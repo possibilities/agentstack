@@ -91,6 +91,7 @@ async function prepareFixture(options: {
   stopFails?: boolean;
   seedFxState?: boolean;
   liveOldPids?: boolean;
+  malformedStatus?: boolean;
 }) {
   const root = await mkdtemp(join(tmpdir(), "agentstack-migration-"));
   roots.push(root);
@@ -139,7 +140,9 @@ async function prepareFixture(options: {
 
   await writeFile(
     join(stateDir, "status.json"),
-    `${JSON.stringify(patchedOld)}\n`,
+    options.malformedStatus
+      ? "{not-json\n"
+      : `${JSON.stringify(patchedOld)}\n`,
   );
   await writeFile(
     join(stateDir, "status.after-start.json"),
@@ -181,7 +184,7 @@ async function prepareFixture(options: {
   };
 }
 
-function runUpgradeScript(
+function writeUpgradeScript(
   fixture: Awaited<ReturnType<typeof prepareFixture>>,
   options: {
     version: string;
@@ -209,20 +212,89 @@ function runUpgradeScript(
     ].join("\n"),
     { mode: 0o755 },
   );
+  return scriptPath;
+}
+
+function upgradeEnv(
+  fixture: Awaited<ReturnType<typeof prepareFixture>>,
+  version: string,
+) {
+  return {
+    ...process.env,
+    PATH: `${fixtureBin}:${process.env.PATH ?? ""}`,
+    HOME: fixture.home,
+    XDG_STATE_HOME: join(fixture.home, ".local", "state"),
+    XDG_CONFIG_HOME: join(fixture.home, ".config"),
+    AGENTSTACK_FIXTURE_STATE: fixture.stateDir,
+    AGENTSTACK_FIXTURE_NEW_VERSION: version,
+    AGENTSTACK_INSTALL_ROOT: fixture.pkgRoot,
+  };
+}
+
+function runUpgradeScript(
+  fixture: Awaited<ReturnType<typeof prepareFixture>>,
+  options: {
+    version: string;
+    readinessAttempts?: number;
+    quiesceAttempts?: number;
+    expectedBuild?: string;
+  },
+) {
+  const scriptPath = writeUpgradeScript(fixture, options);
   return execFileSync("bash", [scriptPath], {
     encoding: "utf8",
     timeout: 12_000,
-    env: {
-      ...process.env,
-      PATH: `${fixtureBin}:${process.env.PATH ?? ""}`,
-      HOME: fixture.home,
-      XDG_STATE_HOME: join(fixture.home, ".local", "state"),
-      XDG_CONFIG_HOME: join(fixture.home, ".config"),
-      AGENTSTACK_FIXTURE_STATE: fixture.stateDir,
-      AGENTSTACK_FIXTURE_NEW_VERSION: options.version,
-      AGENTSTACK_INSTALL_ROOT: fixture.pkgRoot,
-    },
+    env: upgradeEnv(fixture, options.version),
   });
+}
+
+function runUpgradeScriptFailure(
+  fixture: Awaited<ReturnType<typeof prepareFixture>>,
+  options: {
+    version: string;
+    readinessAttempts?: number;
+    quiesceAttempts?: number;
+    expectedBuild?: string;
+  },
+) {
+  const scriptPath = writeUpgradeScript(fixture, options);
+  try {
+    execFileSync("bash", [scriptPath], {
+      encoding: "utf8",
+      timeout: 12_000,
+      env: upgradeEnv(fixture, options.version),
+    });
+    throw new Error("expected upgrade script to fail");
+  } catch (error) {
+    const err = error as {
+      status?: number | null;
+      stdout?: string;
+      stderr?: string;
+      message?: string;
+    };
+    if (err.message === "expected upgrade script to fail") throw error;
+    return {
+      status: err.status ?? null,
+      stdout: String(err.stdout ?? ""),
+      stderr: String(err.stderr ?? ""),
+    };
+  }
+}
+
+async function expectAptNeverReached(
+  fixture: Awaited<ReturnType<typeof prepareFixture>>,
+) {
+  await expect(readFile(join(fixture.stateDir, "apt.log"), "utf8")).rejects.toThrow();
+}
+
+function killLivePids(fixture: Awaited<ReturnType<typeof prepareFixture>>) {
+  for (const pid of [fixture.daemonPid, fixture.codexPid, fixture.fxPid]) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      /* gone */
+    }
+  }
 }
 
 describe("install-host migration fixtures", () => {
@@ -254,6 +326,11 @@ describe("install-host migration fixtures", () => {
     expect(program).toContain("buildIdentity");
     expect(program).toContain("quiesce_attempts=");
     expect(program).toContain("readiness_attempts=");
+    expect(program).toMatch(/source\.revision is required|source\.revision/);
+    expect(program).toContain("need_quiesce");
+    expect(program).toContain("inode_of");
+    expect(program).not.toContain("stat -c");
+    expect(program).toContain("git:?*");
     expect(
       parseInstallArgs([
         "--remote",
@@ -331,23 +408,17 @@ describe("install-host migration fixtures", () => {
       }),
     });
 
-    expect(() =>
-      runUpgradeScript(fixture, {
-        version: "0.1.2",
-        readinessAttempts: 3,
-        quiesceAttempts: 3,
-      }),
-    ).toThrow();
-    await expect(
-      readFile(join(fixture.stateDir, "apt.log"), "utf8"),
-    ).rejects.toThrow();
-    for (const pid of [fixture.daemonPid, fixture.codexPid, fixture.fxPid]) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        /* gone */
-      }
-    }
+    const failure = runUpgradeScriptFailure(fixture, {
+      version: "0.1.2",
+      readinessAttempts: 3,
+      quiesceAttempts: 3,
+    });
+    expect(failure.stderr).toMatch(
+      /fixture: stop failed|refused to replace package|process still running/,
+    );
+    expect(failure.stderr).not.toMatch(/fixture sudo/);
+    await expectAptNeverReached(fixture);
+    killLivePids(fixture);
   });
 
   test("rejects unknown readiness and OR-only version matches", async () => {
@@ -374,12 +445,121 @@ describe("install-host migration fixtures", () => {
       }),
     });
 
-    expect(() =>
-      runUpgradeScript(fixture, {
-        version: "0.1.2",
-        readinessAttempts: 3,
-        quiesceAttempts: 5,
+    const failure = runUpgradeScriptFailure(fixture, {
+      version: "0.1.2",
+      readinessAttempts: 3,
+      quiesceAttempts: 5,
+    });
+    expect(failure.stderr).toMatch(
+      /bounded readiness poll failed|version mismatch|codex readiness not ready|readiness not ready/,
+    );
+  });
+
+  test("fail-closed: live old PIDs refuse replace when unit reports inactive", async () => {
+    const fixture = await prepareFixture({
+      priorActive: false,
+      priorEnabled: false,
+      newVersion: "0.1.2",
+      stopFails: true,
+      liveOldPids: true,
+      oldStatus: statusPayload({
+        productVersion: "0.1.1",
+        daemonPid: 1,
+        daemonGeneration: "gen-old",
+        codexPid: 2,
+        fxPid: 3,
+        readiness: "ready",
       }),
-    ).toThrow();
+      newStatus: statusPayload({
+        productVersion: "0.1.2",
+        daemonPid: 100,
+        daemonGeneration: "gen-new",
+        codexPid: 101,
+        readiness: "ready",
+      }),
+    });
+
+    const failure = runUpgradeScriptFailure(fixture, {
+      version: "0.1.2",
+      readinessAttempts: 3,
+      quiesceAttempts: 3,
+    });
+    expect(failure.stderr).toMatch(
+      /fixture: stop failed|refused to replace package|process still running/,
+    );
+    expect(failure.stderr).not.toMatch(/fixture sudo/);
+    expect(failure.stderr).not.toMatch(/stat:|illegal option|invalid option/);
+    await expectAptNeverReached(fixture);
+    killLivePids(fixture);
+  });
+
+
+  test("missing expected build identity refuses before apt", async () => {
+    const fixture = await prepareFixture({
+      priorActive: true,
+      newVersion: "0.1.2",
+      liveOldPids: false,
+      oldStatus: statusPayload({
+        productVersion: "0.1.1",
+        daemonPid: 111001,
+        daemonGeneration: "gen-old",
+        codexPid: 111002,
+        fxPid: 111003,
+        readiness: "ready",
+      }),
+      newStatus: statusPayload({
+        productVersion: "0.1.2",
+        buildIdentity: "git:wrong",
+        daemonPid: 222001,
+        daemonGeneration: "gen-new",
+        codexPid: 222002,
+        readiness: "ready",
+      }),
+    });
+
+    const failure = runUpgradeScriptFailure(fixture, {
+      version: "0.1.2",
+      expectedBuild: "",
+      readinessAttempts: 3,
+      quiesceAttempts: 3,
+    });
+    expect(failure.stderr).toMatch(/source\.revision|build identity/);
+    expect(failure.stderr).not.toMatch(/stat:|illegal option|invalid option/);
+    await expectAptNeverReached(fixture);
+  });
+
+  test("malformed prior status refuses before apt", async () => {
+    const fixture = await prepareFixture({
+      priorActive: true,
+      newVersion: "0.1.2",
+      liveOldPids: false,
+      malformedStatus: true,
+      oldStatus: statusPayload({
+        productVersion: "0.1.1",
+        daemonPid: 111001,
+        daemonGeneration: "gen-old",
+        codexPid: 111002,
+        fxPid: 111003,
+        readiness: "ready",
+      }),
+      newStatus: statusPayload({
+        productVersion: "0.1.2",
+        daemonPid: 222001,
+        daemonGeneration: "gen-new",
+        codexPid: 222002,
+        readiness: "ready",
+      }),
+    });
+
+    const failure = runUpgradeScriptFailure(fixture, {
+      version: "0.1.2",
+      readinessAttempts: 3,
+      quiesceAttempts: 3,
+    });
+    expect(failure.stderr).toMatch(
+      /malformed or unknown|unparseable|status control/,
+    );
+    expect(failure.stderr).not.toMatch(/stat:|illegal option|invalid option/);
+    await expectAptNeverReached(fixture);
   });
 });
