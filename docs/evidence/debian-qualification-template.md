@@ -86,4 +86,4 @@ available.
 Use the documented stop, package upgrade, start sequence. Record installed and
 running versions before and after the restart. Remove and purge the package,
 then record that `$XDG_CONFIG_HOME/agentstack` and `$XDG_STATE_HOME/agentstack`
-remain unchanged. Do not delete state as part of this qualification.
+remain unchanged. Do not delete state as part of this qualification. After upgrading from a dual-engine release, record that `$XDG_STATE_HOME/agentstack/engines/fx` may remain as inactive/orphaned user data and that cleanup stays explicit.

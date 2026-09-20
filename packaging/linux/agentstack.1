@@ -43,7 +43,9 @@ Private, session-scoped runtime directory.
 User configuration.
 .TP
 .I $XDG_STATE_HOME/agentstack
-User durable state, including separate engine homes.
+User durable state, including separate engine homes. After upgrades from
+dual-engine releases, engines/fx may remain as inactive/orphaned data
+until explicitly removed.
 .SH NOTES
 For package upgrades, use the documented stop, upgrade, start sequence. The
 package never changes user configuration or state on install, remove, or purge.

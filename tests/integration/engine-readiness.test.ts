@@ -33,5 +33,4 @@ describe("direct engine readiness protocols", () => {
     ).toMatchObject({ readiness: "auth-required" });
   });
 
-
 });
