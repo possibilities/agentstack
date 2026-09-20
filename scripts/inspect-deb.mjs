@@ -3,6 +3,7 @@ import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { basename, resolve } from "node:path";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 function usage() {
   return `Usage: node scripts/inspect-deb.mjs --package FILE [--version VERSION] [--json]\n`;
@@ -209,11 +210,16 @@ async function main() {
     );
 }
 
-main().catch((error) => {
-  process.stderr.write(
-    `${error instanceof Error ? error.message : String(error)}\n`,
-  );
-  process.exitCode = 1;
-});
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  main().catch((error) => {
+    process.stderr.write(
+      `${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    process.exitCode = 1;
+  });
+}
 
 export { inspect, normalizedEntries, parseArgs };
