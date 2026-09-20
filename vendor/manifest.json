@@ -17,7 +17,9 @@
       "sha256": "7fde7b8afa198da66257f42ee2001d874c7355631e6d1579a5fb5ef1f246df4c",
       "target": "x86_64-linux-gnu",
       "executable": "bin/node",
-      "licensePaths": ["vendor/licenses/node-LICENSE.txt"],
+      "licensePaths": [
+        "vendor/licenses/node-LICENSE.txt"
+      ],
       "format": "ELF 64-bit x86-64, dynamically linked GNU/Linux",
       "minimumGlibc": "2.28",
       "bytes": 126595440
@@ -69,53 +71,6 @@
           "sha256": "67faaaa89242c4a332e16e508a1977cffc24bf7fca31d4411cdfd101f3831ef3",
           "minimumGlibc": "2.38"
         }
-      }
-    },
-    "fx": {
-      "version": "0.0.10",
-      "source": {
-        "kind": "exact-source-build",
-        "repository": "https://github.com/possibilities/fx",
-        "upstreamRepository": "https://github.com/vercel-labs/fx",
-        "ref": "integration",
-        "commit": "e639de6aded41ae168a8888b920ff71db41877d0",
-        "sourceTreeSha256": "2a6bb9f37eee5f090054a8d31e929c05a5d6411226cfd91e521ea18589401b47"
-      },
-      "sha256": "ce9837da78ff43181c7e180626d39582ea715cb246f1ba29dad68588308bd1ba",
-      "target": "x86_64-linux-musl",
-      "executable": "bin/fx",
-      "args": ["acp"],
-      "licensePaths": [
-        "vendor/licenses/fx-LICENSE.txt",
-        "vendor/licenses/fx-THIRD_PARTY_NOTICES.md"
-      ],
-      "format": "ELF 64-bit x86-64, statically linked",
-      "build": {
-        "zigVersion": "0.16.0",
-        "zigArchiveUrl": "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz",
-        "zigArchiveSha256": "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00",
-        "optimize": "ReleaseSafe",
-        "expectedReleaseBuildHost": "linux-x86_64",
-        "candidateReleaseSha256": "ce9837da78ff43181c7e180626d39582ea715cb246f1ba29dad68588308bd1ba",
-        "buildObservations": [
-          {
-            "host": "linux-x86_64",
-            "workflowRunId": "35537630615",
-            "buildCount": 1,
-            "sha256": "ce9837da78ff43181c7e180626d39582ea715cb246f1ba29dad68588308bd1ba",
-            "role": "release-candidate"
-          },
-          {
-            "host": "darwin-arm64",
-            "buildCount": 2,
-            "sha256": "3926591e083eed79330c8de74031c4a4679ea60ee1421e09128b35420f120e09",
-            "role": "development-observation"
-          }
-        ],
-        "qualificationStatus": "pending-repeated-isolated-linux-builds",
-        "releaseGate": "two isolated Linux x86-64 builds must be byte-identical and match candidateReleaseSha256",
-        "observedDifference": "Darwin and Linux observations differ; current evidence does not establish the cause",
-        "command": "scripts/vendor/build-fx.sh /path/to/clean/possibilities-fx"
       }
     }
   }

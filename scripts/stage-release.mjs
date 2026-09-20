@@ -119,7 +119,6 @@ await cp(
 
 const node = await copyVerified("node", join(output, "runtime", "node"), true);
 const codex = await copyVerified("codex", join(output, "engines", "codex"));
-const fx = await copyVerified("fx", join(output, "engines", "fx"));
 const gitRevision = execFileSync("git", ["rev-parse", "HEAD"], {
   cwd: root,
   encoding: "utf8",
@@ -145,16 +144,6 @@ const manifest = {
       sha256: codex.entry.sha256,
       source: codex.entry.source,
     },
-    fx: {
-      version: fx.entry.version,
-      executable: fx.executable,
-      args: fx.entry.args?.includes("--state-dir")
-        ? fx.entry.args
-        : ["--state-dir", "${FX_STATE_DIR}", ...(fx.entry.args ?? ["acp"])],
-      sha256: fx.entry.sha256,
-      source: fx.entry.source,
-    },
-  },
 };
 await writeFile(
   join(output, "manifest.json"),

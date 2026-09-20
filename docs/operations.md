@@ -14,8 +14,7 @@ Useful commands:
 
 ```sh
 agentstack status --json
-agentstack child restart fx
-agentstack logs --component fx --follow
+agentstack logs --component codex --follow
 agentstack doctor --json
 agentstack restart
 agentstack stop

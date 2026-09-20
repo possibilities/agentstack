@@ -1,7 +1,7 @@
 export const CONTROL_SCHEMA = "agentstack.control.v1" as const;
 export const SYSTEM_INVENTORY_SCHEMA = "agentstack.system.v1" as const;
 
-export const CHILD_IDS = ["codex", "fx"] as const;
+export const CHILD_IDS = ["codex"] as const;
 export type ChildId = (typeof CHILD_IDS)[number];
 
 export type ObservedState =

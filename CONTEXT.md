@@ -2,13 +2,13 @@
 
 **AgentStack daemon**
 
-The single OS-managed foreground process that directly owns Fx ACP and Codex app-server. It owns their pipes, process handles, readiness, bounded recovery, and private control socket.
+The single OS-managed foreground process that directly owns Codex app-server. It owns its pipes, process handles, readiness, bounded recovery, and private control socket.
 
 _Avoid: core, host, broker, server fleet_
 
 **Engine**
 
-One pinned, product-owned native executable supervised by the AgentStack daemon. Milestone one has exactly `fx` and `codex`.
+One pinned, product-owned native executable supervised by the AgentStack daemon. Milestone one has exactly `codex`.
 
 _Avoid: provider, when referring to the local process_
 

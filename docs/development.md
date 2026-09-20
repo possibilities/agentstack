@@ -16,6 +16,5 @@ Libraries compile with strict NodeNext TypeScript and explicit exports. App buil
 
 Integration tests use executable fake children. They test direct ownership, initialize readiness, bounded retries, auth-required stability, single-child restart, shutdown, control-socket permissions, and unsafe stale paths without network access or credentials.
 
-These local commands are development checks. `.github/workflows/native-linux.yml` is the native-package release authority and must pass from the public tagged revision. Never point development tests at global `fx` or `codex`. Use only `vendor/manifest.json` payloads for release qualification.
+These local commands are development checks. `.github/workflows/native-linux.yml` is the native-package release authority and must pass from the public tagged revision. Never point development tests at global `codex`. Use only `vendor/manifest.json` payloads for release qualification.
 
-The observed Darwin arm64 and Linux x86-64 Fx bytes differ even with the same source, Zig version, target and optimization; this evidence does not establish why. `stage-release.mjs` rejects the Darwin development observation. The Linux digest remains a release candidate until two isolated-cache Linux builds compare byte-for-byte and match it.

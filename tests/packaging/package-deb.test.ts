@@ -27,8 +27,7 @@ async function stagedRelease(productVersion = "0.1.0"): Promise<string> {
   await mkdir(join(root, "runtime"), { recursive: true });
   await mkdir(join(root, "apps"), { recursive: true });
   await mkdir(join(root, "engines", "codex"), { recursive: true });
-  await mkdir(join(root, "engines", "fx"), { recursive: true });
-  await mkdir(join(root, "licenses"), { recursive: true });
+    await mkdir(join(root, "licenses"), { recursive: true });
   await writeFile(join(root, "runtime", "node"), "#!/bin/sh\nexit 0\n");
   await chmod(join(root, "runtime", "node"), 0o755);
   await writeFile(join(root, "apps", "cli.mjs"), "export {};\n");
@@ -37,10 +36,8 @@ async function stagedRelease(productVersion = "0.1.0"): Promise<string> {
     join(root, "engines", "codex", "codex"),
     "#!/bin/sh\nexit 0\n",
   );
-  await writeFile(join(root, "engines", "fx", "fx"), "#!/bin/sh\nexit 0\n");
-  await chmod(join(root, "engines", "codex", "codex"), 0o755);
-  await chmod(join(root, "engines", "fx", "fx"), 0o755);
-  await writeFile(join(root, "licenses", "NOTICE"), "fixture notice\n");
+    await chmod(join(root, "engines", "codex", "codex"), 0o755);
+    await writeFile(join(root, "licenses", "NOTICE"), "fixture notice\n");
   await writeFile(
     join(root, "manifest.json"),
     `${JSON.stringify({
@@ -58,13 +55,7 @@ async function stagedRelease(productVersion = "0.1.0"): Promise<string> {
           executable: "engines/codex/codex",
           args: ["app-server"],
           sha256: "a".repeat(64),
-        },
-        fx: {
-          version: "test",
-          executable: "engines/fx/fx",
-          args: ["acp"],
-          sha256: "b".repeat(64),
-        },
+        }
       },
     })}\n`,
   );
@@ -111,7 +102,7 @@ describe("Debian package staging", () => {
 
   test("rejects a staged link that would escape the release root", async () => {
     const stage = await stagedRelease();
-    await symlink("/tmp", join(stage, "engines", "fx", "outside"));
+    await symlink("/tmp", join(stage, "engines", "codex", "outside"));
     await expect(inspectStage(stage)).rejects.toThrow("escapes release root");
   });
 

@@ -9,7 +9,6 @@ import type {
 } from "@agentstack/contracts";
 import { CONTROL_SCHEMA, createSystemInventory } from "@agentstack/contracts";
 import { createCodexReadinessProbe } from "@agentstack/engine-codex";
-import { fxReadinessProbe } from "@agentstack/engine-fx";
 import {
   ManagedChild,
   closeControlServer,
@@ -96,33 +95,18 @@ async function main(): Promise<void> {
       },
       () => undefined,
     ),
-    fx: new ManagedChild(
-      {
-        id: "fx",
-        sourceVersion: manifest.engines.fx.version,
-        command: resolve(releaseRoot, manifest.engines.fx.executable),
-        args: manifest.engines.fx.args.map((arg) =>
-          arg === "${FX_STATE_DIR}" ? paths.fxHome : arg,
-        ),
-        cwd: paths.fxHome,
-        env: childEnvironment(paths.fxHome),
-        probe: fxReadinessProbe,
-      },
-      () => undefined,
-    ),
   };
 
   const status = (): StatusResponse => {
     const childStatus = {
       codex: children.codex.status(),
-      fx: children.fx.status(),
     };
     const childComponent = (id: ChildId): ProcessComponent => {
       const child = childStatus[id];
       const engine = manifest.engines[id];
       return {
         id,
-        name: id === "codex" ? "Codex app-server" : "Fx ACP",
+        name: "Codex app-server",
         kind: "engine",
         owner: "agentstack-daemon",
         desiredState: child.desiredState,
@@ -138,13 +122,10 @@ async function main(): Promise<void> {
         restartCount: child.restartCount,
         lastFailure: child.lastFailure,
         inventory: {
-          summary:
-            id === "codex"
-              ? "Pinned Codex app-server stdio engine"
-              : "Pinned Fx Agent Client Protocol stdio engine",
+          summary: "Pinned Codex app-server stdio engine",
           capabilities: [
             {
-              id: id === "codex" ? "app-server.initialize" : "acp.initialize",
+              id: "app-server.initialize",
               name: "Protocol readiness",
               summary: "Answers an inference-free initialization exchange",
             },
@@ -207,7 +188,6 @@ async function main(): Promise<void> {
         },
       },
       childComponent("codex"),
-      childComponent("fx"),
     ];
     const systemInventory = createSystemInventory(components);
     return {
@@ -246,7 +226,7 @@ async function main(): Promise<void> {
         await closeControlServer(control, paths.controlSocket).catch(
           () => undefined,
         );
-      await Promise.all([children.codex.stop(), children.fx.stop()]);
+      await children.codex.stop();
       log({
         level: "info",
         component: "daemon",
@@ -259,7 +239,7 @@ async function main(): Promise<void> {
     return await shutdownPromise;
   };
 
-  // Signals are owned before the control socket or either child can start.
+  // Signals are owned before the control socket or the Codex child can start.
   process.once("SIGTERM", () => void shutdown("SIGTERM", 0));
   process.once("SIGINT", () => void shutdown("SIGINT", 0));
   process.once("uncaughtException", (error) => {
@@ -292,7 +272,7 @@ async function main(): Promise<void> {
       },
     });
     if (shuttingDown) return;
-    await Promise.all([children.codex.start(), children.fx.start()]);
+    await children.codex.start();
     if (shuttingDown) return;
     log({
       level: "info",

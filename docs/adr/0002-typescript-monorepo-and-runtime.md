@@ -6,4 +6,4 @@ Use pnpm workspaces and Turbo with applications under `apps/*` and compiled inte
 
 This follows current Vercel workspace boundaries while keeping release entrypoints independent of workspace symlinks or an end-user package manager.
 
-Native protocol code uses direct ownership names: `packages/engine-codex` contains only the Codex app-server initialization/readiness exchange, and `packages/engine-fx` contains only the Fx ACP initialization/readiness exchange. Neither package is a general agent abstraction or integration facade.
+Native protocol code uses a direct ownership name: `packages/engine-codex` contains only the Codex app-server initialization/readiness exchange. It is not a general agent abstraction or integration facade.

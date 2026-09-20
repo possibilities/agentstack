@@ -1,11 +1,20 @@
 {
   "extends": "@agentstack/typescript-config/node.json",
-  "compilerOptions": { "noEmit": true },
-  "include": ["src/**/*.ts"],
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/**/*.ts"
+  ],
   "references": [
-    { "path": "../../packages/contracts" },
-    { "path": "../../packages/runtime" },
-    { "path": "../../packages/engine-codex" },
-    { "path": "../../packages/engine-fx" }
+    {
+      "path": "../../packages/contracts"
+    },
+    {
+      "path": "../../packages/runtime"
+    },
+    {
+      "path": "../../packages/engine-codex"
+    }
   ]
 }

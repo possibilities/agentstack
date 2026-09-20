@@ -132,7 +132,7 @@ async function doctor(json: boolean): Promise<number> {
 
 async function childRestart(id: string | undefined): Promise<number> {
   if (!id || !isChildId(id)) {
-    process.stderr.write("child restart requires codex or fx\n");
+    process.stderr.write("child restart requires codex\n");
     return 2;
   }
   try {
@@ -202,7 +202,7 @@ function logs(): Promise<number> {
 
 function help(): void {
   console.log(
-    `Usage: agentstack <command>\n\nCommands:\n  status [--json]            Inspect unit and engine readiness\n  start | stop | restart     Control this user's session service\n  enable [--now]             Enable for this user's login sessions; never enables linger\n  disable [--now]            Disable this user's service\n  child restart <codex|fx>   Restart one owned engine\n  logs [--component ID] [--follow]\n  doctor [--json]\n  version [--json]\n  daemon                     Development/package entrypoint (launcher only)\n\nStatus exits: 0 healthy, 3 stopped, 4 degraded, 5 incompatible/error.`,
+    `Usage: agentstack <command>\n\nCommands:\n  status [--json]            Inspect unit and engine readiness\n  start | stop | restart     Control this user's session service\n  enable [--now]             Enable for this user's login sessions; never enables linger\n  disable [--now]            Disable this user's service\n  child restart <codex>   Restart one owned engine\n  logs [--component ID] [--follow]\n  doctor [--json]\n  version [--json]\n  daemon                     Development/package entrypoint (launcher only)\n\nStatus exits: 0 healthy, 3 stopped, 4 degraded, 5 incompatible/error.`,
   );
 }
 

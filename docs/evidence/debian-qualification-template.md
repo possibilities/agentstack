@@ -17,7 +17,7 @@ fill any item below.
 | Public repository and release tag     |       |
 | Release-manifest revision/attestation |       |
 | Product version and build identity    |       |
-| Codex and Fx payload versions/hashes  |       |
+| Codex payload version/hash  |       |
 | Authorization reference               |       |
 
 ## Package inspection before installation
@@ -52,7 +52,7 @@ systemctl --user cat agentstack.service
 ```
 
 Record the command outputs, the service user's UID, and the exact service
-tree. Confirm one user unit whose direct daemon child owns the pinned Fx and
+tree. Confirm one user unit whose direct daemon child owns the pinned
 Codex children. Confirm `KillMode=mixed`, `Restart=on-failure`, `UMask=0077`,
 and a 0700 runtime directory. Record `stat -c '%a %U %G %n'` for the runtime
 directory and control socket; the socket must be 0600 and same-user owned.
@@ -60,8 +60,8 @@ directory and control socket; the socket must be 0600 and same-user owned.
 ## Engine and recovery proof
 
 Record the real pinned Codex app-server initialization result without creating
-a thread or turn. Record the real Fx version and ACP capability initialization
-without inference. If authentication prevents Fx capability initialization,
+a thread or turn. Record the real Codex version and app-server initialization
+without inference. If authentication prevents Codex capability initialization,
 record `auth-required`, the exact sanitized reason, and leave that capability
 unproven.
 
@@ -75,7 +75,7 @@ to die and record the cgroup cleanup result.
 ## Session and host boundaries
 
 Record `ss -ltnp` (or equivalent) showing no AgentStack TCP listener,
-`loginctl show-user "$USER" -p Linger`, and `command -v fx codex` before and
+`loginctl show-user "$USER" -p Linger`, and `command -v codex` before and
 after installation. A logout proof requires a separate authorized observer;
 an SSH session held open for observation does not prove that the user manager
 stops after the last login ends. Record that limitation when no observer is

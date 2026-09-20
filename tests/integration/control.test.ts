@@ -33,7 +33,7 @@ afterEach(async () => {
 });
 
 function status(): StatusResponse {
-  const child = (id: "codex" | "fx") => ({
+  const child = (id: "codex") => ({
     id,
     sourceVersion: "fixture",
     generation: id,
@@ -47,7 +47,7 @@ function status(): StatusResponse {
     backoffUntil: null,
     lastFailure: null,
   });
-  const components: ProcessComponent[] = ["daemon", "codex", "fx"].map(
+  const components: ProcessComponent[] = ["daemon", "codex"].map(
     (id) => ({
       id,
       name: id,
@@ -87,7 +87,7 @@ function status(): StatusResponse {
       desiredState: "running",
     },
     systemInventory: { schema: SYSTEM_INVENTORY_SCHEMA, components },
-    children: { codex: child("codex"), fx: child("fx") },
+    children: { codex: child("codex") },
   };
 }
 
@@ -143,9 +143,9 @@ describe("private control socket", () => {
     expect(
       (await controlRequest<StatusResponse>(path, "GET", "/v1/status")).schema,
     ).toBe(CONTROL_SCHEMA);
-    await controlRequest(path, "POST", "/v1/children/fx/restart");
+    await controlRequest(path, "POST", "/v1/children/codex/restart");
     await new Promise((resolveWait) => setImmediate(resolveWait));
-    expect(restarted).toEqual(["fx"]);
+    expect(restarted).toEqual(["codex"]);
   });
 
   test("aborts an incomplete HTTP client within the shutdown deadline", async () => {
@@ -219,7 +219,7 @@ describe("private control socket", () => {
 
   test("reports auth-required as degraded rather than healthy", () => {
     const response = status();
-    response.children.fx.readiness = "auth-required";
+    response.children.codex.readiness = "auth-required";
     expect(statusExitCode(true, response)).toBe(4);
   });
 

@@ -236,7 +236,6 @@ async function inspect(packagePath, expectedVersion) {
   for (const component of [
     manifest.runtime,
     manifest.engines?.codex,
-    manifest.engines?.fx,
   ]) {
     if (
       !component ||

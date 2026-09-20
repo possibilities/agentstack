@@ -8,7 +8,6 @@ export interface RuntimePaths {
   configRoot: string;
   stateRoot: string;
   codexHome: string;
-  fxHome: string;
 }
 
 function xdg(name: "CONFIG" | "STATE", fallback: string): string {
@@ -27,7 +26,6 @@ export function resolveRuntimePaths(): RuntimePaths {
     configRoot: resolve(xdg("CONFIG", ".config"), "agentstack"),
     stateRoot,
     codexHome: join(stateRoot, "engines", "codex"),
-    fxHome: join(stateRoot, "engines", "fx"),
   };
 }
 
@@ -55,5 +53,4 @@ export async function ensureRuntimePaths(paths: RuntimePaths): Promise<void> {
   await ensurePrivateDirectory(paths.stateRoot);
   await ensurePrivateDirectory(join(paths.stateRoot, "engines"));
   await ensurePrivateDirectory(paths.codexHome);
-  await ensurePrivateDirectory(paths.fxHome);
 }

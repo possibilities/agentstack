@@ -37,7 +37,6 @@ function safeLogLevel(value: unknown): LogRecord["level"] {
 function safeLogComponent(value: unknown): LogRecord["component"] {
   return value === "daemon" ||
     value === "codex" ||
-    value === "fx" ||
     value === "control"
     ? value
     : "daemon";

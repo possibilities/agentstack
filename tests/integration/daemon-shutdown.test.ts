@@ -59,8 +59,8 @@ test("SIGTERM during readiness closes control and leaves no child orphan", async
     target: "node24",
   });
 
-  const pids = { codex: join(root, "codex.pid"), fx: join(root, "fx.pid") };
-  for (const id of ["codex", "fx"] as const) {
+  const pids = { codex: join(root, "codex.pid") };
+  for (const id of ["codex"] as const) {
     const wrapper = join(release, "engines", id, id);
     await mkdir(join(release, "engines", id), { recursive: true });
     await writeFile(
@@ -84,14 +84,7 @@ test("SIGTERM during readiness closes control and leaves no child orphan", async
           args: [],
           sha256: "a".repeat(64),
           source: "fixture",
-        },
-        fx: {
-          version: "test",
-          executable: "engines/fx/fx",
-          args: [],
-          sha256: "b".repeat(64),
-          source: "fixture",
-        },
+        }
       },
     })}\n`,
   );
@@ -109,14 +102,13 @@ test("SIGTERM during readiness closes control and leaves no child orphan", async
   const stderr: Buffer[] = [];
   child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
   try {
-    await Promise.all([waitForFile(pids.codex), waitForFile(pids.fx)]);
+    await waitForFile(pids.codex);
   } catch (error) {
     throw new Error(
       `${String(error)}\ndaemon stderr:\n${Buffer.concat(stderr).toString("utf8")}`,
     );
   }
   const codexPid = Number((await readFile(pids.codex, "utf8")).trim());
-  const fxPid = Number((await readFile(pids.fx, "utf8")).trim());
   const exited = new Promise<number | null>((resolveExit) =>
     child.once("exit", (code) => resolveExit(code)),
   );
@@ -129,7 +121,6 @@ test("SIGTERM during readiness closes control and leaves no child orphan", async
   ]);
   expect(exit).toBe(0);
   expect(processExists(codexPid)).toBe(false);
-  expect(processExists(fxPid)).toBe(false);
   await expect(
     access(join(root, "runtime", "agentstack", "control.sock")),
   ).rejects.toMatchObject({ code: "ENOENT" });

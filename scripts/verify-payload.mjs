@@ -41,7 +41,6 @@ await walk(stage);
 for (const component of [
   manifest.runtime,
   manifest.engines.codex,
-  manifest.engines.fx,
 ]) {
   const executable = resolve(stage, component.executable);
   const root = await realpath(stage);
@@ -58,8 +57,6 @@ for (const evidence of [
   "licenses/node-LICENSE.txt",
   "licenses/codex-LICENSE.txt",
   "licenses/codex-NOTICE.txt",
-  "licenses/fx-LICENSE.txt",
-  "licenses/fx-THIRD_PARTY_NOTICES.md",
   "provenance/vendor-manifest.json",
   "provenance/VENDOR.md",
 ]) {
@@ -70,12 +67,6 @@ if (
   "a1784b0f3991e4853caaddcc167d2bc8c540f12eddb1b5e40b1ec49f2dbcc024"
 ) {
   throw new Error("Codex archive provenance digest mismatch");
-}
-if (
-  manifest.engines.fx.source?.commit !==
-  "e639de6aded41ae168a8888b920ff71db41877d0"
-) {
-  throw new Error("Fx source commit mismatch");
 }
 console.log(
   JSON.stringify({

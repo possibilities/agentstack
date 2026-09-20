@@ -25,40 +25,17 @@ test("GitHub Actions use full commit pins and least default permissions", async 
   expect(uses.every((value) => /@[a-f0-9]{40}$/.test(value))).toBe(true);
   expect(workflow).toContain("permissions:\n  contents: read");
   expect(workflow).not.toMatch(/pull_request_target/);
-  expect(
-    workflow.match(/scripts\/vendor\/build-fx\.sh "\$fx_source"/g),
-  ).toHaveLength(2);
-  expect(workflow).toContain(
-    'cmp "$RUNNER_TEMP/fx-first" vendor/payloads/linux-x64/fx/bin/fx',
-  );
+  expect(workflow).not.toMatch(/build-fx|engine-fx/);
 });
 
-test("release identity and Linux Fx bytes are pinned for 0.1.1", async () => {
+test("release identity is pinned for 0.1.1 without fx", async () => {
   const repository = resolve(import.meta.dirname, "../..");
   const rootPackage = JSON.parse(
     await readFile(resolve(repository, "package.json"), "utf8"),
   ) as { version: string };
   const manifest = JSON.parse(
     await readFile(resolve(repository, "vendor/manifest.json"), "utf8"),
-  ) as {
-    components: {
-      fx: {
-        sha256: string;
-        build: {
-          expectedReleaseBuildHost: string;
-          candidateReleaseSha256: string;
-          buildObservations: Array<{
-            host: string;
-            workflowRunId?: string;
-            buildCount: number;
-            sha256: string;
-            role: string;
-          }>;
-          qualificationStatus: string;
-        };
-      };
-    };
-  };
+  ) as { components: Record<string, unknown> };
   expect(rootPackage.version).toBe("0.1.1");
   const packageFiles = execFileSync(
     "git",
@@ -85,50 +62,9 @@ test("release identity and Linux Fx bytes are pinned for 0.1.1", async () => {
   expect(await readFile(resolve(repository, "README.md"), "utf8")).toContain(
     "agentstack_0.1.1_amd64.deb",
   );
-  expect(manifest.components.fx).toMatchObject({
-    sha256: "ce9837da78ff43181c7e180626d39582ea715cb246f1ba29dad68588308bd1ba",
-    build: {
-      expectedReleaseBuildHost: "linux-x86_64",
-      candidateReleaseSha256:
-        "ce9837da78ff43181c7e180626d39582ea715cb246f1ba29dad68588308bd1ba",
-      buildObservations: [
-        {
-          host: "linux-x86_64",
-          workflowRunId: "35537630615",
-          buildCount: 1,
-          sha256:
-            "ce9837da78ff43181c7e180626d39582ea715cb246f1ba29dad68588308bd1ba",
-          role: "release-candidate",
-        },
-        {
-          host: "darwin-arm64",
-          buildCount: 2,
-          sha256:
-            "3926591e083eed79330c8de74031c4a4679ea60ee1421e09128b35420f120e09",
-          role: "development-observation",
-        },
-      ],
-      qualificationStatus: "pending-repeated-isolated-linux-builds",
-    },
-  });
-  expect(manifest.components.fx.build).not.toHaveProperty(
-    ["qualified", "Build", "Host"].join(""),
-  );
-  expect(manifest.components.fx.build).not.toHaveProperty(
-    ["qualified", "Sha256"].join(""),
-  );
-  for (const script of [
-    "scripts/vendor/build-fx.sh",
-    "scripts/vendor/verify.sh",
-  ]) {
-    const text = await readFile(resolve(repository, script), "utf8");
-    expect(text, script).toContain(
-      "ce9837da78ff43181c7e180626d39582ea715cb246f1ba29dad68588308bd1ba",
-    );
-    expect(text, script).toContain(
-      "3926591e083eed79330c8de74031c4a4679ea60ee1421e09128b35420f120e09",
-    );
-  }
+  expect(manifest.components).not.toHaveProperty("fx");
+  expect(manifest.components).toHaveProperty("codex");
+  expect(manifest.components).toHaveProperty("node");
 });
 
 test("tracked product files exclude removed product concepts", async () => {
@@ -158,5 +94,5 @@ test("tracked product files exclude removed product concepts", async () => {
   }
   expect(findings).toEqual([]);
   expect(tracked).toContain("packages/engine-codex/package.json");
-  expect(tracked).toContain("packages/engine-fx/package.json");
+  expect(tracked).not.toContain("packages/engine-fx/package.json");
 });

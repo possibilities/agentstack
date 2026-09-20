@@ -1,6 +1,5 @@
 import { describe, expect, test } from "vitest";
 import { createCodexReadinessProbe } from "../../packages/engine-codex/src/index.js";
-import { fxReadinessProbe } from "../../packages/engine-fx/src/index.js";
 
 describe("direct engine readiness protocols", () => {
   test("Codex emits only initialize metadata and classifies its reply", () => {
@@ -34,26 +33,5 @@ describe("direct engine readiness protocols", () => {
     ).toMatchObject({ readiness: "auth-required" });
   });
 
-  test("Fx emits only ACP initialize and rejects incompatible replies", () => {
-    expect(fxReadinessProbe.request("unused")).toEqual({
-      request: {
-        jsonrpc: "2.0",
-        id: "agentstack-fx-initialize",
-        method: "initialize",
-        params: { protocolVersion: 1, clientCapabilities: {} },
-      },
-    });
-    expect(
-      fxReadinessProbe.classify({
-        id: "agentstack-fx-initialize",
-        result: { protocolVersion: 1 },
-      }),
-    ).toEqual({ readiness: "ready", failure: null });
-    expect(
-      fxReadinessProbe.classify({
-        id: "agentstack-fx-initialize",
-        error: { message: "method unsupported" },
-      }),
-    ).toMatchObject({ readiness: "incompatible" });
-  });
+
 });

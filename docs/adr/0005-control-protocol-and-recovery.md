@@ -2,7 +2,7 @@
 
 Status: accepted 2026-09-20.
 
-Expose `agentstack.control.v1` as HTTP/1.1 JSON over a same-user Unix socket. Milestone one supports status and explicit per-child restart. Status carries the validated `agentstack.system.v1` component inventory so future daemon and worker packages can contribute safe identity, status, capabilities, and preference metadata to the System surface. The Fx/Codex map is a derived convenience view. Frames are bounded, paths reject symlinks and foreign ownership, and clients cannot provide launch specifications or raw engine requests.
+Expose `agentstack.control.v1` as HTTP/1.1 JSON over a same-user Unix socket. Milestone one supports status and explicit per-child restart. Status carries the validated `agentstack.system.v1` component inventory so future daemon and worker packages can contribute safe identity, status, capabilities, and preference metadata to the System surface. The Codex child map is a derived convenience view. Frames are bounded, paths reject symlinks and foreign ownership, and clients cannot provide launch specifications or raw engine requests.
 
 Restart returns a durable-shaped admission receipt immediately; terminal outcome is observed through status. A lost response remains outcome-unknown and must not be blindly retried. Server shutdown has a fixed deadline and aborts incomplete HTTP clients before stopping children. Signal ownership is installed before any child or readiness probe starts.
 

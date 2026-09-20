@@ -36,7 +36,7 @@ const probe: ReadinessProbe = {
   },
 };
 
-function spec(id: "codex" | "fx", mode = "ready"): ChildSpec {
+function spec(id: "codex", mode = "ready"): ChildSpec {
   return {
     id,
     sourceVersion: "fixture",
@@ -98,27 +98,27 @@ describe("direct child lifecycle", () => {
 
   test("restarts one child without changing its sibling generation", async () => {
     const codex = new ManagedChild(spec("codex"), () => undefined);
-    const fx = new ManagedChild(spec("fx"), () => undefined);
-    await Promise.all([codex.start(), fx.start()]);
+    const secondary = new ManagedChild(spec("codex"), () => undefined);
+    await Promise.all([codex.start(), secondary.start()]);
     await waitFor(
       () =>
         codex.status().readiness === "ready" &&
-        fx.status().readiness === "ready",
+        secondary.status().readiness === "ready",
     );
     const oldCodex = codex.status().generation;
-    const oldFx = fx.status().generation;
+    const oldSecondary = secondary.status().generation;
     await codex.restart();
     await waitFor(() => codex.status().readiness === "ready");
     expect(codex.status().generation).not.toBe(oldCodex);
     expect(codex.status().restartCount).toBe(1);
-    expect(fx.status().generation).toBe(oldFx);
-    expect(fx.status().restartCount).toBe(0);
-    await Promise.all([codex.stop(), fx.stop()]);
+    expect(secondary.status().generation).toBe(oldSecondary);
+    expect(secondary.status().restartCount).toBe(0);
+    await Promise.all([codex.stop(), secondary.stop()]);
   });
 
   test("bounds crash retries and counts automatic relaunches", async () => {
     const child = new ManagedChild(
-      spec("fx", "exit"),
+      spec("codex", "exit"),
       () => undefined,
       testPolicy(),
     );
@@ -165,7 +165,7 @@ describe("direct child lifecycle", () => {
   });
 
   test("reports auth-required without a restart storm", async () => {
-    const child = new ManagedChild(spec("fx", "auth"), () => undefined);
+    const child = new ManagedChild(spec("codex", "auth"), () => undefined);
     await child.start();
     await waitFor(() => child.status().readiness === "auth-required");
     const generation = child.status().generation;

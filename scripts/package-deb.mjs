@@ -38,7 +38,7 @@ Build an amd64 Debian package from a verified staged release.
 
 Required:
   --stage DIRECTORY       staged release containing manifest.json, runtime/node,
-                          apps/{cli,daemon}.mjs, engines/{codex,fx}, and licenses/
+                          apps/{cli,daemon}.mjs, engines/codex, and licenses/
   --output DIRECTORY      destination for agentstack_VERSION_amd64.deb
 
 Options:
@@ -159,7 +159,7 @@ function validateManifest(manifest) {
   validateComponent(runtime, "runtime");
   if (!engines || typeof engines !== "object" || Array.isArray(engines))
     fail("manifest.engines is required");
-  for (const name of ["codex", "fx"]) {
+  for (const name of ["codex"]) {
     const engine = engines[name];
     validateComponent(engine, `engines.${name}`);
     if (
@@ -207,7 +207,7 @@ async function inspectStage(stageDirectory, requestedVersion) {
   }
   if (!licenseInfo.isDirectory() || licenseInfo.isSymbolicLink())
     fail("licenses must be a real directory");
-  for (const engine of ["codex", "fx"]) {
+  for (const engine of ["codex"]) {
     let info;
     try {
       info = await lstat(join(stage, "engines", engine));
@@ -226,7 +226,7 @@ async function inspectStage(stageDirectory, requestedVersion) {
     manifest.runtime.executable,
     "runtime",
   );
-  for (const name of ["codex", "fx"]) {
+  for (const name of ["codex"]) {
     await requireDeclaredExecutable(
       stage,
       manifest.engines[name].executable,
