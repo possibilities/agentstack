@@ -1,0 +1,17 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	:
+
+override_dh_auto_test:
+	:
+
+# dh_installsystemduser otherwise generates maintainer scripts that operate on
+# every local user's unit state. The product deliberately has no package-time
+# user action: `agentstack enable --now` is an explicit, user-scoped command.
+# The -X keeps the unit in the payload while suppressing generated snippets.
+override_dh_installsystemduser:
+	dh_installsystemduser --no-enable -X agentstack.service

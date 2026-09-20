@@ -1,0 +1,10 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: AgentStack
+Source: https://github.com/agentstack/agentstack
+
+Files: *
+Copyright: 2026 AgentStack contributors
+License: UNLICENSED
+ The license for the product source has not been selected for this first
+ release. Third-party engine notices and source provenance are carried in the
+ staged release manifest and its bundled notices.

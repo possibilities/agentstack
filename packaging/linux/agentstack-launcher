@@ -1,0 +1,32 @@
+#!/bin/sh
+set -eu
+
+install_root=/usr/lib/agentstack
+release=$(readlink -f -- "$install_root/current") || {
+  echo "agentstack: cannot resolve $install_root/current" >&2
+  exit 126
+}
+
+case "$release" in
+  "$install_root"/releases/*) ;;
+  *)
+    echo "agentstack: current release is outside $install_root/releases" >&2
+    exit 126
+    ;;
+esac
+
+if [ ! -x "$release/runtime/node" ] || [ ! -f "$release/apps/cli.mjs" ] || [ ! -f "$release/apps/daemon.mjs" ]; then
+  echo "agentstack: installed release is incomplete: $release" >&2
+  exit 126
+fi
+
+# The daemon and both owned engines inherit this immutable directory, so they
+# cannot accidentally mix files from a later package update.
+export AGENTSTACK_RELEASE_ROOT=$release
+
+if [ "$#" -gt 0 ] && [ "$1" = "daemon" ]; then
+  shift
+  exec "$release/runtime/node" "$release/apps/daemon.mjs" "$@"
+fi
+
+exec "$release/runtime/node" "$release/apps/cli.mjs" "$@"

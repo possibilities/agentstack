@@ -1,0 +1,21 @@
+[Unit]
+Description=AgentStack
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/agentstack daemon
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=15s
+KillMode=mixed
+UMask=0077
+RuntimeDirectory=agentstack
+RuntimeDirectoryMode=0700
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agentstack
+
+[Install]
+WantedBy=default.target

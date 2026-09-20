@@ -1,0 +1,116 @@
+#!/usr/bin/env node
+import { constants } from "node:fs";
+import { access, lstat, realpath } from "node:fs/promises";
+import { basename, isAbsolute, resolve } from "node:path";
+import { spawn } from "node:child_process";
+
+const hostPattern = /^[A-Za-z0-9][A-Za-z0-9.-]*$/;
+
+function usage() {
+  return `Usage: scripts/install-host --remote HOST --package /absolute/path/agentstack_VERSION_amd64.deb [--enable] [--confirm INSTALL-AGENTSTACK-ON-HOST]\n`;
+}
+
+function fail(message) {
+  throw new Error(`install-host: ${message}`);
+}
+
+function parseArgs(argv) {
+  const result = { enable: false };
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--enable") result.enable = true;
+    else if (argument === "--help" || argument === "-h") result.help = true;
+    else if (["--remote", "--package", "--confirm"].includes(argument)) {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("--"))
+        fail(`${argument} requires a value`);
+      result[argument.slice(2)] = value;
+      index += 1;
+    } else fail(`unknown argument: ${argument}`);
+  }
+  return result;
+}
+
+function run(command, args, input) {
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn(command, args, {
+      stdio: [input ? "pipe" : "inherit", "inherit", "inherit"],
+    });
+    child.once("error", rejectRun);
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolveRun();
+      else
+        rejectRun(new Error(`${command} failed (${signal ?? `exit ${code}`})`));
+    });
+    if (input) input.pipe(child.stdin);
+  });
+}
+
+async function packageToInstall(rawPath) {
+  if (!rawPath || !isAbsolute(rawPath))
+    fail("--package must be an absolute .deb path");
+  const resolved = resolve(rawPath);
+  if (!resolved.endsWith(".deb")) fail("--package must name a .deb file");
+  let info;
+  try {
+    info = await lstat(resolved);
+  } catch {
+    fail(`package does not exist: ${resolved}`);
+  }
+  if (!info.isFile() || info.isSymbolicLink())
+    fail(`package must be a regular non-symlink file: ${resolved}`);
+  await access(resolved, constants.R_OK);
+  return await realpath(resolved);
+}
+
+async function main() {
+  const options = parseArgs(process.argv.slice(2));
+  if (options.help) {
+    process.stdout.write(usage());
+    return;
+  }
+  if (!options.remote || !hostPattern.test(options.remote))
+    fail("--remote must be a plain reviewed SSH host name");
+  const packagePath = await packageToInstall(options.package);
+  const confirmation = `INSTALL-AGENTSTACK-ON-${options.remote}`;
+  const plan = {
+    remote: options.remote,
+    package: packagePath,
+    action: "sudo apt-get install from a private temporary remote file",
+    enableAfterInstall: options.enable,
+    confirmationRequired: confirmation,
+  };
+  if (options.confirm !== confirmation) {
+    process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
+    process.stdout.write(
+      `No installation was attempted. Re-run with --confirm ${confirmation} after reviewing this plan.\n`,
+    );
+    return;
+  }
+
+  // The host name is syntax-checked and remains a separate ssh argv item. The
+  // remote program has no interpolated local values and removes its package
+  // input even when apt fails. `sudo -n` refuses an unexpected password prompt.
+  const remoteProgram = options.enable
+    ? 'set -eu; package=$(mktemp /tmp/agentstack.XXXXXX.deb); trap \'rm -f -- "$package"\' EXIT; cat >"$package"; sudo -n apt-get install -y "$package"; agentstack enable --now'
+    : 'set -eu; package=$(mktemp /tmp/agentstack.XXXXXX.deb); trap \'rm -f -- "$package"\' EXIT; cat >"$package"; sudo -n apt-get install -y "$package"';
+  const input = (await import("node:fs")).createReadStream(packagePath);
+  await run("ssh", [options.remote, remoteProgram], input);
+  process.stdout.write(
+    `Installed ${basename(packagePath)} on ${options.remote}.\n`,
+  );
+  if (!options.enable) {
+    process.stdout.write(
+      "The package did not enable a service. As the intended host user, run: agentstack enable --now\n",
+    );
+  }
+}
+
+main().catch((error) => {
+  process.stderr.write(
+    `${error instanceof Error ? error.message : String(error)}\n`,
+  );
+  process.exitCode = 1;
+});
+
+export { parseArgs };

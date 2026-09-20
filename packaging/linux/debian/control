@@ -1,0 +1,15 @@
+Source: agentstack
+Section: utils
+Priority: optional
+Maintainer: AgentStack contributors <maintainers@agentstack.invalid>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.7.2
+Rules-Requires-Root: no
+
+Package: agentstack
+Architecture: amd64
+Depends: ${misc:Depends}, systemd, libc6 (>= 2.38), libtinfo6, ca-certificates, git
+Description: local supervisor for pinned AgentStack engines
+ AgentStack runs a per-user systemd service that owns its pinned native
+ engine processes. The package only installs the product; the intended user
+ explicitly enables and starts the user service.

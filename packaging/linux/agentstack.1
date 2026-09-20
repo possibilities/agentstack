@@ -1,0 +1,49 @@
+.TH AGENTSTACK 1 "2026-09-20" "AgentStack" "User Commands"
+.SH NAME
+agentstack \- control the AgentStack per-user service
+.SH SYNOPSIS
+.B agentstack
+.RI [ command ]
+.SH DESCRIPTION
+AgentStack is installed as a session-scoped systemd user service. It never
+enables linger and package installation does not start or enable the service.
+.SH COMMANDS
+.TP
+.B enable [--now]
+Reload this user's systemd manager and enable AgentStack. With
+.B --now
+also start it.
+.TP
+.B start | stop | restart
+Manage this user's AgentStack service.
+.TP
+.B status [--json]
+Report unit and local control-socket health without starting the service.
+.TP
+.B logs [--component COMPONENT] [--follow]
+Read this user's AgentStack journal entries.
+.TP
+.B doctor [--json]
+Report prerequisites and remedies without changing the machine.
+.TP
+.B daemon
+Run the daemon in the foreground for development or service execution.
+.SH FILES
+.TP
+.I /usr/lib/agentstack/releases/<version>
+Immutable installed release payload.
+.TP
+.I /usr/lib/agentstack/current
+Package-managed link to the installed release.
+.TP
+.I $XDG_RUNTIME_DIR/agentstack
+Private, session-scoped runtime directory.
+.TP
+.I $XDG_CONFIG_HOME/agentstack
+User configuration.
+.TP
+.I $XDG_STATE_HOME/agentstack
+User durable state, including separate engine homes.
+.SH NOTES
+For package upgrades, use the documented stop, upgrade, start sequence. The
+package never changes user configuration or state on install, remove, or purge.
