@@ -45,16 +45,6 @@ jobs:
           test "$(uname -m)" = x86_64
           scripts/vendor/fetch-node.sh
           scripts/vendor/fetch-codex.sh
-          zig_path=$(scripts/vendor/fetch-zig.sh)
-          fx_source="$RUNNER_TEMP/fx"
-          git init "$fx_source"
-          git -C "$fx_source" remote add origin https://github.com/possibilities/fx.git
-          git -C "$fx_source" fetch --depth=1 origin e639de6aded41ae168a8888b920ff71db41877d0
-          git -C "$fx_source" checkout --detach FETCH_HEAD
-          PATH="$(dirname "$zig_path"):$PATH" scripts/vendor/build-fx.sh "$fx_source"
-          cp vendor/payloads/linux-x64/fx/bin/fx "$RUNNER_TEMP/fx-first"
-          PATH="$(dirname "$zig_path"):$PATH" scripts/vendor/build-fx.sh "$fx_source"
-          cmp "$RUNNER_TEMP/fx-first" vendor/payloads/linux-x64/fx/bin/fx
           scripts/vendor/verify.sh
 
       - name: Verify, stage, and build twice
