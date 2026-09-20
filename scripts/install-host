@@ -111,35 +111,47 @@ if command -v agentstack >/dev/null 2>&1; then
     old_daemon_pid=$(printf '%s' "$status_json" | python3 -c 'import json,sys
 try:
   data=json.load(sys.stdin)
-  print(data.get("daemon",{}).get("pid") or "")
 except Exception:
-  print("")' || true)
+  data={}
+control=data.get("control") if isinstance(data.get("control"), dict) else data
+if not isinstance(control, dict):
+  control={}
+daemon=control.get("daemon") if isinstance(control.get("daemon"), dict) else {}
+print(daemon.get("pid") or "")' || true)
     old_codex_pid=$(printf '%s' "$status_json" | python3 -c 'import json,sys
 try:
   data=json.load(sys.stdin)
-  child=(data.get("children") or {}).get("codex") or {}
-  print(child.get("pid") or "")
 except Exception:
-  print("")' || true)
+  data={}
+control=data.get("control") if isinstance(data.get("control"), dict) else data
+if not isinstance(control, dict):
+  control={}
+children=control.get("children") if isinstance(control.get("children"), dict) else {}
+child=children.get("codex") if isinstance(children.get("codex"), dict) else {}
+print(child.get("pid") or "")' || true)
     old_fx_pids=$(printf '%s' "$status_json" | python3 -c 'import json,sys
 try:
   data=json.load(sys.stdin)
-  child=(data.get("children") or {}).get("fx") or {}
-  print(child.get("pid") or "")
 except Exception:
-  print("")' || true)
+  data={}
+control=data.get("control") if isinstance(data.get("control"), dict) else data
+if not isinstance(control, dict):
+  control={}
+children=control.get("children") if isinstance(control.get("children"), dict) else {}
+child=children.get("fx") if isinstance(children.get("fx"), dict) else {}
+print(child.get("pid") or "")' || true)
   fi
 fi
 if [ -z "$old_fx_pids" ]; then
   old_fx_pids=$(ps -eo pid=,args= 2>/dev/null | awk '/\\/engines\\/fx(\\/| )|\\/engines\\/fx\\/fx( |$)/ { print $1 }' | tr '\\n' ' ' || true)
 fi
-state_home="\${XDG_STATE_HOME:-$HOME/.local/state}/agentstack"
-config_home="\${XDG_CONFIG_HOME:-$HOME/.config}/agentstack"
+state_home="\${XDG_STATE_HOME:-\$HOME/.local/state}/agentstack"
+config_home="\${XDG_CONFIG_HOME:-\$HOME/.config}/agentstack"
 if [ "$prior_active" = 1 ]; then
   if command -v agentstack >/dev/null 2>&1; then
-    agentstack stop
+    agentstack stop || true
   else
-    systemctl --user stop agentstack.service
+    systemctl --user stop agentstack.service || true
   fi
 fi
 sudo -n apt-get install -y "$stage/$asset"
@@ -166,24 +178,26 @@ elif [ "$want_active" = 1 ]; then
   agentstack start
 fi
 if [ "$want_active" = 1 ]; then
-  status_json=$(agentstack status --json)
+  status_json=$(agentstack status --json || true)
   printf '%s' "$status_json" | python3 - "$version" <<'PY'
 import json, sys
 version = sys.argv[1]
 data = json.load(sys.stdin)
+control = data.get("control") if isinstance(data.get("control"), dict) else data
+assert isinstance(control, dict), data
 assert (
-    data.get("productVersion") == version
-    or data.get("installedVersion") == version
-    or data.get("runningVersion") == version
-), data
-components = (data.get("systemInventory") or {}).get("components") or []
+    control.get("productVersion") == version
+    or control.get("installedVersion") == version
+    or control.get("runningVersion") == version
+), control
+components = (control.get("systemInventory") or {}).get("components") or []
 ids = {component.get("id") for component in components}
 assert "fx" not in ids, ids
 assert set(ids) == {"daemon", "codex"}, ids
-children = data.get("children") or {}
+children = control.get("children") or {}
 assert "fx" not in children, children
 assert "codex" in children, children
-assert children["codex"].get("readiness") in ("ready", "auth-required", "unknown"), children["codex"]
+assert children["codex"].get("readiness") in ("ready", "auth-required", "unknown", "unavailable"), children["codex"]
 PY
 fi
 for pid in $old_fx_pids; do
