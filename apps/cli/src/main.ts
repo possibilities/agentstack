@@ -1,7 +1,11 @@
 import { spawn, spawnSync } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import type { StatusResponse } from "@agentstack/contracts";
-import { CONTROL_SCHEMA, isChildId } from "@agentstack/contracts";
+import {
+  CONTROL_SCHEMA,
+  isChildId,
+  statusExitCode,
+} from "@agentstack/contracts";
 import { controlRequest, resolveRuntimePaths } from "@agentstack/runtime";
 
 const args = process.argv.slice(2);
@@ -36,22 +40,8 @@ async function status(json: boolean): Promise<number> {
   } catch (error) {
     controlError = error instanceof Error ? error.message : String(error);
   }
-  const healthy =
-    unit.active &&
-    control !== null &&
-    Object.values(control.children).every(
-      (child) => child.observedState === "running",
-    );
-  const exit = healthy
-    ? 0
-    : !unit.active && control === null
-      ? 3
-      : control &&
-          Object.values(control.children).some(
-            (child) => child.observedState === "failed",
-          )
-        ? 5
-        : 4;
+  const exit = statusExitCode(unit.active, control);
+  const healthy = exit === 0;
   if (json) {
     console.log(
       JSON.stringify(

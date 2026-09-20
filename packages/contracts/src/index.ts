@@ -164,3 +164,27 @@ export function createSystemInventory(
   assertValidProcessComponents(components);
   return { schema: SYSTEM_INVENTORY_SCHEMA, components: [...components] };
 }
+
+export function statusExitCode(
+  unitActive: boolean,
+  status: StatusResponse | null,
+): 0 | 3 | 4 | 5 {
+  if (!unitActive && status === null) return 3;
+  if (
+    status?.children &&
+    Object.values(status.children).some(
+      (child) => child.observedState === "failed",
+    )
+  )
+    return 5;
+  if (
+    unitActive &&
+    status !== null &&
+    Object.values(status.children).every(
+      (child) =>
+        child.observedState === "running" && child.readiness === "ready",
+    )
+  )
+    return 0;
+  return 4;
+}

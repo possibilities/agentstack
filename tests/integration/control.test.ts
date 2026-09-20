@@ -6,6 +6,7 @@ import {
   CONTROL_SCHEMA,
   SYSTEM_INVENTORY_SCHEMA,
   assertValidProcessComponents,
+  statusExitCode,
   type ProcessComponent,
   type StatusResponse,
 } from "../../packages/contracts/src/index.js";
@@ -134,5 +135,11 @@ describe("private control socket", () => {
         { ...component, inventory: { ...component.inventory, summary: "" } },
       ]),
     ).toThrow("lacks safe inventory metadata");
+  });
+
+  test("reports auth-required as degraded rather than healthy", () => {
+    const response = status();
+    response.children.fx.readiness = "auth-required";
+    expect(statusExitCode(true, response)).toBe(4);
   });
 });
