@@ -81,7 +81,7 @@
         "commit": "e639de6aded41ae168a8888b920ff71db41877d0",
         "sourceTreeSha256": "2a6bb9f37eee5f090054a8d31e929c05a5d6411226cfd91e521ea18589401b47"
       },
-      "sha256": "3926591e083eed79330c8de74031c4a4679ea60ee1421e09128b35420f120e09",
+      "sha256": "ce9837da78ff43181c7e180626d39582ea715cb246f1ba29dad68588308bd1ba",
       "target": "x86_64-linux-musl",
       "executable": "bin/fx",
       "args": ["acp"],
@@ -90,12 +90,19 @@
         "vendor/licenses/fx-THIRD_PARTY_NOTICES.md"
       ],
       "format": "ELF 64-bit x86-64, statically linked",
-      "bytes": 12839920,
       "build": {
         "zigVersion": "0.16.0",
         "zigArchiveUrl": "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz",
         "zigArchiveSha256": "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00",
         "optimize": "ReleaseSafe",
+        "qualifiedBuildHost": "linux-x86_64",
+        "qualifiedSha256": "ce9837da78ff43181c7e180626d39582ea715cb246f1ba29dad68588308bd1ba",
+        "darwinCrossBuildObservation": {
+          "host": "darwin-arm64",
+          "sha256": "3926591e083eed79330c8de74031c4a4679ea60ee1421e09128b35420f120e09",
+          "qualification": "development-only"
+        },
+        "reproducibilityScope": "release qualification requires byte-identical repeated builds on the pinned Linux x86_64 compiler host; observed cross-host outputs differ",
         "command": "scripts/vendor/build-fx.sh /path/to/clean/possibilities-fx"
       }
     }

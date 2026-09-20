@@ -66,12 +66,12 @@ importers:
       '@agentstack/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@agentstack/harness-codex':
+      '@agentstack/engine-codex':
         specifier: workspace:*
-        version: link:../../packages/harness-codex
-      '@agentstack/harness-fx':
+        version: link:../../packages/engine-codex
+      '@agentstack/engine-fx':
         specifier: workspace:*
-        version: link:../../packages/harness-fx
+        version: link:../../packages/engine-fx
       '@agentstack/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
@@ -104,6 +104,44 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
+  packages/engine-codex:
+    dependencies:
+      '@agentstack/runtime':
+        specifier: workspace:*
+        version: link:../runtime
+    devDependencies:
+      '@agentstack/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@types/node':
+        specifier: 26.6.2
+        version: 26.6.2
+      eslint:
+        specifier: 10.11.0
+        version: 10.11.0
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
+  packages/engine-fx:
+    dependencies:
+      '@agentstack/runtime':
+        specifier: workspace:*
+        version: link:../runtime
+    devDependencies:
+      '@agentstack/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@types/node':
+        specifier: 26.6.2
+        version: 26.6.2
+      eslint:
+        specifier: 10.11.0
+        version: 10.11.0
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
   packages/eslint-config:
     dependencies:
       eslint:
@@ -115,44 +153,6 @@ importers:
       typescript-eslint:
         specifier: 8.70.0
         version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
-
-  packages/harness-codex:
-    dependencies:
-      '@agentstack/runtime':
-        specifier: workspace:*
-        version: link:../runtime
-    devDependencies:
-      '@agentstack/typescript-config':
-        specifier: workspace:*
-        version: link:../typescript-config
-      '@types/node':
-        specifier: 26.6.2
-        version: 26.6.2
-      eslint:
-        specifier: 10.11.0
-        version: 10.11.0
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-
-  packages/harness-fx:
-    dependencies:
-      '@agentstack/runtime':
-        specifier: workspace:*
-        version: link:../runtime
-    devDependencies:
-      '@agentstack/typescript-config':
-        specifier: workspace:*
-        version: link:../typescript-config
-      '@types/node':
-        specifier: 26.6.2
-        version: 26.6.2
-      eslint:
-        specifier: 10.11.0
-        version: 10.11.0
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
 
   packages/runtime:
     dependencies:

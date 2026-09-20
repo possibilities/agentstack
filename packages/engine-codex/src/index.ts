@@ -7,7 +7,9 @@ function errorMessage(message: Record<string, unknown>): string {
   return typeof value === "string" ? value : "initialize failed";
 }
 
-export function createCodexProbe(productVersion: string): ReadinessProbe {
+export function createCodexReadinessProbe(
+  productVersion: string,
+): ReadinessProbe {
   return {
     timeoutMs: 8_000,
     request() {

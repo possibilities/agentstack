@@ -31,7 +31,29 @@ verify_sha256 "$PAYLOAD/codex/codex-path/rg" e62198eb19b136b88c330af83647b5a962c
 verify_sha256 "$PAYLOAD/codex/codex-resources/bwrap" 77360cb751ccedc5971391444ac86a8a33c15b04d6b4a6fe45f5d25496e62c4c
 verify_sha256 "$PAYLOAD/codex/codex-resources/zsh/bin/zsh" 67faaaa89242c4a332e16e508a1977cffc24bf7fca31d4411cdfd101f3831ef3
 verify_sha256 "$PAYLOAD/codex/codex-package.json" 3f9204cd9a7f0278bdcd1ce67876cab8dc6561a35569723b4a10ac11a1417ab1
-verify_sha256 "$PAYLOAD/fx/bin/fx" 3926591e083eed79330c8de74031c4a4679ea60ee1421e09128b35420f120e09
+case "$(uname -s)" in
+  Linux)
+    if [ "$(uname -m)" != x86_64 ]; then
+      printf 'Release payload verification requires Linux x86_64; got %s\n' "$(uname -m)" >&2
+      exit 1
+    fi
+    FX_SHA256=ce9837da78ff43181c7e180626d39582ea715cb246f1ba29dad68588308bd1ba
+    FX_QUALIFICATION=release-linux-native
+    ;;
+  Darwin)
+    if [ "$(uname -m)" != arm64 ]; then
+      printf 'Diagnostic payload verification requires Darwin arm64; got %s\n' "$(uname -m)" >&2
+      exit 1
+    fi
+    FX_SHA256=3926591e083eed79330c8de74031c4a4679ea60ee1421e09128b35420f120e09
+    FX_QUALIFICATION=development-darwin-cross-build
+    ;;
+  *)
+    printf 'Unsupported payload verification host: %s\n' "$(uname -s)" >&2
+    exit 1
+    ;;
+esac
+verify_sha256 "$PAYLOAD/fx/bin/fx" "$FX_SHA256"
 verify_sha256 "$ROOT/vendor/licenses/node-LICENSE.txt" 5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace
 verify_sha256 "$ROOT/vendor/licenses/codex-LICENSE.txt" d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc
 verify_sha256 "$ROOT/vendor/licenses/codex-NOTICE.txt" 9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915
@@ -63,4 +85,4 @@ node -e '
       p.entrypoint !== "bin/codex-app-server") process.exit(1);
 ' "$PAYLOAD/codex/codex-package.json"
 
-printf 'Verified pinned Linux x86-64 vendor payloads\n'
+printf 'Verified pinned Linux x86-64 vendor payloads (%s Fx bytes)\n' "$FX_QUALIFICATION"

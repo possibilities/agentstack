@@ -8,8 +8,8 @@ import type {
   StatusResponse,
 } from "@agentstack/contracts";
 import { CONTROL_SCHEMA, createSystemInventory } from "@agentstack/contracts";
-import { createCodexProbe } from "@agentstack/harness-codex";
-import { fxProbe } from "@agentstack/harness-fx";
+import { createCodexReadinessProbe } from "@agentstack/engine-codex";
+import { fxReadinessProbe } from "@agentstack/engine-fx";
 import {
   ManagedChild,
   closeControlServer,
@@ -92,7 +92,7 @@ async function main(): Promise<void> {
           ...childEnvironment(paths.codexHome),
           CODEX_HOME: paths.codexHome,
         },
-        probe: createCodexProbe(manifest.productVersion),
+        probe: createCodexReadinessProbe(manifest.productVersion),
       },
       () => undefined,
     ),
@@ -106,7 +106,7 @@ async function main(): Promise<void> {
         ),
         cwd: paths.fxHome,
         env: childEnvironment(paths.fxHome),
-        probe: fxProbe,
+        probe: fxReadinessProbe,
       },
       () => undefined,
     ),

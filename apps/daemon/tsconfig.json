@@ -5,7 +5,7 @@
   "references": [
     { "path": "../../packages/contracts" },
     { "path": "../../packages/runtime" },
-    { "path": "../../packages/harness-codex" },
-    { "path": "../../packages/harness-fx" }
+    { "path": "../../packages/engine-codex" },
+    { "path": "../../packages/engine-fx" }
   ]
 }

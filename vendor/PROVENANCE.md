@@ -24,9 +24,20 @@ patched zsh helper.
 
 `build-fx.sh` refuses a dirty checkout, a source commit other than
 `e639de6aded41ae168a8888b920ff71db41877d0`, or a Zig compiler other than
-0.16.0. It cross-builds `x86_64-linux-musl` with `ReleaseSafe`; the result is a
-static x86-64 ELF that embeds Fx version 0.0.10 and build revision
-`e639de6aded4`.
+0.16.0. It builds `x86_64-linux-musl` with `ReleaseSafe`; the result is a static
+x86-64 ELF that embeds Fx version 0.0.10 and build revision `e639de6aded4`.
+
+Observed Zig 0.16.0 output bytes differ by compiler host for this exact cross
+target. Repeated clean Darwin arm64 cross-builds produce
+`3926591e083eed79330c8de74031c4a4679ea60ee1421e09128b35420f120e09`,
+while the first public Linux x86-64 CI build (run `35537630615`) produced
+`ce9837da78ff43181c7e180626d39582ea715cb246f1ba29dad68588308bd1ba`.
+The earlier manifest incorrectly treated the Darwin cross-build digest as
+universal. Linux releases now accept only the committed Linux-native digest,
+and CI builds Fx twice from isolated caches and compares the bytes before
+staging. If those two Linux builds differ, nondeterminism remains release
+blocking. The Darwin digest remains a development-only observation; staging
+rejects it because it is not the release payload.
 
 Node's official binary requires glibc 2.28 or newer. The Codex app-server,
 code-mode host, ripgrep, and bubblewrap binaries are static PIE executables.
@@ -36,4 +47,6 @@ host with glibc 2.38 or newer. This is a package compatibility boundary even
 though the app-server entrypoint itself is static.
 
 These checks verify bytes, architecture, executable mode, and Codex layout.
-They do not replace the required live Debian handshake qualification.
+On Darwin they verify only the recorded cross-build observation; release staging
+still refuses that Fx binary. These checks do not replace the required live
+Debian handshake qualification.

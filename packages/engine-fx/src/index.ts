@@ -7,7 +7,7 @@ function errorMessage(message: Record<string, unknown>): string {
   return typeof value === "string" ? value : "initialize failed";
 }
 
-export const fxProbe: ReadinessProbe = {
+export const fxReadinessProbe: ReadinessProbe = {
   timeoutMs: 8_000,
   request() {
     return {

@@ -3,7 +3,7 @@
 AgentStack runs pinned AI engines behind one small, inspectable local service.
 
 ```sh
-sudo apt install ./agentstack_0.1.0_amd64.deb
+sudo apt install ./agentstack_0.1.1_amd64.deb
 agentstack enable --now
 agentstack status
 ```
