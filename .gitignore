@@ -1,0 +1,12 @@
+node_modules/
+.turbo/
+dist/
+coverage/
+artifacts/
+vendor/payloads/
+vendor/downloads/
+*.tsbuildinfo
+*.deb
+*.tar.gz
+*.tgz
+*.log

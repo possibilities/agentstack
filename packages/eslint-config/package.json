@@ -1,0 +1,16 @@
+{
+  "name": "@agentstack/eslint-config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.mjs"
+  },
+  "dependencies": {
+    "eslint-plugin-turbo": "2.11.2",
+    "typescript-eslint": "8.70.0"
+  },
+  "peerDependencies": {
+    "eslint": ">=10"
+  }
+}

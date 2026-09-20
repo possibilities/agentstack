@@ -1,0 +1,21 @@
+{
+  "name": "@agentstack/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node ../../scripts/build-entrypoints.mjs cli",
+    "check-types": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "@agentstack/contracts": "workspace:*",
+    "@agentstack/runtime": "workspace:*"
+  },
+  "devDependencies": {
+    "@agentstack/typescript-config": "workspace:*",
+    "@types/node": "26.6.2",
+    "eslint": "10.11.0",
+    "typescript": "6.0.3"
+  }
+}

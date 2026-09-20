@@ -1,0 +1,11 @@
+{
+  "extends": "@agentstack/typescript-config/node.json",
+  "compilerOptions": { "noEmit": true },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../../packages/contracts" },
+    { "path": "../../packages/runtime" },
+    { "path": "../../packages/harness-codex" },
+    { "path": "../../packages/harness-fx" }
+  ]
+}

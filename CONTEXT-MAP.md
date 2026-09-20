@@ -1,0 +1,14 @@
+# Context map
+
+| Area                     | Owner            | Contract                                                        |
+| ------------------------ | ---------------- | --------------------------------------------------------------- |
+| `apps/daemon`            | service process  | Direct child ownership and status assembly                      |
+| `apps/cli`               | operator surface | User service lifecycle, status, logs, doctor                    |
+| `packages/contracts`     | wire contract    | `agentstack.control.v1` schemas and enums                       |
+| `packages/runtime`       | process boundary | paths, private socket, bounded framing, retries, shutdown       |
+| `packages/harness-codex` | Codex adapter    | initialize/initialized readiness only                           |
+| `packages/harness-fx`    | Fx adapter       | ACP initialize readiness only                                   |
+| `vendor`                 | release inputs   | pinned provenance, licenses and Linux payloads                  |
+| `packaging/linux`        | Debian artifact  | filesystem layout and user unit                                 |
+| `scripts/install-host`   | AgentStack       | consumer-owned Artbird installation/qualification               |
+| `docs/evidence`          | release proof    | compact redacted receipts, never credentials or provider bodies |

@@ -1,0 +1,33 @@
+{
+  "name": "agentstack",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "check-types": "turbo run check-types",
+    "lint": "turbo run lint",
+    "test": "vitest run",
+    "verify": "pnpm lint && pnpm check-types && pnpm test && pnpm build",
+    "stage": "node scripts/stage-release.mjs",
+    "verify:payload": "node scripts/verify-payload.mjs",
+    "package:deb": "node scripts/package-deb.mjs",
+    "inspect:deb": "node scripts/inspect-deb.mjs"
+  },
+  "devDependencies": {
+    "@agentstack/eslint-config": "workspace:*",
+    "@types/node": "26.6.2",
+    "esbuild": "0.28.2",
+    "eslint": "10.11.0",
+    "eslint-plugin-turbo": "2.11.2",
+    "prettier": "3.9.8",
+    "turbo": "2.11.2",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.0",
+    "vitest": "5.0.1"
+  }
+}
