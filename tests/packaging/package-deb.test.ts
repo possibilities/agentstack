@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { inspectStage, sourceDateEpoch } from "../../scripts/package-deb.mjs";
+import { normalizedEntries } from "../../scripts/inspect-deb.mjs";
 
 const roots: string[] = [];
 
@@ -19,7 +20,7 @@ afterEach(async () => {
   );
 });
 
-async function stagedRelease(): Promise<string> {
+async function stagedRelease(productVersion = "0.1.0"): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "agentstack-package-test-"));
   roots.push(root);
   await mkdir(join(root, "runtime"), { recursive: true });
@@ -42,7 +43,7 @@ async function stagedRelease(): Promise<string> {
   await writeFile(
     join(root, "manifest.json"),
     `${JSON.stringify({
-      productVersion: "0.1.0",
+      productVersion,
       buildIdentity: "test",
       target: "linux-x64",
       runtime: {
@@ -70,6 +71,14 @@ async function stagedRelease(): Promise<string> {
 }
 
 describe("Debian package staging", () => {
+  test("parses the dpkg-deb root entry", () => {
+    expect(
+      normalizedEntries(
+        Buffer.from("drwxr-xr-x root/root 0 2026-09-20 20:12 ./\n"),
+      ),
+    ).toEqual([{ path: "/", linkTarget: null }]);
+  });
+
   test("accepts the explicit verified-release contract", async () => {
     const stage = await stagedRelease();
     await expect(inspectStage(stage)).resolves.toMatchObject({
@@ -83,5 +92,16 @@ describe("Debian package staging", () => {
     const stage = await stagedRelease();
     await symlink("/tmp", join(stage, "engines", "fx", "outside"));
     await expect(inspectStage(stage)).rejects.toThrow("escapes release root");
+  });
+
+  test("accepts distinct N and N+1 immutable release versions", async () => {
+    const current = await stagedRelease("0.1.0");
+    const next = await stagedRelease("0.1.1");
+    await expect(inspectStage(current, "0.1.0")).resolves.toMatchObject({
+      version: "0.1.0",
+    });
+    await expect(inspectStage(next, "0.1.1")).resolves.toMatchObject({
+      version: "0.1.1",
+    });
   });
 });

@@ -57,7 +57,7 @@ function normalizedEntries(listing) {
     .split("\n")
     .filter(Boolean)
     .map((line) => {
-      const match = /(?:\s)(\.\/\S+)(?:\s+->\s+(.*))?$/.exec(line);
+      const match = /(?:\s)(\.\/\S*)(?:\s+->\s+(.*))?$/.exec(line);
       if (!match?.[1]) fail(`cannot parse dpkg-deb contents line: ${line}`);
       return {
         path: match[1].replace(/^\.\//, "/"),
@@ -216,4 +216,4 @@ main().catch((error) => {
   process.exitCode = 1;
 });
 
-export { inspect, parseArgs };
+export { inspect, normalizedEntries, parseArgs };
