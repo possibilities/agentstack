@@ -5,6 +5,7 @@ coverage/
 artifacts/
 vendor/payloads/
 vendor/downloads/
+vendor/toolchains/
 *.tsbuildinfo
 *.deb
 *.tar.gz

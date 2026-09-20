@@ -93,6 +93,8 @@
       "bytes": 12839920,
       "build": {
         "zigVersion": "0.16.0",
+        "zigArchiveUrl": "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz",
+        "zigArchiveSha256": "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00",
         "optimize": "ReleaseSafe",
         "command": "scripts/vendor/build-fx.sh /path/to/clean/possibilities-fx"
       }

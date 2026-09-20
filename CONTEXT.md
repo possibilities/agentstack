@@ -26,8 +26,8 @@ The same-user Unix socket under `$XDG_RUNTIME_DIR/agentstack` that exposes `agen
 
 The immutable `/usr/lib/agentstack/releases/<version>` directory resolved once by a running process. `current` selects the installed release for new processes.
 
-**Artbird**
+**Debian qualification host**
 
-The replaceable Debian installation used for package qualification. AgentStack owns its consumer installer and workload lifecycle; the Artbird repository owns generic host setup.
+An explicitly authorized Debian installation used to qualify an exact public release. AgentStack owns its consumer installer and workload lifecycle; the host owns generic operating-system setup.
 
 _Avoid: test VM, AgentStack host service_

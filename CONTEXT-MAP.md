@@ -10,5 +10,5 @@
 | `packages/harness-fx`    | Fx adapter       | ACP initialize readiness only                                   |
 | `vendor`                 | release inputs   | pinned provenance, licenses and Linux payloads                  |
 | `packaging/linux`        | Debian artifact  | filesystem layout and user unit                                 |
-| `scripts/install-host`   | AgentStack       | consumer-owned Artbird installation/qualification               |
+| `scripts/install-host`   | AgentStack       | exact public-release installation and qualification             |
 | `docs/evidence`          | release proof    | compact redacted receipts, never credentials or provider bodies |

@@ -20,3 +20,11 @@ override_dh_auto_install:
 # generated package-time snippets.
 override_dh_installsystemduser:
 	:
+
+# Vendored payload hashes are product release identities. Debian packaging may
+# normalize metadata, but must not rewrite already-qualified engine binaries.
+override_dh_dwz:
+	:
+
+override_dh_strip:
+	:

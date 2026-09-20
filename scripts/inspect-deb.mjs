@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { basename, resolve } from "node:path";
@@ -50,6 +51,50 @@ function run(command, args, input) {
     });
     if (input) child.stdin.end(input);
   });
+}
+
+function extractFile(packagePath, path) {
+  return new Promise((resolveExtract, rejectExtract) => {
+    const archive = spawn("dpkg-deb", ["--fsys-tarfile", packagePath], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const extract = spawn("tar", ["-xOf", "-", `.${path}`], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const chunks = [];
+    const errors = [];
+    archive.stdout.pipe(extract.stdin);
+    archive.stderr.on("data", (chunk) => errors.push(chunk));
+    extract.stderr.on("data", (chunk) => errors.push(chunk));
+    extract.stdout.on("data", (chunk) => chunks.push(chunk));
+    let archiveCode;
+    let extractCode;
+    const finish = () => {
+      if (archiveCode === undefined || extractCode === undefined) return;
+      if (archiveCode === 0 && extractCode === 0)
+        resolveExtract(Buffer.concat(chunks));
+      else
+        rejectExtract(
+          new Error(
+            `failed to extract ${path}: ${Buffer.concat(errors).toString("utf8").trim()}`,
+          ),
+        );
+    };
+    archive.once("error", rejectExtract);
+    extract.once("error", rejectExtract);
+    archive.once("exit", (code) => {
+      archiveCode = code;
+      finish();
+    });
+    extract.once("exit", (code) => {
+      extractCode = code;
+      finish();
+    });
+  });
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function normalizedEntries(listing) {
@@ -183,6 +228,29 @@ async function inspect(packagePath, expectedVersion) {
   ]) {
     if (!unit.includes(line)) fail(`unit is missing ${line}`);
   }
+  const releaseRoot = `/usr/lib/agentstack/releases/${version}`;
+  const manifest = JSON.parse(
+    (await extractFile(file, `${releaseRoot}/manifest.json`)).toString("utf8"),
+  );
+  const payloadDigests = {};
+  for (const component of [
+    manifest.runtime,
+    manifest.engines?.codex,
+    manifest.engines?.fx,
+  ]) {
+    if (
+      !component ||
+      typeof component.executable !== "string" ||
+      !/^[a-f0-9]{64}$/.test(component.sha256)
+    )
+      fail("release manifest contains invalid payload metadata");
+    const actual = sha256(
+      await extractFile(file, `${releaseRoot}/${component.executable}`),
+    );
+    if (actual !== component.sha256)
+      fail(`packaging changed payload digest: ${component.executable}`);
+    payloadDigests[component.executable] = actual;
+  }
   return {
     package: file,
     version,
@@ -190,6 +258,7 @@ async function inspect(packagePath, expectedVersion) {
     entries: entries.map((entry) => entry.path),
     controlEntries,
     maintainerScripts,
+    payloadDigests,
     checks: "passed",
   };
 }

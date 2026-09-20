@@ -1,13 +1,15 @@
 #!/usr/bin/env node
-import { constants } from "node:fs";
-import { access, lstat, realpath } from "node:fs/promises";
-import { basename, isAbsolute, resolve } from "node:path";
 import { spawn } from "node:child_process";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const hostPattern = /^[A-Za-z0-9][A-Za-z0-9.-]*$/;
+const repositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const tagPattern = /^v([0-9][A-Za-z0-9.+~-]*)$/;
+const shaPattern = /^[a-f0-9]{64}$/;
 
 function usage() {
-  return `Usage: scripts/install-host --remote HOST --package /absolute/path/agentstack_VERSION_amd64.deb [--enable] [--confirm INSTALL-AGENTSTACK-ON-HOST]\n`;
+  return `Usage: scripts/install-host --remote HOST --repository OWNER/REPO --tag vVERSION --expected-sha256 SHA256 [--enable] [--confirm INSTALL-AGENTSTACK-ON-HOST]\n`;
 }
 
 function fail(message) {
@@ -20,47 +22,37 @@ function parseArgs(argv) {
     const argument = argv[index];
     if (argument === "--enable") result.enable = true;
     else if (argument === "--help" || argument === "-h") result.help = true;
-    else if (["--remote", "--package", "--confirm"].includes(argument)) {
+    else if (
+      [
+        "--remote",
+        "--repository",
+        "--tag",
+        "--expected-sha256",
+        "--confirm",
+      ].includes(argument)
+    ) {
       const value = argv[index + 1];
       if (!value || value.startsWith("--"))
         fail(`${argument} requires a value`);
-      result[argument.slice(2)] = value;
+      result[argument.slice(2).replaceAll("-", "_")] = value;
       index += 1;
     } else fail(`unknown argument: ${argument}`);
   }
   return result;
 }
 
-function run(command, args, input) {
+function run(command, args) {
   return new Promise((resolveRun, rejectRun) => {
-    const child = spawn(command, args, {
-      stdio: [input ? "pipe" : "inherit", "inherit", "inherit"],
-    });
+    const child = spawn(command, args, { stdio: "inherit" });
     child.once("error", rejectRun);
     child.once("exit", (code, signal) => {
       if (code === 0) resolveRun();
       else
-        rejectRun(new Error(`${command} failed (${signal ?? `exit ${code}`})`));
+        rejectRun(
+          new Error(`${command} failed (${signal ?? `exit ${String(code)}`})`),
+        );
     });
-    if (input) input.pipe(child.stdin);
   });
-}
-
-async function packageToInstall(rawPath) {
-  if (!rawPath || !isAbsolute(rawPath))
-    fail("--package must be an absolute .deb path");
-  const resolved = resolve(rawPath);
-  if (!resolved.endsWith(".deb")) fail("--package must name a .deb file");
-  let info;
-  try {
-    info = await lstat(resolved);
-  } catch {
-    fail(`package does not exist: ${resolved}`);
-  }
-  if (!info.isFile() || info.isSymbolicLink())
-    fail(`package must be a regular non-symlink file: ${resolved}`);
-  await access(resolved, constants.R_OK);
-  return await realpath(resolved);
 }
 
 async function main() {
@@ -71,12 +63,21 @@ async function main() {
   }
   if (!options.remote || !hostPattern.test(options.remote))
     fail("--remote must be a plain reviewed SSH host name");
-  const packagePath = await packageToInstall(options.package);
+  if (!options.repository || !repositoryPattern.test(options.repository))
+    fail("--repository must be OWNER/REPO");
+  const tag = options.tag?.match(tagPattern);
+  if (!tag) fail("--tag must be vVERSION");
+  if (!options.expected_sha256 || !shaPattern.test(options.expected_sha256))
+    fail("--expected-sha256 must be a lowercase SHA-256 digest");
+  const version = tag[1];
+  const asset = `agentstack_${version}_amd64.deb`;
   const confirmation = `INSTALL-AGENTSTACK-ON-${options.remote}`;
   const plan = {
     remote: options.remote,
-    package: packagePath,
-    action: "sudo apt-get install from a private temporary remote file",
+    repository: options.repository,
+    tag: options.tag,
+    asset,
+    expectedSha256: options.expected_sha256,
     enableAfterInstall: options.enable,
     confirmationRequired: confirmation,
   };
@@ -88,29 +89,50 @@ async function main() {
     return;
   }
 
-  // The host name is syntax-checked and remains a separate ssh argv item. The
-  // remote program has no interpolated local values and removes its package
-  // input even when apt fails. `sudo -n` refuses an unexpected password prompt.
-  const remoteProgram = options.enable
-    ? 'set -eu; package=$(mktemp /tmp/agentstack.XXXXXX.deb); trap \'rm -f -- "$package"\' EXIT; cat >"$package"; sudo -n apt-get install -y "$package"; agentstack enable --now'
-    : 'set -eu; package=$(mktemp /tmp/agentstack.XXXXXX.deb); trap \'rm -f -- "$package"\' EXIT; cat >"$package"; sudo -n apt-get install -y "$package"';
-  const input = (await import("node:fs")).createReadStream(packagePath);
-  await run("ssh", [options.remote, remoteProgram], input);
+  const base = `https://github.com/${options.repository}/releases/download/${options.tag}`;
+  const enable = options.enable ? "agentstack enable --now" : ":";
+  const remoteProgram = `set -eu
+stage=$(mktemp -d /tmp/agentstack-release.XXXXXXXX)
+trap 'rm -rf -- "$stage"' EXIT HUP INT TERM
+base=${base}
+asset=${asset}
+expected=${options.expected_sha256}
+curl --fail --location --proto '=https' --tlsv1.2 "$base/$asset" -o "$stage/$asset"
+curl --fail --location --proto '=https' --tlsv1.2 "$base/SHA256SUMS" -o "$stage/SHA256SUMS"
+curl --fail --location --proto '=https' --tlsv1.2 "$base/release-manifest.json" -o "$stage/release-manifest.json"
+actual=$(sha256sum "$stage/$asset" | awk '{print $1}')
+listed=$(awk -v asset="$asset" '$2 == asset { print $1 }' "$stage/SHA256SUMS")
+test -n "$listed"
+test "$actual" = "$listed"
+test "$actual" = "$expected"
+python3 - "$stage/release-manifest.json" "$asset" "$expected" '${options.tag}' <<'PY'
+import json, sys
+path, asset, expected, tag = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    manifest = json.load(handle)
+assert manifest["schema"] == "agentstack.release.v1"
+assert manifest["source"]["tag"] == tag
+assert manifest["artifact"]["name"] == asset
+assert manifest["artifact"]["sha256"] == expected
+PY
+sudo -n apt-get install -y "$stage/$asset"
+${enable}`;
+  await run("ssh", [options.remote, remoteProgram]);
   process.stdout.write(
-    `Installed ${basename(packagePath)} on ${options.remote}.\n`,
+    `Installed verified ${options.repository} ${options.tag} on ${options.remote}.\n`,
   );
-  if (!options.enable) {
-    process.stdout.write(
-      "The package did not enable a service. As the intended host user, run: agentstack enable --now\n",
-    );
-  }
 }
 
-main().catch((error) => {
-  process.stderr.write(
-    `${error instanceof Error ? error.message : String(error)}\n`,
-  );
-  process.exitCode = 1;
-});
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  main().catch((error) => {
+    process.stderr.write(
+      `${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    process.exitCode = 1;
+  });
+}
 
 export { parseArgs };

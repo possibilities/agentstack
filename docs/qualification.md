@@ -1,6 +1,6 @@
 # Debian qualification
 
-Qualification records the target `/etc/os-release`, architecture, systemd version, `loginctl show-user … -p Linger`, package SHA-256, installed file hashes, product and engine versions, and UTC timestamps. Evidence is compact and redacted.
+Qualification records the target `/etc/os-release`, architecture, systemd version, `loginctl show-user … -p Linger`, immutable public release tag, package SHA-256, release-manifest identity, installed file hashes, product and engine versions, and UTC timestamps. Evidence is compact and redacted. The first live install for a version must use `scripts/install-host` against the exact GitHub Release; a locally copied package is development evidence only.
 
 The live sequence installs the `.deb`, activates the ordinary user's unit, and proves:
 

@@ -6,22 +6,25 @@ fill any item below.
 
 ## Subject
 
-| Field                                | Value |
-| ------------------------------------ | ----- |
-| Operator and date (UTC)              |       |
-| Host and ordinary service user       |       |
-| `/etc/os-release`                    |       |
-| `uname -m`                           |       |
-| `systemctl --version`                |       |
-| Package filename and SHA-256         |       |
-| Product version and build identity   |       |
-| Codex and Fx payload versions/hashes |       |
-| Authorization reference              |       |
+| Field                                 | Value |
+| ------------------------------------- | ----- |
+| Operator and date (UTC)               |       |
+| Host and ordinary service user        |       |
+| `/etc/os-release`                     |       |
+| `uname -m`                            |       |
+| `systemctl --version`                 |       |
+| Package filename and SHA-256          |       |
+| Public repository and release tag     |       |
+| Release-manifest revision/attestation |       |
+| Product version and build identity    |       |
+| Codex and Fx payload versions/hashes  |       |
+| Authorization reference               |       |
 
 ## Package inspection before installation
 
 ```sh
-sha256sum ./agentstack_VERSION_amd64.deb
+gh attestation verify ./agentstack_VERSION_amd64.deb --repo OWNER/REPO
+sha256sum --check SHA256SUMS
 node scripts/inspect-deb.mjs --package ./agentstack_VERSION_amd64.deb --json
 dpkg-deb --field ./agentstack_VERSION_amd64.deb Package Version Architecture
 ```
@@ -35,8 +38,13 @@ maintainer scripts. Record that there are no files in `/usr/local`, `/etc`,
 ## Install and session service
 
 ```sh
-sudo apt install ./agentstack_VERSION_amd64.deb
-agentstack enable --now
+scripts/install-host \
+  --remote QUALIFICATION_HOST \
+  --repository OWNER/REPO \
+  --tag vVERSION \
+  --expected-sha256 PACKAGE_SHA256 \
+  --enable \
+  --confirm INSTALL-AGENTSTACK-ON-QUALIFICATION_HOST
 agentstack status --json
 systemctl --user show agentstack.service \
   --property=Id,LoadState,ActiveState,SubState,Type,Restart,KillMode,UMask

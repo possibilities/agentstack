@@ -1,0 +1,129 @@
+name: Native Linux
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-linux-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.21.0
+
+      - name: Install locked build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential debhelper
+          corepack enable
+          corepack prepare pnpm@11.25.0 --activate
+          pnpm install --frozen-lockfile
+
+      - name: Reproduce pinned native payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/vendor/fetch-node.sh
+          scripts/vendor/fetch-codex.sh
+          zig_path=$(scripts/vendor/fetch-zig.sh)
+          fx_source="$RUNNER_TEMP/fx"
+          git init "$fx_source"
+          git -C "$fx_source" remote add origin https://github.com/possibilities/fx.git
+          git -C "$fx_source" fetch --depth=1 origin e639de6aded41ae168a8888b920ff71db41877d0
+          git -C "$fx_source" checkout --detach FETCH_HEAD
+          PATH="$(dirname "$zig_path"):$PATH" scripts/vendor/build-fx.sh "$fx_source"
+          scripts/vendor/verify.sh
+
+      - name: Verify, stage, and build twice
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm verify
+          stage="$PWD/artifacts/stage-agentstack-$(node -p 'require("./package.json").version')-linux-x64"
+          node scripts/stage-release.mjs --output "$stage"
+          node scripts/verify-payload.mjs "$stage"
+          epoch=$(git show -s --format=%ct HEAD)
+          mkdir -p artifacts/deb-a artifacts/deb-b release
+          SOURCE_DATE_EPOCH="$epoch" node scripts/package-deb.mjs --stage "$stage" --output artifacts/deb-a
+          SOURCE_DATE_EPOCH="$epoch" node scripts/package-deb.mjs --stage "$stage" --output artifacts/deb-b
+          package="agentstack_$(node -p 'require("./package.json").version')_amd64.deb"
+          cmp "artifacts/deb-a/$package" "artifacts/deb-b/$package"
+          cp "artifacts/deb-a/$package" "release/$package"
+          node scripts/inspect-deb.mjs --package "release/$package" --json > release/inspection.json
+          node scripts/create-release-manifest.mjs \
+            --package "release/$package" \
+            --stage "$stage" \
+            --output release/release-manifest.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "v$(node -p 'require("./package.json").version')"
+          (cd release && sha256sum "$package" release-manifest.json inspection.json > SHA256SUMS)
+          printf '%s\n' "runner=$(uname -a)" "dpkg=$(dpkg-buildpackage --version | head -1)" "debhelper=$(dpkg-query -W -f='${Version}' debhelper)" > release/build-environment.txt
+
+      - name: Retain native package evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: agentstack-linux-${{ github.sha }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download exact build result
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: agentstack-linux-${{ github.sha }}
+          path: release
+
+      - name: Verify tag matches package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(jq -r .productVersion release/release-manifest.json)
+          test "$GITHUB_REF_NAME" = "v$version"
+
+      - name: Sign package and static release evidence
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: release/*
+
+      - name: Publish immutable release inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          prerelease=()
+          case "$GITHUB_REF_NAME" in *-*) prerelease=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --generate-notes \
+            "${prerelease[@]}"

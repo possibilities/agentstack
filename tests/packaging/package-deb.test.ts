@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { inspectStage, sourceDateEpoch } from "../../scripts/package-deb.mjs";
 import { normalizedEntries } from "../../scripts/inspect-deb.mjs";
+import { parseArgs as parseInstallArgs } from "../../scripts/install-host";
 
 const roots: string[] = [];
 
@@ -77,6 +78,26 @@ describe("Debian package staging", () => {
         Buffer.from("drwxr-xr-x root/root 0 2026-09-20 20:12 ./\n"),
       ),
     ).toEqual([{ path: "/", linkTarget: null }]);
+  });
+
+  test("requires an exact public release identity for host installation", () => {
+    expect(
+      parseInstallArgs([
+        "--remote",
+        "debian-host",
+        "--repository",
+        "owner/agentstack",
+        "--tag",
+        "v0.1.0",
+        "--expected-sha256",
+        "a".repeat(64),
+      ]),
+    ).toMatchObject({
+      remote: "debian-host",
+      repository: "owner/agentstack",
+      tag: "v0.1.0",
+      expected_sha256: "a".repeat(64),
+    });
   });
 
   test("accepts the explicit verified-release contract", async () => {
