@@ -232,6 +232,46 @@ async function inspect(packagePath, expectedVersion) {
   const manifest = JSON.parse(
     (await extractFile(file, `${releaseRoot}/manifest.json`)).toString("utf8"),
   );
+  if (
+    manifest.engines &&
+    Object.prototype.hasOwnProperty.call(manifest.engines, "fx")
+  ) {
+    fail("retired manifest.engines.fx must not be present");
+  }
+  if (
+    !manifest.engines ||
+    typeof manifest.engines !== "object" ||
+    Object.keys(manifest.engines).join(",") !== "codex"
+  ) {
+    fail("release manifest.engines must contain only codex");
+  }
+  for (const retired of [
+    `${releaseRoot}/engines/fx`,
+    `${releaseRoot}/engines/fx/fx`,
+    `${releaseRoot}/licenses/fx-LICENSE.txt`,
+    `${releaseRoot}/licenses/fx-THIRD_PARTY_NOTICES.md`,
+  ]) {
+    if (
+      entries.some(
+        (entry) =>
+          entry.path === retired || entry.path.startsWith(`${retired}/`),
+      )
+    ) {
+      fail(`package must not contain retired Fx path ${retired}`);
+    }
+  }
+  const provenanceEntry = `${releaseRoot}/provenance/vendor-manifest.json`;
+  if (entries.some((entry) => entry.path === provenanceEntry)) {
+    const provenance = JSON.parse(
+      (await extractFile(file, provenanceEntry)).toString("utf8"),
+    );
+    if (
+      provenance?.components &&
+      Object.prototype.hasOwnProperty.call(provenance.components, "fx")
+    ) {
+      fail("package provenance must not include retired fx");
+    }
+  }
   const payloadDigests = {};
   for (const component of [
     manifest.runtime,

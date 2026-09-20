@@ -38,6 +38,30 @@ async function walk(path) {
 }
 
 await walk(stage);
+if (manifest.engines && Object.prototype.hasOwnProperty.call(manifest.engines, "fx")) {
+  throw new Error("retired manifest.engines.fx must not be present");
+}
+if (
+  !manifest.engines ||
+  typeof manifest.engines !== "object" ||
+  Object.keys(manifest.engines).join(",") !== "codex"
+) {
+  throw new Error("manifest.engines must contain only codex");
+}
+for (const retired of [
+  "engines/fx",
+  "engines/fx/fx",
+  "licenses/fx-LICENSE.txt",
+  "licenses/fx-THIRD_PARTY_NOTICES.md",
+]) {
+  try {
+    await lstat(join(stage, retired));
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ENOENT") continue;
+    throw error;
+  }
+  throw new Error(`retired Fx content must not be present: ${retired}`);
+}
 for (const component of [
   manifest.runtime,
   manifest.engines.codex,
@@ -61,6 +85,15 @@ for (const evidence of [
   "provenance/VENDOR.md",
 ]) {
   await readFile(join(stage, evidence));
+}
+const vendorProvenance = JSON.parse(
+  await readFile(join(stage, "provenance", "vendor-manifest.json"), "utf8"),
+);
+if (
+  vendorProvenance.components &&
+  Object.prototype.hasOwnProperty.call(vendorProvenance.components, "fx")
+) {
+  throw new Error("retired fx provenance must not be present");
 }
 if (
   manifest.engines.codex.source?.archiveSha256 !==

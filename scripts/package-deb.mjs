@@ -159,6 +159,11 @@ function validateManifest(manifest) {
   validateComponent(runtime, "runtime");
   if (!engines || typeof engines !== "object" || Array.isArray(engines))
     fail("manifest.engines is required");
+  if (Object.prototype.hasOwnProperty.call(engines, "fx"))
+    fail("manifest.engines.fx is retired and must not be present");
+  const engineNames = Object.keys(engines);
+  if (engineNames.length !== 1 || engineNames[0] !== "codex")
+    fail("manifest.engines must contain only codex");
   for (const name of ["codex"]) {
     const engine = engines[name];
     validateComponent(engine, `engines.${name}`);
@@ -216,6 +221,38 @@ async function inspectStage(stageDirectory, requestedVersion) {
     }
     if (!info.isDirectory() || info.isSymbolicLink())
       fail(`engines/${engine} must be a real directory`);
+  }
+  for (const retired of [
+    "engines/fx",
+    "engines/fx/fx",
+    "licenses/fx-LICENSE.txt",
+    "licenses/fx-THIRD_PARTY_NOTICES.md",
+  ]) {
+    try {
+      await lstat(join(stage, retired));
+    } catch (error) {
+      if (error && typeof error === "object" && error.code === "ENOENT")
+        continue;
+      throw error;
+    }
+    fail(`retired Fx content must not be present: ${retired}`);
+  }
+  const provenancePath = join(stage, "provenance", "vendor-manifest.json");
+  let provenanceRaw = null;
+  try {
+    provenanceRaw = await readFile(provenancePath, "utf8");
+  } catch (error) {
+    if (!(error && typeof error === "object" && error.code === "ENOENT"))
+      throw error;
+  }
+  if (provenanceRaw !== null) {
+    const provenance = JSON.parse(provenanceRaw);
+    if (
+      provenance?.components &&
+      Object.prototype.hasOwnProperty.call(provenance.components, "fx")
+    ) {
+      fail("provenance vendor-manifest must not include retired fx");
+    }
   }
   await validateNoEscapingLinks(stage);
   const manifest = validateManifest(

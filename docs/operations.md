@@ -3,7 +3,7 @@
 Install and activate for the current logged-in user:
 
 ```sh
-sudo apt install ./agentstack_0.1.1_amd64.deb
+sudo apt install ./agentstack_0.1.2_amd64.deb
 agentstack enable --now
 agentstack status
 ```
@@ -27,3 +27,5 @@ Status exits are 0 healthy, 3 stopped, 4 degraded, and 5 incompatible or failed.
 `agentstack child restart` returns only after the daemon admits the operation. It does not claim terminal success; inspect `agentstack status` for the new generation and readiness. A lost response has unknown outcome and must be observed before retrying.
 
 Removal preserves `$XDG_CONFIG_HOME/agentstack` and `$XDG_STATE_HOME/agentstack`. Stop and disable the user unit before removal. No package hook guesses desktop users or deletes their state.
+
+After an upgrade from a dual-engine release, `$XDG_STATE_HOME/agentstack/engines/fx` may remain as inactive/orphaned user data. Package install and removal never delete it; cleanup must be an explicit operator action.

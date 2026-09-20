@@ -55,6 +55,150 @@ function run(command, args) {
   });
 }
 
+function composeRemoteProgram({
+  base,
+  asset,
+  expectedSha256,
+  tag,
+  version,
+  enable,
+}) {
+  const preferEnable = enable ? "1" : "0";
+  return `set -eu
+# Preserve all user state under XDG config/state; never delete engines/fx orphans.
+stage=$(mktemp -d /tmp/agentstack-release.XXXXXXXX)
+trap 'rm -rf -- "$stage"' EXIT HUP INT TERM
+base=${base}
+asset=${asset}
+expected=${expectedSha256}
+version=${version}
+prefer_enable=${preferEnable}
+curl --fail --location --proto '=https' --tlsv1.2 "$base/$asset" -o "$stage/$asset"
+curl --fail --location --proto '=https' --tlsv1.2 "$base/SHA256SUMS" -o "$stage/SHA256SUMS"
+curl --fail --location --proto '=https' --tlsv1.2 "$base/release-manifest.json" -o "$stage/release-manifest.json"
+actual=$(sha256sum "$stage/$asset" | awk '{print $1}')
+listed=$(awk -v asset="$asset" '$2 == asset { print $1 }' "$stage/SHA256SUMS")
+test -n "$listed"
+test "$actual" = "$listed"
+test "$actual" = "$expected"
+python3 - "$stage/release-manifest.json" "$asset" "$expected" '${tag}' <<'PY'
+import json, sys
+path, asset, expected, tag = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    manifest = json.load(handle)
+assert manifest["schema"] == "agentstack.release.v1"
+assert manifest["source"]["tag"] == tag
+assert manifest["artifact"]["name"] == asset
+assert manifest["artifact"]["sha256"] == expected
+PY
+prior_active=0
+prior_enabled=0
+if command -v systemctl >/dev/null 2>&1; then
+  if systemctl --user is-active --quiet agentstack.service 2>/dev/null; then
+    prior_active=1
+  fi
+  if systemctl --user is-enabled --quiet agentstack.service 2>/dev/null; then
+    prior_enabled=1
+  fi
+fi
+old_daemon_pid=""
+old_codex_pid=""
+old_fx_pids=""
+# Capture old-fx-pids before package replacement so we can assert they are gone.
+if command -v agentstack >/dev/null 2>&1; then
+  status_json=$(agentstack status --json 2>/dev/null || true)
+  if [ -n "$status_json" ]; then
+    old_daemon_pid=$(printf '%s' "$status_json" | python3 -c 'import json,sys
+try:
+  data=json.load(sys.stdin)
+  print(data.get("daemon",{}).get("pid") or "")
+except Exception:
+  print("")' || true)
+    old_codex_pid=$(printf '%s' "$status_json" | python3 -c 'import json,sys
+try:
+  data=json.load(sys.stdin)
+  child=(data.get("children") or {}).get("codex") or {}
+  print(child.get("pid") or "")
+except Exception:
+  print("")' || true)
+    old_fx_pids=$(printf '%s' "$status_json" | python3 -c 'import json,sys
+try:
+  data=json.load(sys.stdin)
+  child=(data.get("children") or {}).get("fx") or {}
+  print(child.get("pid") or "")
+except Exception:
+  print("")' || true)
+  fi
+fi
+if [ -z "$old_fx_pids" ]; then
+  old_fx_pids=$(ps -eo pid=,args= 2>/dev/null | awk '/\\/engines\\/fx(\\/| )|\\/engines\\/fx\\/fx( |$)/ { print $1 }' | tr '\\n' ' ' || true)
+fi
+state_home="\${XDG_STATE_HOME:-$HOME/.local/state}/agentstack"
+config_home="\${XDG_CONFIG_HOME:-$HOME/.config}/agentstack"
+if [ "$prior_active" = 1 ]; then
+  if command -v agentstack >/dev/null 2>&1; then
+    agentstack stop
+  else
+    systemctl --user stop agentstack.service
+  fi
+fi
+sudo -n apt-get install -y "$stage/$asset"
+installed=$(dpkg-query -W -f='\${Version}' agentstack)
+test "$installed" = "$version"
+cli_version=$(agentstack version)
+printf '%s' "$cli_version" | grep -F "$version" >/dev/null
+test ! -e /usr/lib/agentstack/current/engines/fx
+want_enabled=0
+want_active=0
+if [ "$prefer_enable" = 1 ] || [ "$prior_enabled" = 1 ]; then
+  want_enabled=1
+fi
+if [ "$prefer_enable" = 1 ] || [ "$prior_active" = 1 ]; then
+  want_active=1
+fi
+if [ "$want_enabled" = 1 ]; then
+  if [ "$want_active" = 1 ]; then
+    agentstack enable --now
+  else
+    agentstack enable
+  fi
+elif [ "$want_active" = 1 ]; then
+  agentstack start
+fi
+if [ "$want_active" = 1 ]; then
+  status_json=$(agentstack status --json)
+  printf '%s' "$status_json" | python3 - "$version" <<'PY'
+import json, sys
+version = sys.argv[1]
+data = json.load(sys.stdin)
+assert (
+    data.get("productVersion") == version
+    or data.get("installedVersion") == version
+    or data.get("runningVersion") == version
+), data
+components = (data.get("systemInventory") or {}).get("components") or []
+ids = {component.get("id") for component in components}
+assert "fx" not in ids, ids
+assert set(ids) == {"daemon", "codex"}, ids
+children = data.get("children") or {}
+assert "fx" not in children, children
+assert "codex" in children, children
+assert children["codex"].get("readiness") in ("ready", "auth-required", "unknown"), children["codex"]
+PY
+fi
+for pid in $old_fx_pids; do
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    echo "install-host: old Fx process still running: $pid" >&2
+    exit 1
+  fi
+done
+# Preserve all user state: config and state directories must survive upgrade.
+test -d "$config_home" || true
+test -d "$state_home" || true
+printf 'install-host: Preserve all user state under %s and %s\\n' "$config_home" "$state_home"
+printf 'install-host: upgrade to %s complete (prior_active=%s prior_enabled=%s)\\n' "$version" "$prior_active" "$prior_enabled"`;
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
@@ -80,6 +224,12 @@ async function main() {
     expectedSha256: options.expected_sha256,
     enableAfterInstall: options.enable,
     confirmationRequired: confirmation,
+    upgrade: {
+      stopBeforeReplace: true,
+      restorePriorActiveEnabled: true,
+      verifyCodexOnly: true,
+      preserveUserState: true,
+    },
   };
   if (options.confirm !== confirmation) {
     process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
@@ -90,33 +240,14 @@ async function main() {
   }
 
   const base = `https://github.com/${options.repository}/releases/download/${options.tag}`;
-  const enable = options.enable ? "agentstack enable --now" : ":";
-  const remoteProgram = `set -eu
-stage=$(mktemp -d /tmp/agentstack-release.XXXXXXXX)
-trap 'rm -rf -- "$stage"' EXIT HUP INT TERM
-base=${base}
-asset=${asset}
-expected=${options.expected_sha256}
-curl --fail --location --proto '=https' --tlsv1.2 "$base/$asset" -o "$stage/$asset"
-curl --fail --location --proto '=https' --tlsv1.2 "$base/SHA256SUMS" -o "$stage/SHA256SUMS"
-curl --fail --location --proto '=https' --tlsv1.2 "$base/release-manifest.json" -o "$stage/release-manifest.json"
-actual=$(sha256sum "$stage/$asset" | awk '{print $1}')
-listed=$(awk -v asset="$asset" '$2 == asset { print $1 }' "$stage/SHA256SUMS")
-test -n "$listed"
-test "$actual" = "$listed"
-test "$actual" = "$expected"
-python3 - "$stage/release-manifest.json" "$asset" "$expected" '${options.tag}' <<'PY'
-import json, sys
-path, asset, expected, tag = sys.argv[1:]
-with open(path, encoding="utf-8") as handle:
-    manifest = json.load(handle)
-assert manifest["schema"] == "agentstack.release.v1"
-assert manifest["source"]["tag"] == tag
-assert manifest["artifact"]["name"] == asset
-assert manifest["artifact"]["sha256"] == expected
-PY
-sudo -n apt-get install -y "$stage/$asset"
-${enable}`;
+  const remoteProgram = composeRemoteProgram({
+    base,
+    asset,
+    expectedSha256: options.expected_sha256,
+    tag: options.tag,
+    version,
+    enable: options.enable,
+  });
   await run("ssh", [options.remote, remoteProgram]);
   process.stdout.write(
     `Installed checksum-verified ${options.repository} ${options.tag} on ${options.remote}. GitHub attestation verification remains a separate qualification check.\n`,
@@ -135,4 +266,4 @@ if (
   });
 }
 
-export { parseArgs };
+export { parseArgs, composeRemoteProgram };

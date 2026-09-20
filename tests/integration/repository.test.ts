@@ -28,7 +28,24 @@ test("GitHub Actions use full commit pins and least default permissions", async 
   expect(workflow).not.toMatch(/build-fx|engine-fx/);
 });
 
-test("release identity is pinned for 0.1.1 without fx", async () => {
+test("release packaging scripts parse under node --check", () => {
+  const repository = resolve(import.meta.dirname, "../..");
+  for (const script of [
+    "scripts/stage-release.mjs",
+    "scripts/verify-payload.mjs",
+    "scripts/package-deb.mjs",
+    "scripts/inspect-deb.mjs",
+    "scripts/install-host",
+  ]) {
+    expect(() =>
+      execFileSync(process.execPath, ["--check", resolve(repository, script)], {
+        stdio: "pipe",
+      }),
+    ).not.toThrow();
+  }
+});
+
+test("release identity is pinned for 0.1.2 without fx", async () => {
   const repository = resolve(import.meta.dirname, "../..");
   const rootPackage = JSON.parse(
     await readFile(resolve(repository, "package.json"), "utf8"),
@@ -36,7 +53,7 @@ test("release identity is pinned for 0.1.1 without fx", async () => {
   const manifest = JSON.parse(
     await readFile(resolve(repository, "vendor/manifest.json"), "utf8"),
   ) as { components: Record<string, unknown> };
-  expect(rootPackage.version).toBe("0.1.1");
+  expect(rootPackage.version).toBe("0.1.2");
   const packageFiles = execFileSync(
     "git",
     [
@@ -57,10 +74,10 @@ test("release identity is pinned for 0.1.1 without fx", async () => {
     const packageData = JSON.parse(
       await readFile(resolve(repository, packageFile), "utf8"),
     ) as { version: string };
-    expect(packageData.version, packageFile).toBe("0.1.1");
+    expect(packageData.version, packageFile).toBe("0.1.2");
   }
   expect(await readFile(resolve(repository, "README.md"), "utf8")).toContain(
-    "agentstack_0.1.1_amd64.deb",
+    "agentstack_0.1.2_amd64.deb",
   );
   expect(manifest.components).not.toHaveProperty("fx");
   expect(manifest.components).toHaveProperty("codex");
@@ -95,4 +112,37 @@ test("tracked product files exclude removed product concepts", async () => {
   expect(findings).toEqual([]);
   expect(tracked).toContain("packages/engine-codex/package.json");
   expect(tracked).not.toContain("packages/engine-fx/package.json");
+});
+
+test("repository audit rejects retired Fx packaging and vendor artifacts", async () => {
+  const repository = resolve(import.meta.dirname, "../..");
+  const tracked = execFileSync("git", ["ls-files", "-z"], {
+    cwd: repository,
+    encoding: "utf8",
+  })
+    .split("\0")
+    .filter(Boolean);
+  expect(tracked).not.toContain("packages/engine-fx/package.json");
+  expect(tracked).not.toContain("vendor/licenses/fx-LICENSE.txt");
+  expect(tracked).not.toContain("vendor/licenses/fx-THIRD_PARTY_NOTICES.md");
+  expect(
+    tracked.some((path) => path.startsWith("vendor/payloads/") && path.includes("/fx/")),
+  ).toBe(false);
+  expect(tracked).toContain("docs/adr/0007-codex-only-engine-surface.md");
+
+  for (const script of [
+    "scripts/package-deb.mjs",
+    "scripts/verify-payload.mjs",
+    "scripts/inspect-deb.mjs",
+  ]) {
+    const text = await readFile(resolve(repository, script), "utf8");
+    expect(text, script).toMatch(/engines\.fx|retired.*[Ff]x|fx-LICENSE/);
+  }
+
+  const adr0001 = await readFile(
+    resolve(repository, "docs/adr/0001-product-and-service-boundaries.md"),
+    "utf8",
+  );
+  expect(adr0001).toMatch(/superseded.*0007/);
+  expect(adr0001).toMatch(/Fx ACP and Codex/);
 });

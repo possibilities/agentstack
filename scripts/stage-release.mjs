@@ -144,6 +144,7 @@ const manifest = {
       sha256: codex.entry.sha256,
       source: codex.entry.source,
     },
+  },
 };
 await writeFile(
   join(output, "manifest.json"),

@@ -6,6 +6,6 @@ Node uses an exact upstream Node 24 Linux x64 release. Codex is the official 0.1
 
 To update an engine, change one manifest entry, reproduce or retrieve the exact payload, verify licenses and hashes, run `pnpm verify`, stage and inspect the payload, build the Debian package, and repeat the live inference-free qualification. Do not substitute mutable branches, another product's cached binary, or a globally installed command.
 
-`.github/workflows/native-linux.yml` is the release authority. Every action is pinned to a full commit. The job reconstructs Node, Codex, Codex from locked sources, builds and compares the package twice, inspects internal payload hashes, retains CI evidence, and publishes a package, `SHA256SUMS`, static `agentstack.release.v1` manifest and GitHub artifact attestations from an exact `v<productVersion>` tag. The public repository must enable immutable releases before the first publication.
+`.github/workflows/native-linux.yml` is the release authority. Every action is pinned to a full commit. The job reconstructs Node and Codex from locked sources, builds and compares the package twice, inspects internal payload hashes, retains CI evidence, and publishes a package, `SHA256SUMS`, static `agentstack.release.v1` manifest and GitHub artifact attestations from an exact `v<productVersion>` tag. The public repository must enable immutable releases before the first publication.
 
 Fx ACP support was removed; vendor inputs are Node and Codex only.
