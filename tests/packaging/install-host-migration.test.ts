@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -21,18 +21,20 @@ afterEach(async () => {
 });
 
 function livePid(): number {
-  const out = spawnSync("bash", ["-c", "sleep 30 & echo $!"], {
-    encoding: "utf8",
+  const child = spawn("sleep", ["60"], {
+    detached: true,
+    stdio: "ignore",
   });
-  const pid = Number(out.stdout.trim().split("\n").pop());
-  if (!Number.isInteger(pid) || pid <= 0) throw new Error("live pid failed");
-  return pid;
+  child.unref();
+  if (child.pid == null) throw new Error("live pid failed");
+  return child.pid;
 }
 
 function statusPayload(options: {
   productVersion: string;
   installedVersion?: string;
   runningVersion?: string;
+  buildIdentity?: string;
   daemonPid: number;
   daemonGeneration: string;
   codexPid: number;
@@ -67,7 +69,7 @@ function statusPayload(options: {
       productVersion: options.productVersion,
       installedVersion: options.installedVersion ?? options.productVersion,
       runningVersion: options.runningVersion ?? options.productVersion,
-      buildIdentity: "fixture-build",
+      buildIdentity: options.buildIdentity ?? "git:fixture",
       daemon: {
         pid: options.daemonPid,
         generation: options.daemonGeneration,
@@ -109,8 +111,9 @@ async function prepareFixture(options: {
   }
 
   let daemonPid = options.oldStatus.control.daemon.pid;
-  let codexPid = (options.oldStatus.control.children as { codex: { pid: number } })
-    .codex.pid;
+  let codexPid = (
+    options.oldStatus.control.children as { codex: { pid: number } }
+  ).codex.pid;
   let fxPid =
     "fx" in (options.oldStatus.control.children as object)
       ? (options.oldStatus.control.children as { fx: { pid: number } }).fx.pid
@@ -134,7 +137,10 @@ async function prepareFixture(options: {
   (patchedNew.control.children as { codex: { pid: number } }).codex.pid =
     codexPid + 10_000;
 
-  await writeFile(join(stateDir, "status.json"), `${JSON.stringify(patchedOld)}\n`);
+  await writeFile(
+    join(stateDir, "status.json"),
+    `${JSON.stringify(patchedOld)}\n`,
+  );
   await writeFile(
     join(stateDir, "status.after-start.json"),
     `${JSON.stringify(patchedNew)}\n`,
@@ -181,6 +187,7 @@ function runUpgradeScript(
     version: string;
     readinessAttempts?: number;
     quiesceAttempts?: number;
+    expectedBuild?: string;
   },
 ) {
   const scriptPath = join(fixture.root, "run-upgrade.sh");
@@ -193,6 +200,7 @@ function runUpgradeScript(
       `asset=${JSON.stringify(fixture.asset)}`,
       `version=${JSON.stringify(options.version)}`,
       "prefer_enable=1",
+      `expected_build=${JSON.stringify(options.expectedBuild ?? "git:fixture")}`,
       `readiness_attempts=${options.readinessAttempts ?? 10}`,
       "readiness_sleep=0.05",
       `quiesce_attempts=${options.quiesceAttempts ?? 10}`,
@@ -242,8 +250,10 @@ describe("install-host migration fixtures", () => {
     expect(program).not.toMatch(/agentstack stop \|\| true/);
     expect(program).toContain("refused to replace package");
     expect(program).toContain(".agentstack-upgrade-marker");
-    expect(program).toContain('readiness != "ready"');
     expect(program).toContain("codex readiness not ready");
+    expect(program).toContain("buildIdentity");
+    expect(program).toContain("quiesce_attempts=");
+    expect(program).toContain("readiness_attempts=");
     expect(
       parseInstallArgs([
         "--remote",
@@ -303,7 +313,7 @@ describe("install-host migration fixtures", () => {
       priorActive: true,
       newVersion: "0.1.2",
       stopFails: true,
-      liveOldPids: false,
+      liveOldPids: true,
       oldStatus: statusPayload({
         productVersion: "0.1.1",
         daemonPid: 1,
