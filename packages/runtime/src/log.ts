@@ -25,6 +25,24 @@ const ABSOLUTE_URL_PATTERN = /\bhttps?:\/\/[^\s,}\])]+/gi;
 const QUERY_SECRET_PATTERN =
   /([?&](?:api[_-]?key|access[_-]?token|auth[_-]?token|credential|password|secret|token)=)[^&\s,}\])]+/gi;
 
+function safeLogLevel(value: unknown): LogRecord["level"] {
+  return value === "debug" ||
+    value === "info" ||
+    value === "warn" ||
+    value === "error"
+    ? value
+    : "error";
+}
+
+function safeLogComponent(value: unknown): LogRecord["component"] {
+  return value === "daemon" ||
+    value === "codex" ||
+    value === "fx" ||
+    value === "control"
+    ? value
+    : "daemon";
+}
+
 export function sanitizeReason(value: unknown): string {
   const text = value instanceof Error ? value.message : String(value);
   return text
@@ -66,9 +84,9 @@ export function log(record: Omit<LogRecord, "timestamp">): void {
   if (Buffer.byteLength(line) > MAX_LOG_BYTES) {
     line = JSON.stringify({
       timestamp,
-      level: record.level,
-      component: record.component,
-      event: record.event,
+      level: safeLogLevel(record.level),
+      component: safeLogComponent(record.component),
+      event: "log_record_truncated",
       reason: "log_record_truncated",
     });
   }

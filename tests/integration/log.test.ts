@@ -50,16 +50,19 @@ describe("bounded redacted logs", () => {
     expect(line).toContain("[url-redacted]");
   });
 
-  test("replaces oversized records with valid bounded JSON", () => {
+  test("does not reconstruct a 6,139-byte secret event in fallback JSON", () => {
     const writes: string[] = [];
     vi.spyOn(process.stderr, "write").mockImplementation(((chunk: unknown) => {
       writes.push(String(chunk));
       return true;
     }) as typeof process.stderr.write);
+    const token = "sk-PRIVATE_SYNTHETIC_TOKEN_12345";
+    const event = `${"x".repeat(6_139 - Buffer.byteLength(token))}${token}`;
+    expect(Buffer.byteLength(event)).toBe(6_139);
     log({
       level: "warn",
       component: "control",
-      event: "oversized",
+      event,
       details: Object.fromEntries(
         Array.from({ length: 24 }, (_, index) => [
           `field${index}`,
@@ -69,6 +72,13 @@ describe("bounded redacted logs", () => {
     });
     const line = writes.join("");
     expect(Buffer.byteLength(line)).toBeLessThanOrEqual(4097);
-    expect(JSON.parse(line)).toMatchObject({ reason: "log_record_truncated" });
+    expect(line).not.toContain("PRIVATE_SYNTHETIC_TOKEN");
+    expect(line).not.toContain("sk-");
+    expect(JSON.parse(line)).toMatchObject({
+      level: "warn",
+      component: "control",
+      event: "log_record_truncated",
+      reason: "log_record_truncated",
+    });
   });
 });

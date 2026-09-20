@@ -174,7 +174,7 @@ describe("private control socket", () => {
     ).rejects.toThrow("unsafe existing control path");
   });
 
-  test("redacts a raw request URL before logging", async () => {
+  test("omits unknown-request URL and relative query data from logs", async () => {
     const root = await mkdtemp(join(tmpdir(), "agentstack-control-"));
     const path = join(root, "control.sock");
     const writes: string[] = [];
@@ -188,11 +188,24 @@ describe("private control socket", () => {
     });
     servers.push({ server, path });
     await expect(
-      controlRequest(path, "GET", "/missing?token=FAKESECRET12345"),
+      controlRequest(
+        path,
+        "GET",
+        "/missing?prompt=PRIVATE_SYNTHETIC_PROMPT&session=PRIVATE_SYNTHETIC_SESSION",
+      ),
     ).rejects.toThrow("control request failed");
     const output = writes.join("");
-    expect(output).not.toContain("FAKESECRET12345");
-    expect(output).toContain("token=[redacted]");
+    expect(output).not.toContain("PRIVATE_SYNTHETIC_PROMPT");
+    expect(output).not.toContain("PRIVATE_SYNTHETIC_SESSION");
+    expect(output).not.toContain("/missing");
+    expect(output).not.toContain("prompt=");
+    expect(output).not.toContain("session=");
+    expect(JSON.parse(output)).toMatchObject({
+      component: "control",
+      event: "unknown_request",
+      method: "GET",
+    });
+    expect(JSON.parse(output).requestId).toMatch(/^[a-f0-9-]{36}$/);
   });
 
   test("rejects components without safe System inventory metadata", () => {

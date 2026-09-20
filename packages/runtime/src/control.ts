@@ -128,13 +128,15 @@ export async function startControlServer(
     const requestId = randomUUID();
     void routeControlRequest(req.method, req.url, handlers).then((response) => {
       if (response.status === 404) {
+        const method = /^[A-Z]{1,16}$/.test(req.method ?? "")
+          ? req.method
+          : "UNKNOWN";
         log({
           level: "warn",
           component: "control",
           event: "unknown_request",
           requestId,
-          method: req.method,
-          path: req.url,
+          method,
         });
       }
       json(res, response.status, response.body);
