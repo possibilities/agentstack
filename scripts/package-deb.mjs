@@ -300,7 +300,7 @@ async function materializeSource(plan, epoch) {
   await chmod(join(debianRoot, "rules"), 0o755);
   await writeChangelog(join(debianRoot, "changelog"), plan.version, epoch);
 
-  const packageRoot = join(debianRoot, "tmp");
+  const packageRoot = join(sourceRoot, "payload");
   const releaseRoot = join(
     packageRoot,
     "usr",
@@ -325,6 +325,14 @@ async function materializeSource(plan, epoch) {
     join(packageRoot, "usr", "bin", "agentstack"),
     0o755,
   );
+  await mkdir(join(packageRoot, "usr", "lib", "systemd", "user"), {
+    recursive: true,
+  });
+  await copyFileWithMode(
+    join(debianRoot, "agentstack.user.service"),
+    join(packageRoot, "usr", "lib", "systemd", "user", "agentstack.service"),
+    0o644,
+  );
   await mkdir(join(packageRoot, "usr", "share", "doc", "agentstack"), {
     recursive: true,
   });
@@ -346,8 +354,7 @@ async function compressManpage(sourceRoot, epoch) {
   const source = join(packagingRoot, "agentstack.1");
   const output = join(
     sourceRoot,
-    "debian",
-    "tmp",
+    "payload",
     "usr",
     "share",
     "man",

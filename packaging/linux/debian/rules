@@ -9,9 +9,14 @@ override_dh_auto_build:
 override_dh_auto_test:
 	:
 
+override_dh_auto_install:
+	mkdir -p debian/tmp
+	cp -a payload/. debian/tmp/
+
 # dh_installsystemduser otherwise generates maintainer scripts that operate on
 # every local user's unit state. The product deliberately has no package-time
 # user action: `agentstack enable --now` is an explicit, user-scoped command.
-# The -X keeps the unit in the payload while suppressing generated snippets.
+# The unit is copied from the reviewed payload and this override suppresses
+# generated package-time snippets.
 override_dh_installsystemduser:
-	dh_installsystemduser --no-enable -X agentstack.service
+	:
