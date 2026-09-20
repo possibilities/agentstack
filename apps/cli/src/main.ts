@@ -6,7 +6,11 @@ import {
   isChildId,
   statusExitCode,
 } from "@agentstack/contracts";
-import { controlRequest, resolveRuntimePaths } from "@agentstack/runtime";
+import {
+  controlRequest,
+  resolveRuntimePaths,
+  sanitizeReason,
+} from "@agentstack/runtime";
 
 const args = process.argv.slice(2);
 const command = args[0] ?? "help";
@@ -21,9 +25,7 @@ function unitState(): { active: boolean; state: string; detail?: string } {
   return {
     active: result.status === 0,
     state: (result.stdout || "unknown").trim(),
-    ...(result.stderr.trim()
-      ? { detail: result.stderr.trim().slice(0, 512) }
-      : {}),
+    ...(result.stderr.trim() ? { detail: sanitizeReason(result.stderr) } : {}),
   };
 }
 
@@ -38,7 +40,7 @@ async function status(json: boolean): Promise<number> {
       "/v1/status",
     );
   } catch (error) {
-    controlError = error instanceof Error ? error.message : String(error);
+    controlError = sanitizeReason(error);
   }
   const exit = statusExitCode(unit.active, control);
   const healthy = exit === 0;
@@ -74,14 +76,15 @@ function service(
       ? ["disable", "--now", "agentstack.service"]
       : [action, "agentstack.service"];
   const result = systemctl(...argv);
-  if (result.status !== 0) process.stderr.write(result.stderr || result.stdout);
+  if (result.status !== 0)
+    process.stderr.write(`${sanitizeReason(result.stderr || result.stdout)}\n`);
   return result.status ?? 5;
 }
 
 function enable(now: boolean): number {
   const reload = systemctl("daemon-reload");
   if (reload.status !== 0) {
-    process.stderr.write(reload.stderr || reload.stdout);
+    process.stderr.write(`${sanitizeReason(reload.stderr || reload.stdout)}\n`);
     return reload.status ?? 5;
   }
   const result = systemctl(
@@ -89,7 +92,8 @@ function enable(now: boolean): number {
     ...(now ? ["--now"] : []),
     "agentstack.service",
   );
-  if (result.status !== 0) process.stderr.write(result.stderr || result.stdout);
+  if (result.status !== 0)
+    process.stderr.write(`${sanitizeReason(result.stderr || result.stdout)}\n`);
   return result.status ?? 5;
 }
 
@@ -99,7 +103,7 @@ async function doctor(json: boolean): Promise<number> {
   checks.push({
     id: "user-manager",
     ok: unit.status === 0,
-    detail: (unit.stdout || unit.stderr).trim().slice(0, 512),
+    detail: sanitizeReason(unit.stdout || unit.stderr),
   });
   try {
     const info = await stat(paths.runtimeRoot);
@@ -245,9 +249,7 @@ void main().then(
     process.exitCode = code;
   },
   (error) => {
-    process.stderr.write(
-      `${error instanceof Error ? error.message : String(error)}\n`,
-    );
+    process.stderr.write(`${sanitizeReason(error)}\n`);
     process.exitCode = 5;
   },
 );
