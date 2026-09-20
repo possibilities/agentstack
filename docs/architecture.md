@@ -18,3 +18,5 @@ The only local API is a mode-0600 Unix socket inside a mode-0700 same-user direc
 Current toolchain conventions follow the official [Turbo basic workspace](https://github.com/vercel/turborepo/tree/main/examples/basic), [compiled internal package guidance](https://turborepo.com/docs/core-concepts/internal-packages), and explicit package exports. The two app entrypoints are self-contained ESM bundles; end users do not need pnpm or a system Node installation.
 
 The next UI consumes a bounded product API behind `packages/contracts`; it does not attach directly to engine stdio. The future macOS app reuses daemon and engine contracts while replacing Linux service operations with `SMAppService` and adding an `LSUIElement` menu shell.
+
+Milestone one persists no user preferences and introduces no JSON, TOML, or environment-driven user configuration. The future System and CLI configuration seam is reserved for versioned shipped-defaults SQLite plus sparse per-user `config.sqlite3` overrides, with protected secrets in a separate `secrets.sqlite3`; internal launch environment variables remain process plumbing rather than product settings.
