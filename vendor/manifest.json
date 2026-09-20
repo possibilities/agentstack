@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "payloadRoot": "vendor/payloads/linux-x64",
+  "platform": "linux",
+  "architecture": "x64",
+  "components": {
+    "node": {
+      "version": "24.21.0",
+      "source": {
+        "kind": "official-release",
+        "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz",
+        "archive": "node-v24.21.0-linux-x64.tar.xz",
+        "archiveSha256": "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6",
+        "checksumsUrl": "https://nodejs.org/dist/v24.21.0/SHASUMS256.txt.asc",
+        "checksumsSignerFingerprint": "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356"
+      },
+      "sha256": "7fde7b8afa198da66257f42ee2001d874c7355631e6d1579a5fb5ef1f246df4c",
+      "target": "x86_64-linux-gnu",
+      "executable": "bin/node",
+      "licensePaths": ["vendor/licenses/node-LICENSE.txt"],
+      "format": "ELF 64-bit x86-64, dynamically linked GNU/Linux",
+      "minimumGlibc": "2.28",
+      "bytes": 126595440
+    },
+    "codex": {
+      "version": "0.155.1",
+      "source": {
+        "kind": "official-github-release",
+        "repository": "https://github.com/openai/codex",
+        "tag": "rust-v0.155.1",
+        "commit": "be2951ea34f0d295ed0becf97079f92fa5f6950e",
+        "url": "https://github.com/openai/codex/releases/download/rust-v0.155.1/codex-app-server-package-x86_64-unknown-linux-musl.tar.gz",
+        "archive": "codex-app-server-package-x86_64-unknown-linux-musl.tar.gz",
+        "archiveSha256": "a1784b0f3991e4853caaddcc167d2bc8c540f12eddb1b5e40b1ec49f2dbcc024"
+      },
+      "sha256": "7ad7ed70a8e8f72b5d3202ba65cc55ad3b9ab2914982b74092fe11e3269d910f",
+      "target": "x86_64-unknown-linux-musl",
+      "executable": "bin/codex-app-server",
+      "args": [],
+      "licensePaths": [
+        "vendor/licenses/codex-LICENSE.txt",
+        "vendor/licenses/codex-NOTICE.txt",
+        "vendor/licenses/codex-bubblewrap-LICENSE.txt",
+        "vendor/licenses/codex-ripgrep-LICENSE-MIT.txt",
+        "vendor/licenses/codex-ripgrep-UNLICENSE.txt",
+        "vendor/licenses/codex-zsh-LICENCE.txt"
+      ],
+      "format": "upstream layoutVersion 1 app-server package; static PIE entrypoint",
+      "layoutManifest": "codex-package.json",
+      "bytes": 209730568,
+      "helpers": {
+        "codeModeHost": {
+          "path": "bin/codex-code-mode-host",
+          "sha256": "416467143642177de5e03734b3be94087a73a7bba058d84e8b1e54e2cd731010"
+        },
+        "ripgrep": {
+          "path": "codex-path/rg",
+          "version": "15.2.0",
+          "sha256": "e62198eb19b136b88c330af83647b5a962cb99b6b1f066758568f12de1974849"
+        },
+        "bubblewrap": {
+          "path": "codex-resources/bwrap",
+          "sha256": "77360cb751ccedc5971391444ac86a8a33c15b04d6b4a6fe45f5d25496e62c4c"
+        },
+        "zsh": {
+          "path": "codex-resources/zsh/bin/zsh",
+          "sourceCommit": "77045ef899e53b9598bebc5a41db93a548a40ca6",
+          "releaseTag": "codex-zsh-v0.1.0",
+          "sha256": "67faaaa89242c4a332e16e508a1977cffc24bf7fca31d4411cdfd101f3831ef3",
+          "minimumGlibc": "2.38"
+        }
+      }
+    },
+    "fx": {
+      "version": "0.0.10",
+      "source": {
+        "kind": "exact-source-build",
+        "repository": "https://github.com/possibilities/fx",
+        "upstreamRepository": "https://github.com/vercel-labs/fx",
+        "ref": "integration",
+        "commit": "e639de6aded41ae168a8888b920ff71db41877d0",
+        "sourceTreeSha256": "2a6bb9f37eee5f090054a8d31e929c05a5d6411226cfd91e521ea18589401b47"
+      },
+      "sha256": "3926591e083eed79330c8de74031c4a4679ea60ee1421e09128b35420f120e09",
+      "target": "x86_64-linux-musl",
+      "executable": "bin/fx",
+      "args": ["acp"],
+      "licensePaths": [
+        "vendor/licenses/fx-LICENSE.txt",
+        "vendor/licenses/fx-THIRD_PARTY_NOTICES.md"
+      ],
+      "format": "ELF 64-bit x86-64, statically linked",
+      "bytes": 12839920,
+      "build": {
+        "zigVersion": "0.16.0",
+        "optimize": "ReleaseSafe",
+        "command": "scripts/vendor/build-fx.sh /path/to/clean/possibilities-fx"
+      }
+    }
+  }
+}
