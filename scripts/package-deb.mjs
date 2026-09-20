@@ -279,7 +279,7 @@ async function copyFileWithMode(source, destination, mode) {
 }
 
 async function writeChangelog(path, version, epoch) {
-  const date = new Date(epoch * 1000).toUTCString();
+  const date = new Date(epoch * 1000).toUTCString().replace("GMT", "+0000");
   await writeFile(
     path,
     `agentstack (${version}) unstable; urgency=medium\n\n  * Package the ${version} immutable AgentStack release.\n\n -- AgentStack contributors <maintainers@agentstack.invalid>  ${date}\n`,

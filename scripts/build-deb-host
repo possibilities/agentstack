@@ -137,7 +137,7 @@ trap cleanup EXIT INT TERM
 if ! command -v dpkg-buildpackage >/dev/null || ! command -v dh >/dev/null; then
   installed_build_deps=1
   sudo -n apt-get update
-  sudo -n apt-get install -y --no-install-recommends --no-upgrade debhelper
+  sudo -n apt-get install -y --no-install-recommends --no-upgrade build-essential debhelper
 fi
 mkdir -p "$root/output-a" "$root/output-b" "$root/final"
 SOURCE_DATE_EPOCH=${epoch} "$root/stage/runtime/node" "$root/scripts/package-deb.mjs" --stage "$root/stage" --output "$root/output-a" --version ${version}
