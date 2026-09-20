@@ -50,7 +50,7 @@ for binary in \
   "$PAYLOAD/codex/bin/codex-code-mode-host" \
   "$PAYLOAD/codex/codex-path/rg" \
   "$PAYLOAD/codex/codex-resources/bwrap" \
-  "$PAYLOAD/codex/codex-resources/zsh/bin/zsh" \
+  "$PAYLOAD/codex/codex-resources/zsh/bin/zsh"
 do
   verify_elf_x86_64 "$binary"
 done
