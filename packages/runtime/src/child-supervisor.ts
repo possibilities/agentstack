@@ -1,6 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { once } from "node:events";
 import type {
   ChildId,
   ChildStatus,
@@ -38,17 +37,56 @@ export const DEFAULT_RESTART_POLICY: RestartPolicy = {
   stopGraceMs: 10_000,
 };
 
+interface Termination {
+  promise: Promise<void>;
+  settle(): void;
+}
+
+function terminationLatch(child: ChildProcessWithoutNullStreams): Termination {
+  let settled = false;
+  let resolveTermination: () => void = () => undefined;
+  const promise = new Promise<void>((resolve) => {
+    resolveTermination = resolve;
+  });
+  const settle = (): void => {
+    if (settled) return;
+    settled = true;
+    resolveTermination();
+  };
+  child.once("exit", settle);
+  child.once("close", settle);
+  return { promise, settle };
+}
+
+async function boundedWait(
+  promise: Promise<void>,
+  milliseconds: number,
+): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = await Promise.race([
+    promise.then(() => false),
+    new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(true), milliseconds);
+      timer.unref();
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
+  return !timedOut;
+}
+
 export class ManagedChild {
   readonly #spec: ChildSpec;
   readonly #policy: RestartPolicy;
   readonly #onChange: () => void;
   #process: ChildProcessWithoutNullStreams | null = null;
+  #termination: Termination | null = null;
   #generation: string | null = null;
   #desired: "running" | "stopped" = "stopped";
   #state: ChildStatus["observedState"] = "stopped";
   #readiness: Readiness = "unknown";
   #startedAt: string | null = null;
   #restartCount = 0;
+  #launchAttempts = 0;
   #failures: number[] = [];
   #backoffUntil: string | null = null;
   #lastFailure: SanitizedFailure | null = null;
@@ -93,54 +131,46 @@ export class ManagedChild {
   }
 
   async restart(): Promise<void> {
-    this.#restartCount += 1;
     await this.stop(false);
-    await this.start(true);
+    if (this.#desired === "running") await this.start(true);
   }
 
   async stop(setDesired = true): Promise<void> {
     if (setDesired) this.#desired = "stopped";
-    if (this.#restartTimer) {
-      clearTimeout(this.#restartTimer);
-      this.#restartTimer = null;
-    }
-    if (this.#stableTimer) {
-      clearTimeout(this.#stableTimer);
-      this.#stableTimer = null;
-    }
+    this.#clearTimers();
     const child = this.#process;
-    if (!child) {
-      this.#state = "stopped";
-      this.#readiness = "unknown";
-      this.#startedAt = null;
-      this.#onChange();
+    const termination = this.#termination;
+    const generation = this.#generation;
+    if (!child || !termination) {
+      this.#settleStopped(generation);
       return;
     }
-    const generation = this.#generation;
+
     this.#state = "stopping";
     this.#onChange();
     child.stdin.end();
-    child.kill("SIGTERM");
-    const grace = setTimeout(
-      () => child.kill("SIGKILL"),
+    if (child.pid !== undefined) child.kill("SIGTERM");
+    const graceful = await boundedWait(
+      termination.promise,
       this.#policy.stopGraceMs,
     );
-    grace.unref();
-    await once(child, "exit").catch(() => undefined);
-    clearTimeout(grace);
-    if (this.#generation === generation) {
-      this.#process = null;
-      this.#state = "stopped";
-      this.#readiness = "unknown";
-      this.#startedAt = null;
-      this.#onChange();
+    if (!graceful && child.pid !== undefined) {
+      child.kill("SIGKILL");
+      await boundedWait(
+        termination.promise,
+        Math.min(1_000, Math.max(100, this.#policy.stopGraceMs)),
+      );
     }
+    termination.settle();
+    this.#settleStopped(generation);
   }
 
   async #spawn(): Promise<void> {
     const generation = randomUUID();
+    if (this.#launchAttempts > 0) this.#restartCount += 1;
+    this.#launchAttempts += 1;
     this.#generation = generation;
-    this.#startedAt = new Date().toISOString();
+    this.#startedAt = null;
     this.#state = "starting";
     this.#readiness = "unknown";
     this.#backoffUntil = null;
@@ -161,25 +191,25 @@ export class ManagedChild {
         detached: false,
       });
     } catch (error) {
-      this.#recordFailure("spawn_failed", error);
-      this.#scheduleRestart(generation);
+      this.#settleSpawnFailure(generation, error);
       return;
     }
+
+    const termination = terminationLatch(child);
     this.#process = child;
+    this.#termination = termination;
     let stderrBytes = 0;
     child.stderr.on("data", (chunk: Buffer) => {
       stderrBytes = Math.min(stderrBytes + chunk.length, 1024 * 1024);
-    });
-    child.once("error", (error) => {
-      if (this.#generation !== generation) return;
-      this.#recordFailure("process_error", error);
     });
     child.once("exit", (code, signal) => {
       if (this.#generation !== generation) return;
       const intentionalStop = this.#state === "stopping";
       this.#process = null;
+      this.#termination = null;
+      this.#startedAt = null;
       log({
-        level: this.#desired === "stopped" ? "info" : "warn",
+        level: intentionalStop || this.#desired === "stopped" ? "info" : "warn",
         component: this.#spec.id,
         event: "child_exited",
         generation,
@@ -189,9 +219,7 @@ export class ManagedChild {
       });
       if (intentionalStop) return;
       if (this.#desired === "stopped") {
-        this.#state = "stopped";
-        this.#readiness = "unknown";
-        this.#onChange();
+        this.#settleStopped(generation);
         return;
       }
       if (
@@ -209,13 +237,32 @@ export class ManagedChild {
       this.#scheduleRestart(generation);
     });
 
+    const launch = await new Promise<{ error: Error | null }>((resolve) => {
+      let launched = false;
+      child.once("spawn", () => {
+        launched = true;
+        resolve({ error: null });
+      });
+      child.once("error", (error) => {
+        if (!launched) resolve({ error });
+        else if (this.#generation === generation)
+          this.#recordFailure("process_error", error, false);
+      });
+    });
+    if (launch.error) {
+      this.#settleSpawnFailure(generation, launch.error);
+      return;
+    }
+    if (this.#launchInvalid(generation, child)) return;
+
+    this.#startedAt = new Date().toISOString();
     const result = await runJsonLineProbe(
       child.stdout,
       child.stdin,
       this.#spec.probe,
       generation,
     );
-    if (this.#generation !== generation || this.#process !== child) return;
+    if (this.#launchInvalid(generation, child)) return;
     this.#readiness = result.readiness;
     this.#state = "running";
     if (result.failure)
@@ -234,6 +281,54 @@ export class ManagedChild {
           this.#failures = [];
       }, this.#policy.stableResetMs);
       this.#stableTimer.unref();
+    }
+  }
+
+  #settleSpawnFailure(generation: string, error: unknown): void {
+    if (this.#generation !== generation) return;
+    this.#process = null;
+    this.#termination?.settle();
+    this.#termination = null;
+    this.#startedAt = null;
+    if (this.#desired === "stopped" || this.#state === "stopping") {
+      this.#settleStopped(generation);
+      return;
+    }
+    this.#recordFailure("spawn_failed", error);
+    this.#scheduleRestart(generation);
+  }
+
+  #launchInvalid(
+    generation: string,
+    child: ChildProcessWithoutNullStreams,
+  ): boolean {
+    return (
+      this.#generation !== generation ||
+      this.#process !== child ||
+      this.#state === "stopping" ||
+      this.#desired === "stopped"
+    );
+  }
+
+  #settleStopped(generation: string | null): void {
+    if (generation !== null && this.#generation !== generation) return;
+    this.#process = null;
+    this.#termination = null;
+    this.#state = "stopped";
+    this.#readiness = "unknown";
+    this.#startedAt = null;
+    this.#backoffUntil = null;
+    this.#onChange();
+  }
+
+  #clearTimers(): void {
+    if (this.#restartTimer) {
+      clearTimeout(this.#restartTimer);
+      this.#restartTimer = null;
+    }
+    if (this.#stableTimer) {
+      clearTimeout(this.#stableTimer);
+      this.#stableTimer = null;
     }
   }
 

@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
-import type { StatusResponse } from "@agentstack/contracts";
+import type { RestartAdmission, StatusResponse } from "@agentstack/contracts";
 import {
   CONTROL_SCHEMA,
   isChildId,
@@ -131,13 +131,23 @@ async function childRestart(id: string | undefined): Promise<number> {
     process.stderr.write("child restart requires codex or fx\n");
     return 2;
   }
-  await controlRequest(
-    paths.controlSocket,
-    "POST",
-    `/v1/children/${id}/restart`,
-  );
-  console.log(`Restarted ${id}`);
-  return 0;
+  try {
+    const receipt = await controlRequest<RestartAdmission>(
+      paths.controlSocket,
+      "POST",
+      `/v1/children/${id}/restart`,
+    );
+    if (!receipt.accepted || receipt.outcome !== "admitted")
+      throw new Error("restart was not admitted");
+    console.log(
+      `Restart admitted for ${id} (${receipt.requestId}); inspect agentstack status for terminal state`,
+    );
+    return 0;
+  } catch {
+    throw new Error(
+      `Restart outcome unknown for ${id}; inspect agentstack status before retrying`,
+    );
+  }
 }
 
 async function installedProductVersion(): Promise<string> {

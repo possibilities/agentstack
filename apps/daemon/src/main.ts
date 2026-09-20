@@ -228,47 +228,38 @@ async function main(): Promise<void> {
     };
   };
 
-  const control = await startControlServer(paths.controlSocket, {
-    status,
-    async restart(id) {
-      await children[id].restart();
-    },
-  });
-
-  await Promise.all([children.codex.start(), children.fx.start()]);
-  log({
-    level: "info",
-    component: "daemon",
-    event: "ready",
-    generation,
-    releaseRoot,
-  });
-
+  let control: Awaited<ReturnType<typeof startControlServer>> | null = null;
   let shuttingDown = false;
+  let shutdownPromise: Promise<void> | null = null;
   const shutdown = async (signal: string, exitCode: number): Promise<void> => {
-    if (shuttingDown) return;
+    if (shutdownPromise) return await shutdownPromise;
     shuttingDown = true;
-    log({
-      level: "info",
-      component: "daemon",
-      event: "shutdown_started",
-      generation,
-      signal,
-    });
-    await closeControlServer(control, paths.controlSocket).catch(
-      () => undefined,
-    );
-    await Promise.all([children.codex.stop(), children.fx.stop()]);
-    log({
-      level: "info",
-      component: "daemon",
-      event: "shutdown_complete",
-      generation,
-      signal,
-    });
-    process.exit(exitCode);
+    shutdownPromise = (async () => {
+      log({
+        level: "info",
+        component: "daemon",
+        event: "shutdown_started",
+        generation,
+        signal,
+      });
+      if (control)
+        await closeControlServer(control, paths.controlSocket).catch(
+          () => undefined,
+        );
+      await Promise.all([children.codex.stop(), children.fx.stop()]);
+      log({
+        level: "info",
+        component: "daemon",
+        event: "shutdown_complete",
+        generation,
+        signal,
+      });
+      process.exit(exitCode);
+    })();
+    return await shutdownPromise;
   };
 
+  // Signals are owned before the control socket or either child can start.
   process.once("SIGTERM", () => void shutdown("SIGTERM", 0));
   process.once("SIGINT", () => void shutdown("SIGINT", 0));
   process.once("uncaughtException", (error) => {
@@ -291,6 +282,35 @@ async function main(): Promise<void> {
     });
     void shutdown("unhandledRejection", 1);
   });
+
+  try {
+    control = await startControlServer(paths.controlSocket, {
+      status,
+      async restart(id) {
+        if (shuttingDown) throw new Error("daemon is shutting down");
+        await children[id].restart();
+      },
+    });
+    if (shuttingDown) return;
+    await Promise.all([children.codex.start(), children.fx.start()]);
+    if (shuttingDown) return;
+    log({
+      level: "info",
+      component: "daemon",
+      event: "ready",
+      generation,
+      releaseRoot,
+    });
+  } catch (error) {
+    log({
+      level: "error",
+      component: "daemon",
+      event: "startup_failed",
+      generation,
+      reason: String(error),
+    });
+    await shutdown("startup_failed", 1);
+  }
 }
 
 void main().catch((error) => {

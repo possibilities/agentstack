@@ -1,7 +1,9 @@
 import { mkdtemp, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { createConnection } from "node:net";
+import { once } from "node:events";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   CONTROL_SCHEMA,
   SYSTEM_INVENTORY_SCHEMA,
@@ -27,6 +29,7 @@ afterEach(async () => {
       .splice(0)
       .map(({ server, path }) => closeControlServer(server, path)),
   );
+  vi.restoreAllMocks();
 });
 
 function status(): StatusResponse {
@@ -100,6 +103,31 @@ describe("private control socket", () => {
     });
   });
 
+  test("admits restart immediately and leaves terminal state to status", async () => {
+    const neverSettles = new Promise<void>(() => undefined);
+    const startedAt = Date.now();
+    const response = await routeControlRequest(
+      "POST",
+      "/v1/children/codex/restart",
+      {
+        status,
+        async restart() {
+          await neverSettles;
+        },
+      },
+    );
+    expect(Date.now() - startedAt).toBeLessThan(100);
+    expect(response).toMatchObject({
+      status: 202,
+      body: {
+        accepted: true,
+        outcome: "admitted",
+        child: "codex",
+        next: "/v1/status",
+      },
+    });
+  });
+
   test("serves bounded status and restart operations at mode 0600", async () => {
     const root = await mkdtemp(join(tmpdir(), "agentstack-control-"));
     const path = join(root, "control.sock");
@@ -116,7 +144,25 @@ describe("private control socket", () => {
       (await controlRequest<StatusResponse>(path, "GET", "/v1/status")).schema,
     ).toBe(CONTROL_SCHEMA);
     await controlRequest(path, "POST", "/v1/children/fx/restart");
+    await new Promise((resolveWait) => setImmediate(resolveWait));
     expect(restarted).toEqual(["fx"]);
+  });
+
+  test("aborts an incomplete HTTP client within the shutdown deadline", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agentstack-control-"));
+    const path = join(root, "control.sock");
+    const server = await startControlServer(path, {
+      status,
+      async restart() {},
+    });
+    const client = createConnection(path);
+    await once(client, "connect");
+    client.write("GET /v1/status HTTP/1.1\r\nHost:");
+    const startedAt = Date.now();
+    await closeControlServer(server, path);
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
+    client.destroy();
   });
 
   test("refuses a non-socket stale control path", async () => {
@@ -126,6 +172,27 @@ describe("private control socket", () => {
     await expect(
       startControlServer(path, { status, async restart() {} }),
     ).rejects.toThrow("unsafe existing control path");
+  });
+
+  test("redacts a raw request URL before logging", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agentstack-control-"));
+    const path = join(root, "control.sock");
+    const writes: string[] = [];
+    vi.spyOn(process.stderr, "write").mockImplementation(((chunk: unknown) => {
+      writes.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write);
+    const server = await startControlServer(path, {
+      status,
+      async restart() {},
+    });
+    servers.push({ server, path });
+    await expect(
+      controlRequest(path, "GET", "/missing?token=FAKESECRET12345"),
+    ).rejects.toThrow("control request failed");
+    const output = writes.join("");
+    expect(output).not.toContain("FAKESECRET12345");
+    expect(output).toContain("token=[redacted]");
   });
 
   test("rejects components without safe System inventory metadata", () => {
@@ -141,5 +208,11 @@ describe("private control socket", () => {
     const response = status();
     response.children.fx.readiness = "auth-required";
     expect(statusExitCode(true, response)).toBe(4);
+  });
+
+  test("reports incompatible readiness as exit 5", () => {
+    const response = status();
+    response.children.codex.readiness = "incompatible";
+    expect(statusExitCode(true, response)).toBe(5);
   });
 });

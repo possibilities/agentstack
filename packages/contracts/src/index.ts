@@ -103,6 +103,15 @@ export interface ErrorResponse {
   };
 }
 
+export interface RestartAdmission {
+  schema: typeof CONTROL_SCHEMA;
+  accepted: true;
+  outcome: "admitted";
+  child: ChildId;
+  requestId: string;
+  next: "/v1/status";
+}
+
 export function isChildId(value: string): value is ChildId {
   return CHILD_IDS.some((id) => id === value);
 }
@@ -173,7 +182,8 @@ export function statusExitCode(
   if (
     status?.children &&
     Object.values(status.children).some(
-      (child) => child.observedState === "failed",
+      (child) =>
+        child.observedState === "failed" || child.readiness === "incompatible",
     )
   )
     return 5;

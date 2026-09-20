@@ -1,6 +1,6 @@
 import { access } from "node:fs/promises";
 import { resolve } from "node:path";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   ManagedChild,
   type ChildSpec,
@@ -8,6 +8,7 @@ import {
 } from "../../packages/runtime/src/index.js";
 
 const fixture = resolve(import.meta.dirname, "../fixtures/fake-child.mjs");
+afterEach(() => vi.restoreAllMocks());
 const probe: ReadinessProbe = {
   timeoutMs: 500,
   request() {
@@ -44,6 +45,17 @@ function spec(id: "codex" | "fx", mode = "ready"): ChildSpec {
     cwd: process.cwd(),
     env: { PATH: process.env.PATH ?? "", FAKE_MODE: mode },
     probe,
+  };
+}
+
+function testPolicy() {
+  return {
+    initialBackoffMs: 5,
+    maxBackoffMs: 10,
+    maxFailures: 3,
+    failureWindowMs: 1000,
+    stableResetMs: 100,
+    stopGraceMs: 50,
   };
 }
 
@@ -98,27 +110,58 @@ describe("direct child lifecycle", () => {
     await codex.restart();
     await waitFor(() => codex.status().readiness === "ready");
     expect(codex.status().generation).not.toBe(oldCodex);
+    expect(codex.status().restartCount).toBe(1);
     expect(fx.status().generation).toBe(oldFx);
+    expect(fx.status().restartCount).toBe(0);
     await Promise.all([codex.stop(), fx.stop()]);
   });
 
-  test("bounds crash retries and remains observable", async () => {
-    const child = new ManagedChild(spec("fx", "exit"), () => undefined, {
-      initialBackoffMs: 5,
-      maxBackoffMs: 10,
-      maxFailures: 3,
-      failureWindowMs: 1000,
-      stableResetMs: 100,
-      stopGraceMs: 50,
-    });
+  test("bounds crash retries and counts automatic relaunches", async () => {
+    const child = new ManagedChild(
+      spec("fx", "exit"),
+      () => undefined,
+      testPolicy(),
+    );
     await child.start();
     await waitFor(() => child.status().observedState === "failed");
     expect(child.status()).toMatchObject({
       readiness: "unavailable",
       desiredState: "running",
       observedState: "failed",
+      restartCount: 2,
     });
     await child.stop();
+  });
+
+  test("settles async ENOENT through bounded retries and stop", async () => {
+    const missing = spec("codex");
+    missing.command = resolve(
+      process.cwd(),
+      "tests/fixtures/definitely-missing-agentstack-child",
+    );
+    const child = new ManagedChild(missing, () => undefined, testPolicy());
+    await child.start();
+    await waitFor(() => child.status().observedState === "failed");
+    expect(child.status()).toMatchObject({
+      observedState: "failed",
+      readiness: "unavailable",
+      pid: null,
+      restartCount: 2,
+      lastFailure: { code: "spawn_failed" },
+    });
+    await expect(
+      Promise.race([
+        child.stop().then(() => "stopped"),
+        new Promise((resolveWait) =>
+          setTimeout(() => resolveWait("timeout"), 250),
+        ),
+      ]),
+    ).resolves.toBe("stopped");
+    expect(child.status()).toMatchObject({
+      observedState: "stopped",
+      desiredState: "stopped",
+      pid: null,
+    });
   });
 
   test("reports auth-required without a restart storm", async () => {
@@ -130,5 +173,22 @@ describe("direct child lifecycle", () => {
     expect(child.status().generation).toBe(generation);
     expect(child.status().restartCount).toBe(0);
     await child.stop();
+  });
+
+  test("never exposes projected child environment values in logs", async () => {
+    const writes: string[] = [];
+    vi.spyOn(process.stderr, "write").mockImplementation(((chunk: unknown) => {
+      writes.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write);
+    const childSpec = spec("codex");
+    childSpec.env.PRIVATE_HELPER_HANDLE = "opaque-unpatterned-capability-value";
+    const child = new ManagedChild(childSpec, () => undefined, testPolicy());
+    await child.start();
+    await waitFor(() => child.status().readiness === "ready");
+    await child.stop();
+    expect(writes.join("")).not.toContain(
+      "opaque-unpatterned-capability-value",
+    );
   });
 });

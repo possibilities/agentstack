@@ -16,6 +16,7 @@ lines.on("line", (line) => {
     return;
   }
   if (request.method !== "initialize") return;
+  if (mode === "hang") return;
   if (mode === "auth") {
     process.stdout.write(
       `${JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code: -32000, message: "authentication required" } })}\n`,

@@ -1,4 +1,5 @@
 import { chmod, lstat, unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import {
   createServer,
   request as httpRequest,
@@ -9,6 +10,7 @@ import { connect } from "node:net";
 import type {
   ChildId,
   ErrorResponse,
+  RestartAdmission,
   StatusResponse,
 } from "@agentstack/contracts";
 import { CONTROL_SCHEMA, isChildId } from "@agentstack/contracts";
@@ -21,7 +23,7 @@ export interface ControlHandlers {
 
 export interface RoutedControlResponse {
   status: number;
-  body: StatusResponse | ErrorResponse | Record<string, unknown>;
+  body: StatusResponse | ErrorResponse | RestartAdmission;
 }
 
 export interface ControlTransport {
@@ -41,21 +43,30 @@ export async function routeControlRequest(
       ? /^\/v1\/children\/([^/]+)\/restart$/.exec(path ?? "")
       : null;
   if (match?.[1] && isChildId(match[1])) {
-    try {
-      await handlers.restart(match[1]);
-      return {
-        status: 200,
-        body: { schema: CONTROL_SCHEMA, accepted: true, child: match[1] },
-      };
-    } catch {
-      return {
-        status: 500,
-        body: {
-          schema: CONTROL_SCHEMA,
-          error: { code: "restart_failed", message: "child restart failed" },
-        } satisfies ErrorResponse,
-      };
-    }
+    const child = match[1];
+    const requestId = randomUUID();
+    void Promise.resolve()
+      .then(async () => await handlers.restart(child))
+      .catch(() => {
+        log({
+          level: "error",
+          component: "control",
+          event: "restart_failed",
+          requestId,
+          child,
+        });
+      });
+    return {
+      status: 202,
+      body: {
+        schema: CONTROL_SCHEMA,
+        accepted: true,
+        outcome: "admitted",
+        child,
+        requestId,
+        next: "/v1/status",
+      } satisfies RestartAdmission,
+    };
   }
   return {
     status: 404,
@@ -95,7 +106,11 @@ async function prepareSocket(path: string): Promise<void> {
 }
 
 function json(res: ServerResponse, status: number, value: unknown): void {
-  const body = `${JSON.stringify(value)}\n`;
+  let body = `${JSON.stringify(value)}\n`;
+  if (Buffer.byteLength(body) > 1024 * 1024) {
+    status = 500;
+    body = `${JSON.stringify({ schema: CONTROL_SCHEMA, error: { code: "response_too_large", message: "control response exceeded 1 MiB" } } satisfies ErrorResponse)}\n`;
+  }
   res.writeHead(status, {
     "content-type": "application/json",
     "content-length": Buffer.byteLength(body),
@@ -110,7 +125,7 @@ export async function startControlServer(
 ): Promise<Server> {
   await prepareSocket(path);
   const server = createServer((req, res) => {
-    const requestId = crypto.randomUUID();
+    const requestId = randomUUID();
     void routeControlRequest(req.method, req.url, handlers).then((response) => {
       if (response.status === 404) {
         log({
@@ -125,6 +140,13 @@ export async function startControlServer(
       json(res, response.status, response.body);
     });
   });
+  server.headersTimeout = 2_000;
+  server.requestTimeout = 2_000;
+  server.keepAliveTimeout = 500;
+  server.maxRequestsPerSocket = 16;
+  server.on("clientError", (_error, socket) => {
+    socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+  });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(path, resolve);
@@ -137,7 +159,25 @@ export async function closeControlServer(
   server: Server,
   path: string,
 ): Promise<void> {
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  let resolveClosed: () => void = () => undefined;
+  const closed = new Promise<void>((resolve) => {
+    resolveClosed = resolve;
+  });
+  server.close(resolveClosed);
+  server.closeIdleConnections();
+  const closedGracefully = await Promise.race([
+    closed.then(() => true),
+    new Promise<boolean>((resolve) =>
+      setTimeout(() => resolve(false), 500).unref(),
+    ),
+  ]);
+  if (!closedGracefully) {
+    server.closeAllConnections();
+    await Promise.race([
+      closed,
+      new Promise<void>((resolve) => setTimeout(resolve, 250).unref()),
+    ]);
+  }
   try {
     await unlink(path);
   } catch (error) {

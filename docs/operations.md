@@ -25,4 +25,6 @@ Status exits are 0 healthy, 3 stopped, 4 degraded, and 5 incompatible or failed.
 
 `Restart=on-failure` recovers an unexpected daemon exit. The daemon retries an unexpected child exit at 250 ms exponential backoff capped at 10 seconds, with five failures in 60 seconds. Authentication and protocol incompatibility remain observable without a restart storm. Intentional shutdown closes control admission, ends child input, sends SIGTERM, waits, and escalates owned children after the grace period. `KillMode=mixed` is the cgroup backstop.
 
+`agentstack child restart` returns only after the daemon admits the operation. It does not claim terminal success; inspect `agentstack status` for the new generation and readiness. A lost response has unknown outcome and must be observed before retrying.
+
 Removal preserves `$XDG_CONFIG_HOME/agentstack` and `$XDG_STATE_HOME/agentstack`. Stop and disable the user unit before removal. No package hook guesses desktop users or deletes their state.

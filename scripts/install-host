@@ -119,7 +119,7 @@ sudo -n apt-get install -y "$stage/$asset"
 ${enable}`;
   await run("ssh", [options.remote, remoteProgram]);
   process.stdout.write(
-    `Installed verified ${options.repository} ${options.tag} on ${options.remote}.\n`,
+    `Installed checksum-verified ${options.repository} ${options.tag} on ${options.remote}. GitHub attestation verification remains a separate qualification check.\n`,
   );
 }
 
