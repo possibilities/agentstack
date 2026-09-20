@@ -9,11 +9,11 @@ const tagPattern = /^v([0-9][A-Za-z0-9.+~-]*)$/;
 const shaPattern = /^[a-f0-9]{64}$/;
 
 function usage() {
-  return `Usage: scripts/install-host --remote HOST --repository OWNER/REPO --tag vVERSION --expected-sha256 SHA256 [--enable] [--confirm INSTALL-AGENTSTACK-ON-HOST]\n`;
+  return "Usage: scripts/install-host --remote HOST --repository OWNER/REPO --tag vVERSION --expected-sha256 SHA256 [--enable] [--confirm INSTALL-AGENTSTACK-ON-HOST]\n";
 }
 
 function fail(message) {
-  throw new Error(`install-host: ${message}`);
+  throw new Error("install-host: " + message);
 }
 
 function parseArgs(argv) {
@@ -33,10 +33,10 @@ function parseArgs(argv) {
     ) {
       const value = argv[index + 1];
       if (!value || value.startsWith("--"))
-        fail(`${argument} requires a value`);
+        fail(argument + " requires a value");
       result[argument.slice(2).replaceAll("-", "_")] = value;
       index += 1;
-    } else fail(`unknown argument: ${argument}`);
+    } else fail("unknown argument: " + argument);
   }
   return result;
 }
@@ -49,168 +49,67 @@ function run(command, args) {
       if (code === 0) resolveRun();
       else
         rejectRun(
-          new Error(`${command} failed (${signal ?? `exit ${String(code)}`})`),
+          new Error(
+            command +
+              " failed (" +
+              (signal ?? "exit " + String(code)) +
+              ")",
+          ),
         );
     });
   });
 }
 
-function composeRemoteProgram({
-  base,
-  asset,
-  expectedSha256,
-  tag,
-  version,
-  enable,
-}) {
-  const preferEnable = enable ? "1" : "0";
-  return `set -eu
-# Preserve all user state under XDG config/state; never delete engines/fx orphans.
-stage=$(mktemp -d /tmp/agentstack-release.XXXXXXXX)
-trap 'rm -rf -- "$stage"' EXIT HUP INT TERM
-base=${base}
-asset=${asset}
-expected=${expectedSha256}
-version=${version}
-prefer_enable=${preferEnable}
-curl --fail --location --proto '=https' --tlsv1.2 "$base/$asset" -o "$stage/$asset"
-curl --fail --location --proto '=https' --tlsv1.2 "$base/SHA256SUMS" -o "$stage/SHA256SUMS"
-curl --fail --location --proto '=https' --tlsv1.2 "$base/release-manifest.json" -o "$stage/release-manifest.json"
-actual=$(sha256sum "$stage/$asset" | awk '{print $1}')
-listed=$(awk -v asset="$asset" '$2 == asset { print $1 }' "$stage/SHA256SUMS")
-test -n "$listed"
-test "$actual" = "$listed"
-test "$actual" = "$expected"
-python3 - "$stage/release-manifest.json" "$asset" "$expected" '${tag}' <<'PY'
-import json, sys
-path, asset, expected, tag = sys.argv[1:]
-with open(path, encoding="utf-8") as handle:
-    manifest = json.load(handle)
-assert manifest["schema"] == "agentstack.release.v1"
-assert manifest["source"]["tag"] == tag
-assert manifest["artifact"]["name"] == asset
-assert manifest["artifact"]["sha256"] == expected
-PY
-prior_active=0
-prior_enabled=0
-if command -v systemctl >/dev/null 2>&1; then
-  if systemctl --user is-active --quiet agentstack.service 2>/dev/null; then
-    prior_active=1
-  fi
-  if systemctl --user is-enabled --quiet agentstack.service 2>/dev/null; then
-    prior_enabled=1
-  fi
-fi
-old_daemon_pid=""
-old_codex_pid=""
-old_fx_pids=""
-# Capture old-fx-pids before package replacement so we can assert they are gone.
-if command -v agentstack >/dev/null 2>&1; then
-  status_json=$(agentstack status --json 2>/dev/null || true)
-  if [ -n "$status_json" ]; then
-    old_daemon_pid=$(printf '%s' "$status_json" | python3 -c 'import json,sys
-try:
-  data=json.load(sys.stdin)
-except Exception:
-  data={}
-control=data.get("control") if isinstance(data.get("control"), dict) else data
-if not isinstance(control, dict):
-  control={}
-daemon=control.get("daemon") if isinstance(control.get("daemon"), dict) else {}
-print(daemon.get("pid") or "")' || true)
-    old_codex_pid=$(printf '%s' "$status_json" | python3 -c 'import json,sys
-try:
-  data=json.load(sys.stdin)
-except Exception:
-  data={}
-control=data.get("control") if isinstance(data.get("control"), dict) else data
-if not isinstance(control, dict):
-  control={}
-children=control.get("children") if isinstance(control.get("children"), dict) else {}
-child=children.get("codex") if isinstance(children.get("codex"), dict) else {}
-print(child.get("pid") or "")' || true)
-    old_fx_pids=$(printf '%s' "$status_json" | python3 -c 'import json,sys
-try:
-  data=json.load(sys.stdin)
-except Exception:
-  data={}
-control=data.get("control") if isinstance(data.get("control"), dict) else data
-if not isinstance(control, dict):
-  control={}
-children=control.get("children") if isinstance(control.get("children"), dict) else {}
-child=children.get("fx") if isinstance(children.get("fx"), dict) else {}
-print(child.get("pid") or "")' || true)
-  fi
-fi
-if [ -z "$old_fx_pids" ]; then
-  old_fx_pids=$(ps -eo pid=,args= 2>/dev/null | awk '/\\/engines\\/fx(\\/| )|\\/engines\\/fx\\/fx( |$)/ { print $1 }' | tr '\\n' ' ' || true)
-fi
-state_home="\${XDG_STATE_HOME:-\$HOME/.local/state}/agentstack"
-config_home="\${XDG_CONFIG_HOME:-\$HOME/.config}/agentstack"
-if [ "$prior_active" = 1 ]; then
-  if command -v agentstack >/dev/null 2>&1; then
-    agentstack stop || true
-  else
-    systemctl --user stop agentstack.service || true
-  fi
-fi
-sudo -n apt-get install -y "$stage/$asset"
-installed=$(dpkg-query -W -f='\${Version}' agentstack)
-test "$installed" = "$version"
-cli_version=$(agentstack version)
-printf '%s' "$cli_version" | grep -F "$version" >/dev/null
-test ! -e /usr/lib/agentstack/current/engines/fx
-want_enabled=0
-want_active=0
-if [ "$prefer_enable" = 1 ] || [ "$prior_enabled" = 1 ]; then
-  want_enabled=1
-fi
-if [ "$prefer_enable" = 1 ] || [ "$prior_active" = 1 ]; then
-  want_active=1
-fi
-if [ "$want_enabled" = 1 ]; then
-  if [ "$want_active" = 1 ]; then
-    agentstack enable --now
-  else
-    agentstack enable
-  fi
-elif [ "$want_active" = 1 ]; then
-  agentstack start
-fi
-if [ "$want_active" = 1 ]; then
-  status_json=$(agentstack status --json || true)
-  printf '%s' "$status_json" | python3 - "$version" <<'PY'
-import json, sys
-version = sys.argv[1]
-data = json.load(sys.stdin)
-control = data.get("control") if isinstance(data.get("control"), dict) else data
-assert isinstance(control, dict), data
-assert (
-    control.get("productVersion") == version
-    or control.get("installedVersion") == version
-    or control.get("runningVersion") == version
-), control
-components = (control.get("systemInventory") or {}).get("components") or []
-ids = {component.get("id") for component in components}
-assert "fx" not in ids, ids
-assert set(ids) == {"daemon", "codex"}, ids
-children = control.get("children") or {}
-assert "fx" not in children, children
-assert "codex" in children, children
-assert children["codex"].get("readiness") in ("ready", "auth-required", "unknown", "unavailable"), children["codex"]
-PY
-fi
-for pid in $old_fx_pids; do
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-    echo "install-host: old Fx process still running: $pid" >&2
-    exit 1
-  fi
-done
-# Preserve all user state: config and state directories must survive upgrade.
-test -d "$config_home" || true
-test -d "$state_home" || true
-printf 'install-host: Preserve all user state under %s and %s\\n' "$config_home" "$state_home"
-printf 'install-host: upgrade to %s complete (prior_active=%s prior_enabled=%s)\\n' "$version" "$prior_active" "$prior_enabled"`;
+const extractPidPython = "import json, os, sys\n\ndef load_status():\n    raw = os.environ.get(\"AGENTSTACK_STATUS_JSON\", \"\")\n    if not raw.strip():\n        return {}\n    try:\n        data = json.loads(raw)\n    except Exception:\n        return {}\n    if not isinstance(data, dict):\n        return {}\n    control = data.get(\"control\") if isinstance(data.get(\"control\"), dict) else data\n    return control if isinstance(control, dict) else {}\n\ncontrol = load_status()\nkind = os.environ.get(\"AGENTSTACK_PID_KIND\", \"\")\nif kind == \"daemon\":\n    daemon = control.get(\"daemon\") if isinstance(control.get(\"daemon\"), dict) else {}\n    print(daemon.get(\"pid\") or \"\")\nelif kind == \"daemon_generation\":\n    daemon = control.get(\"daemon\") if isinstance(control.get(\"daemon\"), dict) else {}\n    print(daemon.get(\"generation\") or \"\")\nelif kind == \"codex\":\n    children = control.get(\"children\") if isinstance(control.get(\"children\"), dict) else {}\n    child = children.get(\"codex\") if isinstance(children.get(\"codex\"), dict) else {}\n    print(child.get(\"pid\") or \"\")\nelif kind == \"fx\":\n    children = control.get(\"children\") if isinstance(control.get(\"children\"), dict) else {}\n    child = children.get(\"fx\") if isinstance(children.get(\"fx\"), dict) else {}\n    print(child.get(\"pid\") or \"\")\nelse:\n    sys.exit(2)\n";
+const verifyMigrationPython = "import json, os, sys\n\ndef load_status():\n    raw = os.environ.get(\"AGENTSTACK_STATUS_JSON\", \"\")\n    if not raw.strip():\n        return {}\n    try:\n        data = json.loads(raw)\n    except Exception:\n        return {}\n    if not isinstance(data, dict):\n        return {}\n    control = data.get(\"control\") if isinstance(data.get(\"control\"), dict) else data\n    return control if isinstance(control, dict) else {}\n\ncontrol = load_status()\nexpected = os.environ[\"AGENTSTACK_EXPECTED_VERSION\"]\nold_daemon = os.environ.get(\"AGENTSTACK_OLD_DAEMON_PID\", \"\").strip()\nold_generation = os.environ.get(\"AGENTSTACK_OLD_DAEMON_GENERATION\", \"\").strip()\nif not control:\n    raise SystemExit(\"status control payload missing or unparseable\")\nproduct = control.get(\"productVersion\")\ninstalled = control.get(\"installedVersion\")\nrunning = control.get(\"runningVersion\")\nif product != expected or installed != expected or running != expected:\n    raise SystemExit(\n        f\"version mismatch: product={product!r} installed={installed!r} running={running!r} expected={expected!r}\"\n    )\ndaemon = control.get(\"daemon\") if isinstance(control.get(\"daemon\"), dict) else {}\nnew_pid = daemon.get(\"pid\")\nnew_generation = str(daemon.get(\"generation\") or \"\")\nif new_pid is None or new_pid == \"\":\n    raise SystemExit(\"new daemon pid missing\")\nnew_pid = str(new_pid)\nif old_daemon and new_pid == old_daemon:\n    raise SystemExit(f\"daemon pid did not change after upgrade: {new_pid}\")\nif old_generation and (not new_generation or new_generation == old_generation):\n    raise SystemExit(\n        f\"daemon generation did not change after upgrade: {new_generation!r}\"\n    )\ncomponents = (control.get(\"systemInventory\") or {}).get(\"components\") or []\nids = {component.get(\"id\") for component in components if isinstance(component, dict)}\nif \"fx\" in ids:\n    raise SystemExit(f\"fx still present in inventory: {ids}\")\nif ids != {\"daemon\", \"codex\"}:\n    raise SystemExit(f\"expected inventory {{daemon, codex}}, got {ids}\")\nchildren = control.get(\"children\") if isinstance(control.get(\"children\"), dict) else {}\nif \"fx\" in children:\n    raise SystemExit(f\"fx still present in children: {children}\")\nif \"codex\" not in children or not isinstance(children.get(\"codex\"), dict):\n    raise SystemExit(f\"codex child missing: {children}\")\nreadiness = children[\"codex\"].get(\"readiness\")\nif readiness != \"ready\":\n    raise SystemExit(f\"codex readiness not ready: {readiness!r}\")\nprint(new_pid)\n";
+const UPGRADE_MIGRATION_BODY = "prior_active=0\nprior_enabled=0\nif command -v systemctl >/dev/null 2>&1; then\n  if systemctl --user is-active --quiet agentstack.service 2>/dev/null; then\n    prior_active=1\n  fi\n  if systemctl --user is-enabled --quiet agentstack.service 2>/dev/null; then\n    prior_enabled=1\n  fi\nfi\nold_daemon_pid=\"\"\nold_daemon_generation=\"\"\nold_codex_pid=\"\"\nold_fx_pid=\"\"\nif command -v agentstack >/dev/null 2>&1; then\n  status_json=$(agentstack status --json 2>/dev/null || true)\n  if [ -n \"$status_json\" ]; then\n    export AGENTSTACK_STATUS_JSON=\"$status_json\"\n    old_daemon_pid=$(AGENTSTACK_PID_KIND=daemon python3 <<'PY'\nimport json, os, sys\n\ndef load_status():\n    raw = os.environ.get(\"AGENTSTACK_STATUS_JSON\", \"\")\n    if not raw.strip():\n        return {}\n    try:\n        data = json.loads(raw)\n    except Exception:\n        return {}\n    if not isinstance(data, dict):\n        return {}\n    control = data.get(\"control\") if isinstance(data.get(\"control\"), dict) else data\n    return control if isinstance(control, dict) else {}\n\ncontrol = load_status()\nkind = os.environ.get(\"AGENTSTACK_PID_KIND\", \"\")\nif kind == \"daemon\":\n    daemon = control.get(\"daemon\") if isinstance(control.get(\"daemon\"), dict) else {}\n    print(daemon.get(\"pid\") or \"\")\nelif kind == \"daemon_generation\":\n    daemon = control.get(\"daemon\") if isinstance(control.get(\"daemon\"), dict) else {}\n    print(daemon.get(\"generation\") or \"\")\nelif kind == \"codex\":\n    children = control.get(\"children\") if isinstance(control.get(\"children\"), dict) else {}\n    child = children.get(\"codex\") if isinstance(children.get(\"codex\"), dict) else {}\n    print(child.get(\"pid\") or \"\")\nelif kind == \"fx\":\n    children = control.get(\"children\") if isinstance(control.get(\"children\"), dict) else {}\n    child = children.get(\"fx\") if isinstance(children.get(\"fx\"), dict) else {}\n    print(child.get(\"pid\") or \"\")\nelse:\n    sys.exit(2)\n\nPY\n)\n    old_daemon_generation=$(AGENTSTACK_PID_KIND=daemon_generation python3 <<'PY'\nimport json, os, sys\n\ndef load_status():\n    raw = os.environ.get(\"AGENTSTACK_STATUS_JSON\", \"\")\n    if not raw.strip():\n        return {}\n    try:\n        data = json.loads(raw)\n    except Exception:\n        return {}\n    if not isinstance(data, dict):\n        return {}\n    control = data.get(\"control\") if isinstance(data.get(\"control\"), dict) else data\n    return control if isinstance(control, dict) else {}\n\ncontrol = load_status()\nkind = os.environ.get(\"AGENTSTACK_PID_KIND\", \"\")\nif kind == \"daemon\":\n    daemon = control.get(\"daemon\") if isinstance(control.get(\"daemon\"), dict) else {}\n    print(daemon.get(\"pid\") or \"\")\nelif kind == \"daemon_generation\":\n    daemon = control.get(\"daemon\") if isinstance(control.get(\"daemon\"), dict) else {}\n    print(daemon.get(\"generation\") or \"\")\nelif kind == \"codex\":\n    children = control.get(\"children\") if isinstance(control.get(\"children\"), dict) else {}\n    child = children.get(\"codex\") if isinstance(children.get(\"codex\"), dict) else {}\n    print(child.get(\"pid\") or \"\")\nelif kind == \"fx\":\n    children = control.get(\"children\") if isinstance(control.get(\"children\"), dict) else {}\n    child = children.get(\"fx\") if isinstance(children.get(\"fx\"), dict) else {}\n    print(child.get(\"pid\") or \"\")\nelse:\n    sys.exit(2)\n\nPY\n)\n    old_codex_pid=$(AGENTSTACK_PID_KIND=codex python3 <<'PY'\nimport json, os, sys\n\ndef load_status():\n    raw = os.environ.get(\"AGENTSTACK_STATUS_JSON\", \"\")\n    if not raw.strip():\n        return {}\n    try:\n        data = json.loads(raw)\n    except Exception:\n        return {}\n    if not isinstance(data, dict):\n        return {}\n    control = data.get(\"control\") if isinstance(data.get(\"control\"), dict) else data\n    return control if isinstance(control, dict) else {}\n\ncontrol = load_status()\nkind = os.environ.get(\"AGENTSTACK_PID_KIND\", \"\")\nif kind == \"daemon\":\n    daemon = control.get(\"daemon\") if isinstance(control.get(\"daemon\"), dict) else {}\n    print(daemon.get(\"pid\") or \"\")\nelif kind == \"daemon_generation\":\n    daemon = control.get(\"daemon\") if isinstance(control.get(\"daemon\"), dict) else {}\n    print(daemon.get(\"generation\") or \"\")\nelif kind == \"codex\":\n    children = control.get(\"children\") if isinstance(control.get(\"children\"), dict) else {}\n    child = children.get(\"codex\") if isinstance(children.get(\"codex\"), dict) else {}\n    print(child.get(\"pid\") or \"\")\nelif kind == \"fx\":\n    children = control.get(\"children\") if isinstance(control.get(\"children\"), dict) else {}\n    child = children.get(\"fx\") if isinstance(children.get(\"fx\"), dict) else {}\n    print(child.get(\"pid\") or \"\")\nelse:\n    sys.exit(2)\n\nPY\n)\n    old_fx_pid=$(AGENTSTACK_PID_KIND=fx python3 <<'PY'\nimport json, os, sys\n\ndef load_status():\n    raw = os.environ.get(\"AGENTSTACK_STATUS_JSON\", \"\")\n    if not raw.strip():\n        return {}\n    try:\n        data = json.loads(raw)\n    except Exception:\n        return {}\n    if not isinstance(data, dict):\n        return {}\n    control = data.get(\"control\") if isinstance(data.get(\"control\"), dict) else data\n    return control if isinstance(control, dict) else {}\n\ncontrol = load_status()\nkind = os.environ.get(\"AGENTSTACK_PID_KIND\", \"\")\nif kind == \"daemon\":\n    daemon = control.get(\"daemon\") if isinstance(control.get(\"daemon\"), dict) else {}\n    print(daemon.get(\"pid\") or \"\")\nelif kind == \"daemon_generation\":\n    daemon = control.get(\"daemon\") if isinstance(control.get(\"daemon\"), dict) else {}\n    print(daemon.get(\"generation\") or \"\")\nelif kind == \"codex\":\n    children = control.get(\"children\") if isinstance(control.get(\"children\"), dict) else {}\n    child = children.get(\"codex\") if isinstance(children.get(\"codex\"), dict) else {}\n    print(child.get(\"pid\") or \"\")\nelif kind == \"fx\":\n    children = control.get(\"children\") if isinstance(control.get(\"children\"), dict) else {}\n    child = children.get(\"fx\") if isinstance(children.get(\"fx\"), dict) else {}\n    print(child.get(\"pid\") or \"\")\nelse:\n    sys.exit(2)\n\nPY\n)\n  fi\nfi\nif [ -z \"$old_fx_pid\" ]; then\n  old_fx_pid=$(ps -eo pid=,args= 2>/dev/null | awk '/\\/engines\\/fx(\\/| )|\\/engines\\/fx\\/fx( |$)/ { print $1 }' | head -n 1 | tr -d ' ' || true)\nfi\nstate_home=\"${XDG_STATE_HOME:-$HOME/.local/state}/agentstack\"\nconfig_home=\"${XDG_CONFIG_HOME:-$HOME/.config}/agentstack\"\nmkdir -p \"$state_home\" \"$config_home\"\nstate_marker=\"$state_home/.agentstack-upgrade-marker\"\nmarker_value=\"$(date +%s)-$$-$RANDOM\"\nprintf '%s\\n' \"$marker_value\" > \"$state_marker\"\nconfig_marker=\"$config_home/.agentstack-upgrade-config-marker\"\nprintf '%s\\n' \"$marker_value\" > \"$config_marker\"\npre_config_inode=$(stat -c '%i' \"$config_home\")\npre_state_inode=$(stat -c '%i' \"$state_home\")\npre_fx_inode=\"\"\nhad_fx_state=0\nif [ -d \"$state_home/engines/fx\" ]; then\n  had_fx_state=1\n  pre_fx_inode=$(stat -c '%i' \"$state_home/engines/fx\")\nfi\nif [ \"$prior_active\" = 1 ]; then\n  if command -v agentstack >/dev/null 2>&1; then\n    agentstack stop\n  elif command -v systemctl >/dev/null 2>&1; then\n    systemctl --user stop agentstack.service\n  else\n    echo \"install-host: cannot stop active agentstack (no agentstack or systemctl)\" >&2\n    exit 1\n  fi\n  attempt=1\n  while [ \"$attempt\" -le \"$quiesce_attempts\" ]; do\n    still_alive=0\n    for pid in $old_daemon_pid $old_codex_pid $old_fx_pid; do\n      if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then\n        still_alive=1\n        break\n      fi\n    done\n    if [ \"$still_alive\" = 0 ]; then\n      if command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet agentstack.service 2>/dev/null; then\n        still_alive=1\n      fi\n    fi\n    if [ \"$still_alive\" = 0 ]; then\n      break\n    fi\n    sleep \"$quiesce_sleep\"\n    attempt=$((attempt + 1))\n  done\n  for pid in $old_daemon_pid $old_codex_pid $old_fx_pid; do\n    if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then\n      echo \"install-host: refused to replace package; process still running after stop: $pid\" >&2\n      exit 1\n    fi\n  done\n  if command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet agentstack.service 2>/dev/null; then\n    echo \"install-host: refused to replace package; agentstack.service still active after stop\" >&2\n    exit 1\n  fi\nfi\nsudo -n apt-get install -y \"$stage/$asset\"\ninstalled=$(dpkg-query -W -f='${Version}' agentstack)\ntest \"$installed\" = \"$version\"\ncli_version=$(agentstack version)\nprintf '%s' \"$cli_version\" | grep -F \"$version\" >/dev/null\ninstall_root=\"${AGENTSTACK_INSTALL_ROOT:-}\"\ntest ! -e \"${install_root}/usr/lib/agentstack/current/engines/fx\"\ntest -f \"$state_marker\"\ntest \"$(cat \"$state_marker\")\" = \"$marker_value\"\ntest -f \"$config_marker\"\ntest \"$(cat \"$config_marker\")\" = \"$marker_value\"\ntest -d \"$config_home\"\ntest \"$(stat -c '%i' \"$config_home\")\" = \"$pre_config_inode\"\ntest -d \"$state_home\"\ntest \"$(stat -c '%i' \"$state_home\")\" = \"$pre_state_inode\"\nif [ \"$had_fx_state\" = 1 ]; then\n  test -d \"$state_home/engines/fx\"\n  test \"$(stat -c '%i' \"$state_home/engines/fx\")\" = \"$pre_fx_inode\"\nfi\nwant_enabled=0\nwant_active=0\nif [ \"$prefer_enable\" = 1 ] || [ \"$prior_enabled\" = 1 ]; then\n  want_enabled=1\nfi\nif [ \"$prefer_enable\" = 1 ] || [ \"$prior_active\" = 1 ]; then\n  want_active=1\nfi\nif [ \"$want_enabled\" = 1 ]; then\n  if [ \"$want_active\" = 1 ]; then\n    agentstack enable --now\n  else\n    agentstack enable\n  fi\nelif [ \"$want_active\" = 1 ]; then\n  agentstack start\nfi\nif [ \"$want_active\" = 1 ]; then\n  verified=0\n  new_daemon_pid=\"\"\n  attempt=1\n  while [ \"$attempt\" -le \"$readiness_attempts\" ]; do\n    status_json=$(agentstack status --json 2>/dev/null || true)\n    if [ -n \"$status_json\" ]; then\n      export AGENTSTACK_STATUS_JSON=\"$status_json\"\n      export AGENTSTACK_EXPECTED_VERSION=\"$version\"\n      export AGENTSTACK_OLD_DAEMON_PID=\"$old_daemon_pid\"\n      export AGENTSTACK_OLD_DAEMON_GENERATION=\"$old_daemon_generation\"\n      if new_daemon_pid=$(python3 <<'PY'\nimport json, os, sys\n\ndef load_status():\n    raw = os.environ.get(\"AGENTSTACK_STATUS_JSON\", \"\")\n    if not raw.strip():\n        return {}\n    try:\n        data = json.loads(raw)\n    except Exception:\n        return {}\n    if not isinstance(data, dict):\n        return {}\n    control = data.get(\"control\") if isinstance(data.get(\"control\"), dict) else data\n    return control if isinstance(control, dict) else {}\n\ncontrol = load_status()\nexpected = os.environ[\"AGENTSTACK_EXPECTED_VERSION\"]\nold_daemon = os.environ.get(\"AGENTSTACK_OLD_DAEMON_PID\", \"\").strip()\nold_generation = os.environ.get(\"AGENTSTACK_OLD_DAEMON_GENERATION\", \"\").strip()\nif not control:\n    raise SystemExit(\"status control payload missing or unparseable\")\nproduct = control.get(\"productVersion\")\ninstalled = control.get(\"installedVersion\")\nrunning = control.get(\"runningVersion\")\nif product != expected or installed != expected or running != expected:\n    raise SystemExit(\n        f\"version mismatch: product={product!r} installed={installed!r} running={running!r} expected={expected!r}\"\n    )\ndaemon = control.get(\"daemon\") if isinstance(control.get(\"daemon\"), dict) else {}\nnew_pid = daemon.get(\"pid\")\nnew_generation = str(daemon.get(\"generation\") or \"\")\nif new_pid is None or new_pid == \"\":\n    raise SystemExit(\"new daemon pid missing\")\nnew_pid = str(new_pid)\nif old_daemon and new_pid == old_daemon:\n    raise SystemExit(f\"daemon pid did not change after upgrade: {new_pid}\")\nif old_generation and (not new_generation or new_generation == old_generation):\n    raise SystemExit(\n        f\"daemon generation did not change after upgrade: {new_generation!r}\"\n    )\ncomponents = (control.get(\"systemInventory\") or {}).get(\"components\") or []\nids = {component.get(\"id\") for component in components if isinstance(component, dict)}\nif \"fx\" in ids:\n    raise SystemExit(f\"fx still present in inventory: {ids}\")\nif ids != {\"daemon\", \"codex\"}:\n    raise SystemExit(f\"expected inventory {{daemon, codex}}, got {ids}\")\nchildren = control.get(\"children\") if isinstance(control.get(\"children\"), dict) else {}\nif \"fx\" in children:\n    raise SystemExit(f\"fx still present in children: {children}\")\nif \"codex\" not in children or not isinstance(children.get(\"codex\"), dict):\n    raise SystemExit(f\"codex child missing: {children}\")\nreadiness = children[\"codex\"].get(\"readiness\")\nif readiness != \"ready\":\n    raise SystemExit(f\"codex readiness not ready: {readiness!r}\")\nprint(new_pid)\n\nPY\n      ); then\n        verified=1\n        break\n      fi\n    fi\n    sleep \"$readiness_sleep\"\n    attempt=$((attempt + 1))\n  done\n  if [ \"$verified\" != 1 ]; then\n    echo \"install-host: bounded readiness poll failed for version $version (Codex ready + strict version AND + new daemon identity)\" >&2\n    exit 1\n  fi\n  for pid in $old_daemon_pid $old_codex_pid $old_fx_pid; do\n    if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then\n      echo \"install-host: old process still running after upgrade: $pid\" >&2\n      exit 1\n    fi\n  done\n  if [ -n \"$old_daemon_pid\" ]; then\n    test -n \"$new_daemon_pid\"\n    test \"$new_daemon_pid\" != \"$old_daemon_pid\"\n  fi\nfi\nprintf 'install-host: Preserve all user state under %s and %s (orphaned fx present=%s)\\n' \"$config_home\" \"$state_home\" \"$had_fx_state\"\nprintf 'install-host: upgrade to %s complete (prior_active=%s prior_enabled=%s old_daemon_pid=%s new identity verified)\\n' \"$version\" \"$prior_active\" \"$prior_enabled\" \"$old_daemon_pid\"";
+
+function composeUpgradeMigration() {
+  return UPGRADE_MIGRATION_BODY;
+}
+
+function composeRemoteProgram(options) {
+  const base = options.base;
+  const asset = options.asset;
+  const expectedSha256 = options.expectedSha256;
+  const tag = options.tag;
+  const version = options.version;
+  const preferEnable = options.enable ? "1" : "0";
+  const lines = [
+    "set -eu",
+    "# Preserve all user state under XDG config/state; never delete engines/fx orphans.",
+    "stage=$(mktemp -d /tmp/agentstack-release.XXXXXXXX)",
+    "trap 'rm -rf -- \"$stage\"' EXIT HUP INT TERM",
+    "base=" + base,
+    "asset=" + asset,
+    "expected=" + expectedSha256,
+    "version=" + version,
+    "prefer_enable=" + preferEnable,
+    "readiness_attempts=${AGENTSTACK_INSTALL_READY_ATTEMPTS:-30}",
+    "readiness_sleep=${AGENTSTACK_INSTALL_READY_SLEEP:-1}",
+    "quiesce_attempts=${AGENTSTACK_INSTALL_QUIESCE_ATTEMPTS:-20}",
+    "quiesce_sleep=${AGENTSTACK_INSTALL_QUIESCE_SLEEP:-0.25}",
+    'curl --fail --location --proto \'=https\' --tlsv1.2 "$base/$asset" -o "$stage/$asset"',
+    'curl --fail --location --proto \'=https\' --tlsv1.2 "$base/SHA256SUMS" -o "$stage/SHA256SUMS"',
+    'curl --fail --location --proto \'=https\' --tlsv1.2 "$base/release-manifest.json" -o "$stage/release-manifest.json"',
+    'actual=$(sha256sum "$stage/$asset" | awk \'{print $1}\')',
+    'listed=$(awk -v asset="$asset" \'$2 == asset { print $1 }\' "$stage/SHA256SUMS")',
+    'test -n "$listed"',
+    'test "$actual" = "$listed"',
+    'test "$actual" = "$expected"',
+    "python3 - \"$stage/release-manifest.json\" \"$asset\" \"$expected\" '" + tag + "' <<'PY'",
+    "import json, sys",
+    "path, asset, expected, tag = sys.argv[1:]",
+    'with open(path, encoding="utf-8") as handle:',
+    "    manifest = json.load(handle)",
+    'assert manifest["schema"] == "agentstack.release.v1"',
+    'assert manifest["source"]["tag"] == tag',
+    'assert manifest["artifact"]["name"] == asset',
+    'assert manifest["artifact"]["sha256"] == expected',
+    "PY",
+    composeUpgradeMigration(),
+  ];
+  return lines.join("\n");
 }
 
 async function main() {
@@ -228,8 +127,8 @@ async function main() {
   if (!options.expected_sha256 || !shaPattern.test(options.expected_sha256))
     fail("--expected-sha256 must be a lowercase SHA-256 digest");
   const version = tag[1];
-  const asset = `agentstack_${version}_amd64.deb`;
-  const confirmation = `INSTALL-AGENTSTACK-ON-${options.remote}`;
+  const asset = "agentstack_" + version + "_amd64.deb";
+  const confirmation = "INSTALL-AGENTSTACK-ON-" + options.remote;
   const plan = {
     remote: options.remote,
     repository: options.repository,
@@ -240,20 +139,31 @@ async function main() {
     confirmationRequired: confirmation,
     upgrade: {
       stopBeforeReplace: true,
+      failClosedQuiescence: true,
+      proveOldDaemonCodexFxGone: true,
+      requireRunningAndInstalledVersion: true,
+      requireNewDaemonIdentity: true,
+      boundedReadyPoll: true,
       restorePriorActiveEnabled: true,
       verifyCodexOnly: true,
       preserveUserState: true,
+      preserveOrphanedFxState: true,
     },
   };
   if (options.confirm !== confirmation) {
-    process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
+    process.stdout.write(JSON.stringify(plan, null, 2) + "\n");
     process.stdout.write(
-      `No installation was attempted. Re-run with --confirm ${confirmation} after reviewing this plan.\n`,
+      "No installation was attempted. Re-run with --confirm " +
+        confirmation +
+        " after reviewing this plan.\n",
     );
     return;
   }
-
-  const base = `https://github.com/${options.repository}/releases/download/${options.tag}`;
+  const base =
+    "https://github.com/" +
+    options.repository +
+    "/releases/download/" +
+    options.tag;
   const remoteProgram = composeRemoteProgram({
     base,
     asset,
@@ -264,7 +174,13 @@ async function main() {
   });
   await run("ssh", [options.remote, remoteProgram]);
   process.stdout.write(
-    `Installed checksum-verified ${options.repository} ${options.tag} on ${options.remote}. GitHub attestation verification remains a separate qualification check.\n`,
+    "Installed checksum-verified " +
+      options.repository +
+      " " +
+      options.tag +
+      " on " +
+      options.remote +
+      ". GitHub attestation verification remains a separate qualification check.\n",
   );
 }
 
@@ -274,10 +190,16 @@ if (
 ) {
   main().catch((error) => {
     process.stderr.write(
-      `${error instanceof Error ? error.message : String(error)}\n`,
+      (error instanceof Error ? error.message : String(error)) + "\n",
     );
     process.exitCode = 1;
   });
 }
 
-export { parseArgs, composeRemoteProgram };
+export {
+  parseArgs,
+  composeRemoteProgram,
+  composeUpgradeMigration,
+  extractPidPython,
+  verifyMigrationPython,
+};

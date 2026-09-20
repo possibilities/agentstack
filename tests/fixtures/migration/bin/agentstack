@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -eu
+STATE_DIR="${AGENTSTACK_FIXTURE_STATE:?}"
+cmd="${1:-}"
+shift || true
+kill_old_pids() {
+  [[ -f "$STATE_DIR/old_pids" ]] || return 0
+  while read -r pid; do
+    [[ -n "$pid" ]] || continue
+    /bin/kill -9 "$pid" 2>/dev/null || true
+  done < "$STATE_DIR/old_pids"
+  local i alive pid
+  for i in $(seq 1 40); do
+    alive=0
+    while read -r pid; do
+      [[ -n "$pid" ]] || continue
+      if /bin/kill -0 "$pid" 2>/dev/null; then alive=1; break; fi
+    done < "$STATE_DIR/old_pids"
+    if [[ "$alive" = 0 ]]; then return 0; fi
+    sleep 0.05
+  done
+  echo "fixture: old PIDs still alive after stop" >&2
+  return 1
+}
+case "$cmd" in
+  status)
+    if [[ "${1:-}" == "--json" ]]; then
+      if [[ -f "$STATE_DIR/status.after-start.json" && -f "$STATE_DIR/lifecycle.log" ]] && grep -qE '^(start|enable)' "$STATE_DIR/lifecycle.log" 2>/dev/null; then
+        cat "$STATE_DIR/status.after-start.json"
+        exit 0
+      fi
+      cat "$STATE_DIR/status.json"
+      exit "$(cat "$STATE_DIR/status.exit" 2>/dev/null || echo 0)"
+    fi
+    echo "status requires --json" >&2; exit 2 ;;
+  stop)
+    if [[ -f "$STATE_DIR/stop.fail" ]]; then echo "fixture: stop failed" >&2; exit 1; fi
+    printf 'stopped\n' >> "$STATE_DIR/stop.log"
+    kill_old_pids
+    printf 'inactive\n' > "$STATE_DIR/unit.active"
+    exit 0 ;;
+  start|enable)
+    printf '%s %s\n' "$cmd" "$*" >> "$STATE_DIR/lifecycle.log"
+    if [[ "$cmd" == "start" || " $* " == *" --now "* ]]; then printf 'active\n' > "$STATE_DIR/unit.active"; fi
+    if [[ "$cmd" == "enable" ]]; then printf 'enabled\n' > "$STATE_DIR/unit.enabled"; fi
+    exit 0 ;;
+  version) cat "$STATE_DIR/version.txt"; exit 0 ;;
+  *) echo "unknown $cmd" >&2; exit 2 ;;
+esac

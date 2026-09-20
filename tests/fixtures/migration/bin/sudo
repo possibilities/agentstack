@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -eu
+STATE_DIR="${AGENTSTACK_FIXTURE_STATE:?}"
+if [[ "${1:-}" != "-n" ]]; then
+  echo "fixture sudo: expected -n" >&2
+  exit 2
+fi
+shift
+if [[ "${1:-}" != "apt-get" || "${2:-}" != "install" ]]; then
+  echo "fixture sudo: expected apt-get install" >&2
+  exit 2
+fi
+if [[ "$(cat "$STATE_DIR/unit.active" 2>/dev/null || echo inactive)" == "active" ]]; then
+  echo "fixture sudo: refusing package replace while unit active" >&2
+  exit 1
+fi
+if [[ -f "$STATE_DIR/old_pids" ]]; then
+  while read -r pid; do
+    [[ -n "$pid" ]] || continue
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "fixture sudo: refusing package replace; pid $pid still running" >&2
+      exit 1
+    fi
+  done < "$STATE_DIR/old_pids"
+fi
+printf 'apt-get %s\n' "$*" >> "$STATE_DIR/apt.log"
+printf '%s\n' "${AGENTSTACK_FIXTURE_NEW_VERSION:?}" > "$STATE_DIR/dpkg.version"
+printf 'AgentStack %s\n' "${AGENTSTACK_FIXTURE_NEW_VERSION}" > "$STATE_DIR/version.txt"
+rm -rf "$STATE_DIR/pkgroot/usr/lib/agentstack/current/engines/fx"
+mkdir -p "$STATE_DIR/pkgroot/usr/lib/agentstack/current/engines/codex"
+exit 0

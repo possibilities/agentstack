@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -eu
+STATE_DIR="${AGENTSTACK_FIXTURE_STATE:?}"
+if [[ "${1:-}" != "--user" ]]; then
+  echo "fixture systemctl: only --user supported" >&2
+  exit 2
+fi
+shift
+verb="${1:-}"
+shift || true
+unit="${1:-}"
+case "$verb" in
+  is-active)
+    active=$(cat "$STATE_DIR/unit.active" 2>/dev/null || echo inactive)
+    [[ "$active" == "active" ]] && exit 0
+    exit 1
+    ;;
+  is-enabled)
+    enabled=$(cat "$STATE_DIR/unit.enabled" 2>/dev/null || echo disabled)
+    [[ "$enabled" == "enabled" ]] && exit 0
+    exit 1
+    ;;
+  stop)
+    if [[ -f "$STATE_DIR/systemctl-stop.fail" ]]; then
+      echo "fixture: systemctl stop failed" >&2
+      exit 1
+    fi
+    printf 'systemctl-stop %s\n' "$unit" >> "$STATE_DIR/stop.log"
+    if [[ -f "$STATE_DIR/old_pids" ]]; then
+      while read -r pid; do
+        [[ -n "$pid" ]] || continue
+        kill "$pid" 2>/dev/null || true
+      done < "$STATE_DIR/old_pids"
+    fi
+    printf 'inactive\n' > "$STATE_DIR/unit.active"
+    exit 0
+    ;;
+  *)
+    echo "fixture systemctl: unsupported $verb" >&2
+    exit 2
+    ;;
+esac

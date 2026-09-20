@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -eu
+STATE_DIR="${AGENTSTACK_FIXTURE_STATE:?}"
+cat "$STATE_DIR/dpkg.version"

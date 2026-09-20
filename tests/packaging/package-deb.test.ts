@@ -128,18 +128,21 @@ describe("Debian package staging", () => {
     });
     expect(program).toContain("prior_active=");
     expect(program).toContain("prior_enabled=");
-    expect(program).toContain("old-fx-pids");
+    expect(program).toContain("old_fx_pid");
+    expect(program).toContain("AGENTSTACK_STATUS_JSON");
+    expect(program).not.toContain("json.load(sys.stdin)");
     expect(program).toMatch(/agentstack stop|systemctl --user stop/);
+    expect(program).not.toMatch(/agentstack stop \|\| true/);
     expect(program).toContain('sudo -n apt-get install -y "$stage/$asset"');
     expect(program.indexOf("agentstack stop")).toBeLessThan(
       program.indexOf('sudo -n apt-get install -y "$stage/$asset"'),
     );
     expect(program).toContain("agentstack enable --now");
     expect(program).toContain('test "$installed" = "$version"');
-    expect(program).toContain("test ! -e /usr/lib/agentstack/current/engines/fx");
-    expect(program).toContain('assert "fx" not in children');
-    expect(program).toContain('assert set(ids) == {"daemon", "codex"}');
-    expect(program).toContain("old Fx process still running");
+    expect(program).toContain("agentstack-upgrade-marker");
+    expect(program).toContain('readiness != "ready"');
+    expect(program).toContain("refused to replace package");
+    expect(program).toContain("new identity verified");
     expect(program).toContain("Preserve all user state");
   });
 
