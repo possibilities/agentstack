@@ -1,0 +1,174 @@
+#!/usr/bin/env node
+import { access, mkdir, readFile, realpath } from "node:fs/promises";
+import { isAbsolute, resolve } from "node:path";
+import { spawn } from "node:child_process";
+
+const hostPattern = /^[A-Za-z0-9][A-Za-z0-9.-]*$/;
+
+function fail(message) {
+  throw new Error(`build-deb-host: ${message}`);
+}
+
+function parseArgs(argv) {
+  const result = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--help" || argument === "-h") result.help = true;
+    else if (
+      ["--remote", "--stage", "--output", "--source-date-epoch"].includes(
+        argument,
+      )
+    ) {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("--"))
+        fail(`${argument} requires a value`);
+      result[argument.slice(2).replaceAll("-", "_")] = value;
+      index += 1;
+    } else fail(`unknown argument: ${argument}`);
+  }
+  return result;
+}
+
+function run(command, args, options = {}) {
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      stdio: options.capture ? ["ignore", "pipe", "inherit"] : "inherit",
+      encoding: "utf8",
+    });
+    const chunks = [];
+    if (options.capture) child.stdout.on("data", (chunk) => chunks.push(chunk));
+    child.once("error", rejectRun);
+    child.once("exit", (code, signal) => {
+      if (code === 0)
+        resolveRun(
+          options.capture ? Buffer.concat(chunks).toString("utf8") : "",
+        );
+      else
+        rejectRun(
+          new Error(`${command} failed (${signal ?? `exit ${String(code)}`})`),
+        );
+    });
+  });
+}
+
+function usage() {
+  return "Usage: scripts/build-deb-host --remote HOST --stage /absolute/stage --output /absolute/output --source-date-epoch N\n";
+}
+
+async function main() {
+  const options = parseArgs(process.argv.slice(2));
+  if (options.help) {
+    process.stdout.write(usage());
+    return;
+  }
+  if (!options.remote || !hostPattern.test(options.remote))
+    fail("--remote must be a plain reviewed SSH host name");
+  if (!options.stage || !isAbsolute(options.stage))
+    fail("--stage must be absolute");
+  if (!options.output || !isAbsolute(options.output))
+    fail("--output must be absolute");
+  if (!/^[0-9]+$/.test(options.source_date_epoch ?? ""))
+    fail("--source-date-epoch must be an integer");
+
+  const repositoryRoot = resolve(import.meta.dirname, "..");
+  const stage = await realpath(options.stage);
+  await access(resolve(stage, "manifest.json"));
+  const manifest = JSON.parse(
+    await readFile(resolve(stage, "manifest.json"), "utf8"),
+  );
+  const version = manifest.productVersion;
+  if (typeof version !== "string" || !/^[0-9][A-Za-z0-9.+:~\-]*$/.test(version))
+    fail("stage manifest has an unsafe productVersion");
+  const output = resolve(options.output);
+  await mkdir(output, { recursive: true });
+  const remoteRoot = (
+    await run(
+      "ssh",
+      [options.remote, "mktemp -d /tmp/agentstack-build.XXXXXXXX"],
+      { capture: true },
+    )
+  ).trim();
+  if (!/^\/tmp\/agentstack-build\.[A-Za-z0-9]+$/.test(remoteRoot))
+    fail("remote returned an unsafe temporary path");
+
+  try {
+    await run("rsync", [
+      "-a",
+      `${repositoryRoot}/packaging`,
+      `${options.remote}:${remoteRoot}/`,
+    ]);
+    await run("ssh", [
+      options.remote,
+      `mkdir -p ${remoteRoot}/scripts ${remoteRoot}/stage`,
+    ]);
+    await run("rsync", [
+      "-a",
+      `${repositoryRoot}/scripts/package-deb.mjs`,
+      `${repositoryRoot}/scripts/inspect-deb.mjs`,
+      `${options.remote}:${remoteRoot}/scripts/`,
+    ]);
+    await run("rsync", [
+      "-a",
+      `${stage}/`,
+      `${options.remote}:${remoteRoot}/stage/`,
+    ]);
+
+    const epoch = options.source_date_epoch;
+    const remoteProgram = `set -eu
+root=${remoteRoot}
+before="$root/packages.before"
+after="$root/packages.after"
+new="$root/packages.new"
+dpkg-query -W -f='\${binary:Package}\\n' | sort -u >"$before"
+installed_build_deps=0
+cleanup() {
+  status=$?
+  if [ "$installed_build_deps" -eq 1 ]; then
+    dpkg-query -W -f='\${binary:Package}\\n' | sort -u >"$after"
+    comm -13 "$before" "$after" >"$new"
+    if [ -s "$new" ]; then
+      xargs sudo -n apt-get purge -y -- <"$new" || status=$?
+    fi
+  fi
+  exit "$status"
+}
+trap cleanup EXIT INT TERM
+if ! command -v dpkg-buildpackage >/dev/null || ! command -v dh >/dev/null; then
+  installed_build_deps=1
+  sudo -n apt-get update
+  sudo -n apt-get install -y --no-install-recommends --no-upgrade debhelper
+fi
+mkdir -p "$root/output-a" "$root/output-b" "$root/final"
+SOURCE_DATE_EPOCH=${epoch} "$root/stage/runtime/node" "$root/scripts/package-deb.mjs" --stage "$root/stage" --output "$root/output-a" --version ${version}
+SOURCE_DATE_EPOCH=${epoch} "$root/stage/runtime/node" "$root/scripts/package-deb.mjs" --stage "$root/stage" --output "$root/output-b" --version ${version}
+first="$root/output-a/agentstack_${version}_amd64.deb"
+second="$root/output-b/agentstack_${version}_amd64.deb"
+cmp "$first" "$second"
+cp "$first" "$root/final/agentstack_${version}_amd64.deb"
+"$root/stage/runtime/node" "$root/scripts/inspect-deb.mjs" --package "$root/final/agentstack_${version}_amd64.deb" --version ${version} --json
+sha256sum "$first" "$second" "$root/final/agentstack_${version}_amd64.deb"`;
+    await run("ssh", [options.remote, remoteProgram]);
+    await run("rsync", [
+      "-a",
+      `${options.remote}:${remoteRoot}/final/agentstack_${version}_amd64.deb`,
+      `${output}/`,
+    ]);
+  } finally {
+    await run("ssh", [options.remote, `rm -rf -- ${remoteRoot}`]).catch(
+      () => undefined,
+    );
+  }
+  process.stdout.write(
+    `${resolve(output, `agentstack_${version}_amd64.deb`)}\n`,
+  );
+}
+
+main().catch((error) => {
+  process.stderr.write(
+    `${error instanceof Error ? error.message : String(error)}\n`,
+  );
+  process.exitCode = 1;
+});
+
+export { parseArgs };
