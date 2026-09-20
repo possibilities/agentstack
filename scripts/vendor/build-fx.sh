@@ -8,8 +8,8 @@ SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(repo_root)
 EXPECTED_COMMIT=e639de6aded41ae168a8888b920ff71db41877d0
 EXPECTED_ZIG=0.16.0
-EXPECTED_LINUX_NATIVE_SHA256=ce9837da78ff43181c7e180626d39582ea715cb246f1ba29dad68588308bd1ba
-EXPECTED_DARWIN_CROSS_SHA256=3926591e083eed79330c8de74031c4a4679ea60ee1421e09128b35420f120e09
+EXPECTED_LINUX_CANDIDATE_SHA256=ce9837da78ff43181c7e180626d39582ea715cb246f1ba29dad68588308bd1ba
+EXPECTED_DARWIN_OBSERVED_SHA256=3926591e083eed79330c8de74031c4a4679ea60ee1421e09128b35420f120e09
 TARGET=x86_64-linux-musl
 DEST="$ROOT/vendor/payloads/linux-x64/fx"
 
@@ -19,16 +19,16 @@ case "$(uname -s)" in
       printf 'Fx release build requires Linux x86_64; got %s\n' "$(uname -m)" >&2
       exit 1
     fi
-    EXPECTED_BINARY_SHA256=$EXPECTED_LINUX_NATIVE_SHA256
-    QUALIFICATION=release-linux-native
+    EXPECTED_BINARY_SHA256=$EXPECTED_LINUX_CANDIDATE_SHA256
+    OBSERVATION=linux-release-candidate
     ;;
   Darwin)
     if [ "$(uname -m)" != arm64 ]; then
       printf 'Fx diagnostic cross-build requires Darwin arm64; got %s\n' "$(uname -m)" >&2
       exit 1
     fi
-    EXPECTED_BINARY_SHA256=$EXPECTED_DARWIN_CROSS_SHA256
-    QUALIFICATION=development-darwin-cross-build
+    EXPECTED_BINARY_SHA256=$EXPECTED_DARWIN_OBSERVED_SHA256
+    OBSERVATION=darwin-development-observation
     ;;
   *)
     printf 'Unsupported Fx build host: %s\n' "$(uname -s)" >&2
@@ -75,4 +75,4 @@ mkdir -p "$DEST/bin"
 install -m 0755 "$TMP/stage/bin/fx" "$DEST/bin/fx"
 
 printf 'Built Fx %s (%s, %s) from %s to %s\n' \
-  "$EXPECTED_COMMIT" "$TARGET" "$QUALIFICATION" "$SOURCE" "$DEST"
+  "$EXPECTED_COMMIT" "$TARGET" "$OBSERVATION" "$SOURCE" "$DEST"

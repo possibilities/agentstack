@@ -38,7 +38,7 @@ case "$(uname -s)" in
       exit 1
     fi
     FX_SHA256=ce9837da78ff43181c7e180626d39582ea715cb246f1ba29dad68588308bd1ba
-    FX_QUALIFICATION=release-linux-native
+    FX_OBSERVATION=linux-release-candidate
     ;;
   Darwin)
     if [ "$(uname -m)" != arm64 ]; then
@@ -46,7 +46,7 @@ case "$(uname -s)" in
       exit 1
     fi
     FX_SHA256=3926591e083eed79330c8de74031c4a4679ea60ee1421e09128b35420f120e09
-    FX_QUALIFICATION=development-darwin-cross-build
+    FX_OBSERVATION=darwin-development-observation
     ;;
   *)
     printf 'Unsupported payload verification host: %s\n' "$(uname -s)" >&2
@@ -85,4 +85,4 @@ node -e '
       p.entrypoint !== "bin/codex-app-server") process.exit(1);
 ' "$PAYLOAD/codex/codex-package.json"
 
-printf 'Verified pinned Linux x86-64 vendor payloads (%s Fx bytes)\n' "$FX_QUALIFICATION"
+printf 'Verified pinned Linux x86-64 vendor payloads (%s Fx bytes)\n' "$FX_OBSERVATION"

@@ -6,4 +6,4 @@ The Debian artifact contains its own Node runtime, exact Fx integration build, a
 
 This makes the installed process tree reviewable and prevents mutable PATH state from changing product behavior.
 
-Source identity and target triple alone do not make rebuilt Fx bytes universal across compiler hosts. Debian releases accept the committed Linux x86-64 digest only after two isolated-cache builds compare byte-for-byte. Darwin arm64 cross-build bytes remain recorded diagnostic evidence and cannot enter release staging.
+Source identity and target triple alone did not yield universal Fx bytes in the observed Darwin and Linux builds; current evidence does not establish the cause. The single Linux observation is a release candidate. Qualification remains pending until two isolated-cache Linux x86-64 builds compare byte-for-byte and match that candidate. Darwin arm64 bytes remain development evidence and cannot enter release staging.

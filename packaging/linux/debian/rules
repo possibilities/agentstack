@@ -22,7 +22,7 @@ override_dh_installsystemduser:
 	:
 
 # Vendored payload hashes are product release identities. Debian packaging may
-# normalize metadata, but must not rewrite already-qualified engine binaries.
+# normalize metadata, but must not rewrite the already-verified candidate bytes.
 override_dh_dwz:
 	:
 

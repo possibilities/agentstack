@@ -18,4 +18,4 @@ Integration tests use executable fake children. They test direct ownership, init
 
 These local commands are development checks. `.github/workflows/native-linux.yml` is the native-package release authority and must pass from the public tagged revision. Never point development tests at global `fx` or `codex`. Use only `vendor/manifest.json` payloads for release qualification.
 
-Fx output bytes are compiler-host scoped even with the same Zig version and Linux target. Darwin arm64 may reproduce the committed development cross-build observation, but `stage-release.mjs` intentionally rejects those bytes. Only the twice-built, byte-compared Linux x86-64 output with the manifest's qualified digest can enter a Debian release.
+The observed Darwin arm64 and Linux x86-64 Fx bytes differ even with the same source, Zig version, target and optimization; this evidence does not establish why. `stage-release.mjs` rejects the Darwin development observation. The Linux digest remains a release candidate until two isolated-cache Linux builds compare byte-for-byte and match it.
