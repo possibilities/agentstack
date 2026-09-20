@@ -139,6 +139,7 @@ describe("Debian package staging", () => {
     );
     expect(program).toContain("agentstack enable --now");
     expect(program).toContain('test "$installed" = "$version"');
+    expect(program).toContain("AGENTSTACK_INSTALL_ROOT");
     expect(program).toContain("agentstack-upgrade-marker");
     expect(program).toContain('readiness != "ready"');
     expect(program).toContain("refused to replace package");
