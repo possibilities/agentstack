@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { Supervisor, type LaunchSpec, type RunningChild } from "../src/supervisor.js";
+import { appServerArgs, Supervisor, type LaunchSpec, type RunningChild } from "../src/supervisor.js";
 
 const fakeBin = fileURLToPath(new URL("../../test/fixtures/fake-app-server.mjs", import.meta.url));
 
@@ -57,6 +57,56 @@ test("start is idempotent and stop is idempotent", async () => {
     assert.equal(stoppedAgain.state, "stopped");
     assert.deepEqual(killed, ["SIGTERM"]);
     assert.equal(supervisor.list().length, 1);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("caller arguments are merged and --listen is rejected", async () => {
+  const url = "ws://127.0.0.1:41000";
+  assert.deepEqual(appServerArgs(["--model", "gpt-5.4", "-c", "foo=bar"], url), [
+    "app-server",
+    "--listen",
+    url,
+    "--model",
+    "gpt-5.4",
+    "-c",
+    "foo=bar",
+  ]);
+  assert.deepEqual(appServerArgs(["-c", "foo=bar", "app-server", "--remote-control"], url), [
+    "-c",
+    "foo=bar",
+    "app-server",
+    "--listen",
+    url,
+    "--remote-control",
+  ]);
+  assert.throws(() => appServerArgs(["--listen", "ws://127.0.0.1:1"], url), /do not pass --listen/);
+  assert.throws(() => appServerArgs(["--listen=ws://127.0.0.1:1"], url), /do not pass --listen/);
+
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-args-"));
+  const cwd = await mkdtemp(join(tmpdir(), "agentstack-args-cwd-"));
+  const launched: LaunchSpec[] = [];
+  try {
+    const supervisor = new Supervisor({
+      stateDir,
+      async reservePort() {
+        return 41000;
+      },
+      launch(spec): RunningChild {
+        launched.push(spec);
+        return { pid: 40, exited: new Promise(() => undefined), kill() {} };
+      },
+      async waitReady() {
+        return undefined;
+      },
+    });
+    await supervisor.load();
+    await supervisor.start({ cwd, id: "flags", args: ["--model", "gpt-5.4"] });
+    assert.deepEqual(launched[0]?.args, ["app-server", "--listen", url, "--model", "gpt-5.4"]);
+    await assert.rejects(supervisor.start({ cwd, id: "nope", args: ["--listen", url] }), /do not pass --listen/);
+    assert.equal(launched.length, 1);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
     await rm(cwd, { recursive: true, force: true });

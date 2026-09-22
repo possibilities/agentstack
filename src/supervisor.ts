@@ -28,6 +28,7 @@ export type StartInput = {
   cwd: string;
   id?: string;
   codexBin?: string;
+  args?: string[];
 };
 
 export type LaunchSpec = {
@@ -128,6 +129,7 @@ export class Supervisor {
     if (!ID_PATTERN.test(id)) throw new Error(`invalid id: ${id}`);
     const cwd = await existingDirectory(input.cwd);
     const codexBin = input.codexBin && input.codexBin.length > 0 ? input.codexBin : "codex";
+    const userArgs = input.args ?? [];
     const current = this.records.get(id);
     if (current && (await this.isRunning(current))) return viewOf(current);
 
@@ -141,7 +143,7 @@ export class Supervisor {
       try {
         child = this.launch({
           bin: codexBin,
-          args: ["app-server", "--listen", url],
+          args: appServerArgs(userArgs, url),
           cwd,
           logPath,
         });
@@ -236,6 +238,22 @@ export class Supervisor {
     await writeFile(temporary, JSON.stringify(record), { mode: 0o600 });
     await rename(temporary, path);
   }
+}
+
+export function appServerArgs(userArgs: readonly string[], url: string): string[] {
+  for (const arg of userArgs) {
+    if (arg === "--listen" || arg.startsWith("--listen=")) {
+      throw new Error("do not pass --listen; agentstack sets the websocket listener");
+    }
+  }
+  const args = [...userArgs];
+  let appServerAt = args.indexOf("app-server");
+  if (appServerAt === -1) {
+    args.unshift("app-server");
+    appServerAt = 0;
+  }
+  args.splice(appServerAt + 1, 0, "--listen", url);
+  return args;
 }
 
 function viewOf(record: RecordFile): ServerView {

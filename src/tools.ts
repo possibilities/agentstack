@@ -16,15 +16,16 @@ export function registerTools(server: McpServer, supervisor: Supervisor): void {
   server.registerTool(
     "server_start",
     {
-      description: "Start a Codex app-server websocket process, or return the live one with this id.",
+      description: "Start a Codex app-server websocket process, or return the live one with this id. Extra args are passed through. Do not pass --listen.",
       inputSchema: z.object({
         cwd: z.string(),
         id: idSchema.optional(),
         codexBin: z.string().min(1).optional(),
+        args: z.array(z.string()).optional(),
       }),
       outputSchema: serverViewSchema,
     },
-    async ({ cwd, id, codexBin }) => toolResult(await supervisor.start({ cwd, id, codexBin })),
+    async ({ cwd, id, codexBin, args }) => toolResult(await supervisor.start({ cwd, id, codexBin, args })),
   );
 
   server.registerTool(
