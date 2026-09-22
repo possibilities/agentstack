@@ -13,18 +13,20 @@
       </main>
     </div>
     <script>
+      const mapThread = (thread) => ({
+        kind: "native",
+        label: thread.label,
+        detail: thread.model ?? "",
+        activity: thread.activity,
+        children: (thread.children ?? []).map(mapThread),
+      });
       window.agentstackTree = (data) =>
         (data.servers ?? []).map((server) => ({
           kind: "manager",
           label: server.id,
           detail: server.cwd,
           activity: "working",
-          children: (server.threads ?? []).map((thread) => ({
-            kind: "native",
-            label: thread.label,
-            detail: thread.model ?? "",
-            activity: thread.activity,
-          })),
+          children: (server.threads ?? []).map(mapThread),
         }));
     </script>
     <script src="app.js"></script>

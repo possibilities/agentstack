@@ -2,7 +2,9 @@ export type ActiveThread = {
   id: string;
   label: string;
   model: string | null;
-  activity: "working" | "waiting";
+  activity: "working" | "waiting" | "idle";
+  parentThreadId: string | null;
+  children?: ActiveThread[];
 };
 
 export function activeThreads(records: unknown[]): ActiveThread[] {
@@ -13,19 +15,36 @@ export function activeThreads(records: unknown[]): ActiveThread[] {
       id?: unknown;
       preview?: unknown;
       model?: unknown;
+      parentThreadId?: unknown;
       status?: { type?: unknown; activeFlags?: unknown };
     };
-    if (typeof thread.id !== "string" || thread.status?.type !== "active") continue;
-    const flags = Array.isArray(thread.status.activeFlags) ? thread.status.activeFlags : [];
+    if (typeof thread.id !== "string") continue;
+    const status = thread.status?.type;
+    if (status !== "active" && status !== "idle") continue;
+    const flags = Array.isArray(thread.status?.activeFlags) ? thread.status.activeFlags : [];
     const waiting = flags.includes("waitingOnApproval") || flags.includes("waitingOnUserInput");
     threads.push({
       id: thread.id,
       label: typeof thread.preview === "string" && thread.preview.length > 0 ? thread.preview : thread.id,
       model: typeof thread.model === "string" ? thread.model : null,
-      activity: waiting ? "waiting" : "working",
+      activity: status === "idle" ? "idle" : waiting ? "waiting" : "working",
+      parentThreadId: typeof thread.parentThreadId === "string" ? thread.parentThreadId : null,
     });
   }
   return threads;
+}
+
+export function threadTree(threads: ActiveThread[]): ActiveThread[] {
+  const nodes = new Map(threads.map((thread) => [thread.id, { ...thread, children: [] as ActiveThread[] }]));
+  const roots: ActiveThread[] = [];
+  for (const thread of threads) {
+    const node = nodes.get(thread.id);
+    if (!node) continue;
+    const parent = thread.parentThreadId ? nodes.get(thread.parentThreadId) : undefined;
+    if (parent && parent !== node) parent.children?.push(node);
+    else roots.push(node);
+  }
+  return roots;
 }
 
 export async function listActiveThreads(url: string): Promise<ActiveThread[]> {
@@ -78,7 +97,7 @@ export async function listActiveThreads(url: string): Promise<ActiveThread[]> {
         return result.thread;
       }),
     );
-    return activeThreads(records);
+    return threadTree(activeThreads(records));
   } catch {
     return [];
   } finally {

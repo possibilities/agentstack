@@ -82,6 +82,7 @@ body {
   color: var(--text-quiet);
 }
 .tree-kind-icon { flex: none; width: 20px; height: 20px; }
+.tree-status--idle { color: var(--text-quiet); }
 .tree-status--working { color: var(--positive); }
 .tree-status--waiting, .tree-status--unknown { color: var(--warning); }
 .tree-status--failed { color: var(--negative); }

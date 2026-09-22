@@ -1,22 +1,57 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { activeThreads } from "../src/threads.js";
+import { activeThreads, threadTree } from "../src/threads.js";
 
-test("only active threads are shown", () => {
+test("loaded threads nest subagents under the main thread", () => {
   const threads = activeThreads([
-    { id: "idle", preview: "done", status: { type: "idle" } },
-    { id: "missing", preview: "gone", status: { type: "notLoaded" } },
+    { id: "gone", preview: "old", status: { type: "notLoaded" } },
     { id: "broken", preview: "err", status: { type: "systemError" } },
-    { id: "live", preview: "working now", model: "gpt", status: { type: "active", activeFlags: [] } },
+    {
+      id: "main",
+      preview: "plan the change",
+      model: "gpt",
+      parentThreadId: null,
+      status: { type: "idle" },
+    },
+    {
+      id: "child",
+      preview: "",
+      model: "gpt",
+      parentThreadId: "main",
+      status: { type: "active", activeFlags: [] },
+    },
     {
       id: "ask",
-      preview: "",
-      model: null,
+      preview: "need input",
+      parentThreadId: "missing-parent",
       status: { type: "active", activeFlags: ["waitingOnUserInput"] },
     },
   ]);
-  assert.deepEqual(threads, [
-    { id: "live", label: "working now", model: "gpt", activity: "working" },
-    { id: "ask", label: "ask", model: null, activity: "waiting" },
+  assert.deepEqual(threadTree(threads), [
+    {
+      id: "main",
+      label: "plan the change",
+      model: "gpt",
+      activity: "idle",
+      parentThreadId: null,
+      children: [
+        {
+          id: "child",
+          label: "child",
+          model: "gpt",
+          activity: "working",
+          parentThreadId: "main",
+          children: [],
+        },
+      ],
+    },
+    {
+      id: "ask",
+      label: "need input",
+      model: null,
+      activity: "waiting",
+      parentThreadId: "missing-parent",
+      children: [],
+    },
   ]);
 });
