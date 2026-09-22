@@ -2,8 +2,8 @@
 set -eu
 script=$(realpath "$0")
 root=$(CDPATH= cd -- "$(dirname -- "$script")/.." && pwd)
-cli="$root/dist/src/cli.js"
-if [ ! -f "$cli" ] || [ -n "$(find "$root/src" -name '*.ts' -newer "$cli" -print -quit)" ]; then
-  (cd "$root" && pnpm exec tsc)
+cli="$root/packages/owner/dist/src/cli.js"
+if [ ! -f "$cli" ] || [ -n "$(find "$root/packages" -path '*/src/*.ts' -newer "$cli" -print -quit)" ]; then
+  (cd "$root" && pnpm exec turbo build)
 fi
 exec node "$cli" "$@"

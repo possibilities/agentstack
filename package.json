@@ -2,13 +2,9 @@
   "name": "agentstack",
   "version": "0.0.0",
   "private": true,
-  "type": "module",
-  "bin": {
-    "agentstack": "./bin/agentstack"
-  },
   "scripts": {
-    "build": "tsc",
-    "test": "tsc && node --test dist/test/*.test.js"
+    "build": "turbo build",
+    "test": "turbo test"
   },
   "engines": {
     "node": ">=24"
@@ -21,14 +17,7 @@
     }
   },
   "packageManager": "pnpm@12.5.1",
-  "dependencies": {
-    "@modelcontextprotocol/node": "^2.0.0",
-    "@modelcontextprotocol/server": "^2.0.0",
-    "zod": "^4.6.5"
-  },
   "devDependencies": {
-    "@modelcontextprotocol/client": "^2.0.0",
-    "@types/node": "^26.6.2",
-    "typescript": "^7.0.2"
+    "turbo": "^2.10.4"
   }
 }

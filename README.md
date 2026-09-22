@@ -1,1 +1,1 @@
-Local daemon that starts and stops Codex app-servers and exposes that control plane over MCP.
+Process owner for local agent servers. The Codex app-server manager runs as one child process.

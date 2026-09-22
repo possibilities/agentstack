@@ -3,7 +3,7 @@ import { startDaemon } from "./daemon.js";
 import { stateDir } from "./paths.js";
 
 if (process.argv[2] !== "serve") {
-  console.error("usage: agentstack serve");
+  console.error("usage: agentstack-codex serve");
   process.exit(1);
 }
 
