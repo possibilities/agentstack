@@ -5,7 +5,7 @@ import { join } from "node:path";
 export type UiPage = {
   name: string;
   dir: string;
-  data(): Promise<unknown> | unknown;
+  data(request?: URL): Promise<unknown> | unknown;
 };
 
 const files: Record<string, { name: string; type: string }> = {
@@ -68,7 +68,7 @@ async function route(rawUrl: string, pages: Map<string, UiPage>): Promise<{
     };
   }
   if (rest === "/data") {
-    const body = JSON.stringify(await Promise.resolve(page.data()));
+    const body = JSON.stringify(await Promise.resolve(page.data(url)));
     return { status: 200, headers: { "content-type": "application/json", "cache-control": "no-store" }, body };
   }
   const file = files[rest];

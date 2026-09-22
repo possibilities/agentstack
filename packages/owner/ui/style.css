@@ -44,12 +44,12 @@ body {
   isolation: isolate;
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) var(--action-rail);
-  grid-template-rows: var(--action-size) 20px;
-  align-items: start;
+  grid-template-rows: var(--action-size);
+  align-items: center;
   column-gap: var(--row-gap);
   width: 100%;
   min-width: 0;
-  min-height: 64px;
+  min-height: calc(var(--action-size) + 8px);
   padding: 4px 4px 4px calc(8px + var(--depth) * 24px);
   border: 0;
   border-radius: 0;
@@ -59,6 +59,11 @@ body {
   font-size: 18px;
   line-height: 26px;
   cursor: default;
+}
+.tree-row[data-has-metadata] {
+  grid-template-rows: var(--action-size) 20px;
+  align-items: start;
+  min-height: 64px;
 }
 .tree-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .tree-row:not([data-kind="manager"]):focus-visible,

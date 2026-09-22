@@ -28,12 +28,15 @@ function row(node, depth) {
   settings.dataset.agent = "true";
   settings.setAttribute("role", "note");
   if (node.detail) {
+    group.dataset.hasMetadata = "true";
     const detail = document.createElement("span");
     detail.className = "tree-agent-settings";
     detail.textContent = node.detail;
     settings.append(detail);
+    group.append(status, heading, settings);
+  } else {
+    group.append(status, heading);
   }
-  group.append(status, heading, settings);
   item.append(group);
   if (node.children?.length) {
     const list = document.createElement("ul");
@@ -62,16 +65,28 @@ function tree(nodes) {
   return list;
 }
 
+let painting = false;
+
 async function paint() {
+  if (painting) return;
+  painting = true;
   const main = document.querySelector("main");
   try {
     const response = await fetch("data", { cache: "no-store" });
     if (!response.ok) throw new Error(String(response.status));
-    const nodes = window.agentstackTree(await response.json());
-    main.replaceChildren(nodes.length ? tree(nodes) : status("No running agents"));
+    render(main, await response.json());
+    const threads = await fetch("data?threads=1", { cache: "no-store" });
+    if (threads.ok) render(main, await threads.json());
   } catch {
-    main.replaceChildren(status("Unavailable"));
+    if (!main.querySelector(".active-tree")) main.replaceChildren(status("Unavailable"));
+  } finally {
+    painting = false;
   }
+}
+
+function render(main, data) {
+  const nodes = window.agentstackTree(data);
+  main.replaceChildren(nodes.length ? tree(nodes) : status("No running agents"));
 }
 
 function status(text) {

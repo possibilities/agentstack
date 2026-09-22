@@ -63,17 +63,19 @@ export async function startDaemon(stateDir: string, options?: { port?: number })
 export async function runningTree(
   supervisor: Supervisor,
   listThreads: (url: string) => Promise<ReturnType<typeof activeThreads>> = listActiveThreads,
+  includeThreads = false,
 ) {
+  const running = supervisor.list().filter((server) => server.state === "running" && server.url);
+  if (!includeThreads) {
+    return { servers: running.map((server) => ({ id: server.id, cwd: server.cwd, url: server.url, threads: [] })) };
+  }
   const servers = await Promise.all(
-    supervisor
-      .list()
-      .filter((server) => server.state === "running" && server.url)
-      .map(async (server) => ({
-        id: server.id,
-        cwd: server.cwd,
-        url: server.url,
-        threads: await listThreads(server.url ?? ""),
-      })),
+    running.map(async (server) => ({
+      id: server.id,
+      cwd: server.cwd,
+      url: server.url,
+      threads: await listThreads(server.url ?? ""),
+    })),
   );
   return { servers };
 }
@@ -88,7 +90,8 @@ async function handle(
   if (!validateHost(req, res) || !validateOrigin(req, res)) return;
   const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
   if (pathname === "/ui-data") {
-    const body = JSON.stringify(await runningTree(supervisor));
+    const includeThreads = new URL(req.url ?? "/", "http://127.0.0.1").searchParams.get("threads") === "1";
+    const body = JSON.stringify(await runningTree(supervisor, listActiveThreads, includeThreads));
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }).end(body);
     return;
   }

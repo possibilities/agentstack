@@ -28,12 +28,15 @@ function row(node, depth) {
   settings.dataset.agent = "true";
   settings.setAttribute("role", "note");
   if (node.detail) {
+    group.dataset.hasMetadata = "true";
     const detail = document.createElement("span");
     detail.className = "tree-agent-settings";
     detail.textContent = node.detail;
     settings.append(detail);
+    group.append(status, heading, settings);
+  } else {
+    group.append(status, heading);
   }
-  group.append(status, heading, settings);
   item.append(group);
   if (node.children?.length) {
     const list = document.createElement("ul");

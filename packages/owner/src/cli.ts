@@ -48,8 +48,10 @@ const ui = await startUiServer(
             {
               name: child.name,
               dir: child.uiDir,
-              data: async () => {
-                const response = await fetch(child.dataUrl ?? "");
+              data: async (request: URL | undefined) => {
+                const target = new URL(child.dataUrl ?? "");
+                if (request) target.search = request.search;
+                const response = await fetch(target);
                 if (!response.ok) throw new Error(`${child.name} UI data unavailable`);
                 return response.json();
               },
