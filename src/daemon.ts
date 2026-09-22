@@ -10,7 +10,7 @@ export type Daemon = {
   url: string;
   port: number;
   supervisor: Supervisor;
-  close(): Promise<void>;
+  close(options?: { halt?: boolean }): Promise<void>;
 };
 
 export async function startDaemon(stateDir: string, options?: { port?: number }): Promise<Daemon> {
@@ -48,8 +48,10 @@ export async function startDaemon(stateDir: string, options?: { port?: number })
     url: `http://127.0.0.1:${address.port}/mcp`,
     port: address.port,
     supervisor,
-    async close() {
-      await supervisor.stopAll();
+    async close(options) {
+      if (options?.halt) await supervisor.halt();
+      else await supervisor.stopAll();
+      http.closeAllConnections();
       await new Promise<void>((resolve, reject) => {
         http.close((error) => (error ? reject(error) : resolve()));
       });

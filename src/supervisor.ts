@@ -125,6 +125,31 @@ export class Supervisor {
     await Promise.all(running.map((record) => this.stop(record.id)));
   }
 
+  async halt(): Promise<void> {
+    const running = [...this.records.values()].filter((record) => record.state === "running");
+    await Promise.all(
+      running.map(async (record) => {
+        const child = this.children.get(record.id);
+        if (child) {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            // The child already exited.
+          }
+          this.children.delete(record.id);
+        } else if (record.pid !== null) {
+          try {
+            process.kill(record.pid, "SIGKILL");
+          } catch {
+            // The pid already exited.
+          }
+        }
+        record.state = "stopped";
+        await this.persist(record);
+      }),
+    );
+  }
+
   private async startQueued(id: string, input: StartInput): Promise<ServerView> {
     if (!ID_PATTERN.test(id)) throw new Error(`invalid id: ${id}`);
     const cwd = await existingDirectory(input.cwd);

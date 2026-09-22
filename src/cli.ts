@@ -10,9 +10,11 @@ if (process.argv[2] !== "serve") {
 let daemon: Awaited<ReturnType<typeof startDaemon>> | undefined;
 let closing = false;
 const shutdown = () => {
-  if (closing) return;
+  if (closing) process.exit(1);
   closing = true;
-  void daemon?.close().then(
+  const force = setTimeout(() => process.exit(1), 2000);
+  force.unref();
+  void daemon?.close({ halt: true }).then(
     () => process.exit(0),
     () => process.exit(1),
   );
@@ -20,8 +22,9 @@ const shutdown = () => {
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
+const port = process.env.AGENTSTACK_PORT === undefined ? undefined : Number(process.env.AGENTSTACK_PORT);
 try {
-  daemon = await startDaemon(stateDir());
+  daemon = await startDaemon(stateDir(), Number.isInteger(port) ? { port } : undefined);
   console.error(daemon.url);
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));

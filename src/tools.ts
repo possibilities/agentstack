@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { mcpSchema } from "./mcp-schema.js";
 import { Supervisor, type ServerView } from "./supervisor.js";
 
 const idSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/);
@@ -12,6 +13,9 @@ const serverViewSchema = z.object({
   state: z.enum(["running", "stopped"]),
 });
 
+export const serverViewOutput = mcpSchema(serverViewSchema);
+export const serverListOutput = mcpSchema(z.object({ servers: z.array(serverViewSchema) }));
+
 export function registerTools(server: McpServer, supervisor: Supervisor): void {
   server.registerTool(
     "server_start",
@@ -23,7 +27,7 @@ export function registerTools(server: McpServer, supervisor: Supervisor): void {
         codexBin: z.string().min(1).optional(),
         args: z.array(z.string()).optional(),
       }),
-      outputSchema: serverViewSchema,
+      outputSchema: serverViewOutput,
     },
     async ({ cwd, id, codexBin, args }) => toolResult(await supervisor.start({ cwd, id, codexBin, args })),
   );
@@ -33,7 +37,7 @@ export function registerTools(server: McpServer, supervisor: Supervisor): void {
     {
       description: "Stop a Codex app-server process. Stopping an already stopped server succeeds.",
       inputSchema: z.object({ id: idSchema }),
-      outputSchema: serverViewSchema,
+      outputSchema: serverViewOutput,
     },
     async ({ id }) => toolResult(await supervisor.stop(id)),
   );
@@ -43,7 +47,7 @@ export function registerTools(server: McpServer, supervisor: Supervisor): void {
     {
       description: "List Codex app-server processes this daemon has started, including ones that have stopped.",
       inputSchema: z.object({}),
-      outputSchema: z.object({ servers: z.array(serverViewSchema) }),
+      outputSchema: serverListOutput,
     },
     async () => {
       const servers = supervisor.list();

@@ -1,0 +1,30 @@
+import { fromJsonSchema } from "@modelcontextprotocol/server";
+import { z } from "zod";
+
+export function mcpSchema<T extends z.ZodType>(schema: T) {
+  const json = z.toJSONSchema(schema) as Record<string, unknown>;
+  delete json.$schema;
+  expandTypeArrays(json);
+  return fromJsonSchema(json);
+}
+
+function expandTypeArrays(schema: unknown): void {
+  if (Array.isArray(schema)) {
+    for (const item of schema) expandTypeArrays(item);
+    return;
+  }
+  if (!schema || typeof schema !== "object") return;
+  const record = schema as Record<string, unknown>;
+  if (Array.isArray(record.type) && record.type.every((item) => typeof item === "string")) {
+    const types = record.type;
+    delete record.type;
+    record.anyOf = types.map((type) => ({ type }));
+  }
+  for (const value of Object.values(record)) expandTypeArrays(value);
+}
+
+export function publishedJsonSchema(schema: {
+  "~standard": { jsonSchema: { output: (options: { target: "draft-2020-12" }) => unknown } };
+}): unknown {
+  return schema["~standard"].jsonSchema.output({ target: "draft-2020-12" });
+}
