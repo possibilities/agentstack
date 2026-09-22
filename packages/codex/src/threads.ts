@@ -29,72 +29,61 @@ export function activeThreads(records: unknown[]): ActiveThread[] {
 }
 
 export async function listActiveThreads(url: string): Promise<ActiveThread[]> {
-  const threads: unknown[] = [];
   const ws = new WebSocket(url);
-  const messages: Array<Record<string, unknown>> = [];
-  let notify: () => void = () => undefined;
+  const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  let nextId = 1;
   ws.addEventListener("message", (event) => {
     if (typeof event.data !== "string") return;
+    let message: { id?: unknown; result?: unknown; error?: unknown };
     try {
-      messages.push(JSON.parse(event.data) as Record<string, unknown>);
+      message = JSON.parse(event.data) as { id?: unknown; result?: unknown; error?: unknown };
     } catch {
       return;
     }
-    notify();
+    const id = typeof message.id === "number" ? message.id : Number(message.id);
+    const waiter = pending.get(id);
+    if (!waiter || Number.isNaN(id)) return;
+    pending.delete(id);
+    if (message.error) waiter.reject(new Error("rpc failed"));
+    else waiter.resolve(message.result);
   });
-  try {
-    await once(ws, "open", 3_000);
-    await rpc(ws, messages, () => notify, 1, "initialize", {
-      clientInfo: { name: "agentstack", version: "0.0.0" },
+  const call = (method: string, params: unknown) =>
+    new Promise<unknown>((resolve, reject) => {
+      const id = nextId++;
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error(`${method} timed out`));
+      }, 1_000);
+      pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      });
+      ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
     });
+  try {
+    await once(ws, "open", 1_000);
+    await call("initialize", { clientInfo: { name: "agentstack", version: "0.0.0" } });
     ws.send(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }));
-    let cursor: string | null = null;
-    let page = 0;
-    do {
-      const result = (await rpc(ws, messages, () => notify, page + 2, "thread/list", {
-        limit: 100,
-        archived: false,
-        cursor,
-      })) as { data?: unknown; nextCursor?: unknown };
-      if (Array.isArray(result.data)) threads.push(...result.data);
-      cursor = typeof result.nextCursor === "string" ? result.nextCursor : null;
-      page += 1;
-    } while (cursor && page < 5);
-    return activeThreads(threads);
+    const loaded = (await call("thread/loaded/list", {})) as { data?: unknown };
+    const ids = Array.isArray(loaded.data) ? loaded.data.filter((id): id is string => typeof id === "string") : [];
+    const records = await Promise.all(
+      ids.map(async (threadId) => {
+        const result = (await call("thread/read", { threadId })) as { thread?: unknown };
+        return result.thread;
+      }),
+    );
+    return activeThreads(records);
   } catch {
     return [];
   } finally {
     ws.close();
   }
-}
-
-function rpc(
-  ws: WebSocket,
-  messages: Array<Record<string, unknown>>,
-  setNotify: (wake: () => void) => void,
-  id: number,
-  method: string,
-  params: unknown,
-): Promise<unknown> {
-  ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      setNotify(() => undefined);
-      reject(new Error(`${method} timed out`));
-    }, 3_000);
-    const check = () => {
-      const message = messages.find((item) => item.id === id);
-      if (!message) return;
-      clearTimeout(timer);
-      setNotify(() => undefined);
-      if (message.error) reject(new Error(method));
-      else resolve(message.result);
-    };
-    setNotify(() => {
-      check();
-    });
-    check();
-  });
 }
 
 function once(ws: WebSocket, type: "open", timeoutMs: number): Promise<void> {

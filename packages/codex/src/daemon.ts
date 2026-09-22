@@ -64,16 +64,17 @@ export async function runningTree(
   supervisor: Supervisor,
   listThreads: (url: string) => Promise<ReturnType<typeof activeThreads>> = listActiveThreads,
 ) {
-  const servers = [];
-  for (const server of supervisor.list()) {
-    if (server.state !== "running" || !server.url) continue;
-    servers.push({
-      id: server.id,
-      cwd: server.cwd,
-      url: server.url,
-      threads: await listThreads(server.url),
-    });
-  }
+  const servers = await Promise.all(
+    supervisor
+      .list()
+      .filter((server) => server.state === "running" && server.url)
+      .map(async (server) => ({
+        id: server.id,
+        cwd: server.cwd,
+        url: server.url,
+        threads: await listThreads(server.url ?? ""),
+      })),
+  );
   return { servers };
 }
 
