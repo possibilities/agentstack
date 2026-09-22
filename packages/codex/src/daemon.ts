@@ -4,6 +4,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { localhostHostValidation, localhostOriginValidation, NodeStreamableHTTPServerTransport } from "@modelcontextprotocol/node";
 import { defaultPort } from "./paths.js";
 import { Supervisor } from "./supervisor.js";
+import { activeThreads, listActiveThreads } from "./threads.js";
 import { registerTools } from "./tools.js";
 
 export type Daemon = {
@@ -59,6 +60,23 @@ export async function startDaemon(stateDir: string, options?: { port?: number })
   };
 }
 
+export async function runningTree(
+  supervisor: Supervisor,
+  listThreads: (url: string) => Promise<ReturnType<typeof activeThreads>> = listActiveThreads,
+) {
+  const servers = [];
+  for (const server of supervisor.list()) {
+    if (server.state !== "running" || !server.url) continue;
+    servers.push({
+      id: server.id,
+      cwd: server.cwd,
+      url: server.url,
+      threads: await listThreads(server.url),
+    });
+  }
+  return { servers };
+}
+
 async function handle(
   req: IncomingMessage,
   res: ServerResponse,
@@ -68,6 +86,11 @@ async function handle(
 ): Promise<void> {
   if (!validateHost(req, res) || !validateOrigin(req, res)) return;
   const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+  if (pathname === "/ui-data") {
+    const body = JSON.stringify(await runningTree(supervisor));
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }).end(body);
+    return;
+  }
   if (pathname !== "/mcp") {
     res.writeHead(404).end();
     return;

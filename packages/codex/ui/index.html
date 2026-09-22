@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Codex</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <main aria-label="Running Codex agents">
+        <p role="status">Loading…</p>
+      </main>
+    </div>
+    <script>
+      window.agentstackTree = (data) =>
+        (data.servers ?? []).map((server) => ({
+          kind: "manager",
+          label: server.id,
+          detail: server.cwd,
+          activity: "working",
+          children: (server.threads ?? []).map((thread) => ({
+            kind: "native",
+            label: thread.label,
+            detail: thread.model ?? "",
+            activity: thread.activity,
+          })),
+        }));
+    </script>
+    <script src="app.js"></script>
+  </body>
+</html>

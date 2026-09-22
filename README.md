@@ -1,1 +1,3 @@
-Process owner for local agent servers. The Codex app-server manager runs as one child process.
+# Agentstack
+
+Process owner for local agent servers. Package pages are served at `/_ui/<package>` on https://agentstack.localhost.

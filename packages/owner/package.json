@@ -13,8 +13,12 @@
   "engines": {
     "node": ">=24"
   },
+  "agentstack": {
+    "ui": "./ui"
+  },
   "dependencies": {
-    "@agentstack/codex": "workspace:*"
+    "@agentstack/codex": "workspace:*",
+    "portless": "0.15.6"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",

@@ -4,10 +4,20 @@ export type OwnedChild = {
   name: string;
   command: string;
   args: string[];
+  env?: Record<string, string>;
+  uiDir?: string;
+  dataUrl?: string;
+};
+
+export type ChildStatus = {
+  name: string;
+  pid: number | null;
+  running: boolean;
 };
 
 export type RunningOwner = {
   close(): Promise<void>;
+  children(): ChildStatus[];
 };
 
 const haltMs = 2_000;
@@ -16,7 +26,7 @@ export function startOwner(children: OwnedChild[], env: NodeJS.ProcessEnv = proc
   const running = children.map((child) => ({
     child,
     proc: spawn(child.command, child.args, {
-      env,
+      env: { ...env, ...child.env },
       stdio: "inherit",
       detached: false,
     }),
@@ -31,6 +41,11 @@ export function startOwner(children: OwnedChild[], env: NodeJS.ProcessEnv = proc
   return {
     close() {
       return halt(running.map((item) => item.proc));
+    },
+    children() {
+      return running
+        .filter(({ proc }) => proc.exitCode === null && proc.signalCode === null)
+        .map(({ child, proc }) => ({ name: child.name, pid: proc.pid ?? null, running: true }));
     },
   };
 }
