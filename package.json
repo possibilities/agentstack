@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "bin": {
-    "agentstack": "./dist/src/cli.js"
+    "agentstack": "./bin/agentstack"
   },
   "scripts": {
     "build": "tsc",

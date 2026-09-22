@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+script=$(realpath "$0")
+root=$(CDPATH= cd -- "$(dirname -- "$script")/.." && pwd)
+cli="$root/dist/src/cli.js"
+if [ ! -f "$cli" ] || [ -n "$(find "$root/src" -name '*.ts' -newer "$cli" -print -quit)" ]; then
+  (cd "$root" && pnpm exec tsc)
+fi
+exec node "$cli" "$@"
