@@ -17,7 +17,7 @@
         {
           kind: "manager",
           label: "owner",
-          detail: "",
+          detail: data.pid ? `pid ${data.pid}` : "",
           activity: "working",
           children: (data.children ?? []).map((child) => ({
             kind: "native",

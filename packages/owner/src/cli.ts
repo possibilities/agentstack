@@ -40,7 +40,7 @@ const ui = await startUiServer(
     {
       name: "owner",
       dir: join(dirname(ownerPackage), ownerUi),
-      data: () => ({ children: owner.children() }),
+      data: () => ({ pid: process.pid, children: owner.children() }),
     },
     ...children.flatMap((child) =>
       child.uiDir && child.dataUrl
