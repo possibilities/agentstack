@@ -33,9 +33,9 @@ test("unimplemented transports are refused before the package is loaded", async 
     "name: demo\ndescription: Demo operations.\nmcp:\n  description: MCP transport for demo operations.\n",
   );
   try {
-    await assert.rejects(serveApi({ name: "demo", transport: "mcp", root, port: 0 }), /mcp transport is not implemented/);
-    await assert.rejects(serveApi({ name: "demo", transport: "socket", root, port: 0 }), /does not configure socket/);
-    await assert.rejects(serveApi({ name: "missing", transport: "socket", root, port: 0 }), /no package API named missing/);
+    await assert.rejects(serveApi({ name: "demo", transport: "mcp", root }), /mcp transport is not implemented/);
+    await assert.rejects(serveApi({ name: "demo", transport: "socket", root }), /does not configure socket/);
+    await assert.rejects(serveApi({ name: "missing", transport: "socket", root }), /no package API named missing/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

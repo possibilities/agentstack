@@ -13,5 +13,5 @@ export {
 export { findPackage, listPackages, socketPath, workspaceRoot } from "./workspace.js";
 export { loadCatalog, loadPackageApi, type Catalog } from "./catalog.js";
 export { serveSocket, socketCall, type ServedSocket, type SocketServerInfo } from "./socket.js";
-export { defaultDataPort, serveApi, type ServedApi } from "./serve.js";
+export { serveApi, type ServedApi } from "./serve.js";
 export { runApi } from "./run.js";

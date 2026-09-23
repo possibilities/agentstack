@@ -15,7 +15,6 @@ test("codex lifecycle is served on the namespaced unix socket", async () => {
     name: "codex",
     transport: "socket",
     env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir },
-    port: 0,
   });
   try {
     assert.equal(served.socketPath, join(stateDir, "sockets", "codex.sock"));

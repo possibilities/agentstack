@@ -1,37 +1,50 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { spawn } from "node:child_process";
 import test from "node:test";
-import { startUiServer, uiListenPort, uiPageUrl } from "../src/ui.js";
+import { fileURLToPath } from "node:url";
+import { uiListenPort, uiPageUrl } from "../src/ui.js";
 
-test("package UIs are mounted at /_ui/<package>", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-ui-"));
-  const ownerDir = join(root, "owner");
-  const codexDir = join(root, "codex");
-  await mkdir(ownerDir);
-  await mkdir(codexDir);
-  await writeFile(join(ownerDir, "index.html"), "owner-page");
-  await writeFile(join(codexDir, "index.html"), "codex-page");
-  const ui = await startUiServer([
-    { name: "owner", dir: ownerDir, data: () => ({ children: [{ name: "codex", pid: 4 }] }) },
-    { name: "codex", dir: codexDir, data: async () => ({ servers: [] }) },
-  ]);
+test("package UIs render through Next.js", { timeout: 120_000 }, async () => {
+  const uiModule = fileURLToPath(new URL("../src/ui.js", import.meta.url));
+  const child = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import { startUiServer } from ${JSON.stringify(uiModule)};
+       const ui = await startUiServer(0);
+       console.log("PORT " + ui.port);
+       setInterval(() => {}, 1000);`,
+    ],
+    { stdio: ["ignore", "pipe", "inherit"] },
+  );
   try {
-    const page = await fetch(`http://127.0.0.1:${ui.port}/_ui/owner/`);
-    assert.equal(await page.text(), "owner-page");
-    const redirect = await fetch(`http://127.0.0.1:${ui.port}/_ui/codex`, { redirect: "manual" });
-    assert.equal(redirect.status, 302);
-    assert.equal(redirect.headers.get("location"), "/_ui/codex/");
-    const codex = await fetch(`http://127.0.0.1:${ui.port}/_ui/codex/`);
-    assert.equal(await codex.text(), "codex-page");
-    const data = await fetch(`http://127.0.0.1:${ui.port}/_ui/owner/data`);
-    assert.deepEqual(await data.json(), { children: [{ name: "codex", pid: 4 }] });
-    const missing = await fetch(`http://127.0.0.1:${ui.port}/_ui/other/`);
+    const port = await new Promise<number>((resolve, reject) => {
+      let out = "";
+      const timer = setTimeout(() => reject(new Error(`ui server did not start\n${out}`)), 30_000);
+      child.stdout?.setEncoding("utf8");
+      child.stdout?.on("data", (chunk: string) => {
+        out += chunk;
+        const match = out.match(/PORT (\d+)/);
+        if (match) {
+          clearTimeout(timer);
+          resolve(Number(match[1]));
+        }
+      });
+      child.once("exit", () => reject(new Error(`ui server exited\n${out}`)));
+    });
+    const owner = await fetch(`http://127.0.0.1:${port}/_ui/owner`);
+    assert.equal(owner.status, 200);
+    assert.match(await owner.text(), /owner/);
+    const codex = await fetch(`http://127.0.0.1:${port}/_ui/codex`);
+    assert.equal(codex.status, 200);
+    const api = await fetch(`http://127.0.0.1:${port}/_ui/api`);
+    assert.equal(api.status, 200);
+    assert.match(await api.text(), /server_start/);
+    const missing = await fetch(`http://127.0.0.1:${port}/_ui/other`);
     assert.equal(missing.status, 404);
   } finally {
-    await ui.close();
-    await rm(root, { recursive: true, force: true });
+    child.kill("SIGKILL");
   }
 });
 

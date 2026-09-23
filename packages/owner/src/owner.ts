@@ -5,8 +5,6 @@ export type OwnedChild = {
   command: string;
   args: string[];
   env?: Record<string, string>;
-  uiDir?: string;
-  dataUrl?: string;
 };
 
 export type ChildStatus = {

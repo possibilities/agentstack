@@ -17,3 +17,9 @@ _Avoid_: protocol, binding
 One named composition of a Package API. The name is the namespace for its socket.
 
 _Avoid_: daemon, service, app
+
+## UI
+
+Each package's page is a React Server Component under `ui/`, rendered by a Next.js dev server embedded in `agentstack serve` (`packages/owner/web`). Pages call the package's own server actions — no HTTP data endpoints. The client polls the action each second to repaint.
+
+_Avoid_: endpoint, widget

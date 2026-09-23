@@ -21,7 +21,6 @@ export type PackageApi<Ctx> = {
   operations: readonly AnyOperation<Ctx>[];
   createContext(env: NodeJS.ProcessEnv): Promise<Ctx>;
   closeContext(ctx: Ctx, options?: { halt?: boolean }): Promise<void>;
-  uiData?(ctx: Ctx, request?: URL): Promise<unknown>;
 };
 
 const namePattern = /^[a-z][a-z0-9_]{0,63}$/;

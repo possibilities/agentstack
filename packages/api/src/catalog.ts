@@ -62,6 +62,10 @@ export async function loadCatalog(env: NodeJS.ProcessEnv = process.env, from = i
   return { servers };
 }
 
+const importRuntimeFile = new Function("specifier", "return import(specifier)") as (
+  specifier: string,
+) => Promise<{ api?: PackageApi<unknown> }>;
+
 export async function loadPackageApi(dir: string): Promise<PackageApi<unknown>> {
   const entry = join(dir, "dist", "src", "index.js");
   try {
@@ -69,7 +73,7 @@ export async function loadPackageApi(dir: string): Promise<PackageApi<unknown>> 
   } catch {
     throw new Error(`${basename(dir)} API is not built`);
   }
-  const loaded = (await import(pathToFileURL(entry).href)) as { api?: PackageApi<unknown> };
+  const loaded = await importRuntimeFile(pathToFileURL(entry).href);
   if (!loaded.api || !Array.isArray(loaded.api.operations)) throw new Error(`${basename(dir)} does not export api`);
   return loaded.api;
 }

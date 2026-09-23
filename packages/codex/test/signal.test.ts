@@ -13,7 +13,7 @@ const cli = join(dirname(require.resolve("@agentstack/api/package.json")), "dist
 test("SIGINT exits the codex socket while a connection is open", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-signal-"));
   const child = spawn(process.execPath, [cli, "codex", "socket"], {
-    env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_PORT: "0" },
+    env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir },
     stdio: ["ignore", "ignore", "pipe"],
   });
   let stderr = "";
@@ -22,9 +22,8 @@ test("SIGINT exits the codex socket while a connection is open", async () => {
     stderr += chunk;
   });
   try {
-    const url = await waitForUrl(() => stderr);
-    const port = Number(new URL(url).port);
-    const socket = connect(port, "127.0.0.1");
+    const path = await waitForSocket(() => stderr);
+    const socket = connect(path);
     await new Promise<void>((resolve, reject) => {
       socket.once("connect", () => resolve());
       socket.once("error", reject);
@@ -42,15 +41,15 @@ test("SIGINT exits the codex socket while a connection is open", async () => {
   }
 });
 
-async function waitForUrl(read: () => string): Promise<string> {
+async function waitForSocket(read: () => string): Promise<string> {
   const started = Date.now();
   let text = read();
-  while (!text.includes("http://127.0.0.1:")) {
-    if (Date.now() - started > 3_000) throw new Error(`socket did not print a URL\n${text}`);
+  while (!text.includes("codex.sock")) {
+    if (Date.now() - started > 3_000) throw new Error(`socket did not print a path\n${text}`);
     await new Promise((resolve) => setTimeout(resolve, 20));
     text = read();
   }
-  const match = text.match(/http:\/\/127\.0\.0\.1:\d+\/ui-data/);
-  if (!match) throw new Error(`socket did not print a URL\n${text}`);
+  const match = text.match(/\S+codex\.sock/);
+  if (!match) throw new Error(`socket did not print a path\n${text}`);
   return match[0];
 }

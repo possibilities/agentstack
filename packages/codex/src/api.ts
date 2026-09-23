@@ -3,7 +3,6 @@ import { z } from "zod";
 import { operation, type PackageApi } from "@agentstack/api";
 import { stateDir } from "./paths.js";
 import { Supervisor, type ServerView } from "./supervisor.js";
-import { runningTree } from "./tree.js";
 
 const idSchema = z
   .string()
@@ -81,10 +80,6 @@ export const api: PackageApi<CodexContext> = {
   async closeContext(ctx, options) {
     if (options?.halt) await ctx.supervisor.halt();
     else await ctx.supervisor.stopAll();
-  },
-  uiData(ctx, request) {
-    const includeThreads = request?.searchParams.get("threads") === "1";
-    return runningTree(ctx.supervisor, undefined, includeThreads);
   },
 };
 

@@ -1,12 +1,12 @@
-import type { Supervisor } from "./supervisor.js";
+import type { ServerView } from "./supervisor.js";
 import { activeThreads, listActiveThreads } from "./threads.js";
 
 export async function runningTree(
-  supervisor: Supervisor,
+  listServers: () => Promise<ServerView[]> | ServerView[],
   listThreads: (url: string) => Promise<ReturnType<typeof activeThreads>> = listActiveThreads,
   includeThreads = false,
 ) {
-  const running = supervisor.list().filter((server) => server.state === "running" && server.url);
+  const running = (await listServers()).filter((server) => server.state === "running" && server.url);
   if (!includeThreads) {
     return { servers: running.map((server) => ({ id: server.id, cwd: server.cwd, url: server.url, threads: [] })) };
   }
