@@ -7,6 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { uiListenPort, uiPageUrl } from "../src/ui.js";
+import { installedRuntimeVersion } from "@agentstack/codex";
 
 test("package UIs render through Next.js", { timeout: 120_000 }, async () => {
   const uiModule = fileURLToPath(new URL("../src/ui.js", import.meta.url));
@@ -59,6 +60,10 @@ test("package UIs render through Next.js", { timeout: 120_000 }, async () => {
     assert.match(await owner.text(), /owner/);
     const codex = await fetch(`http://127.0.0.1:${port}/_ui/codex`, authenticated);
     assert.equal(codex.status, 200);
+    const expectedVersion = await installedRuntimeVersion();
+    const codexHtml = await codex.text();
+    assert.ok(codexHtml.includes(`Installed runtime: codexnk ${expectedVersion ?? "version unavailable"}`));
+    assert.ok(codexHtml.includes(`codexnk ${expectedVersion ?? "version unavailable"}`));
     const api = await fetch(`http://127.0.0.1:${port}/_ui/api`, authenticated);
     assert.equal(api.status, 200);
     assert.match(await api.text(), /server_start/);

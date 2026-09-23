@@ -1,10 +1,14 @@
 "use server";
 
 import { socketCall, socketPath } from "@agentstack/api";
-import { listActiveThreads, runningTree } from "../dist/src/index.js";
+import { installedRuntimeVersion, listActiveThreads, runningTree } from "../dist/src/index.js";
 import type { ServerView } from "../src/supervisor";
 import type { ActiveThread } from "../src/threads";
 import type { TreeNode } from "./agent-tree";
+
+export async function codexVersion(): Promise<string | null> {
+  return installedRuntimeVersion();
+}
 
 async function listServers(): Promise<ServerView[]> {
   const result = (await socketCall(socketPath("codex"), "tools/call", {

@@ -8,6 +8,13 @@ GitHub CLI access to `possibilities/codexnk-codex`; it verifies the pinned tag,
 commit and asset checksum. The installed runtime is shared with AgentStart,
 whose consumer pin must stay aligned. Vendor Codex remains untouched.
 
+The Codex UI header displays the installed codexnk release version from the
+receipt beside the resolved runtime binary. It does not display the setup pin
+or the binary's unbranded `codex-cli 0.0.0` string. Missing, unreadable or invalid
+release metadata displays `codexnk version unavailable` without hiding the
+server tree. The badge describes the installed runtime for new servers, not
+the version retained by an already-running process.
+
 `pnpm test` rebuilds each package before running compiled tests and checks the Next UI types. `pnpm build` builds all packages, then runs a Next production build and UI typecheck. Package builds remove only their own `dist` directory, so deleted compiled files cannot survive a build. The Next build uses `.next/build`; the UI integration test uses a separate temporary `.next/test-*` directory.
 
 ## State and processes
