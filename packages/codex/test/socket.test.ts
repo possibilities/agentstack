@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -12,6 +12,15 @@ const fakeBin = fileURLToPath(new URL("../../test/fixtures/fake-app-server.mjs",
 test("codex lifecycle is served on the namespaced unix socket", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-codex-api-"));
   const cwd = await mkdtemp(join(tmpdir(), "agentstack-codex-cwd-"));
+  const savedHome = process.env.HOME;
+  const savedPath = process.env.PATH;
+  process.env.HOME = cwd;
+  const runtime = join(cwd, ".local", "libexec", "codexnk", "codex");
+  await mkdir(join(runtime, ".."), { recursive: true });
+  await symlink(fakeBin, runtime);
+  // A working PATH alternative must never substitute for the required runtime.
+  await symlink(fakeBin, join(cwd, "codex"));
+  process.env.PATH = `${cwd}:${savedPath ?? ""}`;
   const served = await serveApi({
     name: "codex",
     transport: "socket",
@@ -46,11 +55,12 @@ test("codex lifecycle is served on the namespaced unix socket", async () => {
 
     const started = (await socketCall(served.socketPath, "tools/call", {
       name: "server_start",
-      arguments: { cwd, id: "remote", codexBin: fakeBin },
+      arguments: { cwd, id: "remote" },
     })) as { id: string; state: string; url: string };
     assert.equal(started.id, "remote");
     assert.equal(started.state, "running");
     assert.equal(started.url, `unix://${join(stateDir, "app", "remote.sock")}`);
+    assert.equal(JSON.parse(await readFile(join(stateDir, "servers", "remote.json"), "utf8")).codexBin, runtime);
     assert.deepEqual(await events.next(), { type: "event", topic: "servers_changed" });
 
     await assert.rejects(
@@ -67,8 +77,14 @@ test("codex lifecycle is served on the namespaced unix socket", async () => {
 
     await assert.rejects(socketCall(served.socketPath, "tools/call", {
       name: "server_start",
-      arguments: { cwd, id: "missing-bin", codexBin: join(stateDir, "absent") },
-    }), /failed to spawn|ENOENT/);
+      arguments: { cwd, id: "override", codexBin: fakeBin },
+    }), /codexBin|Unrecognized/);
+    await rm(runtime);
+    await assert.rejects(socketCall(served.socketPath, "tools/call", {
+      name: "server_start",
+      arguments: { cwd, id: "missing-bin" },
+    }), /required codexnk runtime is missing/);
+    await symlink(fakeBin, runtime);
     const afterBadBin = (await socketCall(served.socketPath, "tools/call", {
       name: "server_list", arguments: {},
     })) as { servers: Array<{ id: string; state: string }> };
@@ -85,7 +101,7 @@ test("codex lifecycle is served on the namespaced unix socket", async () => {
     assert.deepEqual(await events.next(), { type: "unsubscribed", topic: "servers_changed" });
     await socketCall(served.socketPath, "tools/call", {
       name: "server_start",
-      arguments: { cwd, id: "remote", codexBin: fakeBin },
+      arguments: { cwd, id: "remote" },
     });
     await assert.rejects(events.next(300), /no frame/);
 
@@ -96,6 +112,10 @@ test("codex lifecycle is served on the namespaced unix socket", async () => {
     events.close();
   } finally {
     await served.close();
+    if (savedHome === undefined) delete process.env.HOME;
+    else process.env.HOME = savedHome;
+    if (savedPath === undefined) delete process.env.PATH;
+    else process.env.PATH = savedPath;
     await rm(stateDir, { recursive: true, force: true });
     await rm(cwd, { recursive: true, force: true });
   }

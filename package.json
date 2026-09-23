@@ -6,7 +6,7 @@
     "build": "turbo build && pnpm run build:web",
     "build:web": "AGENTSTACK_NEXT_DIST_DIR=.next/build pnpm --filter @agentstack/owner exec next build web && pnpm run typecheck:web",
     "typecheck:web": "pnpm exec tsc -p packages/owner/web/tsconfig.json --noEmit",
-    "test": "turbo test && pnpm run typecheck:web"
+    "test": "turbo test && node --test scripts/install.test.mjs && pnpm run typecheck:web"
   },
   "engines": {
     "node": ">=24"

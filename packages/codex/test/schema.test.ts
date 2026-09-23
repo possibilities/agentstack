@@ -3,6 +3,13 @@ import test from "node:test";
 import { publishedJsonSchema } from "@agentstack/api";
 import { serverList, serverStart } from "../src/api.js";
 
+test("server_start has no executable override and rejects legacy codexBin", () => {
+  const schema = publishedJsonSchema(serverStart.input) as { properties: Record<string, unknown>; additionalProperties: boolean };
+  assert.deepEqual(Object.keys(schema.properties).sort(), ["args", "cwd", "id"]);
+  assert.equal(schema.additionalProperties, false);
+  assert.equal(serverStart.input.safeParse({ cwd: "/tmp", codexBin: "/tmp/vendor-codex" }).success, false);
+});
+
 test("published tool schemas use a single type per branch", () => {
   const schemas = [publishedJsonSchema(serverStart.output), publishedJsonSchema(serverList.output)];
   for (const schema of schemas) assertNoTypeArrays(schema);

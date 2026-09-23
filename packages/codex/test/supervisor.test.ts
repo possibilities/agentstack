@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { connect } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { appServerArgs, Supervisor, waitForReady, type LaunchSpec, type RunningChild } from "../src/supervisor.js";
+import { appServerArgs, launchChild, Supervisor, waitForReady, type LaunchSpec, type RunningChild } from "../src/supervisor.js";
+import { codexRuntimePath } from "../src/paths.js";
 
 const fakeBin = fileURLToPath(new URL("../../test/fixtures/fake-app-server.mjs", import.meta.url));
 
@@ -85,11 +86,12 @@ test("start is idempotent and stop is idempotent", async () => {
       },
     });
     await supervisor.load();
-    const first = await supervisor.start({ cwd, id: "alpha", codexBin: "/tmp/codex" });
-    const second = await supervisor.start({ cwd, id: "alpha", codexBin: "/tmp/codex" });
+    const first = await supervisor.start({ cwd, id: "alpha" });
+    const second = await supervisor.start({ cwd, id: "alpha" });
     assert.equal(first.pid, second.pid);
     assert.equal(first.url, "ws://127.0.0.1:41000");
     assert.equal(launched.length, 1);
+    assert.equal(launched[0]?.bin, codexRuntimePath());
     assert.deepEqual(launched[0]?.args, ["app-server", "--listen", "ws://127.0.0.1:41000"]);
     assert.equal(launched[0]?.cwd, cwd);
     const stopped = await supervisor.stop("alpha");
@@ -447,10 +449,10 @@ test("a reused pid is not treated as the recorded server", async () => {
 test("a fake app-server becomes ready and can be stopped", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-live-"));
   const cwd = await mkdtemp(join(tmpdir(), "agentstack-live-cwd-"));
-  const supervisor = new Supervisor({ stateDir, graceMs: 1_000 });
+  const supervisor = new Supervisor({ stateDir, graceMs: 1_000, launch: (spec) => launchChild({ ...spec, bin: fakeBin }) });
   try {
     await supervisor.load();
-    const started = await supervisor.start({ cwd, id: "live", codexBin: fakeBin });
+    const started = await supervisor.start({ cwd, id: "live" });
     assert.equal(started.state, "running");
     assert.equal(started.url, `unix://${join(stateDir, "app", "live.sock")}`);
     await new Promise<void>((resolve, reject) => {
@@ -463,6 +465,30 @@ test("a fake app-server becomes ready and can be stopped", async () => {
     assert.equal(stopped.url, null);
   } finally {
     await supervisor.stopAll();
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("a persisted live server from another runtime is not returned as codexnk", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-legacy-"));
+  const cwd = await mkdtemp(join(tmpdir(), "agentstack-legacy-cwd-"));
+  let launched = false;
+  const supervisor = new Supervisor({
+    stateDir,
+    commandLine: async () => "vendor-codex app-server --listen ws://127.0.0.1:41000",
+    launch: () => { launched = true; throw new Error("unexpected launch"); },
+  });
+  try {
+    await mkdir(join(stateDir, "servers"));
+    await writeFile(join(stateDir, "servers", "legacy.json"), JSON.stringify({
+      id: "legacy", pid: 12345, cwd, url: "ws://127.0.0.1:41000", state: "running", codexBin: "codex",
+    }));
+    await supervisor.load();
+    await assert.rejects(supervisor.start({ cwd, id: "legacy" }), /different Codex runtime; stop it/);
+    assert.equal(launched, false);
+    assert.equal(supervisor.list()[0]?.state, "running");
+  } finally {
     await rm(stateDir, { recursive: true, force: true });
     await rm(cwd, { recursive: true, force: true });
   }

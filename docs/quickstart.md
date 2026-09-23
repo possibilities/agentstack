@@ -1,12 +1,11 @@
 # Quickstart
 
-Agentstack runs the local Codex Package API and package UIs under one process owner. It requires Node 24 or newer, pnpm 12.5.1, and a `codex` executable on `PATH` when starting a Codex app server.
+Agentstack runs the local Codex Package API and package UIs under one process owner. It requires Node 24 or newer, pnpm 12.5.1, and the sibling `~/code/codexnk` workshop checkout for setup. Setup installs the pinned GitHub release through that workshop's verified installer; no `codex` command on PATH is required.
 
 From the repository root:
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm build
+scripts/install.sh --install
 pnpm test
 node packages/owner/dist/src/cli.js serve
 ```
@@ -22,3 +21,8 @@ node packages/api/dist/src/cli.js codex socket
 The command prints its Unix socket path. The two commands use the same state directory and cannot own the Codex socket at the same time. Stop either command with Ctrl-C and wait for it to exit before starting another instance.
 
 See [operations](operations.md) for state, shutdown, and recovery, and [security](security.md) for the local trust boundary.
+
+All Codex app servers use `~/.local/libexec/codexnk/codex`. The `server_start`
+request accepts `cwd`, optional `id`, and optional `args`; executable selection
+is not configurable. `scripts/install.sh --check` prints the dependency pin and
+installation plan without changes. Setup never starts or restarts services.

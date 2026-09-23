@@ -2,8 +2,9 @@ import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { createWriteStream } from "node:fs";
+import { accessSync, constants, createWriteStream } from "node:fs";
 import { connect } from "node:net";
+import { codexRuntimePath } from "./paths.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const DEFAULT_GRACE_MS = 10_000;
@@ -27,7 +28,6 @@ type RecordFile = ServerView & {
 export type StartInput = {
   cwd: string;
   id?: string;
-  codexBin?: string;
   args?: string[];
 };
 
@@ -127,10 +127,15 @@ export class Supervisor {
   private async startQueued(id: string, input: StartInput): Promise<ServerView> {
     if (!ID_PATTERN.test(id)) throw new Error(`invalid id: ${id}`);
     const cwd = await existingDirectory(input.cwd);
-    const codexBin = input.codexBin && input.codexBin.length > 0 ? input.codexBin : "codex";
+    const codexBin = codexRuntimePath();
     const userArgs = input.args ?? [];
     const current = this.records.get(id);
-    if (current && (await this.isRunning(current))) return viewOf(current);
+    if (current && (await this.isRunning(current))) {
+      if (current.codexBin !== codexBin) {
+        throw new Error(`server ${id} uses a different Codex runtime; stop it before starting it with codexnk`);
+      }
+      return viewOf(current);
+    }
 
     let lastError: Error | undefined;
     for (let attempt = 0; attempt < PORT_ATTEMPTS; attempt += 1) {
@@ -392,6 +397,11 @@ function isOurChild(command: string, url: string): boolean {
 }
 
 export function launchChild(spec: LaunchSpec): RunningChild {
+  try {
+    accessSync(spec.bin, constants.X_OK);
+  } catch {
+    throw new Error(`required codexnk runtime is missing or not executable at ${spec.bin}; run ~/code/agentstart/scripts/install.sh --install`);
+  }
   const log = createWriteStream(spec.logPath, { flags: "a" });
   log.on("error", (error) => console.error(`app-server log: ${error.message}`));
   let child: ChildProcess;

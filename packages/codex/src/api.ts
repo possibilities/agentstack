@@ -29,11 +29,10 @@ export type CodexContext = {
 export const serverStart = operation({
   name: "server_start",
   description:
-    "Start a Codex app-server on a private Unix socket, or return the live one with this id. Extra args are passed through. Do not pass --listen.",
-  input: z.object({
+    "Start the required codexnk runtime on a private Unix socket, or return the live one with this id. Extra args are passed through. Do not pass --listen.",
+  input: z.strictObject({
     cwd: z.string().describe("Working directory for the app-server."),
     id: idSchema.optional().describe("Existing server id to reuse. A new id is generated when omitted."),
-    codexBin: z.string().min(1).optional().describe("Codex executable. Defaults to codex on PATH."),
     args: z.array(z.string()).optional().describe("Extra Codex arguments. Do not include --listen."),
   }),
   output: serverViewSchema,
