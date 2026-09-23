@@ -197,9 +197,6 @@ importers:
       '@agentstack/codex':
         specifier: workspace:*
         version: link:../codex
-      portless:
-        specifier: 0.15.6
-        version: 0.15.6
     devDependencies:
       '@types/node':
         specifier: ^26.6.2
@@ -421,12 +418,6 @@ packages:
     resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
     engines: {node: '>=16.20.0'}
 
-  portless@0.15.6:
-    resolution: {integrity: sha512-uOAwWLF32rmyEGFASzSO0VOaqb/AQxFCCzyZbPGd82UNNOfIEvc09zy92nroNibE5HNfzV4oVB0ObKbPXgkM9A==}
-    engines: {node: '>=24'}
-    os: [darwin, linux, win32]
-    hasBin: true
-
   shebang-command@2.0.0:
     resolution: {integrity: sha512-kHxr2zZpYtdmrN1qDjrrX/Z1rR1kG8Dx+gkpK1G4eXmvXswmcE1hTWBWYUzlraYw1/yZp6YuDY77YtvbN0dmDA==}
     engines: {node: '>=8'}
@@ -590,8 +581,6 @@ snapshots:
   path-key@3.1.1: {}
 
   pkce-challenge@5.0.1: {}
-
-  portless@0.15.6: {}
 
   shebang-command@2.0.0:
     dependencies:

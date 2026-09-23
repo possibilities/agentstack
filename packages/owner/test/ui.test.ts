@@ -3,8 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { portlessCommandEnv, uiOrigin } from "../src/portless.js";
-import { startUiServer } from "../src/ui.js";
+import { startUiServer, uiListenPort, uiPageUrl } from "../src/ui.js";
 
 test("package UIs are mounted at /_ui/<package>", async () => {
   const root = await mkdtemp(join(tmpdir(), "agentstack-ui-"));
@@ -36,12 +35,10 @@ test("package UIs are mounted at /_ui/<package>", async () => {
   }
 });
 
-test("the UI hostname is agentstack.localhost", () => {
-  assert.equal(uiOrigin, "https://agentstack.localhost");
-  const env = portlessCommandEnv({ PATH: "/bin" });
-  assert.equal(env.PORTLESS_HTTPS, "1");
-  assert.equal(env.PORTLESS_PORT, "443");
-  assert.equal(env.PORTLESS_TLD, "localhost");
-  assert.equal(env.PORTLESS_TAILSCALE, "0");
-  assert.equal(env.PATH, "/bin");
+test("the UI uses a developer port", () => {
+  assert.equal(uiListenPort({}), 3000);
+  assert.equal(uiListenPort({ PORT: "" }), 3000);
+  assert.equal(uiListenPort({ PORT: "4321" }), 4321);
+  assert.equal(uiPageUrl(3000, "owner"), "http://127.0.0.1:3000/_ui/owner");
+  assert.throws(() => uiListenPort({ PORT: "nope" }), /invalid PORT: nope/);
 });

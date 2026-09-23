@@ -17,8 +17,7 @@
     "ui": "./ui"
   },
   "dependencies": {
-    "@agentstack/codex": "workspace:*",
-    "portless": "0.15.6"
+    "@agentstack/codex": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",

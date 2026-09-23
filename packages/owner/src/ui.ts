@@ -2,6 +2,19 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+export const defaultUiPort = 3000;
+
+export function uiListenPort(env: NodeJS.ProcessEnv = process.env): number {
+  if (env.PORT === undefined || env.PORT === "") return defaultUiPort;
+  const port = Number(env.PORT);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`invalid PORT: ${env.PORT}`);
+  return port;
+}
+
+export function uiPageUrl(port: number, name: string): string {
+  return `http://127.0.0.1:${port}/_ui/${name}`;
+}
+
 export type UiPage = {
   name: string;
   dir: string;
