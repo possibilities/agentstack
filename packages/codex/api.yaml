@@ -1,0 +1,4 @@
+name: codex
+description: Start, stop, and list local Codex app-server processes.
+socket:
+  description: Unix socket for Codex app-server lifecycle, namespaced as codex.

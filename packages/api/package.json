@@ -1,10 +1,17 @@
 {
-  "name": "@agentstack/owner",
+  "name": "@agentstack/api",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "bin": {
-    "agentstack": "./dist/src/cli.js"
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "agentstack": {
+    "ui": "./ui"
   },
   "scripts": {
     "build": "tsc",
@@ -13,12 +20,9 @@
   "engines": {
     "node": ">=24"
   },
-  "agentstack": {
-    "ui": "./ui"
-  },
   "dependencies": {
-    "@agentstack/api": "workspace:*",
-    "@agentstack/codex": "workspace:*"
+    "yaml": "^2.8.1",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",

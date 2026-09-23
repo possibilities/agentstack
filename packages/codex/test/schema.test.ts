@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { publishedJsonSchema } from "../src/mcp-schema.js";
-import { serverListOutput, serverViewOutput } from "../src/tools.js";
+import { publishedJsonSchema } from "@agentstack/api";
+import { serverList, serverStart } from "../src/api.js";
 
 test("published tool schemas use a single type per branch", () => {
-  const schemas = [publishedJsonSchema(serverViewOutput), publishedJsonSchema(serverListOutput)];
+  const schemas = [publishedJsonSchema(serverStart.output), publishedJsonSchema(serverList.output)];
   for (const schema of schemas) assertNoTypeArrays(schema);
-  const view = publishedJsonSchema(serverViewOutput) as {
+  const view = publishedJsonSchema(serverStart.output) as {
     properties: { url: { anyOf: Array<{ type: string }> }; pid: { anyOf: Array<{ type: string }> } };
     required: string[];
   };

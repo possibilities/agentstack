@@ -12,10 +12,10 @@ test("the owner stops a child it started", async () => {
   await owner.close();
 });
 
-test("the codex child is the built manager", () => {
+test("the codex child serves the codex socket", () => {
   const child = codexChild();
   assert.equal(child.name, "codex");
   assert.equal(child.command, process.execPath);
-  assert.deepEqual(child.args.slice(1), ["serve"]);
+  assert.deepEqual(child.args.slice(1), ["codex", "socket"]);
   assert.equal(existsSync(child.args[0] ?? ""), true);
 });

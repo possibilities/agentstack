@@ -1,11 +1,10 @@
-import { fromJsonSchema } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-export function mcpSchema<T extends z.ZodType>(schema: T) {
+export function publishedJsonSchema(schema: z.ZodType): Record<string, unknown> {
   const json = z.toJSONSchema(schema) as Record<string, unknown>;
   delete json.$schema;
   expandTypeArrays(json);
-  return fromJsonSchema(json);
+  return json;
 }
 
 function expandTypeArrays(schema: unknown): void {
@@ -21,10 +20,4 @@ function expandTypeArrays(schema: unknown): void {
     record.anyOf = types.map((type) => ({ type }));
   }
   for (const value of Object.values(record)) expandTypeArrays(value);
-}
-
-export function publishedJsonSchema(schema: {
-  "~standard": { jsonSchema: { output: (options: { target: "draft-2020-12" }) => unknown } };
-}): unknown {
-  return schema["~standard"].jsonSchema.output({ target: "draft-2020-12" });
 }
