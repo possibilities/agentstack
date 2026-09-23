@@ -22,7 +22,7 @@ runtime="$HOME/.local/libexec/codexnk/codex"
 if [ "$1" = --print-bin ]; then printf '%s\\n' "\${TEST_RUNTIME:-$runtime}"; exit; fi
 printf '%s\\n' "$*" >> "$HOME/runtime-calls"
 [ "\${TEST_FAIL:-0}" != 1 ] || exit 42
-[ "$*" = '--install --tag codexnk-v0.1.1 --sha 2945e58e2fb751dcaa1957f594bbef50fbd78392' ]
+[ "$*" = '--install --tag codexnk-v0.1.2 --sha 9103c8d5162ca57717814733e66a49a2ed756e30' ]
 mkdir -p "$(dirname "$runtime")"
 printf '#!/bin/sh\\nexit 0\\n' > "$runtime"
 chmod +x "$runtime"
