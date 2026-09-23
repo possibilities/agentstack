@@ -22,8 +22,10 @@
     "node": ">=24"
   },
   "dependencies": {
+    "clsx": "2.1.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "tailwind-merge": "3.7.0",
     "yaml": "^2.8.1",
     "zod": "^4.6.5"
   },
