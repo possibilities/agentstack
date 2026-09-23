@@ -43,13 +43,14 @@ test("codex lifecycle is served on the namespaced unix socket", async () => {
     assert.deepEqual(listedTools.websocket?.topics, {
       servers_changed: "Published when a Codex app-server record starts, stops, exits, or is reaped.",
       threads_changed: "Published when a loaded Codex thread starts, changes status, or closes.",
+      inputs_changed: "Published when an observed middleware candidate or its outcome changes; prompt bodies are never sent on this websocket.",
     });
 
     const events = subscribe(served.websocketUrl ?? "", "servers_changed");
     assert.deepEqual(await events.next(), { type: "subscribed", topic: "servers_changed" });
     assert.deepEqual(
       listedTools.tools.map((tool) => tool.name),
-      ["server_start", "server_stop", "server_list"],
+      ["server_start", "server_stop", "server_list", "input_observe_start", "input_observe_stop", "input_observe_list"],
     );
     assert.ok(listedTools.tools.every((tool) => tool.description.length > 0));
 

@@ -1,10 +1,12 @@
-import { codexEventsUrl, codexTree, codexVersion } from "./actions";
+import { codexEventsUrl, codexInputLog, codexTree, codexVersion } from "./actions";
 import { CodexTree, type TreeNode } from "./agent-tree";
+import { InputLog } from "./input-log";
 
 export default async function CodexPage() {
   const version = await codexVersion();
   let initial: TreeNode[] | null;
   let eventsUrl: string | null;
+  const inputLog = await codexInputLog();
   try {
     [initial, eventsUrl] = await Promise.all([codexTree(true), codexEventsUrl()]);
   } catch {
@@ -25,6 +27,7 @@ export default async function CodexPage() {
           </span>
         </header>
         <CodexTree initial={initial} eventsUrl={eventsUrl} />
+        <InputLog tree={initial} log={inputLog} />
       </main>
     </div>
   );

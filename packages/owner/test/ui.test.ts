@@ -64,6 +64,7 @@ test("package UIs render through Next.js", { timeout: 120_000 }, async () => {
     const codexHtml = await codex.text();
     assert.ok(codexHtml.includes(`Installed runtime: codexnk ${expectedVersion ?? "version unavailable"}`));
     assert.ok(codexHtml.includes(`codexnk ${expectedVersion ?? "version unavailable"}`));
+    assert.match(codexHtml, /Input middleware/);
     const api = await fetch(`http://127.0.0.1:${port}/_ui/api`, authenticated);
     assert.equal(api.status, 200);
     assert.match(await api.text(), /server_start/);

@@ -7,3 +7,4 @@ websocket:
   pubsub:
     servers_changed: Published when a Codex app-server record starts, stops, exits, or is reaped.
     threads_changed: Published when a loaded Codex thread starts, changes status, or closes.
+    inputs_changed: Published when an observed middleware candidate or its outcome changes; prompt bodies are never sent on this websocket.

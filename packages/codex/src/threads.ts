@@ -174,7 +174,7 @@ export function watchThreadEvents(url: string, onChange: () => void): () => void
   };
 }
 
-function appServerSocket(url: string): WebSocket {
+export function appServerSocket(url: string): WebSocket {
   const path = url.startsWith("unix://") ? url.slice("unix://".length) : null;
   return path
     ? new WebSocket("ws://localhost/", { createConnection: () => connect(path), handshakeTimeout: 1_000 })
