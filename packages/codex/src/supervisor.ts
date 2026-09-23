@@ -337,7 +337,8 @@ async function existingDirectory(cwd: string): Promise<string> {
 }
 
 function isOurChild(command: string, url: string): boolean {
-  return command.includes("app-server") && command.includes("--listen") && command.includes(url);
+  const tokens = command.split(/\s+/).filter((token) => token.length > 0);
+  return tokens.includes("app-server") && tokens.includes("--listen") && tokens.includes(url);
 }
 
 export function launchChild(spec: LaunchSpec): RunningChild {

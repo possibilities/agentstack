@@ -246,6 +246,58 @@ test("an exited in-memory server is recorded as stopped", async () => {
   }
 });
 
+test("a listen url is not owned when it is only a prefix of another port", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-prefix-"));
+  const killed: string[] = [];
+  const supervisor = new Supervisor({
+    stateDir,
+    graceMs: 30,
+    async commandLine(pid) {
+      if (pid === 11) return "codex app-server --listen ws://127.0.0.1:41000";
+      if (pid === 12) return "codex app-server --listen ws://127.0.0.1:4100";
+      return null;
+    },
+  });
+  const originalKill = process.kill;
+  process.kill = ((pid: number, signal?: NodeJS.Signals | 0) => {
+    killed.push(`${pid}:${signal ?? "SIGTERM"}`);
+    return true;
+  }) as typeof process.kill;
+  try {
+    await supervisor.load();
+    await mkdir(join(stateDir, "servers"), { recursive: true });
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(
+      join(stateDir, "servers", "prefix.json"),
+      JSON.stringify({
+        id: "prefix",
+        pid: 11,
+        cwd: "/tmp",
+        url: "ws://127.0.0.1:4100",
+        state: "running",
+        codexBin: "codex",
+      }),
+    );
+    await writeFile(
+      join(stateDir, "servers", "exact.json"),
+      JSON.stringify({
+        id: "exact",
+        pid: 12,
+        cwd: "/tmp",
+        url: "ws://127.0.0.1:4100",
+        state: "running",
+        codexBin: "codex",
+      }),
+    );
+    await supervisor.load();
+    await supervisor.reap();
+    assert.deepEqual(killed, ["12:SIGTERM", "12:SIGKILL"]);
+  } finally {
+    process.kill = originalKill;
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("a reused pid is not treated as the recorded server", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-reused-"));
   const cwd = await mkdtemp(join(tmpdir(), "agentstack-reused-cwd-"));
