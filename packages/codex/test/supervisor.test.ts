@@ -167,6 +167,85 @@ test("reap kills only a recorded app-server command", async () => {
   }
 });
 
+test("a dead in-memory server is stopped and can start again", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-dead-"));
+  const cwd = await mkdtemp(join(tmpdir(), "agentstack-dead-cwd-"));
+  const launched: number[] = [];
+  let resolveExit: (code: number | null) => void = () => undefined;
+  const exited = new Promise<number | null>((resolve) => {
+    resolveExit = resolve;
+  });
+  const child: RunningChild = { pid: 21, exited, kill() {} };
+  try {
+    const supervisor = new Supervisor({
+      stateDir,
+      async reservePort() {
+        return 41000 + launched.length;
+      },
+      launch(): RunningChild {
+        launched.push(launched.length + 1);
+        if (launched.length === 1) return child;
+        return { pid: 22, exited: new Promise(() => undefined), kill() {} };
+      },
+      async waitReady() {
+        return undefined;
+      },
+    });
+    await supervisor.load();
+    const first = await supervisor.start({ cwd, id: "alpha" });
+    assert.equal(first.pid, 21);
+    child.exitCode = 0;
+    const restarted = await supervisor.start({ cwd, id: "alpha" });
+    assert.equal(launched.length, 2);
+    assert.equal(restarted.pid, 22);
+    assert.equal(restarted.state, "running");
+    resolveExit(0);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const current = supervisor.list().find((server) => server.id === "alpha");
+    assert.equal(current?.pid, 22);
+    assert.equal(current?.state, "running");
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("an exited in-memory server is recorded as stopped", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-exited-"));
+  const cwd = await mkdtemp(join(tmpdir(), "agentstack-exited-cwd-"));
+  let resolveExit: (code: number | null) => void = () => undefined;
+  const exited = new Promise<number | null>((resolve) => {
+    resolveExit = resolve;
+  });
+  const child: RunningChild = { pid: 21, exited, kill() {} };
+  try {
+    const supervisor = new Supervisor({
+      stateDir,
+      async reservePort() {
+        return 41000;
+      },
+      launch(): RunningChild {
+        return child;
+      },
+      async waitReady() {
+        return undefined;
+      },
+    });
+    await supervisor.load();
+    await supervisor.start({ cwd, id: "alpha" });
+    child.exitCode = 0;
+    resolveExit(0);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const listed = supervisor.list().find((server) => server.id === "alpha");
+    assert.equal(listed?.state, "stopped");
+    assert.equal(listed?.pid, null);
+    assert.equal(listed?.url, null);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("a reused pid is not treated as the recorded server", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-reused-"));
   const cwd = await mkdtemp(join(tmpdir(), "agentstack-reused-cwd-"));

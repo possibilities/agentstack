@@ -41,6 +41,7 @@ export type LaunchSpec = {
 export type RunningChild = {
   pid: number;
   exited: Promise<number | null>;
+  exitCode?: number | null;
   kill(signal: NodeJS.Signals): void;
 };
 
@@ -171,6 +172,7 @@ export class Supervisor {
       this.children.set(id, child);
       const record: RecordFile = { id, pid: child.pid, cwd, url, state: "running", codexBin };
       this.records.set(id, record);
+      this.watchExit(id, child, record);
       await this.persist(record);
       try {
         await this.waitReady(url, child.exited, this.readyTimeoutMs);
@@ -203,14 +205,19 @@ export class Supervisor {
   private async isRunning(record: RecordFile): Promise<boolean> {
     if (record.state !== "running" || record.pid === null || record.url === null) return false;
     const child = this.children.get(record.id);
-    if (child) {
-      const status = await Promise.race([
-        child.exited.then(() => "dead" as const),
-        Promise.resolve("alive" as const),
-      ]);
-      return status === "alive";
-    }
+    if (child) return child.exitCode === undefined;
     return this.ownsProcess(record.pid, record.url);
+  }
+
+  private watchExit(id: string, child: RunningChild, record: RecordFile): void {
+    void child.exited.then(() => {
+      void this.enqueue(id, async () => {
+        if (this.children.get(id) !== child || this.records.get(id) !== record) return;
+        this.children.delete(id);
+        this.markStopped(record);
+        await this.persist(record);
+      });
+    });
   }
 
   private async ownsProcess(pid: number, url: string): Promise<boolean> {
@@ -343,23 +350,30 @@ export function launchChild(spec: LaunchSpec): RunningChild {
   });
   child.stdout?.pipe(log);
   child.stderr?.pipe(log);
+  let resolveExit: (code: number | null) => void = () => undefined;
   const exited = new Promise<number | null>((resolve) => {
-    child.once("error", () => resolve(null));
-    child.once("exit", (code) => {
-      log.end();
-      resolve(code);
-    });
+    resolveExit = resolve;
   });
   if (child.pid === undefined) {
     throw new Error(`failed to spawn ${spec.bin}`);
   }
-  return {
+  const running: RunningChild = {
     pid: child.pid,
     exited,
     kill(signal) {
       child.kill(signal);
     },
   };
+  child.once("error", () => {
+    if (running.exitCode === undefined) running.exitCode = null;
+    resolveExit(null);
+  });
+  child.once("exit", (code) => {
+    log.end();
+    running.exitCode = code;
+    resolveExit(code);
+  });
+  return running;
 }
 
 export async function reserveLoopbackPort(): Promise<number> {
