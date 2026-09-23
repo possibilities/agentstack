@@ -11,6 +11,9 @@ export type ChildStatus = {
   name: string;
   pid: number | null;
   running: boolean;
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  error: string | null;
 };
 
 export type RunningOwner = {
@@ -18,23 +21,30 @@ export type RunningOwner = {
   children(): ChildStatus[];
 };
 
-const haltMs = 2_000;
+const haltMs = 14_000;
 
 export function startOwner(children: OwnedChild[], env: NodeJS.ProcessEnv = process.env, onChange?: () => void): RunningOwner {
   const running = children.map((child) => ({
     child,
-    failed: false,
+    error: null as string | null,
     proc: spawn(child.command, child.args, {
       env: { ...env, ...child.env },
       stdio: "inherit",
-      detached: false,
+      detached: process.platform !== "win32",
     }),
   }));
 
   const alive = (item: (typeof running)[number]) =>
-    !item.failed && item.proc.exitCode === null && item.proc.signalCode === null;
+    item.error === null && item.proc.pid !== undefined && item.proc.exitCode === null && item.proc.signalCode === null;
   const statuses = () =>
-    running.filter(alive).map(({ child, proc }) => ({ name: child.name, pid: proc.pid ?? null, running: true }));
+    running.map((item) => ({
+      name: item.child.name,
+      pid: alive(item) ? item.proc.pid ?? null : null,
+      running: alive(item),
+      exitCode: item.proc.exitCode,
+      signal: item.proc.signalCode,
+      error: item.error,
+    }));
   let last = JSON.stringify(statuses());
   const notify = () => {
     const next = JSON.stringify(statuses());
@@ -46,11 +56,19 @@ export function startOwner(children: OwnedChild[], env: NodeJS.ProcessEnv = proc
   for (const item of running) {
     item.proc.once("spawn", notify);
     item.proc.once("error", (error) => {
-      item.failed = true;
+      item.error = error.message;
       console.error(`${item.child.name}: ${error.message}`);
       notify();
     });
-    item.proc.once("exit", notify);
+    item.proc.once("exit", () => {
+      // A child that exits must not leave its descendants behind.
+      try {
+        signalGroup(item.proc, "SIGTERM");
+      } catch (error) {
+        item.error = error instanceof Error ? error.message : String(error);
+      }
+      notify();
+    });
   }
 
   return {
@@ -63,30 +81,39 @@ export function startOwner(children: OwnedChild[], env: NodeJS.ProcessEnv = proc
   };
 }
 
-function halt(procs: ChildProcess[]): Promise<void> {
-  return new Promise((resolve) => {
-    const live = procs.filter((proc) => proc.pid !== undefined && proc.exitCode === null && proc.signalCode === null);
-    if (live.length === 0) {
-      resolve();
-      return;
-    }
-    let pending = live.length;
-    const finish = () => {
-      pending -= 1;
-      if (pending === 0) resolve();
-    };
-    const force = setTimeout(() => {
-      for (const proc of live) {
-        if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
-      }
-    }, haltMs);
-    force.unref();
-    for (const proc of live) {
-      proc.once("exit", () => {
-        if (live.every((item) => item.exitCode !== null || item.signalCode !== null)) clearTimeout(force);
-        finish();
-      });
-      proc.kill("SIGTERM");
-    }
-  });
+async function halt(procs: ChildProcess[]): Promise<void> {
+  for (const proc of procs) signalGroup(proc, "SIGTERM");
+  const deadline = Date.now() + haltMs;
+  while (Date.now() < deadline && procs.some(groupAlive)) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  for (const proc of procs.filter(groupAlive)) signalGroup(proc, "SIGKILL");
+  const forceDeadline = Date.now() + 1_000;
+  while (Date.now() < forceDeadline && procs.some(groupAlive)) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  if (procs.some(groupAlive)) throw new Error("owned process group did not exit");
+}
+
+function groupAlive(proc: ChildProcess): boolean {
+  if (proc.pid === undefined) return false;
+  if (process.platform === "win32") return proc.exitCode === null && proc.signalCode === null;
+  try {
+    process.kill(-proc.pid, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code !== "ESRCH" && !(code === "EPERM" && (proc.exitCode !== null || proc.signalCode !== null));
+  }
+}
+
+function signalGroup(proc: ChildProcess, signal: NodeJS.Signals): void {
+  if (proc.pid === undefined) return;
+  try {
+    if (process.platform === "win32") proc.kill(signal);
+    else process.kill(-proc.pid, signal);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ESRCH" && !(code === "EPERM" && (proc.exitCode !== null || proc.signalCode !== null))) throw error;
+  }
 }

@@ -16,8 +16,8 @@
     "ui": "./ui"
   },
   "scripts": {
-    "build": "tsc",
-    "test": "tsc && node --test dist/test/*.test.js"
+    "build": "node ../../scripts/clean-dist.mjs && tsc",
+    "test": "node --test dist/test/*.test.js"
   },
   "engines": {
     "node": ">=24"

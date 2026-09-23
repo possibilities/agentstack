@@ -1,10 +1,11 @@
 "use client";
 
-import type { CSSProperties, KeyboardEvent } from "react";
+import type { CSSProperties } from "react";
 import { cva } from "class-variance-authority";
 import { usePubsub } from "@agentstack/api/ui/use-pubsub";
 
 export type TreeNode = {
+  id: string;
   kind: "manager" | "native";
   label: string;
   detail?: string;
@@ -70,24 +71,23 @@ function Row({ node, depth }: { node: TreeNode; depth: number }) {
     <li className="list-none">
       <div
         className={treeRow({ kind: node.kind, metadata: Boolean(node.detail) })}
-        tabIndex={0}
-        role="group"
         data-slot="tree-row"
         data-kind={node.kind}
         data-activity={node.activity}
         data-depth={depth}
         style={{ "--depth": String(Math.min(depth, 12)) } as CSSProperties}
-        aria-label={`${node.label}; ${node.activity}`}
         title={node.label}
       >
         <span data-slot="tree-status" className={treeStatus({ activity: node.activity })}>
           {node.kind === "manager" ? managerIcon : robotIcon}
         </span>
-        <span data-slot="tree-heading" className="pointer-events-none relative col-span-2 col-start-2 row-start-1 flex h-9 min-w-0 items-center gap-2">
+        <span data-slot="tree-heading" className="pointer-events-none relative col-start-2 row-start-1 flex h-9 min-w-0 items-center gap-2">
           <span className={treeLabel({ kind: node.kind })}>{node.label}</span>
+          <span className="sr-only">{node.activity}</span>
         </span>
+        <span className="col-start-3 row-start-1 text-[13px] text-muted-foreground">{node.activity}</span>
         {node.detail ? (
-          <span data-slot="tree-settings" role="note" className="pointer-events-none relative col-span-2 col-start-2 row-start-2 flex h-5 w-full max-w-full min-w-0 items-baseline gap-1 truncate text-[13px]/5 text-muted-foreground tabular-nums">
+          <span data-slot="tree-settings" role="note" className="pointer-events-none relative col-start-2 row-start-2 flex h-5 w-full max-w-full min-w-0 items-baseline gap-1 truncate text-[13px]/5 text-muted-foreground tabular-nums">
             <span className="min-w-0 truncate">{node.detail}</span>
           </span>
         ) : null}
@@ -95,7 +95,7 @@ function Row({ node, depth }: { node: TreeNode; depth: number }) {
       {node.children?.length ? (
         <ul className="m-0 list-none p-0">
           {node.children.map((child) => (
-            <Row key={child.label} node={child} depth={depth + 1} />
+            <Row key={child.id} node={child} depth={depth + 1} />
           ))}
         </ul>
       ) : null}
@@ -103,34 +103,27 @@ function Row({ node, depth }: { node: TreeNode; depth: number }) {
   );
 }
 
-function onTreeKeyDown(event: KeyboardEvent<HTMLUListElement>) {
-  if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
-  const rows = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[data-slot="tree-row"]'));
-  const index = rows.indexOf(document.activeElement as HTMLElement);
-  const target =
-    event.key === "Home"
-      ? rows[0]
-      : event.key === "End"
-        ? rows.at(-1)
-        : rows[index + (event.key === "ArrowDown" ? 1 : -1)];
-  if (target) {
-    event.preventDefault();
-    target.focus();
-  }
-}
-
 function AgentTree({ nodes }: { nodes: TreeNode[] }) {
+  const counts = { working: 0, waiting: 0, failed: 0 };
+  const count = (items: TreeNode[]) => {
+    for (const item of items) {
+      if (item.activity in counts) counts[item.activity as keyof typeof counts] += 1;
+      count(item.children ?? []);
+    }
+  };
+  count(nodes);
   return (
-    <ul className="m-0 list-none p-0 select-none [&_*]:select-none" aria-label="Agents" onKeyDown={onTreeKeyDown}>
-      {nodes.map((node) => (
-        <Row key={node.label} node={node} depth={0} />
-      ))}
-    </ul>
+    <>
+      <p className="sr-only" aria-live="polite">{`${counts.working} working, ${counts.waiting} waiting, ${counts.failed} failed`}</p>
+      <ul className="m-0 list-none p-0" aria-label="Agents">
+        {nodes.map((node) => <Row key={node.id} node={node} depth={0} />)}
+      </ul>
+    </>
   );
 }
 
 export function CodexTree({ initial, eventsUrl }: { initial: TreeNode[] | null; eventsUrl: string | null }) {
-  usePubsub(eventsUrl, "servers_changed");
+  usePubsub(eventsUrl, ["servers_changed", "threads_changed"]);
   const nodes = initial;
   if (nodes === null) return <p role="status" className="m-2 text-base text-muted-foreground">Unavailable</p>;
   if (nodes.length === 0) return <p role="status" className="m-2 text-base text-muted-foreground">No running agents</p>;

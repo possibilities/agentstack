@@ -20,7 +20,7 @@ export async function runApi(args: string[], env: NodeJS.ProcessEnv = process.en
   const shutdown = () => {
     if (closing) process.exit(1);
     closing = true;
-    const force = setTimeout(() => process.exit(1), 2_000);
+    const force = setTimeout(() => process.exit(1), 12_000);
     force.unref();
     void served.close().then(
       () => process.exit(0),

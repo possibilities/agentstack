@@ -6,3 +6,4 @@ websocket:
   description: Loopback websocket publishing Codex app-server lifecycle events.
   pubsub:
     servers_changed: Published when a Codex app-server record starts, stops, exits, or is reaped.
+    threads_changed: Published when a loaded Codex thread starts, changes status, or closes.

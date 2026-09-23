@@ -1,3 +1,6 @@
+import { connect } from "node:net";
+import WebSocket from "ws";
+
 export type ActiveThread = {
   id: string;
   label: string;
@@ -36,11 +39,24 @@ export function activeThreads(records: unknown[]): ActiveThread[] {
 
 export function threadTree(threads: ActiveThread[]): ActiveThread[] {
   const nodes = new Map(threads.map((thread) => [thread.id, { ...thread, children: [] as ActiveThread[] }]));
+  const parentIds = new Map(threads.map((thread) => [thread.id, thread.parentThreadId]));
+  const cycleRoots = new Set<string>();
+  for (const thread of threads) {
+    const path: string[] = [];
+    const seen = new Map<string, number>();
+    let id: string | null | undefined = thread.id;
+    while (id && nodes.has(id) && !seen.has(id)) {
+      seen.set(id, path.length);
+      path.push(id);
+      id = parentIds.get(id);
+    }
+    if (id && seen.has(id)) cycleRoots.add([...path.slice(seen.get(id))].sort()[0]);
+  }
   const roots: ActiveThread[] = [];
   for (const thread of threads) {
     const node = nodes.get(thread.id);
     if (!node) continue;
-    const parent = thread.parentThreadId ? nodes.get(thread.parentThreadId) : undefined;
+    const parent = thread.parentThreadId && !cycleRoots.has(thread.id) ? nodes.get(thread.parentThreadId) : undefined;
     if (parent && parent !== node) parent.children?.push(node);
     else roots.push(node);
   }
@@ -48,7 +64,7 @@ export function threadTree(threads: ActiveThread[]): ActiveThread[] {
 }
 
 export async function listActiveThreads(url: string): Promise<ActiveThread[]> {
-  const ws = new WebSocket(url);
+  const ws = appServerSocket(url);
   const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   let nextId = 1;
   ws.addEventListener("message", (event) => {
@@ -91,18 +107,78 @@ export async function listActiveThreads(url: string): Promise<ActiveThread[]> {
     ws.send(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }));
     const loaded = (await call("thread/loaded/list", {})) as { data?: unknown };
     const ids = Array.isArray(loaded.data) ? loaded.data.filter((id): id is string => typeof id === "string") : [];
-    const records = await Promise.all(
+    const results = await Promise.allSettled(
       ids.map(async (threadId) => {
         const result = (await call("thread/read", { threadId })) as { thread?: unknown };
         return result.thread;
       }),
     );
+    const records = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+    if (results.some((result) => result.status === "rejected")) {
+      console.error(`thread/read failed for ${results.filter((result) => result.status === "rejected").length} loaded threads`);
+    }
     return threadTree(activeThreads(records));
   } catch {
     return [];
   } finally {
     ws.close();
   }
+}
+
+const threadChangeMethods = new Set([
+  "thread/started",
+  "thread/status/changed",
+  "thread/closed",
+  "thread/name/updated",
+  "thread/archived",
+  "thread/deleted",
+  "turn/started",
+  "turn/completed",
+]);
+
+export function watchThreadEvents(url: string, onChange: () => void): () => void {
+  let stopped = false;
+  let ws: WebSocket | undefined;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  const open = () => {
+    if (stopped) return;
+    const current = appServerSocket(url);
+    ws = current;
+    current.on("open", () => current.send(JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "agentstack", version: "0.0.0" } } })));
+    current.on("message", (raw) => {
+      let message: { id?: unknown; result?: unknown; method?: unknown };
+      try {
+        message = JSON.parse(String(raw)) as typeof message;
+      } catch {
+        return;
+      }
+      if (message.id === 1 && message.result) {
+        current.send(JSON.stringify({ method: "initialized" }));
+        if (!stopped) onChange();
+      } else if (typeof message.method === "string" && threadChangeMethods.has(message.method)) {
+        if (!stopped) onChange();
+      }
+    });
+    current.on("error", () => current.terminate());
+    current.on("close", () => {
+      if (stopped || ws !== current) return;
+      retry = setTimeout(open, 1_000);
+      retry.unref();
+    });
+  };
+  open();
+  return () => {
+    stopped = true;
+    if (retry) clearTimeout(retry);
+    ws?.terminate();
+  };
+}
+
+function appServerSocket(url: string): WebSocket {
+  const path = url.startsWith("unix://") ? url.slice("unix://".length) : null;
+  return path
+    ? new WebSocket("ws://localhost/", { createConnection: () => connect(path), handshakeTimeout: 1_000 })
+    : new WebSocket(url, { handshakeTimeout: 1_000 });
 }
 
 function once(ws: WebSocket, type: "open", timeoutMs: number): Promise<void> {

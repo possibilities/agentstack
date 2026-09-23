@@ -40,23 +40,39 @@ try {
   events = await serveApi({ name: "owner", transport: "websocket", env });
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
+  await ui.close().catch((closeError) => console.error(closeError));
   process.exit(1);
 }
 
-const owner = startOwner([codexChild()], env, () => events.publish?.("pids_changed"));
-setOwnerUiSource(() => ({ pid: process.pid, children: owner.children(), websocketUrl: events.websocketUrl }));
-
-console.error(uiPageUrl(ui.port, "owner"));
-console.error(uiPageUrl(ui.port, "codex"));
-console.error(uiPageUrl(ui.port, "api"));
-
+let owner: ReturnType<typeof startOwner>;
 let closing = false;
+let childFailed = false;
 const shutdown = () => {
   if (closing) process.exit(1);
   closing = true;
-  const force = setTimeout(() => process.exit(1), 3_000);
+  const force = setTimeout(() => process.exit(1), 16_000);
   force.unref();
-  void Promise.allSettled([ui.close(), owner.close(), events.close()]).then(() => process.exit(0));
+  void Promise.allSettled([ui.close(), owner.close(), events.close()]).then((results) => {
+    const failed = results.some((result) => result.status === "rejected");
+    for (const result of results) {
+      if (result.status === "rejected") console.error(result.reason);
+    }
+    process.exit(childFailed || failed ? 1 : 0);
+  });
 };
+owner = startOwner([codexChild()], env, () => {
+  events.publish?.("pids_changed");
+  if (!closing && owner.children().some((child) => !child.running)) {
+    childFailed = true;
+    console.error("a required child stopped; shutting down agentstack");
+    shutdown();
+  }
+});
+setOwnerUiSource(() => ({ pid: process.pid, children: owner.children(), websocketUrl: events.websocketUrl }));
+
+console.error(uiPageUrl(ui.port, "owner", ui.token));
+console.error(uiPageUrl(ui.port, "codex", ui.token));
+console.error(uiPageUrl(ui.port, "api", ui.token));
+
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

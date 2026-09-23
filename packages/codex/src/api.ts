@@ -3,6 +3,7 @@ import { z } from "zod";
 import { operation, type PackageApi } from "@agentstack/api";
 import { stateDir } from "./paths.js";
 import { Supervisor, type ServerView } from "./supervisor.js";
+import { watchThreadEvents } from "./threads.js";
 
 const idSchema = z
   .string()
@@ -13,7 +14,7 @@ const serverViewSchema = z.object({
   id: idSchema,
   pid: z.number().int().nullable().describe("Process id while running, otherwise null."),
   cwd: z.string().describe("Working directory."),
-  url: z.string().nullable().describe("Websocket URL while running, otherwise null."),
+  url: z.string().nullable().describe("WebSocket endpoint while running, otherwise null."),
   state: z.enum(["running", "stopped"]).describe("running or stopped."),
 });
 
@@ -28,7 +29,7 @@ export type CodexContext = {
 export const serverStart = operation({
   name: "server_start",
   description:
-    "Start a Codex app-server websocket process, or return the live one with this id. Extra args are passed through. Do not pass --listen.",
+    "Start a Codex app-server on a private Unix socket, or return the live one with this id. Extra args are passed through. Do not pass --listen.",
   input: z.object({
     cwd: z.string().describe("Working directory for the app-server."),
     id: idSchema.optional().describe("Existing server id to reuse. A new id is generated when omitted."),
@@ -36,7 +37,7 @@ export const serverStart = operation({
     args: z.array(z.string()).optional().describe("Extra Codex arguments. Do not include --listen."),
   }),
   output: serverViewSchema,
-  annotations: { title: "Start server", idempotentHint: true },
+  annotations: { title: "Start server" },
   async call(ctx: CodexContext, input) {
     return ctx.supervisor.start(input);
   },
@@ -78,14 +79,32 @@ export const api: PackageApi<CodexContext> = {
     return { supervisor };
   },
   subscribe(ctx, publish) {
-    ctx.supervisor.onChange = () => publish("servers_changed");
+    const watches = new Map<string, () => void>();
+    const sync = () => {
+      const active = new Set(ctx.supervisor.list().flatMap((server) => server.state === "running" && server.url ? [server.url] : []));
+      for (const [url, stop] of watches) {
+        if (!active.has(url)) {
+          stop();
+          watches.delete(url);
+        }
+      }
+      for (const url of active) {
+        if (!watches.has(url)) watches.set(url, watchThreadEvents(url, () => publish("threads_changed")));
+      }
+    };
+    ctx.supervisor.onChange = () => {
+      sync();
+      publish("servers_changed");
+    };
+    sync();
     return () => {
       ctx.supervisor.onChange = undefined;
+      for (const stop of watches.values()) stop();
+      watches.clear();
     };
   },
-  async closeContext(ctx, options) {
-    if (options?.halt) await ctx.supervisor.halt();
-    else await ctx.supervisor.stopAll();
+  async closeContext(ctx) {
+    await ctx.supervisor.stopAll();
   },
 };
 

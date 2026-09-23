@@ -1,9 +1,9 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
-import { createServer } from "node:http";
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
+import { connect } from "node:net";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const DEFAULT_GRACE_MS = 10_000;
@@ -49,7 +49,7 @@ export type SupervisorOptions = {
   stateDir: string;
   launch?: (spec: LaunchSpec) => RunningChild;
   waitReady?: (url: string, exited: Promise<number | null>, timeoutMs: number) => Promise<void>;
-  reservePort?: () => Promise<number>;
+  endpoint?: (id: string) => Promise<string>;
   commandLine?: (pid: number) => Promise<string | null>;
   graceMs?: number;
   readyTimeoutMs?: number;
@@ -63,7 +63,7 @@ export class Supervisor {
   private readonly children = new Map<string, RunningChild>();
   private readonly launch: (spec: LaunchSpec) => RunningChild;
   private readonly waitReady: (url: string, exited: Promise<number | null>, timeoutMs: number) => Promise<void>;
-  private readonly reservePort: () => Promise<number>;
+  private readonly endpoint: (id: string) => Promise<string>;
   private readonly commandLine: (pid: number) => Promise<string | null>;
   private readonly graceMs: number;
   private readonly readyTimeoutMs: number;
@@ -71,7 +71,7 @@ export class Supervisor {
   constructor(private readonly options: SupervisorOptions) {
     this.launch = options.launch ?? launchChild;
     this.waitReady = options.waitReady ?? waitForReady;
-    this.reservePort = options.reservePort ?? reserveLoopbackPort;
+    this.endpoint = options.endpoint ?? ((id) => unixEndpoint(options.stateDir, id));
     this.commandLine = options.commandLine ?? processCommandLine;
     this.graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
     this.readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
@@ -98,6 +98,7 @@ export class Supervisor {
     for (const record of this.records.values()) {
       if (record.state !== "running" || record.pid === null || record.url === null) continue;
       if (await this.ownsProcess(record.pid, record.url)) await this.signalPid(record.pid, record.url);
+      await cleanupEndpoint(record.url);
       this.markStopped(record);
       await this.persist(record);
       this.notify();
@@ -123,32 +124,6 @@ export class Supervisor {
     await Promise.all(running.map((record) => this.stop(record.id)));
   }
 
-  async halt(): Promise<void> {
-    const running = [...this.records.values()].filter((record) => record.state === "running");
-    await Promise.all(
-      running.map(async (record) => {
-        const child = this.children.get(record.id);
-        if (child) {
-          try {
-            child.kill("SIGKILL");
-          } catch {
-            // The child already exited.
-          }
-          this.children.delete(record.id);
-        } else if (record.pid !== null && record.url !== null && (await this.ownsProcess(record.pid, record.url))) {
-          try {
-            process.kill(record.pid, "SIGKILL");
-          } catch {
-            // The pid already exited.
-          }
-        }
-        this.markStopped(record);
-        await this.persist(record);
-        this.notify();
-      }),
-    );
-  }
-
   private async startQueued(id: string, input: StartInput): Promise<ServerView> {
     if (!ID_PATTERN.test(id)) throw new Error(`invalid id: ${id}`);
     const cwd = await existingDirectory(input.cwd);
@@ -159,8 +134,8 @@ export class Supervisor {
 
     let lastError: Error | undefined;
     for (let attempt = 0; attempt < PORT_ATTEMPTS; attempt += 1) {
-      const port = await this.reservePort();
-      const url = `ws://127.0.0.1:${port}`;
+      const url = await this.endpoint(id);
+      await prepareEndpoint(url);
       const logPath = join(this.options.stateDir, "logs", `${id}.log`);
       await mkdir(join(this.options.stateDir, "logs"), { recursive: true, mode: 0o700 });
       let child: RunningChild;
@@ -178,17 +153,21 @@ export class Supervisor {
       const record: RecordFile = { id, pid: child.pid, cwd, url, state: "running", codexBin };
       this.records.set(id, record);
       this.watchExit(id, child, record);
-      await this.persist(record);
+      let persisted = false;
       try {
+        await this.persist(record);
+        persisted = true;
         await this.waitReady(url, child.exited, this.readyTimeoutMs);
         this.notify();
         return viewOf(record);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         await this.killChild(id, child);
+        await cleanupEndpoint(url);
         this.markStopped(record);
-        await this.persist(record);
+        await this.persist(record).catch(() => undefined);
         this.notify();
+        if (!persisted) throw lastError;
       }
     }
     throw lastError ?? new Error("failed to start app-server");
@@ -204,6 +183,7 @@ export class Supervisor {
     } else if (record.pid !== null && record.url !== null) {
       await this.signalPid(record.pid, record.url);
     }
+    if (record.url) await cleanupEndpoint(record.url);
     this.markStopped(record);
     await this.persist(record);
     this.notify();
@@ -222,10 +202,11 @@ export class Supervisor {
       void this.enqueue(id, async () => {
         if (this.children.get(id) !== child || this.records.get(id) !== record) return;
         this.children.delete(id);
+        if (record.url) await cleanupEndpoint(record.url);
         this.markStopped(record);
         await this.persist(record);
         this.notify();
-      });
+      }).catch((error) => console.error(`failed to record app-server exit: ${error}`));
     });
   }
 
@@ -271,17 +252,29 @@ export class Supervisor {
     } catch {
       // The child already exited.
     }
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const timedOut = new Promise<"timeout">((resolve) => {
-      setTimeout(() => resolve("timeout"), this.graceMs);
+      timer = setTimeout(() => resolve("timeout"), this.graceMs);
     });
     const outcome = await Promise.race([finished.then(() => "exited" as const), timedOut]);
+    if (timer) clearTimeout(timer);
     if (outcome === "timeout") {
       try {
         child.kill("SIGKILL");
       } catch {
         // The child exited during the grace window.
       }
-      await finished;
+      let forceTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          finished,
+          new Promise<never>((_resolve, reject) => {
+            forceTimer = setTimeout(() => reject(new Error(`app-server ${id} did not exit after SIGKILL`)), 1_000);
+          }),
+        ]);
+      } finally {
+        if (forceTimer) clearTimeout(forceTimer);
+      }
     }
     this.children.delete(id);
   }
@@ -299,9 +292,13 @@ export class Supervisor {
 
   private async persist(record: RecordFile): Promise<void> {
     const path = join(this.recordsDir(), `${record.id}.json`);
-    const temporary = `${path}.tmp`;
-    await writeFile(temporary, JSON.stringify(record), { mode: 0o600 });
-    await rename(temporary, path);
+    const temporary = `${path}.${randomBytes(8).toString("hex")}.tmp`;
+    try {
+      await writeFile(temporary, JSON.stringify(record), { mode: 0o600 });
+      await rename(temporary, path);
+    } finally {
+      await rm(temporary, { force: true });
+    }
   }
 }
 
@@ -319,6 +316,46 @@ export function appServerArgs(userArgs: readonly string[], url: string): string[
   }
   args.splice(appServerAt + 1, 0, "--listen", url);
   return args;
+}
+
+async function unixEndpoint(stateDir: string, id: string): Promise<string> {
+  const directory = join(stateDir, "app");
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const { chmod } = await import("node:fs/promises");
+  await chmod(directory, 0o700);
+  return `unix://${join(directory, `${id}.sock`)}`;
+}
+
+function endpointPath(url: string): string | null {
+  return url.startsWith("unix://") ? url.slice("unix://".length) : null;
+}
+
+async function prepareEndpoint(url: string): Promise<void> {
+  const path = endpointPath(url);
+  if (!path) return;
+  const exists = await import("node:fs/promises").then(({ lstat }) => lstat(path).then(() => true, () => false));
+  if (!exists) return;
+  if (await unixSocketListening(path)) throw new Error(`app-server socket already listening at ${path}`);
+  await rm(path, { force: true });
+}
+
+async function cleanupEndpoint(url: string): Promise<void> {
+  const path = endpointPath(url);
+  if (path && !(await unixSocketListening(path))) await rm(path, { force: true });
+}
+
+function unixSocketListening(path: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connect(path);
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once("error", () => {
+      socket.destroy();
+      resolve(false);
+    });
+  });
 }
 
 function viewOf(record: RecordFile): ServerView {
@@ -356,60 +393,50 @@ function isOurChild(command: string, url: string): boolean {
 
 export function launchChild(spec: LaunchSpec): RunningChild {
   const log = createWriteStream(spec.logPath, { flags: "a" });
-  const child: ChildProcess = spawn(spec.bin, spec.args, {
-    cwd: spec.cwd,
-    detached: false,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: process.env,
-  });
+  log.on("error", (error) => console.error(`app-server log: ${error.message}`));
+  let child: ChildProcess;
+  try {
+    child = spawn(spec.bin, spec.args, {
+      cwd: spec.cwd,
+      detached: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: process.env,
+    });
+  } catch (error) {
+    log.end();
+    throw error;
+  }
   child.stdout?.pipe(log);
   child.stderr?.pipe(log);
   let resolveExit: (code: number | null) => void = () => undefined;
   const exited = new Promise<number | null>((resolve) => {
     resolveExit = resolve;
   });
-  if (child.pid === undefined) {
-    throw new Error(`failed to spawn ${spec.bin}`);
-  }
-  const running: RunningChild = {
+  let running: RunningChild | undefined;
+  child.once("error", () => {
+    if (running && running.exitCode === undefined) running.exitCode = null;
+    resolveExit(null);
+    log.end();
+  });
+  child.once("close", () => log.end());
+  if (child.pid === undefined) throw new Error(`failed to spawn ${spec.bin}`);
+  running = {
     pid: child.pid,
     exited,
     kill(signal) {
       child.kill(signal);
     },
   };
-  child.once("error", () => {
-    if (running.exitCode === undefined) running.exitCode = null;
-    resolveExit(null);
-  });
   child.once("exit", (code) => {
-    log.end();
-    running.exitCode = code;
+    if (running) running.exitCode = code;
     resolveExit(code);
   });
   return running;
 }
 
-export async function reserveLoopbackPort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve());
-  });
-  const address = server.address();
-  if (address === null || typeof address === "string") {
-    server.close();
-    throw new Error("failed to reserve a loopback port");
-  }
-  const { port } = address;
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-  return port;
-}
-
 export async function waitForReady(url: string, exited: Promise<number | null>, timeoutMs: number): Promise<void> {
-  const port = new URL(url).port;
+  const path = endpointPath(url);
+  const port = path ? null : new URL(url).port;
   const deadline = Date.now() + timeoutMs;
   let exitCode: number | null | undefined;
   void exited.then((code) => {
@@ -418,7 +445,19 @@ export async function waitForReady(url: string, exited: Promise<number | null>, 
   while (Date.now() < deadline) {
     if (exitCode !== undefined) throw new Error(`app-server exited before ready (${exitCode ?? "spawn error"})`);
     try {
-      const response = await fetch(`http://127.0.0.1:${port}/readyz`);
+      const remaining = Math.max(1, deadline - Date.now());
+      if (path) {
+        await new Promise<void>((resolve, reject) => {
+          const socket = connect({ path, signal: AbortSignal.timeout(remaining) });
+          socket.once("connect", () => {
+            socket.destroy();
+            resolve();
+          });
+          socket.once("error", reject);
+        });
+        return;
+      }
+      const response = await fetch(`http://127.0.0.1:${port}/readyz`, { signal: AbortSignal.timeout(remaining) });
       if (response.ok) return;
     } catch {
       // The listener is not up yet.

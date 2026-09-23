@@ -1,12 +1,53 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { connect } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { appServerArgs, Supervisor, type LaunchSpec, type RunningChild } from "../src/supervisor.js";
+import { appServerArgs, Supervisor, waitForReady, type LaunchSpec, type RunningChild } from "../src/supervisor.js";
 
 const fakeBin = fileURLToPath(new URL("../../test/fixtures/fake-app-server.mjs", import.meta.url));
+
+test("readiness times out when an HTTP listener never answers", async () => {
+  const server = createServer(() => undefined);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  try {
+    await assert.rejects(waitForReady(`ws://127.0.0.1:${address.port}`, new Promise(() => undefined), 80), /not ready/);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("a failed record rename rolls back the launched child", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-persist-"));
+  const cwd = await mkdtemp(join(tmpdir(), "agentstack-cwd-"));
+  const signals: string[] = [];
+  try {
+    await mkdir(join(stateDir, "servers", "blocked.json"), { recursive: true });
+    const supervisor = new Supervisor({
+      stateDir,
+      endpoint: async () => "ws://127.0.0.1:40001",
+      launch(): RunningChild {
+        let resolveExit: (code: number | null) => void = () => undefined;
+        const exited = new Promise<number | null>((resolve) => { resolveExit = resolve; });
+        return { pid: 12345, exited, kill(signal) { signals.push(signal); resolveExit(0); } };
+      },
+      waitReady: async () => undefined,
+    });
+    await supervisor.load();
+    await assert.rejects(supervisor.start({ cwd, id: "blocked" }), /EISDIR|directory/);
+    assert.deepEqual(signals, ["SIGTERM"]);
+    assert.equal(supervisor.list().find((server) => server.id === "blocked")?.state, "stopped");
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
 
 test("start is idempotent and stop is idempotent", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-"));
@@ -19,8 +60,8 @@ test("start is idempotent and stop is idempotent", async () => {
     const supervisor = new Supervisor({
       stateDir,
       graceMs: 20,
-      async reservePort() {
-        return 41000 + launched.length;
+      async endpoint() {
+        return "ws://127.0.0.1:" + (41000 + launched.length);
       },
       launch(spec): RunningChild {
         launched.push(spec);
@@ -76,8 +117,8 @@ test("onChange fires only on persisted running/stopped transitions", async () =>
       stateDir,
       graceMs: 20,
       onChange: () => events.push("change"),
-      async reservePort() {
-        return 42000 + pids;
+      async endpoint() {
+        return "ws://127.0.0.1:" + (42000 + pids);
       },
       launch(): RunningChild {
         const pid = pids++;
@@ -152,8 +193,8 @@ test("caller arguments are merged and --listen is rejected", async () => {
   try {
     const supervisor = new Supervisor({
       stateDir,
-      async reservePort() {
-        return 41000;
+      async endpoint() {
+        return "ws://127.0.0.1:" + (41000);
       },
       launch(spec): RunningChild {
         launched.push(spec);
@@ -238,8 +279,8 @@ test("a dead in-memory server is stopped and can start again", async () => {
   try {
     const supervisor = new Supervisor({
       stateDir,
-      async reservePort() {
-        return 41000 + launched.length;
+      async endpoint() {
+        return "ws://127.0.0.1:" + (41000 + launched.length);
       },
       launch(): RunningChild {
         launched.push(launched.length + 1);
@@ -280,8 +321,8 @@ test("an exited in-memory server is recorded as stopped", async () => {
   try {
     const supervisor = new Supervisor({
       stateDir,
-      async reservePort() {
-        return 41000;
+      async endpoint() {
+        return "ws://127.0.0.1:" + (41000);
       },
       launch(): RunningChild {
         return child;
@@ -365,8 +406,8 @@ test("a reused pid is not treated as the recorded server", async () => {
     const supervisor = new Supervisor({
       stateDir,
       graceMs: 20,
-      async reservePort() {
-        return 41000 + launched.length;
+      async endpoint() {
+        return "ws://127.0.0.1:" + (41000 + launched.length);
       },
       launch(): RunningChild {
         launched.push(1);
@@ -411,12 +452,15 @@ test("a fake app-server becomes ready and can be stopped", async () => {
     await supervisor.load();
     const started = await supervisor.start({ cwd, id: "live", codexBin: fakeBin });
     assert.equal(started.state, "running");
-    assert.match(started.url ?? "", /^ws:\/\/127\.0\.0\.1:\d+$/);
-    const response = await fetch(`http://127.0.0.1:${new URL(started.url ?? "").port}/readyz`);
-    assert.equal(response.status, 200);
+    assert.equal(started.url, `unix://${join(stateDir, "app", "live.sock")}`);
+    await new Promise<void>((resolve, reject) => {
+      const socket = connect((started.url ?? "").slice("unix://".length));
+      socket.once("connect", () => { socket.destroy(); resolve(); });
+      socket.once("error", reject);
+    });
     const stopped = await supervisor.stop("live");
     assert.equal(stopped.state, "stopped");
-    await assert.rejects(fetch(`http://127.0.0.1:${new URL(started.url ?? "").port}/readyz`));
+    assert.equal(stopped.url, null);
   } finally {
     await supervisor.stopAll();
     await rm(stateDir, { recursive: true, force: true });

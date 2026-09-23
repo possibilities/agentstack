@@ -15,8 +15,8 @@
     "ui": "./ui"
   },
   "scripts": {
-    "build": "tsc",
-    "test": "tsc && node --test dist/test/*.test.js"
+    "build": "node ../../scripts/clean-dist.mjs && tsc",
+    "test": "node --test dist/test/*.test.js"
   },
   "engines": {
     "node": ">=24"
@@ -28,13 +28,13 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "tailwind-merge": "3.7.0",
+    "ws": "^8.21.3",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
     "@types/react": "^19.3.0",
     "@types/ws": "^8.18.1",
-    "typescript": "^7.0.2",
-    "ws": "^8.21.3"
+    "typescript": "^7.0.2"
   }
 }

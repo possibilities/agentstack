@@ -12,15 +12,17 @@ export async function ownerTree(): Promise<TreeNode[]> {
   const data = ownerUiData();
   return [
     {
+      id: "owner",
       kind: "manager",
       label: "owner",
       detail: data.pid ? `pid ${data.pid}` : "",
       activity: "working",
       children: data.children.map((child: ChildStatus) => ({
+        id: child.name,
         kind: "native",
         label: child.name,
-        detail: child.pid ? `pid ${child.pid}` : "",
-        activity: "working",
+        detail: child.running ? `pid ${child.pid}` : child.error ?? (child.signal ? `stopped by ${child.signal}` : `exited ${child.exitCode ?? "unknown"}`),
+        activity: child.running ? "working" : "failed",
       })),
     },
   ];

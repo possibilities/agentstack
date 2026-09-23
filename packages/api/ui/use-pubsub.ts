@@ -5,9 +5,11 @@ import { useEffect } from "react";
 
 const retryDelays = [500, 1_000, 2_000, 4_000, 8_000];
 
-export function usePubsub(url: string | null | undefined, topic: string): void {
+export function usePubsub(url: string | null | undefined, topic: string | readonly string[]): void {
   const router = useRouter();
+  const topicKey = typeof topic === "string" ? topic : topic.join("\u0000");
   useEffect(() => {
+    const topics = topicKey.split("\u0000");
     let cancelled = false;
     let socket: WebSocket | null = null;
     let attempts = 0;
@@ -21,7 +23,8 @@ export function usePubsub(url: string | null | undefined, topic: string): void {
         timer = undefined;
         if (cancelled) return;
         router.refresh();
-        connect();
+        if (url) connect();
+        else schedule();
       }, delay);
     };
 
@@ -30,8 +33,7 @@ export function usePubsub(url: string | null | undefined, topic: string): void {
       const ws = new WebSocket(url);
       socket = ws;
       ws.addEventListener("open", () => {
-        attempts = 0;
-        ws.send(JSON.stringify({ type: "subscribe", topic }));
+        for (const subscribedTopic of topics) ws.send(JSON.stringify({ type: "subscribe", topic: subscribedTopic }));
       });
       ws.addEventListener("message", (event) => {
         if (typeof event.data !== "string") return;
@@ -41,7 +43,8 @@ export function usePubsub(url: string | null | undefined, topic: string): void {
         } catch {
           return;
         }
-        if (message.topic !== topic) return;
+        if (!topics.includes(String(message.topic))) return;
+        if (message.type === "subscribed") attempts = 0;
         if (message.type === "subscribed" || message.type === "event") router.refresh();
       });
       ws.addEventListener("close", () => {
@@ -62,5 +65,5 @@ export function usePubsub(url: string | null | undefined, topic: string): void {
       socket = null;
       current?.close();
     };
-  }, [url, topic, router]);
+  }, [url, topicKey, router]);
 }

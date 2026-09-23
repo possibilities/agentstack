@@ -16,6 +16,7 @@ async function listServers(): Promise<ServerView[]> {
 
 function mapThread(thread: ActiveThread): TreeNode {
   return {
+    id: thread.id,
     kind: "native",
     label: thread.label,
     detail: thread.model ?? "",
@@ -38,6 +39,7 @@ export async function codexEventsUrl(): Promise<string | null> {
 export async function codexTree(includeThreads: boolean): Promise<TreeNode[]> {
   const tree = await runningTree(listServers, listActiveThreads, includeThreads);
   return tree.servers.map((server) => ({
+    id: server.id,
     kind: "manager",
     label: server.id,
     detail: server.cwd,

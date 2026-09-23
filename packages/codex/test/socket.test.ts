@@ -33,6 +33,7 @@ test("codex lifecycle is served on the namespaced unix socket", async () => {
     assert.match(listedTools.websocket?.url ?? "", /^ws:\/\/127\.0\.0\.1:\d+$/);
     assert.deepEqual(listedTools.websocket?.topics, {
       servers_changed: "Published when a Codex app-server record starts, stops, exits, or is reaped.",
+      threads_changed: "Published when a loaded Codex thread starts, changes status, or closes.",
     });
 
     const events = subscribe(served.websocketUrl ?? "", "servers_changed");
@@ -49,14 +50,29 @@ test("codex lifecycle is served on the namespaced unix socket", async () => {
     })) as { id: string; state: string; url: string };
     assert.equal(started.id, "remote");
     assert.equal(started.state, "running");
-    assert.match(started.url, /^ws:\/\/127\.0\.0\.1:\d+$/);
+    assert.equal(started.url, `unix://${join(stateDir, "app", "remote.sock")}`);
     assert.deepEqual(await events.next(), { type: "event", topic: "servers_changed" });
+
+    await assert.rejects(
+      serveApi({ name: "codex", transport: "socket", env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir } }),
+      /already listening/,
+    );
 
     const listed = (await socketCall(served.socketPath, "tools/call", {
       name: "server_list",
       arguments: {},
     })) as { servers: Array<{ id: string }> };
     assert.equal(listed.servers.some((server) => server.id === "remote"), true);
+    assert.equal((listed.servers.find((server) => server.id === "remote") as { state?: string }).state, "running");
+
+    await assert.rejects(socketCall(served.socketPath, "tools/call", {
+      name: "server_start",
+      arguments: { cwd, id: "missing-bin", codexBin: join(stateDir, "absent") },
+    }), /failed to spawn|ENOENT/);
+    const afterBadBin = (await socketCall(served.socketPath, "tools/call", {
+      name: "server_list", arguments: {},
+    })) as { servers: Array<{ id: string; state: string }> };
+    assert.equal(afterBadBin.servers.find((server) => server.id === "remote")?.state, "running");
 
     const stopped = (await socketCall(served.socketPath, "tools/call", {
       name: "server_stop",

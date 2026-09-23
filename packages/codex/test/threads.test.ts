@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { activeThreads, threadTree } from "../src/threads.js";
+import { WebSocketServer } from "ws";
+import { activeThreads, listActiveThreads, threadTree, watchThreadEvents } from "../src/threads.js";
 
 test("loaded threads nest subagents under the main thread", () => {
   const threads = activeThreads([
@@ -55,3 +60,53 @@ test("loaded threads nest subagents under the main thread", () => {
     },
   ]);
 });
+
+test("a parent cycle retains every thread", () => {
+  const input = activeThreads([
+    { id: "a", parentThreadId: "b", status: { type: "active" } },
+    { id: "b", parentThreadId: "c", status: { type: "active" } },
+    { id: "c", parentThreadId: "a", status: { type: "active" } },
+  ]);
+  const tree = threadTree(input);
+  assert.equal(tree.length, 1);
+  assert.equal(tree[0]?.id, "a");
+  assert.deepEqual([tree[0]?.id, tree[0]?.children?.[0]?.id, tree[0]?.children?.[0]?.children?.[0]?.id], ["a", "c", "b"]);
+});
+
+test("thread reads retain successes and notifications invalidate the watcher", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentstack-thread-ws-"));
+  const path = join(dir, "app.sock");
+  const http = createServer();
+  const wss = new WebSocketServer({ server: http });
+  wss.on("connection", (peer) => peer.on("message", (raw) => {
+    const frame = JSON.parse(String(raw)) as { id?: number; method?: string; params?: { threadId?: string } };
+    if (frame.method === "initialize") peer.send(JSON.stringify({ id: frame.id, result: {} }));
+    if (frame.method === "thread/loaded/list") peer.send(JSON.stringify({ id: frame.id, result: { data: ["good", "bad"] } }));
+    if (frame.method === "thread/read") {
+      if (frame.params?.threadId === "good") {
+        peer.send(JSON.stringify({ id: frame.id, result: { thread: { id: "good", status: { type: "active" } } } }));
+      } else peer.send(JSON.stringify({ id: frame.id, error: { message: "unavailable" } }));
+    }
+  }));
+  await new Promise<void>((resolve) => http.listen(path, resolve));
+  let stop: (() => void) | undefined;
+  try {
+    assert.deepEqual((await listActiveThreads(`unix://${path}`)).map((thread) => thread.id), ["good"]);
+    let changes = 0;
+    stop = watchThreadEvents(`unix://${path}`, () => { changes += 1; });
+    await until(() => changes === 1);
+    for (const peer of wss.clients) peer.send(JSON.stringify({ method: "thread/status/changed" }));
+    await until(() => changes === 2);
+  } finally {
+    stop?.();
+    for (const peer of wss.clients) peer.terminate();
+    await new Promise<void>((resolve) => wss.close(() => resolve()));
+    await new Promise<void>((resolve) => http.close(() => resolve()));
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+async function until(check: () => boolean): Promise<void> {
+  for (let i = 0; i < 100 && !check(); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.ok(check(), "expected thread event did not arrive");
+}

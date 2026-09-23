@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
@@ -15,6 +18,23 @@ test("the owner stops a child it started", async () => {
   await owner.close();
 });
 
+test("the owner signals descendants in its process group", { skip: process.platform === "win32" }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentstack-owner-tree-"));
+  const ready = join(dir, "ready");
+  const stopped = join(dir, "stopped");
+  const helper = `process.on("SIGTERM", () => { require("node:fs").writeFileSync(${JSON.stringify(stopped)}, "yes"); process.exit(0); }); require("node:fs").writeFileSync(${JSON.stringify(ready)}, "yes"); setInterval(() => {}, 1000);`;
+  const parent = `const { spawn } = require("node:child_process"); spawn(process.execPath, ["-e", ${JSON.stringify(helper)}], { stdio: "ignore" }); setInterval(() => {}, 1000);`;
+  const owner = startOwner([{ name: "tree", command: process.execPath, args: ["-e", parent] }]);
+  try {
+    await waitFor(() => existsSync(ready), 5_000);
+    await owner.close();
+    assert.equal(await readFile(stopped, "utf8"), "yes");
+  } finally {
+    await owner.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("the codex child serves the codex socket", () => {
   const child = codexChild();
   assert.equal(child.name, "codex");
@@ -23,7 +43,7 @@ test("the codex child serves the codex socket", () => {
   assert.equal(existsSync(child.args[0] ?? ""), true);
 });
 
-test("owner onChange fires on pid set transitions only", async () => {
+test("owner retains running and failed child statuses", async () => {
   const events: number[] = [];
   const owner = startOwner(
     [
@@ -35,18 +55,19 @@ test("owner onChange fires on pid set transitions only", async () => {
     () => events.push(events.length + 1),
   );
   try {
-    await waitFor(() => events.length >= 2 && owner.children().length === 1, 5_000);
-    assert.equal(owner.children()[0]?.name, "fixture");
+    await waitFor(() => events.length >= 2 && owner.children().filter((child) => child.running).length === 1, 5_000);
+    assert.equal(owner.children().find((child) => child.running)?.name, "fixture");
+    assert.match(owner.children().find((child) => child.name === "missing")?.error ?? "", /ENOENT/);
   } finally {
     await owner.close();
   }
   await waitFor(() => events.length >= 3, 5_000);
-  assert.equal(owner.children().length, 0);
+  assert.equal(owner.children().every((child) => !child.running), true);
 });
 
 test("owner close resolves promptly after a failed spawn", async () => {
   const owner = startOwner([{ name: "missing", command: "agentstack-missing-binary", args: [] }]);
-  await waitFor(() => owner.children().length === 0, 5_000);
+  await waitFor(() => owner.children().every((child) => !child.running), 5_000);
   await Promise.race([
     owner.close(),
     new Promise((_resolve, reject) => setTimeout(() => reject(new Error("close hung")), 1_000)),

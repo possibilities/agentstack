@@ -7,11 +7,12 @@ if (!listen) {
   process.stderr.write("missing --listen\n");
   process.exit(1);
 }
-const port = Number(new URL(listen).port);
-createServer((req, res) => {
+const server = createServer((req, res) => {
   if (req.url === "/readyz") {
     res.writeHead(200).end("ok");
     return;
   }
   res.writeHead(404).end();
-}).listen(port, "127.0.0.1");
+});
+if (listen.startsWith("unix://")) server.listen(listen.slice("unix://".length));
+else server.listen(Number(new URL(listen).port), "127.0.0.1");
