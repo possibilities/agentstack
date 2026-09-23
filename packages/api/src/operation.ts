@@ -21,6 +21,7 @@ export type PackageApi<Ctx> = {
   operations: readonly AnyOperation<Ctx>[];
   createContext(env: NodeJS.ProcessEnv): Promise<Ctx>;
   closeContext(ctx: Ctx, options?: { halt?: boolean }): Promise<void>;
+  subscribe?(ctx: Ctx, publish: (topic: string) => void): (() => void) | void | Promise<(() => void) | void>;
 };
 
 const namePattern = /^[a-z][a-z0-9_]{0,63}$/;

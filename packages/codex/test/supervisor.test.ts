@@ -65,6 +65,65 @@ test("start is idempotent and stop is idempotent", async () => {
   }
 });
 
+test("onChange fires only on persisted running/stopped transitions", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-change-"));
+  const cwd = await mkdtemp(join(tmpdir(), "agentstack-change-cwd-"));
+  const events: string[] = [];
+  const children = new Map<number, { resolve: (code: number | null) => void }>();
+  let pids = 50;
+  try {
+    const supervisor = new Supervisor({
+      stateDir,
+      graceMs: 20,
+      onChange: () => events.push("change"),
+      async reservePort() {
+        return 42000 + pids;
+      },
+      launch(): RunningChild {
+        const pid = pids++;
+        let resolveExit: (code: number | null) => void = () => undefined;
+        const exited = new Promise<number | null>((resolve) => {
+          resolveExit = resolve;
+        });
+        children.set(pid, { resolve: resolveExit });
+        const child: RunningChild = {
+          pid,
+          exited,
+          kill() {
+            child.exitCode = 0;
+            resolveExit(0);
+          },
+        };
+        return child;
+      },
+      async waitReady() {
+        return undefined;
+      },
+    });
+    await supervisor.load();
+    await supervisor.start({ cwd, id: "alpha" });
+    assert.equal(events.length, 1);
+    await supervisor.start({ cwd, id: "alpha" });
+    assert.equal(events.length, 1);
+    await supervisor.stop("alpha");
+    assert.equal(events.length, 2);
+    await supervisor.stop("alpha");
+    assert.equal(events.length, 2);
+
+    const started = await supervisor.start({ cwd, id: "alpha" });
+    assert.equal(events.length, 3);
+    children.get(started.pid ?? -1)?.resolve(0);
+    for (let i = 0; i < 100 && events.length < 4; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(events.length, 4);
+    assert.equal(supervisor.list().find((server) => server.id === "alpha")?.state, "stopped");
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("caller arguments are merged and --listen is rejected", async () => {
   const url = "ws://127.0.0.1:41000";
   assert.deepEqual(appServerArgs(["--model", "gpt-5.4", "-c", "foo=bar"], url), [

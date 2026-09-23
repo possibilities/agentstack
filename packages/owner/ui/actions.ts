@@ -4,6 +4,10 @@ import { ownerUiData } from "../dist/src/ui-source.js";
 import type { ChildStatus } from "../src/owner";
 import type { TreeNode } from "./agent-tree";
 
+export async function ownerEventsUrl(): Promise<string | null> {
+  return ownerUiData().websocketUrl ?? null;
+}
+
 export async function ownerTree(): Promise<TreeNode[]> {
   const data = ownerUiData();
   return [

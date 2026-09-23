@@ -24,6 +24,17 @@ function mapThread(thread: ActiveThread): TreeNode {
   };
 }
 
+export async function codexEventsUrl(): Promise<string | null> {
+  try {
+    const listed = (await socketCall(socketPath("codex"), "tools/list")) as {
+      websocket?: { url?: unknown } | null;
+    };
+    return typeof listed.websocket?.url === "string" ? listed.websocket.url : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function codexTree(includeThreads: boolean): Promise<TreeNode[]> {
   const tree = await runningTree(listServers, listActiveThreads, includeThreads);
   return tree.servers.map((server) => ({

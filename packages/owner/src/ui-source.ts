@@ -3,6 +3,7 @@ import type { ChildStatus } from "./owner.js";
 export type OwnerUiData = {
   pid: number;
   children: ChildStatus[];
+  websocketUrl?: string;
 };
 
 const key = "__agentstack_owner_ui_source__";

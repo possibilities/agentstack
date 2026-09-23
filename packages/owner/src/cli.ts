@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { runApi } from "@agentstack/api";
+import { runApi, serveApi } from "@agentstack/api";
 import { codexChild } from "./codex.js";
 import { startOwner } from "./owner.js";
 import { setOwnerUiSource } from "./ui-source.js";
@@ -33,8 +33,18 @@ try {
   process.exit(1);
 }
 
-const owner = startOwner([codexChild()]);
-setOwnerUiSource(() => ({ pid: process.pid, children: owner.children() }));
+const env = { ...process.env, AGENTSTACK_UI_ORIGIN: `http://127.0.0.1:${ui.port}` };
+
+let events: Awaited<ReturnType<typeof serveApi>>;
+try {
+  events = await serveApi({ name: "owner", transport: "websocket", env });
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+
+const owner = startOwner([codexChild()], env, () => events.publish?.("pids_changed"));
+setOwnerUiSource(() => ({ pid: process.pid, children: owner.children(), websocketUrl: events.websocketUrl }));
 
 console.error(uiPageUrl(ui.port, "owner"));
 console.error(uiPageUrl(ui.port, "codex"));
@@ -46,7 +56,7 @@ const shutdown = () => {
   closing = true;
   const force = setTimeout(() => process.exit(1), 3_000);
   force.unref();
-  void Promise.allSettled([ui.close(), owner.close()]).then(() => process.exit(0));
+  void Promise.allSettled([ui.close(), owner.close(), events.close()]).then(() => process.exit(0));
 };
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

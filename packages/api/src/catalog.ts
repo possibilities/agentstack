@@ -24,6 +24,7 @@ export type Catalog = {
       description: string;
       available: boolean;
       endpoint?: string;
+      topics?: Record<string, string>;
     }>;
   }>;
 };
@@ -55,7 +56,14 @@ export async function loadCatalog(env: NodeJS.ProcessEnv = process.env, from = i
               available: true,
               endpoint: socketPath(item.config.name, env),
             }
-          : { type: transport.type, description: transport.description, available: false },
+          : transport.type === "websocket"
+            ? {
+                type: transport.type,
+                description: transport.description,
+                available: true,
+                topics: item.config.websocket?.pubsub,
+              }
+            : { type: transport.type, description: transport.description, available: false },
       ),
     });
   }

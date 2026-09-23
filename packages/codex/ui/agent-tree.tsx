@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import type { CSSProperties, KeyboardEvent } from "react";
 import { cva } from "class-variance-authority";
-import { codexTree } from "./actions";
+import { usePubsub } from "@agentstack/api/ui/use-pubsub";
 
 export type TreeNode = {
   kind: "manager" | "native";
@@ -129,31 +129,9 @@ function AgentTree({ nodes }: { nodes: TreeNode[] }) {
   );
 }
 
-export function CodexTree({ initial }: { initial: TreeNode[] | null }) {
-  const [nodes, setNodes] = useState<TreeNode[] | null>(initial);
-  const busy = useRef(false);
-  useEffect(() => {
-    let live = true;
-    const paint = async () => {
-      if (busy.current) return;
-      busy.current = true;
-      try {
-        const fast = await codexTree(false);
-        if (live) setNodes(fast);
-        const full = await codexTree(true);
-        if (live) setNodes(full);
-      } catch {
-        if (live) setNodes((current) => (current && current.length > 0 ? current : null));
-      } finally {
-        busy.current = false;
-      }
-    };
-    const timer = setInterval(() => void paint(), 1000);
-    return () => {
-      live = false;
-      clearInterval(timer);
-    };
-  }, []);
+export function CodexTree({ initial, eventsUrl }: { initial: TreeNode[] | null; eventsUrl: string | null }) {
+  usePubsub(eventsUrl, "servers_changed");
+  const nodes = initial;
   if (nodes === null) return <p role="status" className="m-2 text-base text-muted-foreground">Unavailable</p>;
   if (nodes.length === 0) return <p role="status" className="m-2 text-base text-muted-foreground">No running agents</p>;
   return <AgentTree nodes={nodes} />;

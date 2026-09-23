@@ -20,9 +20,10 @@ export type RunningOwner = {
 
 const haltMs = 2_000;
 
-export function startOwner(children: OwnedChild[], env: NodeJS.ProcessEnv = process.env): RunningOwner {
+export function startOwner(children: OwnedChild[], env: NodeJS.ProcessEnv = process.env, onChange?: () => void): RunningOwner {
   const running = children.map((child) => ({
     child,
+    failed: false,
     proc: spawn(child.command, child.args, {
       env: { ...env, ...child.env },
       stdio: "inherit",
@@ -30,10 +31,26 @@ export function startOwner(children: OwnedChild[], env: NodeJS.ProcessEnv = proc
     }),
   }));
 
-  for (const { child, proc } of running) {
-    proc.once("error", (error) => {
-      console.error(`${child.name}: ${error.message}`);
+  const alive = (item: (typeof running)[number]) =>
+    !item.failed && item.proc.exitCode === null && item.proc.signalCode === null;
+  const statuses = () =>
+    running.filter(alive).map(({ child, proc }) => ({ name: child.name, pid: proc.pid ?? null, running: true }));
+  let last = JSON.stringify(statuses());
+  const notify = () => {
+    const next = JSON.stringify(statuses());
+    if (next === last) return;
+    last = next;
+    onChange?.();
+  };
+
+  for (const item of running) {
+    item.proc.once("spawn", notify);
+    item.proc.once("error", (error) => {
+      item.failed = true;
+      console.error(`${item.child.name}: ${error.message}`);
+      notify();
     });
+    item.proc.once("exit", notify);
   }
 
   return {
@@ -41,16 +58,14 @@ export function startOwner(children: OwnedChild[], env: NodeJS.ProcessEnv = proc
       return halt(running.map((item) => item.proc));
     },
     children() {
-      return running
-        .filter(({ proc }) => proc.exitCode === null && proc.signalCode === null)
-        .map(({ child, proc }) => ({ name: child.name, pid: proc.pid ?? null, running: true }));
+      return statuses();
     },
   };
 }
 
 function halt(procs: ChildProcess[]): Promise<void> {
   return new Promise((resolve) => {
-    const live = procs.filter((proc) => proc.exitCode === null && proc.signalCode === null);
+    const live = procs.filter((proc) => proc.pid !== undefined && proc.exitCode === null && proc.signalCode === null);
     if (live.length === 0) {
       resolve();
       return;

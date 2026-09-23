@@ -111,6 +111,16 @@ function Transport({ item }: { item: TransportItem }) {
         {item.available ? "Servable" : "Declared, not implemented"}
       </p>
       {item.endpoint ? <p className="mt-2 font-mono text-[13px] text-foreground [overflow-wrap:anywhere]">{item.endpoint}</p> : null}
+      {item.topics && Object.keys(item.topics).length > 0 ? (
+        <ul className="m-0 mt-2 list-none p-0">
+          {Object.entries(item.topics).map(([name, description]) => (
+            <li key={name} className="border-t border-border py-2">
+              <span className="font-mono text-sm">{name}</span>
+              <span className="block text-[13px] text-muted-foreground">{description}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </article>
   );
 }

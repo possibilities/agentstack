@@ -13,7 +13,8 @@ export async function runApi(args: string[], env: NodeJS.ProcessEnv = process.en
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
   }
-  console.error(served.socketPath);
+  if (served.socketPath) console.error(served.socketPath);
+  if (served.websocketUrl) console.error(served.websocketUrl);
 
   let closing = false;
   const shutdown = () => {

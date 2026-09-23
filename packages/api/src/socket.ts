@@ -10,6 +10,7 @@ export type SocketServerInfo = {
   description: string;
   transportDescription: string;
   path: string;
+  websocket?: { url: string; topics: Record<string, string> };
 };
 
 export type ServedSocket = {
@@ -186,6 +187,7 @@ function describeServer<Ctx>(options: {
       description: options.info.transportDescription,
       path: options.info.path,
     },
+    websocket: options.info.websocket ? { url: options.info.websocket.url, topics: options.info.websocket.topics } : null,
     tools: options.operations.map((operation) => ({
       name: operation.name,
       description: operation.description,

@@ -53,9 +53,11 @@ export type SupervisorOptions = {
   commandLine?: (pid: number) => Promise<string | null>;
   graceMs?: number;
   readyTimeoutMs?: number;
+  onChange?: () => void;
 };
 
 export class Supervisor {
+  onChange: (() => void) | undefined;
   private readonly records = new Map<string, RecordFile>();
   private readonly queues = new Map<string, Promise<void>>();
   private readonly children = new Map<string, RunningChild>();
@@ -73,6 +75,7 @@ export class Supervisor {
     this.commandLine = options.commandLine ?? processCommandLine;
     this.graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
     this.readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
+    this.onChange = options.onChange;
   }
 
   async load(): Promise<void> {
@@ -97,6 +100,7 @@ export class Supervisor {
       if (await this.ownsProcess(record.pid, record.url)) await this.signalPid(record.pid, record.url);
       this.markStopped(record);
       await this.persist(record);
+      this.notify();
     }
   }
 
@@ -140,6 +144,7 @@ export class Supervisor {
         }
         this.markStopped(record);
         await this.persist(record);
+        this.notify();
       }),
     );
   }
@@ -176,12 +181,14 @@ export class Supervisor {
       await this.persist(record);
       try {
         await this.waitReady(url, child.exited, this.readyTimeoutMs);
+        this.notify();
         return viewOf(record);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         await this.killChild(id, child);
         this.markStopped(record);
         await this.persist(record);
+        this.notify();
       }
     }
     throw lastError ?? new Error("failed to start app-server");
@@ -199,6 +206,7 @@ export class Supervisor {
     }
     this.markStopped(record);
     await this.persist(record);
+    this.notify();
     return viewOf(record);
   }
 
@@ -216,6 +224,7 @@ export class Supervisor {
         this.children.delete(id);
         this.markStopped(record);
         await this.persist(record);
+        this.notify();
       });
     });
   }
@@ -249,6 +258,10 @@ export class Supervisor {
     record.state = "stopped";
     record.pid = null;
     record.url = null;
+  }
+
+  private notify(): void {
+    this.onChange?.();
   }
 
   private async killChild(id: string, child: RunningChild): Promise<void> {

@@ -63,12 +63,15 @@ export function transportEndpoint(
   if (type === "socket") {
     return { type, description: transport.description, available: true, endpoint: socketPath(config.name, env) };
   }
+  if (type === "websocket") {
+    return { type, description: transport.description, available: true };
+  }
   return { type, description: transport.description, available: false };
 }
 
-export function assertTransport(name: string, config: PackageConfig, transport: string): TransportType {
+export function assertTransport(name: string, config: PackageConfig, transport: string): "socket" | "websocket" {
   if (!isTransportType(transport)) throw new Error(`unknown transport: ${transport}`);
   if (!config[transport]) throw new Error(`${name} does not configure ${transport}`);
-  if (transport !== "socket") throw new Error(`${transport} transport is not implemented`);
+  if (transport === "mcp") throw new Error(`${transport} transport is not implemented`);
   return transport;
 }

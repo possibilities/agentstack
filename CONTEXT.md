@@ -8,7 +8,7 @@ _Avoid_: MCP server, endpoint, route
 
 ## Transport
 
-A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are the names. Only `socket` runs today.
+A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are the names. `socket` and `websocket` run today.
 
 _Avoid_: protocol, binding
 
@@ -20,6 +20,6 @@ _Avoid_: daemon, service, app
 
 ## UI
 
-Each package's page is a React Server Component under `ui/`, rendered by a Next.js dev server embedded in `agentstack serve` (`packages/owner/web`). Pages call the package's own server actions — no HTTP data endpoints. The client polls the action each second to repaint. Styling is Tailwind with shadcn conventions (`cn`, `cva`, CSS-variable tokens in `web/app/globals.css`) — no other UI libraries.
+Each package's page is a React Server Component under `ui/`, rendered by a Next.js dev server embedded in `agentstack serve` (`packages/owner/web`). Pages call the package's own server actions — no HTTP data endpoints. A loopback websocket event invalidates the client, which calls `router.refresh()` to repaint. Styling is Tailwind with shadcn conventions (`cn`, `cva`, CSS-variable tokens in `web/app/globals.css`) — no other UI libraries.
 
 _Avoid_: endpoint, widget

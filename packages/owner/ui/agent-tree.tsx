@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties, type KeyboardEvent } from "react";
+import type { CSSProperties, KeyboardEvent } from "react";
 import { cva } from "class-variance-authority";
-import { ownerTree } from "./actions";
+import { usePubsub } from "@agentstack/api/ui/use-pubsub";
 
 export type TreeNode = {
   kind: "manager" | "native";
@@ -129,24 +129,9 @@ function AgentTree({ nodes }: { nodes: TreeNode[] }) {
   );
 }
 
-export function OwnerTree({ initial }: { initial: TreeNode[] | null }) {
-  const [nodes, setNodes] = useState<TreeNode[] | null>(initial);
-  useEffect(() => {
-    let live = true;
-    const paint = async () => {
-      try {
-        const next = await ownerTree();
-        if (live) setNodes(next);
-      } catch {
-        if (live) setNodes(null);
-      }
-    };
-    const timer = setInterval(() => void paint(), 1000);
-    return () => {
-      live = false;
-      clearInterval(timer);
-    };
-  }, []);
+export function OwnerTree({ initial, eventsUrl }: { initial: TreeNode[] | null; eventsUrl: string | null }) {
+  usePubsub(eventsUrl, "pids_changed");
+  const nodes = initial;
   if (nodes === null) return <p role="status" className="m-2 text-base text-muted-foreground">Unavailable</p>;
   if (nodes.length === 0) return <p role="status" className="m-2 text-base text-muted-foreground">No running agents</p>;
   return <AgentTree nodes={nodes} />;

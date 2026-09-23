@@ -77,6 +77,12 @@ export const api: PackageApi<CodexContext> = {
     await supervisor.reap();
     return { supervisor };
   },
+  subscribe(ctx, publish) {
+    ctx.supervisor.onChange = () => publish("servers_changed");
+    return () => {
+      ctx.supervisor.onChange = undefined;
+    };
+  },
   async closeContext(ctx, options) {
     if (options?.halt) await ctx.supervisor.halt();
     else await ctx.supervisor.stopAll();

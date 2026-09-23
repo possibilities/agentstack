@@ -2,3 +2,7 @@ name: codex
 description: Start, stop, and list local Codex app-server processes.
 socket:
   description: Unix socket for Codex app-server lifecycle, namespaced as codex.
+websocket:
+  description: Loopback websocket publishing Codex app-server lifecycle events.
+  pubsub:
+    servers_changed: Published when a Codex app-server record starts, stops, exits, or is reaped.
