@@ -53,6 +53,8 @@ test("start is idempotent and stop is idempotent", async () => {
     assert.equal(launched[0]?.cwd, cwd);
     const stopped = await supervisor.stop("alpha");
     assert.equal(stopped.state, "stopped");
+    assert.equal(stopped.pid, null);
+    assert.equal(stopped.url, null);
     const stoppedAgain = await supervisor.stop("alpha");
     assert.equal(stoppedAgain.state, "stopped");
     assert.deepEqual(killed, ["SIGTERM"]);
@@ -115,9 +117,10 @@ test("caller arguments are merged and --listen is rejected", async () => {
 
 test("reap kills only a recorded app-server command", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-"));
-  const killed: number[] = [];
+  const killed: string[] = [];
   const supervisor = new Supervisor({
     stateDir,
+    graceMs: 30,
     async commandLine(pid) {
       if (pid === 7) return "codex app-server --listen ws://127.0.0.1:9";
       return "unrelated process";
@@ -125,7 +128,7 @@ test("reap kills only a recorded app-server command", async () => {
   });
   const originalKill = process.kill;
   process.kill = ((pid: number, signal?: NodeJS.Signals | 0) => {
-    if (signal === "SIGTERM") killed.push(pid);
+    killed.push(`${pid}:${signal ?? "SIGTERM"}`);
     return true;
   }) as typeof process.kill;
   try {
@@ -156,11 +159,57 @@ test("reap kills only a recorded app-server command", async () => {
     );
     await supervisor.load();
     await supervisor.reap();
-    assert.deepEqual(killed, [7]);
-    assert.equal(supervisor.list().every((server) => server.state === "stopped"), true);
+    assert.deepEqual(killed, ["7:SIGTERM", "7:SIGKILL"]);
+    assert.equal(supervisor.list().every((server) => server.state === "stopped" && server.pid === null && server.url === null), true);
   } finally {
     process.kill = originalKill;
     await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("a reused pid is not treated as the recorded server", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-reused-"));
+  const cwd = await mkdtemp(join(tmpdir(), "agentstack-reused-cwd-"));
+  const launched: number[] = [];
+  try {
+    const supervisor = new Supervisor({
+      stateDir,
+      graceMs: 20,
+      async reservePort() {
+        return 41000 + launched.length;
+      },
+      launch(): RunningChild {
+        launched.push(1);
+        return { pid: 70 + launched.length, exited: new Promise(() => undefined), kill() {} };
+      },
+      async waitReady() {
+        return undefined;
+      },
+      async commandLine() {
+        return "unrelated process";
+      },
+    });
+    await mkdir(join(stateDir, "servers"), { recursive: true });
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(
+      join(stateDir, "servers", "old.json"),
+      JSON.stringify({
+        id: "old",
+        pid: 70,
+        cwd,
+        url: "ws://127.0.0.1:9",
+        state: "running",
+        codexBin: "codex",
+      }),
+    );
+    await supervisor.load();
+    const started = await supervisor.start({ cwd, id: "old" });
+    assert.equal(launched.length, 1);
+    assert.notEqual(started.pid, 70);
+    assert.equal(started.url, "ws://127.0.0.1:41000");
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
   }
 });
 

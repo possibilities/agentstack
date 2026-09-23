@@ -93,15 +93,8 @@ export class Supervisor {
   async reap(): Promise<void> {
     for (const record of this.records.values()) {
       if (record.state !== "running" || record.pid === null || record.url === null) continue;
-      const command = await this.commandLine(record.pid);
-      if (command && isOurChild(command, record.url)) {
-        try {
-          process.kill(record.pid, "SIGTERM");
-        } catch {
-          // The pid already exited or was reused.
-        }
-      }
-      record.state = "stopped";
+      if (await this.ownsProcess(record.pid, record.url)) await this.signalPid(record.pid, record.url);
+      this.markStopped(record);
       await this.persist(record);
     }
   }
@@ -137,14 +130,14 @@ export class Supervisor {
             // The child already exited.
           }
           this.children.delete(record.id);
-        } else if (record.pid !== null) {
+        } else if (record.pid !== null && record.url !== null && (await this.ownsProcess(record.pid, record.url))) {
           try {
             process.kill(record.pid, "SIGKILL");
           } catch {
             // The pid already exited.
           }
         }
-        record.state = "stopped";
+        this.markStopped(record);
         await this.persist(record);
       }),
     );
@@ -185,7 +178,7 @@ export class Supervisor {
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         await this.killChild(id, child);
-        record.state = "stopped";
+        this.markStopped(record);
         await this.persist(record);
       }
     }
@@ -199,20 +192,16 @@ export class Supervisor {
     const child = this.children.get(id);
     if (child) {
       await this.killChild(id, child);
-    } else if (record.pid !== null) {
-      try {
-        process.kill(record.pid, "SIGTERM");
-      } catch {
-        // Already gone.
-      }
+    } else if (record.pid !== null && record.url !== null) {
+      await this.signalPid(record.pid, record.url);
     }
-    record.state = "stopped";
+    this.markStopped(record);
     await this.persist(record);
     return viewOf(record);
   }
 
   private async isRunning(record: RecordFile): Promise<boolean> {
-    if (record.state !== "running" || record.pid === null) return false;
+    if (record.state !== "running" || record.pid === null || record.url === null) return false;
     const child = this.children.get(record.id);
     if (child) {
       const status = await Promise.race([
@@ -221,7 +210,38 @@ export class Supervisor {
       ]);
       return status === "alive";
     }
-    return pidAlive(record.pid);
+    return this.ownsProcess(record.pid, record.url);
+  }
+
+  private async ownsProcess(pid: number, url: string): Promise<boolean> {
+    const command = await this.commandLine(pid);
+    return Boolean(command && isOurChild(command, url));
+  }
+
+  private async signalPid(pid: number, url: string): Promise<void> {
+    if (!(await this.ownsProcess(pid, url))) return;
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      return;
+    }
+    const deadline = Date.now() + this.graceMs;
+    while (Date.now() < deadline) {
+      if (!(await this.ownsProcess(pid, url))) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    if (!(await this.ownsProcess(pid, url))) return;
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // The process exited during the grace window.
+    }
+  }
+
+  private markStopped(record: RecordFile): void {
+    record.state = "stopped";
+    record.pid = null;
+    record.url = null;
   }
 
   private async killChild(id: string, child: RunningChild): Promise<void> {
@@ -311,15 +331,6 @@ async function existingDirectory(cwd: string): Promise<string> {
 
 function isOurChild(command: string, url: string): boolean {
   return command.includes("app-server") && command.includes("--listen") && command.includes(url);
-}
-
-async function pidAlive(pid: number): Promise<boolean> {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export function launchChild(spec: LaunchSpec): RunningChild {
