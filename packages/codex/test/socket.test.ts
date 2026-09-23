@@ -6,6 +6,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import { serveApi, socketCall } from "@agentstack/api";
+import { StateStore } from "../src/store.js";
 
 const fakeBin = fileURLToPath(new URL("../../test/fixtures/fake-app-server.mjs", import.meta.url));
 
@@ -21,6 +22,9 @@ test("codex lifecycle is served on the namespaced unix socket", async () => {
   // A working PATH alternative must never substitute for the required runtime.
   await symlink(fakeBin, join(cwd, "codex"));
   process.env.PATH = `${cwd}:${savedPath ?? ""}`;
+  const store = new StateStore(stateDir);
+  store.addAccount(JSON.stringify({ tokens: { refresh_token: "test-refresh", access_token: "access", id_token: "fixture.jwt.signature" } }));
+  store.close();
   const served = await serveApi({
     name: "codex",
     transport: "socket",
@@ -42,6 +46,7 @@ test("codex lifecycle is served on the namespaced unix socket", async () => {
     assert.match(listedTools.websocket?.url ?? "", /^ws:\/\/127\.0\.0\.1:\d+$/);
     assert.deepEqual(listedTools.websocket?.topics, {
       servers_changed: "Published when a Codex app-server record starts, stops, exits, or is reaped.",
+      accounts_changed: "Published when a Codex account signs in, is selected, or is removed.",
       threads_changed: "Published when a loaded Codex thread starts, changes status, or closes.",
     });
 
@@ -49,7 +54,7 @@ test("codex lifecycle is served on the namespaced unix socket", async () => {
     assert.deepEqual(await events.next(), { type: "subscribed", topic: "servers_changed" });
     assert.deepEqual(
       listedTools.tools.map((tool) => tool.name),
-      ["server_start", "server_stop", "server_list"],
+      ["server_start", "server_stop", "server_list", "account_list", "account_activate", "account_remove", "account_login_start", "account_login_status", "account_login_cancel"],
     );
     assert.ok(listedTools.tools.every((tool) => tool.description.length > 0));
 
@@ -60,7 +65,10 @@ test("codex lifecycle is served on the namespaced unix socket", async () => {
     assert.equal(started.id, "remote");
     assert.equal(started.state, "running");
     assert.equal(started.url, `unix://${join(stateDir, "app", "remote.sock")}`);
-    assert.equal(JSON.parse(await readFile(join(stateDir, "servers", "remote.json"), "utf8")).codexBin, runtime);
+    const persisted = new StateStore(stateDir);
+    assert.equal(persisted.servers().find((server) => server.id === "remote")?.codexBin, runtime);
+    assert.equal(persisted.servers().find((server) => server.id === "remote")?.account, "codex-1");
+    persisted.close();
     assert.deepEqual(await events.next(), { type: "event", topic: "servers_changed" });
 
     await assert.rejects(

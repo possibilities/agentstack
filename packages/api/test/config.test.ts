@@ -16,7 +16,7 @@ test("codex declares one namespaced socket server", async () => {
   assert.match(codex.config.description, /Start, stop, and list/);
   assert.match(codex.config.socket?.description ?? "", /codex/);
   assert.equal(codex.config.mcp, undefined);
-  assert.deepEqual(Object.keys(codex.config.websocket?.pubsub ?? {}), ["servers_changed", "threads_changed"]);
+  assert.deepEqual(Object.keys(codex.config.websocket?.pubsub ?? {}), ["servers_changed", "accounts_changed", "threads_changed"]);
 });
 
 test("config rejects unknown transports and empty blurbs", () => {

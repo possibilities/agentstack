@@ -12,6 +12,8 @@ node packages/owner/dist/src/cli.js serve
 
 The last command prints admission URLs for the owner, Codex, and API pages. Open one of those exact URLs in a browser on the same machine. The first request exchanges its token in the address for an HttpOnly cookie and redirects to a clean URL. The UI defaults to `127.0.0.1:3000`; set `PORT=0` to let the operating system choose a free port or set `PORT` to another local port.
 
+On the Codex page, choose **Add account**, follow the sign-in link, and return to the page after authentication. The first account becomes active; with several accounts, **Make active** chooses the identity used by newly started app servers. Running server rows show the account they started with. Sign-in does not alter the regular Codex CLI account.
+
 To serve only the Codex Package API, without the UI or process owner:
 
 ```sh

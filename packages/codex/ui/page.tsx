@@ -1,10 +1,12 @@
-import { codexEventsUrl, codexTree, codexVersion } from "./actions";
+import { codexAccounts, codexEventsUrl, codexTree, codexVersion } from "./actions";
 import { CodexTree, type TreeNode } from "./agent-tree";
+import { CodexAccounts } from "./accounts";
 
 export default async function CodexPage() {
   const version = await codexVersion();
   let initial: TreeNode[] | null;
   let eventsUrl: string | null;
+  const accounts = await codexAccounts().catch(() => null);
   try {
     [initial, eventsUrl] = await Promise.all([codexTree(true), codexEventsUrl()]);
   } catch {
@@ -24,6 +26,8 @@ export default async function CodexPage() {
             {`codexnk ${version ?? "version unavailable"}`}
           </span>
         </header>
+        <CodexAccounts initial={accounts} eventsUrl={eventsUrl} />
+        <h2 className="mb-2 text-base font-semibold">Running servers</h2>
         <CodexTree initial={initial} eventsUrl={eventsUrl} />
       </main>
     </div>
