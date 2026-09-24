@@ -17,7 +17,7 @@
         "build",
         "@agentstack/auth#build",
         "@agentstack/bots#build",
-        "@agentstack/capabilities#build",
+        "@agentstack/roles#build",
         "@agentstack/owner#build"
       ],
       "cache": false
@@ -27,7 +27,7 @@
         "build",
         "@agentstack/auth#build",
         "@agentstack/bots#build",
-        "@agentstack/capabilities#build",
+        "@agentstack/roles#build",
         "@agentstack/owner#build"
       ],
       "cache": false

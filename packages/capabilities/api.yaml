@@ -1,8 +1,0 @@
-name: capabilities
-description: Manage the default ordered instruction fragments rendered into every bot's capabilities bundle.
-socket:
-  description: Unix socket for default capability editing and change events.
-mcp:
-  description: HTTP MCP operations for default capability editing, forwarded to the capabilities socket.
-websocket:
-  description: Loopback WebSocket for default capability editing and change events, forwarded to the capabilities socket.

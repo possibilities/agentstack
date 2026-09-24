@@ -1,5 +1,5 @@
 {
-  "name": "@agentstack/capabilities",
+  "name": "@agentstack/roles",
   "version": "0.0.0",
   "private": true,
   "type": "module",

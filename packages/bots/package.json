@@ -20,7 +20,7 @@
   "dependencies": {
     "@agentstack/api": "workspace:*",
     "@agentstack/auth": "workspace:*",
-    "@agentstack/capabilities": "workspace:*",
+    "@agentstack/roles": "workspace:*",
     "ws": "^8.21.3",
     "zod": "^4.6.5"
   },

@@ -188,6 +188,31 @@ test("existing SQLite state gains runtime and credential generations without los
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("legacy launch capabilities migrate once to role fields without resurrecting cleaned roots", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-role-columns-"));
+  try {
+    const first = new StateStore(root);
+    first.saveServer({ id: "bot-1", pid: null, cwd: root, url: null, state: "stopped", codexBin: "codex", account: null,
+      launchedAccount: null, authVersion: null, runtimeRoot: null, mainThreadId: null, threadStarting: false, args: [] });
+    first.close();
+    const config = new DatabaseSync(join(root, "configuration.sqlite"));
+    config.exec("ALTER TABLE servers DROP COLUMN role_root; ALTER TABLE servers DROP COLUMN role_revision; ALTER TABLE servers ADD COLUMN capabilities_root TEXT; ALTER TABLE servers ADD COLUMN capabilities_revision INTEGER");
+    config.prepare("UPDATE servers SET capabilities_root = ?, capabilities_revision = 3 WHERE id = 'bot-1'")
+      .run(join(root, "capabilities", "bot-1", "launch-legacy"));
+    config.close();
+    const migrated = new StateStore(root);
+    const record = migrated.servers()[0]!;
+    assert.equal(record.roleRoot, join(root, "capabilities", "bot-1", "launch-legacy"));
+    assert.equal(record.roleRevision, 3);
+    migrated.saveServer({ ...record, roleRoot: null });
+    migrated.close();
+    const reopened = new StateStore(root);
+    assert.equal(reopened.servers()[0]?.roleRoot, null);
+    assert.equal(reopened.servers()[0]?.roleRevision, 3);
+    reopened.close();
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("legacy JSON Server records follow the migrated immutable account ID", async () => {
   const root = await mkdtemp(join(tmpdir(), "agentstack-json-account-upgrade-"));
   try {

@@ -2,7 +2,7 @@ import { socketCall, socketPath, websocketPort } from "@agentstack/api";
 import { loadCatalog } from "./catalog";
 import type { Account, Bot, Login, OwnerStatus, PackageDoc, Resource, Snapshot, VoiceCall } from "./types";
 
-const knownPackages = ["api", "auth", "bots", "capabilities", "owner"];
+const knownPackages = ["api", "auth", "bots", "roles", "owner"];
 
 function call<T>(pkg: string, name: string, args: Record<string, unknown> = {}): Promise<T> {
   return socketCall(socketPath(pkg), "tools/call", { name, arguments: args }, { timeoutMs: 2_000 }) as Promise<T>;

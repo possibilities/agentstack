@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { CapabilityStore, renderInstructions } from "../src/store.js";
-import { materializeBundle, removeBundle } from "../src/bundle.js";
+import { RoleStore, renderInstructions } from "../src/store.js";
+import { materializeRole, removeRole } from "../src/bundle.js";
 
 test("categories and fragments are durable, ordered, and rendered without human metadata", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-capabilities-"));
-  let store = new CapabilityStore(root);
+  const root = await mkdtemp(join(tmpdir(), "agentstack-roles-"));
+  let store = new RoleStore(root);
   try {
     let state = store.createCategory(0, "Planning", "human-only category");
     const planning = state.categories[0]!.id;
@@ -31,10 +31,10 @@ test("categories and fragments are durable, ordered, and rendered without human 
     assert.equal(renderInstructions(state), "Gamma");
     assert.equal(state.categories[0]!.fragments[1]!.id, beta);
     assert.throws(() => store.deleteCategory(state.revision, tools), /still contains fragments/);
-    assert.throws(() => store.updateFragment(state.revision - 1, gamma, { body: "stale" }), /stale capabilities revision/);
+    assert.throws(() => store.updateFragment(state.revision - 1, gamma, { body: "stale" }), /stale role revision/);
     assert.equal(store.snapshot().revision, state.revision);
     store.close();
-    store = new CapabilityStore(root);
+    store = new RoleStore(root);
     assert.deepEqual(store.snapshot(), state);
     state = store.deleteFragment(state.revision, gamma);
     state = store.deleteFragment(state.revision, beta);
@@ -43,28 +43,28 @@ test("categories and fragments are durable, ordered, and rendered without human 
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 });
 
-test("a bundle snapshots instructions and MCP configuration without argv content", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-capability-bundle-"));
-  const store = new CapabilityStore(root);
+test("a role snapshots instructions and MCP configuration without argv content", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-role-snapshot-"));
+  const store = new RoleStore(root);
   try {
     let state = store.createCategory(0, "Default");
     state = store.createFragment(state.revision, state.categories[0]!.id, "Prompt", "Do useful work.", "not rendered");
-    const first = await materializeBundle(root, "bot-1", state, { auth: "http://127.0.0.1:8743/mcp/auth" });
+    const first = await materializeRole(root, "bot-1", state, { auth: "http://127.0.0.1:8743/mcp/auth" });
     assert.equal(await readFile(join(first, "SYSTEM_APPEND.md"), "utf8"), "Do useful work.");
     assert.match(await readFile(join(first, "config.toml"), "utf8"), /\[mcp_servers.auth\]/);
     state = store.updateFragment(state.revision, state.categories[0]!.fragments[0]!.id, { body: "Changed." });
-    const second = await materializeBundle(root, "bot-1", state, {});
+    const second = await materializeRole(root, "bot-1", state, {});
     assert.equal(await readFile(join(first, "SYSTEM_APPEND.md"), "utf8"), "Do useful work.");
     assert.equal(await readFile(join(second, "SYSTEM_APPEND.md"), "utf8"), "Changed.");
-    await assert.rejects(removeBundle(root, "bot-2", first), /unrecognized/);
-    await removeBundle(root, "bot-1", first);
-    await removeBundle(root, "bot-1", second);
+    await assert.rejects(removeRole(root, "bot-2", first), /unrecognized/);
+    await removeRole(root, "bot-1", first);
+    await removeRole(root, "bot-1", second);
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 });
 
 test("an oversized assembled prompt is rejected before committing an edit", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-capability-limit-"));
-  const store = new CapabilityStore(root);
+  const root = await mkdtemp(join(tmpdir(), "agentstack-role-limit-"));
+  const store = new RoleStore(root);
   try {
     let state = store.createCategory(0, "Large");
     const categoryId = state.categories[0]!.id;
@@ -72,4 +72,22 @@ test("an oversized assembled prompt is rejected before committing an edit", asyn
     assert.throws(() => store.createFragment(state.revision, categoryId, "Too much", "b".repeat(70_000)), /exceed 262144 bytes/);
     assert.deepEqual(store.snapshot(), state);
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("a legacy capabilities database keeps its fragments, revision, and launch cleanup", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-role-migration-"));
+  const old = new RoleStore(root);
+  try {
+    let state = old.createCategory(0, "Existing");
+    state = old.createFragment(state.revision, state.categories[0]!.id, "Instruction", "Keep this.");
+    old.close();
+    await rename(join(root, "roles.sqlite"), join(root, "capabilities.sqlite"));
+    const role = new RoleStore(root);
+    try { assert.deepEqual(role.snapshot(), state); }
+    finally { role.close(); }
+    const legacyRoot = join(root, "capabilities", "bot-1", "launch-legacy");
+    await mkdir(legacyRoot, { recursive: true });
+    await removeRole(root, "bot-1", legacyRoot);
+    await assert.rejects(lstat(legacyRoot), /ENOENT/);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

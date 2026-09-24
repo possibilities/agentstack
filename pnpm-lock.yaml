@@ -219,9 +219,9 @@ importers:
       '@agentstack/auth':
         specifier: workspace:*
         version: link:../auth
-      '@agentstack/capabilities':
+      '@agentstack/roles':
         specifier: workspace:*
-        version: link:../capabilities
+        version: link:../roles
       ws:
         specifier: ^8.21.3
         version: 8.21.3
@@ -235,22 +235,6 @@ importers:
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.1
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
-  packages/capabilities:
-    dependencies:
-      '@agentstack/api':
-        specifier: workspace:*
-        version: link:../api
-      zod:
-        specifier: ^4.6.5
-        version: 4.6.5
-    devDependencies:
-      '@types/node':
-        specifier: ^26.6.2
-        version: 26.6.2
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -292,6 +276,22 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.0
         version: 1.30.0(zod@4.6.5)
+      '@types/node':
+        specifier: ^26.6.2
+        version: 26.6.2
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  packages/roles:
+    dependencies:
+      '@agentstack/api':
+        specifier: workspace:*
+        version: link:../api
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
+    devDependencies:
       '@types/node':
         specifier: ^26.6.2
         version: 26.6.2

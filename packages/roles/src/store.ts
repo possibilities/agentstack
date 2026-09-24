@@ -1,13 +1,13 @@
-import { chmodSync, closeSync, constants, mkdirSync, openSync } from "node:fs";
+import { chmodSync, closeSync, constants, existsSync, mkdirSync, openSync, renameSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 export type Fragment = { id: string; categoryId: string; title: string; description: string; body: string; enabled: boolean };
 export type Category = { id: string; title: string; description: string; enabled: boolean; fragments: Fragment[] };
-export type BundleSnapshot = { revision: number; categories: Category[] };
+export type RoleSnapshot = { revision: number; categories: Category[] };
 
-export function renderInstructions(snapshot: BundleSnapshot): string {
+export function renderInstructions(snapshot: RoleSnapshot): string {
   const bodies = snapshot.categories.flatMap((category) => category.enabled
     ? category.fragments.filter((fragment) => fragment.enabled && fragment.body.trim()).map((fragment) => fragment.body)
     : []);
@@ -16,13 +16,21 @@ export function renderInstructions(snapshot: BundleSnapshot): string {
   return rendered;
 }
 
-export class CapabilityStore {
+export class RoleStore {
   private readonly db: DatabaseSync;
 
   constructor(stateDir: string) {
     mkdirSync(stateDir, { recursive: true, mode: 0o700 });
     chmodSync(stateDir, 0o700);
-    const path = join(stateDir, "capabilities.sqlite");
+    const path = join(stateDir, "roles.sqlite");
+    const legacy = join(stateDir, "capabilities.sqlite");
+    if (!existsSync(path) && existsSync(legacy)) {
+      try { renameSync(legacy, path); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT" || !existsSync(path)) throw error;
+      }
+    }
+    else if (existsSync(path) && existsSync(legacy)) throw new Error("both roles.sqlite and legacy capabilities.sqlite exist; inspect before continuing");
     try { closeSync(openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600)); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
     chmodSync(path, 0o600);
@@ -47,7 +55,7 @@ export class CapabilityStore {
 
   close(): void { this.db.close(); }
 
-  snapshot(): BundleSnapshot {
+  snapshot(): RoleSnapshot {
     this.db.exec("BEGIN");
     try {
       const value = this.readSnapshot();
@@ -56,7 +64,7 @@ export class CapabilityStore {
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
 
-  private readSnapshot(): BundleSnapshot {
+  private readSnapshot(): RoleSnapshot {
     const revision = this.revision();
     const rows = this.db.prepare("SELECT id, title, description, enabled FROM categories ORDER BY position, id").all() as Array<Omit<Category, "fragments" | "enabled"> & { enabled: number }>;
     const fragments = this.db.prepare("SELECT id, category_id, title, description, body, enabled FROM fragments ORDER BY category_id, position, id").all() as Array<{
@@ -70,14 +78,14 @@ export class CapabilityStore {
     return { revision, categories };
   }
 
-  createCategory(expectedRevision: number, title: string, description = "", enabled = true): BundleSnapshot {
+  createCategory(expectedRevision: number, title: string, description = "", enabled = true): RoleSnapshot {
     return this.change(expectedRevision, () => {
       const position = this.count("categories");
       this.db.prepare("INSERT INTO categories VALUES (?, ?, ?, ?, ?)").run(randomUUID(), title, description, Number(enabled), position);
     });
   }
 
-  updateCategory(expectedRevision: number, id: string, fields: { title?: string; description?: string; enabled?: boolean }): BundleSnapshot {
+  updateCategory(expectedRevision: number, id: string, fields: { title?: string; description?: string; enabled?: boolean }): RoleSnapshot {
     return this.change(expectedRevision, () => {
       const existing = this.category(id);
       this.db.prepare("UPDATE categories SET title = ?, description = ?, enabled = ? WHERE id = ?")
@@ -85,7 +93,7 @@ export class CapabilityStore {
     });
   }
 
-  deleteCategory(expectedRevision: number, id: string): BundleSnapshot {
+  deleteCategory(expectedRevision: number, id: string): RoleSnapshot {
     return this.change(expectedRevision, () => {
       this.category(id);
       if ((this.db.prepare("SELECT COUNT(*) AS n FROM fragments WHERE category_id = ?").get(id) as { n: number }).n)
@@ -95,11 +103,11 @@ export class CapabilityStore {
     });
   }
 
-  reorderCategories(expectedRevision: number, ids: string[]): BundleSnapshot {
+  reorderCategories(expectedRevision: number, ids: string[]): RoleSnapshot {
     return this.change(expectedRevision, () => this.reorder("categories", ids));
   }
 
-  createFragment(expectedRevision: number, categoryId: string, title: string, body: string, description = "", enabled = true): BundleSnapshot {
+  createFragment(expectedRevision: number, categoryId: string, title: string, body: string, description = "", enabled = true): RoleSnapshot {
     return this.change(expectedRevision, () => {
       this.category(categoryId);
       const position = this.count("fragments", categoryId);
@@ -108,7 +116,7 @@ export class CapabilityStore {
     });
   }
 
-  updateFragment(expectedRevision: number, id: string, fields: { categoryId?: string; title?: string; body?: string; description?: string; enabled?: boolean }): BundleSnapshot {
+  updateFragment(expectedRevision: number, id: string, fields: { categoryId?: string; title?: string; body?: string; description?: string; enabled?: boolean }): RoleSnapshot {
     return this.change(expectedRevision, () => {
       const existing = this.fragment(id);
       const categoryId = fields.categoryId ?? existing.categoryId;
@@ -121,7 +129,7 @@ export class CapabilityStore {
     });
   }
 
-  deleteFragment(expectedRevision: number, id: string): BundleSnapshot {
+  deleteFragment(expectedRevision: number, id: string): RoleSnapshot {
     return this.change(expectedRevision, () => {
       const existing = this.fragment(id);
       this.db.prepare("DELETE FROM fragments WHERE id = ?").run(id);
@@ -129,19 +137,19 @@ export class CapabilityStore {
     });
   }
 
-  reorderFragments(expectedRevision: number, categoryId: string, ids: string[]): BundleSnapshot {
+  reorderFragments(expectedRevision: number, categoryId: string, ids: string[]): RoleSnapshot {
     return this.change(expectedRevision, () => { this.category(categoryId); this.reorder("fragments", ids, categoryId); });
   }
 
-  private change(expectedRevision: number, mutate: () => void): BundleSnapshot {
+  private change(expectedRevision: number, mutate: () => void): RoleSnapshot {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const revision = this.revision();
-      if (revision !== expectedRevision) throw new Error(`stale capabilities revision: expected ${expectedRevision}, current ${revision}`);
+      if (revision !== expectedRevision) throw new Error(`stale role revision: expected ${expectedRevision}, current ${revision}`);
       mutate();
       const snapshot = this.readSnapshot();
       renderInstructions(snapshot);
-      if (JSON.stringify(snapshot).length > 750_000) throw new Error("bundle snapshot exceeds the socket response budget");
+      if (JSON.stringify(snapshot).length > 750_000) throw new Error("role snapshot exceeds the socket response budget");
       this.db.prepare("UPDATE revision SET value = value + 1 WHERE singleton = 1").run();
       this.db.exec("COMMIT");
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }

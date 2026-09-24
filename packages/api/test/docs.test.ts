@@ -30,7 +30,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.deepEqual(
       docs.packages.map((item) => item.name),
-      ["api", "auth", "bots", "capabilities", "owner"],
+      ["api", "auth", "bots", "owner", "roles"],
     );
     assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@agentstack/${item.name}`));
 
@@ -59,7 +59,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok(start.description.length > 0);
     assert.deepEqual(Object.keys((start.inputSchema.properties ?? {}) as object).sort(), ["args", "cwd", "id"]);
     assert.ok((start.outputSchema.properties as Record<string, unknown>).recoveryIssue);
-    assert.ok((start.outputSchema.properties as Record<string, unknown>).capabilitiesRevision);
+    assert.ok((start.outputSchema.properties as Record<string, unknown>).roleRevision);
     const botsSocket = bots.transports.find((transport) => transport.type === "socket") as TransportDoc;
     assert.equal(botsSocket.supported, true);
     assert.equal(botsSocket.subscriptions, true);
@@ -73,13 +73,13 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(botsWebSocket.endpoint, "ws://127.0.0.1:8744/websocket/bots");
 
     const auth = found.get("auth") as PackageDoc;
-    const capabilities = found.get("capabilities") as PackageDoc;
-    assert.deepEqual(Object.keys(capabilities.events), ["bundle_changed"]);
-    assert.deepEqual(capabilities.operations.map((operation) => operation.name).sort(), [
-      "bundle_preview", "bundle_snapshot", "category_create", "category_delete", "category_reorder", "category_update",
+    const roles = found.get("roles") as PackageDoc;
+    assert.deepEqual(Object.keys(roles.events), ["role_changed"]);
+    assert.deepEqual(roles.operations.map((operation) => operation.name).sort(), [
+      "role_preview", "role_snapshot", "category_create", "category_delete", "category_reorder", "category_update",
       "fragment_create", "fragment_delete", "fragment_reorder", "fragment_update",
-    ]);
-    assert.equal(capabilities.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
+    ].sort());
+    assert.equal(roles.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
     assert.deepEqual(Object.keys(auth.events).sort(), ["accounts_changed", "login_changed"]);
     assert.deepEqual(
       auth.operations.map((operation) => operation.name).sort(),

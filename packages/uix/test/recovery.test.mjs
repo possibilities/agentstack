@@ -15,7 +15,7 @@ const passthrough = { parse: (value) => value };
 const issue = "Recorded process ownership could not be verified. Inspect its PID and endpoint before retrying.";
 
 const record = (id) => ({ id, pid: 4321, cwd: "/tmp/fixture-workspace", url: "unix:///tmp/fixture.sock", state: "running", account: null,
-  runningAccount: null, mainThreadId: "thread-fixture", recoveryIssue: issue, capabilitiesRevision: 1 });
+  runningAccount: null, mainThreadId: "thread-fixture", recoveryIssue: issue, roleRevision: 1 });
 const bot = record("bot-1");
 const operation = (name, value) => ({ name, description: `${name} fixture`, input: passthrough, output: passthrough, async call() { return value; } });
 const packageDoc = (name, operationName, collection) => ({

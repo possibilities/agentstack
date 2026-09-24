@@ -441,7 +441,7 @@ export function BotsWindow() {
                 <dl className="flex flex-col">
                   <Row label="Account"><AccountChip id={bot.account} labels={labels} /></Row>
                    <Row label="Main thread" mono copy={bot.mainThreadId}>{bot.mainThreadId ? shortId(bot.mainThreadId) : "Awaiting first turn"}</Row>
-                   <Row label="Capabilities revision" mono>{bot.capabilitiesRevision ?? "Never launched"}</Row>
+                   <Row label="Role revision" mono>{bot.roleRevision ?? "Never launched"}</Row>
                    <Row label="Workspace" copy={bot.cwd}><Path path={bot.cwd} /></Row>
                 </dl>
                  {bot.recoveryIssue ? <RecoveryWarning message={bot.recoveryIssue} /> : null}

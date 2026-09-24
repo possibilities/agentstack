@@ -22,12 +22,12 @@ export function authChild(): OwnedChild {
     args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "auth", "socket"],
   };
 }
-export function capabilitiesChild(): OwnedChild {
+export function rolesChild(): OwnedChild {
   const apiPackage = require.resolve("@agentstack/api/package.json");
   return {
-    name: "capabilities",
+    name: "roles",
     command: process.execPath,
-    args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "capabilities", "socket"],
+    args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "roles", "socket"],
   };
 }
 export function websocketChild(): OwnedChild {

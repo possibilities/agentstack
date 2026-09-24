@@ -2,7 +2,7 @@
 import { mcpPort, runApi, runMcp, runWebSocket, serveApi, serveMcp, socketCall, socketPath, websocketPort } from "@agentstack/api";
 import { connect } from "node:net";
 import { runDocs, serveDocs } from "@agentstack/docs";
-import { apiChild, authChild, capabilitiesChild, websocketChild } from "./children.js";
+import { apiChild, authChild, rolesChild, websocketChild } from "./children.js";
 import { botsChild } from "./bots.js";
 import { serveInspectorCatalog } from "./inspector-catalog.js";
 import { inspectorChild, inspectorPort } from "./inspector.js";
@@ -105,14 +105,14 @@ const shutdown = () => {
     process.exit(childFailed || failed ? 1 : 0);
   });
 };
-owner = startOwner([apiChild(), authChild(), capabilitiesChild(), botsChild(mcp.port), websocketChild(), inspectorChild(catalog.path, inspectorListenPort), uixChild(uixListenPort)], process.env, () => {
+owner = startOwner([apiChild(), authChild(), rolesChild(), botsChild(mcp.port), websocketChild(), inspectorChild(catalog.path, inspectorListenPort), uixChild(uixListenPort)], process.env, () => {
   statusSource.notify();
   if (!closing && owner.children().some((child) => !child.running)) {
     childFailed = true;
     console.error("a required child stopped; shutting down agentstack");
     shutdown();
   }
-}, [["auth"], ["bots"], ["capabilities"], ["api"]]);
+}, [["auth"], ["bots"], ["roles"], ["api"]]);
 statusSource.attach(owner);
 const indexUrl = `http://127.0.0.1:${uixListenPort}/`;
 const uixUrl = `http://127.0.0.1:${uixListenPort}/x`;

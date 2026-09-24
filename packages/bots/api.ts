@@ -22,7 +22,7 @@ const botView = z.object({
   runningAccount: z.uuid().nullable().describe("Account used by the running process, or null when stopped or launched unbound. Stop/start to apply a changed assignment."),
   mainThreadId: z.string().nullable().describe("First durable root thread, or null until a UI sends its first turn."),
   recoveryIssue: z.string().nullable().describe("Process-ownership issue requiring inspection; a running state is unverified while this is set."),
-  capabilitiesRevision: z.number().int().nonnegative().nullable().describe("Last launched default capabilities revision, or null before launch. Compare with bundle_snapshot; restart to apply edits."),
+  roleRevision: z.number().int().nonnegative().nullable().describe("Last launched role revision, or null before launch. Compare with role_snapshot; restart to apply edits."),
 });
 
 export type BotsContext = { root: string; ledger: BotLedger; store: StateStore; supervisor: Supervisor; voice: VoiceCalls };
@@ -99,7 +99,7 @@ export const botStop = operation({
   async call(ctx: BotsContext, { id }) {
     if (ctx.supervisor.list().some((bot) => bot.id === id)) return ctx.supervisor.stop(id);
     if (!ctx.ledger.has(id) && !ctx.ledger.ownsWorkspace(id)) throw new Error(`unknown bot: ${id}`);
-    return { id, pid: null, cwd: workspacePath(ctx.root, id), url: null, state: "stopped" as const, account: null, runningAccount: null, mainThreadId: null, recoveryIssue: null, capabilitiesRevision: null };
+    return { id, pid: null, cwd: workspacePath(ctx.root, id), url: null, state: "stopped" as const, account: null, runningAccount: null, mainThreadId: null, recoveryIssue: null, roleRevision: null };
   },
 });
 export const botRemove = operation({
@@ -190,7 +190,7 @@ export const api: PackageApi<BotsContext, BotsTopic> = {
     finally {
       await ctx.supervisor.stopAll();
       await ctx.supervisor.runtime.close();
-      ctx.supervisor.capabilities.close();
+      ctx.supervisor.role.close();
       ctx.ledger.close();
       ctx.store.close();
     }

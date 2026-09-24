@@ -8,7 +8,7 @@ import { codexRuntimePath } from "./paths.js";
 import { StateStore, type StoredServer } from "./store.js";
 import { RuntimeAuth, type SyncStatus } from "./runtime-auth.js";
 import { bindMainThread, findEligibleMainThread } from "./threads.js";
-import { CapabilityStore, materializeBundle, removeBundle } from "@agentstack/capabilities";
+import { RoleStore, materializeRole, removeRole } from "@agentstack/roles";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const DEFAULT_GRACE_MS = 10_000;
@@ -27,7 +27,7 @@ export type ServerView = {
   runningAccount: string | null;
   mainThreadId: string | null;
   recoveryIssue: string | null;
-  capabilitiesRevision: number | null;
+  roleRevision: number | null;
 };
 
 type RecordFile = StoredServer;
@@ -86,12 +86,12 @@ export class Supervisor {
   private readonly findMainThread: typeof findEligibleMainThread;
   readonly store: StateStore;
   readonly runtime: RuntimeAuth;
-  readonly capabilities: CapabilityStore;
+  readonly role: RoleStore;
 
   constructor(private readonly options: SupervisorOptions) {
     this.store = options.store ?? new StateStore(options.stateDir);
     this.runtime = new RuntimeAuth(this.store);
-    this.capabilities = new CapabilityStore(options.stateDir);
+    this.role = new RoleStore(options.stateDir);
     this.launch = options.launch ?? launchChild;
     this.waitReady = options.waitReady ?? waitForReady;
     this.endpoint = options.endpoint ?? (() => unixEndpoint(options.stateDir));
@@ -146,7 +146,7 @@ export class Supervisor {
       }
       await this.finishRuntime(record);
       if (owned) await cleanupEndpoint(record.url);
-      await this.releaseCapabilities(record);
+      await this.releaseRole(record);
       this.markStopped(record);
       await this.persist(record);
       this.notify(record.id);
@@ -225,7 +225,7 @@ export class Supervisor {
       await rm(join(this.options.stateDir, "logs", `${id}.log`), { force: true });
       // Legacy shared history cannot be attributed safely to one account.
       await rm(join(this.options.stateDir, "history", id), { recursive: true, force: true });
-      await this.releaseCapabilities(record, true);
+      await this.releaseRole(record, true);
       this.store.deleteServer(id);
       this.records.delete(id);
       this.recoveryIssues.delete(id);
@@ -272,7 +272,7 @@ export class Supervisor {
       if (current.runtimeRoot && status) await this.runtime.retireSuperseded(current, status);
       if (current.runtimeRoot) throw new Error(`server ${id} has unreconciled Codex credentials; inspect its private runtime`);
     }
-    if (current?.capabilitiesRoot) await this.releaseCapabilities(current, true);
+    if (current?.roleRoot) await this.releaseRole(current, true);
     const selected = current
       ? current.account
       : this.store.listAccounts().find((account) => account.active && !account.removing)?.id ?? null;
@@ -287,7 +287,7 @@ export class Supervisor {
     // Reconciliation above may advance the saved credential generation.
     const account = selected ? this.store.accountCredentials(selected) : null;
     const mcpServers = await this.options.mcpServers?.() ?? {};
-    const snapshot = this.capabilities.snapshot();
+    const snapshot = this.role.snapshot();
     const privateHistory = join(this.options.stateDir, "history", id);
     const history = current?.mainThreadId && !existsSync(privateHistory) ? join(this.options.stateDir, "history") : privateHistory;
     await mkdir(history, { recursive: true, mode: 0o700 });
@@ -300,17 +300,17 @@ export class Supervisor {
       await mkdir(join(this.options.stateDir, "logs"), { recursive: true, mode: 0o700 });
       const runtimeRoot = await this.runtime.prepare(id);
       const identity = await mkdtemp(join(this.options.stateDir, ".identity-"));
-      let capabilities: string | undefined;
+      let rolePath: string | undefined;
       let child: RunningChild;
       try {
-        capabilities = await materializeBundle(this.options.stateDir, id, snapshot, mcpServers);
+        rolePath = await materializeRole(this.options.stateDir, id, snapshot, mcpServers);
         if (account) await writeFile(join(identity, "auth.json"), account.auth, { mode: 0o600 });
         const env = { ...process.env };
         for (const key of ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_BASE_URL", "CODEX_HOME", "AGENTUSAGE_AUTH_TOKEN", "AGENTUSAGE_ACCOUNT"]) delete env[key];
         env.TMPDIR = runtimeRoot;
         child = this.launch({
           bin: codexBin,
-          args: [...appServerArgs(userArgs, url), "--enable", "realtime_conversation", "--identity", identity, "--capabilities", capabilities, "--history-dir", history],
+          args: [...appServerArgs(userArgs, url), "--enable", "realtime_conversation", "--identity", identity, "--capabilities", rolePath, "--history-dir", history],
           cwd,
           logPath,
           env,
@@ -318,14 +318,14 @@ export class Supervisor {
       } catch (error) {
         await rm(identity, { recursive: true, force: true });
         await rm(runtimeRoot, { recursive: true, force: true });
-        if (capabilities) await removeBundle(this.options.stateDir, id, capabilities);
+        if (rolePath) await removeRole(this.options.stateDir, id, rolePath);
         throw new Error(error instanceof Error ? error.message : String(error));
       }
       this.children.set(id, child);
       const record: RecordFile = {
         id, pid: child.pid, cwd, url, state: "running", codexBin, account: account?.id ?? null, launchedAccount: account?.id ?? null, authVersion: account?.version ?? null, runtimeRoot,
         mainThreadId: current?.mainThreadId ?? null, threadStarting: current?.threadStarting ?? false, args: [...userArgs],
-        capabilitiesRoot: capabilities, capabilitiesRevision: snapshot.revision,
+        roleRoot: rolePath, roleRevision: snapshot.revision,
       };
       this.records.set(id, record);
       this.watchExit(id, child, record);
@@ -350,7 +350,7 @@ export class Supervisor {
         await this.finishRuntime(record);
         await rm(identity, { recursive: true, force: true });
         await cleanupEndpoint(url);
-        await this.releaseCapabilities(record);
+        await this.releaseRole(record);
         this.markStopped(record);
         await this.persist(record).catch(() => undefined);
         this.notify(id);
@@ -381,7 +381,7 @@ export class Supervisor {
     }
     await this.finishRuntime(record);
     if (owned && record.url) await cleanupEndpoint(record.url);
-    await this.releaseCapabilities(record);
+    await this.releaseRole(record);
     this.markStopped(record);
     await this.persist(record);
     this.notify(id);
@@ -402,7 +402,7 @@ export class Supervisor {
         this.children.delete(id);
         await this.finishRuntime(record);
         if (record.url) await cleanupEndpoint(record.url);
-        await this.releaseCapabilities(record);
+        await this.releaseRole(record);
         this.markStopped(record);
         await this.persist(record);
         this.notify(id);
@@ -456,14 +456,14 @@ export class Supervisor {
     this.recoveryIssues.delete(record.id);
   }
 
-  private async releaseCapabilities(record: RecordFile, required = false): Promise<void> {
-    if (!record.capabilitiesRoot) return;
+  private async releaseRole(record: RecordFile, required = false): Promise<void> {
+    if (!record.roleRoot) return;
     try {
-      await removeBundle(this.options.stateDir, record.id, record.capabilitiesRoot);
-      record.capabilitiesRoot = null;
+      await removeRole(this.options.stateDir, record.id, record.roleRoot);
+      record.roleRoot = null;
     } catch (error) {
       if (required) throw error;
-      console.error(`capabilities cleanup for ${record.id} failed: ${error}`);
+      console.error(`role snapshot cleanup for ${record.id} failed: ${error}`);
     }
   }
 
@@ -562,7 +562,7 @@ function validateAppServerArgs(userArgs: readonly string[]): void {
       : arg.startsWith("-c") && arg.length > 2 ? arg.slice(2) : undefined;
     const key = override?.split("=", 1)[0]?.trim();
     if (key === "developer_instructions" || key === "mcp_servers" || key?.startsWith("mcp_servers.")) {
-      throw new Error("developer_instructions and mcp_servers are managed by the default capabilities bundle");
+      throw new Error("developer_instructions and mcp_servers are managed by the role");
     }
   }
 }
@@ -622,7 +622,7 @@ function viewOf(record: RecordFile, recoveryIssue: string | null): ServerView {
     runningAccount: record.state === "running" ? record.launchedAccount : null,
     mainThreadId: record.mainThreadId ?? null,
     recoveryIssue,
-    capabilitiesRevision: record.capabilitiesRevision ?? null,
+    roleRevision: record.roleRevision ?? null,
   };
 }
 

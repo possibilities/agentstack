@@ -1,0 +1,8 @@
+name: roles
+description: Manage the single role's ordered instruction fragments rendered into every new bot launch.
+socket:
+  description: Unix socket for role operations and change events.
+mcp:
+  description: HTTP MCP operations for role editing, forwarded to the roles socket.
+websocket:
+  description: Loopback WebSocket for role operations and change events, forwarded to the roles socket.

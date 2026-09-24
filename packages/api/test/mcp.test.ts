@@ -15,7 +15,7 @@ test("one HTTP process exposes each configured Package API and forwards operatio
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-mcp-"));
   const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0" };
   const seen: string[] = [];
-  const sockets = await Promise.all(["auth", "bots", "capabilities", "owner"].map((name) => serveSocket({
+  const sockets = await Promise.all(["auth", "bots", "roles", "owner"].map((name) => serveSocket({
     info: { name, description: `${name}.`, transportDescription: "Socket.", path: socketPath(name, env) },
     context: {},
     operations: [name === "auth" ? operation({
@@ -28,7 +28,7 @@ test("one HTTP process exposes each configured Package API and forwards operatio
   })));
   const served = await serveMcp({ env });
   try {
-    assert.deepEqual(Object.keys(served.urls), ["auth", "bots", "capabilities", "owner"]);
+    assert.deepEqual(Object.keys(served.urls), ["auth", "bots", "owner", "roles"]);
     for (const [name, url] of Object.entries(served.urls)) {
       const client = new Client({ name: "test", version: "1.0.0" });
       await client.connect(new StreamableHTTPClientTransport(new URL(url)));

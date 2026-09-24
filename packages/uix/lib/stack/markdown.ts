@@ -36,7 +36,7 @@ export function renderCanvasMarkdown(snapshot: Snapshot): string {
       ...(bot.recoveryIssue ? [`  - Recovery: ${bot.recoveryIssue}`] : []),
       ...(bot.state === "running" && !bot.recoveryIssue && bot.account !== bot.runningAccount ? [`  - Running as ${label(bot.runningAccount)}; stop and start to apply ${label(bot.account)}`] : []),
       `  - Main thread ${code(bot.mainThreadId ?? "awaiting first turn")}`,
-      `  - Last launched capabilities revision ${code(bot.capabilitiesRevision ?? "never launched")}`,
+      `  - Last launched role revision ${code(bot.roleRevision ?? "never launched")}`,
       `  - Workspace ${code(bot.cwd)}`,
       ...(bot.url ? [`  - Endpoint ${code(bot.url)}`] : []),
     ]) : ["No bots."]), ""]),

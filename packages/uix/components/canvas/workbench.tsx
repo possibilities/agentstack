@@ -441,7 +441,7 @@ function Shell() {
   );
 }
 
-const packageOrder = ["owner", "auth", "bots", "capabilities", "api"];
+const packageOrder = ["owner", "auth", "bots", "roles", "api"];
 
 function TopBar({ mode, setMode, openPalette }: { mode: Mode; setMode(mode: Mode): void; openPalette(): void }) {
   const { status, endpoints, scoped } = useStack();

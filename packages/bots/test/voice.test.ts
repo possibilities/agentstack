@@ -10,7 +10,7 @@ import type { ServerView } from "../src/supervisor.js";
 
 const server = (url: string, threadId: string | null = "main"): ServerView => ({
   id: "bot-1", pid: 123, cwd: "/tmp/bot-1", url, state: "running", account: "account",
-  runningAccount: "account", mainThreadId: threadId, recoveryIssue: null, capabilitiesRevision: 1,
+  runningAccount: "account", mainThreadId: threadId, recoveryIssue: null, roleRevision: 1,
 });
 
 test("voice dials only an adopted main thread, relays SDP, and stops without touching turns", async () => {

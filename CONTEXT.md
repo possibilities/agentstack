@@ -30,13 +30,13 @@ The single Codex thread ID retained by a Bot. A fresh Bot has no main thread unt
 
 A Codex app-server process with, after its first turn, a durable main thread. By default it is numbered `bot-N` with a private workspace; `bot_start` can override its ID, working directory, and launch arguments. A Bot may start without an account. Assign an account, then stop and start, before a turn. Turns require a bound account. Bots restart on AgentStack startup and resume their main thread when one exists.
 
-## Default capabilities bundle
+## Role
 
-AgentStack's shared specification for every Bot: ordered instruction fragments, owner MCP connections, and a reserved skills directory. Each process receives a private launch snapshot through codexnk's `--capabilities` directory. Edits affect later launches, not a running process. _Avoid_: system-prompt flag, live prompt file
+The single AgentStack-owned configuration shared by every new Bot launch: ordered developer-instruction fragments, owner MCP connections, and a reserved skills directory. Each Bot receives a private launch snapshot through codexnk's required `--capabilities` directory. Edits affect later launches, not a running process. _Avoid_: capability profile, system-prompt flag, live prompt file
 
 ## Category
 
-An ordered group of instruction fragments in the default capabilities bundle. Its title and description help humans manage content but do not render into the prompt. Disabling it suppresses all its fragments.
+An ordered group of instruction fragments in the Role. Its title and description help humans manage content but do not render into the prompt. Disabling it suppresses all its fragments.
 
 ## Fragment
 

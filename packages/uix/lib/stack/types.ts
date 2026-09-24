@@ -47,7 +47,7 @@ export type Bot = {
   runningAccount: string | null;
   mainThreadId: string | null;
   recoveryIssue: string | null;
-  capabilitiesRevision: number | null;
+  roleRevision: number | null;
 };
 
 export type Account = { id: string; active: boolean; removing: boolean };
