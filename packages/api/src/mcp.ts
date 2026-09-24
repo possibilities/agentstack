@@ -63,7 +63,7 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
         const result = await socketCall(socketPath(name, env), "tools/call", {
           name: params.name,
           arguments: params.arguments ?? {},
-        }, { signal: extra.signal, timeoutMs: params.name === "account_remove" ? 300_000 : params.name === "voice_dial" && name === "codex" ? 75_000 : 60_000 });
+        }, { signal: extra.signal, timeoutMs: params.name === "account_remove" ? 300_000 : params.name === "voice_dial" && name === "bots" ? 75_000 : 60_000 });
         if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("operation returned a non-object result");
         return { structuredContent: result as Record<string, unknown>, content: [{ type: "text", text: JSON.stringify(result) }] };
       } catch (error) {

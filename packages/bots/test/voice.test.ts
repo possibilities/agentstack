@@ -20,25 +20,36 @@ test("voice dials only an adopted main thread, relays SDP, and stops without tou
   const wss = new WebSocketServer({ server: http });
   const methods: string[] = [];
   let emitAnswer = () => {};
-  wss.on("connection", (peer) => peer.on("message", (raw) => {
-    const frame = JSON.parse(String(raw)) as { id?: number; method?: string; params?: Record<string, unknown> };
-    if (!frame.id || !frame.method) return;
-    methods.push(frame.method);
-    if (frame.method === "thread/realtime/start") {
-      assert.deepEqual(frame.params, {
-        threadId: "main", realtimeSessionId: frame.params?.realtimeSessionId,
-        version: "v3", outputModality: "audio", transport: { type: "webrtc", sdp: "offer" },
-      });
-      peer.send(JSON.stringify({ id: frame.id, result: {} }));
-      emitAnswer = () => {
-        peer.send(JSON.stringify({ method: "thread/realtime/started", params: { threadId: "main", realtimeSessionId: frame.params?.realtimeSessionId, version: "v3" } }));
-        peer.send(JSON.stringify({ method: "thread/realtime/sdp", params: { threadId: "main", sdp: "answer" } }));
-      };
-    } else {
-      if (frame.method === "thread/realtime/stop") peer.send(JSON.stringify({ method: "thread/realtime/closed", params: { threadId: "main", reason: "requested" } }));
-      peer.send(JSON.stringify({ id: frame.id, result: {} }));
-    }
-  }));
+  wss.on("connection", (peer) => {
+    let experimentalApi = false;
+    peer.on("message", (raw) => {
+      const frame = JSON.parse(String(raw)) as { id?: number; method?: string; params?: Record<string, unknown> };
+      if (!frame.id || !frame.method) return;
+      methods.push(frame.method);
+      if (frame.method === "initialize") {
+        assert.deepEqual(frame.params?.capabilities, { experimentalApi: true, requestAttestation: false });
+        experimentalApi = (frame.params.capabilities as { experimentalApi?: boolean }).experimentalApi === true;
+      }
+      if (frame.method === "thread/realtime/start") {
+        if (!experimentalApi) {
+          peer.send(JSON.stringify({ id: frame.id, error: { message: "thread/realtime/start requires experimentalApi capability" } }));
+          return;
+        }
+        assert.deepEqual(frame.params, {
+          threadId: "main", realtimeSessionId: frame.params?.realtimeSessionId,
+          version: "v3", outputModality: "audio", transport: { type: "webrtc", sdp: "offer" },
+        });
+        peer.send(JSON.stringify({ id: frame.id, result: {} }));
+        emitAnswer = () => {
+          peer.send(JSON.stringify({ method: "thread/realtime/started", params: { threadId: "main", realtimeSessionId: frame.params?.realtimeSessionId, version: "v3" } }));
+          peer.send(JSON.stringify({ method: "thread/realtime/sdp", params: { threadId: "main", sdp: "answer" } }));
+        };
+      } else {
+        if (frame.method === "thread/realtime/stop") peer.send(JSON.stringify({ method: "thread/realtime/closed", params: { threadId: "main", reason: "requested" } }));
+        peer.send(JSON.stringify({ id: frame.id, result: {} }));
+      }
+    });
+  });
   await new Promise<void>((resolve) => http.listen(path, resolve));
   try {
     const voice = new VoiceCalls(() => [server(`unix://${path}`)]);
