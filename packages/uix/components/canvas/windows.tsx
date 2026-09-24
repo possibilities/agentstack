@@ -259,7 +259,7 @@ export function ServersWindow() {
           ))}
         </div>
       ) : servers.data ? (
-        <Empty icon={ServerIcon} title="No Codex Servers">server_start launches one with a persistent main thread.</Empty>
+        <Empty icon={ServerIcon} title="No Codex Servers">server_start launches one; its first UI turn binds the main thread.</Empty>
       ) : (
         <Empty icon={ShieldAlertIcon} title="Servers unavailable">{servers.error ?? "Waiting for the codex socket."}</Empty>
       )}
@@ -286,14 +286,14 @@ function ServerCard({ server, bot, labels, fields, events }: {
         <StatusDot tone={fenced ? "warning" : running ? "success" : "muted"} pulse={!fenced && Boolean(recent)} label={fenced ? "Needs inspection" : running ? "Running" : "Stopped"} />
         <span className="font-mono text-sm font-semibold">{server.id}</span>
         {bot ? <Badge variant="outline" className="h-4 gap-1 px-1.5 text-[0.62rem]"><BotIcon />bot</Badge> : null}
-        <span className="ml-auto flex items-center gap-2 text-pkg-codex" title="Thread activity, last 5 minutes">
+        <span className="ml-auto flex items-center gap-2 text-pkg-codex" title="Codex notices, last 5 minutes">
           <Sparkline values={histogram(events.map((event) => event.at), now, 16, activitySpan)} />
         </span>
       </div>
       <dl className="flex flex-col">
         <Row label="Account" hint={hint("account")}><AccountChip id={server.account} labels={labels} /></Row>
         <Row label="PID" hint={hint("pid")} mono>{server.pid ?? "—"}</Row>
-        <Row label="Thread" hint={hint("mainThreadId")} mono copy={server.mainThreadId}>{shortId(server.mainThreadId)}</Row>
+        <Row label="Thread" hint={hint("mainThreadId")} mono copy={server.mainThreadId}>{server.mainThreadId ? shortId(server.mainThreadId) : "Awaiting first turn"}</Row>
         <Row label="Workspace" hint={hint("cwd")} copy={server.cwd}><Path path={server.cwd} /></Row>
       </dl>
       {server.recoveryIssue ? <RecoveryWarning message={server.recoveryIssue} /> : null}
@@ -304,7 +304,7 @@ function ServerCard({ server, bot, labels, fields, events }: {
         </p>
       ) : null}
       <div className="flex items-center justify-between text-[0.7rem] text-muted-foreground">
-        <span>{fenced ? "Recovery fenced" : events.length ? <>Thread activity <Time at={events[0].at} /></> : running ? "No thread activity yet" : "Stopped"}</span>
+        <span>{fenced ? "Recovery fenced" : events.length ? <>Codex notice <Time at={events[0].at} /></> : running ? server.mainThreadId ? "No notices yet" : "Awaiting first turn" : "Stopped"}</span>
         {server.url ? <span className="truncate font-mono" title={server.url}>{server.url.replace(/^unix:\/\/.*\//, "unix://…/")}</span> : null}
       </div>
     </NodeCard>
@@ -346,7 +346,7 @@ export function BotsWindow() {
                 </div>
                 <dl className="flex flex-col">
                   <Row label="Account"><AccountChip id={bot.account} labels={labels} /></Row>
-                  <Row label="Main thread" mono copy={bot.mainThreadId}>{shortId(bot.mainThreadId)}</Row>
+                  <Row label="Main thread" mono copy={bot.mainThreadId}>{bot.mainThreadId ? shortId(bot.mainThreadId) : "Awaiting first turn"}</Row>
                   <Row label="Workspace" copy={bot.cwd}><Path path={bot.cwd} /></Row>
                 </dl>
                 {bot.recoveryIssue ? <RecoveryWarning message={bot.recoveryIssue} /> : null}
@@ -354,7 +354,7 @@ export function BotsWindow() {
                   <RadioIcon className={cn("size-3.5", subscription?.status === "open" ? "text-pkg-bots" : "text-muted-foreground")} />
                   <span className="text-muted-foreground">{subscription?.status === "open" ? "Subscribed" : subscription ? "Connecting…" : "Not subscribed"}</span>
                   <span className="ml-auto flex items-center gap-2 font-mono tabular-nums">
-                    <span title="threads_changed notices">{threads} thread</span>
+                    <span title="Codex thread invalidations; may include other top-level threads">{threads} notices</span>
                     <span className="text-muted-foreground/50">·</span>
                     <span title="bots_changed notices">{lifecycle} lifecycle</span>
                   </span>

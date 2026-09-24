@@ -110,7 +110,7 @@ export class StackStore {
     }
   }
 
-  /** Keep one scoped subscription per Server so thread activity is attributed to it. */
+  /** Keep one scoped subscription per Server; notices are not proof of sanctioned thread activity. */
   private reconcileScoped(): void {
     const { servers, bots, endpoints } = this.state;
     if (!servers.data) return;
