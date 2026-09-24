@@ -543,13 +543,13 @@ export class Supervisor {
 export function appServerArgs(userArgs: readonly string[], url: string): string[] {
   validateAppServerArgs(userArgs);
   const args = [...userArgs];
-  let appServerAt = args.indexOf("app-server");
-  if (appServerAt === -1) {
-    args.unshift("app-server");
-    appServerAt = 0;
-  }
-  args.splice(appServerAt + 1, 0, "--listen", url);
-  return args;
+  const appServerAt = args.indexOf("app-server");
+  if (appServerAt !== -1) args.splice(appServerAt, 1);
+  // Codex applies later -c overrides last; callers can narrow either default.
+  return ["app-server", "--listen", url,
+    "-c", 'sandbox_mode="danger-full-access"',
+    "-c", 'approval_policy="never"',
+    ...args];
 }
 
 function validateAppServerArgs(userArgs: readonly string[]): void {
