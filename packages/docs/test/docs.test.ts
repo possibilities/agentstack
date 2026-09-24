@@ -29,6 +29,20 @@ test("the reference renders all current Package APIs from the discovery socket",
     const revision = await fetch(new URL("revision", docs.url));
     assert.equal(revision.status, 200);
     assert.match(html, new RegExp((await revision.json() as { revision: string }).revision));
+    assert.match(html, /rel="alternate" type="text\/markdown" href="\/index\.md"/);
+    assert.match(response.headers.get("link") ?? "", /<\/index\.md>; rel="alternate"; type="text\/markdown"/);
+    assert.equal((await fetch(new URL("llms.txt", docs.url))).status, 404);
+    const markdown = await fetch(new URL("index.md", docs.url));
+    assert.equal(markdown.status, 200);
+    assert.match(markdown.headers.get("content-type") ?? "", /text\/markdown/);
+    const markdownText = await markdown.text();
+    assert.match(markdownText, /^# Package API reference/m);
+    assert.match(markdownText, /^## auth$/m);
+    assert.match(markdownText, /`server_start`/);
+    assert.match(markdownText, /`accounts_changed`/);
+    assert.match(markdownText, /```json\n[\s\S]*"method": "events\/subscribe"/);
+    assert.equal((await fetch(new URL(".md", docs.url))).status, 200);
+    assert.equal((await fetch(new URL("missing.md", docs.url))).status, 404);
     const css = await fetch(new URL("site.css", docs.url));
     assert.equal(css.status, 200);
     const stylesheet = await css.text();
@@ -50,6 +64,10 @@ test("the reference renders all current Package APIs from the discovery socket",
     const unavailableHtml = await unavailable.text();
     assert.match(unavailableHtml, /Discovery API unavailable/);
     assert.match(unavailableHtml, /<meta name="color-scheme" content="light dark">/);
+    const unavailableMarkdown = await fetch(new URL("index.md", docs.url));
+    assert.equal(unavailableMarkdown.status, 503);
+    assert.match(unavailableMarkdown.headers.get("content-type") ?? "", /text\/markdown/);
+    assert.match(await unavailableMarkdown.text(), /# Discovery API unavailable/);
   } finally {
     await docs.close();
     await discovery.close();
@@ -85,8 +103,17 @@ test("the owner-mounted reference keeps assets and live revision under /docs", {
     assert.equal((await fetch(`${docs.url}/revision`)).status, 200);
     const script = await fetch(`${docs.url}/site.js`);
     assert.match(await script.text(), /dataset\.basePath/);
+    assert.match(html, /href="\/docs\/index\.md"/);
+    const markdown = await fetch(`${docs.url}/index.md`);
+    assert.equal(markdown.status, 200);
+    assert.match(await markdown.text(), /^# Package API reference/m);
+    const alias = await fetch(`${docs.url.slice(0, -"/docs".length)}/docs.md`);
+    assert.equal(alias.status, 200);
+    assert.match(alias.headers.get("content-type") ?? "", /text\/markdown/);
     assert.equal((await fetch(new URL("/site.css", docs.url))).status, 404);
     assert.equal((await fetch(new URL("/", docs.url))).status, 404);
+    assert.equal((await fetch(new URL("/index.md", docs.url))).status, 404);
+    assert.equal((await fetch(`${docs.url}/llms.txt`)).status, 404);
   } finally {
     await docs.close();
     await discovery.close();

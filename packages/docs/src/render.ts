@@ -8,11 +8,11 @@ const id = (value: string): string => value.replace(/[^a-z0-9_-]/gi, "-");
 
 type Schema = Record<string, unknown>;
 
-function record(value: unknown): Schema {
+export function record(value: unknown): Schema {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Schema : {};
 }
 
-function typeOf(schema: Schema): string {
+export function typeOf(schema: Schema): string {
   if (Array.isArray(schema.enum)) return schema.enum.map((value) => JSON.stringify(value)).join(" | ");
   if (Array.isArray(schema.anyOf)) return schema.anyOf.map((branch) => typeOf(record(branch))).join(" | ");
   if (Array.isArray(schema.oneOf)) return schema.oneOf.map((branch) => typeOf(record(branch))).join(" | ");
@@ -78,8 +78,8 @@ export function renderDocs(servers: CatalogServer[], revision: string, basePath 
   const operations = servers.reduce((count, server) => count + server.operations.length, 0);
   const events = servers.reduce((count, server) => count + Object.keys(server.events).length, 0);
   const navigation = servers.map((server) => `<div class="nav-group"><a class="nav-package" href="#package-${id(server.name)}">${escape(server.name)}</a><div class="nav-operations">${server.operations.map((item) => `<a href="#operation-${id(server.name)}-${id(item.name)}" data-search="${escape(`${server.name} ${item.name} ${item.title ?? ""} ${item.description}`.toLowerCase())}">${escape(item.title || item.name.replaceAll("_", " "))}</a>`).join("")}${Object.keys(server.events).length ? `<a href="#events-${id(server.name)}" data-search="${escape(`${server.name} subscriptions events`)}">Subscriptions</a>` : ""}</div></div>`).join("");
-  return `<!doctype html><html lang="en" data-revision="${escape(revision)}" data-base-path="${basePath}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><title>Package API reference · AgentStack</title><link rel="stylesheet" href="${basePath}/site.css"><script src="${basePath}/site.js" defer></script></head><body>
-    <a class="skip" href="#main">Skip to content</a><div class="layout"><aside class="sidebar"><a class="brand" href="#main">AgentStack <span class="brand-kind">/ Reference</span></a><label class="search-label" for="search">Find an operation</label><input id="search" type="search" placeholder="Search operations" autocomplete="off"><nav aria-label="Package APIs"><a class="nav-overview" href="#main">Overview</a>${navigation}<p id="no-results" hidden>No matching operations.</p></nav><p class="sidebar-foot">Generated from <code>api.docs_list</code> and <code>api.docs_get</code>.</p></aside>
+  return `<!doctype html><html lang="en" data-revision="${escape(revision)}" data-base-path="${basePath}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><title>Package API reference · AgentStack</title><link rel="stylesheet" href="${basePath}/site.css"><link rel="alternate" type="text/markdown" href="${basePath}/index.md"><script src="${basePath}/site.js" defer></script></head><body>
+    <a class="skip" href="#main">Skip to content</a><div class="layout"><aside class="sidebar"><a class="brand" href="#main">AgentStack <span class="brand-kind">/ Reference</span></a><label class="search-label" for="search">Find an operation</label><input id="search" type="search" placeholder="Search operations" autocomplete="off"><nav aria-label="Package APIs"><a class="nav-overview" href="#main">Overview</a>${navigation}<p id="no-results" hidden>No matching operations.</p></nav><p class="sidebar-foot">Generated from <code>api.docs_list</code> and <code>api.docs_get</code>.<br><a href="${basePath}/index.md">Markdown</a></p></aside>
     <main id="main"><header class="topline"><span>Developer reference</span><span id="source-status">Live from the api socket</span></header><div class="content"><div class="opening"><div><h1>Package API reference</h1><p class="lede">The local operations and change events that make up AgentStack. Browse the current contract, including fields, types, socket paths, and MCP URLs.</p></div><div class="figures"><div><strong>${servers.length}</strong><span>Packages</span></div><div><strong>${operations}</strong><span>Operations</span></div><div><strong>${events}</strong><span>Events</span></div></div></div>
     ${servers.map(packageSection).join("")}</div><footer>AgentStack · Generated from the running discovery API</footer></main></div></body></html>`;
 }
