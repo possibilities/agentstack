@@ -23,6 +23,7 @@ export type ServerView = {
   url: string | null;
   state: ServerState;
   account: string | null;
+  runningAccount: string | null;
   mainThreadId: string | null;
 };
 
@@ -102,6 +103,8 @@ export class Supervisor {
         if (!this.store.hasServer(parsed.id)) {
           parsed.account ??= null;
           if (parsed.account) parsed.account = this.store.resolveLegacyAccount(parsed.account, true);
+          // Legacy records could retain runtime credentials even after stopping.
+          parsed.launchedAccount = parsed.account;
           parsed.authVersion ??= null;
           parsed.runtimeRoot ??= null;
           parsed.mainThreadId ??= null;
@@ -152,6 +155,24 @@ export class Supervisor {
     return this.enqueue(id, () => this.startQueued(id, input));
   }
 
+  assign(id: string, accountId: string): Promise<ServerView> {
+    if (!ID_PATTERN.test(id)) throw new Error(`invalid id: ${id}`);
+    return this.enqueue(id, async () => {
+      const record = this.records.get(id);
+      if (!record) throw new Error(`unknown server: ${id}`);
+      if (!this.store.listAccounts().some((account) => account.id === accountId && !account.removing)) {
+        throw new Error(`unknown Codex account: ${accountId}`);
+      }
+      if (record.account === accountId) return viewOf(record);
+      const previous = record.account;
+      record.account = accountId;
+      try { await this.persist(record); }
+      catch (error) { record.account = previous; throw error; }
+      this.notify(id);
+      return viewOf(record);
+    });
+  }
+
   stop(id: string): Promise<ServerView> {
     if (!ID_PATTERN.test(id)) throw new Error(`invalid id: ${id}`);
     return this.enqueue(id, () => this.stopQueued(id));
@@ -197,6 +218,9 @@ export class Supervisor {
       if (input.args !== undefined && !sameArgs(input.args, current.args)) {
         throw new Error(`server ${id} is running with different launch arguments; stop it before changing args`);
       }
+      if (current.launchedAccount !== current.account) {
+        throw new Error(`server ${id} is running with a different Codex account; stop it before the assigned account is used`);
+      }
       return viewOf(current);
     }
     if (current?.threadStarting && !current.mainThreadId) {
@@ -207,15 +231,19 @@ export class Supervisor {
       if (current.runtimeRoot && status) await this.runtime.retireSuperseded(current, status);
       if (current.runtimeRoot) throw new Error(`server ${id} has unreconciled Codex credentials; inspect its private runtime`);
     }
-    const selected = current?.account ?? this.store.activeAccount().id;
-    for (const record of this.records.values()) {
-      if (record.account === selected && record.runtimeRoot) {
-        if (record.state === "stopped") await this.finishRuntime(record);
-        else await this.runtime.reconcile(record);
+    const selected = current
+      ? current.account
+      : this.store.listAccounts().find((account) => account.active && !account.removing)?.id ?? null;
+    if (selected) {
+      for (const record of this.records.values()) {
+        if (record.launchedAccount === selected && record.runtimeRoot) {
+          if (record.state === "stopped") await this.finishRuntime(record);
+          else await this.runtime.reconcile(record);
+        }
       }
     }
     // Reconciliation above may advance the saved credential generation.
-    const account = this.store.accountCredentials(selected);
+    const account = selected ? this.store.accountCredentials(selected) : null;
     const capabilities = join(this.options.stateDir, "capabilities", "default");
     const privateHistory = join(this.options.stateDir, "history", id);
     const history = current?.mainThreadId && !existsSync(privateHistory) ? join(this.options.stateDir, "history") : privateHistory;
@@ -231,7 +259,7 @@ export class Supervisor {
       const identity = await mkdtemp(join(this.options.stateDir, ".identity-"));
       let child: RunningChild;
       try {
-        await writeFile(join(identity, "auth.json"), account.auth, { mode: 0o600 });
+        if (account) await writeFile(join(identity, "auth.json"), account.auth, { mode: 0o600 });
         const env = { ...process.env };
         for (const key of ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_BASE_URL", "CODEX_HOME", "AGENTUSAGE_AUTH_TOKEN", "AGENTUSAGE_ACCOUNT"]) delete env[key];
         env.TMPDIR = runtimeRoot;
@@ -249,7 +277,7 @@ export class Supervisor {
       }
       this.children.set(id, child);
       const record: RecordFile = {
-        id, pid: child.pid, cwd, url, state: "running", codexBin, account: account.id, authVersion: account.version, runtimeRoot,
+        id, pid: child.pid, cwd, url, state: "running", codexBin, account: account?.id ?? null, launchedAccount: account?.id ?? null, authVersion: account?.version ?? null, runtimeRoot,
         mainThreadId: current?.mainThreadId ?? null, threadStarting: current?.threadStarting ?? false, args: [...userArgs],
       };
       this.records.set(id, record);
@@ -492,6 +520,7 @@ function viewOf(record: RecordFile): ServerView {
     url: record.url,
     state: record.state,
     account: record.account,
+    runningAccount: record.state === "running" ? record.launchedAccount : null,
     mainThreadId: record.mainThreadId ?? null,
   };
 }

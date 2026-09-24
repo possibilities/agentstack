@@ -49,6 +49,7 @@ export class AuthStore {
       const columns = this.db.prepare("PRAGMA table_info(accounts)").all() as Array<{ name: string }>;
       if (!columns.some(({ name }) => name === "removing")) this.db.exec("ALTER TABLE accounts ADD COLUMN removing INTEGER NOT NULL DEFAULT 0");
       const hasServers = Boolean(this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'servers'").get());
+      const hasLaunchedAccount = hasServers && (this.db.prepare("PRAGMA table_info(servers)").all() as Array<{ name: string }>).some(({ name }) => name === "launched_account");
       const legacy = this.db.prepare("SELECT number, name FROM accounts WHERE name GLOB 'codex-[0-9]*'").all() as Array<{ number: number; name: string }>;
       for (const { number, name } of legacy) {
         if (!/^codex-[1-9][0-9]*$/.test(name)) continue;
@@ -57,7 +58,10 @@ export class AuthStore {
         this.db.prepare("UPDATE accounts SET name = ? WHERE number = ?").run(id, number);
         this.db.prepare("UPDATE secrets.credentials SET name = ? WHERE name = ?").run(id, name);
         this.db.prepare("UPDATE settings SET value = ? WHERE key = 'active_account' AND value = ?").run(id, name);
-        if (hasServers) this.db.prepare("UPDATE servers SET account = ? WHERE account = ?").run(id, name);
+        if (hasServers) {
+          this.db.prepare("UPDATE servers SET account = ? WHERE account = ?").run(id, name);
+          if (hasLaunchedAccount) this.db.prepare("UPDATE servers SET launched_account = ? WHERE launched_account = ?").run(id, name);
+        }
       }
       if (hasServers) {
         const orphaned = this.db.prepare("SELECT DISTINCT account FROM servers WHERE account GLOB 'codex-[0-9]*' AND account NOT IN (SELECT name FROM accounts)").all() as Array<{ account: string }>;
@@ -67,6 +71,7 @@ export class AuthStore {
           this.db.prepare("INSERT OR IGNORE INTO account_aliases (legacy_name, id) VALUES (?, ?)").run(account, id);
           const mapped = this.resolveLegacyAccount(account);
           this.db.prepare("UPDATE servers SET account = ? WHERE account = ?").run(mapped, account);
+          if (hasLaunchedAccount) this.db.prepare("UPDATE servers SET launched_account = ? WHERE launched_account = ?").run(mapped, account);
         }
       }
       this.db.exec("COMMIT");
@@ -164,7 +169,11 @@ export class AuthStore {
 
   boundServerIds(id: string): string[] {
     if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'servers'").get()) return [];
-    return (this.db.prepare("SELECT id FROM servers WHERE account = ? ORDER BY id").all(id) as Array<{ id: string }>).map(({ id }) => id);
+    const hasLaunchedAccount = (this.db.prepare("PRAGMA table_info(servers)").all() as Array<{ name: string }>).some(({ name }) => name === "launched_account");
+    const sql = hasLaunchedAccount
+      ? "SELECT id FROM servers WHERE account = ? OR launched_account = ? ORDER BY id"
+      : "SELECT id FROM servers WHERE account = ? ORDER BY id";
+    return (this.db.prepare(sql).all(...(hasLaunchedAccount ? [id, id] : [id])) as Array<{ id: string }>).map(({ id }) => id);
   }
 
   beginRemoval(id: string): void {

@@ -80,6 +80,23 @@ test("legacy ordinal references migrate atomically across credentials and Server
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("an account cannot be removed while a Server last launched with it awaits another assignment", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-pending-removal-"));
+  const store = new AuthStore(root);
+  try {
+    const launched = store.addAccount(credential("launched"));
+    const assigned = store.addAccount(credential("assigned"));
+    const config = new DatabaseSync(join(root, "configuration.sqlite"));
+    config.exec("CREATE TABLE servers (id TEXT PRIMARY KEY, account TEXT, launched_account TEXT)");
+    config.prepare("INSERT INTO servers VALUES ('pending', ?, ?)").run(assigned.id, launched.id);
+    config.close();
+    assert.deepEqual(store.boundServerIds(launched.id), ["pending"]);
+    assert.deepEqual(store.boundServerIds(assigned.id), ["pending"]);
+    assert.throws(() => store.removeAccount(launched.id), /bound Codex Servers/);
+    assert.equal(store.listAccounts().find(({ id }) => id === launched.id)?.removing, true);
+  } finally { store.close(); await rm(root, { recursive: true, force: true }); }
+});
+
 test("refreshed credentials advance only on a strictly newer timestamp and matching launch generation", async () => {
   const root = await mkdtemp(join(tmpdir(), "agentstack-credential-order-"));
   const store = new AuthStore(root);

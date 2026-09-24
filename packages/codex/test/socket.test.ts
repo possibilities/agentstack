@@ -51,7 +51,7 @@ test("codex lifecycle and change events are served on the namespaced unix socket
     });
     assert.deepEqual(
       listedTools.tools.map((tool) => tool.name),
-      ["server_start", "server_stop", "server_remove", "server_list"],
+      ["server_start", "server_stop", "server_assign", "server_remove", "server_list"],
     );
     assert.ok(listedTools.tools.every((tool) => tool.description.length > 0));
 

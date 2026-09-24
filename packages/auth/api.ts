@@ -40,7 +40,7 @@ export const accountActivate = operation({
 });
 
 export const accountRemove = operation({
-  name: "account_remove", description: "Stop and delete this account's bound Servers, then delete the account and credentials. If interrupted, retry the same ID to finish removal.",
+  name: "account_remove", description: "Stop and delete Servers assigned to or last launched with this account, then delete the account and credentials. If interrupted, retry the same ID to finish removal.",
   input: z.strictObject({ id: accountId }), output: z.object({ accounts: z.array(accountSchema) }),
   annotations: { title: "Remove account", destructiveHint: true },
   async call(ctx: AuthContext, { id }) {

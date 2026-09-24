@@ -38,7 +38,7 @@ export class RuntimeAuth {
   }
 
   async watch(record: StoredServer): Promise<void> {
-    if (!record.runtimeRoot || !record.account || record.authVersion === null) return;
+    if (!record.runtimeRoot || !record.launchedAccount || record.authVersion === null) return;
     this.records.set(record.id, record);
     await this.attach(record).catch((error) => console.error(`Codex auth watcher ${record.id}: ${error}`));
     this.scanTimer ??= setInterval(() => {
@@ -52,7 +52,15 @@ export class RuntimeAuth {
 
   async finish(record: StoredServer): Promise<SyncStatus> {
     this.unwatch(record.id);
-    const removedAccount = record.account !== null && !this.store.listAccounts().some(({ id }) => id === record.account);
+    if (record.launchedAccount === null) {
+      if (record.runtimeRoot && record.runtimeRoot === this.rootFor(record.id)) {
+        await rm(record.runtimeRoot, { recursive: true, force: true });
+        record.runtimeRoot = null;
+        this.store.saveServer(record);
+      }
+      return "unavailable";
+    }
+    const removedAccount = !this.store.listAccounts().some(({ id }) => id === record.launchedAccount);
     const status = removedAccount ? "missing" : await this.reconcile(record);
     const emptyRoot = status === "unavailable" && record.runtimeRoot === this.rootFor(record.id) &&
       (await readdir(record.runtimeRoot).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? [] : ["unknown"])).length === 0;
@@ -68,8 +76,8 @@ export class RuntimeAuth {
 
   /** Preserve a superseded runtime for diagnosis without blocking a new launch. */
   async retireSuperseded(record: StoredServer, status: SyncStatus): Promise<boolean> {
-    if (status !== "stale" || record.runtimeRoot !== this.rootFor(record.id) || !record.account || record.authVersion === null) return false;
-    const current = this.store.accountCredentials(record.account);
+    if (status !== "stale" || record.runtimeRoot !== this.rootFor(record.id) || !record.launchedAccount || record.authVersion === null) return false;
+    const current = this.store.accountCredentials(record.launchedAccount);
     if (current.version <= record.authVersion) return false;
     const recovery = join(this.store.stateDir, "runtime-recovery", record.id);
     await mkdir(recovery, { recursive: true, mode: 0o700 });
@@ -85,7 +93,7 @@ export class RuntimeAuth {
   }
 
   private async readAndSync(record: StoredServer): Promise<SyncStatus> {
-    if (!record.runtimeRoot || record.runtimeRoot !== this.rootFor(record.id) || !record.account || record.authVersion === null) return "unavailable";
+    if (!record.runtimeRoot || record.runtimeRoot !== this.rootFor(record.id) || !record.launchedAccount || record.authVersion === null) return "unavailable";
     const home = await this.discover(record.runtimeRoot);
     if (!home) return "unavailable";
     const path = join(home, "auth.json");
@@ -97,7 +105,7 @@ export class RuntimeAuth {
         await new Promise((resolve) => setTimeout(resolve, 40));
         const second = await readFile(path, "utf8");
         if (first !== second) continue;
-        const outcome = this.store.syncCredential(record.account, record.authVersion, second);
+        const outcome = this.store.syncCredential(record.launchedAccount, record.authVersion, second);
         if (outcome.status === "updated" || outcome.status === "unchanged") {
           if (outcome.version !== null && record.authVersion !== outcome.version) {
             record.authVersion = outcome.version;

@@ -20,7 +20,7 @@ test("watcher imports a completed refresh and recovery catches one missed while 
     await mkdir(home);
     const file = join(home, "auth.json");
     await writeFile(file, store.activeAccount().auth);
-    const record: StoredServer = { id: "watched", pid: 1, cwd: root, url: "ws://127.0.0.1:40001", state: "running", codexBin: "codex", account: accountId, authVersion: 1, runtimeRoot, mainThreadId: "thread-watched", threadStarting: false, args: [] };
+    const record: StoredServer = { id: "watched", pid: 1, cwd: root, url: "ws://127.0.0.1:40001", state: "running", codexBin: "codex", account: accountId, launchedAccount: accountId, authVersion: 1, runtimeRoot, mainThreadId: "thread-watched", threadStarting: false, args: [] };
     store.saveServer(record);
     await monitor.watch(record);
     await writeFile(file, '{"tokens":'); // A watcher event can arrive during a truncate/write.
@@ -52,7 +52,7 @@ test("a superseded runtime is retained for diagnosis without blocking the next g
     const home = join(runtimeRoot, "codex-runtime");
     await mkdir(home);
     await writeFile(join(home, "auth.json"), old);
-    const record: StoredServer = { id: "bound", pid: null, cwd: root, url: null, state: "stopped", codexBin: "codex", account: accountId, authVersion: 1, runtimeRoot, mainThreadId: "thread-bound", threadStarting: false, args: [] };
+    const record: StoredServer = { id: "bound", pid: null, cwd: root, url: null, state: "stopped", codexBin: "codex", account: accountId, launchedAccount: accountId, authVersion: 1, runtimeRoot, mainThreadId: "thread-bound", threadStarting: false, args: [] };
     store.saveServer(record);
     const replacement = auth("2026-09-23T11:00:00Z", "signed-in-again");
     store.replaceCredentials(accountId, replacement);

@@ -17,7 +17,8 @@ const serverViewSchema = z.object({
   cwd: z.string().describe("Working directory."),
   url: z.string().nullable().describe("WebSocket endpoint while running, otherwise null."),
   state: z.enum(["running", "stopped"]).describe("running or stopped."),
-  account: z.uuid().nullable().describe("Stable Codex account ID bound at launch; null for older records."),
+  account: z.uuid().nullable().describe("Stable Codex account ID bound to this Server, or null while unbound."),
+  runningAccount: z.uuid().nullable().describe("Account used by the running process, or null when stopped or launched unbound. If different from account, stop and start to apply the assignment."),
   mainThreadId: z.string().nullable().describe("The one durable main thread for this Server; null until its first successful start."),
 });
 
@@ -33,7 +34,7 @@ export type CodexContext = {
 export const serverStart = operation({
   name: "server_start",
   description:
-    "Start the required codexnk runtime with its persistent main thread, or return the live one with this id. Servers resume with saved args. Omit args to reuse them; pass [] to clear them while stopped. A running Server rejects changed args. Do not pass --listen.",
+    "Start the required codexnk runtime with its persistent main thread, or return the live one. A new Server binds the active Codex account when one exists. Existing Servers change account only through server_assign. Stop a running Server before that assignment is used. Omit args to reuse them; pass [] to clear them while stopped. A running Server rejects changed args. Do not pass --listen.",
   input: z.strictObject({
     cwd: z.string().describe("Working directory for the app-server."),
     id: idSchema.optional().describe("Existing server id to reuse. A new id is generated when omitted."),
@@ -43,6 +44,20 @@ export const serverStart = operation({
   annotations: { title: "Start server" },
   async call(ctx: CodexContext, input) {
     return ctx.supervisor.start(input);
+  },
+});
+
+export const serverAssign = operation({
+  name: "server_assign",
+  description: "Assign a Codex account to an existing Server. Does not restart. A running Server keeps its launched identity until it is stopped and started again.",
+  input: z.strictObject({
+    id: idSchema.describe("Existing Server id."),
+    account: z.uuid().describe("Codex account ID from account_list."),
+  }),
+  output: serverViewSchema,
+  annotations: { title: "Assign server account", idempotentHint: true },
+  async call(ctx: CodexContext, { id, account }) {
+    return ctx.supervisor.assign(id, account);
   },
 });
 
@@ -86,7 +101,7 @@ export const topics = {
 export type CodexTopic = keyof typeof topics;
 
 export const api: PackageApi<CodexContext, CodexTopic> = {
-  operations: [serverStart, serverStop, serverRemove, serverList],
+  operations: [serverStart, serverStop, serverAssign, serverRemove, serverList],
   events: {
     topics,
     scope: {

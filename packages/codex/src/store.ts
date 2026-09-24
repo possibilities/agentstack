@@ -8,6 +8,7 @@ export type StoredServer = {
   state: "running" | "stopped";
   codexBin: string;
   account: string | null;
+  launchedAccount: string | null;
   authVersion: number | null;
   runtimeRoot: string | null;
   mainThreadId: string | null;
@@ -41,13 +42,28 @@ export class StateStore extends AuthStore {
     if (!serverColumns.some(({ name }) => name === "runtime_root")) this.db.exec("ALTER TABLE servers ADD COLUMN runtime_root TEXT");
     if (!serverColumns.some(({ name }) => name === "main_thread_id")) this.db.exec("ALTER TABLE servers ADD COLUMN main_thread_id TEXT");
     if (!serverColumns.some(({ name }) => name === "thread_starting")) this.db.exec("ALTER TABLE servers ADD COLUMN thread_starting INTEGER NOT NULL DEFAULT 0");
+    if (!serverColumns.some(({ name }) => name === "launched_account")) {
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        const current = this.db.prepare("PRAGMA table_info(servers)").all() as Array<{ name: string }>;
+        if (!current.some(({ name }) => name === "launched_account")) {
+          this.db.exec("ALTER TABLE servers ADD COLUMN launched_account TEXT");
+          // Stopped Servers can retain an unreconciled credential copy from their last launch.
+          this.db.exec("UPDATE servers SET launched_account = account");
+        }
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    }
   }
 
   servers(): StoredServer[] {
-    return (this.db.prepare("SELECT servers.id, pid, cwd, url, state, codex_bin, account, auth_version, runtime_root, main_thread_id, thread_starting, args_json FROM servers LEFT JOIN secrets.server_args AS launch_args ON launch_args.id = servers.id").all() as Array<{
-      id: string; pid: number | null; cwd: string; url: string | null; state: StoredServer["state"]; codex_bin: string; account: string | null; auth_version: number | null; runtime_root: string | null; main_thread_id: string | null; thread_starting: number; args_json: string | null;
-    }>).map(({ codex_bin, auth_version, runtime_root, main_thread_id, thread_starting, args_json, ...row }) => ({
-      ...row, codexBin: codex_bin, authVersion: auth_version, runtimeRoot: runtime_root,
+    return (this.db.prepare("SELECT servers.id, pid, cwd, url, state, codex_bin, account, launched_account, auth_version, runtime_root, main_thread_id, thread_starting, args_json FROM servers LEFT JOIN secrets.server_args AS launch_args ON launch_args.id = servers.id").all() as Array<{
+      id: string; pid: number | null; cwd: string; url: string | null; state: StoredServer["state"]; codex_bin: string; account: string | null; launched_account: string | null; auth_version: number | null; runtime_root: string | null; main_thread_id: string | null; thread_starting: number; args_json: string | null;
+    }>).map(({ codex_bin, launched_account, auth_version, runtime_root, main_thread_id, thread_starting, args_json, ...row }) => ({
+      ...row, codexBin: codex_bin, launchedAccount: launched_account, authVersion: auth_version, runtimeRoot: runtime_root,
       mainThreadId: main_thread_id, threadStarting: Boolean(thread_starting), args: parseArgs(args_json),
     }));
   }
@@ -56,12 +72,12 @@ export class StateStore extends AuthStore {
     if (!Array.isArray(server.args) || !server.args.every((arg) => typeof arg === "string")) throw new Error(`invalid launch arguments for Server ${server.id}`);
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      this.db.prepare(`INSERT INTO servers (id, pid, cwd, url, state, codex_bin, account, auth_version, runtime_root, main_thread_id, thread_starting) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      this.db.prepare(`INSERT INTO servers (id, pid, cwd, url, state, codex_bin, account, launched_account, auth_version, runtime_root, main_thread_id, thread_starting) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET pid=excluded.pid, cwd=excluded.cwd, url=excluded.url,
-        state=excluded.state, codex_bin=excluded.codex_bin, account=excluded.account,
+        state=excluded.state, codex_bin=excluded.codex_bin, account=excluded.account, launched_account=excluded.launched_account,
         auth_version=excluded.auth_version, runtime_root=excluded.runtime_root,
         main_thread_id=excluded.main_thread_id, thread_starting=excluded.thread_starting`).run(
-        server.id, server.pid, server.cwd, server.url, server.state, server.codexBin, server.account, server.authVersion ?? null, server.runtimeRoot ?? null,
+        server.id, server.pid, server.cwd, server.url, server.state, server.codexBin, server.account, server.launchedAccount ?? null, server.authVersion ?? null, server.runtimeRoot ?? null,
         server.mainThreadId ?? null, server.threadStarting ? 1 : 0,
       );
       this.db.prepare("INSERT INTO secrets.server_args (id, args_json) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET args_json = excluded.args_json")

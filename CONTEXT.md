@@ -26,7 +26,7 @@ _Avoid_: daemon, service, app
 
 ## Codex account
 
-An AgentStack-owned sign-in credential with an immutable account ID managed by the `auth` Package API for a managed Codex Server. One account is active for new Servers; existing Servers bind that ID, never a human-facing ordinal. A future UI may present dense `codex-N` labels derived from the current account list. _Avoid_: Codex home, capability profile
+An AgentStack-owned sign-in credential with an immutable account ID managed by the `auth` Package API for a managed Codex Server. One account is active for new Servers. A Server may be created unbound. An existing Server changes account only through assignment, then the next start after a stop. A running Server reports both its assignment and its launched identity. Removing either account deletes that Server. A Server never takes a human-facing ordinal. A future UI may present dense `codex-N` labels derived from the current account list. _Avoid_: Codex home, capability profile
 
 ## Main thread
 
@@ -34,4 +34,4 @@ The single Codex thread ID retained by a managed Server. Its first successful la
 
 ## Bot
 
-A numbered Codex Server with a private workspace and a durable main thread. Bots restart on AgentStack startup and resume their bound thread.
+A numbered Codex Server with a private workspace and a durable main thread. A Bot may start without an account. Assign an account, then stop and start, before a turn. Turns require a bound account. Bots restart on AgentStack startup and resume their bound thread.

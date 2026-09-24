@@ -9,7 +9,7 @@ import { StateStore } from "@agentstack/codex";
 
 const fakeBin = fileURLToPath(new URL("../../../codex/test/fixtures/fake-app-server.mjs", import.meta.url));
 
-type View = { id: string; pid: number | null; cwd: string; url: string | null; state: string; account: string | null; mainThreadId: string | null };
+type View = { id: string; pid: number | null; cwd: string; url: string | null; state: string; account: string | null; runningAccount: string | null; mainThreadId: string | null };
 
 function call(socket: string, name: string, args: Record<string, unknown> = {}, timeoutMs = 30_000): Promise<unknown> {
   return socketCall(socket, "tools/call", { name, arguments: args }, { timeoutMs });
@@ -53,7 +53,7 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     assert.equal(listedTools.events.scope.example, "bot-1");
     assert.deepEqual(
       listedTools.tools.map((tool) => tool.name),
-      ["bot_start", "bot_stop", "bot_remove", "bot_list"],
+      ["bot_start", "bot_stop", "bot_assign", "bot_remove", "bot_list"],
     );
     const startSchema = listedTools.tools.find((tool) => tool.name === "bot_start")?.inputSchema;
     assert.deepEqual(Object.keys(startSchema?.properties ?? {}).sort(), ["args", "id"]);
@@ -227,6 +227,26 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     assert.deepEqual(await call(auth.socketPath ?? "", "account_remove", { id: accountId }), { accounts: [] });
     assert.deepEqual((await call(botsSocket, "bot_list") as { bots: View[] }).bots, []);
     assert.deepEqual((await call(codexSocket, "server_list") as { servers: View[] }).servers, []);
+
+    const accounts = new StateStore(stateDir);
+    const old = accounts.addAccount(JSON.stringify({ tokens: { refresh_token: "old", access_token: "access", id_token: "fixture.jwt.signature" } }));
+    const next = accounts.addAccount(JSON.stringify({ tokens: { refresh_token: "next", access_token: "access", id_token: "fixture.jwt.signature" } }));
+    accounts.close();
+    const pending = (await call(botsSocket, "bot_start")) as View;
+    assert.equal(pending.account, old.id);
+    const assigned = (await call(botsSocket, "bot_assign", { id: pending.id, account: next.id })) as View;
+    assert.equal(assigned.account, next.id);
+    assert.equal(assigned.runningAccount, old.id);
+    assert.equal(assigned.pid, pending.pid);
+    await assert.rejects(call(botsSocket, "bot_start", { id: pending.id }), /different Codex account/);
+    const listedPending = (await call(botsSocket, "bot_list") as { bots: View[] }).bots.find((bot) => bot.id === pending.id);
+    assert.equal(listedPending?.runningAccount, old.id);
+    assert.deepEqual(await call(auth.socketPath ?? "", "account_remove", { id: old.id }), {
+      accounts: [{ id: next.id, active: true, removing: false }],
+    });
+    assert.equal((await call(botsSocket, "bot_list") as { bots: View[] }).bots.some((bot) => bot.id === pending.id), false);
+    assert.equal((await call(codexSocket, "server_list") as { servers: View[] }).servers.some((server) => server.id === pending.id), false);
+    await assert.rejects(lstat(pending.cwd), /ENOENT/);
   } finally {
     await firstSubscription?.close();
     await secondSubscription?.close();

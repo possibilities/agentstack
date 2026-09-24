@@ -134,7 +134,7 @@ async function ensureWorkspace(path: string): Promise<string> {
 export const botStart = operation({
   name: "bot_start",
   description:
-    "Start a Codex bot app-server in its private workspace, or return the live one. Omit id to allocate the next never-reused bot-N id. Omit args to reuse saved args; pass [] to clear them while stopped. A running Bot rejects changed args.",
+    "Start a Codex bot app-server in its private workspace, or return the live one. A new bot binds the active Codex account when one exists. Existing bots change account only through bot_assign. Stop a running bot before that assignment is used. Omit id to allocate the next never-reused bot-N id. Omit args to reuse saved args; pass [] to clear them while stopped. A running Bot rejects changed args.",
   input: z.strictObject({
     id: botIdSchema.optional().describe("Existing bot id to restart. A new id is allocated when omitted."),
     args: z.array(z.string()).optional().describe("Extra Codex arguments saved for future launches. Omit to reuse saved args; [] clears them when stopped. Do not include --listen."),
@@ -166,6 +166,29 @@ export const botStart = operation({
   },
 });
 
+export const botAssign = operation({
+  name: "bot_assign",
+  description: "Assign a Codex account to an existing bot. Does not restart. A running bot keeps its launched identity until it is stopped and started again.",
+  input: z.strictObject({
+    id: botIdSchema.describe("Existing bot id."),
+    account: z.uuid().describe("Codex account ID from account_list."),
+  }),
+  output: serverStart.output,
+  annotations: { title: "Assign bot account", idempotentHint: true },
+  async call(ctx: BotsContext, { id, account }) {
+    if (!ctx.ledger.has(id)) throw new Error(`unknown bot: ${id}`);
+    const cwd = workspacePath(ctx.root, id);
+    const existing = (await codexServers(ctx)).find((server) => server.id === id);
+    if (!existing) throw new Error(`unknown bot: ${id}`);
+    if (existing.cwd !== cwd) throw new Error(`codex server ${id} does not use the ${id} workspace`);
+    const server = serverStart.output.parse(
+      await socketCall(ctx.codexSocket, "tools/call", { name: "server_assign", arguments: { id, account } }),
+    );
+    if (server.id !== id || server.cwd !== cwd) throw new Error(`codex server ${server.id} at ${server.cwd} is not bot ${id}`);
+    return server;
+  },
+});
+
 export const botStop = operation({
   name: "bot_stop",
   description: "Stop a known bot's Codex app-server. Stopping an already stopped or never-started bot succeeds.",
@@ -179,7 +202,7 @@ export const botStop = operation({
     const cwd = workspacePath(ctx.root, id);
     const existing = (await codexServers(ctx)).find((server) => server.id === id);
     if (existing && existing.cwd !== cwd) throw new Error(`codex server ${id} does not use the ${id} workspace`);
-    if (!existing) return { id, pid: null, cwd, url: null, state: "stopped" as const, account: null, mainThreadId: null };
+    if (!existing) return { id, pid: null, cwd, url: null, state: "stopped" as const, account: null, runningAccount: null, mainThreadId: null };
     const server = serverStop.output.parse(
       await socketCall(ctx.codexSocket, "tools/call", { name: "server_stop", arguments: { id } }, { timeoutMs: STOP_TIMEOUT_MS }),
     );
@@ -224,7 +247,7 @@ export const botList = operation({
 });
 
 export const api: PackageApi<BotsContext, BotsTopic> = {
-  operations: [botStart, botStop, botRemove, botList],
+  operations: [botStart, botStop, botAssign, botRemove, botList],
   events: {
     topics,
     scope: {

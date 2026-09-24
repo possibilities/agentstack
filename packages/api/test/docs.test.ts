@@ -48,7 +48,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(codex.eventScope?.required, false);
     assert.deepEqual(
       codex.operations.map((operation) => operation.name).sort(),
-      ["server_list", "server_remove", "server_start", "server_stop"],
+      ["server_assign", "server_list", "server_remove", "server_start", "server_stop"],
     );
     const start = codex.operations.find((operation) => operation.name === "server_start") as OperationDoc;
     assert.ok(start.description.length > 0);
@@ -80,7 +80,7 @@ test("the api package serves structured documents for every workspace package", 
       example: "bot-1",
       required: true,
     });
-    assert.deepEqual(bots.operations.map((operation) => operation.name).sort(), ["bot_list", "bot_remove", "bot_start", "bot_stop"]);
+    assert.deepEqual(bots.operations.map((operation) => operation.name).sort(), ["bot_assign", "bot_list", "bot_remove", "bot_start", "bot_stop"]);
     assert.equal(bots.transports.find((transport) => transport.type === "socket")?.subscriptions, true);
 
     const owner = found.get("owner") as PackageDoc;

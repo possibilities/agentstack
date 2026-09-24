@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { StateStore, type StoredServer } from "../src/store.js";
 import { Supervisor, type LaunchSpec } from "../src/supervisor.js";
+import { runningTree } from "../src/tree.js";
 
 const credential = (token: string) => JSON.stringify({ tokens: { refresh_token: token, access_token: "access", id_token: "fixture.jwt.signature" } });
 
@@ -59,6 +60,110 @@ function requireAuth(identity: string): string {
   return readFileSync(join(identity, "auth.json"), "utf8");
 }
 
+test("an existing unbound server stays unbound until assign, then the next start uses that account", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-unbound-"));
+  const cwd = await mkdtemp(join(tmpdir(), "agentstack-cwd-"));
+  const store = new StateStore(root);
+  const observed: Array<string | null> = [];
+  try {
+    const supervisor = new Supervisor({ stateDir: root, store, graceMs: 20,
+      endpoint: async () => "ws://127.0.0.1:45503",
+      launch(spec) {
+        const identity = spec.args[spec.args.indexOf("--identity") + 1]!;
+        assert.equal(spec.env.CODEX_HOME, undefined);
+        assert.ok(spec.args.includes("--capabilities") && spec.args.includes("--history-dir"));
+        try { observed.push(readFileSync(join(identity, "auth.json"), "utf8")); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          observed.push(null);
+        }
+        let resolveExit: (code: number | null) => void = () => undefined;
+        const exited = new Promise<number | null>((resolve) => { resolveExit = resolve; });
+        return { pid: 200 + observed.length, exited, kill() { resolveExit(0); } };
+      },
+      waitReady: async () => undefined,
+      bindThread: async (_url, _cwd, id) => id ?? "thread-unbound",
+    });
+    await supervisor.load();
+    const started = await supervisor.start({ cwd, id: "open" });
+    assert.equal(started.account, null);
+    assert.equal(started.state, "running");
+    assert.equal(started.mainThreadId, "thread-unbound");
+    assert.deepEqual(observed, [null]);
+    await writeFile(join(root, "runtime", "open", "leftover"), "runtime");
+    await supervisor.stop("open");
+    const again = await supervisor.start({ cwd, id: "open" });
+    assert.equal(again.account, null);
+    assert.equal(again.mainThreadId, started.mainThreadId);
+    const account = store.addAccount(credential("later"));
+    const stillUnbound = await supervisor.start({ cwd, id: "open" });
+    assert.equal(stillUnbound.account, null);
+    assert.equal(stillUnbound.pid, again.pid);
+    const saveServer = store.saveServer.bind(store);
+    try {
+      store.saveServer = () => { throw new Error("database unavailable"); };
+      await assert.rejects(supervisor.assign("open", account.id), /database unavailable/);
+      assert.equal(supervisor.list()[0]?.account, null);
+    } finally { store.saveServer = saveServer; }
+    const assigned = await supervisor.assign("open", account.id);
+    assert.equal(assigned.account, account.id);
+    assert.equal(assigned.runningAccount, null);
+    assert.equal((await runningTree(() => supervisor.list())).servers[0]?.account, null);
+    await assert.rejects(supervisor.start({ cwd, id: "open" }), /different Codex account/);
+    assert.equal(supervisor.list().find((server) => server.id === "open")?.pid, again.pid);
+    await supervisor.stop("open");
+    const bound = await supervisor.start({ cwd, id: "open" });
+    assert.equal(bound.account, account.id);
+    assert.equal(bound.runningAccount, account.id);
+    assert.equal(bound.mainThreadId, started.mainThreadId);
+    assert.equal(observed.at(-1), credential("later"));
+    const other = store.addAccount(credential("other"));
+    const reassigned = await supervisor.assign("open", other.id);
+    assert.equal(reassigned.runningAccount, account.id);
+    assert.equal((await runningTree(() => supervisor.list())).servers[0]?.account, account.id);
+    await assert.rejects(supervisor.start({ cwd, id: "open" }), /different Codex account/);
+    assert.equal((await supervisor.stop("open")).runningAccount, null);
+    const rebound = await supervisor.start({ cwd, id: "open" });
+    assert.equal(rebound.account, other.id);
+    assert.equal(rebound.runningAccount, other.id);
+    assert.equal(observed.at(-1), credential("other"));
+    await assert.rejects(supervisor.assign("missing", account.id), /unknown server/);
+    await assert.rejects(supervisor.assign("open", "00000000-0000-4000-8000-000000000000"), /unknown Codex account/);
+  } finally { store.close(); await rm(root, { recursive: true, force: true }); await rm(cwd, { recursive: true, force: true }); }
+});
+
+test("upgrading a stopped Server reconciles its retained runtime against the last launched account", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-stopped-upgrade-"));
+  const auth = (stamp: string, token: string) => JSON.stringify({
+    last_refresh: stamp, tokens: { refresh_token: token, access_token: "access", id_token: "fixture.jwt.signature" },
+  });
+  try {
+    const original = new StateStore(root);
+    const account = original.addAccount(auth("2026-09-23T10:00:00Z", "old"));
+    const runtimeRoot = join(root, "runtime", "stopped");
+    const home = join(runtimeRoot, "codex-runtime");
+    await mkdir(home, { recursive: true });
+    await writeFile(join(home, "auth.json"), auth("2026-09-23T11:00:00Z", "refreshed"));
+    original.saveServer({
+      id: "stopped", pid: null, cwd: root, url: null, state: "stopped", codexBin: "codex", account: account.id,
+      launchedAccount: account.id, authVersion: 1, runtimeRoot, mainThreadId: "thread-stopped", threadStarting: false, args: [],
+    });
+    original.close();
+    const config = new DatabaseSync(join(root, "configuration.sqlite"));
+    config.exec("ALTER TABLE servers DROP COLUMN launched_account");
+    config.close();
+
+    const supervisor = new Supervisor({ stateDir: root });
+    try {
+      await supervisor.load();
+      assert.equal(supervisor.store.servers()[0]?.launchedAccount, account.id);
+      await supervisor.reap();
+      assert.equal(supervisor.store.accountCredentials(account.id).auth, auth("2026-09-23T11:00:00Z", "refreshed"));
+      assert.equal(supervisor.store.servers()[0]?.runtimeRoot, null);
+    } finally { supervisor.store.close(); }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("existing SQLite state gains runtime and credential generations without losing accounts", async () => {
   const root = await mkdtemp(join(tmpdir(), "agentstack-schema-upgrade-"));
   try {
@@ -66,7 +171,7 @@ test("existing SQLite state gains runtime and credential generations without los
     const accountId = first.addAccount(credential("before-upgrade")).id;
     first.close();
     const config = new DatabaseSync(join(root, "configuration.sqlite"));
-    config.exec("ALTER TABLE servers DROP COLUMN auth_version; ALTER TABLE servers DROP COLUMN runtime_root; ALTER TABLE servers DROP COLUMN main_thread_id; ALTER TABLE servers DROP COLUMN thread_starting");
+    config.exec("ALTER TABLE servers DROP COLUMN auth_version; ALTER TABLE servers DROP COLUMN runtime_root; ALTER TABLE servers DROP COLUMN main_thread_id; ALTER TABLE servers DROP COLUMN thread_starting; ALTER TABLE servers DROP COLUMN launched_account");
     config.prepare("INSERT INTO servers (id, pid, cwd, url, state, codex_bin, account) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .run("old", null, root, null, "stopped", "codex", accountId);
     config.close();
@@ -109,6 +214,7 @@ test("legacy JSON Server records follow the migrated immutable account ID", asyn
     assert.notEqual(id, "codex-1");
     assert.equal(supervisor.list().find((server) => server.id === "old")?.account, id);
     assert.equal(supervisor.store.servers().find((server) => server.id === "old")?.account, id);
+    assert.equal(supervisor.store.servers().find((server) => server.id === "old")?.launchedAccount, id);
     assert.deepEqual(supervisor.store.servers().find((server) => server.id === "old")?.args, []);
     const orphan = supervisor.list().find((server) => server.id === "orphan")?.account;
     assert.match(orphan ?? "", /^[0-9a-f-]{36}$/);
@@ -125,7 +231,7 @@ test("Server launch arguments persist only in private secrets storage and are re
   const args = ["-c", "provider_token=private-example", "--model", "gpt-5.4"];
   try {
     const account = store.addAccount(credential("account"));
-    const record: StoredServer = { id: "private", pid: null, cwd: root, url: null, state: "stopped", codexBin: "codex", account: account.id, authVersion: null, runtimeRoot: null, mainThreadId: null, threadStarting: false, args };
+    const record: StoredServer = { id: "private", pid: null, cwd: root, url: null, state: "stopped", codexBin: "codex", account: account.id, launchedAccount: null, authVersion: null, runtimeRoot: null, mainThreadId: null, threadStarting: false, args };
     store.saveServer(record);
     assert.deepEqual(store.servers()[0]?.args, args);
     assert.equal(readFileSync(join(root, "configuration.sqlite")).includes(Buffer.from("provider_token=private-example")), false);

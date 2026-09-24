@@ -198,7 +198,7 @@ test("a new Server launches with credentials reconciled from an older Server", a
     const home = join(runtimeRoot, "codex-runtime");
     await mkdir(home);
     await writeFile(join(home, "auth.json"), auth("2026-09-23T11:00:00Z", "refreshed"));
-    const older: StoredServer = { id: "older", pid: null, cwd, url: null, state: "stopped", codexBin: codexRuntimePath(), account: account.id, authVersion: 1, runtimeRoot, mainThreadId: "thread-old", threadStarting: false, args: [] };
+    const older: StoredServer = { id: "older", pid: null, cwd, url: null, state: "stopped", codexBin: codexRuntimePath(), account: account.id, launchedAccount: account.id, authVersion: 1, runtimeRoot, mainThreadId: "thread-old", threadStarting: false, args: [] };
     supervisor.store.saveServer(older);
     await supervisor.load();
     await supervisor.start({ cwd, id: "new" });
@@ -233,7 +233,7 @@ test("a stopped Server resumes after re-sign-in while preserving its old runtime
     const home = join(runtimeRoot, "codex-runtime");
     await mkdir(home);
     await writeFile(join(home, "auth.json"), auth("old"));
-    const bound: StoredServer = { id: "bound", pid: null, cwd, url: null, state: "stopped", codexBin: codexRuntimePath(), account: account.id, authVersion: 1, runtimeRoot, mainThreadId: "thread-bound", threadStarting: false, args: [] };
+    const bound: StoredServer = { id: "bound", pid: null, cwd, url: null, state: "stopped", codexBin: codexRuntimePath(), account: account.id, launchedAccount: account.id, authVersion: 1, runtimeRoot, mainThreadId: "thread-bound", threadStarting: false, args: [] };
     supervisor.store.saveServer(bound);
     supervisor.store.replaceCredentials(account.id, auth("new"));
     await supervisor.load();
