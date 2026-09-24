@@ -79,6 +79,7 @@ test("the owner starts the four required socket children", () => {
     assert.equal(existsSync(child.args[0] ?? ""), true);
   }
   assert.deepEqual([apiChild(), authChild(), codexChild(), botsChild()].map((child) => child.name), ["api", "auth", "codex", "bots"]);
+  assert.deepEqual(codexChild(43123).env, { AGENTSTACK_OWNER_MCP_PORT: "43123" });
   const websocket = websocketChild();
   assert.equal(websocket.command, process.execPath);
   assert.equal(existsSync(websocket.args[0] ?? ""), true);
