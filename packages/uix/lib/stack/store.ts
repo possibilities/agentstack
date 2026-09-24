@@ -12,6 +12,8 @@ export type StackState = Snapshot & {
   attempt: Login | null;
 };
 
+export type StackConnections = { packages?: readonly string[]; scopedBots?: boolean };
+
 const authReads = new Set(["account_list", "account_login_current", "account_login_status", "worker_account_list"]);
 
 function isLoginState(value: unknown): value is Login {
@@ -30,6 +32,7 @@ export class StackStore {
   private inflight = new Map<ResourceKey, Promise<void>>();
   private dirty = new Set<ResourceKey>();
   private seq = 0;
+  private scopedBots = true;
 
   constructor(snapshot: Snapshot) {
     this.state = { ...snapshot, status: {}, scoped: {}, events: [], attempt: snapshot.login.data };
@@ -42,9 +45,12 @@ export class StackStore {
     return () => this.listeners.delete(listener);
   };
 
-  start(): void {
+  start({ packages, scopedBots = true }: StackConnections = {}): void {
+    this.scopedBots = scopedBots;
     const { endpoints } = this.state;
+    const enabled = packages && new Set(packages);
     const open = (pkg: string, onOpen: () => void, onNotice?: (topic: string) => void, topics?: string[]) => {
+      if (enabled && !enabled.has(pkg)) return;
       const url = endpoints[pkg];
       if (!url) return;
       const channel = new Channel(url, {
@@ -63,10 +69,11 @@ export class StackStore {
       this.refresh("accounts");
       if (topic === "worker_accounts_changed") this.refresh("workerAccounts");
       if (topic === "login_changed") this.refresh("login");
-    }, ["accounts_changed", "login_changed"]);
+    }, ["accounts_changed", "login_changed", "worker_accounts_changed"]);
     open("bots", () => { this.refresh("bots"); this.refresh("voice"); }, (topic) => {
+      if (topic === "bots_changed") this.refresh("bots");
       if (topic === "voice_changed") this.refresh("voice");
-    }, ["voice_changed"]);
+    }, ["bots_changed", "voice_changed"]);
     open("workers", () => { this.refresh("workerRuntimes"); this.refresh("workerSessions"); }, () => {
       this.refresh("workerRuntimes"); this.refresh("workerSessions");
     }, ["workers_changed"]);
@@ -167,6 +174,7 @@ export class StackStore {
 
   /** Keep one scoped subscription per bot; notices are not proof of sanctioned thread activity. */
   private reconcileScoped(): void {
+    if (!this.scopedBots) return;
     const { bots, endpoints } = this.state;
     if (!bots.data) return;
     const wanted = new Map<string, { pkg: string; topics: string[] }>();
