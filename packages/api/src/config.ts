@@ -12,18 +12,9 @@ const blurb = z
     message: "description must be 1-400 characters",
   });
 
-const topicName = /^[a-z][a-z0-9_]{0,63}$/;
-
 const transportSchema = z
   .object({
     description: blurb,
-  })
-  .strict();
-
-const websocketSchema = z
-  .object({
-    description: blurb,
-    pubsub: z.record(z.string().regex(topicName), blurb).optional(),
   })
   .strict();
 
@@ -33,7 +24,7 @@ const configSchema = z
     description: blurb,
     socket: transportSchema.optional(),
     mcp: transportSchema.optional(),
-    websocket: websocketSchema.optional(),
+    websocket: transportSchema.optional(),
   })
   .strict()
   .refine((config) => transportTypes.some((type) => config[type] !== undefined), {
@@ -41,7 +32,7 @@ const configSchema = z
   });
 
 export type TransportConfig = z.infer<typeof transportSchema>;
-export type WebsocketConfig = z.infer<typeof websocketSchema>;
+export type WebsocketConfig = TransportConfig;
 export type PackageConfig = z.infer<typeof configSchema>;
 
 export function parseConfig(text: string, label = "api.yaml"): PackageConfig {

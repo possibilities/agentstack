@@ -4,3 +4,5 @@ socket:
   description: Unix socket for Codex bot lifecycle and bot-scoped change events, namespaced as bots.
 mcp:
   description: HTTP MCP tools for Codex bot lifecycle, forwarded to the bots socket.
+websocket:
+  description: Loopback WebSocket for bot operations and bot-scoped change events, forwarded to the bots socket.

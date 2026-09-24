@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import { packageEventTopics, type PackageApi } from "./operation.js";
 import { publishedJsonSchema } from "./schema.js";
 import { configuredTransports } from "./config.js";
-import { listPackages, mcpPort, socketPath, workspaceRoot } from "./workspace.js";
+import { listPackages, mcpPort, socketPath, websocketPort, workspaceRoot } from "./workspace.js";
 
 export type CatalogTransport = {
   type: string;
@@ -40,12 +40,13 @@ export type Catalog = {
 export async function loadCatalog(env: NodeJS.ProcessEnv = process.env, from = import.meta.dirname): Promise<Catalog> {
   const root = workspaceRoot(from);
   const port = mcpPort(env);
+  const wsPort = websocketPort(env);
   const packages = await listPackages(root);
   const servers: CatalogServer[] = [];
   for (const item of packages) {
     const api = await loadPackageApi(item.dir);
     const manifest = JSON.parse(await readFile(join(item.dir, "package.json"), "utf8")) as { name?: string };
-    const events = api.events ? packageEventTopics(item.config.name, api.events) : (item.config.websocket?.pubsub ?? {});
+    const events = api.events ? packageEventTopics(item.config.name, api.events) : {};
     servers.push({
       name: item.config.name,
       description: item.config.description,
@@ -78,8 +79,8 @@ export async function loadCatalog(env: NodeJS.ProcessEnv = process.env, from = i
                 type: transport.type,
                 description: transport.description,
                 supported: true,
-                subscriptions: api.events !== undefined || Object.keys(item.config.websocket?.pubsub ?? {}).length > 0,
-                endpoint: null,
+                subscriptions: api.events !== undefined,
+                endpoint: wsPort === 0 ? null : `ws://127.0.0.1:${wsPort}/websocket/${item.config.name}`,
               }
             : {
                 type: transport.type,

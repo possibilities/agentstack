@@ -1,138 +1,122 @@
-import { createServer, type Server } from "node:http";
+import { createServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
+import { listPackages, socketPath, websocketPort, workspaceRoot } from "./workspace.js";
+import { socketCall, socketSubscribe, type SocketSubscription } from "./socket.js";
 
-export type ServedWebSocket = {
-  url: string;
-  publish(topic: string): void;
-  close(): Promise<void>;
-};
+export type ServedWebSocket = { urls: Record<string, string>; close(): Promise<void> };
 
-export type WebSocketSource = (
-  publish: (topic: string) => void,
-  info: { url: string },
-) => (() => void) | void | Promise<(() => void) | void>;
+const maxPayload = 1_000_000;
+const maxClientBuffer = 1_000_000;
 
-const defaultMaxPayload = 16 * 1024;
+export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: string; port?: number } = {}): Promise<ServedWebSocket> {
+  const env = options.env ?? process.env;
+  const port = options.port ?? websocketPort(env);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("WebSocket port must be an integer from 0 to 65535");
+  const root = options.root ?? workspaceRoot(import.meta.dirname);
+  const names = new Set((await listPackages(root)).filter((item) => item.config.websocket).map((item) => item.config.name));
+  if (names.size === 0) throw new Error("no Package APIs configure websocket");
 
-export async function serveWebSocket(options: {
-  topics: Record<string, string>;
-  origin?: string;
-  maxPayload?: number;
-  subscribe?: WebSocketSource;
-}): Promise<ServedWebSocket> {
-  const topics = new Map(Object.entries(options.topics));
-  const subscriptions = new Map<WebSocket, Set<string>>();
-  const server = new WebSocketServer({ noServer: true, maxPayload: options.maxPayload ?? defaultMaxPayload });
-
-  const publish = (topic: string): void => {
-    if (!topics.has(topic)) throw new Error(`unknown topic: ${topic}`);
-    const frame = JSON.stringify({ type: "event", topic });
-    for (const [client, subscribed] of subscriptions) {
-      if (subscribed.has(topic) && client.readyState === client.OPEN) client.send(frame);
-    }
-  };
-
-  server.on("connection", (client) => {
-    const subscribed = new Set<string>();
-    subscriptions.set(client, subscribed);
-    client.on("message", (raw, binary) => handleMessage(client, subscribed, topics, raw, binary));
-    const drop = () => subscriptions.delete(client);
-    client.on("close", drop);
-    client.on("error", drop);
-  });
-
-  const http = createServer((_req, res) => {
-    res.writeHead(400).end();
-  });
-  http.on("upgrade", (request, socket, head) => {
-    if (!originAllowed(request.headers.origin, options.origin)) {
-      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-    server.handleUpgrade(request, socket, head, (client) => server.emit("connection", client, request));
-  });
-
-  await listen(http);
-  const address = http.address();
-  if (address === null || typeof address === "string") {
-    await closeHttp(http);
-    throw new Error("failed to listen");
-  }
-  const url = `ws://127.0.0.1:${address.port}`;
-
-  let unsubscribe: (() => void) | void;
-  try {
-    unsubscribe = await options.subscribe?.(publish, { url });
-  } catch (error) {
-    await shutdown(subscriptions, server, http).catch(() => undefined);
-    throw error;
-  }
-
-  let closed = false;
-  return {
-    url,
-    publish,
-    async close() {
-      if (closed) return;
-      closed = true;
-      let failure: unknown;
+  const clients = new Set<WebSocket>();
+  const wss = new WebSocketServer({ noServer: true, maxPayload });
+  let closing: Promise<void> | undefined;
+  wss.on("connection", (client, request) => {
+    clients.add(client);
+    const name = /^\/websocket\/([a-z][a-z0-9-]{0,31})$/.exec(request.url ?? "")?.[1];
+    if (!name) { client.terminate(); return; }
+    const controller = new AbortController();
+    let subscription: SocketSubscription | undefined;
+    let subscriptions = Promise.resolve();
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      clients.delete(client);
+      controller.abort();
+      void subscription?.close();
+    };
+    client.on("close", stop);
+    client.on("error", stop);
+    client.on("message", (raw, binary) => {
+      if (binary) { send(client, { id: null, error: { message: "binary frames are not supported" } }); return; }
+      let message: { id?: unknown; method?: unknown; params?: unknown };
       try {
-        await unsubscribe?.();
-      } catch (error) {
-        failure = error;
+        const parsed: unknown = JSON.parse(String(raw));
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid frame");
+        message = parsed as typeof message;
+      } catch {
+        send(client, { id: null, error: { message: "invalid json or frame" } });
+        return;
       }
-      await shutdown(subscriptions, server, http);
-      if (failure !== undefined) throw failure;
+      const id = message.id ?? null;
+      const respond = (result: unknown) => send(client, { id, result });
+      const fail = (error: unknown) => send(client, { id, error: { message: error instanceof Error ? error.message : String(error) } });
+      if (message.method === "events/subscribe") {
+        subscriptions = subscriptions.then(async () => {
+          if (stopped) return;
+          const params = message.params as { topics?: unknown; scope?: unknown } | undefined;
+          if (!params || !Array.isArray(params.topics) || params.topics.length > 256
+            || (params.scope !== undefined && typeof params.scope !== "string")) {
+            throw new Error("invalid event subscription");
+          }
+          // The socket may deliver a notice in the same read as its acknowledgement.
+          // Keep the WebSocket acknowledgement ahead of those notices.
+          let acknowledged = false;
+          const pending: string[] = [];
+          const notice = (topic: string) => send(client, { method: "events/changed", params: { topic } });
+          const next = await socketSubscribe(socketPath(name, env), params.topics, (topic) => {
+            if (acknowledged) notice(topic);
+            else pending.push(topic);
+          }, { scope: params.scope as string | undefined, signal: controller.signal });
+          if (stopped) { await next.close(); return; }
+          const previous = subscription;
+          subscription = next;
+          await previous?.close();
+          respond({ topics: [...next.topics], ...(next.scope === undefined ? {} : { scope: next.scope }) });
+          acknowledged = true;
+          for (const topic of pending) notice(topic);
+          void next.closed.then(() => {
+            if (!stopped && subscription === next) {
+              subscription = undefined;
+              send(client, { method: "events/disconnected", params: {} });
+            }
+          });
+        }).catch(fail);
+      } else if (message.method === "tools/list" || message.method === "tools/call") {
+        void socketCall(socketPath(name, env), message.method, message.params, { signal: controller.signal }).then(respond, fail);
+      } else {
+        fail(new Error(`unknown method: ${String(message.method)}`));
+      }
+    });
+  });
+
+  const http = createServer((_req, res) => res.writeHead(404).end());
+  http.on("upgrade", (request, socket, head) => {
+    const address = http.address();
+    const name = /^\/websocket\/([a-z][a-z0-9-]{0,31})$/.exec(request.url ?? "")?.[1];
+    if (!name || !names.has(name)) { socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.destroy(); return; }
+    if (!address || typeof address === "string" || ![`127.0.0.1:${address.port}`, `localhost:${address.port}`].includes(request.headers.host ?? "")
+      || !originAllowed(request.headers.origin, env.AGENTSTACK_WEBSOCKET_ORIGIN)) {
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n"); socket.destroy(); return;
+    }
+    wss.handleUpgrade(request, socket, head, (client) => wss.emit("connection", client, request));
+  });
+  await new Promise<void>((resolve, reject) => {
+    http.once("error", reject);
+    http.listen(port, "127.0.0.1", () => { http.off("error", reject); resolve(); });
+  });
+  const address = http.address();
+  if (!address || typeof address === "string") throw new Error("WebSocket server has no TCP address");
+  return {
+    urls: Object.fromEntries([...names].map((name) => [name, `ws://127.0.0.1:${address.port}/websocket/${name}`])),
+    close() {
+      closing ??= (async () => {
+        for (const client of clients) client.terminate();
+        await new Promise<void>((resolve, reject) => wss.close((error) => error ? reject(error) : resolve()));
+        await new Promise<void>((resolve, reject) => http.close((error) => error ? reject(error) : resolve()));
+      })();
+      return closing;
     },
   };
-}
-
-function handleMessage(
-  client: WebSocket,
-  subscribed: Set<string>,
-  topics: Map<string, string>,
-  raw: unknown,
-  binary: boolean,
-): void {
-  if (binary) {
-    send(client, { type: "error", message: "binary frames are not supported" });
-    return;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(String(raw));
-  } catch {
-    send(client, { type: "error", message: "invalid json" });
-    return;
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    send(client, { type: "error", message: "invalid frame" });
-    return;
-  }
-  const message = parsed as { type?: unknown; topic?: unknown };
-  switch (message.type) {
-    case "subscribe": {
-      if (typeof message.topic !== "string" || !topics.has(message.topic)) {
-        send(client, { type: "error", message: `unknown topic: ${String(message.topic)}` });
-        return;
-      }
-      subscribed.add(message.topic);
-      send(client, { type: "subscribed", topic: message.topic });
-      return;
-    }
-    case "unsubscribe": {
-      if (typeof message.topic !== "string") {
-        send(client, { type: "error", message: "missing topic" });
-        return;
-      }
-      subscribed.delete(message.topic);
-      send(client, { type: "unsubscribed", topic: message.topic });
-      return;
-    }
-    default:
-      send(client, { type: "error", message: `unknown message type: ${String(message.type)}` });
-  }
 }
 
 function originAllowed(header: string | undefined, configured: string | undefined): boolean {
@@ -140,41 +124,14 @@ function originAllowed(header: string | undefined, configured: string | undefine
   if (configured) return header === configured;
   try {
     const hostname = new URL(header).hostname;
-    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1" || hostname === "[::1]";
+    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]";
   } catch {
     return false;
   }
 }
 
 function send(client: WebSocket, message: unknown): void {
-  if (client.readyState === client.OPEN) client.send(JSON.stringify(message));
-}
-
-async function shutdown(subscriptions: Map<WebSocket, Set<string>>, server: WebSocketServer, http: Server): Promise<void> {
-  for (const client of subscriptions.keys()) client.terminate();
-  subscriptions.clear();
-  await closeWebsocket(server);
-  await closeHttp(http);
-}
-
-function listen(http: Server): Promise<void> {
-  return new Promise((resolve, reject) => {
-    http.once("error", reject);
-    http.listen(0, "127.0.0.1", () => {
-      http.off("error", reject);
-      resolve();
-    });
-  });
-}
-
-function closeWebsocket(server: WebSocketServer): Promise<void> {
-  return new Promise((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-}
-
-function closeHttp(http: Server): Promise<void> {
-  return new Promise((resolve, reject) => {
-    http.close((error) => (error ? reject(error) : resolve()));
-  });
+  if (client.readyState !== client.OPEN) return;
+  if (client.bufferedAmount > maxClientBuffer) { client.terminate(); return; }
+  client.send(JSON.stringify(message));
 }

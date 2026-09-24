@@ -22,7 +22,6 @@ export async function runApi(args: string[], env: NodeJS.ProcessEnv = process.en
     process.exit(1);
   }
   if (served.socketPath) console.error(served.socketPath);
-  if (served.websocketUrl) console.error(served.websocketUrl);
 
   let closing = false;
   const shutdown = () => {

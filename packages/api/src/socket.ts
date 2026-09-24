@@ -10,7 +10,6 @@ export type SocketServerInfo = {
   description: string;
   transportDescription: string;
   path: string;
-  websocket?: { url: string; topics: Record<string, string> };
 };
 
 export type SocketEvents<Ctx> = {
@@ -478,7 +477,7 @@ function describeServer<Ctx>(options: {
       description: options.info.transportDescription,
       path: options.info.path,
     },
-    websocket: options.info.websocket ? { url: options.info.websocket.url, topics: options.info.websocket.topics } : null,
+    websocket: null,
     events: options.events ? { topics: options.events.topics, subscribe: "events/subscribe", ...(options.events.scope ? { scope: {
       description: options.events.scope.description, example: options.events.scope.example, required: options.events.scope.required ?? false,
     } } : {}) } : null,

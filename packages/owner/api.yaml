@@ -4,3 +4,5 @@ socket:
   description: Unix socket for owned-process status and change events, namespaced as owner.
 mcp:
   description: HTTP MCP tools for owned-process status, forwarded to the owner socket.
+websocket:
+  description: Loopback WebSocket for owned-process status and change events, forwarded to the owner socket.

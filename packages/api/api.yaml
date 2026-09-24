@@ -2,3 +2,5 @@ name: api
 description: Structured package API discovery documents for every AgentStack package.
 socket:
   description: Unix socket for package API discovery, namespaced as api.
+websocket:
+  description: Loopback WebSocket for package API discovery, forwarded to the api socket.

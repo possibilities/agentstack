@@ -30,3 +30,11 @@ export function mcpChild(): OwnedChild {
     args: [fileURLToPath(new URL("./cli.js", import.meta.url)), "mcp"],
   };
 }
+
+export function websocketChild(): OwnedChild {
+  return {
+    name: "websocket",
+    command: process.execPath,
+    args: [fileURLToPath(new URL("./cli.js", import.meta.url)), "websocket"],
+  };
+}

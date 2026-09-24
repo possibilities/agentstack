@@ -8,7 +8,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { serveApi, socketCall, socketSubscribe } from "@agentstack/api";
-import { apiChild, authChild, mcpChild } from "../src/children.js";
+import { apiChild, authChild, mcpChild, websocketChild } from "../src/children.js";
 import { botsChild } from "../src/bots.js";
 import { codexChild } from "../src/codex.js";
 import { startOwner } from "../src/owner.js";
@@ -49,6 +49,10 @@ test("the owner starts the four required socket children", () => {
   assert.equal(mcp.command, process.execPath);
   assert.equal(existsSync(mcp.args[0] ?? ""), true);
   assert.deepEqual(mcp.args.slice(1), ["mcp"]);
+  const websocket = websocketChild();
+  assert.equal(websocket.command, process.execPath);
+  assert.equal(existsSync(websocket.args[0] ?? ""), true);
+  assert.deepEqual(websocket.args.slice(1), ["websocket"]);
 });
 
 function orphanParent(stateDir: string, keepAlive: boolean) {
@@ -179,10 +183,6 @@ test("owner close resolves promptly after a failed spawn", async () => {
 test("owner api serves status and pids_changed on its socket", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-owner-sock-"));
   const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir };
-  await assert.rejects(
-    serveApi({ name: "owner", transport: "websocket", env }),
-    /does not configure websocket/,
-  );
   const served = await serveApi({ name: "owner", transport: "socket", env });
   const received: string[] = [];
   try {

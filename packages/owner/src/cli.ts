@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { runApi, runMcp, serveApi } from "@agentstack/api";
+import { runApi, runMcp, runWebSocket, serveApi } from "@agentstack/api";
 import { runDocs, serveDocs } from "@agentstack/docs";
-import { apiChild, authChild, mcpChild } from "./children.js";
+import { apiChild, authChild, mcpChild, websocketChild } from "./children.js";
 import { botsChild } from "./bots.js";
 import { codexChild } from "./codex.js";
 import { startOwner } from "./owner.js";
@@ -15,8 +15,10 @@ if (command === "api") {
   await runDocs();
 } else if (command === "mcp") {
   await runMcp();
+} else if (command === "websocket") {
+  await runWebSocket();
 } else if (command !== "serve") {
-  console.error("usage: agentstack serve\nusage: agentstack api <package> <transport>\nusage: agentstack mcp\nusage: agentstack docs");
+  console.error("usage: agentstack serve\nusage: agentstack api <package> <transport>\nusage: agentstack mcp\nusage: agentstack websocket\nusage: agentstack docs");
   process.exit(1);
 }
 
@@ -57,7 +59,7 @@ const shutdown = () => {
     process.exit(childFailed || failed ? 1 : 0);
   });
 };
-owner = startOwner([apiChild(), authChild(), codexChild(), botsChild(), mcpChild()], process.env, () => {
+owner = startOwner([apiChild(), authChild(), codexChild(), botsChild(), mcpChild(), websocketChild()], process.env, () => {
   statusSource.notify();
   if (!closing && owner.children().some((child) => !child.running)) {
     childFailed = true;

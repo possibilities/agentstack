@@ -4,3 +4,5 @@ socket:
   description: Unix socket for Codex app-server lifecycle and change events, namespaced as codex.
 mcp:
   description: HTTP MCP tools for Codex app-server operations, forwarded to the codex socket.
+websocket:
+  description: Loopback WebSocket for Codex app-server operations and scoped change events, forwarded to the codex socket.

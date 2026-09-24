@@ -13,6 +13,15 @@ export function mcpPort(env: NodeJS.ProcessEnv = process.env): number {
   return port;
 }
 
+export function websocketPort(env: NodeJS.ProcessEnv = process.env): number {
+  const value = env.AGENTSTACK_WEBSOCKET_PORT;
+  const port = value === undefined ? 8744 : Number(value);
+  if (!Number.isInteger(port) || port < 0 || port > 65535 || value === "") {
+    throw new Error("AGENTSTACK_WEBSOCKET_PORT must be an integer from 0 to 65535");
+  }
+  return port;
+}
+
 export function workspaceRoot(from: string): string {
   let dir = from;
   for (let i = 0; i < 8; i += 1) {
@@ -73,15 +82,17 @@ export function transportEndpoint(
     return { type, description: transport.description, available: true, endpoint: socketPath(config.name, env) };
   }
   if (type === "websocket") {
-    return { type, description: transport.description, available: true };
+    const port = websocketPort(env);
+    return { type, description: transport.description, available: true, endpoint: port ? `ws://127.0.0.1:${port}/websocket/${config.name}` : undefined };
   }
   const port = mcpPort(env);
   return { type, description: transport.description, available: true, endpoint: port ? `http://127.0.0.1:${port}/mcp/${config.name}` : undefined };
 }
 
-export function assertTransport(name: string, config: PackageConfig, transport: string): "socket" | "websocket" {
+export function assertTransport(name: string, config: PackageConfig, transport: string): "socket" {
   if (!isTransportType(transport)) throw new Error(`unknown transport: ${transport}`);
   if (!config[transport]) throw new Error(`${name} does not configure ${transport}`);
   if (transport === "mcp") throw new Error("mcp is served together for all configured Package APIs; run agentstack mcp");
+  if (transport === "websocket") throw new Error("websocket is served together for all configured Package APIs; run agentstack websocket");
   return transport;
 }

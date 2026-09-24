@@ -8,7 +8,7 @@ _Avoid_: MCP server, endpoint, route
 
 ## Transport
 
-A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are the names. `mcp` exposes operations over loopback HTTP through the running socket Servers; it does not expose event subscriptions.
+A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are the names. `mcp` exposes operations over loopback HTTP through the running socket Servers; it does not expose event subscriptions. `websocket` exposes operations and event subscriptions over a shared loopback listener, forwarding to those same socket Servers.
 
 _Avoid_: protocol, binding
 

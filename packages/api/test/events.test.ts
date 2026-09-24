@@ -254,7 +254,7 @@ test("an event-bearing package fails closed before its context is created on an 
   }
 });
 
-test("scoped events cannot be served on a WebSocket that has no scope filter", async () => {
+test("scoped events stay on the socket owner for WebSocket forwarding", async () => {
   const root = await mkdtemp(join(tmpdir(), "agentstack-scoped-websocket-"));
   const dir = join(root, "packages", "demo");
   await mkdir(join(dir, "dist"), { recursive: true });
@@ -266,11 +266,12 @@ test("scoped events cannot be served on a WebSocket that has no scope filter", a
       scope: { description: "Bot ID.", example: "bot-1", required: true, valid: () => true },
       start() {},
     },
-    async createContext() { throw new Error("context must not be created"); },
+    async createContext() { return {}; },
     async closeContext() {},
   };\n`);
   try {
-    await assert.rejects(serveApi({ name: "demo", transport: "socket", root }), /scoped events require a socket-only transport/);
+    const served = await serveApi({ name: "demo", transport: "socket", root, env: { ...process.env, AGENTSTACK_STATE_DIR: root } });
+    await served.close();
   } finally {
     await rm(root, { recursive: true, force: true });
   }

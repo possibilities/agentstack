@@ -13,11 +13,11 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
 const socketNames = ["api", "auth", "codex", "bots", "owner"];
 
-test("serve owns its sockets, HTTP MCP child, and live docs, then shuts them down", { timeout: 120_000 }, async () => {
+test("serve owns sockets, MCP, WebSocket, and live docs, then shuts them down", { timeout: 120_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-serve-"));
   const child = spawn(process.execPath, [cli, "serve"], {
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0" },
+    env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0" },
   });
   let stderr = "";
   child.stderr?.setEncoding("utf8");
@@ -38,7 +38,7 @@ test("serve owns its sockets, HTTP MCP child, and live docs, then shuts them dow
       children: Array<{ name: string; pid: number | null; running: boolean }>;
     };
     assert.equal(status.pid, child.pid);
-    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["api", "auth", "bots", "codex", "mcp"]);
+    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["api", "auth", "bots", "codex", "mcp", "websocket"]);
     for (let i = 0; i < 200 && status.children.some((entry) => !entry.running); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
       status = (await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} })) as typeof status;
@@ -59,6 +59,22 @@ test("serve owns its sockets, HTTP MCP child, and live docs, then shuts them dow
     } finally {
       await client.close();
     }
+
+    for (let i = 0; i < 200 && !/owner WebSocket: (ws:\/\/\S+)/.test(stderr); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const wsUrl = /owner WebSocket: (ws:\/\/\S+)/.exec(stderr)?.[1];
+    assert.ok(wsUrl, stderr);
+    for (const name of socketNames) assert.match(stderr, new RegExp(`${name} WebSocket: ws://127\\.0\\.0\\.1:\\d+/websocket/${name}`));
+    const ws = new WebSocket(wsUrl);
+    await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = () => reject(new Error("WebSocket did not open")); });
+    const frame = () => new Promise<any>((resolve) => { ws.onmessage = (event) => resolve(JSON.parse(String(event.data))); });
+    const call = frame();
+    ws.send(JSON.stringify({ id: 1, method: "tools/call", params: { name: "owner_status", arguments: {} } }));
+    assert.equal((await call).result.pid, child.pid);
+    const subscribed = frame();
+    ws.send(JSON.stringify({ id: 2, method: "events/subscribe", params: { topics: ["pids_changed"] } }));
+    assert.deepEqual(await subscribed, { id: 2, result: { topics: ["pids_changed"] } });
 
     const subscription = await socketSubscribe(ownerSock, ["pids_changed"], () => undefined);
 
@@ -89,6 +105,12 @@ test("serve owns its sockets, HTTP MCP child, and live docs, then shuts them dow
     assert.equal(code, 0, stderr);
     await assert.rejects(fetch(docsUrl));
     await subscription.closed;
+    await new Promise<void>((resolve) => { if (ws.readyState === WebSocket.CLOSED) resolve(); else ws.onclose = () => resolve(); });
+    await assert.rejects(new Promise<void>((resolve, reject) => {
+      const probe = new WebSocket(wsUrl);
+      probe.onopen = () => { probe.close(); resolve(); };
+      probe.onerror = () => reject(new Error("WebSocket listener closed"));
+    }));
     for (const name of socketNames) {
       const sock = join(stateDir, "sockets", `${name}.sock`);
       for (let i = 0; i < 100 && existsSync(sock); i += 1) await new Promise((resolve) => setTimeout(resolve, 25));

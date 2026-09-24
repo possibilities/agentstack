@@ -10,14 +10,14 @@ import { loadPackageApi } from "../src/catalog.js";
 import { serveApi } from "../src/serve.js";
 import { findPackage, workspaceRoot } from "../src/workspace.js";
 
-test("codex declares one namespaced socket server", async () => {
+test("codex declares socket, MCP, and WebSocket transports", async () => {
   const root = workspaceRoot(dirname(fileURLToPath(import.meta.url)));
   const codex = await findPackage(root, "codex");
   assert.equal(codex.config.name, "codex");
   assert.match(codex.config.description, /Start, stop, and list/);
   assert.match(codex.config.socket?.description ?? "", /codex/);
   assert.match(codex.config.mcp?.description ?? "", /codex/);
-  assert.equal(codex.config.websocket, undefined);
+  assert.match(codex.config.websocket?.description ?? "", /codex/i);
   const codexApi = await loadPackageApi(codex.dir);
   assert.deepEqual(Object.keys(codexApi.events?.topics ?? {}).sort(), ["inputs_changed", "servers_changed", "threads_changed"]);
 });
@@ -40,23 +40,24 @@ test("config rejects unknown transports and empty blurbs", () => {
   assert.throws(() => parseConfig("name: demo\ndescription: '  '\nsocket:\n  description: Demo socket.\n"), /description/);
 });
 
-test("websocket pubsub topics follow operation names and need descriptions", () => {
-  const parsed = parseConfig(
-    "name: demo\ndescription: Demo.\nwebsocket:\n  description: Demo events.\n  pubsub:\n    pids_changed: Fired when pids change.\n",
-  );
-  assert.deepEqual(parsed.websocket?.pubsub, { pids_changed: "Fired when pids change." });
-  assert.throws(
-    () => parseConfig("name: demo\ndescription: Demo.\nwebsocket:\n  description: Demo events.\n  pubsub:\n    Bad_Topic: Fired.\n"),
-    /pubsub/,
-  );
-  assert.throws(
-    () => parseConfig("name: demo\ndescription: Demo.\nwebsocket:\n  description: Demo events.\n  pubsub:\n    pids_changed: ''\n"),
-    /description/,
-  );
+test("WebSocket uses Package API events rather than transport-specific pubsub", () => {
+  const parsed = parseConfig("name: demo\ndescription: Demo.\nwebsocket:\n  description: Browser operations and events.\n");
+  assert.match(parsed.websocket?.description ?? "", /Browser/);
+  assert.throws(() => parseConfig("name: demo\ndescription: Demo.\nwebsocket:\n  description: Demo events.\n  pubsub:\n    pids_changed: Fired.\n"), /pubsub/);
   assert.throws(
     () => parseConfig("name: demo\ndescription: Demo.\nsocket:\n  description: Demo socket.\n  pubsub:\n    pids_changed: Fired.\n"),
     /pubsub|Unrecognized/,
   );
+});
+
+test("individual WebSocket launch is refused in favor of the shared listener", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-ws-config-"));
+  const dir = join(root, "packages", "demo");
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n");
+  try {
+    await assert.rejects(serveApi({ name: "demo", transport: "websocket", root }), /agentstack websocket/);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("individual mcp launch is refused in favor of the shared HTTP process", async () => {
