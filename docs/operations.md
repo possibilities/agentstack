@@ -27,6 +27,11 @@ on each page load. An unavailable discovery socket produces a retryable
 unavailable page. The owner closes the listener on shutdown. It does not call
 the other Package APIs or expose their control operations over HTTP. The
 optional `agentstack docs` command can still run the reference independently.
+If `agentstack serve` is invoked again against a running owner, it reports that
+owner's PID and docs URL and exits without claiming sockets or starting
+children. A fixed MCP port already in use is refused before startup, even if
+the owner socket cannot be reached; an unrelated listener is never assumed to
+be AgentStack.
 
 When the Codex Package API starts, it reaps recorded child processes from a prior owner and launches every recorded Server again, including Bots and manually created Servers. Each Server creates one main thread on its first successful launch and resumes that stored thread ID later. An explicit `server_stop` lasts until the next AgentStack startup. If the first `thread/start` has an uncertain result, that Server remains stopped with an unconfirmed-start error instead of creating another thread. Inspect its Codex history before recovering that binding; other Servers continue starting.
 

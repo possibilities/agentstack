@@ -196,9 +196,11 @@ test("owner api serves status and pids_changed on its socket", async () => {
 
     const empty = (await socketCall(served.socketPath, "tools/call", { name: "owner_status", arguments: {} })) as {
       pid: number;
+      docsUrl: string | null;
       children: Array<{ name: string; running: boolean }>;
     };
     assert.equal(empty.pid, process.pid);
+    assert.equal(empty.docsUrl, null);
     assert.deepEqual(empty.children, []);
 
     const subscription = await socketSubscribe(served.socketPath ?? "", ["pids_changed"], (topic) => received.push(topic));

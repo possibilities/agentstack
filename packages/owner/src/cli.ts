@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { runApi, runMcp, serveApi } from "@agentstack/api";
+import { mcpPort, runApi, runMcp, serveApi, socketCall, socketPath } from "@agentstack/api";
+import { connect } from "node:net";
 import { runDocs, serveDocs } from "@agentstack/docs";
 import { apiChild, authChild, mcpChild } from "./children.js";
 import { botsChild } from "./bots.js";
@@ -20,6 +21,29 @@ if (command === "api") {
   process.exit(1);
 }
 
+// Check both owner identity and the fixed MCP listener before creating any
+// sockets or starting children. A second invocation must not partially start
+// and then fail after trying to claim the first owner's ports.
+const existing = await socketCall(socketPath("owner"), "tools/call", {
+  name: "owner_status", arguments: {},
+}, { timeoutMs: 1_000 }).catch(() => null) as { pid?: unknown; docsUrl?: unknown } | null;
+if (existing && typeof existing.pid === "number") {
+  console.error(`AgentStack is already running (pid ${existing.pid}).${typeof existing.docsUrl === "string" ? ` Reference: ${existing.docsUrl}` : ""}`);
+  process.exit(0);
+}
+
+const port = mcpPort(process.env);
+if (port !== 0 && await new Promise<boolean>((resolve) => {
+  const probe = connect({ host: "127.0.0.1", port });
+  const finish = (listening: boolean) => { probe.destroy(); resolve(listening); };
+  probe.setTimeout(1_000, () => finish(false));
+  probe.once("connect", () => finish(true));
+  probe.once("error", () => finish(false));
+})) {
+  console.error(`MCP port ${port} is already in use on 127.0.0.1. An AgentStack owner may already be running; check its owner socket or choose another AGENTSTACK_MCP_PORT.`);
+  process.exit(1);
+}
+
 let events: Awaited<ReturnType<typeof serveApi>>;
 try {
   events = await serveApi({ name: "owner", transport: "socket", env: process.env });
@@ -35,6 +59,7 @@ try {
     port: process.env.AGENTSTACK_DOCS_PORT === undefined ? 0 : Number(process.env.AGENTSTACK_DOCS_PORT),
     basePath: "/docs",
   });
+  statusSource.setDocsUrl(docs.url);
 } catch (error) {
   await events.close();
   console.error(error instanceof Error ? error.message : String(error));
