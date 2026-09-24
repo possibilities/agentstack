@@ -1,2 +1,4 @@
 packages:
   - packages/*
+allowBuilds:
+  '@modelcontextprotocol/inspector': false

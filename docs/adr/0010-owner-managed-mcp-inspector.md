@@ -1,0 +1,7 @@
+# 10. Run the official Inspector with the owner
+
+Status: accepted, 2026-09-24. Builds on [ADR 0008](0008-mcp-rpc-transport.md) and the owner-hosted reference in [ADR 0009](0009-serve-docs-with-owner.md).
+
+The owner serves MCP HTTP alongside its socket and docs listener, so it knows the bound port even when `AGENTSTACK_MCP_PORT=0`. It starts the pinned official MCP Inspector as an owned, headless child on a fixed loopback port. The Inspector reads a private, read-only config file generated from Package API manifests; AgentStack rewrites that file atomically when configured MCP packages change. The Inspector watches the file and re-reads it on refresh. The MCP transport checks the configured packages on each request and lists tools from the running socket Server, keeping the Inspector's available entries and tool definitions aligned with the active Package APIs.
+
+This avoids a manually maintained Inspector catalog and avoids giving the Inspector ownership of Package API contexts. The wrapper child suppresses the Inspector's token-bearing startup banner, retains its local API-token protection, disables automatic browser launch, and stops the Inspector on owner shutdown or IPC disconnect. The Inspector's UI selects a Package API to connect to; the file supplies every configured entry without implying simultaneous connections or MCP event subscriptions.

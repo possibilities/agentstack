@@ -10,7 +10,7 @@ pnpm test
 node packages/owner/dist/src/cli.js serve
 ```
 
-`agentstack serve` starts the required `api`, `auth`, `codex`, `bots`, and MCP children and serves `owner` status and `pids_changed` events on its own socket in-process. Each Package API is a line-delimited JSON socket under `<state>/sockets/<name>.sock`; the serve output prints their paths. The MCP child also serves the four configured Package APIs as Streamable HTTP tools on loopback at `http://127.0.0.1:8743/mcp/{auth,bots,codex,owner}`. Give an MCP inspector one of these URLs; no client connection is required for the process to run. Set `AGENTSTACK_MCP_PORT` before starting to change the port (or use `0` to allocate one and read the printed URLs). MCP exposes operations only; socket change-event subscriptions remain on the sockets.
+`agentstack serve` starts the required `api`, `auth`, `codex`, and `bots` socket children, serves `owner` status on its own socket, and hosts the configured MCP Package APIs in the owner process. Each Package API is a line-delimited JSON socket under `<state>/sockets/<name>.sock`. The four MCP URLs default to `http://127.0.0.1:8743/mcp/{auth,bots,codex,owner}`; set `AGENTSTACK_MCP_PORT` before starting to change the port (or use `0` to allocate one and read the printed URLs). MCP exposes operations only; socket change-event subscriptions remain on the sockets.
 
 To sign in, call `account_login_start` on the auth socket, open the returned `authUrl` in a browser on the same machine, and enter the `userCode` at the provider. Poll `account_login_status` (or subscribe to `login_changed`) until the attempt completes. The first account becomes active; `account_activate` chooses the identity used by newly created app servers. Existing Servers retain their account and main thread when restarted, including after AgentStack restarts. Sign-in does not alter the regular Codex CLI account.
 
@@ -23,6 +23,16 @@ change events, and refreshes when the document changes. Set
 `AGENTSTACK_DOCS_PORT` before starting to choose a port; otherwise an available
 port is selected. The optional `agentstack docs` command still serves an
 independent reference on a separate loopback port when needed.
+
+The owner starts the official MCP Inspector as a headless child and prints
+`AgentStack Inspector: http://127.0.0.1:6274/`. Open that URL to see every
+Package API that configures MCP, select one, and connect in the Inspector. Set
+`AGENTSTACK_INSPECTOR_PORT` to choose another fixed port. AgentStack derives the
+Inspector's read-only server list from `packages/*/api.yaml` and updates it when
+the configuration changes; refreshing the Inspector reads the current list.
+Tool listings come from the running socket Servers, so they reflect their
+current operation definitions. The Inspector stays available without an open
+browser tab, and the owner stops it on shutdown.
 
 To serve only the Codex Package API, without the process owner:
 
