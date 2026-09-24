@@ -35,4 +35,4 @@ export { runMcp } from "./run-mcp.js";
 export { runWebSocket } from "./run-websocket.js";
 export { serveApi, type ServedApi } from "./serve.js";
 export { runApi } from "./run.js";
-export { api, docsGet, docsList, type DocsContext } from "../api.js";
+export { api, docsGet, docsList, docsSnapshot, type DocsContext } from "../api.js";

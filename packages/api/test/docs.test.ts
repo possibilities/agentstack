@@ -3,13 +3,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { serveApi, socketCall } from "../src/index.js";
+import { docsSnapshot, serveApi, socketCall } from "../src/index.js";
 
 type TransportDoc = { type: string; description: string; supported: boolean; subscriptions: boolean; endpoint: string | null };
 type OperationDoc = { name: string; title: string | null; description: string; annotations: Record<string, unknown>; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown> };
 type PackageDoc = { name: string; description: string; packageName: string; operations: OperationDoc[]; events: Record<string, string>; eventScope: { description: string; example: string; required: boolean } | null; transports: TransportDoc[] };
 
 test("the api package serves structured documents for every workspace package", { timeout: 60_000 }, async () => {
+  assert.equal(docsSnapshot.name, "docs_snapshot");
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-docs-"));
   const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "8743", AGENTSTACK_WEBSOCKET_PORT: "8744" };
   const served = await serveApi({ name: "api", transport: "socket", env });
