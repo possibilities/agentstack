@@ -33,13 +33,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { annotationBadges, fieldsOf, findOperation, operationTitle, recordFields } from "@/lib/stack/catalog";
 import { accountLabels, clockTime, histogram, pathParts, serversFor, shortId } from "@/lib/stack/derive";
 import type { Account, Login, OperationDoc, PackageDoc, Server, StackEvent } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
-import { errorMessage, useAuthActions } from "./auth-actions";
+import { useAuthActions } from "./auth-actions";
 import { CopyButton, Empty, NodeCard, Orb, Row, Sparkline, StatusDot, Time } from "./primitives";
-import { useActivity, useNow, useOperation, useStack, useWorkbench } from "./provider";
+import { useActivity, useNow, useStack, useWorkbench } from "./provider";
 import { accentBg, accentOf, accentText, Section, Window } from "./window";
 
 const activitySpan = 5 * 60_000;
@@ -167,27 +168,44 @@ export function AccountsWindow() {
   const { accounts, login, servers, catalog, status, endpoints, attempt } = useStack();
   const actions = useAuthActions();
   const labels = accountLabels(accounts.data);
-  const addButton = (
-    <Button size="xs" variant="outline" onClick={() => actions.startSignIn()} disabled={actions.pendingSignIn}>
-      {actions.pendingSignIn ? <Spinner data-icon="inline-start" /> : <UserRoundPlusIcon data-icon="inline-start" />}
-      Add account
-    </Button>
-  );
 
   return (
     <Window id="accounts" title="Accounts" subtitle="auth · codex sign-ins" icon={KeyRoundIcon} accent="auth"
       count={accounts.data?.length} status={status.auth} endpoint={endpoints.auth} updatedAt={accounts.at} error={accounts.error ?? login.error}
-      actions={addButton}>
+      actions={
+        <Tooltip>
+          <TooltipTrigger
+            render={<Button variant="ghost" size="icon-xs" aria-label="Add Codex account" disabled={actions.pendingSignIn} onClick={() => actions.startSignIn()} />}
+          >
+            {actions.pendingSignIn ? <Spinner /> : <UserRoundPlusIcon />}
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Add Codex account</TooltipContent>
+        </Tooltip>
+      }>
       {attempt ? <SignInCard key={attempt.id} attempt={attempt} labels={labels} accounts={accounts.data} catalog={catalog.data} /> : null}
 
       {accounts.data?.length ? (
         <div className="flex flex-col gap-2">
           {accounts.data.map((account) => <AccountCard key={account.id} account={account} label={labels.get(account.id)!} servers={servers.data} />)}
+          <button
+            type="button"
+            disabled={actions.pendingSignIn}
+            onClick={() => actions.startSignIn()}
+            className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed px-3 py-2.5 text-[0.8rem] font-medium text-muted-foreground transition-colors hover:border-foreground/20 hover:bg-background/80 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50"
+          >
+            {actions.pendingSignIn ? <Spinner className="size-3.5" /> : <UserRoundPlusIcon className="size-3.5" />}
+            Add Codex account
+          </button>
         </div>
       ) : accounts.data ? (
         <div className="flex flex-col gap-2.5">
           <Empty icon={KeyRoundIcon} title="No Codex accounts">Device sign-in creates the first one; it becomes active.</Empty>
-          <div className="flex justify-center">{addButton}</div>
+          <div className="flex justify-center">
+            <Button size="sm" variant="outline" onClick={() => actions.startSignIn()} disabled={actions.pendingSignIn}>
+              {actions.pendingSignIn ? <Spinner data-icon="inline-start" /> : <UserRoundPlusIcon data-icon="inline-start" />}
+              Add account
+            </Button>
+          </div>
         </div>
       ) : (
         <Empty icon={ShieldAlertIcon} title="Accounts unavailable">{accounts.error ?? "Waiting for the auth socket."}</Empty>
@@ -304,18 +322,12 @@ function SignInCard({ attempt, labels, accounts, catalog }: { attempt: Login; la
 
 function AccountCard({ account, label, servers }: { account: Account; label: string; servers: Server[] | null }) {
   const actions = useAuthActions();
-  const activate = useOperation<Account>("auth", "account_activate");
   const used = serversFor(account.id, servers);
   const removing = account.removing || actions.removing === account.id;
   const busy = actions.removing === account.id;
-  const onActivate = async () => {
-    try {
-      await activate.run({ id: account.id });
-      toast.success(`${label} is now active`);
-    } catch (error) {
-      toast.error(errorMessage(error));
-    }
-  };
+  const activating = actions.activating === account.id;
+  const errorFor = (op: "activate" | "remove") =>
+    actions.error?.op === op && actions.error.target === account.id ? actions.error.message : null;
   return (
     <NodeCard node={{ kind: "account", id: account.id }} label={`account ${label}`} className={cn(removing && "opacity-60")}>
       <div className="flex items-center gap-3">
@@ -337,7 +349,7 @@ function AccountCard({ account, label, servers }: { account: Account; label: str
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuGroup>
-              <DropdownMenuItem disabled={account.active || removing} onClick={() => void onActivate()}>
+              <DropdownMenuItem disabled={account.active || removing || activating} onClick={() => actions.activate(account)}>
                 <CircleCheckIcon />Make active
               </DropdownMenuItem>
               <DropdownMenuItem disabled={removing} onClick={() => actions.startSignIn(account.id)}>
@@ -364,14 +376,17 @@ function AccountCard({ account, label, servers }: { account: Account; label: str
       {busy ? (
         <p className="flex items-center gap-1.5 text-[0.72rem] text-muted-foreground"><Spinner className="size-3.5" /> Removing…</p>
       ) : account.removing ? (
-        <Button size="xs" variant="outline" className="w-fit" onClick={() => actions.finishRemoval(account)}>Finish removal</Button>
+        <div className="flex flex-col gap-1">
+          <Button size="xs" variant="outline" className="w-fit" onClick={() => actions.finishRemoval(account)}>Finish removal</Button>
+          {errorFor("remove") ? <p className="text-[0.72rem] text-pretty text-destructive">{errorFor("remove")}</p> : null}
+        </div>
       ) : !account.active ? (
         <div className="flex flex-col gap-1">
-          <Button size="xs" variant="secondary" className="w-fit" disabled={activate.pending} onClick={() => void onActivate()}>
-            {activate.pending ? <Spinner data-icon="inline-start" /> : null}
+          <Button size="xs" variant="secondary" className="w-fit" disabled={activating} onClick={() => actions.activate(account)}>
+            {activating ? <Spinner data-icon="inline-start" /> : null}
             Make active
           </Button>
-          {activate.error ? <p className="text-[0.72rem] text-pretty text-destructive">{activate.error}</p> : null}
+          {errorFor("activate") ? <p className="text-[0.72rem] text-pretty text-destructive">{errorFor("activate")}</p> : null}
         </div>
       ) : null}
     </NodeCard>

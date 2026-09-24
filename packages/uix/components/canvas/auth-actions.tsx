@@ -27,7 +27,7 @@ export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export type ActionError = { op: "activate" | "cancel" | "signin"; target: string | null; message: string };
+export type ActionError = { op: "activate" | "cancel" | "remove" | "signin"; target: string | null; message: string };
 
 export type AuthActions = {
   /** Start a device sign-in (or replace an account's credentials); confirms first when one is pending. */
@@ -97,8 +97,13 @@ export function AuthActionsProvider({ children }: { children: React.ReactNode })
       await removeOp.run({ id: account.id });
       toast.success(`Removed ${label(account.id)}`);
       setRemoveTarget(null);
-    } catch {
-      // The dialog stays open and shows removeOp.error; a retry finishes removal.
+    } catch (cause) {
+      // An open dialog shows removeOp.error inline; a card-level retry toasts and marks the card.
+      if (removeTarget?.id !== account.id) {
+        const message = errorMessage(cause);
+        setError({ op: "remove", target: account.id, message });
+        toast.error(message);
+      }
     } finally {
       setRemoving(null);
     }
