@@ -32,4 +32,4 @@ export {
 export { serveWebSocket, type ServedWebSocket, type WebSocketSource } from "./websocket.js";
 export { serveApi, type ServedApi } from "./serve.js";
 export { runApi } from "./run.js";
-export { api, docsGet, docsList, type DocsContext } from "./docs.js";
+export { api, docsGet, docsList, type DocsContext } from "../api.js";

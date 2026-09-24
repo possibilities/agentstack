@@ -86,7 +86,7 @@ const importRuntimeFile = new Function("specifier", "return import(specifier)") 
 ) => Promise<{ api?: PackageApi<unknown> }>;
 
 export async function loadPackageApi(dir: string): Promise<PackageApi<unknown>> {
-  const entry = join(dir, "dist", "src", "index.js");
+  const entry = join(dir, "dist", "api.js");
   try {
     await stat(entry);
   } catch {

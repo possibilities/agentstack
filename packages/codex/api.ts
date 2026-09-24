@@ -1,11 +1,11 @@
 import { chmod, mkdir } from "node:fs/promises";
 import { z } from "zod";
 import { operation, type PackageApi } from "@agentstack/api";
-import { stateDir } from "./paths.js";
-import { Supervisor, type ServerView } from "./supervisor.js";
-import { watchThreadEvents } from "./threads.js";
-import { InputObserver } from "./input-observer.js";
-import { StateStore } from "./store.js";
+import { stateDir } from "./src/paths.js";
+import { Supervisor, type ServerView } from "./src/supervisor.js";
+import { watchThreadEvents } from "./src/threads.js";
+import { InputObserver } from "./src/input-observer.js";
+import { StateStore } from "./src/store.js";
 
 const idSchema = z
   .string()

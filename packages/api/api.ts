@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { loadCatalog } from "./catalog.js";
-import { operation, type PackageApi } from "./operation.js";
-import { workspaceRoot } from "./workspace.js";
+import { loadCatalog } from "./src/catalog.js";
+import { operation, type PackageApi } from "./src/operation.js";
+import { workspaceRoot } from "./src/workspace.js";
 
 export type DocsContext = {
   env: NodeJS.ProcessEnv;

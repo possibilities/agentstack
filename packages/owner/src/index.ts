@@ -1,4 +1,4 @@
-export { api, ownerStatus, topics, type OwnerContext, type OwnerTopic } from "./api.js";
+export { api, ownerStatus, topics, type OwnerContext, type OwnerTopic } from "../api.js";
 export { apiChild, authChild } from "./children.js";
 export { botsChild } from "./bots.js";
 export { codexChild } from "./codex.js";

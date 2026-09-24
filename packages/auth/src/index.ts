@@ -12,7 +12,7 @@ export {
   type AuthTopic,
   type Account,
   type LoginState,
-} from "./api.js";
+} from "../api.js";
 export { AuthStore } from "./store.js";
 export { LoginManager } from "./login.js";
 export { codexRuntimePath, stateDir } from "./paths.js";

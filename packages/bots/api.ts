@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { z } from "zod";
 import { operation, socketCall, socketPath, type PackageApi } from "@agentstack/api";
 import { serverList, serverStart, serverStop, type ServerView } from "@agentstack/codex";
-import { BotLedger } from "./ledger.js";
+import { BotLedger } from "./src/ledger.js";
 
 const START_TIMEOUT_MS = 60_000;
 const STOP_TIMEOUT_MS = 20_000;

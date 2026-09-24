@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { operation, type PackageApi } from "@agentstack/api";
-import { statusSource, type StatusSource } from "./status.js";
+import { statusSource, type StatusSource } from "./src/status.js";
 
 const childStatusSchema = z.object({
   name: z.string().describe("Required child name."),

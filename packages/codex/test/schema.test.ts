@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { publishedJsonSchema } from "@agentstack/api";
-import { serverList, serverStart } from "../src/api.js";
+import { serverList, serverStart } from "../api.js";
 
 test("server_start has no executable override and rejects legacy codexBin", () => {
   const schema = publishedJsonSchema(serverStart.input) as { properties: Record<string, unknown>; additionalProperties: boolean };

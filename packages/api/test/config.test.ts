@@ -22,6 +22,19 @@ test("codex declares one namespaced socket server", async () => {
   assert.deepEqual(Object.keys(codexApi.events?.topics ?? {}).sort(), ["inputs_changed", "servers_changed", "threads_changed"]);
 });
 
+test("a package API loads from the built sibling api.ts without an index", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentstack-api-entry-"));
+  try {
+    await mkdir(join(dir, "dist"));
+    await writeFile(join(dir, "package.json"), '{"type":"module"}');
+    await writeFile(join(dir, "dist", "api.js"), "export const api = { operations: [] };\n");
+    const api = await loadPackageApi(dir);
+    assert.deepEqual(api.operations, []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("config rejects unknown transports and empty blurbs", () => {
   assert.throws(() => parseConfig("name: demo\ndescription: Demo.\nhttp: {}\n"), /http/);
   assert.throws(() => parseConfig("name: demo\ndescription: '  '\nsocket:\n  description: Demo socket.\n"), /description/);

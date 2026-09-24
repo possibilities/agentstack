@@ -1,9 +1,9 @@
 import { chmod, mkdir } from "node:fs/promises";
 import { z } from "zod";
 import { operation, type PackageApi } from "@agentstack/api";
-import { stateDir } from "./paths.js";
-import { AuthStore, type Account } from "./store.js";
-import { LoginManager, type LoginState } from "./login.js";
+import { stateDir } from "./src/paths.js";
+import { AuthStore, type Account } from "./src/store.js";
+import { LoginManager, type LoginState } from "./src/login.js";
 
 const accountSchema = z.object({ name: z.string(), active: z.boolean() });
 const accountName = z.string().regex(/^codex-[1-9][0-9]*$/);

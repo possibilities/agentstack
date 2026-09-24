@@ -1,9 +1,9 @@
-export { api, topics, serverList, serverStart, serverStop, type CodexContext, type CodexTopic, type ServerView } from "./api.js";
+export { api, topics, serverList, serverStart, serverStop, type CodexContext, type CodexTopic, type ServerView } from "../api.js";
 export { listActiveThreads, type ActiveThread } from "./threads.js";
 export { StateStore, type StoredServer } from "./store.js";
 export { runningTree } from "./tree.js";
 export { installedRuntimeVersion } from "./runtime.js";
-export { inputObserveStart, inputObserveStop, inputObserveList } from "./api.js";
+export { inputObserveStart, inputObserveStop, inputObserveList } from "../api.js";
 export { InputObserver, type InputObservation, type InputObservationTarget, type InputObservationIssue } from "./input-observer.js";
 export {
   attachInputMiddleware,
