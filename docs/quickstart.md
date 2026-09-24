@@ -16,6 +16,8 @@ To sign in, call `account_login_start` on the auth socket, open the returned `au
 
 Structured documents for every package API — operations with their JSON Schemas, event topics, and configured transports — come from the `api` socket: `docs_list` names the packages and `docs_get` returns one package's document.
 
+For a browsable reference, run `agentstack docs` in a second terminal while `agentstack serve` is running and open the printed loopback URL. The page reads those two discovery operations each time it loads, shows the four current package APIs and their socket change events, and refreshes when the document changes. Set `AGENTSTACK_DOCS_PORT` to choose a port; otherwise an available port is selected.
+
 To serve only the Codex Package API, without the process owner:
 
 ```sh

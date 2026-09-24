@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { runApi, serveApi } from "@agentstack/api";
+import { runDocs } from "@agentstack/docs";
 import { apiChild, authChild } from "./children.js";
 import { botsChild } from "./bots.js";
 import { codexChild } from "./codex.js";
@@ -10,8 +11,10 @@ const command = process.argv[2];
 
 if (command === "api") {
   await runApi(process.argv.slice(3));
+} else if (command === "docs") {
+  await runDocs();
 } else if (command !== "serve") {
-  console.error("usage: agentstack serve\nusage: agentstack api <package> <transport>");
+  console.error("usage: agentstack serve\nusage: agentstack api <package> <transport>\nusage: agentstack docs");
   process.exit(1);
 }
 

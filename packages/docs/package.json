@@ -1,5 +1,5 @@
 {
-  "name": "@agentstack/owner",
+  "name": "@agentstack/docs",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -7,25 +7,21 @@
     ".": {
       "types": "./dist/src/index.d.ts",
       "default": "./dist/src/index.js"
-    },
-    "./package.json": "./package.json"
+    }
   },
   "bin": {
-    "agentstack": "./dist/src/cli.js"
+    "agentstack-docs": "./dist/src/cli.js"
   },
   "scripts": {
     "build": "node ../../scripts/clean-dist.mjs && tsc",
-    "test": "node --test dist/test/*.test.js"
+    "test": "node --test dist/test/*.test.js",
+    "start": "node dist/src/cli.js"
   },
   "engines": {
     "node": ">=24"
   },
   "dependencies": {
-    "@agentstack/api": "workspace:*",
-    "@agentstack/bots": "workspace:*",
-    "@agentstack/codex": "workspace:*",
-    "@agentstack/docs": "workspace:*",
-    "zod": "^4.6.5"
+    "@agentstack/api": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",

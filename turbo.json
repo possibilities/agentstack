@@ -18,6 +18,16 @@
         "@agentstack/owner#build"
       ],
       "cache": false
+    },
+    "@agentstack/docs#test": {
+      "dependsOn": [
+        "build",
+        "@agentstack/auth#build",
+        "@agentstack/bots#build",
+        "@agentstack/codex#build",
+        "@agentstack/owner#build"
+      ],
+      "cache": false
     }
   }
 }
