@@ -1,0 +1,9 @@
+# Default capabilities bundle
+
+Every managed Server and Bot gets the same editable default instruction fragments. Read `bundle_snapshot` from the `capabilities` Package API to obtain its `revision`, ordered categories, and fragments. Pass that revision as `expectedRevision` on every edit. A stale revision fails without changing state; read again before retrying an intentional edit.
+
+Use `category_create`, `category_update`, `category_delete`, and `category_reorder` to manage categories. Use `fragment_create`, `fragment_update`, `fragment_delete`, and `fragment_reorder` for their fragments. Updating `categoryId` moves a fragment to the end of the destination category; reorder afterward if needed. A reorder supplies every current ID in the relevant list exactly once. Deleting a category with fragments is refused. Empty bodies are useful as drafts and do not render. Disabling a category suppresses all its fragments. Titles and descriptions never appear in the prompt.
+
+`bundle_preview` returns the exact rendered developer instructions and revision. A change Event, `bundle_changed`, tells subscribers to read another snapshot after subscribing or reconnecting. Changes are saved immediately, but running processes keep their launch snapshot. `server_list` and `bot_list` report `capabilitiesRevision`, the revision last launched for that process; compare it with `bundle_snapshot.revision` to know whether a restart would change its bundle.
+
+AgentStack materializes `SYSTEM_APPEND.md`, owner MCP URLs in `[mcp_servers]` inside `config.toml`, and an empty `skills/` directory under a private per-launch path passed to codexnk's `--capabilities`. The prompt is not a launch argument. The directory remains unchanged until that exact process exits. Future skill installation belongs in the same bundle contract, but this API does not yet manage skills.

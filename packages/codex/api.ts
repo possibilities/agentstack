@@ -22,6 +22,7 @@ const serverViewSchema = z.object({
   runningAccount: z.uuid().nullable().describe("Account used by the running process, or null when stopped or launched unbound. If different from account, stop and start to apply the assignment."),
   mainThreadId: z.string().nullable().describe("The first durable root thread created through this Server, or null until a UI sends its first turn."),
   recoveryIssue: z.string().nullable().describe("Why a recorded process is fenced for inspection; null when recovery has no known ownership issue. A reported running state is unverified while this is set."),
+  capabilitiesRevision: z.number().int().nonnegative().nullable().describe("Last launched default capabilities revision, or null before launch. Compare with bundle_snapshot; a running Server needs restart for edits."),
 });
 
 const serverListSchema = z.object({
@@ -36,7 +37,7 @@ export type CodexContext = {
 export const serverStart = operation({
   name: "server_start",
   description:
-    "Start codexnk without creating a thread, or return the live Server. The first durable root thread from a connected UI becomes its main thread. A new Server binds the active Codex account; existing Servers change account through server_assign, then stop/start. Omit args to reuse them; [] clears them while stopped. A running Server rejects changed args. Do not pass --listen.",
+    "Start codexnk with a snapshot of the default capabilities bundle, without creating a thread, or return the live Server. The first durable root UI thread becomes its main thread. Existing Servers change account through server_assign, then stop/start. Omit args to reuse them; [] clears them while stopped. A running Server rejects changed args. Do not override owned capabilities.",
   input: z.strictObject({
     cwd: z.string().describe("Working directory for the app-server."),
     id: idSchema.optional().describe("Existing server id to reuse. A new id is generated when omitted."),
@@ -162,6 +163,7 @@ export const api: PackageApi<CodexContext, CodexTopic> = {
   async closeContext(ctx) {
     await ctx.supervisor.stopAll();
     await ctx.supervisor.runtime.close();
+    ctx.supervisor.capabilities.close();
     ctx.store.close();
   },
 };

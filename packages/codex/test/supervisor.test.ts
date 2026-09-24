@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { connect, createServer as createNetServer } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { appServerArgs, launchChild, ownerMcpArgs, processOwnsEndpoint, Supervisor, waitForReady, type LaunchSpec, type RunningChild, type SupervisorOptions } from "../src/supervisor.js";
+import { appServerArgs, launchChild, processOwnsEndpoint, Supervisor, waitForReady, type LaunchSpec, type RunningChild, type SupervisorOptions } from "../src/supervisor.js";
 import { codexRuntimePath } from "../src/paths.js";
 import type { StoredServer } from "../src/store.js";
 
@@ -220,7 +220,7 @@ test("launch arguments survive owner recovery and can change only while stopped"
   }
 });
 
-test("owner MCP connections are applied to every launch without persisting as caller arguments", async () => {
+test("owner MCP connections are materialized in the capabilities bundle on each launch", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-mcp-launch-"));
   const cwd = await mkdtemp(join(tmpdir(), "agentstack-mcp-cwd-"));
   const launches: string[][] = [];
@@ -245,16 +245,27 @@ test("owner MCP connections are applied to every launch without persisting as ca
   try {
     await supervisor.load();
     seedAccount(supervisor);
-    await supervisor.start({ id: "with-mcp", cwd, args: ["--model", "gpt-5.4"] });
-    assert.deepEqual(launches[0]?.slice(0, 7), [
-      "app-server", "--listen", "ws://127.0.0.1:43400", "--model", "gpt-5.4",
-      "-c", 'mcp_servers.auth={url="http://127.0.0.1:43123/mcp/auth",enabled=true}',
-    ]);
+    let bundle = supervisor.capabilities.createCategory(0, "Default", "human-only");
+    bundle = supervisor.capabilities.createFragment(bundle.revision, bundle.categories[0]!.id, "First", "Original instruction.", "not rendered");
+    const launched = await supervisor.start({ id: "with-mcp", cwd, args: ["--model", "gpt-5.4"] });
+    assert.equal(launched.capabilitiesRevision, bundle.revision);
+    assert.deepEqual(launches[0]?.slice(0, 5), ["app-server", "--listen", "ws://127.0.0.1:43400", "--model", "gpt-5.4"]);
+    assert.equal(launches[0]?.includes("-c"), false);
+    const firstBundle = launches[0]![launches[0]!.indexOf("--capabilities") + 1]!;
+    assert.equal(await readFile(join(firstBundle, "config.toml"), "utf8"), '[mcp_servers.auth]\nurl = "http://127.0.0.1:43123/mcp/auth"\nenabled = true\n');
+    assert.equal(await readFile(join(firstBundle, "SYSTEM_APPEND.md"), "utf8"), "Original instruction.");
+    bundle = supervisor.capabilities.updateFragment(bundle.revision, bundle.categories[0]!.fragments[0]!.id, { body: "Revised instruction." });
+    assert.equal((await supervisor.start({ id: "with-mcp", cwd })).capabilitiesRevision, launched.capabilitiesRevision);
+    assert.equal(await readFile(join(firstBundle, "SYSTEM_APPEND.md"), "utf8"), "Original instruction.");
     assert.deepEqual(supervisor.store.servers()[0]?.args, ["--model", "gpt-5.4"]);
     await supervisor.stop("with-mcp");
     exposed = { ...exposed, bots: "http://127.0.0.1:43123/mcp/bots" };
-    await supervisor.start({ id: "with-mcp", cwd });
-    assert.deepEqual(launches[1]?.slice(5, 9), ownerMcpArgs(exposed));
+    assert.equal((await supervisor.start({ id: "with-mcp", cwd })).capabilitiesRevision, bundle.revision);
+    const secondBundle = launches[1]![launches[1]!.indexOf("--capabilities") + 1]!;
+    assert.notEqual(secondBundle, firstBundle);
+    assert.match(await readFile(join(secondBundle, "config.toml"), "utf8"), /\[mcp_servers.bots\]/);
+    assert.equal(await readFile(join(secondBundle, "SYSTEM_APPEND.md"), "utf8"), "Revised instruction.");
+    await assert.rejects(readFile(join(firstBundle, "config.toml")), /ENOENT/);
     assert.equal(supervisor.list()[0]?.mainThreadId, null);
   } finally {
     await supervisor.stopAll();
@@ -423,6 +434,8 @@ test("caller arguments are merged and --listen is rejected", async () => {
   assert.throws(() => appServerArgs(["--listen", "ws://127.0.0.1:1"], url), /do not pass --listen/);
   assert.throws(() => appServerArgs(["--listen=ws://127.0.0.1:1"], url), /do not pass --listen/);
   assert.throws(() => appServerArgs(["--identity", "/tmp/other"], url), /agentstack owns these axes/);
+  assert.throws(() => appServerArgs(["-c", 'developer_instructions="other"'], url), /managed by the default capabilities bundle/);
+  assert.throws(() => appServerArgs(['--config=mcp_servers.auth={enabled=false}'], url), /managed by the default capabilities bundle/);
 
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-args-"));
   const cwd = await mkdtemp(join(tmpdir(), "agentstack-args-cwd-"));

@@ -35,3 +35,15 @@ The single Codex thread ID retained by a managed Server. A fresh Server has no m
 ## Bot
 
 A numbered Codex Server with a private workspace and, after its first turn, a durable main thread. A Bot may start without an account. Assign an account, then stop and start, before a turn. Turns require a bound account. Bots restart on AgentStack startup and resume their main thread when one exists.
+
+## Default capabilities bundle
+
+AgentStack's shared specification for every managed Server and Bot: ordered instruction fragments, owner MCP connections, and a reserved skills directory. Each process receives a private launch snapshot through codexnk's `--capabilities` directory. Edits affect later launches, not a running process. _Avoid_: system-prompt flag, live prompt file
+
+## Category
+
+An ordered group of instruction fragments in the default capabilities bundle. Its title and description help humans manage content but do not render into the prompt. Disabling it suppresses all its fragments.
+
+## Fragment
+
+A durable, ordered developer-instruction body with a stable ID and human-only title and description. Only enabled fragments in enabled categories enter `SYSTEM_APPEND.md`.

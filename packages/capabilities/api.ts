@@ -1,0 +1,87 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { z } from "zod";
+import { operation, type PackageApi } from "@agentstack/api";
+import { CapabilityStore, renderInstructions } from "./src/store.js";
+
+const id = z.uuid().describe("Stable category or fragment ID.");
+const revision = z.number().int().nonnegative().describe("Expected bundle revision; stale writes fail.");
+const title = z.string().trim().min(1).max(200);
+const description = z.string().max(4_000);
+const body = z.string().max(262_144).describe("Verbatim developer instruction body; metadata never renders.");
+const fragment = z.strictObject({ id, categoryId: id, title, description, body, enabled: z.boolean() });
+const category = z.strictObject({ id, title, description, enabled: z.boolean(), fragments: z.array(fragment) });
+const snapshot = z.strictObject({ revision, categories: z.array(category) });
+const preview = z.strictObject({ revision, rendered: z.string() });
+const write = z.strictObject({ expectedRevision: revision });
+
+export type CapabilitiesContext = { store: CapabilityStore; changed?: () => void };
+function changed(ctx: CapabilitiesContext, result: z.infer<typeof snapshot>) { ctx.changed?.(); return result; }
+
+export const bundleSnapshot = operation({
+  name: "bundle_snapshot", description: "Read the default capabilities categories, fragments, order, enabled flags, and current revision.",
+  input: z.strictObject({}), output: snapshot, annotations: { title: "Read default bundle", readOnlyHint: true },
+  async call(ctx: CapabilitiesContext) { return ctx.store.snapshot(); },
+});
+export const bundlePreview = operation({
+  name: "bundle_preview", description: "Preview the exact developer instruction text rendered for the next Server or Bot launch; descriptions and titles are excluded.",
+  input: z.strictObject({}), output: preview, annotations: { title: "Preview default bundle", readOnlyHint: true },
+  async call(ctx: CapabilitiesContext) { const value = ctx.store.snapshot(); return { revision: value.revision, rendered: renderInstructions(value) }; },
+});
+export const categoryCreate = operation({
+  name: "category_create", description: "Create an ordered category at the end of the default bundle. Pass the current revision.",
+  input: write.extend({ title, description: description.optional(), enabled: z.boolean().optional() }), output: snapshot,
+  annotations: { title: "Create category" },
+  async call(ctx: CapabilitiesContext, input) { return changed(ctx, ctx.store.createCategory(input.expectedRevision, input.title, input.description, input.enabled)); },
+});
+export const categoryUpdate = operation({
+  name: "category_update", description: "Update a category's title, human-only description, or enabled state. A disabled category contributes no fragments.",
+  input: write.extend({ id, title: title.optional(), description: description.optional(), enabled: z.boolean().optional() }), output: snapshot,
+  annotations: { title: "Update category" },
+  async call(ctx: CapabilitiesContext, { id, expectedRevision, ...fields }) { return changed(ctx, ctx.store.updateCategory(expectedRevision, id, fields)); },
+});
+export const categoryDelete = operation({
+  name: "category_delete", description: "Delete an empty category. Move or delete its fragments first; no implicit content deletion.",
+  input: write.extend({ id }), output: snapshot, annotations: { title: "Delete category", destructiveHint: true },
+  async call(ctx: CapabilitiesContext, { id, expectedRevision }) { return changed(ctx, ctx.store.deleteCategory(expectedRevision, id)); },
+});
+export const categoryReorder = operation({
+  name: "category_reorder", description: "Atomically replace category order with an exact permutation of all category IDs.",
+  input: write.extend({ ids: z.array(id) }), output: snapshot, annotations: { title: "Reorder categories" },
+  async call(ctx: CapabilitiesContext, { ids, expectedRevision }) { return changed(ctx, ctx.store.reorderCategories(expectedRevision, ids)); },
+});
+export const fragmentCreate = operation({
+  name: "fragment_create", description: "Create a fragment at the end of a category. Only enabled bodies in enabled categories render.",
+  input: write.extend({ categoryId: id, title, body, description: description.optional(), enabled: z.boolean().optional() }), output: snapshot,
+  annotations: { title: "Create instruction fragment" },
+  async call(ctx: CapabilitiesContext, input) { return changed(ctx, ctx.store.createFragment(input.expectedRevision, input.categoryId, input.title, input.body, input.description, input.enabled)); },
+});
+export const fragmentUpdate = operation({
+  name: "fragment_update", description: "Update content or metadata, enable/disable, or move to another category (appended there). Reorder separately if needed.",
+  input: write.extend({ id, categoryId: id.optional(), title: title.optional(), body: body.optional(), description: description.optional(), enabled: z.boolean().optional() }), output: snapshot,
+  annotations: { title: "Update instruction fragment" },
+  async call(ctx: CapabilitiesContext, { id, expectedRevision, ...fields }) { return changed(ctx, ctx.store.updateFragment(expectedRevision, id, fields)); },
+});
+export const fragmentDelete = operation({
+  name: "fragment_delete", description: "Delete a fragment from its category and the default bundle.",
+  input: write.extend({ id }), output: snapshot, annotations: { title: "Delete instruction fragment", destructiveHint: true },
+  async call(ctx: CapabilitiesContext, { id, expectedRevision }) { return changed(ctx, ctx.store.deleteFragment(expectedRevision, id)); },
+});
+export const fragmentReorder = operation({
+  name: "fragment_reorder", description: "Atomically replace one category's fragment order with an exact permutation of its fragment IDs.",
+  input: write.extend({ categoryId: id, ids: z.array(id) }), output: snapshot, annotations: { title: "Reorder instruction fragments" },
+  async call(ctx: CapabilitiesContext, { categoryId, ids, expectedRevision }) { return changed(ctx, ctx.store.reorderFragments(expectedRevision, categoryId, ids)); },
+});
+
+export const topics = { bundle_changed: "The default bundle was edited. Read bundle_snapshot after (re)subscribing." } as const;
+
+export const api: PackageApi<CapabilitiesContext, keyof typeof topics> = {
+  operations: [bundleSnapshot, bundlePreview, categoryCreate, categoryUpdate, categoryDelete, categoryReorder,
+    fragmentCreate, fragmentUpdate, fragmentDelete, fragmentReorder],
+  events: {
+    topics,
+    start(ctx, publish) { ctx.changed = () => publish("bundle_changed"); return () => { ctx.changed = undefined; }; },
+  },
+  async createContext(env) { return { store: new CapabilityStore(env.AGENTSTACK_STATE_DIR ?? join(homedir(), ".local", "state", "agentstack")) }; },
+  async closeContext(ctx) { ctx.store.close(); },
+};

@@ -17,6 +17,7 @@
         "build",
         "@agentstack/auth#build",
         "@agentstack/bots#build",
+        "@agentstack/capabilities#build",
         "@agentstack/codex#build",
         "@agentstack/owner#build"
       ],
@@ -27,6 +28,7 @@
         "build",
         "@agentstack/auth#build",
         "@agentstack/bots#build",
+        "@agentstack/capabilities#build",
         "@agentstack/codex#build",
         "@agentstack/owner#build"
       ],
