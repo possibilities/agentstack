@@ -61,8 +61,8 @@ The command prints its Unix socket path. The two commands use the same state dir
 See [operations](operations.md) for state, shutdown, and recovery, and [security](security.md) for the local trust boundary.
 
 All bots use `~/.local/libexec/codexnk/codex`. `bot_start` with `{}` allocates the
-next `bot-N` and a private workspace. Supply `id`, `cwd`, or `args` to override
-those launch choices; a supplied external directory remains yours. Executable selection
+next `bot-N` and a private workspace. It defaults to `sandbox_mode="danger-full-access"` and `approval_policy="never"`. Supply `id`, `cwd`, or `args` to override
+those launch choices and narrow access with later `-c` settings; a supplied external directory remains yours. Executable selection
 is not configurable. A new bot returns `mainThreadId: null`; connect a TUI
 with `codex --remote <url>` to create its first thread and send a turn. Once
 durable, that thread becomes `mainThreadId` and can be joined later with

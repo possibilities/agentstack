@@ -64,7 +64,7 @@ async function claimNamedWorkspace(path: string): Promise<string> {
 
 export const botStart = operation({
   name: "bot_start",
-  description: "Start a bot without creating a thread, or return the live one. By default allocate the next bot-N in its private workspace and bind the active Codex account. Override id, cwd, or Codex args for full launch control. An existing bot reuses its saved workspace and args; [] clears args while stopped. A running bot rejects changed args or account assignment.",
+  description: "Start a bot or return its live process. Omit id for the next bot-N and a private workspace. New bots bind the active account and launch with full access and no approval prompts. Optional id, cwd, and args override defaults; later -c flags may narrow access. Saved args recur on restart; [] clears caller args while stopped. A running bot rejects changed args or account assignment.",
   input: z.strictObject({
     id: botId.optional().describe("Existing or custom bot id. Omit to allocate the next bot-N."),
     cwd: z.string().optional().describe("Existing working directory override. Omit for a new private workspace or to reuse an existing bot's workspace. A supplied directory is never deleted by bot_remove."),

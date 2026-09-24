@@ -170,7 +170,7 @@ test("launch arguments survive owner recovery and can change only while stopped"
     stateDir, graceMs: 20,
     endpoint: async () => `ws://127.0.0.1:${43300 + launches.length}`,
       launch(spec): RunningChild {
-        launches.push(spec.args.slice(spec.args.indexOf("--listen") + 2, spec.args.indexOf("--enable")));
+        launches.push(spec.args.slice(spec.args.indexOf("--listen") + 6, spec.args.indexOf("--enable")));
       let finish: (code: number | null) => void = () => undefined;
       const child: RunningChild = {
         pid: 100 + launches.length,
@@ -441,24 +441,30 @@ test("onChange fires only on persisted running/stopped transitions", async () =>
   }
 });
 
-test("caller arguments are merged and --listen is rejected", async () => {
+test("full access defaults precede caller overrides, and owned launch axes are rejected", async () => {
   const url = "ws://127.0.0.1:41000";
+  const defaults = ["-c", 'sandbox_mode="danger-full-access"', "-c", 'approval_policy="never"'];
   assert.deepEqual(appServerArgs(["--model", "gpt-5.4", "-c", "foo=bar"], url), [
     "app-server",
     "--listen",
     url,
+    ...defaults,
     "--model",
     "gpt-5.4",
     "-c",
     "foo=bar",
   ]);
   assert.deepEqual(appServerArgs(["-c", "foo=bar", "app-server", "--remote-control"], url), [
-    "-c",
-    "foo=bar",
     "app-server",
     "--listen",
     url,
+    ...defaults,
+    "-c",
+    "foo=bar",
     "--remote-control",
+  ]);
+  assert.deepEqual(appServerArgs(["-c", 'sandbox_mode="read-only"', "-c", 'approval_policy="on-request"'], url).slice(3), [
+    ...defaults, "-c", 'sandbox_mode="read-only"', "-c", 'approval_policy="on-request"',
   ]);
   assert.throws(() => appServerArgs(["--listen", "ws://127.0.0.1:1"], url), /do not pass --listen/);
   assert.throws(() => appServerArgs(["--listen=ws://127.0.0.1:1"], url), /do not pass --listen/);
@@ -485,7 +491,7 @@ test("caller arguments are merged and --listen is rejected", async () => {
     await supervisor.load();
     seedAccount(supervisor);
     await supervisor.start({ cwd, id: "flags", args: ["--model", "gpt-5.4"] });
-    assert.deepEqual(launched[0]?.args.slice(0, 5), ["app-server", "--listen", url, "--model", "gpt-5.4"]);
+    assert.deepEqual(launched[0]?.args.slice(0, 9), ["app-server", "--listen", url, ...defaults, "--model", "gpt-5.4"]);
     await assert.rejects(supervisor.start({ cwd, id: "nope", args: ["--listen", url] }), /do not pass --listen/);
     assert.equal(launched.length, 1);
   } finally {
