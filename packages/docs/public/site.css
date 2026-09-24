@@ -23,7 +23,6 @@
   }
 }
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
 body { margin: 0; background: var(--bg); color: var(--ink); }
 [hidden] { display: none !important; }
 a { color: inherit; }
@@ -134,4 +133,3 @@ footer { max-width: 1150px; margin: 0 auto; padding: 1.5rem clamp(1.5rem, 5vw, 5
   .package-count { display: block; margin-top: .75rem; }
   .event { grid-template-columns: 1fr; gap: .3rem; }
 }
-@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
