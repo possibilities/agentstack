@@ -23,7 +23,6 @@
   "dependencies": {
     "@agentstack/api": "workspace:*",
     "@agentstack/bots": "workspace:*",
-    "@agentstack/codex": "workspace:*",
     "@agentstack/docs": "workspace:*",
     "@agentstack/uix": "workspace:*",
     "@modelcontextprotocol/inspector": "2.7.0",

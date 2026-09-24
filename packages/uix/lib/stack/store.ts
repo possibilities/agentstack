@@ -1,11 +1,11 @@
 import { loadCatalog } from "./catalog";
 import { Channel } from "./channel";
-import type { Account, ChannelStatus, Login, OwnerStatus, PackageDoc, Resource, Server, Snapshot, StackEvent, VoiceCall } from "./types";
+import type { Account, Bot, ChannelStatus, Login, OwnerStatus, PackageDoc, Resource, Snapshot, StackEvent, VoiceCall } from "./types";
 
 export type StackState = Snapshot & {
   /** Main channel status by Package API name. */
   status: Record<string, ChannelStatus>;
-  /** Scoped event subscription status by Server id. */
+  /** Scoped event subscription status by bot id. */
   scoped: Record<string, { pkg: string; status: ChannelStatus }>;
   events: StackEvent[];
   /** Most recent sign-in attempt this page has seen, kept visible after it finishes. */
@@ -18,7 +18,7 @@ function isLoginState(value: unknown): value is Login {
   return typeof value === "object" && value !== null && "status" in value && "authUrl" in value;
 }
 
-type ResourceKey = "owner" | "accounts" | "login" | "servers" | "bots" | "voice" | "catalog";
+type ResourceKey = "owner" | "accounts" | "login" | "bots" | "voice" | "catalog";
 
 const maxEvents = 250;
 
@@ -63,11 +63,9 @@ export class StackStore {
       this.refresh("accounts");
       if (topic === "login_changed") this.refresh("login");
     }, ["accounts_changed", "login_changed"]);
-    open("codex", () => { this.refresh("servers"); this.refresh("voice"); }, (topic) => {
+    open("bots", () => { this.refresh("bots"); this.refresh("voice"); }, (topic) => {
       if (topic === "voice_changed") this.refresh("voice");
-      else { this.refresh("servers"); this.refresh("bots"); this.refresh("voice"); }
-    }, ["servers_changed", "voice_changed"]);
-    open("bots", () => this.refresh("bots"));
+    }, ["voice_changed"]);
     open("api", () => this.refresh("catalog"));
     this.reconcileScoped();
   }
@@ -115,7 +113,7 @@ export class StackStore {
       .then((next) => {
         this.set({ [key]: next } as Partial<StackState>);
         if (key === "login") this.reconcileAttempt();
-        if (key === "servers" || key === "bots") this.reconcileScoped();
+        if (key === "bots") this.reconcileScoped();
       })
       .finally(() => {
         this.inflight.delete(key);
@@ -133,9 +131,8 @@ export class StackStore {
       case "owner": return call<OwnerStatus>("owner", "owner_status");
       case "accounts": return call<{ accounts: Account[] }>("auth", "account_list").then((result) => result.accounts);
       case "login": return call<{ login: Login | null }>("auth", "account_login_current").then((result) => result.login);
-      case "servers": return call<{ servers: Server[] }>("codex", "server_list").then((result) => result.servers);
-      case "bots": return call<{ bots: Server[] }>("bots", "bot_list").then((result) => result.bots);
-      case "voice": return call<{ call: VoiceCall | null }>("codex", "voice_status").then((result) => result.call);
+      case "bots": return call<{ bots: Bot[] }>("bots", "bot_list").then((result) => result.bots);
+      case "voice": return call<{ call: VoiceCall | null }>("bots", "voice_status").then((result) => result.call);
       case "catalog": return loadCatalog((name, args) => call<never>("api", name, args)) as Promise<PackageDoc[]>;
     }
   }
@@ -159,19 +156,12 @@ export class StackStore {
     });
   }
 
-  /** Keep one scoped subscription per Server; notices are not proof of sanctioned thread activity. */
+  /** Keep one scoped subscription per bot; notices are not proof of sanctioned thread activity. */
   private reconcileScoped(): void {
-    const { servers, bots, endpoints } = this.state;
-    if (!servers.data) return;
-    const botIds = new Set(bots.data?.map((bot) => bot.id) ?? []);
+    const { bots, endpoints } = this.state;
+    if (!bots.data) return;
     const wanted = new Map<string, { pkg: string; topics: string[] }>();
-    for (const server of servers.data) {
-      if (botIds.has(server.id) && endpoints.bots) wanted.set(server.id, { pkg: "bots", topics: ["bots_changed", "threads_changed"] });
-      else if (endpoints.codex && !server.recoveryIssue) wanted.set(server.id, { pkg: "codex", topics: ["threads_changed"] });
-    }
-    for (const bot of bots.data ?? []) {
-      if (!wanted.has(bot.id) && endpoints.bots) wanted.set(bot.id, { pkg: "bots", topics: ["bots_changed", "threads_changed"] });
-    }
+    for (const bot of bots.data) if (endpoints.bots) wanted.set(bot.id, { pkg: "bots", topics: ["bots_changed", "threads_changed"] });
     const scoped = { ...this.state.scoped };
     for (const [id, channel] of this.scopedChannels) {
       if (wanted.get(id)?.pkg === scoped[id]?.pkg) continue;
@@ -191,7 +181,6 @@ export class StackStore {
           this.log(pkg, topic, id);
           if (topic === "bots_changed") {
             this.refresh("bots");
-            this.refresh("servers");
           }
         },
       });

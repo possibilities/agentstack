@@ -26,18 +26,34 @@ export class BotLedger {
     }
     chmodSync(file, 0o600);
     this.db = new DatabaseSync(file);
+    const legacyOwnership = !this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'owned_workspaces'").get();
     this.db.exec(`
       PRAGMA journal_mode = DELETE;
       PRAGMA busy_timeout = 5000;
       CREATE TABLE IF NOT EXISTS bots (number INTEGER PRIMARY KEY AUTOINCREMENT);
+      CREATE TABLE IF NOT EXISTS owned_workspaces (id TEXT PRIMARY KEY);
     `);
+    if (legacyOwnership) this.db.exec("INSERT OR IGNORE INTO owned_workspaces (id) SELECT 'bot-' || number FROM bots");
   }
 
   close(): void {
     this.db.close();
   }
 
+  ownsWorkspace(id: string): boolean {
+    return Boolean(this.db.prepare("SELECT 1 FROM owned_workspaces WHERE id = ?").get(id));
+  }
+
+  ownWorkspace(id: string): void {
+    this.db.prepare("INSERT OR IGNORE INTO owned_workspaces (id) VALUES (?)").run(id);
+  }
+
+  forgetWorkspace(id: string): void {
+    this.db.prepare("DELETE FROM owned_workspaces WHERE id = ?").run(id);
+  }
+
   has(id: string): boolean {
+    if (!/^bot-[1-9][0-9]*$/.test(id)) return false;
     const number = Number(id.slice("bot-".length));
     if (!Number.isSafeInteger(number) || number < 1) return false;
     return Boolean(this.db.prepare("SELECT 1 FROM bots WHERE number = ?").get(number));
@@ -55,13 +71,14 @@ export class BotLedger {
       .map(({ number }) => `bot-${number}`);
   }
 
-  reserve(claim: (id: string) => boolean): string {
+  reserve(claim: (id: string) => boolean, ownsWorkspace = true): string {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       for (;;) {
         const result = this.db.prepare("INSERT INTO bots DEFAULT VALUES").run();
         const id = `bot-${result.lastInsertRowid}`;
         if (claim(id)) {
+          if (ownsWorkspace) this.ownWorkspace(id);
           this.db.exec("COMMIT");
           return id;
         }

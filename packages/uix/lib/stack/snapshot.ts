@@ -1,8 +1,8 @@
 import { socketCall, socketPath, websocketPort } from "@agentstack/api";
 import { loadCatalog } from "./catalog";
-import type { Account, Login, OwnerStatus, PackageDoc, Resource, Server, Snapshot, VoiceCall } from "./types";
+import type { Account, Bot, Login, OwnerStatus, PackageDoc, Resource, Snapshot, VoiceCall } from "./types";
 
-const knownPackages = ["api", "auth", "bots", "capabilities", "codex", "owner"];
+const knownPackages = ["api", "auth", "bots", "capabilities", "owner"];
 
 function call<T>(pkg: string, name: string, args: Record<string, unknown> = {}): Promise<T> {
   return socketCall(socketPath(pkg), "tools/call", { name, arguments: args }, { timeoutMs: 2_000 }) as Promise<T>;
@@ -33,14 +33,13 @@ export function websocketEndpoints(catalog: PackageDoc[] | null): Record<string,
 }
 
 export async function loadSnapshot(): Promise<Snapshot> {
-  const [owner, accounts, login, servers, bots, voice, catalog] = await Promise.all([
+  const [owner, accounts, login, bots, voice, catalog] = await Promise.all([
     resource(() => call<OwnerStatus>("owner", "owner_status")),
     resource(async () => (await call<{ accounts: Account[] }>("auth", "account_list")).accounts),
     resource(async () => (await call<{ login: Login | null }>("auth", "account_login_current")).login),
-    resource(async () => (await call<{ servers: Server[] }>("codex", "server_list")).servers),
-    resource(async () => (await call<{ bots: Server[] }>("bots", "bot_list")).bots),
-    resource(async () => (await call<{ call: VoiceCall | null }>("codex", "voice_status")).call),
+    resource(async () => (await call<{ bots: Bot[] }>("bots", "bot_list")).bots),
+    resource(async () => (await call<{ call: VoiceCall | null }>("bots", "voice_status")).call),
     resource(() => loadCatalog((name, args) => call("api", name, args))),
   ]);
-  return { owner, accounts, login, servers, bots, voice, catalog, endpoints: websocketEndpoints(catalog.data) };
+  return { owner, accounts, login, bots, voice, catalog, endpoints: websocketEndpoints(catalog.data) };
 }

@@ -10,11 +10,11 @@ pnpm test
 node packages/owner/dist/src/cli.js serve
 ```
 
-`agentstack serve` starts the required `api`, `auth`, `codex`, and `bots` socket children and the WebSocket, Inspector, and UI canvas children. It serves `owner` status on its own socket and hosts the configured MCP Package APIs in the owner process. Each Package API is a line-delimited JSON socket under `<state>/sockets/<name>.sock`. The four MCP URLs default to `http://127.0.0.1:8743/mcp/{auth,bots,codex,owner}`; set `AGENTSTACK_MCP_PORT` before starting to change the port (or use `0` to allocate one and read the printed URLs). MCP exposes operations only; socket and WebSocket event subscriptions remain separate.
+`agentstack serve` starts the required `api`, `auth`, `bots`, and `capabilities` socket children and the WebSocket, Inspector, and UI canvas children. It serves `owner` status on its own socket and hosts the configured MCP Package APIs in the owner process. Each Package API is a line-delimited JSON socket under `<state>/sockets/<name>.sock`. The MCP URLs default to `http://127.0.0.1:8743/mcp/{auth,bots,capabilities,owner}`; set `AGENTSTACK_MCP_PORT` before starting to change the port (or use `0` to allocate one and read the printed URLs). MCP exposes operations only; socket and WebSocket event subscriptions remain separate.
 
 The WebSocket child serves every configured Package API at `ws://127.0.0.1:8744/websocket/<name>` and forwards operations and event subscriptions to its socket Server. Set `AGENTSTACK_WEBSOCKET_PORT` to change the port; `0` allocates one and prints the startup URLs. The listener reads current `api.yaml` configuration when admitting a new connection, so newly enabled paths work without restarting it and disabled paths reject new connections. Existing connections continue until closed. A temporarily unreadable configuration rejects new connections as unavailable; configuration does not establish socket Server liveness. The live reference reflects the current configuration, while printed URLs are a startup snapshot. Send JSON frames `{ "id": 1, "method": "tools/list" }`, `{ "id": 2, "method": "tools/call", "params": { "name": "owner_status", "arguments": {} } }`, or `{ "id": 3, "method": "events/subscribe", "params": { "topics": ["pids_changed"] } }`. Responses echo `id` with `result` or `error`; subscribed connections receive `{ "method": "events/changed", "params": { "topic": "pids_changed" } }`. Scoped events also require `scope` in subscription params. Notices have no payload and are not replayed; snapshot state after subscribing and after each notice. If the upstream socket closes, the listener sends `events/disconnected`; resubscribe and snapshot again. The listener accepts local browser origins; set `AGENTSTACK_WEBSOCKET_ORIGIN` to pin a specific origin.
 
-To create an account, call `account_login_start` with `{}` on the auth Package API (also available in Inspector), open the returned `authUrl` in a browser on the same machine, and enter the `userCode` at the provider. Poll `account_login_status` (or subscribe to `login_changed`) until the attempt completes. The result's `account` is its immutable ID; `account_list` returns IDs and the active choice. Use `account_login_replace` with an existing ID to sign in again. The first account becomes active; `account_activate` chooses the ID for newly created Servers when available. A new Server may also start unbound. Existing Servers retain their main thread and account assignment across restarts; `server_assign` or `bot_assign` changes the assignment without restarting the process. Sign-in does not alter the regular Codex CLI account.
+To create an account, call `account_login_start` with `{}` on the auth Package API (also available in Inspector), open the returned `authUrl` in a browser on the same machine, and enter the `userCode` at the provider. Poll `account_login_status` (or subscribe to `login_changed`) until the attempt completes. The result's `account` is its immutable ID; `account_list` returns IDs and the active choice. Use `account_login_replace` with an existing ID to sign in again. The first account becomes active; `account_activate` chooses the ID for newly created bots when available. A bot may also start unbound. Existing bots retain their main thread and account assignment across restarts; `bot_assign` changes the assignment without restarting the process. Sign-in does not alter the regular Codex CLI account.
 
 Structured documents for every package API — operations with their JSON Schemas, event topics, and configured transports — come from the `api` socket: `docs_list` names the packages, `docs_get` returns one package's document, and `docs_snapshot` returns one consistent catalog for a full reference. MCP and WebSocket URLs are included when their ports are fixed.
 
@@ -31,7 +31,7 @@ URL).
 The owner also starts the standalone UI app at `http://127.0.0.1:8745/` and
 prints this index URL.
 Its root lists current local links, Package API URLs, owner processes, and
-running Codex Servers; the blank experiment canvas is at `/x`. Both pages
+running bots; the live canvas is at `/x`. Both pages
 serve markdown twins at `/index.md` and `/x.md`. The owner
 also prints the canvas URL. Set `AGENTSTACK_UIX_PORT` before starting to choose
 another port. `pnpm build` prepares `packages/uix` for `agentstack serve`.
@@ -48,19 +48,20 @@ Tool listings come from the running socket Servers, so they reflect their
 current operation definitions. The Inspector stays available without an open
 browser tab, and the owner stops it on shutdown.
 
-To serve only the Codex Package API, without the process owner:
+To serve only the Bots Package API, without the process owner:
 
 ```sh
-node packages/api/dist/src/cli.js codex socket
+node packages/api/dist/src/cli.js bots socket
 ```
 
-The command prints its Unix socket path. The two commands use the same state directory and cannot own the Codex socket at the same time. Stop either command with Ctrl-C and wait for it to exit before starting another instance.
+The command prints its Unix socket path. The two commands use the same state directory and cannot own the bots socket at the same time. Stop either command with Ctrl-C and wait for it to exit before starting another instance.
 
 See [operations](operations.md) for state, shutdown, and recovery, and [security](security.md) for the local trust boundary.
 
-All Codex app servers use `~/.local/libexec/codexnk/codex`. The `server_start`
-request accepts `cwd`, optional `id`, and optional `args`; executable selection
-is not configurable. A new Server returns `mainThreadId: null`; connect a TUI
+All bots use `~/.local/libexec/codexnk/codex`. `bot_start` with `{}` allocates the
+next `bot-N` and a private workspace. Supply `id`, `cwd`, or `args` to override
+those launch choices; a supplied external directory remains yours. Executable selection
+is not configurable. A new bot returns `mainThreadId: null`; connect a TUI
 with `codex --remote <url>` to create its first thread and send a turn. Once
 durable, that thread becomes `mainThreadId` and can be joined later with
 `codex --remote <url> resume <mainThreadId>`.

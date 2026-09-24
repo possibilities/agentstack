@@ -69,7 +69,7 @@ test("legacy ordinal references migrate atomically across credentials and Server
     assert.deepEqual(migrated.boundServerIds(account.id), ["bound"]);
     migrated.beginRemoval(account.id);
     assert.throws(() => migrated.accountCredentials(account.id), /unavailable/);
-    assert.throws(() => migrated.removeAccount(account.id), /bound Codex Servers/);
+    assert.throws(() => migrated.removeAccount(account.id), /bound bots/);
     const writable = new DatabaseSync(join(root, "configuration.sqlite"));
     writable.prepare("DELETE FROM servers WHERE id = 'bound'").run();
     writable.close();
@@ -92,7 +92,7 @@ test("an account cannot be removed while a Server last launched with it awaits a
     config.close();
     assert.deepEqual(store.boundServerIds(launched.id), ["pending"]);
     assert.deepEqual(store.boundServerIds(assigned.id), ["pending"]);
-    assert.throws(() => store.removeAccount(launched.id), /bound Codex Servers/);
+    assert.throws(() => store.removeAccount(launched.id), /bound bots/);
     assert.equal(store.listAccounts().find(({ id }) => id === launched.id)?.removing, true);
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 });

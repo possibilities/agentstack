@@ -12,7 +12,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
-const socketNames = ["api", "auth", "capabilities", "codex", "bots", "owner"];
+const socketNames = ["api", "auth", "capabilities", "bots", "owner"];
 
 test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then shuts them down", { timeout: 120_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-serve-"));
@@ -41,7 +41,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
       children: Array<{ name: string; pid: number | null; running: boolean }>;
     };
     assert.equal(status.pid, child.pid);
-    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["api", "auth", "bots", "capabilities", "codex", "inspector", "uix", "websocket"]);
+    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["api", "auth", "bots", "capabilities", "inspector", "uix", "websocket"]);
     for (let i = 0; i < 200 && status.children.some((entry) => !entry.running); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
       status = (await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} })) as typeof status;
@@ -92,7 +92,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     assert.equal(servers?.status, 200, stderr);
-    assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["auth", "bots", "capabilities", "codex", "owner"]);
+    assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["auth", "bots", "capabilities", "owner"]);
     const inspectorUrl = `http://127.0.0.1:${inspectorPort}/`;
     assert.equal((await fetch(inspectorUrl)).status, 200);
     const catalogDir = (await readdir(stateDir)).find((entry) => entry.startsWith("inspector-"));
@@ -145,7 +145,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     assert.equal(page.status, 200);
     assert.equal(page.headers.get("cache-control"), "no-store");
     const html = await page.text();
-    assert.match(html, /id="package-codex"/);
+    assert.match(html, /id="package-bots"/);
     assert.match(html, /href="\/docs\/site\.css"/);
     assert.match(html, /src="\/docs\/site\.js"/);
     const revision = await fetch(`${docsUrl}/revision`);
@@ -166,10 +166,10 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     assert.equal(index?.status, 200, stderr);
     const indexHtml = await index.text();
     assert.match(indexHtml, /<h1[^>]*>AgentStack<\/h1>/);
-    assert.match(indexHtml, /Local links and Server processes/);
+    assert.match(indexHtml, /Local links and bot processes/);
     assert.match(indexHtml, /Package API reference/);
     assert.match(indexHtml, /MCP Inspector/);
-    assert.match(indexHtml, /No running Codex Servers/);
+    assert.match(indexHtml, /No running bots/);
     assert.match(indexHtml, /Package API URLs/);
     assert.ok(indexHtml.includes(uixUrl));
     assert.ok(indexHtml.includes(docsUrl));

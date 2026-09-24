@@ -10,7 +10,7 @@ const geistMono = Geist_Mono({ subsets: ["latin"], variable: "--font-mono" });
 
 export const metadata: Metadata = {
   title: "AgentStack",
-  description: "Local AgentStack links and running Servers.",
+  description: "Local AgentStack links and running bots.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

@@ -216,41 +216,6 @@ importers:
       '@agentstack/api':
         specifier: workspace:*
         version: link:../api
-      '@agentstack/codex':
-        specifier: workspace:*
-        version: link:../codex
-      zod:
-        specifier: ^4.6.5
-        version: 4.6.5
-    devDependencies:
-      '@types/node':
-        specifier: ^26.6.2
-        version: 26.6.2
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
-  packages/capabilities:
-    dependencies:
-      '@agentstack/api':
-        specifier: workspace:*
-        version: link:../api
-      zod:
-        specifier: ^4.6.5
-        version: 4.6.5
-    devDependencies:
-      '@types/node':
-        specifier: ^26.6.2
-        version: 26.6.2
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
-  packages/codex:
-    dependencies:
-      '@agentstack/api':
-        specifier: workspace:*
-        version: link:../api
       '@agentstack/auth':
         specifier: workspace:*
         version: link:../auth
@@ -270,6 +235,22 @@ importers:
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.1
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  packages/capabilities:
+    dependencies:
+      '@agentstack/api':
+        specifier: workspace:*
+        version: link:../api
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.2
+        version: 26.6.2
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -295,9 +276,6 @@ importers:
       '@agentstack/bots':
         specifier: workspace:*
         version: link:../bots
-      '@agentstack/codex':
-        specifier: workspace:*
-        version: link:../codex
       '@agentstack/docs':
         specifier: workspace:*
         version: link:../docs

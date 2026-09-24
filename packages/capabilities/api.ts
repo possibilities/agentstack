@@ -24,7 +24,7 @@ export const bundleSnapshot = operation({
   async call(ctx: CapabilitiesContext) { return ctx.store.snapshot(); },
 });
 export const bundlePreview = operation({
-  name: "bundle_preview", description: "Preview the exact developer instruction text rendered for the next Server or Bot launch; descriptions and titles are excluded.",
+  name: "bundle_preview", description: "Preview the exact developer instruction text rendered for the next bot launch; descriptions and titles are excluded.",
   input: z.strictObject({}), output: preview, annotations: { title: "Preview default bundle", readOnlyHint: true },
   async call(ctx: CapabilitiesContext) { const value = ctx.store.snapshot(); return { revision: value.revision, rendered: renderInstructions(value) }; },
 });

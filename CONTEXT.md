@@ -8,7 +8,7 @@ _Avoid_: MCP server, endpoint, route
 
 ## Transport
 
-A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are the names. `mcp` exposes operations over loopback HTTP through the running socket Servers; it does not expose event subscriptions. `websocket` exposes operations and event subscriptions over a shared loopback listener, forwarding to those same socket Servers.
+A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are the names. `mcp` exposes operations over loopback HTTP through the running socket Package APIs; it does not expose event subscriptions. `websocket` exposes operations and event subscriptions over a shared loopback listener, forwarding to those same socket Package APIs.
 
 _Avoid_: protocol, binding
 
@@ -18,27 +18,21 @@ A named change notice a Package API publishes on an event-capable transport. Top
 
 _Avoid_: stream, feed, pubsub
 
-## Server
-
-One named composition of a Package API. The name is the namespace for its socket.
-
-_Avoid_: daemon, service, app
-
 ## Codex account
 
-An AgentStack-owned sign-in credential with an immutable account ID managed by the `auth` Package API for a managed Codex Server. One account is active for new Servers. A Server may be created unbound. An existing Server changes account only through assignment, then the next start after a stop. A running Server reports both its assignment and its launched identity. Removing either account deletes that Server. A Server never takes a human-facing ordinal. A future UI may present dense `codex-N` labels derived from the current account list. _Avoid_: Codex home, capability profile
+An AgentStack-owned sign-in credential with an immutable account ID managed by the `auth` Package API for Bots. One account is active for new Bots. A Bot may be created unbound. An existing Bot changes account only through assignment, then the next start after a stop. A running Bot reports both its assignment and its launched identity. Removing either account deletes that Bot. Accounts never take a durable human-facing ordinal. A UI may present dense `codex-N` labels derived from the current account list. _Avoid_: Codex home, capability profile
 
 ## Main thread
 
-The single Codex thread ID retained by a managed Server. A fresh Server has no main thread until the first persistent root thread created by a connected UI has a durable turn; later Server launches resume that ID. Only this root and its descendants belong to AgentStack's view of the Server. Other Codex top-level threads on the same socket are ignored.
+The single Codex thread ID retained by a Bot. A fresh Bot has no main thread until the first persistent root thread created by a connected UI has a durable turn; later Bot launches resume that ID. Only this root and its descendants belong to AgentStack's view of the Bot. Other Codex top-level threads on the same socket are ignored.
 
 ## Bot
 
-A numbered Codex Server with a private workspace and, after its first turn, a durable main thread. A Bot may start without an account. Assign an account, then stop and start, before a turn. Turns require a bound account. Bots restart on AgentStack startup and resume their main thread when one exists.
+A Codex app-server process with, after its first turn, a durable main thread. By default it is numbered `bot-N` with a private workspace; `bot_start` can override its ID, working directory, and launch arguments. A Bot may start without an account. Assign an account, then stop and start, before a turn. Turns require a bound account. Bots restart on AgentStack startup and resume their main thread when one exists.
 
 ## Default capabilities bundle
 
-AgentStack's shared specification for every managed Server and Bot: ordered instruction fragments, owner MCP connections, and a reserved skills directory. Each process receives a private launch snapshot through codexnk's `--capabilities` directory. Edits affect later launches, not a running process. _Avoid_: system-prompt flag, live prompt file
+AgentStack's shared specification for every Bot: ordered instruction fragments, owner MCP connections, and a reserved skills directory. Each process receives a private launch snapshot through codexnk's `--capabilities` directory. Edits affect later launches, not a running process. _Avoid_: system-prompt flag, live prompt file
 
 ## Category
 
@@ -50,6 +44,6 @@ A durable, ordered developer-instruction body with a stable ID and human-only ti
 
 ## Voice call
 
-One ephemeral, full-duplex WebRTC audio session into a running Server's existing main thread. The Codex Package API relays an SDP offer and answer, tracks the exact call ID, and stops only native realtime on hang-up; it never creates a thread or ends a turn. A Bot is callable through its underlying Codex Server ID. The browser owns microphone capture and speaker playback.
+One ephemeral, full-duplex WebRTC audio session into a running Bot's existing main thread. The Bots Package API relays an SDP offer and answer, tracks the exact call ID, and stops only native realtime on hang-up; it never creates a thread or ends a turn. The browser owns microphone capture and speaker playback.
 
 _Avoid_: voice agent, voice thread

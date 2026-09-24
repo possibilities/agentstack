@@ -37,7 +37,7 @@ export type PackageDoc = {
   transports: TransportDoc[];
 };
 
-export type Server = {
+export type Bot = {
   id: string;
   pid: number | null;
   cwd: string;
@@ -83,7 +83,7 @@ export type OwnerStatus = {
 
 export type VoiceCall = {
   sessionId: string;
-  serverId: string;
+  botId: string;
   threadId: string;
   phase: "dialing" | "connected";
 };
@@ -94,8 +94,7 @@ export type Snapshot = {
   owner: Resource<OwnerStatus>;
   accounts: Resource<Account[]>;
   login: Resource<Login | null>;
-  servers: Resource<Server[]>;
-  bots: Resource<Server[]>;
+  bots: Resource<Bot[]>;
   voice: Resource<VoiceCall | null>;
   catalog: Resource<PackageDoc[]>;
   endpoints: Record<string, string>;
@@ -116,7 +115,6 @@ export type NodeRef =
   | { kind: "child"; id: string }
   | { kind: "account"; id: string }
   | { kind: "login" }
-  | { kind: "server"; id: string }
   | { kind: "bot"; id: string }
   | { kind: "package"; id: string }
   | { kind: "operation"; id: string; pkg: string };

@@ -8,12 +8,11 @@ import { cn } from "@/lib/utils";
 import { StatusDot, Time } from "./primitives";
 import type { Mode } from "./provider";
 
-export type Accent = "owner" | "auth" | "codex" | "bots" | "api" | "events";
+export type Accent = "owner" | "auth" | "bots" | "api" | "events";
 
 export const accentTile: Record<Accent, string> = {
   owner: "bg-pkg-owner/15 text-pkg-owner",
   auth: "bg-pkg-auth/15 text-pkg-auth",
-  codex: "bg-pkg-codex/15 text-pkg-codex",
   bots: "bg-pkg-bots/15 text-pkg-bots",
   api: "bg-pkg-api/15 text-pkg-api",
   events: "bg-pkg-events/15 text-pkg-events",
@@ -22,7 +21,6 @@ export const accentTile: Record<Accent, string> = {
 export const accentText: Record<Accent, string> = {
   owner: "text-pkg-owner",
   auth: "text-pkg-auth",
-  codex: "text-pkg-codex",
   bots: "text-pkg-bots",
   api: "text-pkg-api",
   events: "text-pkg-events",
@@ -31,7 +29,6 @@ export const accentText: Record<Accent, string> = {
 export const accentBg: Record<Accent, string> = {
   owner: "bg-pkg-owner",
   auth: "bg-pkg-auth",
-  codex: "bg-pkg-codex",
   bots: "bg-pkg-bots",
   api: "bg-pkg-api",
   events: "bg-pkg-events",

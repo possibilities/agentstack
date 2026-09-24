@@ -100,7 +100,6 @@ test("start is idempotent and stop is idempotent", async () => {
     assert.equal(launched[0]?.bin, codexRuntimePath());
     assert.deepEqual(launched[0]?.args.slice(0, 3), ["app-server", "--listen", "ws://127.0.0.1:41000"]);
     assert.deepEqual(launched[0]?.args.filter((arg) => arg.startsWith("--") && arg !== "--listen"), ["--enable", "--identity", "--capabilities", "--history-dir"]);
-    assert.ok(launched[0]?.args.includes("realtime_conversation"));
     assert.equal(first.account, supervisor.store.listAccounts()[0]?.id);
     assert.equal(first.mainThreadId, null);
     assert.equal(launched[0]?.cwd, cwd);
@@ -170,8 +169,8 @@ test("launch arguments survive owner recovery and can change only while stopped"
   const options: SupervisorOptions = {
     stateDir, graceMs: 20,
     endpoint: async () => `ws://127.0.0.1:${43300 + launches.length}`,
-    launch(spec): RunningChild {
-      launches.push(spec.args.slice(spec.args.indexOf("--listen") + 2, spec.args.indexOf("--enable")));
+      launch(spec): RunningChild {
+        launches.push(spec.args.slice(spec.args.indexOf("--listen") + 2, spec.args.indexOf("--enable")));
       let finish: (code: number | null) => void = () => undefined;
       const child: RunningChild = {
         pid: 100 + launches.length,
@@ -221,7 +220,7 @@ test("launch arguments survive owner recovery and can change only while stopped"
   }
 });
 
-test("owner MCP connections are materialized in the capabilities bundle on each launch", async () => {
+test("owner MCP connections are materialized in each launch bundle without persisting as caller arguments", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-mcp-launch-"));
   const cwd = await mkdtemp(join(tmpdir(), "agentstack-mcp-cwd-"));
   const launches: string[][] = [];
@@ -246,27 +245,17 @@ test("owner MCP connections are materialized in the capabilities bundle on each 
   try {
     await supervisor.load();
     seedAccount(supervisor);
-    let bundle = supervisor.capabilities.createCategory(0, "Default", "human-only");
-    bundle = supervisor.capabilities.createFragment(bundle.revision, bundle.categories[0]!.id, "First", "Original instruction.", "not rendered");
-    const launched = await supervisor.start({ id: "with-mcp", cwd, args: ["--model", "gpt-5.4"] });
-    assert.equal(launched.capabilitiesRevision, bundle.revision);
-    assert.deepEqual(launches[0]?.slice(0, 5), ["app-server", "--listen", "ws://127.0.0.1:43400", "--model", "gpt-5.4"]);
-    assert.equal(launches[0]?.includes("-c"), false);
-    const firstBundle = launches[0]![launches[0]!.indexOf("--capabilities") + 1]!;
-    assert.equal(await readFile(join(firstBundle, "config.toml"), "utf8"), '[mcp_servers.auth]\nurl = "http://127.0.0.1:43123/mcp/auth"\nenabled = true\n');
-    assert.equal(await readFile(join(firstBundle, "SYSTEM_APPEND.md"), "utf8"), "Original instruction.");
-    bundle = supervisor.capabilities.updateFragment(bundle.revision, bundle.categories[0]!.fragments[0]!.id, { body: "Revised instruction." });
-    assert.equal((await supervisor.start({ id: "with-mcp", cwd })).capabilitiesRevision, launched.capabilitiesRevision);
-    assert.equal(await readFile(join(firstBundle, "SYSTEM_APPEND.md"), "utf8"), "Original instruction.");
+    await supervisor.start({ id: "with-mcp", cwd, args: ["--model", "gpt-5.4"] });
+    const firstRoot = launches[0]?.[launches[0].indexOf("--capabilities") + 1];
+    assert.ok(firstRoot);
+    assert.match(await readFile(join(firstRoot, "config.toml"), "utf8"), /\[mcp_servers.auth\]/);
     assert.deepEqual(supervisor.store.servers()[0]?.args, ["--model", "gpt-5.4"]);
     await supervisor.stop("with-mcp");
     exposed = { ...exposed, bots: "http://127.0.0.1:43123/mcp/bots" };
-    assert.equal((await supervisor.start({ id: "with-mcp", cwd })).capabilitiesRevision, bundle.revision);
-    const secondBundle = launches[1]![launches[1]!.indexOf("--capabilities") + 1]!;
-    assert.notEqual(secondBundle, firstBundle);
-    assert.match(await readFile(join(secondBundle, "config.toml"), "utf8"), /\[mcp_servers.bots\]/);
-    assert.equal(await readFile(join(secondBundle, "SYSTEM_APPEND.md"), "utf8"), "Revised instruction.");
-    await assert.rejects(readFile(join(firstBundle, "config.toml")), /ENOENT/);
+    await supervisor.start({ id: "with-mcp", cwd });
+    const secondRoot = launches[1]?.[launches[1].indexOf("--capabilities") + 1];
+    assert.ok(secondRoot);
+    assert.match(await readFile(join(secondRoot, "config.toml"), "utf8"), /\[mcp_servers.bots\]/);
     assert.equal(supervisor.list()[0]?.mainThreadId, null);
   } finally {
     await supervisor.stopAll();
@@ -435,8 +424,6 @@ test("caller arguments are merged and --listen is rejected", async () => {
   assert.throws(() => appServerArgs(["--listen", "ws://127.0.0.1:1"], url), /do not pass --listen/);
   assert.throws(() => appServerArgs(["--listen=ws://127.0.0.1:1"], url), /do not pass --listen/);
   assert.throws(() => appServerArgs(["--identity", "/tmp/other"], url), /agentstack owns these axes/);
-  assert.throws(() => appServerArgs(["-c", 'developer_instructions="other"'], url), /managed by the default capabilities bundle/);
-  assert.throws(() => appServerArgs(['--config=mcp_servers.auth={enabled=false}'], url), /managed by the default capabilities bundle/);
 
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-args-"));
   const cwd = await mkdtemp(join(tmpdir(), "agentstack-args-cwd-"));

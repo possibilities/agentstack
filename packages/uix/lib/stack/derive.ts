@@ -1,4 +1,4 @@
-import type { Account, Server } from "./types";
+import type { Account, Bot } from "./types";
 
 export function shortId(id: string | null | undefined, length = 8): string {
   if (!id) return "—";
@@ -38,8 +38,8 @@ export function clockTime(at: number): string {
   return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 }
 
-export function serversFor(accountId: string, servers: Server[] | null): Server[] {
-  return (servers ?? []).filter((server) => server.account === accountId || server.runningAccount === accountId);
+export function botsFor(accountId: string, bots: Bot[] | null): Bot[] {
+  return (bots ?? []).filter((bot) => bot.account === accountId || bot.runningAccount === accountId);
 }
 
 /** Buckets event timestamps into `count` bins ending now. */

@@ -16,7 +16,6 @@ const loginStateSchema = z.object({
 export type AuthContext = {
   store: AuthStore;
   login: LoginManager;
-  codexSocket: string;
   botsSocket: string;
   onAccountsChanged: (() => void) | undefined;
 };
@@ -29,7 +28,7 @@ export const accountList = operation({
 });
 
 export const accountActivate = operation({
-  name: "account_activate", description: "Use this Codex account for newly created app servers.",
+  name: "account_activate", description: "Use this Codex account for newly created bots.",
   input: z.strictObject({ id: accountId }), output: accountSchema,
   annotations: { title: "Select active account" },
   async call(ctx: AuthContext, { id }) {
@@ -40,20 +39,15 @@ export const accountActivate = operation({
 });
 
 export const accountRemove = operation({
-  name: "account_remove", description: "Stop and delete Servers assigned to or last launched with this account, then delete the account and credentials. If interrupted, retry the same ID to finish removal.",
+  name: "account_remove", description: "Stop and delete bots assigned to or last launched with this account, then delete the account and credentials. If interrupted, retry the same ID to finish removal.",
   input: z.strictObject({ id: accountId }), output: z.object({ accounts: z.array(accountSchema) }),
   annotations: { title: "Remove account", destructiveHint: true },
   async call(ctx: AuthContext, { id }) {
     ctx.store.beginRemoval(id);
     ctx.onAccountsChanged?.();
     const bound = ctx.store.boundServerIds(id);
-    const botIds = bound.some((serverId) => /^bot-[1-9][0-9]*$/.test(serverId))
-      ? new Set(((await socketCall(ctx.botsSocket, "tools/call", { name: "bot_list", arguments: {} })) as { bots: Array<{ id: string }> }).bots.map((bot) => bot.id))
-      : new Set<string>();
     for (const serverId of bound) {
-      await socketCall(botIds.has(serverId) ? ctx.botsSocket : ctx.codexSocket, "tools/call", {
-        name: botIds.has(serverId) ? "bot_remove" : "server_remove", arguments: { id: serverId },
-      }, { timeoutMs: 30_000 });
+      await socketCall(ctx.botsSocket, "tools/call", { name: "bot_remove", arguments: { id: serverId } }, { timeoutMs: 30_000 });
     }
     ctx.store.removeAccount(id);
     ctx.onAccountsChanged?.();
@@ -123,7 +117,7 @@ export const api: PackageApi<AuthContext, AuthTopic> = {
     await mkdir(dir, { recursive: true, mode: 0o700 });
     await chmod(dir, 0o700);
     const store = new AuthStore(dir);
-    return { store, login: new LoginManager(store), codexSocket: socketPath("codex", env), botsSocket: socketPath("bots", env), onAccountsChanged: undefined };
+    return { store, login: new LoginManager(store), botsSocket: socketPath("bots", env), onAccountsChanged: undefined };
   },
   async closeContext(ctx) {
     await ctx.login.close();

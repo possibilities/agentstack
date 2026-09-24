@@ -52,7 +52,7 @@ test("voice dials only an adopted main thread, relays SDP, and stops without tou
     await until(() => methods.includes("thread/realtime/start"));
     emitAnswer();
     assert.deepEqual(await dialing, { sessionId: id, answer: "answer" });
-    assert.deepEqual(voice.status(), { sessionId: id, serverId: "bot-1", threadId: "main", phase: "connected" });
+    assert.deepEqual(voice.status(), { sessionId: id, botId: "bot-1", threadId: "main", phase: "connected" });
     assert.equal(changes, 2);
     assert.deepEqual(await voice.hangup(id), null);
     assert.equal(voice.status(), null);
@@ -75,7 +75,7 @@ test("voice dials only an adopted main thread, relays SDP, and stops without tou
   }
 });
 
-test("voice refuses Servers without a verified, durable main thread", async () => {
+test("voice refuses bots without a verified, durable main thread", async () => {
   const voice = new VoiceCalls(() => [server("ws://127.0.0.1:1", null)]);
   await assert.rejects(voice.dial("bot-1", crypto.randomUUID(), "offer"), /durable main thread/);
   assert.equal(voice.status(), null);

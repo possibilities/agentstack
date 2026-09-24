@@ -16,7 +16,6 @@ import {
   PlusIcon,
   ScanIcon,
   SearchIcon,
-  ServerIcon,
   SquareDashedMousePointerIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -33,7 +32,7 @@ import { Palette, type PaletteAction } from "./palette";
 import { StatusDot } from "./primitives";
 import { StackProvider, useStack, WorkbenchContext, type Mode, type WorkbenchValue } from "./provider";
 import { accentTile, PlacementContext, type Accent, type WindowPlacement } from "./window";
-import { AccountsWindow, ActivityWindow, ApiWindow, BotsWindow, ServersWindow, SystemWindow } from "./windows";
+import { AccountsWindow, ActivityWindow, ApiWindow, BotsWindow, SystemWindow } from "./windows";
 import { VoiceWidget } from "./voice-widget";
 
 type Point = { x: number; y: number };
@@ -46,14 +45,13 @@ const windows: WindowDef[] = [
   { id: "system", title: "System", icon: CpuIcon, accent: "owner", width: 340, column: 0, render: SystemWindow },
   { id: "activity", title: "Activity", icon: ActivityIcon, accent: "events", width: 340, column: 0, render: ActivityWindow },
   { id: "accounts", title: "Accounts", icon: KeyRoundIcon, accent: "auth", width: 320, column: 1, render: AccountsWindow },
-  { id: "servers", title: "Servers", icon: ServerIcon, accent: "codex", width: 380, column: 2, render: ServersWindow },
-  { id: "bots", title: "Bots", icon: BotIcon, accent: "bots", width: 340, column: 3, render: BotsWindow },
-  { id: "api", title: "API", icon: BookOpenIcon, accent: "api", width: 420, column: 4, render: ApiWindow },
+  { id: "bots", title: "Bots", icon: BotIcon, accent: "bots", width: 380, column: 2, render: BotsWindow },
+  { id: "api", title: "API", icon: BookOpenIcon, accent: "api", width: 420, column: 3, render: ApiWindow },
 ];
 const renderers = new Map(windows.map((item) => [item.id, item.render]));
-const gridOrder = ["system", "accounts", "servers", "bots", "activity", "api"];
+const gridOrder = ["system", "accounts", "bots", "activity", "api"];
 const homeWindow: Record<NodeRef["kind"], string> = {
-  owner: "system", child: "system", account: "accounts", login: "accounts", server: "servers", bot: "bots", package: "api", operation: "api",
+  owner: "system", child: "system", account: "accounts", login: "accounts", bot: "bots", package: "api", operation: "api",
 };
 
 const storageKey = "agentstack.uix.canvas.v1";
@@ -71,7 +69,7 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 function initialLayout(): Layout {
   let x = 0;
   const positions: Record<string, Point> = {};
-  for (let column = 0; column <= 4; column += 1) {
+  for (let column = 0; column <= 3; column += 1) {
     const members = windows.filter((item) => item.column === column);
     members.forEach((item, index) => { positions[item.id] = { x, y: index * 520 }; });
     x += Math.max(...members.map((item) => item.width)) + gapX;
@@ -126,7 +124,7 @@ function Shell() {
   const tidied = useCallback((): Record<string, Point> => {
     const positions: Record<string, Point> = {};
     let x = 0;
-    for (let column = 0; column <= 4; column += 1) {
+    for (let column = 0; column <= 3; column += 1) {
       let y = 0;
       const members = windows.filter((item) => item.column === column);
       for (const item of members) {
@@ -159,7 +157,7 @@ function Shell() {
   const primaryView = useCallback((positions: Record<string, Point>): View => {
     const element = viewport.current;
     if (!element) return viewRef.current;
-    const live = windows.filter((item) => item.column <= 3);
+    const live = windows.filter((item) => item.column <= 2);
     const minX = Math.min(...live.map((item) => positions[item.id].x));
     const maxX = Math.max(...live.map((item) => positions[item.id].x + size(item.id).width));
     const availableWidth = element.clientWidth - pad * 2;
@@ -443,7 +441,7 @@ function Shell() {
   );
 }
 
-const packageOrder = ["owner", "auth", "codex", "bots", "api"];
+const packageOrder = ["owner", "auth", "bots", "capabilities", "api"];
 
 function TopBar({ mode, setMode, openPalette }: { mode: Mode; setMode(mode: Mode): void; openPalette(): void }) {
   const { status, endpoints, scoped } = useStack();
@@ -476,7 +474,7 @@ function TopBar({ mode, setMode, openPalette }: { mode: Mode; setMode(mode: Mode
                 <span className="opacity-70">{endpoints[name] ? status[name] ?? "idle" : "no WebSocket endpoint"}</span>
               </span>
             ))}
-            <span className="mt-1 border-t border-background/20 pt-1 opacity-70">{scopedLive} scoped Server subscription{scopedLive === 1 ? "" : "s"}</span>
+            <span className="mt-1 border-t border-background/20 pt-1 opacity-70">{scopedLive} scoped bot subscription{scopedLive === 1 ? "" : "s"}</span>
           </TooltipContent>
         </Tooltip>
       </div>

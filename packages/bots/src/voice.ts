@@ -7,7 +7,7 @@ const REQUEST_TIMEOUT_MS = 15_000;
 
 export type VoiceCall = {
   sessionId: string;
-  serverId: string;
+  botId: string;
   threadId: string;
   phase: "dialing" | "connected";
 };
@@ -21,23 +21,23 @@ type ActiveCall = VoiceCall & {
   finish: (error: Error, answer?: string) => void;
 };
 
-/** A single call across all managed Servers. Codex owns the media; this connection only signals SDP. */
+/** A single call across all bots. Codex owns the media; this connection only signals SDP. */
 export class VoiceCalls {
   private current: ActiveCall | null = null;
   onChange?: () => void;
 
-  constructor(private readonly servers: () => ServerView[], private readonly connect = appServerSocket) {}
+  constructor(private readonly bots: () => ServerView[], private readonly connect = appServerSocket) {}
 
   status(): VoiceCall | null {
     const call = this.current;
-    return call ? { sessionId: call.sessionId, serverId: call.serverId, threadId: call.threadId, phase: call.phase } : null;
+    return call ? { sessionId: call.sessionId, botId: call.botId, threadId: call.threadId, phase: call.phase } : null;
   }
 
-  async dial(serverId: string, sessionId: string, sdp: string): Promise<{ sessionId: string; answer: string }> {
-    if (this.current) throw new Error(`voice call already in progress on ${this.current.serverId}`);
-    const server = this.servers().find((item) => item.id === serverId);
-    if (!server || server.state !== "running" || !server.url || server.recoveryIssue || !server.mainThreadId || !server.runningAccount) {
-      throw new Error(`Server ${serverId} needs a verified running account and a durable main thread before a voice call`);
+  async dial(botId: string, sessionId: string, sdp: string): Promise<{ sessionId: string; answer: string }> {
+    if (this.current) throw new Error(`voice call already in progress on ${this.current.botId}`);
+    const bot = this.bots().find((item) => item.id === botId);
+    if (!bot || bot.state !== "running" || !bot.url || bot.recoveryIssue || !bot.mainThreadId || !bot.runningAccount) {
+      throw new Error(`Bot ${botId} needs a verified running account and a durable main thread before a voice call`);
     }
 
     let resolveAnswer!: (answer: string) => void;
@@ -45,14 +45,14 @@ export class VoiceCalls {
     const answer = new Promise<string>((resolve, reject) => { resolveAnswer = resolve; rejectAnswer = reject; });
     // Reserve synchronously, before any socket or native request can race a second dial.
     const call: ActiveCall = {
-      sessionId, serverId, threadId: server.mainThreadId, phase: "dialing",
+      sessionId, botId, threadId: bot.mainThreadId, phase: "dialing",
       connection: null, startSent: false, ending: false, stop: null,
       finish: (error: Error, value?: string) => value === undefined ? rejectAnswer(error) : resolveAnswer(value),
     };
     this.current = call;
     this.onChange?.();
     let ws: WebSocket;
-    try { ws = this.connect(server.url); }
+    try { ws = this.connect(bot.url); }
     catch (error) { this.release(call); throw error; }
     call.connection = ws;
     const pending = new Map<number, Pending>();

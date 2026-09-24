@@ -15,8 +15,7 @@ const passthrough = { parse: (value) => value };
 const issue = "Recorded process ownership could not be verified. Inspect its PID and endpoint before retrying.";
 
 const record = (id) => ({ id, pid: 4321, cwd: "/tmp/fixture-workspace", url: "unix:///tmp/fixture.sock", state: "running", account: null,
-  runningAccount: null, mainThreadId: "thread-fixture", recoveryIssue: issue });
-const server = record("server-1");
+  runningAccount: null, mainThreadId: "thread-fixture", recoveryIssue: issue, capabilitiesRevision: 1 });
 const bot = record("bot-1");
 const operation = (name, value) => ({ name, description: `${name} fixture`, input: passthrough, output: passthrough, async call() { return value; } });
 const packageDoc = (name, operationName, collection) => ({
@@ -35,7 +34,7 @@ async function availablePort() {
   return port;
 }
 
-test("the index and canvas render a fenced Server and Bot honestly in HTML and Markdown", { timeout: 30_000 }, async () => {
+test("the index and canvas render a fenced bot honestly in HTML and Markdown", { timeout: 30_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-uix-recovery-"));
   const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, NEXT_TELEMETRY_DISABLED: "1" };
   const served = [];
@@ -45,9 +44,8 @@ test("the index and canvas render a fenced Server and Bot honestly in HTML and M
     const definitions = {
       owner: [operation("owner_status", { pid: process.pid, docsUrl: null, indexUrl: null, uixUrl: null, inspectorUrl: null, mcpUrls: {}, children: [] })],
       auth: [operation("account_list", { accounts: [] }), operation("account_login_current", { login: null })],
-      codex: [operation("server_list", { servers: [server, bot] }), operation("voice_status", { call: null })],
-      bots: [operation("bot_list", { bots: [bot] })],
-      api: [operation("docs_snapshot", { packages: [packageDoc("codex", "server_list", "servers"), packageDoc("bots", "bot_list", "bots")] })],
+      bots: [operation("bot_list", { bots: [bot] }), operation("voice_status", { call: null })],
+      api: [operation("docs_snapshot", { packages: [packageDoc("bots", "bot_list", "bots")] })],
     };
     for (const [name, operations] of Object.entries(definitions)) {
       served.push(await serveSocket({ info: { name, description: name, transportDescription: "Fixture socket", path: socketPath(name, env) }, context: {}, operations }));
@@ -76,13 +74,13 @@ test("the index and canvas render a fenced Server and Bot honestly in HTML and M
       assert.match(page, /Needs inspection|needs inspection/);
       assert.match(page, /Recorded process ownership could not be verified/);
     }
-    assert.match(canvas, /server-1/);
     assert.match(canvas, /bot-1/);
     assert.match(canvasMd, /Recovery: Recorded process ownership could not be verified/);
     assert.match(canvas, /Voice call/);
-    assert.match(canvas, /No callable Servers/);
+    assert.match(canvas, /No ready main threads/);
+    assert.match(canvas, /Running bots need recovery inspection before they can be called/);
     assert.match(canvasMd, /No active voice call/);
-    assert.doesNotMatch(index, /server-1[^<]*Running · PID/);
+    assert.doesNotMatch(index, /bot-1[^<]*Running · PID/);
   } finally {
     if (next?.pid) {
       try { process.kill(process.platform === "win32" ? next.pid : -next.pid, "SIGTERM"); } catch (error) { if (error.code !== "ESRCH") throw error; }

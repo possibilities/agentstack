@@ -18,13 +18,13 @@ test("the reference renders all current Package APIs from the discovery socket",
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("cache-control"), "no-store");
     const html = await response.text();
-    for (const name of ["auth", "bots", "capabilities", "codex", "owner"]) assert.match(html, new RegExp(`id="package-${name}"`));
+    for (const name of ["auth", "bots", "capabilities", "owner"]) assert.match(html, new RegExp(`id="package-${name}"`));
     assert.doesNotMatch(html, /id="package-api"/);
-    assert.match(html, /server_start/);
+    assert.match(html, /bot_start/);
     assert.match(html, /accounts_changed/);
     assert.match(html, /events\/subscribe/);
     assert.match(html, /&quot;topics&quot;: \[/);
-    assert.match(html, /id="events-bots"[\s\S]*?&quot;scope&quot;: &quot;bot-1&quot;/);
+    assert.match(html, /id="events-bots"[\s\S]*?voice_changed/);
     assert.match(html, /JSON Schema/);
     assert.match(html, /Generated from <code>api\.docs_snapshot<\/code>/);
     const revision = await fetch(new URL("revision", docs.url));
@@ -39,7 +39,7 @@ test("the reference renders all current Package APIs from the discovery socket",
     const markdownText = await markdown.text();
     assert.match(markdownText, /^# Package API reference/m);
     assert.match(markdownText, /^## auth$/m);
-    assert.match(markdownText, /`server_start`/);
+    assert.match(markdownText, /`bot_start`/);
     assert.match(markdownText, /`accounts_changed`/);
     assert.match(markdownText, /```json\n[\s\S]*"method": "events\/subscribe"/);
     assert.equal((await fetch(new URL(".md", docs.url))).status, 200);

@@ -3,14 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import { HeadphonesIcon, MicIcon, PhoneIcon, PhoneOffIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { Server, VoiceCall } from "@/lib/stack/types";
+import type { Bot } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useStack, useStore } from "./provider";
 
 type LocalPhase = "idle" | "preparing" | "dialing" | "connected" | "ending";
 
-function ready(server: Server): boolean {
-  return server.state === "running" && !server.recoveryIssue && Boolean(server.url && server.mainThreadId && server.runningAccount);
+function ready(bot: Bot): boolean {
+  return bot.state === "running" && !bot.recoveryIssue && Boolean(bot.url && bot.mainThreadId && bot.runningAccount);
 }
 
 function waitForIce(peer: RTCPeerConnection): Promise<void> {
@@ -24,7 +24,7 @@ function waitForIce(peer: RTCPeerConnection): Promise<void> {
 }
 
 export function VoiceWidget() {
-  const { servers, bots, voice, status } = useStack();
+  const { bots, voice, status } = useStack();
   const store = useStore();
   const [target, setTarget] = useState("");
   const [phase, setPhase] = useState<LocalPhase>("idle");
@@ -36,9 +36,20 @@ export function VoiceWidget() {
   const session = useRef<string | null>(null);
   const generation = useRef(0);
 
-  const available = (servers.data ?? []).filter(ready);
-  const botIds = new Set(bots.data?.map((bot) => bot.id));
-  const selected = available.some((server) => server.id === target) ? target : available[0]?.id ?? "";
+  const available = (bots.data ?? []).filter(ready);
+  const running = (bots.data ?? []).filter((bot) => bot.state === "running");
+  const unavailableReason = bots.error
+    ? "Bot list unavailable. Try again when the Bots API reconnects."
+    : !bots.data
+      ? "Loading bots…"
+      : !running.length
+        ? "Start a bot to make a call."
+        : !running.some((bot) => bot.mainThreadId)
+          ? "A running bot needs a durable first turn before its main thread can be called."
+          : !running.some((bot) => bot.mainThreadId && !bot.recoveryIssue)
+            ? "Running bots need recovery inspection before they can be called."
+            : "No running bot has a launched account and endpoint ready for voice.";
+  const selected = available.some((bot) => bot.id === target) ? target : available[0]?.id ?? "";
   const active = voice.data;
   const connected = phase === "connected" && active?.sessionId === session.current;
   const busy = active !== null || phase !== "idle";
@@ -66,12 +77,12 @@ export function VoiceWidget() {
       generation.current++;
       clearMedia();
       setPhase("idle");
-      setMessage("Call ended on the Server.");
+      setMessage("Call ended on the bot.");
     }
   }, [active, voice.error, phase]);
 
   const dial = async () => {
-    if (!selected || busy || status.codex !== "open") return;
+    if (!selected || busy || status.bots !== "open") return;
     const attempt = ++generation.current;
     const id = crypto.randomUUID();
     setMessage(null);
@@ -99,8 +110,8 @@ export function VoiceWidget() {
       await waitForIce(connection);
       if (attempt !== generation.current) return;
       setPhase("dialing");
-      const result = await store.call<{ sessionId: string; answer: string }>("codex", "voice_dial", {
-        serverId: selected, sessionId: id, sdp: connection.localDescription?.sdp,
+      const result = await store.call<{ sessionId: string; answer: string }>("bots", "voice_dial", {
+        botId: selected, sessionId: id, sdp: connection.localDescription?.sdp,
       });
       if (attempt !== generation.current) return;
       await connection.setRemoteDescription({ type: "answer", sdp: result.answer });
@@ -123,7 +134,7 @@ export function VoiceWidget() {
     clearMedia();
     try {
       // The Package API fences stale IDs; a stopped call remains safe to retry.
-      await store.call("codex", "voice_hangup", { sessionId: id });
+      await store.call("bots", "voice_hangup", { sessionId: id });
       if (attempt === generation.current) setPhase("idle");
     } catch (error) {
       if (attempt === generation.current) {
@@ -137,11 +148,11 @@ export function VoiceWidget() {
     <aside data-chrome aria-label="Voice call" className="pointer-events-auto fixed right-3 bottom-16 z-30 w-[min(22rem,calc(100vw-1.5rem))] rounded-2xl border bg-card p-4 text-card-foreground shadow-lg sm:bottom-4">
       <audio ref={audio} autoPlay playsInline className="hidden" />
       <div className="flex items-center gap-3">
-        <span className="flex size-9 items-center justify-center rounded-xl bg-pkg-codex/12 text-pkg-codex"><PhoneIcon className="size-4" /></span>
+        <span className="flex size-9 items-center justify-center rounded-xl bg-pkg-bots/12 text-pkg-bots"><PhoneIcon className="size-4" /></span>
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold">Voice call</h2>
           <p role="status" className="text-xs text-muted-foreground">
-            {active ? `${active.phase === "connected" ? "Connected" : "Dialing"} · ${active.serverId}` : phase === "preparing" ? "Preparing microphone…" : phase === "dialing" ? "Connecting to Codex…" : phase === "ending" ? "Hanging up…" : "Call into a running main thread"}
+            {active ? `${active.phase === "connected" ? "Connected" : "Dialing"} · ${active.botId}` : phase === "preparing" ? "Preparing microphone…" : phase === "dialing" ? "Connecting to Codex…" : phase === "ending" ? "Hanging up…" : "Call an existing main thread"}
           </p>
         </div>
         <span aria-hidden className={cn("size-2 rounded-full", active ? "bg-success" : "bg-muted-foreground/40")} />
@@ -149,13 +160,13 @@ export function VoiceWidget() {
       {!active && phase === "idle" ? (
         <div className="mt-4 flex gap-2">
           <label className="min-w-0 flex-1">
-            <span className="sr-only">Server or Bot</span>
+            <span className="sr-only">Bot</span>
             <select value={selected} onChange={(event) => setTarget(event.target.value)} disabled={!available.length}
               className="h-10 w-full rounded-lg border bg-background px-2.5 text-sm focus-visible:outline-2 focus-visible:outline-ring">
-              {available.length ? available.map((server) => <option key={server.id} value={server.id}>{server.id}{botIds.has(server.id) ? " · Bot" : " · Server"}</option>) : <option value="">No callable Servers</option>}
+              {available.length ? available.map((bot) => <option key={bot.id} value={bot.id}>{bot.id}</option>) : <option value="">No ready main threads</option>}
             </select>
           </label>
-          <Button onClick={() => void dial()} disabled={!selected || status.codex !== "open"} className="h-10 gap-2 rounded-lg"><PhoneIcon /> Dial</Button>
+          <Button onClick={() => void dial()} disabled={!selected || status.bots !== "open"} className="h-10 gap-2 rounded-lg"><PhoneIcon /> Dial</Button>
         </div>
       ) : (
         <div className="mt-4 flex gap-2">
@@ -165,11 +176,11 @@ export function VoiceWidget() {
             setMicrophoneOn(next);
           }} aria-pressed={!microphoneOn} className="h-10 flex-1 gap-2 rounded-lg"><MicIcon />{microphoneOn ? "Mic on" : "Mic off"}</Button> : null}
           {connected ? <Button variant="outline" aria-label="Play response audio" onClick={() => void audio.current?.play()} className="h-10 gap-2 rounded-lg"><HeadphonesIcon /> Play</Button> : null}
-          {session.current || active ? <Button variant="destructive" onClick={() => void hangup()} disabled={phase === "ending" || status.codex !== "open"} className="h-10 flex-1 gap-2 rounded-lg"><PhoneOffIcon /> Hang up</Button> : null}
+          {session.current || active ? <Button variant="destructive" onClick={() => void hangup()} disabled={phase === "ending" || status.bots !== "open"} className="h-10 flex-1 gap-2 rounded-lg"><PhoneOffIcon /> Hang up</Button> : null}
         </div>
       )}
       {message ? <p role="alert" className="mt-3 text-xs text-destructive">{message}</p> : null}
-      {!available.length && !active ? <p className="mt-3 text-xs text-muted-foreground">Start a Server with an account and send its first turn to create a main thread.</p> : null}
+      {!available.length && !active ? <p className="mt-3 text-xs text-muted-foreground">{unavailableReason}</p> : null}
     </aside>
   );
 }

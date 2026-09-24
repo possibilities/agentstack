@@ -30,7 +30,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.deepEqual(
       docs.packages.map((item) => item.name),
-      ["api", "auth", "bots", "capabilities", "codex", "owner"],
+      ["api", "auth", "bots", "capabilities", "owner"],
     );
     assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@agentstack/${item.name}`));
 
@@ -48,29 +48,29 @@ test("the api package serves structured documents for every workspace package", 
     const responseLength = JSON.stringify({ id: 1, result: snapshot }).length + 1;
     assert.ok(responseLength < 750_000, `discovery snapshot exceeds the socket response budget: ${responseLength} characters`);
 
-    const codex = found.get("codex") as PackageDoc;
-    assert.deepEqual(Object.keys(codex.events).sort(), ["servers_changed", "threads_changed", "voice_changed"]);
-    assert.equal(codex.eventScope?.required, false);
+    const bots = found.get("bots") as PackageDoc;
+    assert.deepEqual(Object.keys(bots.events).sort(), ["bots_changed", "threads_changed", "voice_changed"]);
+    assert.equal(bots.eventScope?.required, false);
     assert.deepEqual(
-      codex.operations.map((operation) => operation.name).sort(),
-      ["server_assign", "server_list", "server_remove", "server_start", "server_stop", "voice_dial", "voice_hangup", "voice_status"],
+      bots.operations.map((operation) => operation.name).sort(),
+      ["bot_assign", "bot_list", "bot_remove", "bot_start", "bot_stop", "voice_dial", "voice_hangup", "voice_status"],
     );
-    const start = codex.operations.find((operation) => operation.name === "server_start") as OperationDoc;
+    const start = bots.operations.find((operation) => operation.name === "bot_start") as OperationDoc;
     assert.ok(start.description.length > 0);
     assert.deepEqual(Object.keys((start.inputSchema.properties ?? {}) as object).sort(), ["args", "cwd", "id"]);
     assert.ok((start.outputSchema.properties as Record<string, unknown>).recoveryIssue);
     assert.ok((start.outputSchema.properties as Record<string, unknown>).capabilitiesRevision);
-    const codexSocket = codex.transports.find((transport) => transport.type === "socket") as TransportDoc;
-    assert.equal(codexSocket.supported, true);
-    assert.equal(codexSocket.subscriptions, true);
-    assert.equal(codexSocket.endpoint, join(stateDir, "sockets", "codex.sock"));
-    const codexMcp = codex.transports.find((transport) => transport.type === "mcp") as TransportDoc;
-    assert.equal(codexMcp.supported, true);
-    assert.equal(codexMcp.subscriptions, false);
-    assert.equal(codexMcp.endpoint, "http://127.0.0.1:8743/mcp/codex");
-    const codexWebSocket = codex.transports.find((transport) => transport.type === "websocket") as TransportDoc;
-    assert.equal(codexWebSocket.subscriptions, true);
-    assert.equal(codexWebSocket.endpoint, "ws://127.0.0.1:8744/websocket/codex");
+    const botsSocket = bots.transports.find((transport) => transport.type === "socket") as TransportDoc;
+    assert.equal(botsSocket.supported, true);
+    assert.equal(botsSocket.subscriptions, true);
+    assert.equal(botsSocket.endpoint, join(stateDir, "sockets", "bots.sock"));
+    const botsMcp = bots.transports.find((transport) => transport.type === "mcp") as TransportDoc;
+    assert.equal(botsMcp.supported, true);
+    assert.equal(botsMcp.subscriptions, false);
+    assert.equal(botsMcp.endpoint, "http://127.0.0.1:8743/mcp/bots");
+    const botsWebSocket = bots.transports.find((transport) => transport.type === "websocket") as TransportDoc;
+    assert.equal(botsWebSocket.subscriptions, true);
+    assert.equal(botsWebSocket.endpoint, "ws://127.0.0.1:8744/websocket/bots");
 
     const auth = found.get("auth") as PackageDoc;
     const capabilities = found.get("capabilities") as PackageDoc;
@@ -87,15 +87,11 @@ test("the api package serves structured documents for every workspace package", 
     );
     assert.deepEqual((auth.operations.find((operation) => operation.name === "account_login_start")?.inputSchema.properties ?? {}), {});
 
-    const bots = found.get("bots") as PackageDoc;
-    assert.deepEqual(Object.keys(bots.events).sort(), ["bots_changed", "threads_changed"]);
     assert.deepEqual(bots.eventScope, {
-      description: "Required bot ID. Only changes to that bot are delivered on this subscription.",
+      description: "Optional bot ID. Scoped subscriptions receive changes only for that bot; omit scope to receive global voice and bot notices.",
       example: "bot-1",
-      required: true,
+      required: false,
     });
-    assert.deepEqual(bots.operations.map((operation) => operation.name).sort(), ["bot_assign", "bot_list", "bot_remove", "bot_start", "bot_stop"]);
-    assert.equal(bots.transports.find((transport) => transport.type === "socket")?.subscriptions, true);
 
     const owner = found.get("owner") as PackageDoc;
     assert.deepEqual(Object.keys(owner.events), ["pids_changed"]);

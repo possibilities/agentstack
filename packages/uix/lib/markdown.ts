@@ -2,10 +2,10 @@ import type { IndexData } from "./status";
 
 const code = (value: unknown): string => `\`${String(value ?? "")}\``;
 
-export function renderIndexMarkdown({ owner, servers, links, mcp, children }: IndexData): string {
+export function renderIndexMarkdown({ owner, bots, links, mcp, children }: IndexData): string {
   const lines = [
     "# AgentStack", "",
-    "Local links and Server processes.", "",
+    "Local links and bot processes.", "",
     "## Open", "",
     ...(owner === null
       ? ["Owner status unavailable.", ""]
@@ -16,16 +16,16 @@ export function renderIndexMarkdown({ owner, servers, links, mcp, children }: In
     ...(mcp.length ? [...mcp.map(([name, url]) => `- **${name}** — ${code(url)}`), ""] : ["No MCP URLs available.", ""]),
     "## Owner processes", "",
     ...(children.length ? [...children.map((child) => `- **${child.name}** — Running · PID ${child.pid}`), ""] : ["No running owner processes.", ""]),
-    "## Codex Servers", "",
-    ...(servers === null
-      ? ["Server list unavailable.", ""]
-      : servers.length === 0
-        ? ["No running Codex Servers.", ""]
-        : servers.flatMap((server) => [
-            `- **${server.id}** — ${server.recoveryIssue ? "Needs inspection (reported running state unverified)" : "Running"} · PID ${server.pid}`,
-            ...(server.recoveryIssue ? [`  - Recovery: ${server.recoveryIssue}`] : []),
-            `  - ${code(server.cwd)}`,
-            ...(server.url ? [`  - ${code(server.url)}`] : []),
+    "## Bots", "",
+    ...(bots === null
+      ? ["Bot list unavailable.", ""]
+      : bots.length === 0
+        ? ["No running bots.", ""]
+        : bots.flatMap((bot) => [
+            `- **${bot.id}** — ${bot.recoveryIssue ? "Needs inspection (reported running state unverified)" : "Running"} · PID ${bot.pid}`,
+            ...(bot.recoveryIssue ? [`  - Recovery: ${bot.recoveryIssue}`] : []),
+            `  - ${code(bot.cwd)}`,
+            ...(bot.url ? [`  - ${code(bot.url)}`] : []),
             "",
           ])),
   ];

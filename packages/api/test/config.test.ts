@@ -10,16 +10,14 @@ import { loadPackageApi } from "../src/catalog.js";
 import { serveApi } from "../src/serve.js";
 import { findPackage, workspaceRoot } from "../src/workspace.js";
 
-test("codex declares socket, MCP, and WebSocket transports", async () => {
+test("bots declares socket, MCP, and WebSocket transports", async () => {
   const root = workspaceRoot(dirname(fileURLToPath(import.meta.url)));
-  const codex = await findPackage(root, "codex");
-  assert.equal(codex.config.name, "codex");
-  assert.match(codex.config.description, /Codex app-server/);
-  assert.match(codex.config.socket?.description ?? "", /codex/);
-  assert.match(codex.config.mcp?.description ?? "", /codex/);
-  assert.match(codex.config.websocket?.description ?? "", /codex/i);
-  const codexApi = await loadPackageApi(codex.dir);
-  assert.deepEqual(Object.keys(codexApi.events?.topics ?? {}).sort(), ["servers_changed", "threads_changed", "voice_changed"]);
+  const bots = await findPackage(root, "bots");
+  assert.equal(bots.config.name, "bots");
+  assert.match(bots.config.description, /Codex bots/);
+  assert.ok(bots.config.socket && bots.config.mcp && bots.config.websocket);
+  const botsApi = await loadPackageApi(bots.dir);
+  assert.deepEqual(Object.keys(botsApi.events?.topics ?? {}).sort(), ["bots_changed", "threads_changed", "voice_changed"]);
 });
 
 test("a package API loads from the built sibling api.ts without an index", async () => {

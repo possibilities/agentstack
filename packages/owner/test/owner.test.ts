@@ -11,7 +11,6 @@ import { serveApi, socketCall, socketSubscribe } from "@agentstack/api";
 import { apiChild, authChild, capabilitiesChild, websocketChild } from "../src/children.js";
 import { inspectorChild, inspectorPort } from "../src/inspector.js";
 import { botsChild } from "../src/bots.js";
-import { codexChild } from "../src/codex.js";
 import { startOwner } from "../src/owner.js";
 import { statusSource } from "../src/status.js";
 import { uixChild, uixPort } from "../src/uix.js";
@@ -73,13 +72,13 @@ test("shutdown drains a dependent child before stopping its dependency", async (
 });
 
 test("the owner starts the required socket children", () => {
-  for (const child of [apiChild(), authChild(), capabilitiesChild(), codexChild(), botsChild()]) {
+  for (const child of [apiChild(), authChild(), capabilitiesChild(), botsChild()]) {
     assert.equal(child.command, process.execPath);
     assert.deepEqual(child.args.slice(1), [child.name, "socket"]);
     assert.equal(existsSync(child.args[0] ?? ""), true);
   }
-  assert.deepEqual([apiChild(), authChild(), capabilitiesChild(), codexChild(), botsChild()].map((child) => child.name), ["api", "auth", "capabilities", "codex", "bots"]);
-  assert.deepEqual(codexChild(43123).env, { AGENTSTACK_OWNER_MCP_PORT: "43123" });
+  assert.deepEqual([apiChild(), authChild(), capabilitiesChild(), botsChild()].map((child) => child.name), ["api", "auth", "capabilities", "bots"]);
+  assert.deepEqual(botsChild(43123).env, { AGENTSTACK_OWNER_MCP_PORT: "43123" });
   const websocket = websocketChild();
   assert.equal(websocket.command, process.execPath);
   assert.equal(existsSync(websocket.args[0] ?? ""), true);
@@ -105,9 +104,8 @@ function orphanParent(stateDir: string, keepAlive: boolean) {
   const script = `
     import { startOwner } from ${JSON.stringify(fileURLToPath(new URL("../src/owner.js", import.meta.url)))};
     import { apiChild, authChild, capabilitiesChild } from ${JSON.stringify(fileURLToPath(new URL("../src/children.js", import.meta.url)))};
-    import { codexChild } from ${JSON.stringify(fileURLToPath(new URL("../src/codex.js", import.meta.url)))};
     import { botsChild } from ${JSON.stringify(fileURLToPath(new URL("../src/bots.js", import.meta.url)))};
-    const owner = startOwner([apiChild(), authChild(), capabilitiesChild(), codexChild(), botsChild()], { ...process.env, AGENTSTACK_STATE_DIR: ${JSON.stringify(stateDir)} });
+    const owner = startOwner([apiChild(), authChild(), capabilitiesChild(), botsChild()], { ...process.env, AGENTSTACK_STATE_DIR: ${JSON.stringify(stateDir)} });
     for (const child of owner.children()) console.log(\`PID \${child.name} \${child.pid}\`);
     ${keepAlive ? "setInterval(() => {}, 1000);" : "process.exit(0);"}
   `;
@@ -161,17 +159,17 @@ async function connectable(path: string, timeoutMs = 10_000): Promise<void> {
   throw failure;
 }
 
-const sockets = (stateDir: string) => ["api", "auth", "capabilities", "codex", "bots"].map((name) => join(stateDir, "sockets", `${name}.sock`));
+const sockets = (stateDir: string) => ["api", "auth", "capabilities", "bots"].map((name) => join(stateDir, "sockets", `${name}.sock`));
 
 test("api children shut down when the owner parent dies abruptly", { skip: process.platform === "win32", timeout: 60_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-orphan-"));
   const { parent, pids } = orphanParent(stateDir, true);
   const socks = sockets(stateDir);
   try {
-    await waitFor(() => pids.size === 5 && socks.every(existsSync), 15_000);
+    await waitFor(() => pids.size === 4 && socks.every(existsSync), 15_000);
     for (const sock of socks) await connectable(sock);
     parent.kill("SIGKILL");
-    await waitFor(() => [apiChild(), authChild(), capabilitiesChild(), codexChild(), botsChild()].every((child) => !processAlive(pids.get(child.name))), 15_000);
+    await waitFor(() => [apiChild(), authChild(), capabilitiesChild(), botsChild()].every((child) => !processAlive(pids.get(child.name))), 15_000);
     await waitFor(() => socks.every((sock) => !existsSync(sock)), 15_000);
   } finally {
     if (parent.exitCode === null && parent.signalCode === null) parent.kill("SIGKILL");
@@ -185,8 +183,8 @@ test("api children shut down when the owner exits before they finish starting", 
   const { parent, pids } = orphanParent(stateDir, false);
   const socks = sockets(stateDir);
   try {
-    await waitFor(() => pids.size === 5, 5_000);
-    await waitFor(() => [apiChild(), authChild(), capabilitiesChild(), codexChild(), botsChild()].every((child) => !processAlive(pids.get(child.name))), 15_000);
+    await waitFor(() => pids.size === 4, 5_000);
+    await waitFor(() => [apiChild(), authChild(), capabilitiesChild(), botsChild()].every((child) => !processAlive(pids.get(child.name))), 15_000);
     for (const sock of socks) assert.equal(existsSync(sock), false);
   } finally {
     if (parent.exitCode === null && parent.signalCode === null) parent.kill("SIGKILL");

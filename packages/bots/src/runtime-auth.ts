@@ -7,7 +7,7 @@ import { StateStore, type StoredServer } from "./store.js";
 export type SyncStatus = "updated" | "unchanged" | "stale" | "invalid" | "missing" | "unavailable";
 
 // codexnk creates a random, retained runtime home with tempfile::TempDir::new().
-// A private TMPDIR per Server makes that home discoverable without changing Codex.
+// A private TMPDIR per bot makes that home discoverable without changing Codex.
 export class RuntimeAuth {
   private readonly watchers = new Map<string, FSWatcher>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();

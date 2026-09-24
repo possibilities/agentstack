@@ -19,11 +19,14 @@
   },
   "dependencies": {
     "@agentstack/api": "workspace:*",
-    "@agentstack/codex": "workspace:*",
+    "@agentstack/auth": "workspace:*",
+    "@agentstack/capabilities": "workspace:*",
+    "ws": "^8.21.3",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
+    "@types/ws": "^8.18.1",
     "typescript": "^7.0.2"
   }
 }

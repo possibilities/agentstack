@@ -60,11 +60,11 @@ function resolve(ref: NodeRef, state: StackState): View | null {
     case "account": {
       const account = state.accounts.data?.find((item) => item.id === ref.id);
       if (!account) return null;
-      const bound = (state.servers.data ?? []).filter((server) => server.account === account.id || server.runningAccount === account.id);
+       const bound = (state.bots.data ?? []).filter((bot) => bot.account === account.id || bot.runningAccount === account.id);
       return {
         eyebrow: "Codex account", accent: "auth", title: labels.get(account.id) ?? shortId(account.id), orb: account.id, record: account,
         fields: recordFields(catalog, "auth", "account_list"),
-        related: bound.map((server) => ({ ref: { kind: "server", id: server.id } as NodeRef, label: server.id })),
+         related: bound.map((bot) => ({ ref: { kind: "bot", id: bot.id } as NodeRef, label: bot.id })),
         operations: { pkg: "auth", list: recordOperations(catalog, "auth").filter((operation) => !accountControls.has(operation.name) && !operation.name.startsWith("account_login")) },
         controls: <AccountControls account={account} />,
         events: state.events.filter((event) => event.pkg === "auth"),
@@ -82,24 +82,18 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         events: state.events.filter((event) => event.topic === "login_changed"),
       };
     }
-    case "server":
     case "bot": {
-      const pkg = ref.kind === "bot" ? "bots" : "codex";
-      const list = ref.kind === "bot" ? state.bots.data : state.servers.data;
-      const server = list?.find((item) => item.id === ref.id);
-      if (!server) return null;
-      const isBot = state.bots.data?.some((bot) => bot.id === server.id);
+      const bot = state.bots.data?.find((item) => item.id === ref.id);
+      if (!bot) return null;
       const related: View["related"] = [];
-      if (server.account) related.push({ ref: { kind: "account", id: server.account }, label: `${labels.get(server.account) ?? shortId(server.account)} · assigned` });
-      if (server.runningAccount && server.runningAccount !== server.account) related.push({ ref: { kind: "account", id: server.runningAccount }, label: `${labels.get(server.runningAccount) ?? shortId(server.runningAccount)} · ${server.recoveryIssue ? "last launched" : "running"}` });
-      if (ref.kind === "server" && isBot) related.push({ ref: { kind: "bot", id: server.id }, label: `Bot ${server.id}` });
-      if (ref.kind === "bot") related.push({ ref: { kind: "server", id: server.id }, label: `Codex Server ${server.id}` });
+      if (bot.account) related.push({ ref: { kind: "account", id: bot.account }, label: `${labels.get(bot.account) ?? shortId(bot.account)} · assigned` });
+      if (bot.runningAccount && bot.runningAccount !== bot.account) related.push({ ref: { kind: "account", id: bot.runningAccount }, label: `${labels.get(bot.runningAccount) ?? shortId(bot.runningAccount)} · ${bot.recoveryIssue ? "last launched" : "running"}` });
       return {
-        eyebrow: ref.kind === "bot" ? "Bot" : "Codex Server", accent: ref.kind === "bot" ? "bots" : "codex", title: server.id, record: server,
-        recoveryIssue: server.recoveryIssue,
-        fields: recordFields(catalog, pkg, ref.kind === "bot" ? "bot_list" : "server_list"),
-        related, operations: { pkg, list: recordOperations(catalog, pkg) },
-        events: state.events.filter((event) => event.scope === server.id),
+        eyebrow: "Bot", accent: "bots", title: bot.id, record: bot,
+        recoveryIssue: bot.recoveryIssue,
+        fields: recordFields(catalog, "bots", "bot_list"),
+        related, operations: { pkg: "bots", list: recordOperations(catalog, "bots") },
+        events: state.events.filter((event) => event.scope === bot.id),
       };
     }
     case "package": {

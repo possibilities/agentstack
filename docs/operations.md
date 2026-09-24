@@ -2,73 +2,22 @@
 
 ## Build and verification
 
-`scripts/install.sh --install` installs the exact codexnk release dependency,
-builds AgentStack, and links its editable command. The release installer requires
-GitHub CLI access to `possibilities/codexnk-codex`; it verifies the pinned tag,
-commit and asset checksum. The installed runtime is shared with AgentStart,
-whose consumer pin must stay aligned. Vendor Codex remains untouched.
-
-`pnpm test` rebuilds each package before running compiled tests. `pnpm build` builds all packages. Package builds remove only their own `dist` directory, so deleted compiled files cannot survive a build.
+`scripts/install.sh --install` installs the pinned codexnk release, builds AgentStack, and links its command. `pnpm test` builds packages and runs their compiled tests. `pnpm build` prepares the owner-served UI; do not rebuild its `.next` under a live owner without coordinating a restart.
 
 ## State and processes
 
-State defaults to `~/.local/state/agentstack`. Set `AGENTSTACK_STATE_DIR` to use another location. Each Package API owns `<state>/sockets/<name>.sock` (`api`, `auth`, `codex`, `bots`, and `owner` under `agentstack serve`); Codex app servers use a fresh opaque `<state>/app/<nonce>.sock` path on each launch. Use the running Server's reported URL rather than deriving a path from its ID. Configuration, account IDs, active choice and server records are in `<state>/configuration.sqlite`; Codex credentials are in `<state>/secrets.sqlite`. Existing `<state>/servers/*.json` records are imported once and removed after successful import. App-server output lives under `<state>/logs/<id>.log`. These directories are private to the local user; sockets and databases use mode `0600`.
+State defaults to `~/.local/state/agentstack`; set `AGENTSTACK_STATE_DIR` for disposable checks. The owner runs `api`, `auth`, `bots`, and `capabilities` socket children, a shared WebSocket child, Inspector, and UI canvas. It serves the `owner` Package API, discovery reference, and MCP HTTP in-process. Each Package API has `<state>/sockets/<name>.sock`. Bots launch codexnk on fresh opaque `<state>/app/<nonce>.sock` URLs. Read the reported `url` rather than deriving a socket path.
 
-The `auth` Package API creates an account through device sign-in (`account_login_start` with `{}`, then `account_login_status` or `login_changed` events for its verification URL, one-time code, and result), makes an ID active for new Servers (`account_activate`), signs in again under the same ID (`account_login_replace`), or removes one (`account_remove`). IDs are immutable UUIDs; a UI can number the current accounts densely without changing Server bindings. The first successful sign-in becomes active. Removing an account fences new launches, stops and deletes Servers assigned to or last launched with it (including bot workspaces), deletes its credentials, then selects the oldest remaining account if necessary. This includes Servers pending a restart under another account. A failed removal remains marked for retry under the same ID. New Server history is isolated per Server so it can be removed with it; ambiguous older shared history remains untouched. The login process has a sixteen-minute limit and does not modify ordinary Codex or AgentUsage storage. A new app server may start without an active account. It still receives a private identity directory, an initially empty capabilities directory, and private history storage; the identity directory omits credentials until an account is bound. A new Server binds the active account when one exists. An existing Server changes account only through `server_assign` or `bot_assign`, which do not restart it. Stop it, then start it, before the new account is used. A running Server keeps its launched identity until then; `account` in its view is the assignment and `runningAccount` is the live identity. codexnk receives an ephemeral credential input only when an account is bound at launch.
+The Bots Package API owns every managed Codex process. `bot_start` with `{}` reserves the next `bot-N` and creates `<state>/bots/bot-N` with mode `0700`. A caller can supply `id`, an existing `cwd`, and Codex `args` for the previous `server_start` control. Existing bots reuse their recorded directory and arguments. A different directory cannot be substituted for an existing ID. `args: []` clears saved arguments while stopped; a running bot rejects changes. The raw array lives in `<state>/secrets.sqlite` and is absent from `bot_list`. `bot_remove` deletes a bot's private runtime, history, log, and default workspace, but leaves an external working directory intact. Previously recorded named Codex Servers are listed as Bots with their IDs and directories preserved. The existing SQLite `servers` table and `secrets.server_args` table remain the on-disk migration format.
 
-Each managed Server has a private `<state>/runtime/<id>` temporary root. codexnk creates its own runtime home beneath it. AgentStack watches that home's `auth.json` for a completed refresh and also reconciles it before another launch, after the Server exits, and after owner recovery. Only a valid, strictly later `last_refresh` from the Server's recorded credential generation can replace SQLite credentials. If either timestamp is missing, freshness cannot be established and the database is not overwritten. A missing or partial file is retried; ambiguous or conflicting runtime state remains private for diagnosis instead of replacing a newer database value. Several simultaneous Servers for one account can still race to refresh at the provider; this is best effort. Sign in again under the same account ID when the saved token is exhausted or conflicting. When a stopped Server's runtime copy is definitively stale and the saved generation has advanced, its next launch moves that copy under `<state>/runtime-recovery/<id>/<uuid>` for diagnosis and uses the saved generation. Invalid or ambiguous copies still block the launch. Removing the Server removes its recovery copies.
+An account is an immutable UUID managed by `auth`. The active account binds to a new bot; without one, a bot can launch unbound but cannot take a turn. `bot_assign` records a different account on an existing bot without restarting it. The view's `account` is the assignment and `runningAccount` is the live process identity. Stop and start to apply it. Removing an account fences new launches, removes bots assigned to or last launched with it (including a bot pending reassignment), then removes credentials. A failed removal remains retryable under the same ID. Credentials and runtime copies are private; a strictly later valid refresh can replace the saved generation. Ambiguous or stale copies are retained for inspection rather than replacing newer credentials.
 
-The owner starts its required `api`, `auth`, `codex`, `bots`, WebSocket, Inspector, and UI canvas children in separate process groups and serves the `owner` Package API, docs, and MCP HTTP in-process. If a child fails or exits, the owner reports the failure and shuts down. Normal shutdown closes public ingress and the WebSocket, Inspector, and UI canvas children, drains in-flight calls, then stops `auth`, `bots`, `codex`, and `api` in dependency order. The Codex Server gracefully stops its app servers. Each child is signalled with SIGTERM and escalated to SIGKILL after a bounded grace period. The owner does not restart failed children automatically.
+A fresh bot starts with `mainThreadId: null`. Connect a UI to its `url` (for example, `codex --remote unix://…`) and send a first durable turn. The first persistent root thread with a materialized turn becomes the main thread. Later launches resume that ID and do not substitute another thread after a failed resume. Additional top-level Codex threads are outside AgentStack's bot view. Bot-scoped `threads_changed` notices invalidate state; they do not prove that the sanctioned lineage changed. An optional event scope allows a client to observe one Bot; unscoped subscriptions receive global `voice_changed` and bot notices.
 
-`agentstack serve` hosts the read-only browser reference at its printed
-`http://127.0.0.1:<port>/docs` URL as part of the owner lifecycle. It binds
-only to `127.0.0.1` and reads one `docs_snapshot` from the `api` socket
-on each request. An unavailable discovery socket produces a retryable
-unavailable page. The owner closes the listener on shutdown. The page also
-serves a markdown twin at `index.md` (or with `.md` appended) with the same
-live catalog and unavailable handling. The docs listener does not call
-the other Package APIs or expose their control operations. The
-optional `agentstack docs` command can still run the reference independently.
-If `agentstack serve` is invoked again against a running owner, it reports that
-owner's PID, docs URL, and UI canvas URL and exits without claiming sockets or starting
-children. A fixed MCP port already in use is refused before startup, even if
-the owner socket cannot be reached; an unrelated listener is never assumed to
-be AgentStack.
+The `bots` Package API also owns one ephemeral voice call across all bots. `voice_dial` takes a `botId`, client-generated `sessionId`, and gathered WebRTC SDP offer; it requires a verified running bot with an account and main thread. `voice_status`, `voice_hangup`, and `voice_changed` report and control the call without creating a new thread or transporting media through AgentStack. The canvas uses these operations for its call control.
 
-The standalone Next.js UI app is served by an owned child on `127.0.0.1:8745`
-by default. Its `/` index snapshots the owner and Codex Package APIs on each
-request; `/x` is the experiment canvas, a live workbench that
-snapshots every Package API over sockets, follows the loopback WebSocket
-in the browser, and runs the auth API's operations — sign-in, activation,
-and removal — from its Accounts window, inspector, and command palette.
-Other Package APIs stay read-only there. Both pages serve markdown twins
-(`/index.md`, `/x.md`). Set `AGENTSTACK_UIX_PORT` to
-another available nonzero port before starting the owner. The canvas URL is
-printed and returned by `owner_status` as `uixUrl`, alongside `indexUrl` and the
-current docs, Inspector, and MCP URLs. The child serves the built `packages/uix/.next` output
-and shuts down with the owner. Rebuild and restart the owner after changing the
-app. A port already in use is refused before the owner creates any sockets.
+On each launch, the bot snapshots the default capabilities bundle and currently configured owner MCP URLs into a private `--capabilities` directory, with `SYSTEM_APPEND.md`, `config.toml`, and `skills/`. `capabilitiesRevision` is the last launched revision; edits affect the next launch. The private identity directory is created even for an unbound bot, so the launch never falls back to ambient Codex credentials. The executable is always `~/.local/libexec/codexnk/codex`.
 
-The owner's MCP listener forwards tool calls to their socket Servers. Its
-Inspector child reads a generated, read-only file under `<state>/inspector-*`;
-the file is rewritten when configured MCP Package APIs change and removed on
-shutdown. The Inspector binds to loopback on `AGENTSTACK_INSPECTOR_PORT` (6274
-by default), keeps its own API token, and does not open a browser automatically.
+On startup, the Bots Package API verifies recorded process ownership, reaps children from a previous owner, and relaunches recorded bots, including stopped ones. An unverified PID/endpoint pair remains fenced with `recoveryIssue`; it is not killed merely because the record says running. A verified stop clears the issue. An existing Package API socket is never unlinked to claim a second instance. If `<state>/sockets/bots.sock` is left by a crash, inspect its listener and owner before removing only that verified stale path. App-server sockets are cleaned only after their known child stops.
 
-When the Codex Package API starts, it reaps recorded child processes from a prior owner and launches every recorded Server again, including Bots and manually created Servers. A new Server starts with `mainThreadId: null`. Connect a UI to the Server's `url` (for example, `codex --remote unix://…` without `resume`); the first persistent root thread with a durable turn becomes its main thread. A blank TUI session does not bind it. Subsequent starts resume the stored ID, never substituting another thread after a failed resume. The Codex Package API checks the Server's private history after connecting and on thread changes, so a missed notice can be reconciled after restart. An explicit `server_stop` lasts until the next AgentStack startup. Old unconfirmed-start markers still block restart until their history is inspected.
-
-`server_start` and `bot_start` retain caller-supplied Codex arguments for later launches. Omitting `args` reuses the saved array, while explicit `args: []` clears it. A running Server rejects different arguments; stop it before changing them without losing its main thread. The raw array is stored in `<state>/secrets.sqlite` and is not returned by `server_list` or `bot_list`. Existing records have no saved arguments and start with `[]` until reconfigured.
-
-The owner supplies its bound MCP port to the Codex socket child, including when `AGENTSTACK_MCP_PORT=0`. On each Server launch, AgentStack discovers the currently MCP-configured Package APIs and gives Codex each owner's loopback URL under its Package API name; Bots use the same path. These launch-owned settings are not saved with caller arguments. A running Server retains its current connections until its next start, when newly configured Package APIs are picked up.
-
-Starting a second Package API against the same state directory fails before it loads process records. An existing socket path is never removed during startup. If the previous process crashed and left `<state>/sockets/codex.sock`, first confirm that no Agentstack process is listening (`lsof -U | rg 'codex.sock'` and inspect the owning process). Remove **only that verified stale socket** and start again. Never remove a listening socket to force a second instance. On recovery, AgentStack checks both the recorded process command and the PID's exact listening endpoint before signalling it. If either cannot be verified while the PID remains alive, that Server stays fenced for inspection and other Servers continue. `server_list` and `bot_list` expose a nullable `recoveryIssue`; while set, the persisted `running` state is unverified and the canvas shows “Needs inspection” rather than a healthy process. The issue clears after a verified lifecycle transition. App-server socket paths are cleaned after their known child stops; startup never unlinks an existing app-server path. Inspect its owner and remove only a verified stale path before retrying a launch that reports one.
-
-The `codex` Package API lists stopped records as well as running ones. A failed `server_start` may leave a stopped record for diagnosis; its child is terminated before the call returns an error. A log file can retain output across restarts of the same ID.
-
-The required executable is always `~/.local/libexec/codexnk/codex`, regardless of
-the owner's PATH. A missing runtime is an installation error, not a reason to
-use another Codex. Existing records may retain a `codexBin` provenance field;
-that field does not configure future launches. Reusing a live ID from another
-runtime is refused until the operator stops it. Builds and setup leave running
-processes untouched, so restart an old owner during an authorized maintenance
-window to load the new runtime-selection code.
+The owner refuses a second `serve` against a running instance and checks fixed ports before claiming sockets. On shutdown it closes public ingress, drains active calls while dependencies remain, then stops `auth`, `bots`, `capabilities`, and `api` in order. The Bots child stops its app-server processes. The owner does not restart failed children automatically. The owner-served reference and `/x` canvas reflect the live Package API catalog and have markdown twins at `/docs/index.md` and `/x.md`; the index at `/` has `/index.md`.

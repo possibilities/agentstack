@@ -10,18 +10,17 @@ type Edge = { id: string; from: string; to: string; color: string; dashed?: bool
 type Geometry = Edge & { d: string; start: [number, number]; end: [number, number] };
 
 function useEdges(): Edge[] {
-  const { servers, bots } = useStack();
+  const { bots } = useStack();
   return useMemo(() => {
     const edges: Edge[] = [];
-    for (const server of servers.data ?? []) {
-      if (server.account) edges.push({ id: `${server.id}>${server.account}`, from: `server:${server.id}`, to: `account:${server.account}`, color: accountColor(server.account) });
-      if (server.state === "running" && server.runningAccount && server.runningAccount !== server.account) {
-        edges.push({ id: `${server.id}>>${server.runningAccount}`, from: `server:${server.id}`, to: `account:${server.runningAccount}`, color: "var(--warning)", dashed: true });
+    for (const bot of bots.data ?? []) {
+      if (bot.account) edges.push({ id: `${bot.id}>${bot.account}`, from: `bot:${bot.id}`, to: `account:${bot.account}`, color: accountColor(bot.account) });
+      if (bot.state === "running" && bot.runningAccount && bot.runningAccount !== bot.account) {
+        edges.push({ id: `${bot.id}>>${bot.runningAccount}`, from: `bot:${bot.id}`, to: `account:${bot.runningAccount}`, color: "var(--warning)", dashed: true });
       }
     }
-    for (const bot of bots.data ?? []) edges.push({ id: `bot:${bot.id}`, from: `bot:${bot.id}`, to: `server:${bot.id}`, color: "var(--pkg-bots)" });
     return edges;
-  }, [servers.data, bots.data]);
+  }, [bots.data]);
 }
 
 /**

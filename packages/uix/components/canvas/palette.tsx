@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpenIcon, BotIcon, CircleCheckIcon, CpuIcon, RefreshCwIcon, ServerIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
+import { BookOpenIcon, BotIcon, CircleCheckIcon, CpuIcon, RefreshCwIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
 import { operationTitle } from "@/lib/stack/catalog";
 import { accountLabels, shortId } from "@/lib/stack/derive";
@@ -12,7 +12,7 @@ import { useStack, useWorkbench } from "./provider";
 export type PaletteAction = { id: string; label: string; shortcut?: string; icon: React.ComponentType; run(): void };
 
 export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpenChange(open: boolean): void; actions: PaletteAction[] }) {
-  const { servers, bots, accounts, owner, catalog, attempt } = useStack();
+  const { bots, accounts, owner, catalog, attempt } = useStack();
   const auth = useAuthActions();
   const { focus } = useWorkbench();
   const labels = accountLabels(accounts.data);
@@ -27,29 +27,19 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
   const removable = (account: Account) => !account.removing;
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange} title="Jump to" description="Find a Server, bot, account, process, or operation." className="sm:max-w-lg">
+    <CommandDialog open={open} onOpenChange={onOpenChange} title="Jump to" description="Find a bot, account, process, or operation." className="sm:max-w-lg">
       <Command loop>
-        <CommandInput placeholder="Jump to a Server, account, operation…" />
+        <CommandInput placeholder="Jump to a bot, account, operation…" />
         <CommandList className="max-h-96">
           <CommandEmpty>No matches.</CommandEmpty>
-          {servers.data?.length ? (
-            <CommandGroup heading="Servers">
-              {servers.data.map((server) => (
-                <CommandItem key={server.id} value={`server ${server.id} ${server.cwd}`} onSelect={() => go({ kind: "server", id: server.id })}>
-                  <ServerIcon />
-                  <span className="font-mono">{server.id}</span>
-                  <StatusDot tone={server.state === "running" ? "success" : "muted"} />
-                  <CommandShortcut className="tracking-normal">{server.state}</CommandShortcut>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          ) : null}
           {bots.data?.length ? (
             <CommandGroup heading="Bots">
               {bots.data.map((bot) => (
-                <CommandItem key={bot.id} value={`bot ${bot.id}`} onSelect={() => go({ kind: "bot", id: bot.id })}>
+                <CommandItem key={bot.id} value={`bot ${bot.id} ${bot.cwd}`} onSelect={() => go({ kind: "bot", id: bot.id })}>
                   <BotIcon />
                   <span className="font-mono">{bot.id}</span>
+                  <StatusDot tone={bot.state === "running" ? "success" : "muted"} />
+                  <CommandShortcut className="tracking-normal">{bot.state}</CommandShortcut>
                 </CommandItem>
               ))}
             </CommandGroup>
@@ -145,4 +135,3 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
     </CommandDialog>
   );
 }
-

@@ -13,13 +13,12 @@ import {
   AlertDialogMedia,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Toaster } from "@/components/ui/sonner";
 import { Spinner } from "@/components/ui/spinner";
-import { accountLabels, serversFor, shortId } from "@/lib/stack/derive";
-import type { Account, Login, Server } from "@/lib/stack/types";
+import { accountLabels, botsFor, shortId } from "@/lib/stack/derive";
+import type { Account, Bot, Login } from "@/lib/stack/types";
 import { Orb, StatusDot } from "./primitives";
 import { useOperation, useStack, useStore } from "./provider";
 
@@ -56,15 +55,9 @@ export function useAuthActions(): AuthActions {
   return value;
 }
 
-function usedServers(accountId: string, servers: Server[] | null, bots: Server[] | null): Server[] {
-  const bound = serversFor(accountId, servers);
-  const seen = new Set(bound.map((server) => server.id));
-  return [...bound, ...serversFor(accountId, bots).filter((bot) => !seen.has(bot.id))];
-}
-
 export function AuthActionsProvider({ children }: { children: React.ReactNode }) {
   const store = useStore();
-  const { accounts, servers, bots, attempt } = useStack();
+  const { accounts, bots, attempt } = useStack();
   const start = useOperation<Login>("auth", "account_login_start");
   const replace = useOperation<Login>("auth", "account_login_replace");
   const activateOp = useOperation<Account>("auth", "account_activate");
@@ -173,8 +166,7 @@ export function AuthActionsProvider({ children }: { children: React.ReactNode })
           key={removeTarget.id}
           account={removeTarget}
           label={label(removeTarget.id)}
-          used={usedServers(removeTarget.id, servers.data, bots.data)}
-          botIds={new Set(bots.data?.map((bot) => bot.id))}
+          used={botsFor(removeTarget.id, bots.data)}
           pending={removeOp.pending}
           error={removeOp.error}
           onConfirm={() => void runRemove(removeTarget)}
@@ -186,11 +178,10 @@ export function AuthActionsProvider({ children }: { children: React.ReactNode })
   );
 }
 
-function RemoveAccountDialog({ account, label, used, botIds, pending, error, onConfirm, onClose }: {
+function RemoveAccountDialog({ account, label, used, pending, error, onConfirm, onClose }: {
   account: Account;
   label: string;
-  used: Server[];
-  botIds: Set<string>;
+  used: Bot[];
   pending: boolean;
   error: string | null;
   onConfirm(): void;
@@ -214,14 +205,13 @@ function RemoveAccountDialog({ account, label, used, botIds, pending, error, onC
           {used.length ? (
             <div className="flex flex-col gap-1.5 rounded-lg border bg-background/50 p-2.5">
               <span className="text-[0.72rem] font-medium text-muted-foreground">
-                {used.length} {used.length === 1 ? "Server" : "Servers"} will be stopped and deleted
+                {used.length} {used.length === 1 ? "bot" : "bots"} will be stopped and deleted
               </span>
               <ul className="flex flex-col gap-1">
                 {used.map((server) => (
                   <li key={server.id} className="flex items-center gap-2 font-mono text-[0.78rem]">
                     <StatusDot tone={server.state === "running" ? "success" : "muted"} />
                     {server.id}
-                    {botIds.has(server.id) ? <Badge variant="outline" className="h-4 px-1.5 text-[0.62rem]">bot</Badge> : null}
                   </li>
                 ))}
               </ul>

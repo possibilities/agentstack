@@ -14,7 +14,6 @@ import {
   KeyRoundIcon,
   RadioIcon,
   RefreshCwIcon,
-  ServerIcon,
   ShieldAlertIcon,
   SquareArrowOutUpRightIcon,
   Trash2Icon,
@@ -35,8 +34,8 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { annotationBadges, fieldsOf, findOperation, operationTitle, recordFields } from "@/lib/stack/catalog";
-import { accountLabels, clockTime, histogram, pathParts, serversFor, shortId } from "@/lib/stack/derive";
-import type { Account, Login, OperationDoc, PackageDoc, Server, StackEvent } from "@/lib/stack/types";
+import { accountLabels, botsFor, clockTime, histogram, pathParts, shortId } from "@/lib/stack/derive";
+import type { Account, Bot, Login, OperationDoc, PackageDoc } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
 import { CopyButton, Empty, NodeCard, Orb, Row, Sparkline, StatusDot, Time } from "./primitives";
@@ -165,7 +164,7 @@ export function SystemWindow() {
 /* ─── Accounts ───────────────────────────────────────────────────────── */
 
 export function AccountsWindow() {
-  const { accounts, login, servers, catalog, status, endpoints, attempt } = useStack();
+  const { accounts, login, bots, catalog, status, endpoints, attempt } = useStack();
   const actions = useAuthActions();
   const labels = accountLabels(accounts.data);
 
@@ -186,7 +185,7 @@ export function AccountsWindow() {
 
       {accounts.data?.length ? (
         <div className="flex flex-col gap-2">
-          {accounts.data.map((account) => <AccountCard key={account.id} account={account} label={labels.get(account.id)!} servers={servers.data} />)}
+          {accounts.data.map((account) => <AccountCard key={account.id} account={account} label={labels.get(account.id)!} bots={bots.data} />)}
           <button
             type="button"
             disabled={actions.pendingSignIn}
@@ -210,7 +209,7 @@ export function AccountsWindow() {
       ) : (
         <Empty icon={ShieldAlertIcon} title="Accounts unavailable">{accounts.error ?? "Waiting for the auth socket."}</Empty>
       )}
-      {accounts.data?.length ? <p className="px-0.5 text-[0.7rem] text-pretty text-muted-foreground">The active account binds to newly created Servers. Labels are numbered from the current list; IDs never change.</p> : null}
+      {accounts.data?.length ? <p className="px-0.5 text-[0.7rem] text-pretty text-muted-foreground">The active account binds to newly created bots. Labels are numbered from the current list; IDs never change.</p> : null}
     </Window>
   );
 }
@@ -320,9 +319,9 @@ function SignInCard({ attempt, labels, accounts, catalog }: { attempt: Login; la
   );
 }
 
-function AccountCard({ account, label, servers }: { account: Account; label: string; servers: Server[] | null }) {
+function AccountCard({ account, label, bots }: { account: Account; label: string; bots: Bot[] | null }) {
   const actions = useAuthActions();
-  const used = serversFor(account.id, servers);
+  const used = botsFor(account.id, bots);
   const removing = account.removing || actions.removing === account.id;
   const busy = actions.removing === account.id;
   const activating = actions.activating === account.id;
@@ -371,7 +370,7 @@ function AccountCard({ account, label, servers }: { account: Account; label: str
             <StatusDot tone={server.recoveryIssue ? "warning" : server.state === "running" ? "success" : "muted"} label={server.recoveryIssue ? "Needs inspection" : server.state} className="size-1.5 [&>span]:size-1.5" />
             {server.id}
           </span>
-        )) : <span className="text-[0.7rem] text-muted-foreground">No Servers bound</span>}
+        )) : <span className="text-[0.7rem] text-muted-foreground">No bots bound</span>}
       </div>
       {busy ? (
         <p className="flex items-center gap-1.5 text-[0.72rem] text-muted-foreground"><Spinner className="size-3.5" /> Removing…</p>
@@ -393,10 +392,10 @@ function AccountCard({ account, label, servers }: { account: Account; label: str
   );
 }
 
-/* ─── Servers ────────────────────────────────────────────────────────── */
+/* ─── Bots ───────────────────────────────────────────────────────────── */
 
-function sortServers(servers: Server[]): Server[] {
-  return [...servers].sort((a, b) => Number(Boolean(b.recoveryIssue)) - Number(Boolean(a.recoveryIssue)) || Number(b.state === "running") - Number(a.state === "running") || a.id.localeCompare(b.id, undefined, { numeric: true }));
+function sortBots(bots: Bot[]): Bot[] {
+  return [...bots].sort((a, b) => Number(Boolean(b.recoveryIssue)) - Number(Boolean(a.recoveryIssue)) || Number(b.state === "running") - Number(a.state === "running") || a.id.localeCompare(b.id, undefined, { numeric: true }));
 }
 
 export function RecoveryWarning({ message }: { message: string }) {
@@ -407,79 +406,6 @@ export function RecoveryWarning({ message }: { message: string }) {
     </p>
   );
 }
-
-export function ServersWindow() {
-  const { servers, bots, accounts, catalog, status, endpoints } = useStack();
-  const activity = useActivity();
-  const labels = accountLabels(accounts.data);
-  const fields = recordFields(catalog.data, "codex", "server_list");
-  const botIds = new Set(bots.data?.map((bot) => bot.id));
-  const running = servers.data?.filter((server) => server.state === "running" && !server.recoveryIssue).length ?? 0;
-  const fenced = servers.data?.filter((server) => server.recoveryIssue).length ?? 0;
-
-  return (
-    <Window id="servers" title="Servers" subtitle={servers.data ? `codex · ${running} running · ${fenced} need inspection · ${servers.data.length - running - fenced} stopped` : "codex · app-servers"}
-      icon={ServerIcon} accent="codex" count={servers.data?.length} status={status.codex} endpoint={endpoints.codex} updatedAt={servers.at} error={servers.error}>
-      {servers.data?.length ? (
-        <div className="flex flex-col gap-2">
-          {sortServers(servers.data).map((server) => (
-            <ServerCard key={server.id} server={server} bot={botIds.has(server.id)} labels={labels} fields={fields} events={activity.get(`server:${server.id}`) ?? []} />
-          ))}
-        </div>
-      ) : servers.data ? (
-        <Empty icon={ServerIcon} title="No Codex Servers">server_start launches one; its first UI turn binds the main thread.</Empty>
-      ) : (
-        <Empty icon={ShieldAlertIcon} title="Servers unavailable">{servers.error ?? "Waiting for the codex socket."}</Empty>
-      )}
-    </Window>
-  );
-}
-
-function ServerCard({ server, bot, labels, fields, events }: {
-  server: Server;
-  bot: boolean;
-  labels: Map<string, string>;
-  fields: Map<string, { description: string | null }>;
-  events: StackEvent[];
-}) {
-  const now = useNow();
-  const fenced = Boolean(server.recoveryIssue);
-  const running = server.state === "running" && !fenced;
-  const pendingAssignment = running && server.account !== server.runningAccount;
-  const recent = events[0] && now - events[0].at < 4_000;
-  const hint = (name: string) => fields.get(name)?.description;
-  return (
-    <NodeCard node={{ kind: "server", id: server.id }} label={`server ${server.id}`} lastEvent={events[0]} accent="var(--pkg-codex)">
-      <div className="flex items-center gap-2">
-        <StatusDot tone={fenced ? "warning" : running ? "success" : "muted"} pulse={!fenced && Boolean(recent)} label={fenced ? "Needs inspection" : running ? "Running" : "Stopped"} />
-        <span className="font-mono text-sm font-semibold">{server.id}</span>
-        {bot ? <Badge variant="outline" className="h-4 gap-1 px-1.5 text-[0.62rem]"><BotIcon />bot</Badge> : null}
-        <span className="ml-auto flex items-center gap-2 text-pkg-codex" title="Codex notices, last 5 minutes">
-          <Sparkline values={histogram(events.map((event) => event.at), now, 16, activitySpan)} />
-        </span>
-      </div>
-      <dl className="flex flex-col">
-        <Row label="Account" hint={hint("account")}><AccountChip id={server.account} labels={labels} /></Row>
-        <Row label="PID" hint={hint("pid")} mono>{server.pid ?? "—"}</Row>
-        <Row label="Thread" hint={hint("mainThreadId")} mono copy={server.mainThreadId}>{server.mainThreadId ? shortId(server.mainThreadId) : "Awaiting first turn"}</Row>
-        <Row label="Workspace" hint={hint("cwd")} copy={server.cwd}><Path path={server.cwd} /></Row>
-      </dl>
-      {server.recoveryIssue ? <RecoveryWarning message={server.recoveryIssue} /> : null}
-      {pendingAssignment ? (
-        <p className="flex items-start gap-1.5 rounded-lg bg-warning/10 px-2 py-1.5 text-[0.72rem] text-pretty text-warning">
-          <TriangleAlertIcon className="mt-px size-3.5 shrink-0" />
-          <span>Running as {server.runningAccount ? labels.get(server.runningAccount) ?? shortId(server.runningAccount) : "unbound"}. Stop and start to apply {server.account ? labels.get(server.account) ?? shortId(server.account) : "unbound"}.</span>
-        </p>
-      ) : null}
-      <div className="flex items-center justify-between text-[0.7rem] text-muted-foreground">
-        <span>{fenced ? "Recovery fenced" : events.length ? <>Codex notice <Time at={events[0].at} /></> : running ? server.mainThreadId ? "No notices yet" : "Awaiting first turn" : "Stopped"}</span>
-        {server.url ? <span className="truncate font-mono" title={server.url}>{server.url.replace(/^unix:\/\/.*\//, "unix://…/")}</span> : null}
-      </div>
-    </NodeCard>
-  );
-}
-
-/* ─── Bots ───────────────────────────────────────────────────────────── */
 
 export function BotsWindow() {
   const { bots, accounts, scoped, status, endpoints } = useStack();
@@ -492,9 +418,9 @@ export function BotsWindow() {
       count={bots.data?.length} status={status.bots} endpoint={endpoints.bots} updatedAt={bots.at} error={bots.error}>
       {bots.data?.length ? (
         <div className="flex flex-col gap-2">
-          {sortServers(bots.data).map((bot) => {
-            const events = activity.get(`server:${bot.id}`) ?? [];
-            const number = /(\d+)$/.exec(bot.id)?.[1];
+          {sortBots(bots.data).map((bot) => {
+            const events = activity.get(`bot:${bot.id}`) ?? [];
+            const number = /^bot-(\d+)$/.exec(bot.id)?.[1];
             const subscription = scoped[bot.id];
             const threads = events.filter((event) => event.topic === "threads_changed").length;
             const lifecycle = events.length - threads;
@@ -514,10 +440,12 @@ export function BotsWindow() {
                 </div>
                 <dl className="flex flex-col">
                   <Row label="Account"><AccountChip id={bot.account} labels={labels} /></Row>
-                  <Row label="Main thread" mono copy={bot.mainThreadId}>{bot.mainThreadId ? shortId(bot.mainThreadId) : "Awaiting first turn"}</Row>
-                  <Row label="Workspace" copy={bot.cwd}><Path path={bot.cwd} /></Row>
+                   <Row label="Main thread" mono copy={bot.mainThreadId}>{bot.mainThreadId ? shortId(bot.mainThreadId) : "Awaiting first turn"}</Row>
+                   <Row label="Capabilities revision" mono>{bot.capabilitiesRevision ?? "Never launched"}</Row>
+                   <Row label="Workspace" copy={bot.cwd}><Path path={bot.cwd} /></Row>
                 </dl>
-                {bot.recoveryIssue ? <RecoveryWarning message={bot.recoveryIssue} /> : null}
+                 {bot.recoveryIssue ? <RecoveryWarning message={bot.recoveryIssue} /> : null}
+                 {bot.state === "running" && !bot.recoveryIssue && bot.account !== bot.runningAccount ? <p className="rounded-lg bg-warning/10 px-2 py-1.5 text-[0.72rem] text-warning">Running as {bot.runningAccount ? labels.get(bot.runningAccount) ?? shortId(bot.runningAccount) : "unbound"}. Stop and start to apply {bot.account ? labels.get(bot.account) ?? shortId(bot.account) : "unbound"}.</p> : null}
                 <div className="flex items-center gap-2 rounded-lg bg-muted/60 px-2 py-1.5 text-[0.7rem]">
                   <RadioIcon className={cn("size-3.5", subscription?.status === "open" ? "text-pkg-bots" : "text-muted-foreground")} />
                   <span className="text-muted-foreground">{subscription?.status === "open" ? "Subscribed" : subscription ? "Connecting…" : "Not subscribed"}</span>
@@ -562,7 +490,7 @@ export function ActivityWindow() {
               <button
                 type="button"
                 disabled={!event.scope}
-                onClick={() => event.scope && focus({ kind: "server", id: event.scope })}
+                onClick={() => event.scope && focus({ kind: "bot", id: event.scope })}
                 className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-[0.75rem] animate-uix-arrive enabled:hover:bg-muted/70 focus-visible:outline-2 focus-visible:outline-ring"
                 style={{ "--ping": `var(--pkg-${accentOf(event.pkg)})` } as React.CSSProperties}
               >

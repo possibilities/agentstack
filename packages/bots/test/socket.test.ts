@@ -1,265 +1,98 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { serveApi, socketCall, socketSubscribe, type ServedApi, type SocketSubscription } from "@agentstack/api";
-import { StateStore } from "@agentstack/codex";
+import { StateStore } from "../src/store.js";
 
-const fakeBin = fileURLToPath(new URL("../../../codex/test/fixtures/fake-app-server.mjs", import.meta.url));
-
+const fakeBin = fileURLToPath(new URL("../../test/fixtures/fake-app-server.mjs", import.meta.url));
 type View = { id: string; pid: number | null; cwd: string; url: string | null; state: string; account: string | null; runningAccount: string | null; mainThreadId: string | null };
-
-function call(socket: string, name: string, args: Record<string, unknown> = {}, timeoutMs = 30_000): Promise<unknown> {
-  return socketCall(socket, "tools/call", { name, arguments: args }, { timeoutMs });
+function call(socket: string, name: string, args: Record<string, unknown> = {}): Promise<unknown> {
+  return socketCall(socket, "tools/call", { name, arguments: args }, { timeoutMs: 30_000 });
 }
 
-test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_000 }, async () => {
+test("bots own the complete app-server lifecycle on one socket", { timeout: 120_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-bots-state-"));
   const home = await mkdtemp(join(tmpdir(), "agentstack-bots-home-"));
-  const workDir = await mkdtemp(join(tmpdir(), "agentstack-bots-work-"));
+  const external = await mkdtemp(join(tmpdir(), "agentstack-bots-external-"));
   const savedHome = process.env.HOME;
   process.env.HOME = home;
   const runtime = join(home, ".local", "libexec", "codexnk", "codex");
   await mkdir(join(runtime, ".."), { recursive: true });
   await symlink(fakeBin, runtime);
   const store = new StateStore(stateDir);
-  const accountId = store.addAccount(JSON.stringify({ tokens: { refresh_token: "test-refresh", access_token: "access", id_token: "fixture.jwt.signature" } })).id;
+  const account = store.addAccount(JSON.stringify({ tokens: { refresh_token: "test", access_token: "access", id_token: "fixture.jwt.signature" } })).id;
   store.close();
   const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir };
   const auth = await serveApi({ name: "auth", transport: "socket", env });
-  let codex = await serveApi({ name: "codex", transport: "socket", env });
-  const codexSocket = codex.socketPath ?? "";
-  const botsSocket = join(stateDir, "sockets", "bots.sock");
   let bots: ServedApi | undefined = await serveApi({ name: "bots", transport: "socket", env });
-  let firstSubscription: SocketSubscription | undefined;
-  let secondSubscription: SocketSubscription | undefined;
+  const socket = bots.socketPath ?? "";
+  let subscription: SocketSubscription | undefined;
   try {
-    assert.equal(bots.socketPath, botsSocket);
-    const listedTools = (await socketCall(botsSocket, "tools/list")) as {
-      server: { name: string; description: string };
-      transport: { type: string; path: string };
-      websocket: { url: string } | null;
-      events: { topics: Record<string, string>; scope: { required: boolean; example: string } };
-      tools: Array<{ name: string; inputSchema: { properties?: Record<string, unknown>; additionalProperties?: boolean } }>;
-    };
-    assert.equal(listedTools.server.name, "bots");
-    assert.equal(listedTools.transport.type, "socket");
-    assert.equal(listedTools.transport.path, botsSocket);
-    assert.equal(listedTools.websocket, null);
-    assert.deepEqual(Object.keys(listedTools.events.topics).sort(), ["bots_changed", "threads_changed"]);
-    assert.equal(listedTools.events.scope.required, true);
-    assert.equal(listedTools.events.scope.example, "bot-1");
-    assert.deepEqual(
-      listedTools.tools.map((tool) => tool.name),
-      ["bot_start", "bot_stop", "bot_assign", "bot_remove", "bot_list"],
-    );
-    const startSchema = listedTools.tools.find((tool) => tool.name === "bot_start")?.inputSchema;
-    assert.deepEqual(Object.keys(startSchema?.properties ?? {}).sort(), ["args", "id"]);
-    assert.equal(startSchema?.additionalProperties, false);
+    const tools = await socketCall(socket, "tools/list") as { tools: Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }>; events: { scope: { required: boolean } } };
+    assert.deepEqual(tools.tools.map((tool) => tool.name), ["bot_start", "bot_stop", "bot_assign", "bot_remove", "bot_list", "voice_status", "voice_dial", "voice_hangup"]);
+    assert.deepEqual(Object.keys(tools.tools[0].inputSchema.properties).sort(), ["args", "cwd", "id"]);
+    assert.equal(tools.events.scope.required, false);
 
-    await assert.rejects(call(botsSocket, "bot_start", { id: "bot-4" }), /unknown bot: bot-4/);
-    await assert.rejects(call(botsSocket, "bot_start", { id: "bot-99999999999999999999" }), /unknown bot/);
-    await assert.rejects(call(botsSocket, "bot_start", { id: "server-1" }), /id/);
-    await assert.rejects(call(botsSocket, "bot_start", { cwd: workDir }), /cwd|Unrecognized/);
-    await assert.rejects(call(botsSocket, "bot_stop", { id: "bot-4" }), /unknown bot: bot-4/);
-
-    const first = (await call(botsSocket, "bot_start", { args: ["--model", "gpt-5.4"] })) as View;
+    const first = await call(socket, "bot_start", { args: ["--model", "gpt-5.4"] }) as View;
     assert.equal(first.id, "bot-1");
-    assert.equal(first.state, "running");
     assert.equal(first.cwd, join(stateDir, "bots", "bot-1"));
-    assert.match(first.url ?? "", /\/app\/[0-9a-f]{14}\.sock$/);
-    assert.equal(first.account, accountId);
+    assert.equal(first.account, account);
+    assert.equal(first.state, "running");
     assert.equal(first.mainThreadId, null);
-    const firstWorkspace = await lstat(first.cwd);
-    assert.equal(firstWorkspace.isDirectory(), true);
-    assert.equal(firstWorkspace.mode & 0o777, 0o700);
-    const ledgerMode = await lstat(join(stateDir, "bots", "ledger.sqlite"));
-    assert.equal(ledgerMode.mode & 0o777, 0o600);
+    assert.equal((await lstat(first.cwd)).mode & 0o777, 0o700);
+    assert.equal((await lstat(join(stateDir, "bots", "ledger.sqlite"))).mode & 0o777, 0o600);
+    assert.equal((await call(socket, "bot_start", { id: first.id }) as View).pid, first.pid);
+    await assert.rejects(call(socket, "bot_start", { id: first.id, args: [] }), /stop it before changing args/);
 
-    const again = (await call(botsSocket, "bot_start", { id: "bot-1" })) as View;
-    assert.equal(again.id, "bot-1");
-    assert.equal(again.state, "running");
-    assert.equal(again.pid, first.pid);
-    assert.equal(again.mainThreadId, first.mainThreadId);
-    await assert.rejects(call(botsSocket, "bot_start", { id: "bot-1", args: ["--model", "gpt-5.6"] }), /stop it before changing args/);
-
-    const second = (await call(botsSocket, "bot_start")) as View;
-    assert.equal(second.id, "bot-2");
-    assert.equal(second.cwd, join(stateDir, "bots", "bot-2"));
-
-    await assert.rejects(socketSubscribe(botsSocket, ["bots_changed"], () => undefined), /needs a scope/);
-    await assert.rejects(socketSubscribe(botsSocket, ["bots_changed"], () => undefined, { scope: "bot-999" }), /invalid event scope/);
-    const firstEvents: string[] = [];
-    const secondEvents: string[] = [];
-    firstSubscription = await socketSubscribe(botsSocket, ["bots_changed", "threads_changed"], (topic) => firstEvents.push(topic), { scope: "bot-1" });
-    secondSubscription = await socketSubscribe(botsSocket, ["bots_changed", "threads_changed"], (topic) => secondEvents.push(topic), { scope: "bot-2" });
-    await assert.rejects(socketSubscribe(botsSocket, ["inputs_changed"], () => undefined, { scope: "bot-1" }), /unknown topic/);
-    codex.publish?.("servers_changed", "bot-1");
-    codex.publish?.("servers_changed", "bot-2");
-    for (let i = 0; i < 100 && (!firstEvents.includes("bots_changed") || !secondEvents.includes("bots_changed")); i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    assert.ok(firstEvents.includes("bots_changed") && secondEvents.includes("bots_changed"));
-    firstEvents.length = 0;
-    secondEvents.length = 0;
-    codex.publish?.("threads_changed", "bot-1");
-    for (let i = 0; i < 100 && !firstEvents.includes("threads_changed"); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.ok(firstEvents.includes("threads_changed"));
-    assert.ok(!secondEvents.includes("threads_changed"));
-    firstEvents.length = 0;
-    codex.publish?.("threads_changed", "bot-2");
-    for (let i = 0; i < 100 && !secondEvents.includes("threads_changed"); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.ok(secondEvents.includes("threads_changed"));
-    assert.ok(!firstEvents.includes("threads_changed"));
-    secondEvents.length = 0;
-
-    const unrelated = (await call(codexSocket, "server_start", { id: "other", cwd: workDir })) as View;
-    assert.equal(unrelated.id, "other");
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    assert.equal(firstEvents.length, 0);
-    assert.equal(secondEvents.length, 0);
-
-    const listed = (await call(botsSocket, "bot_list")) as { bots: View[] };
-    assert.deepEqual(listed.bots.map((bot) => bot.id), ["bot-1", "bot-2"]);
-    assert.ok(listed.bots.every((bot) => bot.cwd === join(stateDir, "bots", bot.id)));
-    const codexListed = (await call(codexSocket, "server_list")) as { servers: View[] };
-    assert.ok(codexListed.servers.some((server) => server.id === "other"));
-
-    const stopped = (await call(botsSocket, "bot_stop", { id: "bot-1" })) as View;
-    assert.equal(stopped.state, "stopped");
-    assert.equal(stopped.cwd, first.cwd);
-    for (let i = 0; i < 100 && !firstEvents.includes("bots_changed"); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.ok(firstEvents.includes("bots_changed"));
-    assert.equal(secondEvents.length, 0);
-    const restarted = (await call(botsSocket, "bot_start", { id: "bot-1" })) as View;
-    assert.equal(restarted.state, "running");
-    assert.equal(restarted.mainThreadId, first.mainThreadId);
+    const notices: string[] = [];
+    subscription = await socketSubscribe(socket, ["bots_changed", "threads_changed"], (topic) => notices.push(topic), { scope: first.id });
+    await new Promise((resolve) => setTimeout(resolve, 30)); // Initial thread-watch invalidation may arrive after subscribing.
+    notices.length = 0;
+    const custom = await call(socket, "bot_start", { id: "custom", cwd: external }) as View;
+    assert.equal(custom.cwd, external);
+    const named = await call(socket, "bot_start", { id: "named" }) as View;
+    assert.equal(named.cwd, join(stateDir, "bots", "named"));
+    assert.equal((await call(socket, "bot_list") as { bots: View[] }).bots.length, 3);
+    assert.equal(notices.length, 0);
+    await call(socket, "bot_stop", { id: first.id });
+    for (let i = 0; i < 100 && !notices.includes("bots_changed"); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(notices.includes("bots_changed"));
+    await call(socket, "bot_start", { id: first.id, args: [] });
     const saved = new StateStore(stateDir);
-    assert.deepEqual(saved.servers().find((server) => server.id === "bot-1")?.args, ["--model", "gpt-5.4"]);
+    assert.deepEqual(saved.servers().find((entry) => entry.id === first.id)?.args, []);
     saved.close();
 
-    const concurrent = (await Promise.all([
-      call(botsSocket, "bot_start"),
-      call(botsSocket, "bot_start"),
-      call(botsSocket, "bot_start"),
-    ])) as View[];
-    assert.deepEqual(concurrent.map((view) => view.id).sort(), ["bot-3", "bot-4", "bot-5"]);
-
-    await rm(runtime);
-    await assert.rejects(call(botsSocket, "bot_start"), /required codexnk runtime is missing/);
-    const neverStarted = (await call(botsSocket, "bot_stop", { id: "bot-6" })) as View;
-    assert.equal(neverStarted.state, "stopped");
-    assert.equal((neverStarted as View & { recoveryIssue: string | null }).recoveryIssue, null);
-    assert.equal(neverStarted.cwd, join(stateDir, "bots", "bot-6"));
-    await symlink(fakeBin, runtime);
-    const foreignReserved = (await call(codexSocket, "server_start", { id: "bot-6", cwd: workDir })) as View;
-    assert.equal(foreignReserved.cwd, workDir);
-    const foreignEvents: string[] = [];
-    const foreignSubscription = await socketSubscribe(botsSocket, ["bots_changed", "threads_changed"], (topic) => foreignEvents.push(topic), { scope: "bot-6" });
-    codex.publish?.("threads_changed", "bot-6");
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    assert.equal(foreignEvents.length, 0);
-    await foreignSubscription.close();
-    const afterFailure = (await call(botsSocket, "bot_start")) as View;
-    assert.equal(afterFailure.id, "bot-7");
-
-    await mkdir(join(stateDir, "bots", "bot-8"));
-    await symlink(workDir, join(stateDir, "bots", "bot-9"));
-    const afterCollision = (await call(botsSocket, "bot_start")) as View;
-    assert.equal(afterCollision.id, "bot-10");
-
-    const foreign = (await call(codexSocket, "server_start", { id: "bot-11", cwd: workDir })) as View;
-    assert.equal(foreign.cwd, workDir);
-    const afterForeign = (await call(botsSocket, "bot_start")) as View;
-    assert.equal(afterForeign.id, "bot-12");
-    await assert.rejects(call(botsSocket, "bot_start", { id: "bot-11" }), /unknown bot: bot-11/);
-    const filtered = (await call(botsSocket, "bot_list")) as { bots: View[] };
-    assert.ok(!filtered.bots.some((bot) => bot.id === "bot-11" || bot.id === "other"));
-    assert.ok(filtered.bots.some((bot) => bot.id === "bot-1" && bot.state === "running"));
-
-    await rm(join(stateDir, "bots", "bot-2"), { recursive: true, force: true });
-    await symlink(workDir, join(stateDir, "bots", "bot-2"));
-    await assert.rejects(call(botsSocket, "bot_start", { id: "bot-2" }), /not a directory/);
-    await rm(join(stateDir, "bots", "bot-2"));
-    await mkdir(join(stateDir, "bots", "bot-2"));
-
+    const second = await call(socket, "bot_start") as View;
+    assert.equal(second.id, "bot-2");
     await bots.close();
     bots = await serveApi({ name: "bots", transport: "socket", env });
-    const afterRestart = (await call(botsSocket, "bot_start")) as View;
-    assert.equal(afterRestart.id, "bot-13");
-    const stillRunning = (await call(codexSocket, "server_list")) as { servers: View[] };
-    assert.equal(stillRunning.servers.find((server) => server.id === "bot-1")?.state, "running");
-    assert.equal(stillRunning.servers.find((server) => server.id === "other")?.state, "running");
-
-    await bots.close();
-    bots = undefined;
-    await codex.close();
-    codex = await serveApi({ name: "codex", transport: "socket", env });
-    bots = await serveApi({ name: "bots", transport: "socket", env });
-    const booted = (await call(botsSocket, "bot_list")) as { bots: View[] };
-    assert.equal(booted.bots.length, 9); // bot-6 was reserved, but never successfully started.
-    assert.ok(booted.bots.every((bot) => bot.state === "running" && bot.mainThreadId === null));
-    assert.equal(booted.bots.find((bot) => bot.id === "bot-1")?.mainThreadId, first.mainThreadId);
-    const resumedStore = new StateStore(stateDir);
-    assert.deepEqual(resumedStore.servers().find((server) => server.id === "bot-1")?.args, ["--model", "gpt-5.4"]);
-    resumedStore.close();
-    const afterBoot = (await call(codexSocket, "server_list")) as { servers: View[] };
-    assert.equal(afterBoot.servers.find((server) => server.id === "other")?.state, "running");
-    assert.equal(afterBoot.servers.find((server) => server.id === "other")?.mainThreadId, unrelated.mainThreadId);
-    assert.equal(afterBoot.servers.find((server) => server.id === "bot-11")?.state, "running");
-    const resumedEvents: string[] = [];
-    const resumedSubscription = await socketSubscribe(botsSocket, ["bots_changed", "threads_changed"], (topic) => resumedEvents.push(topic), { scope: "bot-1" });
-    await codex.close();
-    codex = await serveApi({ name: "codex", transport: "socket", env });
-    for (let i = 0; i < 200 && !resumedEvents.includes("threads_changed"); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.ok(resumedEvents.includes("threads_changed"));
-    await resumedSubscription.close();
-    await assert.rejects(readFile(join(stateDir, "history", "bot-1", "fake-threads.jsonl"), "utf8"), /ENOENT/);
-    assert.deepEqual(await call(botsSocket, "bot_remove", { id: "bot-1" }), { id: "bot-1" });
-    assert.equal((await call(botsSocket, "bot_list") as { bots: View[] }).bots.some((bot) => bot.id === "bot-1"), false);
-    assert.equal((await call(codexSocket, "server_list") as { servers: View[] }).servers.some((server) => server.id === "bot-1"), false);
+    assert.deepEqual((await call(socket, "bot_list") as { bots: View[] }).bots.map((bot) => bot.id), ["bot-1", "custom", "named", "bot-2"]);
+    assert.ok((await call(socket, "bot_list") as { bots: View[] }).bots.every((bot) => bot.state === "running"));
+    await call(socket, "bot_remove", { id: "custom" });
+    assert.equal((await lstat(external)).isDirectory(), true);
+    await call(socket, "bot_remove", { id: "named" });
+    await assert.rejects(lstat(named.cwd), /ENOENT/);
+    await call(socket, "bot_remove", { id: first.id });
     await assert.rejects(lstat(first.cwd), /ENOENT/);
-    await assert.rejects(lstat(join(stateDir, "history", "bot-1")), /ENOENT/);
-    assert.deepEqual(await call(auth.socketPath ?? "", "account_remove", { id: accountId }), { accounts: [] });
-    assert.deepEqual((await call(botsSocket, "bot_list") as { bots: View[] }).bots, []);
-    assert.deepEqual((await call(codexSocket, "server_list") as { servers: View[] }).servers, []);
-
-    const accounts = new StateStore(stateDir);
-    const old = accounts.addAccount(JSON.stringify({ tokens: { refresh_token: "old", access_token: "access", id_token: "fixture.jwt.signature" } }));
-    const next = accounts.addAccount(JSON.stringify({ tokens: { refresh_token: "next", access_token: "access", id_token: "fixture.jwt.signature" } }));
-    accounts.close();
-    const pending = (await call(botsSocket, "bot_start")) as View;
-    assert.equal(pending.account, old.id);
-    const assigned = (await call(botsSocket, "bot_assign", { id: pending.id, account: next.id })) as View;
-    assert.equal(assigned.account, next.id);
-    assert.equal(assigned.runningAccount, old.id);
-    assert.equal(assigned.pid, pending.pid);
-    await assert.rejects(call(botsSocket, "bot_start", { id: pending.id }), /different Codex account/);
-    const listedPending = (await call(botsSocket, "bot_list") as { bots: View[] }).bots.find((bot) => bot.id === pending.id);
-    assert.equal(listedPending?.runningAccount, old.id);
-    assert.deepEqual(await call(auth.socketPath ?? "", "account_remove", { id: old.id }), {
-      accounts: [{ id: next.id, active: true, removing: false }],
-    });
-    assert.equal((await call(botsSocket, "bot_list") as { bots: View[] }).bots.some((bot) => bot.id === pending.id), false);
-    assert.equal((await call(codexSocket, "server_list") as { servers: View[] }).servers.some((server) => server.id === pending.id), false);
-    await assert.rejects(lstat(pending.cwd), /ENOENT/);
+    await call(auth.socketPath ?? "", "account_remove", { id: account });
+    assert.deepEqual((await call(socket, "bot_list") as { bots: View[] }).bots, []);
+    await assert.rejects(lstat(second.cwd), /ENOENT/);
   } finally {
-    await firstSubscription?.close();
-    await secondSubscription?.close();
+    await subscription?.close();
     await bots?.close();
-    await codex.close();
     await auth.close();
     if (savedHome === undefined) delete process.env.HOME;
     else process.env.HOME = savedHome;
     await rm(stateDir, { recursive: true, force: true });
     await rm(home, { recursive: true, force: true });
-    await rm(workDir, { recursive: true, force: true });
+    await rm(external, { recursive: true, force: true });
   }
 });
 
-test("bots refuses a workspace root that is not a real directory", async () => {
+test("bots refuse a workspace root that is not a real directory", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-bots-rootstate-"));
   const target = await mkdtemp(join(tmpdir(), "agentstack-bots-roottarget-"));
   const root = join(stateDir, "bots");

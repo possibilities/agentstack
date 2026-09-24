@@ -8,23 +8,23 @@ export type Owner = {
   mcpUrls: Record<string, string>;
   children: Child[];
 };
-export type Server = { id: string; pid: number | null; cwd: string; url: string | null; state: "running" | "stopped"; recoveryIssue: string | null };
+export type Bot = { id: string; pid: number | null; cwd: string; url: string | null; state: "running" | "stopped"; recoveryIssue: string | null };
 
 export type IndexData = {
   owner: Owner | null;
-  servers: Server[] | null;
+  bots: Bot[] | null;
   links: { name: string; url: string }[];
   mcp: [string, string][];
   children: Child[];
 };
 
 export async function loadIndex(): Promise<IndexData> {
-  const [ownerResult, serversResult] = await Promise.allSettled([
+  const [ownerResult, botsResult] = await Promise.allSettled([
     socketCall(socketPath("owner"), "tools/call", { name: "owner_status", arguments: {} }, { timeoutMs: 1_500 }) as Promise<Owner>,
-    socketCall(socketPath("codex"), "tools/call", { name: "server_list", arguments: {} }, { timeoutMs: 1_500 }) as Promise<{ servers: Server[] }>,
+    socketCall(socketPath("bots"), "tools/call", { name: "bot_list", arguments: {} }, { timeoutMs: 1_500 }) as Promise<{ bots: Bot[] }>,
   ]);
   const owner = ownerResult.status === "fulfilled" ? ownerResult.value : null;
-  const servers = serversResult.status === "fulfilled" ? serversResult.value.servers.filter((server) => server.state === "running") : null;
+  const bots = botsResult.status === "fulfilled" ? botsResult.value.bots.filter((bot) => bot.state === "running") : null;
   const links = owner ? [
     { name: "UI canvas", url: owner.uixUrl },
     { name: "Package API reference", url: owner.docsUrl },
@@ -32,5 +32,5 @@ export async function loadIndex(): Promise<IndexData> {
   ].filter((entry): entry is { name: string; url: string } => entry.url !== null) : [];
   const mcp = Object.entries(owner?.mcpUrls ?? {}).sort(([a], [b]) => a.localeCompare(b));
   const children = owner?.children.filter((child) => child.running) ?? [];
-  return { owner, servers, links, mcp, children };
+  return { owner, bots, links, mcp, children };
 }

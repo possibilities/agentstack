@@ -184,7 +184,7 @@ export class AuthStore {
     this.beginRemoval(id);
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      if (this.boundServerIds(id).length) throw new Error(`account ${id} still has bound Codex Servers`);
+    if (this.boundServerIds(id).length) throw new Error(`account ${id} still has bound bots`);
       this.db.prepare("DELETE FROM accounts WHERE name = ?").run(id);
       this.db.prepare("DELETE FROM account_aliases WHERE id = ?").run(id);
       this.db.prepare("DELETE FROM secrets.credentials WHERE name = ?").run(id);
