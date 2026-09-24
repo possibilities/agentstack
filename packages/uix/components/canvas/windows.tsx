@@ -430,8 +430,7 @@ export function BotsWindow() {
             const callReason = voice.callable(bot);
             return (
               <NodeCard key={bot.id} node={{ kind: "bot", id: bot.id }} label={`bot ${bot.id}`} lastEvent={events[0]} accent="var(--pkg-bots)"
-                className={cn(onCall && "border-pkg-bots/40")}>
-                {onCall ? <span aria-hidden className="pointer-events-none absolute inset-0 rounded-[inherit] ring-1 ring-pkg-bots/40 motion-safe:animate-pulse" /> : null}
+                className={cn(onCall && "border-pkg-bots/40 ring-2 ring-pkg-bots/35 shadow-[0_0_18px_-4px_color-mix(in_oklch,var(--pkg-bots)_45%,transparent)]")}>
                 <div className="flex items-center gap-3">
                   <BotTile bot={bot} pulse={!bot.recoveryIssue && Boolean(events[0] && now - events[0].at < 4_000)} />
                   <div className="flex min-w-0 flex-col">

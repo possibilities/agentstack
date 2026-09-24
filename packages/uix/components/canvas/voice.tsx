@@ -25,6 +25,8 @@ export type Voice = {
   botId: string | null;
   /** A call is in progress, here or elsewhere. */
   busy: boolean;
+  /** The active call was dialed by this page (not one observed through `voice_status`). */
+  ownCall: boolean;
   muted: boolean;
   autoplayBlocked: boolean;
   startedAt: number | null;
@@ -94,6 +96,8 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
   const session = useRef<string | null>(null);
   /** True once `voice_status` has confirmed our session, so a later disappearance means the call ended remotely. */
   const seen = useRef(false);
+  /** Whether the call currently ending was dialed by this page. */
+  const endingOurs = useRef(false);
   const generation = useRef(0);
 
   const setSession = (id: string | null) => {
@@ -197,8 +201,17 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
 
   const hangup = async () => {
     const id = voice.data?.sessionId ?? session.current;
-    if (!id || phase === "ending") return;
+    if (!id) {
+      // Nothing on the server yet (e.g. still in the permission prompt) — cancel locally.
+      if (phase === "idle") return;
+      generation.current++;
+      clearMedia();
+      setPhase("idle");
+      return;
+    }
+    if (phase === "ending") return;
     const attempt = ++generation.current;
+    endingOurs.current = id === session.current;
     setPhase("ending");
     clearMedia();
     try {
@@ -217,6 +230,7 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
     sessionId,
     botId: dialedBot ?? voice.data?.botId ?? null,
     busy: phase !== "idle" || voice.data !== null,
+    ownCall: sessionId !== null || (phase !== "idle" && (phase !== "ending" || endingOurs.current)),
     muted,
     autoplayBlocked,
     startedAt,
@@ -253,17 +267,23 @@ function Meter({ stream, label, className }: { stream: MediaStream | null; label
     const context = new AudioContext();
     const source = context.createMediaStreamSource(stream);
     const analyser = context.createAnalyser();
-    analyser.fftSize = 64;
-    analyser.smoothingTimeConstant = 0.55;
+    analyser.fftSize = 256;
     source.connect(analyser);
-    const data = new Uint8Array(analyser.frequencyBinCount);
-    let frame = 0;
+    const data = new Uint8Array(analyser.fftSize);
     const weights = [0.45, 0.8, 1, 0.7, 0.35];
+    let level = 0;
+    let frame = 0;
     const tick = () => {
-      analyser.getByteFrequencyData(data);
-      const level = Math.min(1, data.reduce((sum, value) => sum + value, 0) / data.length / 130);
+      analyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (const value of data) {
+        const centered = (value - 128) / 128;
+        sum += centered * centered;
+      }
+      const rms = Math.min(1, Math.sqrt(sum / data.length) * 4);
+      level += (rms - level) * (rms > level ? 0.5 : 0.12);
       bars.current.forEach((bar, index) => {
-        if (bar) bar.style.height = `${2 + Math.round(level * weights[index] * 10 + (data[index * 3] ?? 0) / 255 * 2)}px`;
+        if (bar) bar.style.height = `${3 + Math.round(level * weights[index] * 13)}px`;
       });
       frame = requestAnimationFrame(tick);
     };
@@ -271,9 +291,9 @@ function Meter({ stream, label, className }: { stream: MediaStream | null; label
     return () => { cancelAnimationFrame(frame); source.disconnect(); void context.close(); };
   }, [stream]);
   return (
-    <span className={cn("flex h-3.5 items-end gap-px", className)} role="img" aria-label={`${label} audio level`} title={label}>
+    <span className={cn("flex h-4 items-end gap-0.5", className)} role="img" aria-label={`${label} audio level`} title={label}>
       {[0, 1, 2, 3, 4].map((index) => (
-        <span key={index} ref={(element) => { bars.current[index] = element; }} className="w-0.5 rounded-full bg-current transition-[height] duration-75" style={{ height: 2 }} />
+        <span key={index} ref={(element) => { bars.current[index] = element; }} className="w-[3px] rounded-full bg-current transition-[height] duration-75" style={{ height: 3 }} />
       ))}
     </span>
   );
@@ -287,7 +307,9 @@ function CallDock() {
   const { focus } = useWorkbench();
   const now = useNow();
   if (!voice.busy) return null;
-  const elsewhere = remote.data && remote.data.sessionId !== voice.sessionId;
+  // While our own call is ending, voice.data may still report it — a call only
+  // belongs elsewhere when this page never dialed it.
+  const elsewhere = !voice.ownCall && remote.data && remote.data.sessionId !== voice.sessionId;
   const bot = bots.data?.find((item) => item.id === voice.botId);
   const statusText =
     voice.phase === "preparing" ? "Preparing microphone…"
@@ -298,7 +320,7 @@ function CallDock() {
 
   return (
     <aside data-chrome aria-label="Voice call" className="fixed top-16 left-1/2 z-30 -translate-x-1/2 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-3 sm:top-3">
-      <div className="flex items-center gap-3 rounded-2xl border bg-card/80 py-1.5 pr-1.5 pl-2 shadow-sm backdrop-blur-xl">
+      <div className="flex items-center gap-3 rounded-2xl border bg-card/80 py-1.5 pr-1.5 pl-2 whitespace-nowrap shadow-sm backdrop-blur-xl">
         {elsewhere ? (
           <>
             <span className="flex size-9 items-center justify-center rounded-xl bg-pkg-bots/12 text-pkg-bots"><PhoneIcon className="size-4" /></span>
@@ -316,8 +338,8 @@ function CallDock() {
               <BotTile bot={bot} className="size-9 rounded-lg text-sm [&_svg]:size-4" />
             </button>
             <div className="flex min-w-0 flex-col leading-tight">
-              <span className="font-mono text-[0.8rem] font-semibold">{voice.botId}</span>
-              <span role="status" className="flex items-center gap-1 text-[0.68rem] text-muted-foreground tabular-nums">
+              <span className="font-mono text-[0.8rem] font-semibold whitespace-nowrap">{voice.botId}</span>
+              <span role="status" className="flex items-center gap-1 text-[0.68rem] whitespace-nowrap text-muted-foreground tabular-nums">
                 {voice.phase === "connected" ? <span aria-hidden className="size-1.5 rounded-full bg-success motion-safe:animate-pulse" /> : <Spinner className="size-2.5" />}
                 {statusText}
               </span>
@@ -326,12 +348,12 @@ function CallDock() {
               <>
                 <Separator orientation="vertical" className="mx-0.5 h-6! self-center" />
                 <span className="flex flex-col items-center gap-0.5 text-muted-foreground" title="You">
-                  <Meter stream={voice.localStream} label="You" className="h-3" />
-                  <span className="text-[0.55rem] font-medium tracking-[0.08em] uppercase">You</span>
+                  <Meter stream={voice.localStream} label="You" />
+                  <span className="hidden text-[0.62rem] sm:inline">You</span>
                 </span>
                 <span className="flex flex-col items-center gap-0.5 text-pkg-bots" title={voice.botId ?? "Bot"}>
-                  <Meter stream={voice.remoteStream} label={voice.botId ?? "Bot"} className="h-3" />
-                  <span className="text-[0.55rem] font-medium tracking-[0.08em] uppercase">{voice.botId}</span>
+                  <Meter stream={voice.remoteStream} label={voice.botId ?? "Bot"} />
+                  <span className="hidden text-[0.62rem] whitespace-nowrap sm:inline">{voice.botId}</span>
                 </span>
                 <Separator orientation="vertical" className="mx-0.5 h-6! self-center" />
               </>
@@ -374,19 +396,28 @@ export function CallLauncher() {
   const { bots } = useStack();
   const [open, setOpen] = useState(false);
   const list = bots.data ?? [];
+  const dialing = voice.phase === "preparing" || voice.phase === "dialing";
+  const inCall = voice.busy && !dialing;
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <Tooltip>
         <TooltipTrigger
           render={
-            <PopoverTrigger
-              render={<Button variant="outline" size="icon" className="size-10 rounded-xl bg-card/80 shadow-sm backdrop-blur-xl" aria-label="Call a bot" disabled={voice.busy} />}
-            />
+            <span className="inline-flex" />
           }
         >
-          {voice.busy ? <Spinner /> : <PhoneIcon />}
+          <PopoverTrigger
+            render={<Button variant="outline" size="icon" className="size-10 rounded-xl bg-card/80 shadow-sm backdrop-blur-xl" aria-label={inCall ? "On a call" : "Call a bot"} disabled={voice.busy} />}
+          >
+            {dialing ? <Spinner /> : (
+              <span className="relative">
+                <PhoneIcon />
+                {inCall ? <span aria-hidden className="absolute -top-1 -right-1 size-2 rounded-full bg-success ring-1 ring-card" /> : null}
+              </span>
+            )}
+          </PopoverTrigger>
         </TooltipTrigger>
-        <TooltipContent side="bottom">Call a bot</TooltipContent>
+        <TooltipContent side="bottom">{inCall ? "On a call" : "Call a bot"}</TooltipContent>
       </Tooltip>
       <PopoverContent align="end" sideOffset={8} className="w-72 gap-0 p-1.5">
         {list.length ? (
@@ -398,7 +429,9 @@ export function CallLauncher() {
                   <BotTile bot={bot} className="size-8 rounded-lg text-xs [&_svg]:size-3.5" />
                   <div className="flex min-w-0 flex-col leading-tight">
                     <span className="font-mono text-[0.8rem] font-medium">{bot.id}</span>
-                    <span className="text-[0.68rem] text-muted-foreground">{reason ?? (bot.mainThreadId ? `main thread ${shortId(bot.mainThreadId)}` : "")}</span>
+                    <span className="text-[0.68rem] text-muted-foreground">
+                      {bot.mainThreadId ? `main thread ${shortId(bot.mainThreadId)}` : `${bot.state}${bot.pid ? ` · pid ${bot.pid}` : ""}`}
+                    </span>
                   </div>
                   {reason ? (
                     <span className="ml-auto shrink-0 text-[0.68rem] text-muted-foreground">{reason}</span>
