@@ -47,6 +47,7 @@ export type Server = {
   runningAccount: string | null;
   mainThreadId: string | null;
   recoveryIssue: string | null;
+  capabilitiesRevision: number | null;
 };
 
 export type Account = { id: string; active: boolean; removing: boolean };

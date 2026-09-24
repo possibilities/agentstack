@@ -22,6 +22,14 @@ export function authChild(): OwnedChild {
     args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "auth", "socket"],
   };
 }
+export function capabilitiesChild(): OwnedChild {
+  const apiPackage = require.resolve("@agentstack/api/package.json");
+  return {
+    name: "capabilities",
+    command: process.execPath,
+    args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "capabilities", "socket"],
+  };
+}
 export function websocketChild(): OwnedChild {
   return {
     name: "websocket",

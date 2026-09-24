@@ -30,7 +30,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.deepEqual(
       docs.packages.map((item) => item.name),
-      ["api", "auth", "bots", "codex", "owner"],
+      ["api", "auth", "bots", "capabilities", "codex", "owner"],
     );
     assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@agentstack/${item.name}`));
 
@@ -59,6 +59,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok(start.description.length > 0);
     assert.deepEqual(Object.keys((start.inputSchema.properties ?? {}) as object).sort(), ["args", "cwd", "id"]);
     assert.ok((start.outputSchema.properties as Record<string, unknown>).recoveryIssue);
+    assert.ok((start.outputSchema.properties as Record<string, unknown>).capabilitiesRevision);
     const codexSocket = codex.transports.find((transport) => transport.type === "socket") as TransportDoc;
     assert.equal(codexSocket.supported, true);
     assert.equal(codexSocket.subscriptions, true);
@@ -72,6 +73,13 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(codexWebSocket.endpoint, "ws://127.0.0.1:8744/websocket/codex");
 
     const auth = found.get("auth") as PackageDoc;
+    const capabilities = found.get("capabilities") as PackageDoc;
+    assert.deepEqual(Object.keys(capabilities.events), ["bundle_changed"]);
+    assert.deepEqual(capabilities.operations.map((operation) => operation.name).sort(), [
+      "bundle_preview", "bundle_snapshot", "category_create", "category_delete", "category_reorder", "category_update",
+      "fragment_create", "fragment_delete", "fragment_reorder", "fragment_update",
+    ]);
+    assert.equal(capabilities.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
     assert.deepEqual(Object.keys(auth.events).sort(), ["accounts_changed", "login_changed"]);
     assert.deepEqual(
       auth.operations.map((operation) => operation.name).sort(),

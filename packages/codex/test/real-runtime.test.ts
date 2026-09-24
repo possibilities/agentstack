@@ -15,6 +15,8 @@ test("installed codexnk retains its runtime under a child-specific TMPDIR", { sk
   await Promise.all([identity, capabilities, history, runtime].map((path) => mkdir(path, { mode: 0o700 })));
   const fakeAuth = JSON.stringify({ tokens: { refresh_token: "fixture-only" } });
   await writeFile(join(identity, "auth.json"), fakeAuth, { mode: 0o600 });
+  await writeFile(join(capabilities, "SYSTEM_APPEND.md"), "Fixture append from capabilities.", { mode: 0o600 });
+  await writeFile(join(capabilities, "config.toml"), '[mcp_servers.fixture]\nurl = "http://127.0.0.1:8743/mcp/fixture"\nenabled = true\n', { mode: 0o600 });
   const child = spawn(codexRuntimePath(), ["app-server", "--listen", `unix://${join(root, "app.sock")}`, "--identity", identity, "--capabilities", capabilities, "--history-dir", history], {
     env: { ...process.env, TMPDIR: runtime }, stdio: "ignore",
   });
@@ -29,6 +31,9 @@ test("installed codexnk retains its runtime under a child-specific TMPDIR", { sk
     }
     assert.ok(home, "codexnk should create its retained runtime inside TMPDIR");
     assert.equal(await readFile(join(home, "auth.json"), "utf8"), fakeAuth);
+    const config = await readFile(join(home, "config.toml"), "utf8");
+    assert.match(config, /\[mcp_servers.fixture\]/);
+    assert.match(config, /developer_instructions\s*=.*Fixture append from capabilities/);
   } finally {
     child.kill("SIGTERM");
     let force: ReturnType<typeof setTimeout> | undefined;

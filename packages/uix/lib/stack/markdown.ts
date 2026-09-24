@@ -17,6 +17,7 @@ export function renderCanvasMarkdown(snapshot: Snapshot): string {
     ...(item.recoveryIssue ? [`  - Recovery: ${item.recoveryIssue}`] : []),
     ...(item.state === "running" && !item.recoveryIssue && item.account !== item.runningAccount ? [`  - Running as ${label(item.runningAccount)}; stop and start to apply ${label(item.account)}`] : []),
     `  - Main thread ${code(item.mainThreadId ?? "awaiting first turn")}`,
+    `  - Last launched capabilities revision ${code(item.capabilitiesRevision ?? "never launched")}`,
     `  - Workspace ${code(item.cwd)}`,
     ...(item.url ? [`  - Endpoint ${code(item.url)}`] : []),
   ];
@@ -43,6 +44,7 @@ export function renderCanvasMarkdown(snapshot: Snapshot): string {
     ...section("Bots", bots, (data) => [...(data.length ? data.flatMap((bot) => [
       `- **${bot.id}** — ${bot.recoveryIssue ? "needs inspection (reported running state unverified)" : bot.state} · account ${label(bot.account)} · main thread ${code(bot.mainThreadId ?? "awaiting first turn")} · ${code(bot.cwd)}`,
       ...(bot.recoveryIssue ? [`  - Recovery: ${bot.recoveryIssue}`] : []),
+      `  - Last launched capabilities revision ${code(bot.capabilitiesRevision ?? "never launched")}`,
     ]) : ["No bots."]), ""]),
     ...section("API", catalog, (data) => data.flatMap((doc) => [
       `### ${doc.name}`, "",
