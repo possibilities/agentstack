@@ -8,7 +8,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { serveApi, socketCall, socketSubscribe } from "@agentstack/api";
-import { apiChild, authChild } from "../src/children.js";
+import { apiChild, authChild, mcpChild } from "../src/children.js";
 import { botsChild } from "../src/bots.js";
 import { codexChild } from "../src/codex.js";
 import { startOwner } from "../src/owner.js";
@@ -45,6 +45,10 @@ test("the owner starts the four required socket children", () => {
     assert.equal(existsSync(child.args[0] ?? ""), true);
   }
   assert.deepEqual([apiChild(), authChild(), codexChild(), botsChild()].map((child) => child.name), ["api", "auth", "codex", "bots"]);
+  const mcp = mcpChild();
+  assert.equal(mcp.command, process.execPath);
+  assert.equal(existsSync(mcp.args[0] ?? ""), true);
+  assert.deepEqual(mcp.args.slice(1), ["mcp"]);
 });
 
 function orphanParent(stateDir: string, keepAlive: boolean) {

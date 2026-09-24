@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import { packageEventTopics, type PackageApi } from "./operation.js";
 import { publishedJsonSchema } from "./schema.js";
 import { configuredTransports } from "./config.js";
-import { listPackages, socketPath, workspaceRoot } from "./workspace.js";
+import { listPackages, mcpPort, socketPath, workspaceRoot } from "./workspace.js";
 
 export type CatalogTransport = {
   type: string;
@@ -38,6 +38,7 @@ export type Catalog = {
 
 export async function loadCatalog(env: NodeJS.ProcessEnv = process.env, from = import.meta.dirname): Promise<Catalog> {
   const root = workspaceRoot(from);
+  const port = mcpPort(env);
   const packages = await listPackages(root);
   const servers: CatalogServer[] = [];
   for (const item of packages) {
@@ -74,7 +75,13 @@ export async function loadCatalog(env: NodeJS.ProcessEnv = process.env, from = i
                 subscriptions: api.events !== undefined || Object.keys(item.config.websocket?.pubsub ?? {}).length > 0,
                 endpoint: null,
               }
-            : { type: transport.type, description: transport.description, supported: false, subscriptions: false, endpoint: null },
+            : {
+                type: transport.type,
+                description: transport.description,
+                supported: true,
+                subscriptions: false,
+                endpoint: port === 0 ? null : `http://127.0.0.1:${port}/mcp/${item.config.name}`,
+              },
       ),
     });
   }

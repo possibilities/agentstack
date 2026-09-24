@@ -207,7 +207,7 @@ test("an event-bearing package fails closed before its context is created on an 
     };\n`,
   );
   try {
-    await assert.rejects(serveApi({ name: "demo", transport: "mcp", root }), /mcp transport is not implemented/);
+    await assert.rejects(serveApi({ name: "demo", transport: "mcp", root }), /agentstack mcp/);
     await assert.rejects(serveApi({ name: "demo", transport: "socket", root }), /does not configure socket/);
     await assert.rejects(serveApi({ name: "demo", transport: "websocket", root }), /does not configure websocket/);
   } finally {

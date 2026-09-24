@@ -11,7 +11,7 @@ type PackageDoc = { name: string; description: string; packageName: string; oper
 
 test("the api package serves structured documents for every workspace package", { timeout: 60_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-docs-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir };
+  const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "8743" };
   const served = await serveApi({ name: "api", transport: "socket", env });
   try {
     assert.equal(served.socketPath, join(stateDir, "sockets", "api.sock"));
@@ -56,6 +56,10 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(codexSocket.supported, true);
     assert.equal(codexSocket.subscriptions, true);
     assert.equal(codexSocket.endpoint, join(stateDir, "sockets", "codex.sock"));
+    const codexMcp = codex.transports.find((transport) => transport.type === "mcp") as TransportDoc;
+    assert.equal(codexMcp.supported, true);
+    assert.equal(codexMcp.subscriptions, false);
+    assert.equal(codexMcp.endpoint, "http://127.0.0.1:8743/mcp/codex");
 
     const auth = found.get("auth") as PackageDoc;
     assert.deepEqual(Object.keys(auth.events).sort(), ["accounts_changed", "login_changed"]);
