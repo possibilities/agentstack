@@ -16,7 +16,7 @@ test("codex declares one namespaced socket server", async () => {
   assert.equal(codex.config.name, "codex");
   assert.match(codex.config.description, /Start, stop, and list/);
   assert.match(codex.config.socket?.description ?? "", /codex/);
-  assert.equal(codex.config.mcp, undefined);
+  assert.match(codex.config.mcp?.description ?? "", /codex/);
   assert.equal(codex.config.websocket, undefined);
   const codexApi = await loadPackageApi(codex.dir);
   assert.deepEqual(Object.keys(codexApi.events?.topics ?? {}).sort(), ["inputs_changed", "servers_changed", "threads_changed"]);
@@ -59,7 +59,7 @@ test("websocket pubsub topics follow operation names and need descriptions", () 
   );
 });
 
-test("unimplemented transports are refused before the package is loaded", async () => {
+test("individual mcp launch is refused in favor of the shared HTTP process", async () => {
   const root = await mkdtemp(join(tmpdir(), "agentstack-api-config-"));
   const dir = join(root, "packages", "demo");
   await mkdir(dir, { recursive: true });
@@ -68,7 +68,7 @@ test("unimplemented transports are refused before the package is loaded", async 
     "name: demo\ndescription: Demo operations.\nmcp:\n  description: MCP transport for demo operations.\n",
   );
   try {
-    await assert.rejects(serveApi({ name: "demo", transport: "mcp", root }), /mcp transport is not implemented/);
+    await assert.rejects(serveApi({ name: "demo", transport: "mcp", root }), /agentstack mcp/);
     await assert.rejects(serveApi({ name: "demo", transport: "socket", root }), /does not configure socket/);
     await assert.rejects(serveApi({ name: "demo", transport: "websocket", root }), /does not configure websocket/);
     await assert.rejects(serveApi({ name: "missing", transport: "socket", root }), /no package API named missing/);

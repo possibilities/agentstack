@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { OwnedChild } from "./owner.js";
 
 const require = createRequire(import.meta.url);
@@ -19,5 +20,13 @@ export function authChild(): OwnedChild {
     name: "auth",
     command: process.execPath,
     args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "auth", "socket"],
+  };
+}
+
+export function mcpChild(): OwnedChild {
+  return {
+    name: "mcp",
+    command: process.execPath,
+    args: [fileURLToPath(new URL("./cli.js", import.meta.url)), "mcp"],
   };
 }

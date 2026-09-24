@@ -2,3 +2,5 @@ name: codex
 description: Start, stop, and list local Codex app-server processes with persistent main threads.
 socket:
   description: Unix socket for Codex app-server lifecycle and change events, namespaced as codex.
+mcp:
+  description: HTTP MCP tools for Codex app-server operations, forwarded to the codex socket.

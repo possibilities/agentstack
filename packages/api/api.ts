@@ -15,7 +15,7 @@ const transportDocSchema = z.object({
   description: z.string(),
   supported: z.boolean().describe("The transport is implemented and configured; it does not report liveness."),
   subscriptions: z.boolean().describe("The transport delivers event change notices."),
-  endpoint: z.string().nullable().describe("Socket path when the transport has a fixed endpoint."),
+  endpoint: z.string().nullable().describe("Socket path or HTTP URL when the transport has a fixed address."),
 });
 
 const operationDocSchema = z.object({

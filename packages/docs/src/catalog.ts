@@ -14,7 +14,7 @@ export async function loadDocs(env: NodeJS.ProcessEnv = process.env): Promise<Ca
     }
     return {
       ...doc,
-      transports: doc.transports.filter((transport) => transport.supported && (transport.type === "socket" || transport.type === "websocket")),
+      transports: doc.transports.filter((transport) => transport.supported),
     };
   }));
 }

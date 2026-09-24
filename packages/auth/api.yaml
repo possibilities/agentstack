@@ -2,3 +2,5 @@ name: auth
 description: Manage Codex accounts and device sign-in for AgentStack-owned app servers without exposing credentials.
 socket:
   description: Unix socket for Codex account and sign-in operations, namespaced as auth.
+mcp:
+  description: HTTP MCP tools for Codex account and sign-in operations, forwarded to the auth socket.
