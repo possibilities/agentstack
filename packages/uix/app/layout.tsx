@@ -7,8 +7,8 @@ import { cn } from "@/lib/utils";
 const geist = Geist({ subsets: ["latin"], variable: "--font-sans" });
 
 export const metadata: Metadata = {
-  title: "UI Experiments",
-  description: "A blank canvas for UI experiments.",
+  title: "AgentStack",
+  description: "Local AgentStack links and running Servers.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

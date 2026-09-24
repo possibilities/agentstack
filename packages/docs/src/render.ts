@@ -85,5 +85,5 @@ export function renderDocs(servers: CatalogServer[], revision: string, basePath 
 }
 
 export function renderUnavailable(basePath = ""): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>API reference unavailable · AgentStack</title><link rel="stylesheet" href="${basePath}/site.css"></head><body><main class="unavailable"><p>AgentStack / Reference</p><h1>Discovery API unavailable</h1><p>Check that <code>agentstack serve</code> is running and the packages are built, then reload this page.</p></main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><title>API reference unavailable · AgentStack</title><link rel="stylesheet" href="${basePath}/site.css"></head><body><main class="unavailable"><p>AgentStack / Reference</p><h1>Discovery API unavailable</h1><p>Check that <code>agentstack serve</code> is running and the packages are built, then reload this page.</p></main></body></html>`;
 }
