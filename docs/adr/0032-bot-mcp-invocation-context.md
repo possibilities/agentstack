@@ -1,0 +1,7 @@
+# 32. Bind internal MCP connections to live Bot launches
+
+Status: accepted, 2026-09-24. Extends [ADR 0021](0021-managed-servers-inherit-owner-mcp.md)'s internal MCP inheritance and [ADR 0031](0031-role-resources.md)'s private Role launch config.
+
+On each Bot launch, AgentStack gives codexnk internal Package API MCP URLs with a bot ID, digest of its exact app-server endpoint, and HMAC proof in the URL query. The HMAC key is a private state file shared by the owner MCP listener and Bots child. The owner keeps human-facing base URLs unchanged. For every bot-bound tool call the MCP listener verifies the proof and compares the instance digest with the currently running, unfenced `bot_list` record; old URLs are fenced after stop or restart. Role-defined MCP servers cannot alias the internal listener, which would bypass this binding. One shared HTTP listener remains sufficient; no per-Bot port is allocated.
+
+Codex supplies `threadId` and `sessionId` in tool-call `_meta`. The listener refuses bot-bound calls without `threadId` and forwards a typed invocation context as the operation handler's optional third argument, never as a user-visible tool input. Existing operation schemas and direct socket clients remain unchanged. An unbound local MCP call has null Bot and instance fields. The Bot identity is bound to a live launch, while the thread ID remains a claim from the caller; any future workflow that sends a Codex turn must validate that thread against the Bot's sanctioned `mainThreadId` lineage. The local-user trust boundary is unchanged.

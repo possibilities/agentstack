@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,6 +10,8 @@ import { operation } from "../src/operation.js";
 import { serveMcp } from "../src/mcp.js";
 import { serveSocket } from "../src/socket.js";
 import { mcpPort, socketPath } from "../src/workspace.js";
+import { botMcpUrl } from "../src/bot-mcp-identity.js";
+import type { InvocationContext } from "../src/operation.js";
 
 test("one HTTP process exposes each configured Package API and forwards operations to socket owners", { timeout: 30_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-mcp-"));
@@ -75,6 +77,56 @@ test("one HTTP process exposes each configured Package API and forwards operatio
     await served.close();
     await Promise.all(sockets.map((socket) => socket.close()));
     await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("a bot-bound MCP URL forwards verified bot and Codex thread context without changing tool inputs", { timeout: 30_000 }, async () => {
+  const root = await mkdtemp("/tmp/as-mcp-b-");
+  const env = { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_MCP_PORT: "0" };
+  const packageDir = join(root, "packages", "sample");
+  await mkdir(packageDir, { recursive: true });
+  await writeFile(join(packageDir, "api.yaml"), "name: sample\ndescription: Sample.\nmcp:\n  description: Sample MCP.\n");
+  let endpoint = "unix:///tmp/bot-instance-1.sock";
+  const seen: Array<{ input: unknown; invocation: InvocationContext | undefined }> = [];
+  const bots = await serveSocket({
+    info: { name: "bots", description: "Bots.", transportDescription: "Socket.", path: socketPath("bots", env) }, context: {},
+    operations: [operation({ name: "bot_list", description: "List bots.", input: z.strictObject({}), output: z.object({ bots: z.array(z.unknown()) }),
+      async call() { return { bots: [{ id: "bot-1", state: "running", url: endpoint, recoveryIssue: null }] }; } })],
+  });
+  const sample = await serveSocket({
+    info: { name: "sample", description: "Sample.", transportDescription: "Socket.", path: socketPath("sample", env) }, context: {},
+    operations: [operation({ name: "who", description: "Read the caller.", input: z.strictObject({ value: z.string() }), output: z.object({ invocation: z.unknown() }),
+      async call(_ctx, input, invocation) { seen.push({ input, invocation }); return { invocation }; } })],
+  });
+  const served = await serveMcp({ root, env });
+  const url = botMcpUrl(served.urls.sample!, "bot-1", endpoint, env);
+  const client = new Client({ name: "bot-bound", version: "1.0.0" });
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(url)));
+    const call = await client.callTool({ name: "who", arguments: { value: "unchanged" }, _meta: { threadId: "thread-1", sessionId: "session-1" } });
+    assert.equal(call.isError, undefined);
+    assert.deepEqual(seen, [{ input: { value: "unchanged" }, invocation: {
+      transport: "mcp", botId: "bot-1", instance: new URL(url).searchParams.get("instance"), threadId: "thread-1", sessionId: "session-1",
+    } }]);
+    assert.deepEqual(call.structuredContent, { invocation: seen[0]!.invocation });
+    const missing = await client.callTool({ name: "who", arguments: { value: "no-thread" } });
+    assert.equal(missing.isError, true);
+    assert.equal(seen.length, 1);
+    const tampered = new URL(url);
+    tampered.searchParams.set("proof", "0".repeat(64));
+    const forbidden = await fetch(tampered, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" }, body: "{}" });
+    assert.equal(forbidden.status, 403);
+    endpoint = "unix:///tmp/bot-instance-2.sock";
+    const stale = await client.callTool({ name: "who", arguments: { value: "stale" }, _meta: { threadId: "thread-1" } });
+    assert.equal(stale.isError, true);
+    assert.equal(seen.length, 1);
+    assert.equal((await lstat(join(env.AGENTSTACK_STATE_DIR, "mcp-bot-identity.key"))).mode & 0o777, 0o600);
+  } finally {
+    await client.close();
+    await served.close();
+    await sample.close();
+    await bots.close();
+    await rm(root, { recursive: true, force: true });
   }
 });
 

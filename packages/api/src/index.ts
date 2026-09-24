@@ -3,6 +3,7 @@ export {
   packageEventTopics,
   type Annotations,
   type AnyOperation,
+  type InvocationContext,
   type PackageApi,
   type PackageEvents,
 } from "./operation.js";
@@ -18,7 +19,8 @@ export {
   type TransportType,
   type WebsocketConfig,
 } from "./config.js";
-export { findPackage, listPackages, mcpPort, socketPath, websocketPort, workspaceRoot } from "./workspace.js";
+export { findPackage, listPackages, mcpPort, socketPath, stateDir, websocketPort, workspaceRoot } from "./workspace.js";
+export { botInstance, botMcpUrl, parseBotMcpIdentity } from "./bot-mcp-identity.js";
 export { loadCatalog, loadPackageApi, type Catalog, type CatalogServer, type CatalogTransport } from "./catalog.js";
 export {
   serveSocket,

@@ -3,6 +3,7 @@ import { lstat, mkdir, mkdtemp, readFile, readdir, rm, rename } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { botMcpUrl } from "@agentstack/api";
 import { RoleStore, renderInstructions } from "../src/store.js";
 import { materializeRole, removeRole } from "../src/bundle.js";
 
@@ -134,5 +135,20 @@ test("enabled role resources materialize privately and disabled items stay out o
     await removeRole(root, "bot-1", second);
     state = store.createMcpServer(state.revision, "auth", "Collision", { type: "http", url: "https://mcp.example.test/other" }, false);
     await assert.rejects(materializeRole(root, "bot-1", state, { auth: "http://127.0.0.1:8743/mcp/auth" }), /collides/);
+  } finally { store.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("role launch keeps bot-bound internal URLs and rejects an unbound internal alias", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-role-bot-mcp-"));
+  const store = new RoleStore(root);
+  try {
+    const base = "http://127.0.0.1:8743/mcp/auth";
+    const bound = botMcpUrl(base, "bot-1", "unix:///tmp/bot-one.sock", { AGENTSTACK_STATE_DIR: root });
+    const path = await materializeRole(root, "bot-1", store.snapshot(), { auth: bound });
+    assert.match(await readFile(join(path, "config.toml"), "utf8"), /\?bot=bot-1&instance=/);
+    await removeRole(root, "bot-1", path);
+    await assert.rejects(materializeRole(root, "bot-2", store.snapshot(), { auth: bound }), /another bot/);
+    const withAlias = store.createMcpServer(0, "other", "Alias", { type: "http", url: base });
+    await assert.rejects(materializeRole(root, "bot-1", withAlias, { auth: bound }), /cannot alias the internal MCP listener/);
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 });

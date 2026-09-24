@@ -33,9 +33,12 @@ export function workspaceRoot(from: string): string {
   throw new Error("workspace root not found");
 }
 
+export function stateDir(env: NodeJS.ProcessEnv = process.env): string {
+  return env.AGENTSTACK_STATE_DIR ?? join(homedir(), ".local", "state", "agentstack");
+}
+
 export function socketPath(name: string, env: NodeJS.ProcessEnv = process.env): string {
-  const root = env.AGENTSTACK_STATE_DIR ?? join(homedir(), ".local", "state", "agentstack");
-  return join(root, "sockets", `${name}.sock`);
+  return join(stateDir(env), "sockets", `${name}.sock`);
 }
 
 export type PackageLocation = {

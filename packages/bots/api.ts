@@ -179,7 +179,7 @@ export const api: PackageApi<BotsContext, BotsTopic> = {
     const store = new StateStore(dir);
     const root = resolve(join(dir, "bots"));
     const ledger = new BotLedger(root);
-    const supervisor = new Supervisor({ stateDir: dir, store, mcpServers: ownerMcpPort === undefined ? undefined : () => ownerMcpUrls(workspaceRoot(import.meta.dirname), Number(ownerMcpPort)) });
+    const supervisor = new Supervisor({ stateDir: dir, store, mcpServers: ownerMcpPort === undefined ? undefined : (id, endpoint) => ownerMcpUrls(workspaceRoot(import.meta.dirname), Number(ownerMcpPort), id, endpoint, env) });
     await supervisor.load();
     await supervisor.reap();
     await supervisor.resumeAll();

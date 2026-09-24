@@ -4,6 +4,8 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ListToolsRequestSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
 import { socketCall } from "./socket.js";
 import { listPackages, mcpPort, socketPath, workspaceRoot } from "./workspace.js";
+import { botInstance, parseBotMcpIdentity } from "./bot-mcp-identity.js";
+import type { InvocationContext } from "./operation.js";
 
 export type ServedMcp = { port: number; urls: Record<string, string>; close(): Promise<void> };
 
@@ -23,7 +25,8 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
   if (packages.length === 0) throw new Error("no Package APIs configure mcp");
 
   const server = createServer(async (request, response) => {
-    const name = /^\/mcp\/([a-z][a-z0-9-]{0,31})$/.exec(request.url ?? "")?.[1];
+    const target = new URL(request.url ?? "/", "http://127.0.0.1");
+    const name = target.origin === "http://127.0.0.1" ? /^\/mcp\/([a-z][a-z0-9-]{0,31})$/.exec(target.pathname)?.[1] : undefined;
     let definition: { name: string; description: string } | undefined;
     try {
       definition = (await configuredMcpPackages(root)).find((item) => item.name === name);
@@ -40,6 +43,9 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
       response.writeHead(405, { Allow: "POST" }).end();
       return;
     }
+    let identity: { botId: string; instance: string } | null;
+    try { identity = parseBotMcpIdentity(target, env); }
+    catch { response.writeHead(403).end(); return; }
     const address = server.address();
     if (!address || typeof address === "string") {
       response.writeHead(503).end();
@@ -60,9 +66,28 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
     });
     mcp.setRequestHandler(CallToolRequestSchema, async ({ params }, extra) => {
       try {
+        if (identity) {
+          const listed = await socketCall(socketPath("bots", env), "tools/call", { name: "bot_list", arguments: {} }, { timeoutMs: 2_000 }) as {
+            bots: Array<{ id: string; url: string | null; state: string; recoveryIssue: string | null }>;
+          };
+          const bot = listed.bots.find((entry) => entry.id === identity.botId);
+          if (!bot || bot.state !== "running" || bot.recoveryIssue || !bot.url || botInstance(bot.url) !== identity.instance) {
+            throw new Error("bot MCP connection is no longer bound to a running instance");
+          }
+        }
+        const meta = (params as { _meta?: unknown })._meta;
+        const ids = meta && typeof meta === "object" && !Array.isArray(meta) ? meta as Record<string, unknown> : {};
+        const identifier = (value: unknown) => typeof value === "string" && value.length > 0 && value.length <= 128 ? value : null;
+        const threadId = identifier(ids.threadId);
+        if (identity && !threadId) throw new Error("bot MCP tool call is missing Codex threadId metadata");
+        const invocation: InvocationContext = {
+          transport: "mcp", botId: identity?.botId ?? null, instance: identity?.instance ?? null,
+          threadId, sessionId: identifier(ids.sessionId),
+        };
         const result = await socketCall(socketPath(name, env), "tools/call", {
           name: params.name,
           arguments: params.arguments ?? {},
+          invocation,
         }, { signal: extra.signal, timeoutMs: params.name === "account_remove" ? 300_000 : params.name === "voice_dial" && name === "bots" ? 75_000 : 60_000 });
         if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("operation returned a non-object result");
         return { structuredContent: result as Record<string, unknown>, content: [{ type: "text", text: JSON.stringify(result) }] };

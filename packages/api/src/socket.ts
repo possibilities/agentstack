@@ -2,7 +2,7 @@ import { chmod, lstat, mkdir, rm } from "node:fs/promises";
 import { createServer, connect, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import { z } from "zod";
-import type { AnyOperation } from "./operation.js";
+import type { AnyOperation, InvocationContext } from "./operation.js";
 import { publishedJsonSchema } from "./schema.js";
 
 export type SocketServerInfo = {
@@ -508,12 +508,16 @@ async function callTool<Ctx>(
   params: unknown,
   options: { context: Ctx; operations: readonly AnyOperation<Ctx>[] },
 ): Promise<unknown> {
-  const record = params && typeof params === "object" ? (params as { name?: unknown; arguments?: unknown }) : {};
+  const record = params && typeof params === "object" ? (params as { name?: unknown; arguments?: unknown; invocation?: unknown }) : {};
   if (typeof record.name !== "string") throw new Error("missing operation name");
   const operation = options.operations.find((item) => item.name === record.name);
   if (!operation) throw new Error(`unknown operation: ${record.name}`);
   const input = operation.input.parse(record.arguments ?? {});
-  const output = await operation.call(options.context, input);
+  const invocation = record.invocation === undefined ? undefined : z.strictObject({
+    transport: z.literal("mcp"), botId: z.string().nullable(), instance: z.string().nullable(),
+    threadId: z.string().nullable(), sessionId: z.string().nullable(),
+  }).parse(record.invocation) as InvocationContext;
+  const output = await operation.call(options.context, input, invocation);
   return operation.output.parse(output);
 }
 

@@ -8,13 +8,23 @@ export type Annotations = {
   openWorldHint?: boolean;
 };
 
+/** Transport-supplied context, not part of an operation's public input schema. */
+export type InvocationContext = {
+  transport: "mcp";
+  botId: string | null;
+  instance: string | null;
+  /** Claimed by Codex in MCP _meta; validate lineage before targeting a thread. */
+  threadId: string | null;
+  sessionId: string | null;
+};
+
 export type AnyOperation<Ctx> = {
   name: string;
   description: string;
   input: z.ZodType;
   output: z.ZodType;
   annotations?: Annotations;
-  call(ctx: Ctx, input: any): Promise<any>;
+  call(ctx: Ctx, input: any, invocation?: InvocationContext): Promise<any>;
 };
 
 export type PackageEvents<Ctx, Topic extends string = string> = {
@@ -55,14 +65,14 @@ export function operation<Ctx, InputSchema extends z.ZodType, OutputSchema exten
   input: InputSchema;
   output: OutputSchema;
   annotations?: Annotations;
-  call(ctx: Ctx, input: z.infer<InputSchema>): Promise<z.infer<OutputSchema>>;
+  call(ctx: Ctx, input: z.infer<InputSchema>, invocation?: InvocationContext): Promise<z.infer<OutputSchema>>;
 }): {
   name: string;
   description: string;
   input: InputSchema;
   output: OutputSchema;
   annotations?: Annotations;
-  call(ctx: Ctx, input: z.infer<InputSchema>): Promise<z.infer<OutputSchema>>;
+  call(ctx: Ctx, input: z.infer<InputSchema>, invocation?: InvocationContext): Promise<z.infer<OutputSchema>>;
 } {
   if (!namePattern.test(op.name)) throw new Error(`invalid operation name: ${op.name}`);
   const description = op.description.trim();

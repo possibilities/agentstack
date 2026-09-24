@@ -55,7 +55,7 @@ export type RunningChild = {
 
 export type SupervisorOptions = {
   stateDir: string;
-  mcpServers?: () => Promise<Record<string, string>>;
+  mcpServers?: (botId: string, endpoint: string) => Promise<Record<string, string>>;
   launch?: (spec: LaunchSpec) => RunningChild;
   waitReady?: (url: string, exited: Promise<number | null>, timeoutMs: number) => Promise<void>;
   endpoint?: (id: string) => Promise<string>;
@@ -286,7 +286,6 @@ export class Supervisor {
     }
     // Reconciliation above may advance the saved credential generation.
     const account = selected ? this.store.accountCredentials(selected) : null;
-    const mcpServers = await this.options.mcpServers?.() ?? {};
     const snapshot = this.role.snapshot();
     const privateHistory = join(this.options.stateDir, "history", id);
     const history = current?.mainThreadId && !existsSync(privateHistory) ? join(this.options.stateDir, "history") : privateHistory;
@@ -303,6 +302,7 @@ export class Supervisor {
       let rolePath: string | undefined;
       let child: RunningChild;
       try {
+        const mcpServers = await this.options.mcpServers?.(id, url) ?? {};
         rolePath = await materializeRole(this.options.stateDir, id, snapshot, mcpServers);
         if (account) await writeFile(join(identity, "auth.json"), account.auth, { mode: 0o600 });
         const env = { ...process.env };

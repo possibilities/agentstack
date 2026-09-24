@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, dirname, basename } from "node:path";
 import { renderInstructions, type RoleSnapshot } from "./store.js";
 import { mcpRecord, skillRecord, type RoleMcpServer } from "./resources.js";
+import { parseBotMcpIdentity } from "@agentstack/api";
 
 const namePattern = /^[a-z][a-z0-9-]{0,31}$/;
 const toml = (value: string) => JSON.stringify(value);
@@ -33,14 +34,22 @@ export async function materializeRole(stateDir: string, botId: string, snapshot:
     if (rendered) await writeFile(join(root, "SYSTEM_APPEND.md"), rendered, { mode: 0o600 });
     const lines: string[] = [];
     for (const [name, url] of Object.entries(mcpServers).sort(([a], [b]) => a.localeCompare(b))) {
-      if (!namePattern.test(name) || !/^http:\/\/127\.0\.0\.1:\d+\/mcp\/[a-z][a-z0-9-]*$/.test(url))
+      let parsed: URL;
+      try { parsed = new URL(url); }
+      catch { throw new Error(`invalid owner MCP entry: ${name}`); }
+      if (!namePattern.test(name) || parsed.protocol !== "http:" || parsed.hostname !== "127.0.0.1" || !parsed.port || parsed.pathname !== `/mcp/${name}` || parsed.hash)
         throw new Error(`invalid owner MCP entry: ${name}`);
+      if (parsed.search && parseBotMcpIdentity(parsed, { AGENTSTACK_STATE_DIR: stateDir })?.botId !== botId) throw new Error(`owner MCP entry ${name} belongs to another bot`);
       lines.push(`[mcp_servers.${name}]`, `url = ${JSON.stringify(url)}`, "enabled = true", "");
     }
     const ownerNames = new Set(Object.keys(mcpServers).map((name) => name.toLowerCase()));
+    const ownerOrigins = new Set(Object.values(mcpServers).map((url) => new URL(url).origin));
     for (const value of snapshot.mcpServers) {
       const server = mcpRecord.parse(value);
       if (ownerNames.has(server.name.toLowerCase())) throw new Error(`role MCP server ${server.name} collides with an internal Package API`);
+      if (server.definition.type === "http" && ownerOrigins.has(new URL(server.definition.url).origin)) {
+        throw new Error(`role MCP server ${server.name} cannot alias the internal MCP listener`);
+      }
       if (server.enabled) lines.push(...mcpLines(server));
     }
     await writeFile(join(root, "config.toml"), lines.join("\n"), { mode: 0o600 });
