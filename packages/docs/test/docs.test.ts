@@ -26,6 +26,7 @@ test("the reference renders all current Package APIs from the discovery socket",
     assert.match(html, /&quot;topics&quot;: \[/);
     assert.match(html, /id="events-bots"[\s\S]*?&quot;scope&quot;: &quot;bot-1&quot;/);
     assert.match(html, /JSON Schema/);
+    assert.match(html, /Generated from <code>api\.docs_snapshot<\/code>/);
     const revision = await fetch(new URL("revision", docs.url));
     assert.equal(revision.status, 200);
     assert.match(html, new RegExp((await revision.json() as { revision: string }).revision));

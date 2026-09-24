@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { loadCatalog } from "./src/catalog.js";
+import { loadCatalog, type CatalogServer } from "./src/catalog.js";
 import { operation, type PackageApi } from "./src/operation.js";
 import { workspaceRoot } from "./src/workspace.js";
 
@@ -75,15 +75,28 @@ export const docsGet = operation({
     const catalog = await loadCatalog(ctx.env, ctx.root);
     const server = catalog.servers.find((item) => item.name === input.package);
     if (!server) throw new Error(`unknown package API: ${input.package}`);
-    return {
-      ...server,
-      operations: server.operations.map((item) => ({ ...item, title: item.title ?? null })),
-    };
+    return documentFor(server);
   },
 });
 
+export const docsSnapshot = operation({
+  name: "docs_snapshot",
+  description: "Return one current, consistent document for every workspace Package API. Use this to render the complete reference with one discovery call.",
+  input: z.strictObject({}),
+  output: z.object({ packages: z.array(packageDocSchema) }),
+  annotations: { title: "Snapshot API docs", readOnlyHint: true },
+  async call(ctx: DocsContext) {
+    const catalog = await loadCatalog(ctx.env, ctx.root);
+    return { packages: catalog.servers.map(documentFor) };
+  },
+});
+
+function documentFor(server: CatalogServer) {
+  return { ...server, operations: server.operations.map((item) => ({ ...item, title: item.title ?? null })) };
+}
+
 export const api: PackageApi<DocsContext> = {
-  operations: [docsList, docsGet],
+  operations: [docsList, docsGet, docsSnapshot],
   async createContext(env) {
     return { env, root: workspaceRoot(import.meta.dirname) };
   },

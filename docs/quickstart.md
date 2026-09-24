@@ -16,10 +16,10 @@ The WebSocket child serves every configured Package API at `ws://127.0.0.1:8744/
 
 To create an account, call `account_login_start` with `{}` on the auth Package API (also available in Inspector), open the returned `authUrl` in a browser on the same machine, and enter the `userCode` at the provider. Poll `account_login_status` (or subscribe to `login_changed`) until the attempt completes. The result's `account` is its immutable ID; `account_list` returns IDs and the active choice. Use `account_login_replace` with an existing ID to sign in again. The first account becomes active; `account_activate` chooses the ID used by newly created app servers. Existing Servers retain their bound ID and main thread when restarted, including after AgentStack restarts. Sign-in does not alter the regular Codex CLI account.
 
-Structured documents for every package API — operations with their JSON Schemas, event topics, and configured transports — come from the `api` socket: `docs_list` names the packages and `docs_get` returns one package's document. MCP and WebSocket URLs are included when their ports are fixed.
+Structured documents for every package API — operations with their JSON Schemas, event topics, and configured transports — come from the `api` socket: `docs_list` names the packages, `docs_get` returns one package's document, and `docs_snapshot` returns one consistent catalog for a full reference. MCP and WebSocket URLs are included when their ports are fixed.
 
 `agentstack serve` also prints the loopback URL for its browsable reference,
-`http://127.0.0.1:<port>/docs`. The page reads those two discovery operations
+`http://127.0.0.1:<port>/docs`. The page reads one `docs_snapshot` per request
 each time it loads, shows the configured Package APIs, MCP and WebSocket URLs, and socket
 change events, and refreshes when the document changes. Set
 `AGENTSTACK_DOCS_PORT` before starting to choose a port; otherwise an available

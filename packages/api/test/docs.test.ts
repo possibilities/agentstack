@@ -22,7 +22,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.equal(listed.server.name, "api");
     assert.equal(listed.events, null);
-    assert.deepEqual(listed.tools.map((tool) => tool.name).sort(), ["docs_get", "docs_list"]);
+    assert.deepEqual(listed.tools.map((tool) => tool.name).sort(), ["docs_get", "docs_list", "docs_snapshot"]);
 
     const docs = (await socketCall(served.socketPath, "tools/call", { name: "docs_list", arguments: {} })) as {
       packages: Array<{ name: string; description: string; packageName: string }>;
@@ -42,6 +42,10 @@ test("the api package serves structured documents for every workspace package", 
       assert.equal(doc.name, item.name);
       found.set(doc.name, doc);
     }
+    const snapshot = (await socketCall(served.socketPath, "tools/call", { name: "docs_snapshot", arguments: {} })) as { packages: PackageDoc[] };
+    assert.deepEqual(snapshot.packages, [...found.values()]);
+    const responseLength = JSON.stringify({ id: 1, result: snapshot }).length + 1;
+    assert.ok(responseLength < 750_000, `discovery snapshot exceeds the socket response budget: ${responseLength} characters`);
 
     const codex = found.get("codex") as PackageDoc;
     assert.deepEqual(Object.keys(codex.events).sort(), ["servers_changed", "threads_changed"]);
@@ -92,7 +96,7 @@ test("the api package serves structured documents for every workspace package", 
 
     const api = found.get("api") as PackageDoc;
     assert.deepEqual(api.events, {});
-    assert.deepEqual(api.operations.map((operation) => operation.name).sort(), ["docs_get", "docs_list"]);
+    assert.deepEqual(api.operations.map((operation) => operation.name).sort(), ["docs_get", "docs_list", "docs_snapshot"]);
     assert.equal(api.transports.find((transport) => transport.type === "socket")?.endpoint, join(stateDir, "sockets", "api.sock"));
     assert.equal(api.transports.find((transport) => transport.type === "websocket")?.subscriptions, false);
 
