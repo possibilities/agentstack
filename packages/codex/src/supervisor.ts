@@ -7,6 +7,7 @@ import { connect } from "node:net";
 import { codexRuntimePath } from "./paths.js";
 import { StateStore, type StoredServer } from "./store.js";
 import { RuntimeAuth } from "./runtime-auth.js";
+import { bindMainThread } from "./threads.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const DEFAULT_GRACE_MS = 10_000;
@@ -22,6 +23,7 @@ export type ServerView = {
   url: string | null;
   state: ServerState;
   account: string | null;
+  mainThreadId: string | null;
 };
 
 type RecordFile = StoredServer;
@@ -55,6 +57,7 @@ export type SupervisorOptions = {
   commandLine?: (pid: number) => Promise<string | null>;
   graceMs?: number;
   readyTimeoutMs?: number;
+  bindThread?: typeof bindMainThread;
   onChange?: () => void;
   store?: StateStore;
 };
@@ -70,6 +73,7 @@ export class Supervisor {
   private readonly commandLine: (pid: number) => Promise<string | null>;
   private readonly graceMs: number;
   private readonly readyTimeoutMs: number;
+  private readonly bindThread: typeof bindMainThread;
   readonly store: StateStore;
   readonly runtime: RuntimeAuth;
 
@@ -82,6 +86,7 @@ export class Supervisor {
     this.commandLine = options.commandLine ?? processCommandLine;
     this.graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
     this.readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
+    this.bindThread = options.bindThread ?? bindMainThread;
     this.onChange = options.onChange;
   }
 
@@ -98,6 +103,8 @@ export class Supervisor {
           parsed.account ??= null;
           parsed.authVersion ??= null;
           parsed.runtimeRoot ??= null;
+          parsed.mainThreadId ??= null;
+          parsed.threadStarting ??= false;
           this.store.saveServer(parsed);
           this.records.set(parsed.id, parsed);
         }
@@ -120,6 +127,16 @@ export class Supervisor {
     }
     for (const record of this.records.values()) {
       if (record.state === "stopped" && record.runtimeRoot) await this.finishRuntime(record);
+    }
+  }
+
+  async resumeAll(): Promise<void> {
+    for (const record of this.records.values()) {
+      try {
+        await this.start({ id: record.id, cwd: record.cwd });
+      } catch (error) {
+        console.error(`failed to restart server ${record.id}: ${error}`);
+      }
     }
   }
 
@@ -148,24 +165,28 @@ export class Supervisor {
     const codexBin = codexRuntimePath();
     const userArgs = input.args ?? [];
     const current = this.records.get(id);
+    if (current && current.cwd !== cwd) throw new Error(`server ${id} is bound to ${current.cwd}, not ${cwd}`);
     if (current && (await this.isRunning(current))) {
       if (current.codexBin !== codexBin) {
         throw new Error(`server ${id} uses a different Codex runtime; stop it before starting it with codexnk`);
       }
       return viewOf(current);
     }
+    if (current?.threadStarting && !current.mainThreadId) {
+      throw new Error(`server ${id} has an unconfirmed thread/start; inspect its Codex history before retrying to avoid a second main thread`);
+    }
     if (current?.runtimeRoot) {
       await this.runtime.finish(current);
       if (current.runtimeRoot) throw new Error(`server ${id} has unreconciled Codex credentials; sign in again or inspect its private runtime`);
     }
-    const selected = this.store.activeAccount().name;
+    const account = current?.account ? this.store.accountCredentials(current.account) : this.store.activeAccount();
+    const selected = account.name;
     for (const record of this.records.values()) {
       if (record.account === selected && record.runtimeRoot) {
         if (record.state === "stopped") await this.finishRuntime(record);
         else await this.runtime.reconcile(record);
       }
     }
-    const account = this.store.activeAccount();
     const capabilities = join(this.options.stateDir, "capabilities", "default");
     const history = join(this.options.stateDir, "history");
     await Promise.all([mkdir(capabilities, { recursive: true, mode: 0o700 }), mkdir(history, { recursive: true, mode: 0o700 })]);
@@ -197,14 +218,28 @@ export class Supervisor {
         throw new Error(error instanceof Error ? error.message : String(error));
       }
       this.children.set(id, child);
-      const record: RecordFile = { id, pid: child.pid, cwd, url, state: "running", codexBin, account: account.name, authVersion: account.version, runtimeRoot };
+      const record: RecordFile = {
+        id, pid: child.pid, cwd, url, state: "running", codexBin, account: account.name, authVersion: account.version, runtimeRoot,
+        mainThreadId: current?.mainThreadId ?? null, threadStarting: current?.threadStarting ?? false,
+      };
       this.records.set(id, record);
       this.watchExit(id, child, record);
       let persisted = false;
+      let ready = false;
       try {
         await this.persist(record);
         persisted = true;
         await this.waitReady(url, child.exited, this.readyTimeoutMs);
+        ready = true;
+        const threadId = await this.bindThread(url, cwd, record.mainThreadId, async () => {
+          // Only after the handshake, fence the allocation before sending thread/start.
+          record.threadStarting = true;
+          try { await this.persist(record); }
+          catch (error) { record.threadStarting = false; throw error; }
+        });
+        record.mainThreadId = threadId;
+        record.threadStarting = false;
+        await this.persist(record);
         await rm(identity, { recursive: true, force: true });
         await this.runtime.watch(record);
         this.notify();
@@ -220,6 +255,7 @@ export class Supervisor {
         this.notify();
         if (!persisted) throw lastError;
         if (record.runtimeRoot) throw lastError;
+        if (ready) throw lastError;
       }
     }
     throw lastError ?? new Error("failed to start app-server");
@@ -418,6 +454,7 @@ function viewOf(record: RecordFile): ServerView {
     url: record.url,
     state: record.state,
     account: record.account,
+    mainThreadId: record.mainThreadId ?? null,
   };
 }
 

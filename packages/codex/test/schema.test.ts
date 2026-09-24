@@ -8,6 +8,7 @@ test("server_start has no executable override and rejects legacy codexBin", () =
   assert.deepEqual(Object.keys(schema.properties).sort(), ["args", "cwd", "id"]);
   assert.equal(schema.additionalProperties, false);
   assert.equal(serverStart.input.safeParse({ cwd: "/tmp", codexBin: "/tmp/vendor-codex" }).success, false);
+  assert.equal(serverStart.input.safeParse({ cwd: "/tmp", restartOnBoot: false }).success, false);
 });
 
 test("published tool schemas use a single type per branch", () => {
@@ -22,6 +23,7 @@ test("published tool schemas use a single type per branch", () => {
   assert.ok(view.properties.pid.anyOf.some((branch) => branch.type === "null"));
   assert.ok(view.required.includes("url"));
   assert.ok(view.required.includes("pid"));
+  assert.ok(view.required.includes("mainThreadId"));
 });
 
 function assertNoTypeArrays(schema: unknown): void {

@@ -95,13 +95,15 @@ test("codex lifecycle is served on the namespaced unix socket", async () => {
     const started = (await socketCall(served.socketPath, "tools/call", {
       name: "server_start",
       arguments: { cwd, id: "remote" },
-    })) as { id: string; state: string; url: string };
+    })) as { id: string; state: string; url: string; mainThreadId: string | null };
     assert.equal(started.id, "remote");
     assert.equal(started.state, "running");
+    assert.ok(started.mainThreadId);
     assert.equal(started.url, `unix://${join(stateDir, "app", "remote.sock")}`);
     const persisted = new StateStore(stateDir);
     assert.equal(persisted.servers().find((server) => server.id === "remote")?.codexBin, runtime);
     assert.equal(persisted.servers().find((server) => server.id === "remote")?.account, "codex-1");
+    assert.equal(persisted.servers().find((server) => server.id === "remote")?.mainThreadId, started.mainThreadId);
     persisted.close();
     assert.deepEqual(await events.next(), { type: "event", topic: "servers_changed" });
 

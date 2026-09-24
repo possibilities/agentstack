@@ -1,4 +1,4 @@
 name: bots
-description: Start, stop, and list numbered Codex bot app-servers, each in its own private workspace.
+description: Start, stop, and list numbered Codex bot app-servers, each in its own private workspace with a main thread resumed on startup.
 socket:
   description: Unix socket for Codex bot lifecycle, namespaced as bots.

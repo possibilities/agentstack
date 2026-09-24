@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -7,9 +7,9 @@ import { fileURLToPath } from "node:url";
 import { serveApi, socketCall, type ServedApi } from "@agentstack/api";
 import { StateStore } from "@agentstack/codex";
 
-const fakeBin = fileURLToPath(new URL("../../test/fixtures/fake-app-server.mjs", import.meta.url));
+const fakeBin = fileURLToPath(new URL("../../../codex/test/fixtures/fake-app-server.mjs", import.meta.url));
 
-type View = { id: string; pid: number | null; cwd: string; url: string | null; state: string; account: string | null };
+type View = { id: string; pid: number | null; cwd: string; url: string | null; state: string; account: string | null; mainThreadId: string | null };
 
 function call(socket: string, name: string, args: Record<string, unknown> = {}, timeoutMs = 30_000): Promise<unknown> {
   return socketCall(socket, "tools/call", { name, arguments: args }, { timeoutMs });
@@ -28,7 +28,7 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
   store.addAccount(JSON.stringify({ tokens: { refresh_token: "test-refresh", access_token: "access", id_token: "fixture.jwt.signature" } }));
   store.close();
   const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir };
-  const codex = await serveApi({ name: "codex", transport: "socket", env });
+  let codex = await serveApi({ name: "codex", transport: "socket", env });
   const codexSocket = codex.socketPath ?? "";
   const botsSocket = join(stateDir, "sockets", "bots.sock");
   let bots: ServedApi | undefined = await serveApi({ name: "bots", transport: "socket", env });
@@ -64,6 +64,7 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     assert.equal(first.cwd, join(stateDir, "bots", "bot-1"));
     assert.equal(first.url, `unix://${join(stateDir, "app", "bot-1.sock")}`);
     assert.equal(first.account, "codex-1");
+    assert.ok(first.mainThreadId);
     const firstWorkspace = await lstat(first.cwd);
     assert.equal(firstWorkspace.isDirectory(), true);
     assert.equal(firstWorkspace.mode & 0o777, 0o700);
@@ -74,6 +75,7 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     assert.equal(again.id, "bot-1");
     assert.equal(again.state, "running");
     assert.equal(again.pid, first.pid);
+    assert.equal(again.mainThreadId, first.mainThreadId);
 
     const second = (await call(botsSocket, "bot_start")) as View;
     assert.equal(second.id, "bot-2");
@@ -93,6 +95,7 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     assert.equal(stopped.cwd, first.cwd);
     const restarted = (await call(botsSocket, "bot_start", { id: "bot-1" })) as View;
     assert.equal(restarted.state, "running");
+    assert.equal(restarted.mainThreadId, first.mainThreadId);
 
     const concurrent = (await Promise.all([
       call(botsSocket, "bot_start"),
@@ -128,6 +131,7 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     await symlink(workDir, join(stateDir, "bots", "bot-2"));
     await assert.rejects(call(botsSocket, "bot_start", { id: "bot-2" }), /not a directory/);
     await rm(join(stateDir, "bots", "bot-2"));
+    await mkdir(join(stateDir, "bots", "bot-2"));
 
     await bots.close();
     bots = await serveApi({ name: "bots", transport: "socket", env });
@@ -136,6 +140,24 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     const stillRunning = (await call(codexSocket, "server_list")) as { servers: View[] };
     assert.equal(stillRunning.servers.find((server) => server.id === "bot-1")?.state, "running");
     assert.equal(stillRunning.servers.find((server) => server.id === "other")?.state, "running");
+
+    await bots.close();
+    bots = undefined;
+    await codex.close();
+    codex = await serveApi({ name: "codex", transport: "socket", env });
+    bots = await serveApi({ name: "bots", transport: "socket", env });
+    const booted = (await call(botsSocket, "bot_list")) as { bots: View[] };
+    assert.equal(booted.bots.length, 9); // bot-6 was reserved, but never successfully started.
+    assert.ok(booted.bots.every((bot) => bot.state === "running" && bot.mainThreadId));
+    assert.equal(booted.bots.find((bot) => bot.id === "bot-1")?.mainThreadId, first.mainThreadId);
+    const afterBoot = (await call(codexSocket, "server_list")) as { servers: View[] };
+    assert.equal(afterBoot.servers.find((server) => server.id === "other")?.state, "running");
+    assert.equal(afterBoot.servers.find((server) => server.id === "other")?.mainThreadId, unrelated.mainThreadId);
+    assert.equal(afterBoot.servers.find((server) => server.id === "bot-11")?.state, "running");
+    const history = (await readFile(join(stateDir, "history", "fake-threads.jsonl"), "utf8"))
+      .trim().split("\n").map((line) => JSON.parse(line) as { method: string; threadId: string; cwd: string });
+    assert.equal(history.filter((entry) => entry.method === "thread/start" && entry.cwd === first.cwd).length, 1);
+    assert.ok(history.filter((entry) => entry.method === "thread/resume" && entry.cwd === first.cwd).length >= 2);
   } finally {
     await bots?.close();
     await codex.close();

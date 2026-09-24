@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { connect } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { appServerArgs, launchChild, Supervisor, waitForReady, type LaunchSpec, type RunningChild } from "../src/supervisor.js";
+import { appServerArgs, launchChild, Supervisor, waitForReady, type LaunchSpec, type RunningChild, type SupervisorOptions } from "../src/supervisor.js";
 import { codexRuntimePath } from "../src/paths.js";
 
 const fakeBin = fileURLToPath(new URL("../../test/fixtures/fake-app-server.mjs", import.meta.url));
@@ -38,6 +38,7 @@ test("a failed database write rolls back the launched child", async () => {
         return { pid: 12345, exited, kill(signal) { signals.push(signal); resolveExit(0); } };
       },
       waitReady: async () => undefined,
+      bindThread: async (_url, _cwd, id) => id ?? "thread-blocked",
     });
     await supervisor.load();
     seedAccount(supervisor);
@@ -85,6 +86,7 @@ test("start is idempotent and stop is idempotent", async () => {
       async waitReady() {
         return undefined;
       },
+      bindThread: async (_url, _cwd, id) => id ?? "thread-alpha",
     });
     await supervisor.load();
     seedAccount(supervisor);
@@ -97,13 +99,16 @@ test("start is idempotent and stop is idempotent", async () => {
     assert.deepEqual(launched[0]?.args.slice(0, 3), ["app-server", "--listen", "ws://127.0.0.1:41000"]);
     assert.deepEqual(launched[0]?.args.filter((arg) => arg.startsWith("--") && arg !== "--listen"), ["--identity", "--capabilities", "--history-dir"]);
     assert.equal(first.account, "codex-1");
+    assert.equal(first.mainThreadId, "thread-alpha");
     assert.equal(launched[0]?.cwd, cwd);
+    await assert.rejects(supervisor.start({ cwd: stateDir, id: "alpha" }), /bound to/);
     const stopped = await supervisor.stop("alpha");
     assert.equal(stopped.state, "stopped");
     assert.equal(stopped.pid, null);
     assert.equal(stopped.url, null);
     const stoppedAgain = await supervisor.stop("alpha");
     assert.equal(stoppedAgain.state, "stopped");
+    assert.equal(stoppedAgain.mainThreadId, first.mainThreadId);
     assert.deepEqual(killed, ["SIGTERM"]);
     assert.equal(supervisor.list().length, 1);
   } finally {
@@ -146,6 +151,7 @@ test("onChange fires only on persisted running/stopped transitions", async () =>
       async waitReady() {
         return undefined;
       },
+      bindThread: async (_url, _cwd, id) => id ?? "thread-alpha",
     });
     await supervisor.load();
     seedAccount(supervisor);
@@ -211,6 +217,7 @@ test("caller arguments are merged and --listen is rejected", async () => {
       async waitReady() {
         return undefined;
       },
+      bindThread: async (_url, _cwd, id) => id ?? "thread-flags",
     });
     await supervisor.load();
     seedAccount(supervisor);
@@ -299,6 +306,7 @@ test("a dead in-memory server is stopped and can start again", async () => {
       async waitReady() {
         return undefined;
       },
+      bindThread: async (_url, _cwd, id) => id ?? "thread-alpha",
     });
     await supervisor.load();
     seedAccount(supervisor);
@@ -340,6 +348,7 @@ test("an exited in-memory server is recorded as stopped", async () => {
       async waitReady() {
         return undefined;
       },
+      bindThread: async (_url, _cwd, id) => id ?? "thread-alpha",
     });
     await supervisor.load();
     seedAccount(supervisor);
@@ -429,6 +438,7 @@ test("a reused pid is not treated as the recorded server", async () => {
       async waitReady() {
         return undefined;
       },
+      bindThread: async (_url, _cwd, id) => id ?? "thread-old",
       async commandLine() {
         return "unrelated process";
       },
@@ -467,6 +477,7 @@ test("a fake app-server becomes ready and can be stopped", async () => {
     seedAccount(supervisor);
     const started = await supervisor.start({ cwd, id: "live" });
     assert.equal(started.state, "running");
+    assert.ok(started.mainThreadId);
     assert.equal(started.url, `unix://${join(stateDir, "app", "live.sock")}`);
     await new Promise<void>((resolve, reject) => {
       const socket = connect((started.url ?? "").slice("unix://".length));
@@ -476,8 +487,78 @@ test("a fake app-server becomes ready and can be stopped", async () => {
     const stopped = await supervisor.stop("live");
     assert.equal(stopped.state, "stopped");
     assert.equal(stopped.url, null);
+    const resumed = await supervisor.start({ cwd, id: "live" });
+    assert.equal(resumed.mainThreadId, started.mainThreadId);
+    const entries = (await readFile(join(stateDir, "history", "fake-threads.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { method: string; threadId: string });
+    assert.deepEqual(entries.map(({ method }) => method), ["thread/start", "thread/resume"]);
+    assert.ok(entries.every(({ threadId }) => threadId === started.mainThreadId));
   } finally {
     await supervisor.stopAll();
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("failed resume retains the main thread and never creates a replacement", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-resume-fail-"));
+  const cwd = await mkdtemp(join(tmpdir(), "agentstack-resume-cwd-"));
+  let resolveExit: (code: number | null) => void = () => undefined;
+  const calls: Array<string | null> = [];
+  const supervisor = new Supervisor({ stateDir, graceMs: 20,
+    endpoint: async () => "ws://127.0.0.1:43111",
+    launch: () => ({ pid: 77, exited: new Promise((resolve) => { resolveExit = resolve; }), kill: () => resolveExit(0) }),
+    waitReady: async () => undefined,
+    bindThread: async (_url, _cwd, id) => {
+      calls.push(id);
+      if (id) throw new Error("thread missing");
+      return "main-1";
+    },
+  });
+  try {
+    await supervisor.load();
+    seedAccount(supervisor);
+    await supervisor.start({ cwd, id: "one" });
+    await supervisor.stop("one");
+    await assert.rejects(supervisor.start({ cwd, id: "one" }), /thread missing/);
+    assert.deepEqual(calls, [null, "main-1"]);
+    assert.equal(supervisor.list()[0]?.mainThreadId, "main-1");
+    assert.equal(supervisor.list()[0]?.state, "stopped");
+  } finally {
+    supervisor.store.close();
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("an unconfirmed first thread start blocks a second allocation after recovery", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-uncertain-thread-"));
+  const cwd = await mkdtemp(join(tmpdir(), "agentstack-uncertain-cwd-"));
+  let resolveExit: (code: number | null) => void = () => undefined;
+  let allocations = 0;
+  const options: SupervisorOptions = { stateDir, graceMs: 20,
+    endpoint: async () => "ws://127.0.0.1:43112",
+    launch: () => ({ pid: 78, exited: new Promise<number | null>((resolve) => { resolveExit = resolve; }), kill: () => resolveExit(0) }),
+    waitReady: async () => undefined,
+    bindThread: async (_url, _cwd, _id, beforeStart) => {
+      await beforeStart?.();
+      allocations += 1;
+      throw new Error("lost thread/start response");
+    },
+  };
+  const first = new Supervisor(options);
+  try {
+    await first.load();
+    seedAccount(first);
+    await assert.rejects(first.start({ cwd, id: "one" }), /lost thread\/start response/);
+    assert.equal(first.store.servers()[0]?.threadStarting, true);
+    first.store.close();
+    const recovered = new Supervisor(options);
+    try {
+      await recovered.load();
+      await assert.rejects(recovered.start({ cwd, id: "one" }), /unconfirmed thread\/start/);
+      assert.equal(allocations, 1);
+    } finally { recovered.store.close(); }
+  } finally {
     await rm(stateDir, { recursive: true, force: true });
     await rm(cwd, { recursive: true, force: true });
   }

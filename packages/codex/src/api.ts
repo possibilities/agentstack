@@ -20,6 +20,7 @@ const serverViewSchema = z.object({
   url: z.string().nullable().describe("WebSocket endpoint while running, otherwise null."),
   state: z.enum(["running", "stopped"]).describe("running or stopped."),
   account: z.string().nullable().describe("Codex account bound at launch; null for older records."),
+  mainThreadId: z.string().nullable().describe("The one durable main thread for this Server; null until its first successful start."),
 });
 
 const serverListSchema = z.object({
@@ -92,7 +93,7 @@ export const inputObserveList = operation({
 export const serverStart = operation({
   name: "server_start",
   description:
-    "Start the required codexnk runtime on a private Unix socket, or return the live one with this id. Extra args are passed through. Do not pass --listen.",
+    "Start the required codexnk runtime with its persistent main thread, or return the live one with this id. Servers resume when agentstack starts. Extra args are passed through. Do not pass --listen.",
   input: z.strictObject({
     cwd: z.string().describe("Working directory for the app-server."),
     id: idSchema.optional().describe("Existing server id to reuse. A new id is generated when omitted."),
@@ -204,6 +205,7 @@ export const api: PackageApi<CodexContext> = {
     const supervisor = new Supervisor({ stateDir: dir, store });
     await supervisor.load();
     await supervisor.reap();
+    await supervisor.resumeAll();
     return { supervisor, store, login: new LoginManager(store), observer: new InputObserver() };
   },
   subscribe(ctx, publish) {

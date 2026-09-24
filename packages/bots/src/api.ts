@@ -112,7 +112,7 @@ export const botStop = operation({
     const cwd = workspacePath(ctx.root, id);
     const existing = (await codexServers(ctx)).find((server) => server.id === id);
     if (existing && existing.cwd !== cwd) throw new Error(`codex server ${id} does not use the ${id} workspace`);
-    if (!existing) return { id, pid: null, cwd, url: null, state: "stopped" as const, account: null };
+    if (!existing) return { id, pid: null, cwd, url: null, state: "stopped" as const, account: null, mainThreadId: null };
     const server = serverStop.output.parse(
       await socketCall(ctx.codexSocket, "tools/call", { name: "server_stop", arguments: { id } }, { timeoutMs: STOP_TIMEOUT_MS }),
     );

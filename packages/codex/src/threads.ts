@@ -1,5 +1,5 @@
 import { connect } from "node:net";
-import WebSocket from "ws";
+import WebSocket, { type RawData } from "ws";
 
 export type ActiveThread = {
   id: string;
@@ -61,6 +61,50 @@ export function threadTree(threads: ActiveThread[]): ActiveThread[] {
     else roots.push(node);
   }
   return roots;
+}
+
+/** Join the server's durable main thread, creating it only on its first launch. */
+export async function bindMainThread(url: string, cwd: string, threadId: string | null, beforeStart?: () => Promise<void>): Promise<string> {
+  const ws = appServerSocket(url);
+  ws.on("error", () => undefined); // The close event rejects any in-flight request.
+  let nextId = 1;
+  const call = (method: string, params: unknown): Promise<unknown> => new Promise((resolve, reject) => {
+    const id = nextId++;
+    const timer = setTimeout(() => finish(new Error(`${method} timed out`)), 15_000);
+    const onMessage = (raw: RawData) => {
+      let frame: { id?: unknown; result?: unknown; error?: { message?: string } };
+      try { frame = JSON.parse(String(raw)) as typeof frame; } catch { return; }
+      if (frame.id !== id) return;
+      finish(frame.error ? new Error(`${method}: ${frame.error.message ?? "failed"}`) : null, frame.result);
+    };
+    const onClose = () => finish(new Error(`${method}: connection closed`));
+    const finish = (error: Error | null, result?: unknown) => {
+      clearTimeout(timer);
+      ws.off("message", onMessage);
+      ws.off("close", onClose);
+      if (error) reject(error);
+      else resolve(result);
+    };
+    ws.on("message", onMessage);
+    ws.on("close", onClose);
+    ws.send(JSON.stringify({ id, method, params }));
+  });
+  try {
+    await once(ws, "open", 5_000);
+    await call("initialize", { clientInfo: { name: "agentstack", version: "0.0.0" } });
+    ws.send(JSON.stringify({ method: "initialized" }));
+    if (!threadId) await beforeStart?.();
+    const method = threadId ? "thread/resume" : "thread/start";
+    const response = await call(method, threadId ? { threadId, cwd } : { cwd }) as { thread?: { id?: unknown } };
+    const id = response?.thread?.id;
+    if (typeof id !== "string" || !id || (threadId && id !== threadId)) {
+      throw new Error(`${method} returned an unexpected thread id`);
+    }
+    return id;
+  } finally {
+    if (ws.readyState === WebSocket.OPEN) ws.close();
+    else ws.terminate();
+  }
 }
 
 export async function listActiveThreads(url: string): Promise<ActiveThread[]> {

@@ -46,7 +46,7 @@ test("an explicit observer records candidate, committed pass and clean detach", 
     });
   });
   try {
-    await observer.start({ id: "s1", cwd: dir, pid: 1, state: "running", url: `unix://${path}`, account: null }, "t1");
+    await observer.start({ id: "s1", cwd: dir, pid: 1, state: "running", url: `unix://${path}`, account: null, mainThreadId: "t1" }, "t1");
     await resolved;
     assert.equal(observer.snapshot().entries[0]?.originalText, "Original text");
     assert.equal(observer.snapshot().entries[0]?.disposition, "passed");
