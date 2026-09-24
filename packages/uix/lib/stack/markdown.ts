@@ -23,7 +23,7 @@ export function renderCanvasMarkdown(snapshot: Snapshot): string {
 
   return [
     "# AgentStack canvas", "",
-    "A read-only live view of every Package API. The HTML page reads the same state over WebSocket and refreshes on change notices.", "",
+    "A live view of every Package API. The HTML page reads the same state over WebSocket, refreshes on change notices, and can also run the auth API's operations (sign-in, activation, removal).", "",
     ...section("System", owner, (data) => [
       `Owner pid ${data.pid} · ${data.children.filter((child) => child.running).length}/${data.children.length} children running.`, "",
       ...data.children.map((child) => `- **${child.name}** — ${child.running ? `running · pid ${child.pid}` : `stopped${child.exitCode !== null ? ` · exit ${child.exitCode}` : ""}${child.signal ? ` · ${child.signal}` : ""}${child.error ? ` · ${child.error}` : ""}`}`),

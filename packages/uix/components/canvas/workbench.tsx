@@ -26,6 +26,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { nodeKey, type NodeRef, type Snapshot } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
+import { AuthActionsProvider } from "./auth-actions";
 import { Inspector } from "./inspector";
 import { Lines } from "./lines";
 import { Palette, type PaletteAction } from "./palette";
@@ -307,7 +308,7 @@ function Shell() {
         return;
       }
       const target = event.target as HTMLElement;
-      if (event.metaKey || event.ctrlKey || event.altKey || paletteOpen || target.closest("input,textarea,[contenteditable=true],[role=dialog]")) return;
+      if (event.metaKey || event.ctrlKey || event.altKey || paletteOpen || target.closest("input,textarea,[contenteditable=true],[role=dialog],[role=alertdialog]")) return;
       const key = event.key.toLowerCase();
       if (key === "g") toggleMode();
       if (mode !== "canvas") return;
@@ -391,6 +392,7 @@ function Shell() {
 
   return (
     <WorkbenchContext value={workbench}>
+      <AuthActionsProvider>
       <PlacementContext value={placement}>
         <main
           ref={viewport}
@@ -434,6 +436,7 @@ function Shell() {
         <Inspector />
         <Palette open={paletteOpen} onOpenChange={setPaletteOpen} actions={actions} />
       </PlacementContext>
+      </AuthActionsProvider>
     </WorkbenchContext>
   );
 }

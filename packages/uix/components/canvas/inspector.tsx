@@ -1,18 +1,20 @@
 "use client";
 
-import { useEffect } from "react";
-import { ArrowRightIcon, LockIcon, RadioIcon, XIcon } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowRightIcon, CircleCheckIcon, LockIcon, RadioIcon, RefreshCwIcon, SquareArrowOutUpRightIcon, Trash2Icon, XIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { fieldsOf, findOperation, operationTitle, recordFields, recordOperations, type Field } from "@/lib/stack/catalog";
 import { accountLabels, clockTime, shortId } from "@/lib/stack/derive";
 import type { StackState } from "@/lib/stack/store";
-import { nodeKey, type NodeRef, type OperationDoc, type PackageDoc, type StackEvent } from "@/lib/stack/types";
+import { nodeKey, type Account, type Login, type NodeRef, type OperationDoc, type PackageDoc, type StackEvent } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
+import { useAuthActions } from "./auth-actions";
 import { CopyButton, Orb } from "./primitives";
-import { useStack, useWorkbench } from "./provider";
+import { useOperation, useStack, useWorkbench } from "./provider";
 import { accentBg, accentOf, accentText, type Accent } from "./window";
 import { OperationBadges, RecoveryWarning } from "./windows";
 
@@ -25,6 +27,8 @@ type View = {
   fields?: Map<string, Field>;
   related?: { ref: NodeRef; label: string }[];
   operations?: { pkg: string; list: OperationDoc[] };
+  /** Live controls rendered above the operation list; their ops drop out of the list. */
+  controls?: React.ReactNode;
   events?: StackEvent[];
   body?: React.ReactNode;
   recoveryIssue?: string | null;
@@ -61,18 +65,20 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         eyebrow: "Codex account", accent: "auth", title: labels.get(account.id) ?? shortId(account.id), orb: account.id, record: account,
         fields: recordFields(catalog, "auth", "account_list"),
         related: bound.map((server) => ({ ref: { kind: "server", id: server.id } as NodeRef, label: server.id })),
-        operations: { pkg: "auth", list: recordOperations(catalog, "auth") },
+        operations: { pkg: "auth", list: recordOperations(catalog, "auth").filter((operation) => !accountControls.has(operation.name)) },
+        controls: <AccountControls account={account} />,
         events: state.events.filter((event) => event.pkg === "auth"),
       };
     }
     case "login": {
-      const login = state.login.data;
+      const login = state.login.data ?? state.attempt;
       if (!login) return null;
       return {
         eyebrow: "Device sign-in", accent: "auth", title: login.status === "pending" ? "Sign-in in progress" : `Sign-in ${login.status}`, record: login,
         fields: new Map(fieldsOf(findOperation(catalog, "auth", "account_login_status")?.outputSchema).map((field) => [field.name, field])),
         related: [login.account, login.targetAccount].filter((id): id is string => Boolean(id)).map((id) => ({ ref: { kind: "account", id }, label: labels.get(id) ?? shortId(id) })),
-        operations: { pkg: "auth", list: (catalog?.find((doc) => doc.name === "auth")?.operations ?? []).filter((operation) => operation.name.startsWith("account_login")) },
+        operations: { pkg: "auth", list: (catalog?.find((doc) => doc.name === "auth")?.operations ?? []).filter((operation) => operation.name.startsWith("account_login") && !loginControls.has(operation.name)) },
+        controls: <LoginControls login={login} />,
         events: state.events.filter((event) => event.topic === "login_changed"),
       };
     }
@@ -112,6 +118,77 @@ function resolve(ref: NodeRef, state: StackState): View | null {
       };
     }
   }
+}
+
+const accountControls = new Set(["account_activate", "account_remove", "account_login_replace"]);
+const loginControls = new Set(["account_login_cancel", "account_login_status"]);
+
+function AccountControls({ account }: { account: Account }) {
+  const actions = useAuthActions();
+  const pending = actions.activating === account.id;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex flex-wrap gap-1.5">
+        <Button size="sm" variant="outline" disabled={account.active || account.removing || pending} onClick={() => actions.activate(account)}>
+          {pending ? <Spinner data-icon="inline-start" /> : <CircleCheckIcon data-icon="inline-start" />}
+          Make active
+        </Button>
+        <Button size="sm" variant="outline" disabled={account.removing || actions.pendingSignIn} onClick={() => actions.startSignIn(account.id)}>
+          <RefreshCwIcon data-icon="inline-start" />
+          Sign in again
+        </Button>
+        <Button size="sm" variant="destructive" disabled={account.removing || actions.removing === account.id} onClick={() => actions.confirmRemove(account)}>
+          <Trash2Icon data-icon="inline-start" />
+          Remove…
+        </Button>
+      </div>
+      {actions.error?.op === "activate" && actions.error.target === account.id ? (
+        <p className="text-[0.72rem] text-pretty text-destructive">{actions.error.message}</p>
+      ) : null}
+      {account.removing ? (
+        <p className="text-[0.72rem] text-muted-foreground">Removal started. {actions.removing === account.id ? "Removing…" : "Remove again to finish it."}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function LoginControls({ login }: { login: Login }) {
+  const actions = useAuthActions();
+  const check = useOperation<Login>("auth", "account_login_status");
+  const [result, setResult] = useState<Login | null>(null);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex flex-wrap gap-1.5">
+        {login.status === "pending" ? (
+          <Button size="sm" variant="outline" disabled={actions.cancelPending} onClick={() => actions.cancelLogin(login.id)}>
+            {actions.cancelPending ? <Spinner data-icon="inline-start" /> : <XIcon data-icon="inline-start" />}
+            Cancel sign-in
+          </Button>
+        ) : null}
+        <Button size="sm" variant="outline" disabled={check.pending} onClick={() => {
+          void check.run({ id: login.id }).then(setResult, () => undefined);
+        }}>
+          {check.pending ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}
+          Check status
+        </Button>
+        {login.authUrl ? (
+          <Button size="sm" variant="outline" render={<a href={login.authUrl} target="_blank" rel="noreferrer" />}>
+            Open page
+            <SquareArrowOutUpRightIcon data-icon="inline-end" />
+          </Button>
+        ) : null}
+      </div>
+      {result ? (
+        <p className="flex items-center gap-1.5 text-[0.75rem]">
+          <span className="text-muted-foreground">Latest:</span>
+          <Badge variant={result.status === "failed" ? "destructive" : "secondary"} className="capitalize">{result.status}</Badge>
+          {result.error ? <span className="text-destructive">{result.error}</span> : null}
+          {result.account ? <span className="font-mono">{shortId(result.account)}</span> : null}
+        </p>
+      ) : null}
+      {check.error ? <p className="text-[0.72rem] text-pretty text-destructive">{check.error}</p> : null}
+    </div>
+  );
 }
 
 function Value({ value }: { value: unknown }) {
@@ -237,7 +314,7 @@ export function Inspector() {
   useEffect(() => {
     if (!selected) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !event.defaultPrevented && !document.querySelector("[role=dialog]")) select(null);
+      if (event.key === "Escape" && !event.defaultPrevented && !document.querySelector("[role=dialog],[role=alertdialog]")) select(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -299,25 +376,28 @@ export function Inspector() {
                 </div>
               </Block>
             ) : null}
-            {view.operations?.list.length ? (
-              <Block title="Actions" aside={<span className="flex items-center gap-1 text-[0.68rem] text-muted-foreground"><LockIcon className="size-3" />Read only for now</span>}>
-                <ul className="flex flex-col gap-1.5">
-                  {view.operations.list.map((operation) => (
-                    <li key={operation.name} className="flex items-center gap-2 rounded-lg border border-dashed px-2.5 py-2">
-                      <div className="flex min-w-0 flex-col">
-                        <span className="text-[0.8rem] font-medium">{operationTitle(operation)}</span>
-                        <span className="truncate font-mono text-[0.68rem] text-muted-foreground">{operation.name}</span>
-                      </div>
-                      <span className="ml-auto flex shrink-0 gap-1"><OperationBadges operation={operation} /></span>
-                      <Tooltip>
-                        <TooltipTrigger render={<Button variant="ghost" size="icon-xs" aria-label={`Details for ${operation.name}`} onClick={() => select({ kind: "operation", id: operation.name, pkg: view.operations!.pkg })} />}>
-                          <ArrowRightIcon />
-                        </TooltipTrigger>
-                        <TooltipContent side="left" className="max-w-64">{operation.description}</TooltipContent>
-                      </Tooltip>
-                    </li>
-                  ))}
-                </ul>
+            {view.controls || view.operations?.list.length ? (
+              <Block title="Actions" aside={view.controls ? undefined : <span className="flex items-center gap-1 text-[0.68rem] text-muted-foreground"><LockIcon className="size-3" />Read only for now</span>}>
+                {view.controls}
+                {view.operations?.list.length ? (
+                  <ul className="flex flex-col gap-1.5">
+                    {view.operations.list.map((operation) => (
+                      <li key={operation.name} className="flex items-center gap-2 rounded-lg border border-dashed px-2.5 py-2">
+                        <div className="flex min-w-0 flex-col">
+                          <span className="text-[0.8rem] font-medium">{operationTitle(operation)}</span>
+                          <span className="truncate font-mono text-[0.68rem] text-muted-foreground">{operation.name}</span>
+                        </div>
+                        <span className="ml-auto flex shrink-0 gap-1"><OperationBadges operation={operation} /></span>
+                        <Tooltip>
+                          <TooltipTrigger render={<Button variant="ghost" size="icon-xs" aria-label={`Details for ${operation.name}`} onClick={() => select({ kind: "operation", id: operation.name, pkg: view.operations!.pkg })} />}>
+                            <ArrowRightIcon />
+                          </TooltipTrigger>
+                          <TooltipContent side="left" className="max-w-64">{operation.description}</TooltipContent>
+                        </Tooltip>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </Block>
             ) : null}
             {view.events ? (

@@ -1,23 +1,30 @@
 "use client";
 
-import { BookOpenIcon, BotIcon, CpuIcon, ServerIcon, TerminalIcon } from "lucide-react";
+import { BookOpenIcon, BotIcon, CircleCheckIcon, CpuIcon, RefreshCwIcon, ServerIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
 import { operationTitle } from "@/lib/stack/catalog";
 import { accountLabels, shortId } from "@/lib/stack/derive";
-import type { NodeRef } from "@/lib/stack/types";
+import type { Account, NodeRef } from "@/lib/stack/types";
+import { useAuthActions } from "./auth-actions";
 import { Orb, StatusDot } from "./primitives";
 import { useStack, useWorkbench } from "./provider";
 
 export type PaletteAction = { id: string; label: string; shortcut?: string; icon: React.ComponentType; run(): void };
 
 export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpenChange(open: boolean): void; actions: PaletteAction[] }) {
-  const { servers, bots, accounts, owner, catalog } = useStack();
+  const { servers, bots, accounts, owner, catalog, attempt } = useStack();
+  const auth = useAuthActions();
   const { focus } = useWorkbench();
   const labels = accountLabels(accounts.data);
   const go = (ref: NodeRef) => {
     onOpenChange(false);
     focus(ref);
   };
+  const act = (run: () => void) => {
+    onOpenChange(false);
+    run();
+  };
+  const removable = (account: Account) => !account.removing;
 
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange} title="Jump to" description="Find a Server, bot, account, process, or operation." className="sm:max-w-lg">
@@ -82,6 +89,37 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
               )))}
             </CommandGroup>
           ) : null}
+          <CommandGroup heading="Account actions">
+            <CommandItem value="action add codex account sign in" onSelect={() => act(() => auth.startSignIn())}>
+              <UserRoundPlusIcon />
+              Add Codex account
+            </CommandItem>
+            {accounts.data?.filter(removable).flatMap((account) => {
+              const label = labels.get(account.id) ?? shortId(account.id);
+              return [
+                ...(!account.active ? [
+                  <CommandItem key={`${account.id}-activate`} value={`action make ${label} active ${account.id}`} onSelect={() => act(() => auth.activate(account))}>
+                    <CircleCheckIcon />
+                    Make {label} active
+                  </CommandItem>,
+                ] : []),
+                <CommandItem key={`${account.id}-replace`} value={`action sign in again ${label} replace ${account.id}`} onSelect={() => act(() => auth.startSignIn(account.id))}>
+                  <RefreshCwIcon />
+                  Sign in again to {label}
+                </CommandItem>,
+                <CommandItem key={`${account.id}-remove`} value={`action remove ${label} delete ${account.id}`} onSelect={() => act(() => auth.confirmRemove(account))}>
+                  <Trash2Icon />
+                  Remove {label}…
+                </CommandItem>,
+              ];
+            })}
+            {attempt?.status === "pending" ? (
+              <CommandItem value="action cancel sign in" onSelect={() => act(() => auth.cancelLogin(attempt.id))}>
+                <XIcon />
+                Cancel sign-in
+              </CommandItem>
+            ) : null}
+          </CommandGroup>
           {catalog.data?.length ? (
             <CommandGroup heading="Package APIs">
               {catalog.data.map((doc) => (

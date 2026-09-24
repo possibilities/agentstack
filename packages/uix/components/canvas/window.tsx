@@ -65,7 +65,7 @@ const statusCopy: Record<ChannelStatus, string> = {
   closed: "Reconnecting…",
 };
 
-export function Window({ id, title, subtitle, icon: Icon, accent, count, status, endpoint, updatedAt, error, children }: {
+export function Window({ id, title, subtitle, icon: Icon, accent, count, status, endpoint, updatedAt, error, actions, children }: {
   id: string;
   title: string;
   subtitle: string;
@@ -76,6 +76,7 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
   endpoint?: string;
   updatedAt?: number | null;
   error?: string | null;
+  actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const placement = use(PlacementContext)?.(id);
@@ -118,6 +119,7 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
           <p className="truncate font-mono text-[0.68rem] text-muted-foreground">{subtitle}</p>
         </div>
         <div className="ml-auto flex items-center gap-1">
+          {actions}
           {canvas ? <GripHorizontalIcon aria-hidden className="size-4 text-muted-foreground/0 transition-colors group-hover/header:text-muted-foreground/50" /> : null}
           {status ? (
             <Tooltip>

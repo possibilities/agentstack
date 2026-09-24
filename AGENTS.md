@@ -9,7 +9,7 @@
 
 ## The UI (`packages/uix`)
 
-`packages/uix` is the central UI for interacting with AgentStack. The `/x` canvas ([ADR 0024](docs/adr/0024-live-canvas-workbench.md)) is how a human sees and, later, operates every Package API. Its data layer is in `lib/stack/` and its components are in `components/canvas/`.
+`packages/uix` is the central UI for interacting with AgentStack. The `/x` canvas ([ADR 0024](docs/adr/0024-live-canvas-workbench.md)) is how a human sees every Package API and, today, operates the `auth` API ([ADR 0026](docs/adr/0026-canvas-auth-controls.md)); other APIs remain read-only there. Its data layer is in `lib/stack/` and its components are in `components/canvas/`.
 
 - **Always maintain it.** When you change a Package API's operations, output fields, events, scopes, or transports, update the UI in the same change so it still compiles and still shows the truth: `lib/stack/types.ts`, the store's reads and subscriptions, the affected cards and inspector views, and the `/x.md` twin. Renamed, removed, or re-typed data must never silently break or go stale in the UI. Run `pnpm --filter @agentstack/uix typecheck`.
 - **Never extend it implicitly.** Do not add new windows, cards, views, controls, mutating actions, interaction patterns, or UI dependencies as a side effect of other work. New UI is added only when the human explicitly asks for it. The inspector already renders every record field generically, so new fields on existing records need no new UI.

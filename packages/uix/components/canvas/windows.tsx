@@ -8,21 +8,38 @@ import {
   BotIcon,
   BracesIcon,
   ChevronRightIcon,
+  CircleCheckIcon,
   CpuIcon,
+  EllipsisVerticalIcon,
   KeyRoundIcon,
   RadioIcon,
+  RefreshCwIcon,
   ServerIcon,
   ShieldAlertIcon,
+  SquareArrowOutUpRightIcon,
+  Trash2Icon,
   TriangleAlertIcon,
   UserRoundPlusIcon,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Spinner } from "@/components/ui/spinner";
 import { annotationBadges, fieldsOf, findOperation, operationTitle, recordFields } from "@/lib/stack/catalog";
 import { accountLabels, clockTime, histogram, pathParts, serversFor, shortId } from "@/lib/stack/derive";
-import type { Account, OperationDoc, PackageDoc, Server, StackEvent } from "@/lib/stack/types";
+import type { Account, Login, OperationDoc, PackageDoc, Server, StackEvent } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
+import { errorMessage, useAuthActions } from "./auth-actions";
 import { CopyButton, Empty, NodeCard, Orb, Row, Sparkline, StatusDot, Time } from "./primitives";
-import { useActivity, useNow, useStack, useWorkbench } from "./provider";
+import { useActivity, useNow, useOperation, useStack, useWorkbench } from "./provider";
 import { accentBg, accentOf, accentText, Section, Window } from "./window";
 
 const activitySpan = 5 * 60_000;
@@ -147,46 +164,31 @@ export function SystemWindow() {
 /* ─── Accounts ───────────────────────────────────────────────────────── */
 
 export function AccountsWindow() {
-  const { accounts, login, servers, catalog, status, endpoints } = useStack();
+  const { accounts, login, servers, catalog, status, endpoints, attempt } = useStack();
+  const actions = useAuthActions();
   const labels = accountLabels(accounts.data);
-  const loginFields = fieldsOf(findOperation(catalog.data, "auth", "account_login_status")?.outputSchema);
-  const current = login.data;
+  const addButton = (
+    <Button size="xs" variant="outline" onClick={() => actions.startSignIn()} disabled={actions.pendingSignIn}>
+      {actions.pendingSignIn ? <Spinner data-icon="inline-start" /> : <UserRoundPlusIcon data-icon="inline-start" />}
+      Add account
+    </Button>
+  );
 
   return (
     <Window id="accounts" title="Accounts" subtitle="auth · codex sign-ins" icon={KeyRoundIcon} accent="auth"
-      count={accounts.data?.length} status={status.auth} endpoint={endpoints.auth} updatedAt={accounts.at} error={accounts.error ?? login.error}>
-      {current ? (
-        <NodeCard node={{ kind: "login" }} label="device sign-in" className="border-pkg-auth/40 bg-pkg-auth/5">
-          <div className="flex items-center gap-2">
-            <UserRoundPlusIcon className="size-4 text-pkg-auth" />
-            <span className="text-sm font-medium">
-              {current.targetAccount ? `Signing in again · ${labels.get(current.targetAccount) ?? shortId(current.targetAccount)}` : "New device sign-in"}
-            </span>
-            <Badge variant={current.status === "failed" ? "destructive" : "secondary"} className="ml-auto capitalize">{current.status}</Badge>
-          </div>
-          {current.userCode ? (
-            <div className="flex items-center justify-between gap-2 rounded-lg bg-background/70 px-3 py-2">
-              <span className="font-mono text-xl font-semibold tracking-[0.2em]" title={loginFields.find((field) => field.name === "userCode")?.description ?? undefined}>{current.userCode}</span>
-              <CopyButton value={current.userCode} label="one-time code" className="opacity-100" />
-            </div>
-          ) : current.status === "pending" ? (
-            <p className="text-xs text-muted-foreground">Waiting for the verification prompt…</p>
-          ) : null}
-          {current.authUrl && current.status === "pending" ? (
-            <a href={current.authUrl} target="_blank" rel="noreferrer" className="inline-flex w-fit items-center gap-1 text-xs font-medium text-pkg-auth underline-offset-4 hover:underline">
-              Open verification page <ArrowUpRightIcon className="size-3" />
-            </a>
-          ) : null}
-          {current.error ? <p className="text-xs text-destructive">{current.error}</p> : null}
-        </NodeCard>
-      ) : null}
+      count={accounts.data?.length} status={status.auth} endpoint={endpoints.auth} updatedAt={accounts.at} error={accounts.error ?? login.error}
+      actions={addButton}>
+      {attempt ? <SignInCard key={attempt.id} attempt={attempt} labels={labels} accounts={accounts.data} catalog={catalog.data} /> : null}
 
       {accounts.data?.length ? (
         <div className="flex flex-col gap-2">
           {accounts.data.map((account) => <AccountCard key={account.id} account={account} label={labels.get(account.id)!} servers={servers.data} />)}
         </div>
       ) : accounts.data ? (
-        <Empty icon={KeyRoundIcon} title="No Codex accounts">Device sign-in with account_login_start creates the first one; it becomes active.</Empty>
+        <div className="flex flex-col gap-2.5">
+          <Empty icon={KeyRoundIcon} title="No Codex accounts">Device sign-in creates the first one; it becomes active.</Empty>
+          <div className="flex justify-center">{addButton}</div>
+        </div>
       ) : (
         <Empty icon={ShieldAlertIcon} title="Accounts unavailable">{accounts.error ?? "Waiting for the auth socket."}</Empty>
       )}
@@ -195,23 +197,161 @@ export function AccountsWindow() {
   );
 }
 
-function AccountCard({ account, label, servers }: { account: Account; label: string; servers: Server[] | null }) {
-  const used = serversFor(account.id, servers);
+function elapsedClock(since: number, now: number): string {
+  const seconds = Math.max(0, Math.floor((now - since) / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function SignInCard({ attempt, labels, accounts, catalog }: { attempt: Login; labels: Map<string, string>; accounts: Account[] | null; catalog: PackageDoc[] | null }) {
+  const actions = useAuthActions();
+  const [seenAt] = useState(() => Date.now());
+  const now = useNow();
+  const loginFields = fieldsOf(findOperation(catalog, "auth", "account_login_status")?.outputSchema);
+  const target = attempt.targetAccount;
+  const result = attempt.account ? accounts?.find((account) => account.id === attempt.account) : undefined;
+  const resultLabel = attempt.account ? labels.get(attempt.account) ?? shortId(attempt.account) : null;
+  const phase = attempt.status === "pending" ? (attempt.userCode ? "code" : "starting") : attempt.status;
+
+  const copyAndOpen = async () => {
+    if (attempt.userCode) {
+      await navigator.clipboard.writeText(attempt.userCode).then(() => toast.success("Code copied")).catch(() => undefined);
+    }
+    if (attempt.authUrl) window.open(attempt.authUrl, "_blank", "noopener,noreferrer");
+  };
+
   return (
-    <NodeCard node={{ kind: "account", id: account.id }} label={`account ${label}`} className={cn(account.removing && "opacity-60")}>
+    <NodeCard node={{ kind: "login" }} label="device sign-in"
+      className={cn(attempt.status === "failed" ? "border-destructive/40 bg-destructive/5" : attempt.status === "complete" ? "border-success/40 bg-success/5" : "border-pkg-auth/40 bg-pkg-auth/5")}>
+      <div className="flex items-center gap-2">
+        <UserRoundPlusIcon className="size-4 text-pkg-auth" />
+        <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
+          {target ? (
+            <>Signing in again · <Orb id={target} size="sm" /> {labels.get(target) ?? shortId(target)}</>
+          ) : "New Codex account"}
+        </span>
+        <Badge variant={attempt.status === "failed" ? "destructive" : "secondary"} className="ml-auto capitalize">{attempt.status}</Badge>
+      </div>
+      <div key={phase} className="flex flex-col gap-2.5 motion-safe:animate-in motion-safe:fade-in-0">
+        {phase === "starting" ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Spinner className="size-3.5 text-pkg-auth" />
+            Starting Codex sign-in…
+            <Button size="xs" variant="ghost" className="ml-auto" disabled={actions.cancelPending} onClick={() => actions.cancelLogin(attempt.id)}>Cancel</Button>
+          </div>
+        ) : null}
+        {phase === "code" ? (
+          <>
+            <div className="flex items-center justify-between gap-2 rounded-lg bg-background/70 px-3 py-2.5">
+              <span className="font-mono text-2xl font-semibold tracking-[0.22em]" title={loginFields.find((field) => field.name === "userCode")?.description ?? undefined}>{attempt.userCode}</span>
+              <CopyButton value={attempt.userCode ?? ""} label="one-time code" className="opacity-100" />
+            </div>
+            <p className="flex items-center gap-1.5 text-[0.72rem] text-muted-foreground">
+              <Spinner className="size-3 text-pkg-auth" />
+              Waiting for approval · {elapsedClock(seenAt, now)}
+            </p>
+            <div className="flex items-center gap-1.5">
+              <Button size="sm" className="flex-1" disabled={!attempt.authUrl} onClick={() => void copyAndOpen()}>
+                <SquareArrowOutUpRightIcon data-icon="inline-start" />
+                Copy code & open page
+              </Button>
+              <Button size="sm" variant="ghost" disabled={actions.cancelPending} onClick={() => actions.cancelLogin(attempt.id)}>
+                {actions.cancelPending ? <Spinner data-icon="inline-start" /> : null}
+                Cancel
+              </Button>
+            </div>
+          </>
+        ) : null}
+        {phase === "complete" && attempt.account ? (
+          <>
+            <p className="flex items-center gap-2 rounded-lg bg-background/70 px-3 py-2 text-sm">
+              <CircleCheckIcon className="size-4 shrink-0 text-success" />
+              <Orb id={attempt.account} size="sm" />
+              <span className="font-medium">{target ? `${resultLabel} credentials replaced` : `${resultLabel} is signed in`}</span>
+            </p>
+            <div className="flex items-center gap-1.5">
+              {result && !result.active && !result.removing ? (
+                <Button size="sm" variant="secondary" disabled={actions.activating === result.id} onClick={() => actions.activate(result)}>
+                  {actions.activating === result.id ? <Spinner data-icon="inline-start" /> : null}
+                  Make active
+                </Button>
+              ) : null}
+              <Button size="sm" variant="ghost" onClick={actions.dismissAttempt}>Dismiss</Button>
+            </div>
+          </>
+        ) : null}
+        {phase === "failed" ? (
+          <>
+            <p className="flex items-start gap-1.5 rounded-lg bg-background/70 px-3 py-2 text-[0.78rem] text-pretty text-destructive">
+              <TriangleAlertIcon className="mt-px size-3.5 shrink-0" />
+              {attempt.error ?? "Sign-in failed."}
+            </p>
+            <div className="flex items-center gap-1.5">
+              <Button size="sm" variant="secondary" disabled={actions.pendingSignIn} onClick={() => actions.startSignIn(attempt.targetAccount)}>
+                {actions.pendingSignIn ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}
+                Try again
+              </Button>
+              <Button size="sm" variant="ghost" onClick={actions.dismissAttempt}>Dismiss</Button>
+            </div>
+          </>
+        ) : null}
+        {actions.error?.op === "signin" || actions.error?.op === "cancel" ? (
+          <p className="text-[0.72rem] text-pretty text-destructive">{actions.error.message}</p>
+        ) : null}
+      </div>
+    </NodeCard>
+  );
+}
+
+function AccountCard({ account, label, servers }: { account: Account; label: string; servers: Server[] | null }) {
+  const actions = useAuthActions();
+  const activate = useOperation<Account>("auth", "account_activate");
+  const used = serversFor(account.id, servers);
+  const removing = account.removing || actions.removing === account.id;
+  const busy = actions.removing === account.id;
+  const onActivate = async () => {
+    try {
+      await activate.run({ id: account.id });
+      toast.success(`${label} is now active`);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  };
+  return (
+    <NodeCard node={{ kind: "account", id: account.id }} label={`account ${label}`} className={cn(removing && "opacity-60")}>
       <div className="flex items-center gap-3">
         <Orb id={account.id} size="lg" />
         <div className="flex min-w-0 flex-col">
           <span className="flex items-center gap-2 text-sm font-semibold">
             {label}
             {account.active ? <Badge className="h-4 bg-success/15 px-1.5 text-[0.62rem] text-success">Active</Badge> : null}
-            {account.removing ? <Badge variant="destructive" className="h-4 px-1.5 text-[0.62rem]">Removing</Badge> : null}
+            {removing ? <Badge variant="destructive" className="h-4 px-1.5 text-[0.62rem]">Removing</Badge> : null}
           </span>
           <span className="group/row flex items-center gap-1 font-mono text-[0.7rem] text-muted-foreground">
             {shortId(account.id, 13)}…
             <CopyButton value={account.id} label="account ID" className="size-5" />
           </span>
         </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" aria-label={`${label} actions`} className="ml-auto -mr-1" />}>
+            <EllipsisVerticalIcon />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuGroup>
+              <DropdownMenuItem disabled={account.active || removing} onClick={() => void onActivate()}>
+                <CircleCheckIcon />Make active
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={removing} onClick={() => actions.startSignIn(account.id)}>
+                <RefreshCwIcon />Sign in again
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuItem variant="destructive" disabled={removing} onClick={() => actions.confirmRemove(account)}>
+                <Trash2Icon />Remove account…
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       <div className="flex flex-wrap items-center gap-1">
         {used.length ? used.map((server) => (
@@ -221,6 +361,19 @@ function AccountCard({ account, label, servers }: { account: Account; label: str
           </span>
         )) : <span className="text-[0.7rem] text-muted-foreground">No Servers bound</span>}
       </div>
+      {busy ? (
+        <p className="flex items-center gap-1.5 text-[0.72rem] text-muted-foreground"><Spinner className="size-3.5" /> Removing…</p>
+      ) : account.removing ? (
+        <Button size="xs" variant="outline" className="w-fit" onClick={() => actions.finishRemoval(account)}>Finish removal</Button>
+      ) : !account.active ? (
+        <div className="flex flex-col gap-1">
+          <Button size="xs" variant="secondary" className="w-fit" disabled={activate.pending} onClick={() => void onActivate()}>
+            {activate.pending ? <Spinner data-icon="inline-start" /> : null}
+            Make active
+          </Button>
+          {activate.error ? <p className="text-[0.72rem] text-pretty text-destructive">{activate.error}</p> : null}
+        </div>
+      ) : null}
     </NodeCard>
   );
 }

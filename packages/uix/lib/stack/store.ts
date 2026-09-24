@@ -8,7 +8,15 @@ export type StackState = Snapshot & {
   /** Scoped event subscription status by Server id. */
   scoped: Record<string, { pkg: string; status: ChannelStatus }>;
   events: StackEvent[];
+  /** Most recent sign-in attempt this page has seen, kept visible after it finishes. */
+  attempt: Login | null;
 };
+
+const authReads = new Set(["account_list", "account_login_current", "account_login_status"]);
+
+function isLoginState(value: unknown): value is Login {
+  return typeof value === "object" && value !== null && "status" in value && "authUrl" in value;
+}
 
 type ResourceKey = "owner" | "accounts" | "login" | "servers" | "bots" | "catalog";
 
@@ -24,7 +32,7 @@ export class StackStore {
   private seq = 0;
 
   constructor(snapshot: Snapshot) {
-    this.state = { ...snapshot, status: {}, scoped: {}, events: [] };
+    this.state = { ...snapshot, status: {}, scoped: {}, events: [], attempt: snapshot.login.data };
   }
 
   getState = (): StackState => this.state;
@@ -67,6 +75,23 @@ export class StackStore {
     this.scopedChannels.clear();
   }
 
+  /** Call any operation on a Package API's main channel. Auth mutations refresh accounts and sign-in state. */
+  call = async <T>(pkg: string, name: string, args: Record<string, unknown> = {}): Promise<T> => {
+    const channel = this.main.get(pkg);
+    if (!channel || channel.status !== "open") throw new Error(`${pkg} WebSocket is not connected`);
+    const result = await channel.call<T>(name, args);
+    if (pkg === "auth") {
+      if (isLoginState(result)) this.set({ attempt: result });
+      if (!authReads.has(name)) {
+        this.refresh("accounts");
+        this.refresh("login");
+      }
+    }
+    return result;
+  };
+
+  dismissAttempt = (): void => this.set({ attempt: null });
+
   private set(patch: Partial<StackState>): void {
     this.state = { ...this.state, ...patch };
     for (const listener of this.listeners) listener();
@@ -86,6 +111,7 @@ export class StackStore {
       .then((data) => ({ data, error: null, at: Date.now() }), (error: Error) => ({ data: this.state[key].data, error: error.message, at: Date.now() }))
       .then((next) => {
         this.set({ [key]: next } as Partial<StackState>);
+        if (key === "login") this.reconcileAttempt();
         if (key === "servers" || key === "bots") this.reconcileScoped();
       })
       .finally(() => {
@@ -108,6 +134,25 @@ export class StackStore {
       case "bots": return call<{ bots: Server[] }>("bots", "bot_list").then((result) => result.bots);
       case "catalog": return loadCatalog((name, args) => call<never>("api", name, args)) as Promise<PackageDoc[]>;
     }
+  }
+
+  /**
+   * `account_login_current` only reports pending attempts, so once it returns
+   * null a remembered pending attempt is resolved through `account_login_status`
+   * to keep its outcome visible. Unknown sign-ins are dropped.
+   */
+  private reconcileAttempt(): void {
+    const current = this.state.login.data;
+    const attempt = this.state.attempt;
+    if (current) {
+      if (attempt?.id !== current.id || attempt.status === "pending") this.set({ attempt: current });
+      return;
+    }
+    if (attempt?.status !== "pending") return;
+    const id = attempt.id;
+    void this.call<Login>("auth", "account_login_status", { id }).catch((error: Error) => {
+      if (/unknown Codex sign-in/.test(error.message) && this.state.attempt?.id === id) this.set({ attempt: null });
+    });
   }
 
   /** Keep one scoped subscription per Server; notices are not proof of sanctioned thread activity. */
