@@ -38,6 +38,14 @@ An owner-supervised stdio ACP process for one ready Worker account: OpenCode for
 
 A no-turn observation of model and dependent effort choices actually offered by one account's ACP session, with native Devin model IDs as separately labelled evidence. Cached values retain source, observation time and stale/error state; they do not by themselves prove successful inference or spendable quota.
 
+## Worker
+
+An AgentStack-owned ACP session started by a Bot (or the local operator) under one enabled Worker account in an owned Git worktree. It retains its account, model/effort, Role revision, transcript and origin across turns. Closing a Worker retains the worktree and branch for review. _Avoid_: Bot, active account, disposable prompt
+
+## Worker turn
+
+One `session/prompt` request on an existing Worker. Admission returns durable Worker and turn IDs before completion; status and transcript reads establish the outcome. A lost response is `unknown`, never a reason to resubmit the turn automatically. A subsequent turn can request corrections in the same ACP session after it is idle or explicitly loaded for recovery.
+
 ## Main thread
 
 The single Codex thread ID retained by a Bot. A fresh Bot has no main thread until the first persistent root thread created by a connected UI has a durable turn; later Bot launches resume that ID. Only this root and its descendants belong to AgentStack's view of the Bot. Other Codex top-level threads on the same socket are ignored.

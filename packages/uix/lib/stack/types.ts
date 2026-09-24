@@ -53,6 +53,11 @@ export type Bot = {
 export type Account = { id: string; active: boolean; removing: boolean };
 export type WorkerAccount = { id: string; provider: "codex" | "grok" | "devin"; enabled: boolean; ready: boolean; removing: boolean };
 export type WorkerRuntime = { id: string; provider: WorkerAccount["provider"]; state: "running" | "stopped" | "error"; pid: number | null; error: string | null };
+export type WorkerSession = { id: string; botId: string; threadId: string; accountId: string; provider: WorkerAccount["provider"];
+  model: string; effort: string | null; repo: string; cwd: string | null; branch: string | null; baseCommit: string | null;
+  sourceDirty: boolean; roleRevision: number | null; acpSessionId: string | null;
+  phase: "preparing" | "idle" | "running" | "awaiting_input" | "cancelling" | "closed" | "failed" | "needs_recovery";
+  currentTurnId: string | null; issue: string | null; createdAt: number; updatedAt: number };
 
 export type Login = {
   id: string;
@@ -97,6 +102,7 @@ export type Snapshot = {
   accounts: Resource<Account[]>;
   workerAccounts: Resource<WorkerAccount[]>;
   workerRuntimes: Resource<WorkerRuntime[]>;
+  workerSessions: Resource<WorkerSession[]>;
   login: Resource<Login | null>;
   bots: Resource<Bot[]>;
   voice: Resource<VoiceCall | null>;

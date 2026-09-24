@@ -1,6 +1,6 @@
 import { loadCatalog } from "./catalog";
 import { Channel } from "./channel";
-import type { Account, Bot, ChannelStatus, Login, OwnerStatus, PackageDoc, Resource, Snapshot, StackEvent, VoiceCall, WorkerAccount, WorkerRuntime } from "./types";
+import type { Account, Bot, ChannelStatus, Login, OwnerStatus, PackageDoc, Resource, Snapshot, StackEvent, VoiceCall, WorkerAccount, WorkerRuntime, WorkerSession } from "./types";
 
 export type StackState = Snapshot & {
   /** Main channel status by Package API name. */
@@ -18,7 +18,7 @@ function isLoginState(value: unknown): value is Login {
   return typeof value === "object" && value !== null && "status" in value && "authUrl" in value;
 }
 
-type ResourceKey = "owner" | "accounts" | "workerAccounts" | "workerRuntimes" | "login" | "bots" | "voice" | "catalog";
+type ResourceKey = "owner" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "bots" | "voice" | "catalog";
 
 const maxEvents = 250;
 
@@ -67,7 +67,9 @@ export class StackStore {
     open("bots", () => { this.refresh("bots"); this.refresh("voice"); }, (topic) => {
       if (topic === "voice_changed") this.refresh("voice");
     }, ["voice_changed"]);
-    open("workers", () => this.refresh("workerRuntimes"), () => this.refresh("workerRuntimes"), ["workers_changed"]);
+    open("workers", () => { this.refresh("workerRuntimes"); this.refresh("workerSessions"); }, () => {
+      this.refresh("workerRuntimes"); this.refresh("workerSessions");
+    }, ["workers_changed"]);
     open("api", () => this.refresh("catalog"));
     this.reconcileScoped();
   }
@@ -136,6 +138,7 @@ export class StackStore {
       case "accounts": return call<{ accounts: Account[] }>("auth", "account_list").then((result) => result.accounts);
       case "workerAccounts": return call<{ accounts: WorkerAccount[] }>("auth", "worker_account_list").then((result) => result.accounts);
       case "workerRuntimes": return call<{ runtimes: WorkerRuntime[] }>("workers", "worker_runtime_list").then((result) => result.runtimes);
+      case "workerSessions": return call<{ workers: WorkerSession[] }>("workers", "worker_list").then((result) => result.workers);
       case "login": return call<{ login: Login | null }>("auth", "account_login_current").then((result) => result.login);
       case "bots": return call<{ bots: Bot[] }>("bots", "bot_list").then((result) => result.bots);
       case "voice": return call<{ call: VoiceCall | null }>("bots", "voice_status").then((result) => result.call);

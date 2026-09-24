@@ -2,7 +2,7 @@ import { record } from "./acp.js";
 
 export type ModelChoice = { id: string; name: string; efforts: string[]; effortConfigId: string | null };
 export type Catalog = { accountId: string; provider: "codex" | "grok" | "devin"; observedAt: string; source: string;
-  runtimeVersion: string; models: ModelChoice[]; nativeModelIds: string[]; stale: boolean; error: string | null };
+  runtimeVersion: string; modelConfigId: string | null; models: ModelChoice[]; nativeModelIds: string[]; stale: boolean; error: string | null };
 
 type Option = { id: string; category?: string; name: string; values: Array<{ value: string; name: string }> };
 
@@ -28,6 +28,12 @@ export function optionsOf(result: unknown): Option[] {
       record(entry) && typeof entry.modelId === "string" ? [{ value: entry.modelId, name: typeof entry.name === "string" ? entry.name : entry.modelId }] : []),
   }];
   return [];
+}
+
+export function currentOption(result: unknown, id: string): string | null {
+  if (!record(result) || !Array.isArray(result.configOptions)) return null;
+  const option = result.configOptions.find((entry: unknown) => record(entry) && entry.id === id);
+  return record(option) && typeof option.currentValue === "string" ? option.currentValue : null;
 }
 
 export function modelOption(options: Option[]): Option | undefined {

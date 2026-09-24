@@ -7,12 +7,15 @@ import { socketCall, socketPath, socketSubscribe, type SocketSubscription } from
 import { AcpProcess, record } from "./acp.js";
 import { effortOption, modelOption, nativeDevinModels, optionsOf, type Catalog, type ModelChoice } from "./catalog.js";
 
-type Runtime = { account: WorkerAccount; process: AcpProcess; version: string; probeSession: string | null; canClose: boolean };
+export type Runtime = { account: WorkerAccount; process: AcpProcess; version: string; probeSession: string | null;
+  canClose: boolean; canLoad: boolean; supportsHttp: boolean; instance: string };
 export type RuntimeView = { id: string; provider: WorkerAccount["provider"]; state: "running" | "stopped" | "error";
   pid: number | null; error: string | null };
 
 export class WorkerSupervisor {
   onChange?: () => void;
+  onRuntimeReady?: (runtime: Runtime) => void;
+  onRuntimeExit?: (accountId: string) => void;
   private live = new Map<string, Runtime>();
   private errors = new Map<string, { provider: WorkerAccount["provider"]; message: string }>();
   private launchRetry = new Map<string, { after: number; delay: number }>();
@@ -56,7 +59,7 @@ export class WorkerSupervisor {
       if (this.closing) return;
       const accounts = await this.accounts();
       const wanted = new Map(accounts.filter((account) => account.enabled && account.ready && !account.removing).map((account) => [account.id, account]));
-      for (const [id, runtime] of this.live) if (!wanted.has(id)) { this.live.delete(id); await runtime.process.close(); this.onChange?.(); }
+      for (const [id, runtime] of this.live) if (!wanted.has(id)) { this.live.delete(id); this.onRuntimeExit?.(id); await runtime.process.close(); this.onChange?.(); }
       for (const id of this.errors.keys()) if (!wanted.has(id)) { this.errors.delete(id); this.launchRetry.delete(id); this.onChange?.(); }
       for (const account of wanted.values()) {
         if (this.live.has(account.id)) continue;
@@ -76,13 +79,20 @@ export class WorkerSupervisor {
       const version = await this.binaryVersion(account);
       const canClose = record(initialized.agentCapabilities) && record(initialized.agentCapabilities.sessionCapabilities)
         && record(initialized.agentCapabilities.sessionCapabilities.close);
-      this.live.set(account.id, { account, process: child, version, probeSession: null, canClose: Boolean(canClose) });
+      const canLoad = record(initialized.agentCapabilities) && initialized.agentCapabilities.loadSession === true;
+      const supportsHttp = record(initialized.agentCapabilities) && record(initialized.agentCapabilities.mcpCapabilities)
+        && initialized.agentCapabilities.mcpCapabilities.http === true;
+      const runtime: Runtime = { account, process: child, version, probeSession: null, canClose: Boolean(canClose),
+        canLoad: Boolean(canLoad), supportsHttp: Boolean(supportsHttp), instance: randomUUID() };
+      this.live.set(account.id, runtime);
+      this.onRuntimeReady?.(runtime);
       this.errors.delete(account.id);
       this.launchRetry.delete(account.id);
       this.onChange?.();
       void child.exited.then(() => {
         if (this.live.get(account.id)?.process !== child) return;
         this.live.delete(account.id);
+        this.onRuntimeExit?.(account.id);
         this.errors.set(account.id, { provider: account.provider, message: "ACP process exited; inspect the native account before retrying" });
         this.onChange?.();
       });
@@ -105,7 +115,7 @@ export class WorkerSupervisor {
   async drain(id: string): Promise<void> {
     await this.syncQueue.catch(() => undefined);
     const runtime = this.live.get(id);
-    if (runtime) { this.live.delete(id); await runtime.process.close(); }
+    if (runtime) { this.live.delete(id); this.onRuntimeExit?.(id); await runtime.process.close(); }
     this.catalogs.delete(id);
     this.retryAfter.delete(id);
     this.launchRetry.delete(id);
@@ -119,6 +129,8 @@ export class WorkerSupervisor {
       return { id, provider: runtime?.account.provider ?? this.errors.get(id)?.provider ?? "devin", state: runtime ? "running" : "error", pid: runtime?.process.pid ?? null, error: this.errors.get(id)?.message ?? null };
     });
   }
+
+  runtime(id: string): Runtime | null { return this.live.get(id) ?? null; }
 
   async catalog(id: string, refresh: boolean): Promise<Catalog> {
     const account = (await this.accounts()).find((item) => item.id === id);
@@ -137,7 +149,7 @@ export class WorkerSupervisor {
     }).catch(() => {
       const message = "ACP catalog refresh failed; inspect the private account runtime";
       const failed: Catalog = saved ? { ...saved, stale: true, error: message } : { accountId: id, provider: account.provider, observedAt: new Date(0).toISOString(), source: "acp-v1-session",
-        runtimeVersion: "unknown", models: [], nativeModelIds: [], stale: true, error: message } satisfies Catalog;
+        runtimeVersion: "unknown", modelConfigId: null, models: [], nativeModelIds: [], stale: true, error: message } satisfies Catalog;
       this.catalogs.set(id, failed);
       this.retryAfter.set(id, Date.now() + 60_000);
       this.onChange?.();
@@ -172,7 +184,7 @@ export class WorkerSupervisor {
     }
     const nativeModelIds = account.provider === "devin" ? await this.devinModelIds(account) : [];
     const catalog: Catalog = { accountId: account.id, provider: account.provider, observedAt: new Date().toISOString(),
-      source: "acp-v1-session", runtimeVersion: runtime.version, models, nativeModelIds, stale: false, error: null };
+      source: "acp-v1-session", runtimeVersion: runtime.version, modelConfigId: model.id, models, nativeModelIds, stale: false, error: null };
     await this.saveCatalog(catalog);
     return catalog;
   }
@@ -196,7 +208,7 @@ export class WorkerSupervisor {
     try {
       const value = JSON.parse(await readFile(this.catalogPath(id), "utf8")) as Catalog;
       if (value.accountId !== id || !Array.isArray(value.models)) return null;
-      return { ...value, stale: true };
+      return { ...value, modelConfigId: typeof value.modelConfigId === "string" ? value.modelConfigId : null, stale: true };
     } catch { return null; }
   }
   private async saveCatalog(value: Catalog): Promise<void> {
@@ -216,6 +228,7 @@ export class WorkerSupervisor {
     await this.syncQueue.catch(() => undefined);
     const running = [...this.live.values()];
     this.live.clear();
+    for (const runtime of running) this.onRuntimeExit?.(runtime.account.id);
     await Promise.all(running.map((runtime) => runtime.process.close()));
   }
 }

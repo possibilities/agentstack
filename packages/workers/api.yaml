@@ -1,8 +1,8 @@
 name: workers
-description: Discover account-bound ACP worker models and runtime health. Worker turns are added after the no-turn account foundation.
+description: Run durable account-bound ACP Workers in owned Git worktrees, read their turns, and inspect account catalog and runtime health.
 socket:
-  description: Private socket for ACP worker catalog and runtime operations.
+  description: Private socket for Worker lifecycle, transcripts, account catalog and runtime operations.
 mcp:
-  description: Bot-facing account-bound worker catalog, forwarded to the workers socket.
+  description: Bot-facing Worker operations and account-bound catalog, forwarded to the workers socket.
 websocket:
-  description: Loopback WebSocket for worker catalog and change notices.
+  description: Loopback WebSocket for Worker reads, operations and change notices.

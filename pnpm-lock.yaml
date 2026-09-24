@@ -374,6 +374,12 @@ importers:
       '@agentstack/auth':
         specifier: workspace:*
         version: link:../auth
+      '@agentstack/bots':
+        specifier: workspace:*
+        version: link:../bots
+      '@agentstack/roles':
+        specifier: workspace:*
+        version: link:../roles
       zod:
         specifier: ^4.6.5
         version: 4.6.5

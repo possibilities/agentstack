@@ -1,6 +1,6 @@
 import { socketCall, socketPath, websocketPort } from "@agentstack/api";
 import { loadCatalog } from "./catalog";
-import type { Account, Bot, Login, OwnerStatus, PackageDoc, Resource, Snapshot, VoiceCall, WorkerAccount, WorkerRuntime } from "./types";
+import type { Account, Bot, Login, OwnerStatus, PackageDoc, Resource, Snapshot, VoiceCall, WorkerAccount, WorkerRuntime, WorkerSession } from "./types";
 
 const knownPackages = ["api", "auth", "bots", "roles", "owner", "workers"];
 
@@ -33,15 +33,16 @@ export function websocketEndpoints(catalog: PackageDoc[] | null): Record<string,
 }
 
 export async function loadSnapshot(): Promise<Snapshot> {
-  const [owner, accounts, workerAccounts, workerRuntimes, login, bots, voice, catalog] = await Promise.all([
+  const [owner, accounts, workerAccounts, workerRuntimes, workerSessions, login, bots, voice, catalog] = await Promise.all([
     resource(() => call<OwnerStatus>("owner", "owner_status")),
     resource(async () => (await call<{ accounts: Account[] }>("auth", "account_list")).accounts),
     resource(async () => (await call<{ accounts: WorkerAccount[] }>("auth", "worker_account_list")).accounts),
     resource(async () => (await call<{ runtimes: WorkerRuntime[] }>("workers", "worker_runtime_list")).runtimes),
+    resource(async () => (await call<{ workers: WorkerSession[] }>("workers", "worker_list")).workers),
     resource(async () => (await call<{ login: Login | null }>("auth", "account_login_current")).login),
     resource(async () => (await call<{ bots: Bot[] }>("bots", "bot_list")).bots),
     resource(async () => (await call<{ call: VoiceCall | null }>("bots", "voice_status")).call),
     resource(() => loadCatalog((name, args) => call("api", name, args))),
   ]);
-  return { owner, accounts, workerAccounts, workerRuntimes, login, bots, voice, catalog, endpoints: websocketEndpoints(catalog.data) };
+  return { owner, accounts, workerAccounts, workerRuntimes, workerSessions, login, bots, voice, catalog, endpoints: websocketEndpoints(catalog.data) };
 }
