@@ -1,4 +1,4 @@
-# 19. Admit WebSocket connections from current Package API configuration
+# 20. Admit WebSocket connections from current Package API configuration
 
 Status: accepted, 2026-09-24. Extends [ADR 0010](0010-shared-websocket-transport.md)'s shared listener and aligns admission with [ADR 0008](0008-mcp-rpc-transport.md)'s live MCP configuration.
 
