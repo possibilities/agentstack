@@ -99,7 +99,8 @@ test("start is idempotent and stop is idempotent", async () => {
     assert.equal(launched.length, 1);
     assert.equal(launched[0]?.bin, codexRuntimePath());
     assert.deepEqual(launched[0]?.args.slice(0, 3), ["app-server", "--listen", "ws://127.0.0.1:41000"]);
-    assert.deepEqual(launched[0]?.args.filter((arg) => arg.startsWith("--") && arg !== "--listen"), ["--identity", "--capabilities", "--history-dir"]);
+    assert.deepEqual(launched[0]?.args.filter((arg) => arg.startsWith("--") && arg !== "--listen"), ["--enable", "--identity", "--capabilities", "--history-dir"]);
+    assert.ok(launched[0]?.args.includes("realtime_conversation"));
     assert.equal(first.account, supervisor.store.listAccounts()[0]?.id);
     assert.equal(first.mainThreadId, null);
     assert.equal(launched[0]?.cwd, cwd);
@@ -170,7 +171,7 @@ test("launch arguments survive owner recovery and can change only while stopped"
     stateDir, graceMs: 20,
     endpoint: async () => `ws://127.0.0.1:${43300 + launches.length}`,
     launch(spec): RunningChild {
-      launches.push(spec.args.slice(spec.args.indexOf("--listen") + 2, spec.args.indexOf("--identity")));
+      launches.push(spec.args.slice(spec.args.indexOf("--listen") + 2, spec.args.indexOf("--enable")));
       let finish: (code: number | null) => void = () => undefined;
       const child: RunningChild = {
         pid: 100 + launches.length,

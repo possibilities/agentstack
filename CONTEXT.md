@@ -47,3 +47,9 @@ An ordered group of instruction fragments in the default capabilities bundle. It
 ## Fragment
 
 A durable, ordered developer-instruction body with a stable ID and human-only title and description. Only enabled fragments in enabled categories enter `SYSTEM_APPEND.md`.
+
+## Voice call
+
+One ephemeral, full-duplex WebRTC audio session into a running Server's existing main thread. The Codex Package API relays an SDP offer and answer, tracks the exact call ID, and stops only native realtime on hang-up; it never creates a thread or ends a turn. A Bot is callable through its underlying Codex Server ID. The browser owns microphone capture and speaker playback.
+
+_Avoid_: voice agent, voice thread

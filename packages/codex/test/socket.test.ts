@@ -41,7 +41,7 @@ test("codex lifecycle and change events are served on the namespaced unix socket
       tools: Array<{ name: string; description: string }>;
     };
     assert.equal(listedTools.server.name, "codex");
-    assert.match(listedTools.server.description, /Start, stop, and list/);
+    assert.match(listedTools.server.description, /full-duplex voice call/);
     assert.equal(listedTools.transport.type, "socket");
     assert.equal(listedTools.transport.path, served.socketPath);
     assert.equal(listedTools.websocket, null);
@@ -49,10 +49,11 @@ test("codex lifecycle and change events are served on the namespaced unix socket
     assert.deepEqual(listedTools.events?.topics, {
       servers_changed: "Published when a Codex app-server record starts, stops, exits, is reaped, or becomes fenced for recovery inspection.",
       threads_changed: "Published when a loaded Codex thread starts, changes status, or closes.",
+      voice_changed: "Published when the single voice call starts, connects, or ends. Refresh voice_status; the notice carries no SDP or audio.",
     });
     assert.deepEqual(
       listedTools.tools.map((tool) => tool.name),
-      ["server_start", "server_stop", "server_assign", "server_remove", "server_list"],
+      ["server_start", "server_stop", "server_assign", "server_remove", "server_list", "voice_status", "voice_dial", "voice_hangup"],
     );
     assert.ok(listedTools.tools.every((tool) => tool.description.length > 0));
 

@@ -81,6 +81,13 @@ export type OwnerStatus = {
   children: OwnerChild[];
 };
 
+export type VoiceCall = {
+  sessionId: string;
+  serverId: string;
+  threadId: string;
+  phase: "dialing" | "connected";
+};
+
 export type Resource<T> = { data: T | null; error: string | null; at: number | null };
 
 export type Snapshot = {
@@ -89,6 +96,7 @@ export type Snapshot = {
   login: Resource<Login | null>;
   servers: Resource<Server[]>;
   bots: Resource<Server[]>;
+  voice: Resource<VoiceCall | null>;
   catalog: Resource<PackageDoc[]>;
   endpoints: Record<string, string>;
 };

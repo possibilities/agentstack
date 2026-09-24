@@ -45,7 +45,7 @@ test("the index and canvas render a fenced Server and Bot honestly in HTML and M
     const definitions = {
       owner: [operation("owner_status", { pid: process.pid, docsUrl: null, indexUrl: null, uixUrl: null, inspectorUrl: null, mcpUrls: {}, children: [] })],
       auth: [operation("account_list", { accounts: [] }), operation("account_login_current", { login: null })],
-      codex: [operation("server_list", { servers: [server, bot] })],
+      codex: [operation("server_list", { servers: [server, bot] }), operation("voice_status", { call: null })],
       bots: [operation("bot_list", { bots: [bot] })],
       api: [operation("docs_snapshot", { packages: [packageDoc("codex", "server_list", "servers"), packageDoc("bots", "bot_list", "bots")] })],
     };
@@ -79,6 +79,9 @@ test("the index and canvas render a fenced Server and Bot honestly in HTML and M
     assert.match(canvas, /server-1/);
     assert.match(canvas, /bot-1/);
     assert.match(canvasMd, /Recovery: Recorded process ownership could not be verified/);
+    assert.match(canvas, /Voice call/);
+    assert.match(canvas, /No callable Servers/);
+    assert.match(canvasMd, /No active voice call/);
     assert.doesNotMatch(index, /server-1[^<]*Running · PID/);
   } finally {
     if (next?.pid) {

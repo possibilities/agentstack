@@ -1,6 +1,6 @@
 import { loadCatalog } from "./catalog";
 import { Channel } from "./channel";
-import type { Account, ChannelStatus, Login, OwnerStatus, PackageDoc, Resource, Server, Snapshot, StackEvent } from "./types";
+import type { Account, ChannelStatus, Login, OwnerStatus, PackageDoc, Resource, Server, Snapshot, StackEvent, VoiceCall } from "./types";
 
 export type StackState = Snapshot & {
   /** Main channel status by Package API name. */
@@ -18,7 +18,7 @@ function isLoginState(value: unknown): value is Login {
   return typeof value === "object" && value !== null && "status" in value && "authUrl" in value;
 }
 
-type ResourceKey = "owner" | "accounts" | "login" | "servers" | "bots" | "catalog";
+type ResourceKey = "owner" | "accounts" | "login" | "servers" | "bots" | "voice" | "catalog";
 
 const maxEvents = 250;
 
@@ -63,7 +63,10 @@ export class StackStore {
       this.refresh("accounts");
       if (topic === "login_changed") this.refresh("login");
     }, ["accounts_changed", "login_changed"]);
-    open("codex", () => this.refresh("servers"), () => { this.refresh("servers"); this.refresh("bots"); }, ["servers_changed"]);
+    open("codex", () => { this.refresh("servers"); this.refresh("voice"); }, (topic) => {
+      if (topic === "voice_changed") this.refresh("voice");
+      else { this.refresh("servers"); this.refresh("bots"); this.refresh("voice"); }
+    }, ["servers_changed", "voice_changed"]);
     open("bots", () => this.refresh("bots"));
     open("api", () => this.refresh("catalog"));
     this.reconcileScoped();
@@ -132,6 +135,7 @@ export class StackStore {
       case "login": return call<{ login: Login | null }>("auth", "account_login_current").then((result) => result.login);
       case "servers": return call<{ servers: Server[] }>("codex", "server_list").then((result) => result.servers);
       case "bots": return call<{ bots: Server[] }>("bots", "bot_list").then((result) => result.bots);
+      case "voice": return call<{ call: VoiceCall | null }>("codex", "voice_status").then((result) => result.call);
       case "catalog": return loadCatalog((name, args) => call<never>("api", name, args)) as Promise<PackageDoc[]>;
     }
   }

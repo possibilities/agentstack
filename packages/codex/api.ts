@@ -6,6 +6,7 @@ import { Supervisor, type ServerView } from "./src/supervisor.js";
 import { watchThreadEvents } from "./src/threads.js";
 import { StateStore } from "./src/store.js";
 import { ownerMcpUrls } from "./src/owner-mcp.js";
+import { VoiceCalls } from "./src/voice.js";
 
 const idSchema = z
   .string()
@@ -32,7 +33,47 @@ const serverListSchema = z.object({
 export type CodexContext = {
   supervisor: Supervisor;
   store: StateStore;
+  voice: VoiceCalls;
 };
+
+const sessionIdSchema = z.uuid().describe("Client-generated call ID, used to identify the exact call when hanging up.");
+const voiceCallSchema = z.strictObject({
+  sessionId: sessionIdSchema,
+  serverId: idSchema,
+  threadId: z.string(),
+  phase: z.enum(["dialing", "connected"]),
+});
+
+export const voiceStatus = operation({
+  name: "voice_status",
+  description: "Read the single active voice call, if any. Calls belong to an existing Server's durable main thread; a new thread is never created.",
+  input: z.strictObject({}),
+  output: z.strictObject({ call: voiceCallSchema.nullable() }),
+  annotations: { title: "Voice call status", readOnlyHint: true },
+  async call(ctx: CodexContext) { return { call: ctx.voice.status() }; },
+});
+
+export const voiceDial = operation({
+  name: "voice_dial",
+  description: "Start full-duplex WebRTC audio on a verified running Server's durable main thread. Supply a gathered SDP offer and a fresh client-generated UUID. Returns Codex's SDP answer after its started notification. One call is allowed across all Servers; never creates or interrupts a thread or turn.",
+  input: z.strictObject({
+    serverId: idSchema.describe("Running Codex Server or Bot ID."),
+    sessionId: sessionIdSchema,
+    sdp: z.string().min(1).max(65_536).describe("Complete local WebRTC audio SDP offer, after ICE gathering."),
+  }),
+  output: z.strictObject({ sessionId: sessionIdSchema, answer: z.string().min(1).describe("Remote WebRTC SDP answer from Codex.") }),
+  annotations: { title: "Dial voice" },
+  async call(ctx: CodexContext, { serverId, sessionId, sdp }) { return ctx.voice.dial(serverId, sessionId, sdp); },
+});
+
+export const voiceHangup = operation({
+  name: "voice_hangup",
+  description: "End exactly this call via Codex thread/realtime/stop. An already ended call succeeds; another active call cannot be stopped with a stale ID. Does not stop the Server or its turns.",
+  input: z.strictObject({ sessionId: sessionIdSchema }),
+  output: z.strictObject({ call: voiceCallSchema.nullable() }),
+  annotations: { title: "Hang up voice", idempotentHint: true },
+  async call(ctx: CodexContext, { sessionId }) { return { call: await ctx.voice.hangup(sessionId) }; },
+});
 
 export const serverStart = operation({
   name: "server_start",
@@ -99,12 +140,13 @@ export const serverList = operation({
 export const topics = {
   servers_changed: "Published when a Codex app-server record starts, stops, exits, is reaped, or becomes fenced for recovery inspection.",
   threads_changed: "Published when a loaded Codex thread starts, changes status, or closes.",
+  voice_changed: "Published when the single voice call starts, connects, or ends. Refresh voice_status; the notice carries no SDP or audio.",
 } as const;
 
 export type CodexTopic = keyof typeof topics;
 
 export const api: PackageApi<CodexContext, CodexTopic> = {
-  operations: [serverStart, serverStop, serverAssign, serverRemove, serverList],
+  operations: [serverStart, serverStop, serverAssign, serverRemove, serverList, voiceStatus, voiceDial, voiceHangup],
   events: {
     topics,
     scope: {
@@ -133,9 +175,11 @@ export const api: PackageApi<CodexContext, CodexTopic> = {
         sync();
         publish("servers_changed", id);
       };
+      ctx.voice.onChange = () => publish("voice_changed");
       sync();
       return () => {
         ctx.supervisor.onChange = undefined;
+        ctx.voice.onChange = undefined;
         for (const watch of watches.values()) watch.stop();
         watches.clear();
       };
@@ -158,13 +202,16 @@ export const api: PackageApi<CodexContext, CodexTopic> = {
     await supervisor.load();
     await supervisor.reap();
     await supervisor.resumeAll();
-    return { supervisor, store };
+    return { supervisor, store, voice: new VoiceCalls(() => supervisor.list()) };
   },
   async closeContext(ctx) {
-    await ctx.supervisor.stopAll();
-    await ctx.supervisor.runtime.close();
-    ctx.supervisor.capabilities.close();
-    ctx.store.close();
+    try { await ctx.voice.close(); }
+    finally {
+      await ctx.supervisor.stopAll();
+      await ctx.supervisor.runtime.close();
+      ctx.supervisor.capabilities.close();
+      ctx.store.close();
+    }
   },
 };
 

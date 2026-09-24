@@ -310,7 +310,7 @@ export class Supervisor {
         env.TMPDIR = runtimeRoot;
         child = this.launch({
           bin: codexBin,
-          args: [...appServerArgs(userArgs, url), "--identity", identity, "--capabilities", capabilities, "--history-dir", history],
+          args: [...appServerArgs(userArgs, url), "--enable", "realtime_conversation", "--identity", identity, "--capabilities", capabilities, "--history-dir", history],
           cwd,
           logPath,
           env,

@@ -49,11 +49,11 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok(responseLength < 750_000, `discovery snapshot exceeds the socket response budget: ${responseLength} characters`);
 
     const codex = found.get("codex") as PackageDoc;
-    assert.deepEqual(Object.keys(codex.events).sort(), ["servers_changed", "threads_changed"]);
+    assert.deepEqual(Object.keys(codex.events).sort(), ["servers_changed", "threads_changed", "voice_changed"]);
     assert.equal(codex.eventScope?.required, false);
     assert.deepEqual(
       codex.operations.map((operation) => operation.name).sort(),
-      ["server_assign", "server_list", "server_remove", "server_start", "server_stop"],
+      ["server_assign", "server_list", "server_remove", "server_start", "server_stop", "voice_dial", "voice_hangup", "voice_status"],
     );
     const start = codex.operations.find((operation) => operation.name === "server_start") as OperationDoc;
     assert.ok(start.description.length > 0);

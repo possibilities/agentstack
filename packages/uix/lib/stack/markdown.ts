@@ -9,7 +9,7 @@ function section<T>(title: string, resource: Resource<T>, render: (data: T) => s
 }
 
 export function renderCanvasMarkdown(snapshot: Snapshot): string {
-  const { owner, accounts, login, servers, bots, catalog, endpoints } = snapshot;
+  const { owner, accounts, login, servers, bots, voice, catalog, endpoints } = snapshot;
   const labels = accountLabels(accounts.data);
   const label = (id: string | null) => (id ? labels.get(id) ?? shortId(id) : "unbound");
   const server = (item: Server) => [
@@ -24,7 +24,7 @@ export function renderCanvasMarkdown(snapshot: Snapshot): string {
 
   return [
     "# AgentStack canvas", "",
-    "A live view of every Package API. The HTML page reads the same state over WebSocket, refreshes on change notices, and can also run the auth API's operations (sign-in, activation, removal).", "",
+    "A live view of every Package API. The HTML canvas operates account sign-in and full-duplex voice calls to existing Server and Bot main threads. This markdown twin reports their state.", "",
     ...section("System", owner, (data) => [
       `Owner pid ${data.pid} · ${data.children.filter((child) => child.running).length}/${data.children.length} children running.`, "",
       ...data.children.map((child) => `- **${child.name}** — ${child.running ? `running · pid ${child.pid}` : `stopped${child.exitCode !== null ? ` · exit ${child.exitCode}` : ""}${child.signal ? ` · ${child.signal}` : ""}${child.error ? ` · ${child.error}` : ""}`}`),
@@ -46,6 +46,7 @@ export function renderCanvasMarkdown(snapshot: Snapshot): string {
       ...(bot.recoveryIssue ? [`  - Recovery: ${bot.recoveryIssue}`] : []),
       `  - Last launched capabilities revision ${code(bot.capabilitiesRevision ?? "never launched")}`,
     ]) : ["No bots."]), ""]),
+    "## Voice", "", voice.error ? `Unavailable: ${voice.error}.` : voice.data ? `Call ${code(voice.data.sessionId)} · ${voice.data.phase} · Server ${code(voice.data.serverId)} · main thread ${code(voice.data.threadId)}` : "No active voice call.", "",
     ...section("API", catalog, (data) => data.flatMap((doc) => [
       `### ${doc.name}`, "",
       `${doc.description} ${code(doc.packageName)}`, "",

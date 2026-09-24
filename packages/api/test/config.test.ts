@@ -14,12 +14,12 @@ test("codex declares socket, MCP, and WebSocket transports", async () => {
   const root = workspaceRoot(dirname(fileURLToPath(import.meta.url)));
   const codex = await findPackage(root, "codex");
   assert.equal(codex.config.name, "codex");
-  assert.match(codex.config.description, /Start, stop, and list/);
+  assert.match(codex.config.description, /Codex app-server/);
   assert.match(codex.config.socket?.description ?? "", /codex/);
   assert.match(codex.config.mcp?.description ?? "", /codex/);
   assert.match(codex.config.websocket?.description ?? "", /codex/i);
   const codexApi = await loadPackageApi(codex.dir);
-  assert.deepEqual(Object.keys(codexApi.events?.topics ?? {}).sort(), ["servers_changed", "threads_changed"]);
+  assert.deepEqual(Object.keys(codexApi.events?.topics ?? {}).sort(), ["servers_changed", "threads_changed", "voice_changed"]);
 });
 
 test("a package API loads from the built sibling api.ts without an index", async () => {

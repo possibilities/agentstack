@@ -1,5 +1,5 @@
 name: codex
-description: Start, stop, and list Codex app-server processes with a default capabilities bundle; their first durable UI thread becomes the persistent main thread.
+description: Manage Codex app-server processes with a default capabilities bundle and one full-duplex voice call into an existing Server or Bot main thread.
 socket:
   description: Unix socket for Codex app-server lifecycle and change events, namespaced as codex.
 mcp:

@@ -34,6 +34,7 @@ import { StatusDot } from "./primitives";
 import { StackProvider, useStack, WorkbenchContext, type Mode, type WorkbenchValue } from "./provider";
 import { accentTile, PlacementContext, type Accent, type WindowPlacement } from "./window";
 import { AccountsWindow, ActivityWindow, ApiWindow, BotsWindow, ServersWindow, SystemWindow } from "./windows";
+import { VoiceWidget } from "./voice-widget";
 
 type Point = { x: number; y: number };
 type View = Point & { k: number };
@@ -435,6 +436,7 @@ function Shell() {
           {canvas ? <CanvasToolbar scale={view.k} zoom={(factor) => animate(() => zoomAt(factor))} fit={fit} tidy={tidy} /> : null}
           <Inspector />
           <Palette open={paletteOpen} onOpenChange={setPaletteOpen} actions={actions} />
+          <VoiceWidget />
         </PlacementContext>
       </AuthActionsProvider>
     </WorkbenchContext>

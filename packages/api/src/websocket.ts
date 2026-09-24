@@ -82,7 +82,9 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
           });
         }).catch(fail);
       } else if (message.method === "tools/list" || message.method === "tools/call") {
-        void socketCall(socketPath(name, env), message.method, message.params, { signal: controller.signal }).then(respond, fail);
+        const voiceDial = name === "codex" && message.method === "tools/call"
+          && (message.params as { name?: unknown } | undefined)?.name === "voice_dial";
+        void socketCall(socketPath(name, env), message.method, message.params, { signal: controller.signal, timeoutMs: voiceDial ? 75_000 : undefined }).then(respond, fail);
       } else {
         fail(new Error(`unknown method: ${String(message.method)}`));
       }
