@@ -15,3 +15,8 @@ local URL. Its generated server list is read-only in Inspector and lives in a
 private, temporary directory under the state directory. The Inspector's
 authenticated UI can initiate tool calls, so it shares the local-user trust
 boundary described above.
+
+The UI canvas is a separate loopback-only Next.js listener and child process.
+It currently renders an empty page and has no Package API connection. Future
+experiments that call local control transports must respect their existing
+local-user trust boundary; the canvas is not an authentication boundary.
