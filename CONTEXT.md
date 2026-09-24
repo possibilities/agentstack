@@ -52,7 +52,7 @@ The single AgentStack-owned configuration shared by every new Bot launch: ordere
 
 ## Trusted project
 
-An explicit, revisioned Role entry for a canonical project root. Only a Bot launched inside an enabled root receives its `[projects]` trust decision in the private runtime config. That permits the selected project's Codex config, including project MCP servers, when supported by the pinned codexnk release; it does not import the operator's home configuration.
+An explicit, revisioned Role entry for a canonical project root. Only a Bot launched inside an enabled root receives its `[projects]` trust decision in the private runtime config. That permits the selected project's Codex config, including project MCP servers; it does not import the operator's home configuration.
 
 ## Category
 
@@ -64,7 +64,7 @@ A durable, ordered developer-instruction body with a stable ID and human-only ti
 
 ## Role skill
 
-A named, enabled or disabled skill record containing Markdown instructions and optional supporting files. AgentStack stores the bytes in the Role and writes only enabled skills to a Bot's private launch snapshot. Codex may independently discover project or user skills; that ambient discovery is outside the current Role isolation guarantee.
+A named, enabled or disabled skill record containing Markdown instructions and optional supporting files. AgentStack stores the bytes in the Role and writes only enabled skills to a Bot's private launch snapshot. Codex also discovers project skills, while the three-axis launch excludes home-level skills. Role skill selection does not suppress project, bundled, or explicitly added skill roots.
 
 ## Role MCP server
 
