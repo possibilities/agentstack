@@ -7,7 +7,7 @@ import { codexRuntimePath } from "../src/paths.js";
 import { appServerArgs, waitForReady } from "../src/supervisor.js";
 import { appServerSocket } from "../src/threads.js";
 
-test("installed codexnk retains its private runtime and honors full-access Bot defaults", { skip: !process.env.AGENTSTACK_TEST_REAL_CODEX }, async () => {
+test("installed codexnk retains its private runtime and honors Bot launch defaults", { skip: !process.env.AGENTSTACK_TEST_REAL_CODEX }, async () => {
   const root = await mkdtemp("/tmp/as-full-");
   const identity = join(root, "identity");
   const capabilities = join(root, "capabilities");
@@ -51,7 +51,9 @@ test("installed codexnk retains its private runtime and honors full-access Bot d
     await request(1, "initialize", { clientInfo: { name: "agentstack-test", version: "0.0.0" }, capabilities: { experimentalApi: true, requestAttestation: false } });
     ws.send(JSON.stringify({ method: "initialized" }));
     const result = await request(2, "config/read", { includeLayers: false, cwd: root });
-    const config = result.config as { approval_policy?: string; sandbox_mode?: string };
+    const config = result.config as { model?: string; model_reasoning_effort?: string; approval_policy?: string; sandbox_mode?: string };
+    assert.equal(config.model, "gpt-6-sol");
+    assert.equal(config.model_reasoning_effort, "medium");
     assert.equal(config.approval_policy, "never");
     assert.equal(config.sandbox_mode, "danger-full-access");
   } finally {

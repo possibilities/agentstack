@@ -7,10 +7,12 @@ import test from "node:test";
 import { WebSocketServer } from "ws";
 import { VoiceCalls } from "../src/voice.js";
 import type { ServerView } from "../src/supervisor.js";
+import { DEFAULT_BOT_SETTINGS } from "../src/store.js";
 
 const server = (url: string, threadId: string | null = "main"): ServerView => ({
   id: "bot-1", pid: 123, cwd: "/tmp/bot-1", url, state: "running", account: "account",
   runningAccount: "account", mainThreadId: threadId, recoveryIssue: null, roleRevision: 1,
+  settings: DEFAULT_BOT_SETTINGS,
 });
 
 test("voice dials only an adopted main thread, relays SDP, and stops without touching turns", async () => {

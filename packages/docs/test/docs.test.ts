@@ -21,6 +21,7 @@ test("the reference renders all current Package APIs from the discovery socket",
     for (const name of ["auth", "bots", "roles", "owner", "workers"]) assert.match(html, new RegExp(`id="package-${name}"`));
     assert.doesNotMatch(html, /id="package-api"/);
     assert.match(html, /bot_start/);
+    assert.match(html, /bot_defaults_set/);
     assert.match(html, /accounts_changed/);
     assert.match(html, /events\/subscribe/);
     assert.match(html, /&quot;topics&quot;: \[/);
@@ -40,6 +41,7 @@ test("the reference renders all current Package APIs from the discovery socket",
     assert.match(markdownText, /^# Package API reference/m);
     assert.match(markdownText, /^## auth$/m);
     assert.match(markdownText, /`bot_start`/);
+    assert.match(markdownText, /`bot_defaults_get`/);
     assert.match(markdownText, /`accounts_changed`/);
     assert.match(markdownText, /```json\n[\s\S]*"method": "events\/subscribe"/);
     assert.equal((await fetch(new URL(".md", docs.url))).status, 200);

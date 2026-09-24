@@ -15,7 +15,8 @@ const passthrough = { parse: (value) => value };
 const issue = "Recorded process ownership could not be verified. Inspect its PID and endpoint before retrying.";
 
 const record = (id) => ({ id, pid: 4321, cwd: "/tmp/fixture-workspace", url: "unix:///tmp/fixture.sock", state: "running", account: null,
-  runningAccount: null, mainThreadId: "thread-fixture", recoveryIssue: issue, roleRevision: 1 });
+  runningAccount: null, mainThreadId: "thread-fixture", recoveryIssue: issue, roleRevision: 1,
+  settings: { model: "gpt-6-sol", reasoningEffort: "medium", sandboxMode: "danger-full-access", approvalPolicy: "never" } });
 const bot = record("bot-1");
 const operation = (name, value) => ({ name, description: `${name} fixture`, input: passthrough, output: passthrough, async call() { return value; } });
 const packageDoc = (name, operationName, collection) => ({
@@ -44,7 +45,7 @@ test("the index and canvas render a fenced bot honestly in HTML and Markdown", {
     const definitions = {
       owner: [operation("owner_status", { pid: process.pid, docsUrl: null, indexUrl: null, uixUrl: null, inspectorUrl: null, mcpUrls: {}, children: [] })],
       auth: [operation("account_list", { accounts: [] }), operation("account_login_current", { login: null })],
-      bots: [operation("bot_list", { bots: [bot] }), operation("voice_status", { call: null })],
+      bots: [operation("bot_list", { bots: [bot] }), operation("bot_defaults_get", bot.settings), operation("voice_status", { call: null })],
       api: [operation("docs_snapshot", { packages: [packageDoc("bots", "bot_list", "bots")] })],
     };
     for (const [name, operations] of Object.entries(definitions)) {
@@ -78,6 +79,7 @@ test("the index and canvas render a fenced bot honestly in HTML and Markdown", {
     assert.match(canvasMd, /Recovery: Recorded process ownership could not be verified/);
     assert.match(canvas, /Call a bot/);
     assert.match(canvasMd, /No active voice call/);
+    assert.match(canvasMd, /New Bots: `gpt-6-sol` · `medium` effort/);
     assert.doesNotMatch(index, /bot-1[^<]*Running · PID/);
   } finally {
     if (next?.pid) {

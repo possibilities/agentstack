@@ -1,5 +1,5 @@
 name: bots
-description: Start, stop, assign, and list Codex bots. New bots use numbered private workspaces and full access without approval prompts by default; id, cwd, and launch arguments can be overridden. The first durable UI thread becomes the main thread and resumes on startup.
+description: Start, stop, assign, and list Codex bots. Read or change the model, effort, sandbox, and approval defaults copied into new Bots; each Bot can override its saved settings. New bots use numbered private workspaces and default to gpt-6-sol at medium effort with full access and no approval prompts. The first durable UI thread becomes the main thread and resumes on startup.
 socket:
   description: Unix socket for bot lifecycle, scoped thread notices, and global voice call notices.
 mcp:

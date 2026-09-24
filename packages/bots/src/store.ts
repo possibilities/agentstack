@@ -1,5 +1,29 @@
 import { AuthStore } from "@agentstack/auth";
 
+export type BotSettings = {
+  model: string;
+  reasoningEffort: "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+  sandboxMode: "read-only" | "workspace-write" | "danger-full-access";
+  approvalPolicy: "untrusted" | "on-failure" | "on-request" | "never";
+};
+
+export const DEFAULT_BOT_SETTINGS: BotSettings = {
+  model: "gpt-6-sol",
+  reasoningEffort: "medium",
+  sandboxMode: "danger-full-access",
+  approvalPolicy: "never",
+};
+
+function parseSettings(raw: string): BotSettings {
+  const value: unknown = JSON.parse(raw);
+  if (!value || typeof value !== "object") throw new Error("invalid stored Bot settings");
+  const settings = value as Record<string, unknown>;
+  if (typeof settings.model !== "string" || !settings.model.trim() || !["low", "medium", "high", "xhigh", "max", "ultra"].includes(String(settings.reasoningEffort))
+    || !["read-only", "workspace-write", "danger-full-access"].includes(String(settings.sandboxMode))
+    || !["untrusted", "on-failure", "on-request", "never"].includes(String(settings.approvalPolicy))) throw new Error("invalid stored Bot settings");
+  return settings as BotSettings;
+}
+
 export type StoredServer = {
   id: string;
   pid: number | null;
@@ -14,11 +38,13 @@ export type StoredServer = {
   mainThreadId: string | null;
   threadStarting: boolean;
   args: string[];
+  settings?: BotSettings | null;
   roleRoot?: string | null;
   roleRevision?: number | null;
 };
 
 export class StateStore extends AuthStore {
+  onDefaultsChange?: () => void;
   constructor(stateDir: string) {
     super(stateDir);
     this.db.exec(`
@@ -30,6 +56,8 @@ export class StateStore extends AuthStore {
         role_root TEXT, role_revision INTEGER
       );
       CREATE TABLE IF NOT EXISTS secrets.server_args (id TEXT PRIMARY KEY, args_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS bot_defaults (id INTEGER PRIMARY KEY CHECK (id = 1), settings_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS bot_settings (id TEXT PRIMARY KEY, settings_json TEXT NOT NULL);
       CREATE TRIGGER IF NOT EXISTS servers_account_insert BEFORE INSERT ON servers
       WHEN NEW.account IS NOT NULL AND NOT EXISTS (SELECT 1 FROM servers WHERE id = NEW.id)
         AND NOT EXISTS (SELECT 1 FROM accounts WHERE name = NEW.account AND removing = 0)
@@ -39,6 +67,7 @@ export class StateStore extends AuthStore {
       WHEN NEW.account IS NOT OLD.account AND NEW.account IS NOT NULL AND NOT EXISTS (SELECT 1 FROM accounts WHERE name = NEW.account AND removing = 0)
       BEGIN SELECT RAISE(ABORT, 'Codex account is unavailable'); END;
     `);
+    this.db.prepare("INSERT OR IGNORE INTO bot_defaults (id, settings_json) VALUES (1, ?)").run(JSON.stringify(DEFAULT_BOT_SETTINGS));
     // Existing installations of the first SQLite-backed release have neither column.
     const serverColumns = this.db.prepare("PRAGMA table_info(servers)").all() as Array<{ name: string }>;
     if (!serverColumns.some(({ name }) => name === "auth_version")) this.db.exec("ALTER TABLE servers ADD COLUMN auth_version INTEGER");
@@ -70,17 +99,30 @@ export class StateStore extends AuthStore {
   }
 
   servers(): StoredServer[] {
-    return (this.db.prepare("SELECT servers.id, pid, cwd, url, state, codex_bin, account, launched_account, auth_version, runtime_root, main_thread_id, thread_starting, role_root, role_revision, args_json FROM servers LEFT JOIN secrets.server_args AS launch_args ON launch_args.id = servers.id").all() as Array<{
-      id: string; pid: number | null; cwd: string; url: string | null; state: StoredServer["state"]; codex_bin: string; account: string | null; launched_account: string | null; auth_version: number | null; runtime_root: string | null; main_thread_id: string | null; thread_starting: number; role_root: string | null; role_revision: number | null; args_json: string | null;
-    }>).map(({ codex_bin, launched_account, auth_version, runtime_root, main_thread_id, thread_starting, role_root, role_revision, args_json, ...row }) => ({
+    return (this.db.prepare("SELECT servers.id, pid, cwd, url, state, codex_bin, account, launched_account, auth_version, runtime_root, main_thread_id, thread_starting, role_root, role_revision, args_json, bot_settings.settings_json FROM servers LEFT JOIN secrets.server_args AS launch_args ON launch_args.id = servers.id LEFT JOIN bot_settings ON bot_settings.id = servers.id").all() as Array<{
+      id: string; pid: number | null; cwd: string; url: string | null; state: StoredServer["state"]; codex_bin: string; account: string | null; launched_account: string | null; auth_version: number | null; runtime_root: string | null; main_thread_id: string | null; thread_starting: number; role_root: string | null; role_revision: number | null; args_json: string | null; settings_json: string | null;
+    }>).map(({ codex_bin, launched_account, auth_version, runtime_root, main_thread_id, thread_starting, role_root, role_revision, args_json, settings_json, ...row }) => ({
       ...row, codexBin: codex_bin, launchedAccount: launched_account, authVersion: auth_version, runtimeRoot: runtime_root,
       mainThreadId: main_thread_id, threadStarting: Boolean(thread_starting), roleRoot: role_root,
-      roleRevision: role_revision, args: parseArgs(args_json),
+      roleRevision: role_revision, args: parseArgs(args_json), settings: settings_json === null ? null : parseSettings(settings_json),
     }));
+  }
+
+  botDefaults(): BotSettings {
+    const row = this.db.prepare("SELECT settings_json FROM bot_defaults WHERE id = 1").get() as { settings_json: string };
+    return parseSettings(row.settings_json);
+  }
+
+  setBotDefaults(update: Partial<BotSettings>): BotSettings {
+    const next = parseSettings(JSON.stringify({ ...this.botDefaults(), ...update }));
+    this.db.prepare("UPDATE bot_defaults SET settings_json = ? WHERE id = 1").run(JSON.stringify(next));
+    this.onDefaultsChange?.();
+    return next;
   }
 
   saveServer(server: StoredServer): void {
     if (!Array.isArray(server.args) || !server.args.every((arg) => typeof arg === "string")) throw new Error(`invalid launch arguments for Server ${server.id}`);
+    const settings = server.settings == null ? null : parseSettings(JSON.stringify(server.settings));
     this.db.exec("BEGIN IMMEDIATE");
     try {
       this.db.prepare(`INSERT INTO servers (id, pid, cwd, url, state, codex_bin, account, launched_account, auth_version, runtime_root, main_thread_id, thread_starting, role_root, role_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -94,6 +136,9 @@ export class StateStore extends AuthStore {
       );
       this.db.prepare("INSERT INTO secrets.server_args (id, args_json) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET args_json = excluded.args_json")
         .run(server.id, JSON.stringify(server.args));
+      if (settings) this.db.prepare("INSERT INTO bot_settings (id, settings_json) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET settings_json = excluded.settings_json")
+        .run(server.id, JSON.stringify(settings));
+      else this.db.prepare("DELETE FROM bot_settings WHERE id = ?").run(server.id);
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -108,6 +153,7 @@ export class StateStore extends AuthStore {
     try {
       this.db.prepare("DELETE FROM servers WHERE id = ?").run(id);
       this.db.prepare("DELETE FROM secrets.server_args WHERE id = ?").run(id);
+      this.db.prepare("DELETE FROM bot_settings WHERE id = ?").run(id);
       this.db.exec("DELETE FROM account_aliases WHERE id NOT IN (SELECT name FROM accounts) AND id NOT IN (SELECT account FROM servers WHERE account IS NOT NULL)");
       this.db.exec("COMMIT");
     } catch (error) {
