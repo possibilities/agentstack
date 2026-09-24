@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -83,6 +84,17 @@ test("serve owns sockets, MCP, WebSocket, and live docs, then shuts them down", 
     }
     const docsUrl = /AgentStack reference: (http:\/\/\S+\/docs)/.exec(stderr)?.[1];
     assert.ok(docsUrl, stderr);
+    const duplicate = spawn(process.execPath, [cli, "serve"], {
+      stdio: ["ignore", "ignore", "pipe"],
+      env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0" },
+    });
+    let duplicateError = "";
+    duplicate.stderr?.on("data", (chunk: Buffer) => { duplicateError += chunk.toString(); });
+    assert.equal(await new Promise<number | null>((resolve) => duplicate.once("exit", resolve)), 0);
+    assert.match(duplicateError, /AgentStack is already running/);
+    assert.ok(duplicateError.includes(docsUrl), duplicateError);
+    assert.doesNotMatch(duplicateError, /a required child stopped|EADDRINUSE/);
+    assert.equal((await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} }) as { pid: number }).pid, child.pid);
     const page = await fetch(docsUrl);
     assert.equal(page.status, 200);
     assert.equal(page.headers.get("cache-control"), "no-store");
@@ -118,6 +130,50 @@ test("serve owns sockets, MCP, WebSocket, and live docs, then shuts them down", 
     }
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("a claimed MCP port refuses startup before the owner creates a socket", { timeout: 30_000 }, async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-occupied-"));
+  const listener = createServer();
+  await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  const address = listener.address();
+  assert.ok(address && typeof address !== "string");
+  try {
+    const child = spawn(process.execPath, [cli, "serve"], {
+      stdio: ["ignore", "ignore", "pipe"],
+      env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: String(address.port) },
+    });
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    assert.equal(await new Promise<number | null>((resolve) => child.once("exit", resolve)), 1);
+    assert.match(stderr, new RegExp(`MCP port ${address.port} is already in use`));
+    assert.equal(existsSync(join(stateDir, "sockets", "owner.sock")), false);
+  } finally {
+    await new Promise<void>((resolve) => listener.close(() => resolve()));
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("a claimed WebSocket port refuses startup before the owner creates a socket", { timeout: 30_000 }, async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-ws-occupied-"));
+  const listener = createServer();
+  await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  const address = listener.address();
+  assert.ok(address && typeof address !== "string");
+  try {
+    const child = spawn(process.execPath, [cli, "serve"], {
+      stdio: ["ignore", "ignore", "pipe"],
+      env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: String(address.port) },
+    });
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    assert.equal(await new Promise<number | null>((resolve) => child.once("exit", resolve)), 1);
+    assert.match(stderr, new RegExp(`WebSocket port ${address.port} is already in use`));
+    assert.equal(existsSync(join(stateDir, "sockets", "owner.sock")), false);
+  } finally {
+    await new Promise<void>((resolve) => listener.close(() => resolve()));
     await rm(stateDir, { recursive: true, force: true });
   }
 });
