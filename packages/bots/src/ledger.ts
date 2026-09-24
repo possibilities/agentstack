@@ -43,6 +43,13 @@ export class BotLedger {
     return Boolean(this.db.prepare("SELECT 1 FROM bots WHERE number = ?").get(number));
   }
 
+  remove(id: string): void {
+    const number = Number(id.slice("bot-".length));
+    if (!Number.isSafeInteger(number) || number < 1 || !this.db.prepare("DELETE FROM bots WHERE number = ?").run(number).changes) {
+      throw new Error(`unknown bot: ${id}`);
+    }
+  }
+
   ids(): string[] {
     return (this.db.prepare("SELECT number FROM bots ORDER BY number").all() as Array<{ number: number }>)
       .map(({ number }) => `bot-${number}`);

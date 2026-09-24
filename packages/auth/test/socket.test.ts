@@ -48,7 +48,7 @@ test("auth serves accounts and device sign-in on its namespaced socket", { timeo
     });
     assert.deepEqual(
       listed.tools.map((tool) => tool.name),
-      ["account_list", "account_activate", "account_remove", "account_login_start", "account_login_status", "account_login_current", "account_login_cancel"],
+      ["account_list", "account_activate", "account_remove", "account_login_start", "account_login_replace", "account_login_status", "account_login_current", "account_login_cancel"],
     );
 
     await assert.rejects(socketCall(served.socketPath, "events/subscribe", { topics: [] }), /non-empty/);
@@ -59,8 +59,11 @@ test("auth serves accounts and device sign-in on its namespaced socket", { timeo
     const subscription = await socketSubscribe(served.socketPath ?? "", ["accounts_changed", "login_changed"], (topic) => events.push(topic));
     assert.deepEqual([...subscription.topics].sort(), ["accounts_changed", "login_changed"]);
 
+    await assert.rejects(call(served.socketPath, "account_login_start", { name: "codex-1" }), /Unrecognized key: "name"/);
+    await assert.rejects(call(served.socketPath, "account_login_replace", { id: "codex-1" }), /id:/);
     const started = (await call(served.socketPath, "account_login_start")) as ServedLogin;
     assert.equal(started.status, "pending");
+    assert.equal(started.targetAccount, null);
     let current = (await call(served.socketPath, "account_login_current")) as { login: ServedLogin | null };
     for (let i = 0; i < 100 && !current.login?.authUrl; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -75,31 +78,33 @@ test("auth serves accounts and device sign-in on its namespaced socket", { timeo
       settled = (await call(served.socketPath, "account_login_status", { id: started.id })) as ServedLogin;
     }
     assert.equal(settled.status, "complete");
-    assert.equal(settled.account, "codex-1");
+    const firstId = settled.account!;
+    assert.match(firstId, /^[0-9a-f-]{36}$/);
     assert.equal(settled.authUrl, null);
     assert.equal(settled.userCode, null);
     assert.deepEqual(await call(served.socketPath, "account_login_current"), { login: null });
-    assert.deepEqual(await call(served.socketPath, "account_list"), { accounts: [{ name: "codex-1", active: true }] });
+    assert.deepEqual(await call(served.socketPath, "account_list"), { accounts: [{ id: firstId, active: true, removing: false }] });
 
-    const reauth = (await call(served.socketPath, "account_login_start", { name: "codex-1" })) as ServedLogin;
-    assert.equal(reauth.targetAccount, "codex-1");
+    const reauth = (await call(served.socketPath, "account_login_replace", { id: firstId })) as ServedLogin;
+    assert.equal(reauth.targetAccount, firstId);
     let settledReauth = (await call(served.socketPath, "account_login_status", { id: reauth.id })) as ServedLogin;
     for (let i = 0; i < 100 && settledReauth.status === "pending"; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
       settledReauth = (await call(served.socketPath, "account_login_status", { id: reauth.id })) as ServedLogin;
     }
     assert.equal(settledReauth.status, "complete");
-    assert.equal(settledReauth.account, "codex-1");
+    assert.equal(settledReauth.account, firstId);
     const second = (await call(served.socketPath, "account_login_start")) as ServedLogin;
     let settledSecond = (await call(served.socketPath, "account_login_status", { id: second.id })) as ServedLogin;
     for (let i = 0; i < 100 && settledSecond.status === "pending"; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
       settledSecond = (await call(served.socketPath, "account_login_status", { id: second.id })) as ServedLogin;
     }
-    assert.equal(settledSecond.account, "codex-2");
-    assert.deepEqual(await call(served.socketPath, "account_activate", { name: "codex-1" }), { name: "codex-1", active: true });
-    assert.deepEqual(await call(served.socketPath, "account_remove", { name: "codex-1" }), { accounts: [{ name: "codex-2", active: true }] });
-    await assert.rejects(call(served.socketPath, "account_activate", { name: "codex-9" }), /unknown Codex account/);
+    const secondId = settledSecond.account!;
+    assert.notEqual(secondId, firstId);
+    assert.deepEqual(await call(served.socketPath, "account_activate", { id: firstId }), { id: firstId, active: true, removing: false });
+    assert.deepEqual(await call(served.socketPath, "account_remove", { id: firstId }), { accounts: [{ id: secondId, active: true, removing: false }] });
+    await assert.rejects(call(served.socketPath, "account_activate", { id: firstId }), /unknown Codex account/);
     await assert.rejects(socketCall(served.socketPath, "tools/call", { name: "server_list", arguments: {} }), /unknown operation/);
 
     for (let i = 0; i < 100 && !events.includes("accounts_changed"); i += 1) {

@@ -24,6 +24,14 @@ export class StateStore extends AuthStore {
         auth_version INTEGER, runtime_root TEXT,
         main_thread_id TEXT, thread_starting INTEGER NOT NULL DEFAULT 0
       );
+      CREATE TRIGGER IF NOT EXISTS servers_account_insert BEFORE INSERT ON servers
+      WHEN NEW.account IS NOT NULL AND NOT EXISTS (SELECT 1 FROM servers WHERE id = NEW.id)
+        AND NOT EXISTS (SELECT 1 FROM accounts WHERE name = NEW.account AND removing = 0)
+        AND NOT EXISTS (SELECT 1 FROM account_aliases WHERE id = NEW.account AND NOT EXISTS (SELECT 1 FROM accounts WHERE name = NEW.account))
+      BEGIN SELECT RAISE(ABORT, 'Codex account is unavailable'); END;
+      CREATE TRIGGER IF NOT EXISTS servers_account_rebind BEFORE UPDATE OF account ON servers
+      WHEN NEW.account IS NOT OLD.account AND NEW.account IS NOT NULL AND NOT EXISTS (SELECT 1 FROM accounts WHERE name = NEW.account AND removing = 0)
+      BEGIN SELECT RAISE(ABORT, 'Codex account is unavailable'); END;
     `);
     // Existing installations of the first SQLite-backed release have neither column.
     const serverColumns = this.db.prepare("PRAGMA table_info(servers)").all() as Array<{ name: string }>;
@@ -54,4 +62,9 @@ export class StateStore extends AuthStore {
   }
 
   hasServer(id: string): boolean { return Boolean(this.db.prepare("SELECT 1 FROM servers WHERE id = ?").get(id)); }
+
+  deleteServer(id: string): void {
+    this.db.prepare("DELETE FROM servers WHERE id = ?").run(id);
+    this.db.exec("DELETE FROM account_aliases WHERE id NOT IN (SELECT name FROM accounts) AND id NOT IN (SELECT account FROM servers WHERE account IS NOT NULL)");
+  }
 }

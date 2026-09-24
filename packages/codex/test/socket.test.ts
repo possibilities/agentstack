@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -25,7 +25,7 @@ test("codex lifecycle and change events are served on the namespaced unix socket
   process.env.PATH = `${cwd}:${savedPath ?? ""}`;
   const authStore = new AuthStore(stateDir);
   authStore.addAccount(credential("first-secret"));
-  authStore.addAccount(credential("second-secret"));
+  const secondAccount = authStore.addAccount(credential("second-secret"));
   const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir };
   const auth = await serveApi({ name: "auth", transport: "socket", env });
   const served = await serveApi({ name: "codex", transport: "socket", env });
@@ -52,7 +52,7 @@ test("codex lifecycle and change events are served on the namespaced unix socket
     });
     assert.deepEqual(
       listedTools.tools.map((tool) => tool.name),
-      ["server_start", "server_stop", "server_list", "input_observe_start", "input_observe_stop", "input_observe_list"],
+      ["server_start", "server_stop", "server_remove", "server_list", "input_observe_start", "input_observe_stop", "input_observe_list"],
     );
     assert.ok(listedTools.tools.every((tool) => tool.description.length > 0));
 
@@ -67,7 +67,7 @@ test("codex lifecycle and change events are served on the namespaced unix socket
     await assert.rejects(socketSubscribe(served.socketPath ?? "", ["servers_changed"], () => undefined, { scope: "invalid/id" }), /invalid event scope/);
 
     await assert.rejects(socketCall(served.socketPath, "tools/call", { name: "account_list", arguments: {} }), /unknown operation/);
-    await socketCall(auth.socketPath ?? "", "tools/call", { name: "account_activate", arguments: { name: "codex-2" } });
+    await socketCall(auth.socketPath ?? "", "tools/call", { name: "account_activate", arguments: { id: secondAccount.id } });
 
     const started = (await socketCall(served.socketPath, "tools/call", {
       name: "server_start",
@@ -75,12 +75,12 @@ test("codex lifecycle and change events are served on the namespaced unix socket
     })) as { id: string; state: string; url: string; account: string | null; mainThreadId: string | null };
     assert.equal(started.id, "remote");
     assert.equal(started.state, "running");
-    assert.equal(started.account, "codex-2");
+    assert.equal(started.account, secondAccount.id);
     assert.ok(started.mainThreadId);
     assert.equal(started.url, `unix://${join(stateDir, "app", "remote.sock")}`);
     const persisted = new StateStore(stateDir);
     assert.equal(persisted.servers().find((server) => server.id === "remote")?.codexBin, runtime);
-    assert.equal(persisted.servers().find((server) => server.id === "remote")?.account, "codex-2");
+    assert.equal(persisted.servers().find((server) => server.id === "remote")?.account, secondAccount.id);
     assert.equal(persisted.servers().find((server) => server.id === "remote")?.mainThreadId, started.mainThreadId);
     persisted.close();
     for (let i = 0; i < 100 && received.length === 0; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
@@ -140,6 +140,13 @@ test("codex lifecycle and change events are served on the namespaced unix socket
       socketCall(served.socketPath, "tools/call", { name: "server_start", arguments: {} }),
       /cwd/,
     );
+    assert.deepEqual(await socketCall(served.socketPath, "tools/call", { name: "server_remove", arguments: { id: "remote" } }), { id: "remote" });
+    const removed = (await socketCall(served.socketPath, "tools/call", { name: "server_list", arguments: {} })) as { servers: Array<{ id: string }> };
+    assert.equal(removed.servers.some((server) => server.id === "remote"), false);
+    const checked = new StateStore(stateDir);
+    assert.equal(checked.hasServer("remote"), false);
+    checked.close();
+    await assert.rejects(lstat(join(stateDir, "history", "remote")), /ENOENT/);
   } finally {
     await served.close();
     await auth.close();

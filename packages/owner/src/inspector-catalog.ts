@@ -31,6 +31,7 @@ export async function serveInspectorCatalog(options: {
         type: "http",
         url: `http://127.0.0.1:${options.mcpPort}/mcp/${name}`,
         suppressNotificationStream: true,
+        ...(name === "auth" ? { requestTimeout: 300_000 } : {}),
       }])),
     }, null, 2)}\n`;
     if (content === last && await readFile(path, "utf8").catch(() => null) === content) return;

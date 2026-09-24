@@ -26,7 +26,7 @@ _Avoid_: daemon, service, app
 
 ## Codex account
 
-An AgentStack-owned sign-in credential and stable `codex-N` name managed by the `auth` Package API for a managed Codex Server. One account is active for new Servers; an existing Server retains the account recorded at its launch. _Avoid_: Codex home, capability profile
+An AgentStack-owned sign-in credential with an immutable account ID managed by the `auth` Package API for a managed Codex Server. One account is active for new Servers; existing Servers bind that ID, never a human-facing ordinal. A future UI may present dense `codex-N` labels derived from the current account list. _Avoid_: Codex home, capability profile
 
 ## Main thread
 

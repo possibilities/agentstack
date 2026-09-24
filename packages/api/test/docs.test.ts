@@ -48,7 +48,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(codex.eventScope?.required, false);
     assert.deepEqual(
       codex.operations.map((operation) => operation.name).sort(),
-      ["input_observe_list", "input_observe_start", "input_observe_stop", "server_list", "server_start", "server_stop"],
+      ["input_observe_list", "input_observe_start", "input_observe_stop", "server_list", "server_remove", "server_start", "server_stop"],
     );
     const start = codex.operations.find((operation) => operation.name === "server_start") as OperationDoc;
     assert.ok(start.description.length > 0);
@@ -69,8 +69,9 @@ test("the api package serves structured documents for every workspace package", 
     assert.deepEqual(Object.keys(auth.events).sort(), ["accounts_changed", "login_changed"]);
     assert.deepEqual(
       auth.operations.map((operation) => operation.name).sort(),
-      ["account_activate", "account_list", "account_login_cancel", "account_login_current", "account_login_start", "account_login_status", "account_remove"],
+      ["account_activate", "account_list", "account_login_cancel", "account_login_current", "account_login_replace", "account_login_start", "account_login_status", "account_remove"],
     );
+    assert.deepEqual((auth.operations.find((operation) => operation.name === "account_login_start")?.inputSchema.properties ?? {}), {});
 
     const bots = found.get("bots") as PackageDoc;
     assert.deepEqual(Object.keys(bots.events).sort(), ["bots_changed", "inputs_changed", "threads_changed"]);
@@ -79,7 +80,7 @@ test("the api package serves structured documents for every workspace package", 
       example: "bot-1",
       required: true,
     });
-    assert.deepEqual(bots.operations.map((operation) => operation.name).sort(), ["bot_list", "bot_start", "bot_stop"]);
+    assert.deepEqual(bots.operations.map((operation) => operation.name).sort(), ["bot_list", "bot_remove", "bot_start", "bot_stop"]);
     assert.equal(bots.transports.find((transport) => transport.type === "socket")?.subscriptions, true);
 
     const owner = found.get("owner") as PackageDoc;

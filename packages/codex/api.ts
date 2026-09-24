@@ -18,7 +18,7 @@ const serverViewSchema = z.object({
   cwd: z.string().describe("Working directory."),
   url: z.string().nullable().describe("WebSocket endpoint while running, otherwise null."),
   state: z.enum(["running", "stopped"]).describe("running or stopped."),
-  account: z.string().nullable().describe("Codex account bound at launch; null for older records."),
+  account: z.uuid().nullable().describe("Stable Codex account ID bound at launch; null for older records."),
   mainThreadId: z.string().nullable().describe("The one durable main thread for this Server; null until its first successful start."),
 });
 
@@ -117,6 +117,14 @@ export const serverStop = operation({
   },
 });
 
+export const serverRemove = operation({
+  name: "server_remove",
+  description: "Stop and delete a Server record and its private runtime, log, and per-Server history. Legacy shared history is retained.",
+  input: z.strictObject({ id: idSchema }), output: z.strictObject({ id: idSchema }),
+  annotations: { title: "Remove server", destructiveHint: true, idempotentHint: true },
+  async call(ctx: CodexContext, { id }) { return ctx.supervisor.remove(id); },
+});
+
 export const serverList = operation({
   name: "server_list",
   description: "List Codex app-server processes started here, including ones that have stopped.",
@@ -137,7 +145,7 @@ export const topics = {
 export type CodexTopic = keyof typeof topics;
 
 export const api: PackageApi<CodexContext, CodexTopic> = {
-  operations: [serverStart, serverStop, serverList, inputObserveStart, inputObserveStop, inputObserveList],
+  operations: [serverStart, serverStop, serverRemove, serverList, inputObserveStart, inputObserveStop, inputObserveList],
   events: {
     topics,
     scope: {

@@ -2,7 +2,7 @@ import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { accessSync, constants, createWriteStream } from "node:fs";
+import { accessSync, constants, createWriteStream, existsSync } from "node:fs";
 import { connect } from "node:net";
 import { codexRuntimePath } from "./paths.js";
 import { StateStore, type StoredServer } from "./store.js";
@@ -101,6 +101,7 @@ export class Supervisor {
         if (!parsed?.id || !ID_PATTERN.test(parsed.id)) continue;
         if (!this.store.hasServer(parsed.id)) {
           parsed.account ??= null;
+          if (parsed.account) parsed.account = this.store.resolveLegacyAccount(parsed.account, true);
           parsed.authVersion ??= null;
           parsed.runtimeRoot ??= null;
           parsed.mainThreadId ??= null;
@@ -154,6 +155,25 @@ export class Supervisor {
     return this.enqueue(id, () => this.stopQueued(id));
   }
 
+  remove(id: string): Promise<{ id: string }> {
+    if (!ID_PATTERN.test(id)) throw new Error(`invalid id: ${id}`);
+    return this.enqueue(id, async () => {
+      const record = this.records.get(id);
+      if (!record) return { id };
+      if (record.state === "running") await this.stopQueued(id);
+      await this.runtime.finish(record).catch((error) => console.error(`Codex auth cleanup for removed server ${id}: ${error}`));
+      await rm(this.runtime.rootFor(id), { recursive: true, force: true });
+      if (record.url) await cleanupEndpoint(record.url);
+      await rm(join(this.options.stateDir, "logs", `${id}.log`), { force: true });
+      // Legacy shared history cannot be attributed safely to one account.
+      await rm(join(this.options.stateDir, "history", id), { recursive: true, force: true });
+      this.store.deleteServer(id);
+      this.records.delete(id);
+      this.notify(id);
+      return { id };
+    });
+  }
+
   async stopAll(): Promise<void> {
     const running = [...this.records.values()].filter((record) => record.state === "running");
     await Promise.all(running.map((record) => this.stop(record.id)));
@@ -180,7 +200,7 @@ export class Supervisor {
       if (current.runtimeRoot) throw new Error(`server ${id} has unreconciled Codex credentials; sign in again or inspect its private runtime`);
     }
     const account = current?.account ? this.store.accountCredentials(current.account) : this.store.activeAccount();
-    const selected = account.name;
+    const selected = account.id;
     for (const record of this.records.values()) {
       if (record.account === selected && record.runtimeRoot) {
         if (record.state === "stopped") await this.finishRuntime(record);
@@ -188,7 +208,8 @@ export class Supervisor {
       }
     }
     const capabilities = join(this.options.stateDir, "capabilities", "default");
-    const history = join(this.options.stateDir, "history");
+    const privateHistory = join(this.options.stateDir, "history", id);
+    const history = current?.mainThreadId && !existsSync(privateHistory) ? join(this.options.stateDir, "history") : privateHistory;
     await Promise.all([mkdir(capabilities, { recursive: true, mode: 0o700 }), mkdir(history, { recursive: true, mode: 0o700 })]);
 
     let lastError: Error | undefined;
@@ -219,7 +240,7 @@ export class Supervisor {
       }
       this.children.set(id, child);
       const record: RecordFile = {
-        id, pid: child.pid, cwd, url, state: "running", codexBin, account: account.name, authVersion: account.version, runtimeRoot,
+        id, pid: child.pid, cwd, url, state: "running", codexBin, account: account.id, authVersion: account.version, runtimeRoot,
         mainThreadId: current?.mainThreadId ?? null, threadStarting: current?.threadStarting ?? false,
       };
       this.records.set(id, record);

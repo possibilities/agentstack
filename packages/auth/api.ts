@@ -1,21 +1,23 @@
 import { chmod, mkdir } from "node:fs/promises";
 import { z } from "zod";
-import { operation, type PackageApi } from "@agentstack/api";
+import { operation, socketCall, socketPath, type PackageApi } from "@agentstack/api";
 import { stateDir } from "./src/paths.js";
 import { AuthStore, type Account } from "./src/store.js";
 import { LoginManager, type LoginState } from "./src/login.js";
 
-const accountSchema = z.object({ name: z.string(), active: z.boolean() });
-const accountName = z.string().regex(/^codex-[1-9][0-9]*$/);
+const accountId = z.uuid().describe("Stable account ID. Obtain it from account_list.");
+const accountSchema = z.object({ id: accountId, active: z.boolean(), removing: z.boolean() });
 const loginStateSchema = z.object({
   id: z.string(), status: z.enum(["pending", "complete", "failed"]),
   authUrl: z.string().nullable(), userCode: z.string().nullable(),
-  account: z.string().nullable(), error: z.string().nullable(), targetAccount: z.string().nullable(),
+  account: accountId.nullable(), error: z.string().nullable(), targetAccount: accountId.nullable(),
 });
 
 export type AuthContext = {
   store: AuthStore;
   login: LoginManager;
+  codexSocket: string;
+  botsSocket: string;
   onAccountsChanged: (() => void) | undefined;
 };
 
@@ -28,31 +30,49 @@ export const accountList = operation({
 
 export const accountActivate = operation({
   name: "account_activate", description: "Use this Codex account for newly created app servers.",
-  input: z.object({ name: accountName }), output: accountSchema,
+  input: z.strictObject({ id: accountId }), output: accountSchema,
   annotations: { title: "Select active account" },
-  async call(ctx: AuthContext, { name }) {
-    ctx.store.activate(name);
+  async call(ctx: AuthContext, { id }) {
+    ctx.store.activate(id);
     ctx.onAccountsChanged?.();
-    return { name, active: true };
+    return { id, active: true, removing: false };
   },
 });
 
 export const accountRemove = operation({
-  name: "account_remove", description: "Delete a saved Codex account. Running servers retain their launch identity until stopped.",
-  input: z.object({ name: accountName }), output: z.object({ accounts: z.array(accountSchema) }),
+  name: "account_remove", description: "Stop and delete this account's bound Servers, then delete the account and credentials. If interrupted, retry the same ID to finish removal.",
+  input: z.strictObject({ id: accountId }), output: z.object({ accounts: z.array(accountSchema) }),
   annotations: { title: "Remove account", destructiveHint: true },
-  async call(ctx: AuthContext, { name }) {
-    ctx.store.removeAccount(name);
+  async call(ctx: AuthContext, { id }) {
+    ctx.store.beginRemoval(id);
+    ctx.onAccountsChanged?.();
+    const bound = ctx.store.boundServerIds(id);
+    const botIds = bound.some((serverId) => /^bot-[1-9][0-9]*$/.test(serverId))
+      ? new Set(((await socketCall(ctx.botsSocket, "tools/call", { name: "bot_list", arguments: {} })) as { bots: Array<{ id: string }> }).bots.map((bot) => bot.id))
+      : new Set<string>();
+    for (const serverId of bound) {
+      await socketCall(botIds.has(serverId) ? ctx.botsSocket : ctx.codexSocket, "tools/call", {
+        name: botIds.has(serverId) ? "bot_remove" : "server_remove", arguments: { id: serverId },
+      }, { timeoutMs: 30_000 });
+    }
+    ctx.store.removeAccount(id);
     ctx.onAccountsChanged?.();
     return { accounts: ctx.store.listAccounts() };
   },
 });
 
 export const accountLoginStart = operation({
-  name: "account_login_start", description: "Start a Codex device sign-in in an isolated temporary home, superseding any attempt already in progress. Optionally replace credentials for an existing name. Poll account_login_status for its verification URL, one-time code, and result.",
-  input: z.object({ name: accountName.optional() }), output: loginStateSchema,
+  name: "account_login_start", description: "Create a Codex account by device sign-in in an isolated temporary home. Supersedes any attempt already in progress. Poll account_login_status for its verification URL, one-time code, and result.",
+  input: z.strictObject({}), output: loginStateSchema,
   annotations: { title: "Sign in to Codex" },
-  async call(ctx: AuthContext, { name }) { return ctx.login.start(name ?? null); },
+  async call(ctx: AuthContext) { return ctx.login.start(); },
+});
+
+export const accountLoginReplace = operation({
+  name: "account_login_replace", description: "Sign in again to an existing Codex account, replacing its credentials without changing its identity.",
+  input: z.strictObject({ id: accountId }), output: loginStateSchema,
+  annotations: { title: "Sign in again" },
+  async call(ctx: AuthContext, { id }) { return ctx.login.start(id); },
 });
 
 export const accountLoginStatus = operation({
@@ -84,7 +104,7 @@ export const topics = {
 export type AuthTopic = keyof typeof topics;
 
 export const api: PackageApi<AuthContext, AuthTopic> = {
-  operations: [accountList, accountActivate, accountRemove, accountLoginStart, accountLoginStatus, accountLoginCurrent, accountLoginCancel],
+  operations: [accountList, accountActivate, accountRemove, accountLoginStart, accountLoginReplace, accountLoginStatus, accountLoginCurrent, accountLoginCancel],
   events: {
     topics,
     start(ctx: AuthContext, publish: (topic: AuthTopic) => void) {
@@ -103,7 +123,7 @@ export const api: PackageApi<AuthContext, AuthTopic> = {
     await mkdir(dir, { recursive: true, mode: 0o700 });
     await chmod(dir, 0o700);
     const store = new AuthStore(dir);
-    return { store, login: new LoginManager(store), onAccountsChanged: undefined };
+    return { store, login: new LoginManager(store), codexSocket: socketPath("codex", env), botsSocket: socketPath("bots", env), onAccountsChanged: undefined };
   },
   async closeContext(ctx) {
     await ctx.login.close();

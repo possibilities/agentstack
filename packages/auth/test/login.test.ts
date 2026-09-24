@@ -43,18 +43,19 @@ test("device login imports only finished credentials into the secrets database",
     assert.deepEqual(login.current(), shown);
     const result = await settle(login, started.id);
     assert.equal(result.status, "complete");
-    assert.equal(result.account, "codex-1");
+    assert.equal(result.account, store.listAccounts()[0]?.id);
     assert.equal(result.authUrl, null);
     assert.equal(result.userCode, null);
     assert.equal(login.current(), null);
     assert.equal(store.activeAccount().auth, credential("fixture-secret"));
-    const replacement = await login.start("codex-1");
-    assert.equal(replacement.targetAccount, "codex-1");
+    const id = result.account!;
+    const replacement = await login.start(id);
+    assert.equal(replacement.targetAccount, id);
     const updated = await settle(login, replacement.id);
     assert.equal(updated.status, "complete");
     assert.equal(updated.authUrl, null);
     assert.equal(updated.userCode, null);
-    assert.deepEqual(store.listAccounts(), [{ name: "codex-1", active: true }]);
+    assert.deepEqual(store.listAccounts(), [{ id, active: true, removing: false }]);
   } finally { await login.close(); store.close(); await rm(root, { recursive: true, force: true }); }
 });
 

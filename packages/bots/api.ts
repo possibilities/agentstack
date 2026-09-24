@@ -1,5 +1,5 @@
 import { lstatSync, mkdirSync } from "node:fs";
-import { lstat, mkdir } from "node:fs/promises";
+import { lstat, mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
@@ -20,6 +20,7 @@ export type BotsContext = {
   codexSocket: string;
   ledger: BotLedger;
   watchBot?: (id: string) => void;
+  unwatchBot?: (id: string) => void;
 };
 
 export const topics = {
@@ -191,6 +192,24 @@ export const botStop = operation({
   },
 });
 
+export const botRemove = operation({
+  name: "bot_remove",
+  description: "Stop and delete a bot Server, its private workspace, and its ledger record.",
+  input: z.strictObject({ id: botIdSchema }), output: z.strictObject({ id: botIdSchema }),
+  annotations: { title: "Remove bot", destructiveHint: true },
+  async call(ctx: BotsContext, { id }) {
+    if (!ctx.ledger.has(id)) throw new Error(`unknown bot: ${id}`);
+    const cwd = workspacePath(ctx.root, id);
+    const existing = (await codexServers(ctx)).find((server) => server.id === id);
+    if (existing && existing.cwd !== cwd) throw new Error(`codex server ${id} does not use the ${id} workspace`);
+    if (existing) await socketCall(ctx.codexSocket, "tools/call", { name: "server_remove", arguments: { id } }, { timeoutMs: STOP_TIMEOUT_MS });
+    await rm(cwd, { recursive: true, force: true });
+    ctx.ledger.remove(id);
+    ctx.unwatchBot?.(id);
+    return { id };
+  },
+});
+
 export const botList = operation({
   name: "bot_list",
   description: "List recorded bots, including stopped ones. Each bot runs Codex in its own workspace under the agentstack state bots directory.",
@@ -207,7 +226,7 @@ export const botList = operation({
 });
 
 export const api: PackageApi<BotsContext, BotsTopic> = {
-  operations: [botStart, botStop, botList],
+  operations: [botStart, botStop, botRemove, botList],
   events: {
     topics,
     scope: {
@@ -221,9 +240,14 @@ export const api: PackageApi<BotsContext, BotsTopic> = {
       ctx.watchBot = (id) => {
         if (!watches.has(id)) watches.set(id, watchBot(ctx, id, publish));
       };
+      ctx.unwatchBot = (id) => {
+        watches.get(id)?.();
+        watches.delete(id);
+      };
       for (const id of ctx.ledger.ids()) ctx.watchBot(id);
       return () => {
         ctx.watchBot = undefined;
+        ctx.unwatchBot = undefined;
         for (const stop of watches.values()) stop();
         watches.clear();
       };

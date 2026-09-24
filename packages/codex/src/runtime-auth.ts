@@ -51,7 +51,7 @@ export class RuntimeAuth {
 
   async finish(record: StoredServer): Promise<void> {
     this.unwatch(record.id);
-    const removedAccount = record.account !== null && !this.store.listAccounts().some(({ name }) => name === record.account);
+    const removedAccount = record.account !== null && !this.store.listAccounts().some(({ id }) => id === record.account);
     const status = removedAccount ? "missing" : await this.reconcile(record);
     const emptyRoot = status === "unavailable" && record.runtimeRoot === this.rootFor(record.id) &&
       (await readdir(record.runtimeRoot).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? [] : ["unknown"])).length === 0;
