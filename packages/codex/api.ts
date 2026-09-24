@@ -140,31 +140,36 @@ export const api: PackageApi<CodexContext, CodexTopic> = {
   operations: [serverStart, serverStop, serverList, inputObserveStart, inputObserveStop, inputObserveList],
   events: {
     topics,
-    start(ctx: CodexContext, publish: (topic: CodexTopic) => void) {
-      const watches = new Map<string, () => void>();
+    scope: {
+      description: "Optional Codex Server id. Scoped subscriptions receive changes only for that Server.",
+      example: "bot-1",
+      valid: (_ctx, scope) => idSchema.safeParse(scope).success,
+    },
+    start(ctx: CodexContext, publish: (topic: CodexTopic, scope?: string) => void) {
+      const watches = new Map<string, { url: string; stop: () => void }>();
       const sync = () => {
-        const active = new Set(ctx.supervisor.list().flatMap((server) => server.state === "running" && server.url ? [server.url] : []));
-        for (const [url, stop] of watches) {
-          if (!active.has(url)) {
-            stop();
-            watches.delete(url);
+        const active = new Map(ctx.supervisor.list().flatMap((server) => server.state === "running" && server.url ? [[server.id, server.url] as const] : []));
+        for (const [id, watch] of watches) {
+          if (active.get(id) !== watch.url) {
+            watch.stop();
+            watches.delete(id);
           }
         }
-        for (const url of active) {
-          if (!watches.has(url)) watches.set(url, watchThreadEvents(url, () => publish("threads_changed")));
+        for (const [id, url] of active) {
+          if (!watches.has(id)) watches.set(id, { url, stop: watchThreadEvents(url, () => publish("threads_changed", id)) });
         }
       };
-      ctx.supervisor.onChange = () => {
+      ctx.supervisor.onChange = (id) => {
         sync();
         ctx.observer.reconcile(ctx.supervisor.list());
-        publish("servers_changed");
+        publish("servers_changed", id);
       };
-      ctx.observer.setPublisher(() => publish("inputs_changed"));
+      ctx.observer.setPublisher((id) => publish("inputs_changed", id));
       sync();
       return () => {
         ctx.supervisor.onChange = undefined;
         ctx.observer.setPublisher(undefined);
-        for (const stop of watches.values()) stop();
+        for (const watch of watches.values()) watch.stop();
         watches.clear();
       };
     },

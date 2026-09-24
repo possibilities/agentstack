@@ -33,6 +33,11 @@ const packageDocSchema = z.object({
   packageName: z.string().describe("Workspace package name."),
   operations: z.array(operationDocSchema),
   events: z.record(z.string(), z.string()).describe("Event topics and descriptions; empty when the package serves none."),
+  eventScope: z.object({
+    description: z.string().describe("Meaning of the subscription scope."),
+    example: z.string().describe("Example scope value for events/subscribe."),
+    required: z.boolean().describe("Whether events/subscribe requires a scope."),
+  }).nullable().describe("Socket event subscription scope, when supported."),
   transports: z.array(transportDocSchema),
 });
 

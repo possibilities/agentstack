@@ -1,1 +1,1 @@
-export { api, botList, botStart, botStop, type BotsContext } from "../api.js";
+export { api, botList, botStart, botStop, topics, type BotsContext, type BotsTopic } from "../api.js";

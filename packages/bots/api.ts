@@ -3,7 +3,7 @@ import { lstat, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
-import { operation, socketCall, socketPath, type PackageApi } from "@agentstack/api";
+import { operation, socketCall, socketPath, socketSubscribe, type PackageApi, type SocketSubscription } from "@agentstack/api";
 import { serverList, serverStart, serverStop, type ServerView } from "@agentstack/codex";
 import { BotLedger } from "./src/ledger.js";
 
@@ -19,7 +19,74 @@ export type BotsContext = {
   root: string;
   codexSocket: string;
   ledger: BotLedger;
+  watchBot?: (id: string) => void;
 };
+
+export const topics = {
+  bots_changed: "Published when this bot's Codex Server starts, stops, exits, or is reaped. Refresh bot_list.",
+  threads_changed: "Published when loaded thread state for this bot changes or its Codex connection resumes. Read its app-server thread state.",
+  inputs_changed: "Published when this bot's observed input or outcome changes or its Codex connection resumes. Read Codex input_observe_list for this bot; notices never contain prompt bodies.",
+} as const;
+
+export type BotsTopic = keyof typeof topics;
+
+function watchBot(ctx: BotsContext, id: string, publish: (topic: BotsTopic, scope: string) => void): () => void {
+  let stopped = false;
+  let owned = false;
+  let subscription: SocketSubscription | undefined;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  const abort = new AbortController();
+  let refresh = Promise.resolve();
+  const checkOwnership = () => {
+    refresh = refresh.then(async () => {
+      const servers = await codexServers(ctx);
+      const wasOwned = owned;
+      owned = servers.some((server) => server.id === id && server.cwd === workspacePath(ctx.root, id));
+      if (!stopped && (owned || wasOwned)) publish("bots_changed", id);
+      if (!stopped && owned) {
+        publish("threads_changed", id);
+        publish("inputs_changed", id);
+      }
+    }).catch(() => undefined);
+  };
+  const connect = async () => {
+    if (stopped) return;
+    try {
+      const current = await socketSubscribe(
+        ctx.codexSocket,
+        ["servers_changed", "threads_changed", "inputs_changed"],
+        (topic) => {
+          if (stopped) return;
+          if (topic === "servers_changed") checkOwnership();
+          else if (owned) publish(topic as BotsTopic, id);
+        },
+        { scope: id, signal: abort.signal },
+      );
+      if (stopped) { await current.close(); return; }
+      subscription = current;
+      // Notices are invalidations, not a replay. Refresh after every (re)subscription.
+      checkOwnership();
+      void current.closed.then(() => {
+        if (subscription === current) subscription = undefined;
+        schedule();
+      });
+    } catch {
+      schedule();
+    }
+  };
+  const schedule = () => {
+    if (stopped || retry) return;
+    retry = setTimeout(() => { retry = undefined; void connect(); }, 1_000);
+    retry.unref();
+  };
+  void connect();
+  return () => {
+    stopped = true;
+    if (retry) clearTimeout(retry);
+    abort.abort();
+    void subscription?.close();
+  };
+}
 
 function workspacePath(root: string, id: string): string {
   return join(root, id);
@@ -80,6 +147,7 @@ export const botStart = operation({
     if (id === undefined) {
       const taken = new Set((await codexServers(ctx).catch(() => [])).map((server) => server.id));
       id = ctx.ledger.reserve(claimWorkspace(ctx.root, taken));
+      ctx.watchBot?.(id);
     } else if (!ctx.ledger.has(id)) {
       throw new Error(`unknown bot: ${id}`);
     }
@@ -138,8 +206,29 @@ export const botList = operation({
   },
 });
 
-export const api: PackageApi<BotsContext> = {
+export const api: PackageApi<BotsContext, BotsTopic> = {
   operations: [botStart, botStop, botList],
+  events: {
+    topics,
+    scope: {
+      description: "Required bot ID. Only changes to that bot are delivered on this subscription.",
+      example: "bot-1",
+      required: true,
+      valid: (ctx, scope) => ctx.ledger.has(scope),
+    },
+    start(ctx, publish) {
+      const watches = new Map<string, () => void>();
+      ctx.watchBot = (id) => {
+        if (!watches.has(id)) watches.set(id, watchBot(ctx, id, publish));
+      };
+      for (const id of ctx.ledger.ids()) ctx.watchBot(id);
+      return () => {
+        ctx.watchBot = undefined;
+        for (const stop of watches.values()) stop();
+        watches.clear();
+      };
+    },
+  },
   async createContext(env) {
     const stateDir = env.AGENTSTACK_STATE_DIR ?? join(homedir(), ".local", "state", "agentstack");
     const root = resolve(join(stateDir, "bots"));

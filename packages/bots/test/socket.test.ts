@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { serveApi, socketCall, type ServedApi } from "@agentstack/api";
+import { serveApi, socketCall, socketSubscribe, type ServedApi, type SocketSubscription } from "@agentstack/api";
 import { StateStore } from "@agentstack/codex";
 
 const fakeBin = fileURLToPath(new URL("../../../codex/test/fixtures/fake-app-server.mjs", import.meta.url));
@@ -32,18 +32,24 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
   const codexSocket = codex.socketPath ?? "";
   const botsSocket = join(stateDir, "sockets", "bots.sock");
   let bots: ServedApi | undefined = await serveApi({ name: "bots", transport: "socket", env });
+  let firstSubscription: SocketSubscription | undefined;
+  let secondSubscription: SocketSubscription | undefined;
   try {
     assert.equal(bots.socketPath, botsSocket);
     const listedTools = (await socketCall(botsSocket, "tools/list")) as {
       server: { name: string; description: string };
       transport: { type: string; path: string };
       websocket: { url: string } | null;
+      events: { topics: Record<string, string>; scope: { required: boolean; example: string } };
       tools: Array<{ name: string; inputSchema: { properties?: Record<string, unknown>; additionalProperties?: boolean } }>;
     };
     assert.equal(listedTools.server.name, "bots");
     assert.equal(listedTools.transport.type, "socket");
     assert.equal(listedTools.transport.path, botsSocket);
     assert.equal(listedTools.websocket, null);
+    assert.deepEqual(Object.keys(listedTools.events.topics).sort(), ["bots_changed", "inputs_changed", "threads_changed"]);
+    assert.equal(listedTools.events.scope.required, true);
+    assert.equal(listedTools.events.scope.example, "bot-1");
     assert.deepEqual(
       listedTools.tools.map((tool) => tool.name),
       ["bot_start", "bot_stop", "bot_list"],
@@ -81,8 +87,41 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     assert.equal(second.id, "bot-2");
     assert.equal(second.cwd, join(stateDir, "bots", "bot-2"));
 
+    await assert.rejects(socketSubscribe(botsSocket, ["bots_changed"], () => undefined), /needs a scope/);
+    await assert.rejects(socketSubscribe(botsSocket, ["bots_changed"], () => undefined, { scope: "bot-999" }), /invalid event scope/);
+    const firstEvents: string[] = [];
+    const secondEvents: string[] = [];
+    firstSubscription = await socketSubscribe(botsSocket, ["bots_changed", "threads_changed", "inputs_changed"], (topic) => firstEvents.push(topic), { scope: "bot-1" });
+    secondSubscription = await socketSubscribe(botsSocket, ["bots_changed", "threads_changed", "inputs_changed"], (topic) => secondEvents.push(topic), { scope: "bot-2" });
+    codex.publish?.("servers_changed", "bot-1");
+    codex.publish?.("servers_changed", "bot-2");
+    for (let i = 0; i < 100 && (!firstEvents.includes("bots_changed") || !secondEvents.includes("bots_changed")); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.ok(firstEvents.includes("bots_changed") && secondEvents.includes("bots_changed"));
+    firstEvents.length = 0;
+    secondEvents.length = 0;
+    codex.publish?.("threads_changed", "bot-1");
+    for (let i = 0; i < 100 && !firstEvents.includes("threads_changed"); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(firstEvents.includes("threads_changed"));
+    assert.equal(secondEvents.length, 0);
+    firstEvents.length = 0;
+    codex.publish?.("inputs_changed", "bot-1");
+    for (let i = 0; i < 100 && !firstEvents.includes("inputs_changed"); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(firstEvents.includes("inputs_changed"));
+    assert.equal(secondEvents.length, 0);
+    firstEvents.length = 0;
+    codex.publish?.("threads_changed", "bot-2");
+    for (let i = 0; i < 100 && !secondEvents.includes("threads_changed"); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(secondEvents.includes("threads_changed"));
+    assert.equal(firstEvents.length, 0);
+    secondEvents.length = 0;
+
     const unrelated = (await call(codexSocket, "server_start", { id: "other", cwd: workDir })) as View;
     assert.equal(unrelated.id, "other");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(firstEvents.length, 0);
+    assert.equal(secondEvents.length, 0);
 
     const listed = (await call(botsSocket, "bot_list")) as { bots: View[] };
     assert.deepEqual(listed.bots.map((bot) => bot.id), ["bot-1", "bot-2"]);
@@ -93,6 +132,9 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     const stopped = (await call(botsSocket, "bot_stop", { id: "bot-1" })) as View;
     assert.equal(stopped.state, "stopped");
     assert.equal(stopped.cwd, first.cwd);
+    for (let i = 0; i < 100 && !firstEvents.includes("bots_changed"); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(firstEvents.includes("bots_changed"));
+    assert.equal(secondEvents.length, 0);
     const restarted = (await call(botsSocket, "bot_start", { id: "bot-1" })) as View;
     assert.equal(restarted.state, "running");
     assert.equal(restarted.mainThreadId, first.mainThreadId);
@@ -110,6 +152,14 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     assert.equal(neverStarted.state, "stopped");
     assert.equal(neverStarted.cwd, join(stateDir, "bots", "bot-6"));
     await symlink(fakeBin, runtime);
+    const foreignReserved = (await call(codexSocket, "server_start", { id: "bot-6", cwd: workDir })) as View;
+    assert.equal(foreignReserved.cwd, workDir);
+    const foreignEvents: string[] = [];
+    const foreignSubscription = await socketSubscribe(botsSocket, ["bots_changed", "threads_changed", "inputs_changed"], (topic) => foreignEvents.push(topic), { scope: "bot-6" });
+    codex.publish?.("threads_changed", "bot-6");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(foreignEvents.length, 0);
+    await foreignSubscription.close();
     const afterFailure = (await call(botsSocket, "bot_start")) as View;
     assert.equal(afterFailure.id, "bot-7");
 
@@ -154,11 +204,24 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     assert.equal(afterBoot.servers.find((server) => server.id === "other")?.state, "running");
     assert.equal(afterBoot.servers.find((server) => server.id === "other")?.mainThreadId, unrelated.mainThreadId);
     assert.equal(afterBoot.servers.find((server) => server.id === "bot-11")?.state, "running");
+    const resumedEvents: string[] = [];
+    const resumedSubscription = await socketSubscribe(botsSocket, ["bots_changed", "threads_changed", "inputs_changed"], (topic) => resumedEvents.push(topic), { scope: "bot-1" });
+    await codex.close();
+    codex = await serveApi({ name: "codex", transport: "socket", env });
+    for (let i = 0; i < 200 && !resumedEvents.includes("threads_changed"); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(resumedEvents.includes("threads_changed"));
+    resumedEvents.length = 0;
+    codex.publish?.("inputs_changed", "bot-1");
+    for (let i = 0; i < 100 && !resumedEvents.includes("inputs_changed"); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(resumedEvents.includes("inputs_changed"));
+    await resumedSubscription.close();
     const history = (await readFile(join(stateDir, "history", "fake-threads.jsonl"), "utf8"))
       .trim().split("\n").map((line) => JSON.parse(line) as { method: string; threadId: string; cwd: string });
     assert.equal(history.filter((entry) => entry.method === "thread/start" && entry.cwd === first.cwd).length, 1);
     assert.ok(history.filter((entry) => entry.method === "thread/resume" && entry.cwd === first.cwd).length >= 2);
   } finally {
+    await firstSubscription?.close();
+    await secondSubscription?.close();
     await bots?.close();
     await codex.close();
     if (savedHome === undefined) delete process.env.HOME;

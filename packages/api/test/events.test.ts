@@ -63,6 +63,45 @@ test("socket events deliver change notices to subscribed connections only", asyn
   }
 });
 
+test("scoped socket subscriptions receive only their own changes and validate the scope", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentstack-events-scope-"));
+  const path = join(dir, "scoped.sock");
+  const served = await serveSocket({
+    info: { name: "demo", description: "Demo.", transportDescription: "Socket.", path },
+    context: { ids: new Set(["bot-1", "bot-2"]) },
+    operations: [],
+    events: { topics, scope: { description: "Bot ID.", example: "bot-1", required: true, valid: (ctx, id) => ctx.ids.has(id) } },
+  });
+  const first: string[] = [];
+  const second: string[] = [];
+  try {
+    const listed = await socketCall(path, "tools/list") as { events: { scope: unknown } };
+    assert.deepEqual(listed.events.scope, { description: "Bot ID.", example: "bot-1", required: true });
+    await assert.rejects(socketSubscribe(path, ["ping_changed"], () => undefined), /needs a scope/);
+    await assert.rejects(socketSubscribe(path, ["ping_changed"], () => undefined, { scope: "missing" }), /invalid event scope/);
+    const a = await socketSubscribe(path, ["ping_changed"], (topic) => first.push(topic), { scope: "bot-1" });
+    const b = await socketSubscribe(path, ["ping_changed"], (topic) => second.push(topic), { scope: "bot-2" });
+    assert.equal(a.scope, "bot-1");
+    served.publish?.("ping_changed", "bot-1");
+    for (let i = 0; i < 100 && first.length === 0; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.deepEqual(first, ["ping_changed"]);
+    assert.deepEqual(second, []);
+    served.publish?.("ping_changed", "bot-2");
+    for (let i = 0; i < 100 && second.length === 0; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.deepEqual(second, ["ping_changed"]);
+    assert.deepEqual(first, ["ping_changed"]);
+    served.publish?.("ping_changed");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(first, ["ping_changed"]);
+    assert.deepEqual(second, ["ping_changed"]);
+    await a.close();
+    await b.close();
+  } finally {
+    await served.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("events/subscribe rejects unknown, duplicate, and empty topic sets atomically", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agentstack-events-reject-"));
   const { served, path } = await serveEventsSocket(dir);
@@ -215,6 +254,28 @@ test("an event-bearing package fails closed before its context is created on an 
   }
 });
 
+test("scoped events cannot be served on a WebSocket that has no scope filter", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-scoped-websocket-"));
+  const dir = join(root, "packages", "demo");
+  await mkdir(join(dir, "dist"), { recursive: true });
+  await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo operations.\nsocket:\n  description: Local socket.\nwebsocket:\n  description: Browser notices.\n");
+  await writeFile(join(dir, "dist", "api.js"), `export const api = {
+    operations: [],
+    events: {
+      topics: { ping_changed: "Ping changed." },
+      scope: { description: "Bot ID.", example: "bot-1", required: true, valid: () => true },
+      start() {},
+    },
+    async createContext() { throw new Error("context must not be created"); },
+    async closeContext() {},
+  };\n`);
+  try {
+    await assert.rejects(serveApi({ name: "demo", transport: "socket", root }), /scoped events require a socket-only transport/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("socketSubscribe closes on post-ack malformed frames, odd notifications, and abort", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agentstack-events-stream-"));
   const servers: Array<{ close(): Promise<void> }> = [];
@@ -298,6 +359,7 @@ test("socketSubscribe rejects acknowledgements that do not match the requested t
     );
     await assert.rejects(socketSubscribe(await fake(ack("ping_changed")), ["ping_changed"], () => undefined), /did not match/);
     await assert.rejects(socketSubscribe(await fake(ack([])), ["ping_changed"], () => undefined), /did not match/);
+    await assert.rejects(socketSubscribe(await fake(ack(["ping_changed"])), ["ping_changed"], () => undefined, { scope: "bot-1" }), /did not match/);
     await assert.rejects(socketSubscribe(await fake({ id: 1, error: null }), ["ping_changed"], () => undefined), /subscribe failed/);
     await assert.rejects(socketSubscribe(await fake({ id: 1, error: { message: "denied" } }), ["ping_changed"], () => undefined), /denied/);
   } finally {

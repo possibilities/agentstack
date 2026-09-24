@@ -7,7 +7,7 @@ import { serveApi, socketCall } from "../src/index.js";
 
 type TransportDoc = { type: string; description: string; supported: boolean; subscriptions: boolean; endpoint: string | null };
 type OperationDoc = { name: string; title: string | null; description: string; annotations: Record<string, unknown>; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown> };
-type PackageDoc = { name: string; description: string; packageName: string; operations: OperationDoc[]; events: Record<string, string>; transports: TransportDoc[] };
+type PackageDoc = { name: string; description: string; packageName: string; operations: OperationDoc[]; events: Record<string, string>; eventScope: { description: string; example: string; required: boolean } | null; transports: TransportDoc[] };
 
 test("the api package serves structured documents for every workspace package", { timeout: 60_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-docs-"));
@@ -45,6 +45,7 @@ test("the api package serves structured documents for every workspace package", 
 
     const codex = found.get("codex") as PackageDoc;
     assert.deepEqual(Object.keys(codex.events).sort(), ["inputs_changed", "servers_changed", "threads_changed"]);
+    assert.equal(codex.eventScope?.required, false);
     assert.deepEqual(
       codex.operations.map((operation) => operation.name).sort(),
       ["input_observe_list", "input_observe_start", "input_observe_stop", "server_list", "server_start", "server_stop"],
@@ -65,9 +66,14 @@ test("the api package serves structured documents for every workspace package", 
     );
 
     const bots = found.get("bots") as PackageDoc;
-    assert.deepEqual(bots.events, {});
+    assert.deepEqual(Object.keys(bots.events).sort(), ["bots_changed", "inputs_changed", "threads_changed"]);
+    assert.deepEqual(bots.eventScope, {
+      description: "Required bot ID. Only changes to that bot are delivered on this subscription.",
+      example: "bot-1",
+      required: true,
+    });
     assert.deepEqual(bots.operations.map((operation) => operation.name).sort(), ["bot_list", "bot_start", "bot_stop"]);
-    assert.equal(bots.transports.find((transport) => transport.type === "socket")?.subscriptions, false);
+    assert.equal(bots.transports.find((transport) => transport.type === "socket")?.subscriptions, true);
 
     const owner = found.get("owner") as PackageDoc;
     assert.deepEqual(Object.keys(owner.events), ["pids_changed"]);

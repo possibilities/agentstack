@@ -58,12 +58,12 @@ export type SupervisorOptions = {
   graceMs?: number;
   readyTimeoutMs?: number;
   bindThread?: typeof bindMainThread;
-  onChange?: () => void;
+  onChange?: (id: string) => void;
   store?: StateStore;
 };
 
 export class Supervisor {
-  onChange: (() => void) | undefined;
+  onChange: ((id: string) => void) | undefined;
   private readonly records = new Map<string, RecordFile>();
   private readonly queues = new Map<string, Promise<void>>();
   private readonly children = new Map<string, RunningChild>();
@@ -123,7 +123,7 @@ export class Supervisor {
       await cleanupEndpoint(record.url);
       this.markStopped(record);
       await this.persist(record);
-      this.notify();
+      this.notify(record.id);
     }
     for (const record of this.records.values()) {
       if (record.state === "stopped" && record.runtimeRoot) await this.finishRuntime(record);
@@ -242,7 +242,7 @@ export class Supervisor {
         await this.persist(record);
         await rm(identity, { recursive: true, force: true });
         await this.runtime.watch(record);
-        this.notify();
+        this.notify(id);
         return viewOf(record);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
@@ -252,7 +252,7 @@ export class Supervisor {
         await cleanupEndpoint(url);
         this.markStopped(record);
         await this.persist(record).catch(() => undefined);
-        this.notify();
+        this.notify(id);
         if (!persisted) throw lastError;
         if (record.runtimeRoot) throw lastError;
         if (ready) throw lastError;
@@ -275,7 +275,7 @@ export class Supervisor {
     if (record.url) await cleanupEndpoint(record.url);
     this.markStopped(record);
     await this.persist(record);
-    this.notify();
+    this.notify(id);
     return viewOf(record);
   }
 
@@ -295,7 +295,7 @@ export class Supervisor {
         if (record.url) await cleanupEndpoint(record.url);
         this.markStopped(record);
         await this.persist(record);
-        this.notify();
+        this.notify(id);
       }).catch((error) => console.error(`failed to record app-server exit: ${error}`));
     });
   }
@@ -331,8 +331,8 @@ export class Supervisor {
     record.url = null;
   }
 
-  private notify(): void {
-    this.onChange?.();
+  private notify(id: string): void {
+    this.onChange?.(id);
   }
 
   private async killChild(id: string, child: RunningChild): Promise<void> {

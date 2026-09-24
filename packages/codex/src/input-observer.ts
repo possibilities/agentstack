@@ -25,9 +25,9 @@ export class InputObserver {
   private readonly targets = new Map<string, InputObservationTarget>();
   private readonly entries: InputObservation[] = [];
   private readonly issues: InputObservationIssue[] = [];
-  private publish: (() => void) | undefined;
+  private publish: ((serverId: string) => void) | undefined;
 
-  setPublisher(publish: (() => void) | undefined): void {
+  setPublisher(publish: ((serverId: string) => void) | undefined): void {
     this.publish = publish;
   }
 
@@ -56,7 +56,7 @@ export class InputObserver {
       for (let index = this.issues.length - 1; index >= 0; index--) {
         if (this.issues[index]?.serverId === server.id && this.issues[index]?.threadId === threadId) this.issues.splice(index, 1);
       }
-      this.publish?.();
+      this.publish?.(server.id);
     })();
     this.connecting.set(key, connecting);
     try { await connecting; }
@@ -64,7 +64,7 @@ export class InputObserver {
       this.issues.unshift({ serverId: server.id, threadId, at: new Date().toISOString(),
         message: String(error instanceof Error ? error.message : error).slice(0, 256) });
       if (this.issues.length > 20) this.issues.length = 20;
-      this.publish?.();
+      this.publish?.(server.id);
       throw error;
     } finally { this.connecting.delete(key); }
   }
@@ -86,7 +86,7 @@ export class InputObserver {
     }
     this.connections.delete(key);
     this.endpoints.delete(key);
-    if (this.targets.delete(key)) this.publish?.();
+    if (this.targets.delete(key)) this.publish?.(serverId);
     for (const entry of this.entries) {
       if (entry.serverId === serverId && entry.threadId === threadId && entry.disposition === "pending") {
         entry.disposition = "unresolved";
@@ -124,7 +124,7 @@ export class InputObserver {
     };
     this.entries.unshift(entry);
     if (this.entries.length > MAX_ENTRIES) this.entries.length = MAX_ENTRIES;
-    this.publish?.();
+    this.publish?.(serverId);
   }
 
   private noteResolution(serverId: string, resolution: InputResolution): void {
@@ -134,13 +134,13 @@ export class InputObserver {
     entry.disposition = resolution.disposition.type;
     entry.operationId = resolution.disposition.type === "intercepted" ? resolution.disposition.operationId : null;
     entry.effect = resolution.effect;
-    this.publish?.();
+    this.publish?.(serverId);
     const connection = this.connections.get(this.key(serverId, resolution.threadId));
     void connection?.read(resolution.inputId).then((record) => {
       if (!record) return;
       entry.selectedText = record.selectedText;
       entry.effect = record.effect;
-      this.publish?.();
+      this.publish?.(serverId);
     }).catch(() => undefined);
   }
 }

@@ -58,8 +58,13 @@ test("codex lifecycle and change events are served on the namespaced unix socket
 
     const received: string[] = [];
     const events = await socketSubscribe(served.socketPath ?? "", ["servers_changed"], (topic) => received.push(topic));
+    const scoped: string[] = [];
+    const unrelated: string[] = [];
+    const scopedEvents = await socketSubscribe(served.socketPath ?? "", ["servers_changed"], (topic) => scoped.push(topic), { scope: "remote" });
+    const otherEvents = await socketSubscribe(served.socketPath ?? "", ["servers_changed"], (topic) => unrelated.push(topic), { scope: "other" });
     assert.deepEqual(events.topics, ["servers_changed"]);
     await assert.rejects(socketCall(served.socketPath, "events/subscribe", { topics: ["accounts_changed"] }), /unknown topic/);
+    await assert.rejects(socketSubscribe(served.socketPath ?? "", ["servers_changed"], () => undefined, { scope: "invalid/id" }), /invalid event scope/);
 
     await assert.rejects(socketCall(served.socketPath, "tools/call", { name: "account_list", arguments: {} }), /unknown operation/);
     await socketCall(auth.socketPath ?? "", "tools/call", { name: "account_activate", arguments: { name: "codex-2" } });
@@ -80,6 +85,8 @@ test("codex lifecycle and change events are served on the namespaced unix socket
     persisted.close();
     for (let i = 0; i < 100 && received.length === 0; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
     assert.deepEqual(received, ["servers_changed"]);
+    assert.deepEqual(scoped, ["servers_changed"]);
+    assert.deepEqual(unrelated, []);
 
     await assert.rejects(
       serveApi({ name: "codex", transport: "socket", env }),
@@ -115,8 +122,12 @@ test("codex lifecycle and change events are served on the namespaced unix socket
     assert.equal(stopped.state, "stopped");
     for (let i = 0; i < 100 && received.length < 2; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
     assert.deepEqual(received, ["servers_changed", "servers_changed"]);
+    assert.deepEqual(scoped, ["servers_changed", "servers_changed"]);
+    assert.deepEqual(unrelated, []);
 
     await events.close();
+    await scopedEvents.close();
+    await otherEvents.close();
     received.length = 0;
     await socketCall(served.socketPath, "tools/call", {
       name: "server_start",

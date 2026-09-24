@@ -29,6 +29,7 @@ export type CatalogServer = {
   packageName: string;
   operations: CatalogOperation[];
   events: Record<string, string>;
+  eventScope: { description: string; example: string; required: boolean } | null;
   transports: CatalogTransport[];
 };
 
@@ -57,6 +58,11 @@ export async function loadCatalog(env: NodeJS.ProcessEnv = process.env, from = i
         outputSchema: publishedJsonSchema(operation.output),
       })),
       events,
+      eventScope: api.events?.scope ? {
+        description: api.events.scope.description,
+        example: api.events.scope.example,
+        required: api.events.scope.required ?? false,
+      } : null,
       transports: configuredTransports(item.config).map((transport) =>
         transport.type === "socket"
           ? {

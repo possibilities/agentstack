@@ -15,10 +15,12 @@ test("an explicit observer records candidate, committed pass and clean detach", 
   await new Promise<void>((resolve) => http.listen(path, resolve));
   const observer = new InputObserver();
   let publishCount = 0;
+  const publishedIds: string[] = [];
   let finish!: () => void;
   const resolved = new Promise<void>((resolve) => { finish = resolve; });
-  observer.setPublisher(() => {
+  observer.setPublisher((serverId) => {
     publishCount++;
+    publishedIds.push(serverId);
     if (observer.snapshot().entries[0]?.disposition === "passed") finish();
   });
   server.on("connection", (client) => {
@@ -51,6 +53,7 @@ test("an explicit observer records candidate, committed pass and clean detach", 
     assert.equal(observer.snapshot().entries[0]?.originalText, "Original text");
     assert.equal(observer.snapshot().entries[0]?.disposition, "passed");
     assert.ok(publishCount >= 2);
+    assert.ok(publishedIds.every((id) => id === "s1"));
     await observer.stop("s1", "t1");
     assert.deepEqual(observer.snapshot().targets, []);
     assert.equal(observer.snapshot().entries[0]?.disposition, "passed");

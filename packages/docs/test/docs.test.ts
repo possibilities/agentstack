@@ -24,6 +24,7 @@ test("the reference renders all current Package APIs from the discovery socket",
     assert.match(html, /accounts_changed/);
     assert.match(html, /events\/subscribe/);
     assert.match(html, /&quot;topics&quot;: \[/);
+    assert.match(html, /id="events-bots"[\s\S]*?&quot;scope&quot;: &quot;bot-1&quot;/);
     assert.match(html, /JSON Schema/);
     const revision = await fetch(new URL("revision", docs.url));
     assert.equal(revision.status, 200);
@@ -55,7 +56,7 @@ test("API-authored text is escaped in the generated reference", () => {
   const html = renderDocs([{
     name: "sample", packageName: "@agentstack/sample", description: "<script>bad()</script>",
     operations: [{ name: "sample_list", description: "<img src=x>", annotations: {}, inputSchema: {}, outputSchema: {} }],
-    events: { sample_changed: "<b>bad</b>" }, transports: [],
+    events: { sample_changed: "<b>bad</b>" }, eventScope: null, transports: [],
   }], "revision");
   assert.doesNotMatch(html, /<script>bad\(\)<\/script>/);
   assert.match(html, /&lt;script&gt;bad\(\)&lt;\/script&gt;/);

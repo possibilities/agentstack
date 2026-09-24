@@ -10,7 +10,7 @@ export type ServedApi = {
   transport: "socket" | "websocket";
   socketPath?: string;
   websocketUrl?: string;
-  publish?: (topic: string) => void;
+  publish?: (topic: string, scope?: string) => void;
   close(): Promise<void>;
 };
 
@@ -32,13 +32,16 @@ export async function serveApi(options: {
   if (api.events && located.config.websocket?.pubsub && Object.keys(located.config.websocket.pubsub).length > 0) {
     throw new Error(`${options.name} declares both events and websocket.pubsub`);
   }
+  if (api.events?.scope && located.config.websocket) {
+    throw new Error(`${options.name} scoped events require a socket-only transport`);
+  }
   const eventTopics = api.events ? packageEventTopics(options.name, api.events) : undefined;
   if (eventTopics && transport !== "socket" && transport !== "websocket") {
     throw new Error(`${options.name} events cannot be served over ${transport}`);
   }
-  const publishTargets: Array<(topic: string) => void> = [];
-  const publish = (topic: string): void => {
-    for (const target of publishTargets) target(topic);
+  const publishTargets: Array<(topic: string, scope?: string) => void> = [];
+  const publish = (topic: string, scope?: string): void => {
+    for (const target of publishTargets) target(topic, scope);
   };
   let socket: ServedSocket | undefined;
   let websocket: ServedWebSocket | undefined;
@@ -71,7 +74,7 @@ export async function serveApi(options: {
         info: socketInfo,
         context: contextReady,
         operations: api.operations,
-        events: eventTopics ? { topics: eventTopics } : undefined,
+        events: eventTopics ? { topics: eventTopics, scope: api.events?.scope } : undefined,
       });
       if (socket.publish) publishTargets.push(socket.publish);
     }

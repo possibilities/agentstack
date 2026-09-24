@@ -19,7 +19,13 @@ export type AnyOperation<Ctx> = {
 
 export type PackageEvents<Ctx, Topic extends string = string> = {
   topics: Readonly<Record<Topic, string>>;
-  start(ctx: Ctx, publish: (topic: Topic) => void): (() => void) | void | Promise<(() => void) | void>;
+  scope?: {
+    description: string;
+    example: string;
+    required?: boolean;
+    valid(ctx: Ctx, scope: string): boolean;
+  };
+  start(ctx: Ctx, publish: (topic: Topic, scope?: string) => void): (() => void) | void | Promise<(() => void) | void>;
 };
 
 export type PackageApi<Ctx, Topic extends string = string> = {

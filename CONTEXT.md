@@ -14,7 +14,7 @@ _Avoid_: protocol, binding
 
 ## Event
 
-A named change notice a Package API publishes on an event-capable transport. Topics and descriptions are declared in TypeScript on the PackageApi (`events`); the socket transport delivers them to connections that call `events/subscribe`. A notice carries only the topic name — never a payload or credentials — so callers snapshot state after (re)subscribing.
+A named change notice a Package API publishes on an event-capable transport. Topics and descriptions are declared in TypeScript on the PackageApi (`events`); the socket transport delivers them to connections that call `events/subscribe`. A Package API can require a subscription scope (such as a bot ID), which filters notices without adding data to them. A notice carries only the topic name — never a payload or credentials — so callers snapshot state after (re)subscribing.
 
 _Avoid_: stream, feed, pubsub
 

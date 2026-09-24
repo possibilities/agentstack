@@ -13,13 +13,14 @@ export type SocketServerInfo = {
   websocket?: { url: string; topics: Record<string, string> };
 };
 
-export type SocketEvents = {
+export type SocketEvents<Ctx> = {
   topics: Record<string, string>;
+  scope?: { description: string; example: string; required?: boolean; valid(ctx: Ctx, scope: string): boolean };
 };
 
 export type ServedSocket = {
   path: string;
-  publish?: (topic: string) => void;
+  publish?: (topic: string, scope?: string) => void;
   close(): Promise<void>;
 };
 
@@ -31,7 +32,7 @@ export async function serveSocket<Ctx>(options: {
   info: SocketServerInfo;
   context: Ctx | Promise<Ctx>;
   operations: readonly AnyOperation<Ctx>[];
-  events?: SocketEvents;
+  events?: SocketEvents<Ctx>;
 }): Promise<ServedSocket> {
   const names = new Set<string>();
   for (const operation of options.operations) {
@@ -39,12 +40,12 @@ export async function serveSocket<Ctx>(options: {
     names.add(operation.name);
   }
   const topics = new Map(Object.entries(options.events?.topics ?? {}));
-  const subscriptions = new Map<Socket, Set<string>>();
+  const subscriptions = new Map<Socket, { topics: Set<string>; scope?: string }>();
   const publish = options.events
-    ? (topic: string): void => {
+    ? (topic: string, scope?: string): void => {
         if (!topics.has(topic)) throw new Error(`unknown topic: ${topic}`);
         for (const [client, subscribed] of subscriptions) {
-          if (!subscribed.has(topic) || !client.writable) continue;
+          if (!subscribed.topics.has(topic) || !client.writable || (subscribed.scope && subscribed.scope !== scope)) continue;
           if (client.writableLength > maxClientBuffer) {
             client.destroy();
             continue;
@@ -64,7 +65,7 @@ export async function serveSocket<Ctx>(options: {
       return;
     }
     clients.add(socket);
-    subscriptions.set(socket, new Set());
+    subscriptions.set(socket, { topics: new Set() });
     socket.setEncoding("utf8");
     let buffer = "";
     socket.on("data", (chunk: string) => {
@@ -202,6 +203,7 @@ export function socketCall(
 
 export type SocketSubscription = {
   topics: readonly string[];
+  scope?: string;
   closed: Promise<void>;
   close(): Promise<void>;
 };
@@ -210,13 +212,13 @@ export function socketSubscribe(
   socketPath: string,
   topics: readonly string[],
   onEvent: (topic: string) => void,
-  options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  options: { timeoutMs?: number; signal?: AbortSignal; scope?: string } = {},
 ): Promise<SocketSubscription> {
   if (topics.length === 0) return Promise.reject(new Error("socket subscription needs at least one topic"));
   if (new Set(topics).size !== topics.length) return Promise.reject(new Error("socket subscription repeats a topic"));
   let request: string;
   try {
-    request = `${JSON.stringify({ id: 1, method: "events/subscribe", params: { topics: [...topics] } })}\n`;
+    request = `${JSON.stringify({ id: 1, method: "events/subscribe", params: { topics: [...topics], ...(options.scope === undefined ? {} : { scope: options.scope }) } })}\n`;
   } catch (error) {
     return Promise.reject(error);
   }
@@ -239,6 +241,7 @@ export function socketSubscribe(
     options.signal?.addEventListener("abort", onAbort, { once: true });
     const subscription: SocketSubscription = {
       topics,
+      ...(options.scope === undefined ? {} : { scope: options.scope }),
       closed,
       close() {
         client.destroy();
@@ -300,13 +303,14 @@ export function socketSubscribe(
                 fail(new Error(typeof detail === "string" ? detail : "socket subscribe failed"));
                 return;
               }
-              const result = message.result as { topics?: unknown } | undefined;
+              const result = message.result as { topics?: unknown; scope?: unknown } | undefined;
               const granted = result?.topics;
               if (
                 !Array.isArray(granted)
                 || granted.length !== wanted.size
                 || new Set(granted).size !== granted.length
                 || !granted.every((topic) => typeof topic === "string" && wanted.has(topic))
+                || result?.scope !== options.scope
               ) {
                 fail(new Error("subscribe acknowledgement did not match the requested topics"));
                 return;
@@ -388,8 +392,8 @@ async function handleLine<Ctx>(
     info: SocketServerInfo;
     context: Ctx | Promise<Ctx>;
     operations: readonly AnyOperation<Ctx>[];
-    events?: SocketEvents;
-    subscriptions?: Map<Socket, Set<string>>;
+    events?: SocketEvents<Ctx>;
+    subscriptions?: Map<Socket, { topics: Set<string>; scope?: string }>;
   },
 ): Promise<void> {
   let message: { id?: unknown; method?: unknown; params?: unknown };
@@ -422,8 +426,8 @@ async function dispatch<Ctx>(
     info: SocketServerInfo;
     context: Ctx | Promise<Ctx>;
     operations: readonly AnyOperation<Ctx>[];
-    events?: SocketEvents;
-    subscriptions?: Map<Socket, Set<string>>;
+    events?: SocketEvents<Ctx>;
+    subscriptions?: Map<Socket, { topics: Set<string>; scope?: string }>;
   },
 ): Promise<unknown> {
   if (method === "tools/list") return describeServer(options);
@@ -432,11 +436,11 @@ async function dispatch<Ctx>(
   throw new Error(`unknown method: ${method}`);
 }
 
-function subscribeEvents<Ctx>(
+async function subscribeEvents<Ctx>(
   socket: Socket,
   params: unknown,
-  options: { info: SocketServerInfo; events?: SocketEvents; subscriptions?: Map<Socket, Set<string>> },
-): unknown {
+  options: { info: SocketServerInfo; context: Ctx | Promise<Ctx>; events?: SocketEvents<Ctx>; subscriptions?: Map<Socket, { topics: Set<string>; scope?: string }> },
+): Promise<unknown> {
   if (!options.events || !options.subscriptions) {
     throw new Error(`${options.info.name} does not serve events on this socket`);
   }
@@ -452,14 +456,20 @@ function subscribeEvents<Ctx>(
     if (next.has(topic)) throw new Error(`duplicate topic: ${topic}`);
     next.add(topic);
   }
-  options.subscriptions.set(socket, next);
-  return { topics: [...next] };
+  const scope = (params as { scope?: unknown }).scope;
+  if (scope !== undefined && (typeof scope !== "string" || !options.events.scope || !options.events.scope.valid(await options.context, scope))) {
+    throw new Error(`invalid event scope: ${String(scope)}`);
+  }
+  if (scope === undefined && options.events.scope?.required) throw new Error("events/subscribe needs a scope");
+  if (socket.destroyed) return { topics: [...next], ...(scope === undefined ? {} : { scope }) };
+  options.subscriptions.set(socket, { topics: next, ...(scope === undefined ? {} : { scope }) });
+  return { topics: [...next], ...(scope === undefined ? {} : { scope }) };
 }
 
 function describeServer<Ctx>(options: {
   info: SocketServerInfo;
   operations: readonly AnyOperation<Ctx>[];
-  events?: SocketEvents;
+  events?: SocketEvents<Ctx>;
 }): unknown {
   return {
     server: { name: options.info.name, description: options.info.description },
@@ -469,7 +479,9 @@ function describeServer<Ctx>(options: {
       path: options.info.path,
     },
     websocket: options.info.websocket ? { url: options.info.websocket.url, topics: options.info.websocket.topics } : null,
-    events: options.events ? { topics: options.events.topics, subscribe: "events/subscribe" } : null,
+    events: options.events ? { topics: options.events.topics, subscribe: "events/subscribe", ...(options.events.scope ? { scope: {
+      description: options.events.scope.description, example: options.events.scope.example, required: options.events.scope.required ?? false,
+    } } : {}) } : null,
     tools: options.operations.map((operation) => ({
       name: operation.name,
       description: operation.description,
