@@ -26,10 +26,14 @@ change events, and refreshes when the document changes. Set
 port is selected. The optional `agentstack docs` command still serves an
 independent reference on a separate loopback port when needed.
 
-The owner also starts the standalone UI experiment canvas at
-`http://127.0.0.1:8745/` and prints its URL. Set `AGENTSTACK_UIX_PORT` before
-starting to choose another port. The canvas is a Next.js app in `packages/uix`;
-`pnpm build` prepares it for `agentstack serve`. The owner stops it on shutdown.
+The owner also starts the standalone UI app at `http://127.0.0.1:8745/` and
+prints this index URL.
+Its root lists current local links, Package API URLs, owner processes, and
+running Codex Servers; the blank experiment canvas is at `/x`. The owner
+also prints the canvas URL. Set `AGENTSTACK_UIX_PORT` before starting to choose
+another port. `pnpm build` prepares `packages/uix` for `agentstack serve`.
+Both pages follow the system light/dark preference. The owner stops the app
+on shutdown.
 
 The owner starts the official MCP Inspector as a headless child and prints
 `AgentStack Inspector: http://127.0.0.1:6274/`. Open that URL to see every

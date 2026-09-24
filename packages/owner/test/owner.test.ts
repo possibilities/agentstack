@@ -242,12 +242,18 @@ test("owner api serves status and pids_changed on its socket", async () => {
     const empty = (await socketCall(served.socketPath, "tools/call", { name: "owner_status", arguments: {} })) as {
       pid: number;
       docsUrl: string | null;
+      indexUrl: string | null;
       uixUrl: string | null;
+      inspectorUrl: string | null;
+      mcpUrls: Record<string, string>;
       children: Array<{ name: string; running: boolean }>;
     };
     assert.equal(empty.pid, process.pid);
     assert.equal(empty.docsUrl, null);
+    assert.equal(empty.indexUrl, null);
     assert.equal(empty.uixUrl, null);
+    assert.equal(empty.inspectorUrl, null);
+    assert.deepEqual(empty.mcpUrls, {});
     assert.deepEqual(empty.children, []);
 
     const subscription = await socketSubscribe(served.socketPath ?? "", ["pids_changed"], (topic) => received.push(topic));
