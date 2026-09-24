@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { loadDocs } from "./catalog.js";
+import { renderMarkdown, renderUnavailableMarkdown } from "./markdown.js";
 import { renderDocs, renderUnavailable } from "./render.js";
 
 export type DocsServer = { url: string; close(): Promise<void> };
@@ -35,7 +36,10 @@ export async function serveDocs(options: { env?: NodeJS.ProcessEnv; port?: numbe
       response.writeHead(200, { ...headers, "Content-Type": path.endsWith(".css") ? "text/css; charset=utf-8" : "text/javascript; charset=utf-8" }).end(path.endsWith(".css") ? css : js);
       return;
     }
-    if (path !== (basePath || "/") && path !== `${basePath}/revision`) {
+    const pagePath = basePath || "/";
+    const markdownTarget = path.endsWith(".md") ? path.slice(0, -".md".length) : null;
+    const isMarkdown = markdownTarget === pagePath || markdownTarget === `${basePath}/index`;
+    if (path !== pagePath && path !== `${basePath}/revision` && !isMarkdown) {
       response.writeHead(404, headers).end();
       return;
     }
@@ -44,12 +48,23 @@ export async function serveDocs(options: { env?: NodeJS.ProcessEnv; port?: numbe
       const revision = createHash("sha256").update(JSON.stringify(docs)).digest("hex");
       if (path === `${basePath}/revision`) {
         response.writeHead(200, { ...headers, "Cache-Control": "no-store", "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify({ revision }));
+      } else if (isMarkdown) {
+        response.writeHead(200, { ...headers, "Cache-Control": "no-store", "Content-Type": "text/markdown; charset=utf-8" }).end(renderMarkdown(docs));
       } else {
-        response.writeHead(200, { ...headers, "Cache-Control": "no-store", "Content-Type": "text/html; charset=utf-8" }).end(renderDocs(docs, revision, basePath));
+        response.writeHead(200, {
+          ...headers,
+          "Cache-Control": "no-store",
+          "Content-Type": "text/html; charset=utf-8",
+          Link: `<${basePath}/index.md>; rel="alternate"; type="text/markdown"`,
+        }).end(renderDocs(docs, revision, basePath));
       }
     } catch {
-      response.writeHead(503, { ...headers, "Cache-Control": "no-store", "Content-Type": path === `${basePath}/revision` ? "application/json; charset=utf-8" : "text/html; charset=utf-8" })
-        .end(path === `${basePath}/revision` ? JSON.stringify({ error: "Discovery API unavailable" }) : renderUnavailable(basePath));
+      const unavailable = path === `${basePath}/revision`
+        ? ["application/json; charset=utf-8", JSON.stringify({ error: "Discovery API unavailable" })] as const
+        : isMarkdown
+          ? ["text/markdown; charset=utf-8", renderUnavailableMarkdown()] as const
+          : ["text/html; charset=utf-8", renderUnavailable(basePath)] as const;
+      response.writeHead(503, { ...headers, "Cache-Control": "no-store", "Content-Type": unavailable[0] }).end(unavailable[1]);
     }
   });
   await new Promise<void>((resolve, reject) => {

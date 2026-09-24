@@ -24,12 +24,15 @@ each time it loads, shows the configured Package APIs, MCP and WebSocket URLs, a
 change events, and refreshes when the document changes. Set
 `AGENTSTACK_DOCS_PORT` before starting to choose a port; otherwise an available
 port is selected. The optional `agentstack docs` command still serves an
-independent reference on a separate loopback port when needed.
+independent reference on a separate loopback port when needed. The page is
+also served as markdown at `index.md` (or with `.md` appended to the page
+URL).
 
 The owner also starts the standalone UI app at `http://127.0.0.1:8745/` and
 prints this index URL.
 Its root lists current local links, Package API URLs, owner processes, and
-running Codex Servers; the blank experiment canvas is at `/x`. The owner
+running Codex Servers; the blank experiment canvas is at `/x`. Both pages
+serve markdown twins at `/index.md` and `/x.md`. The owner
 also prints the canvas URL. Set `AGENTSTACK_UIX_PORT` before starting to choose
 another port. `pnpm build` prepares `packages/uix` for `agentstack serve`.
 Both pages follow the system light/dark preference. The owner stops the app
