@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join, dirname, basename } from "node:path";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { join, dirname, basename, isAbsolute, relative, sep } from "node:path";
 import { renderInstructions, type RoleSnapshot } from "./store.js";
-import { mcpRecord, skillRecord, type RoleMcpServer } from "./resources.js";
+import { mcpRecord, skillRecord, trustedProjectRecord, type RoleMcpServer } from "./resources.js";
 import { parseBotMcpIdentity } from "@agentstack/api";
 
 const namePattern = /^[a-z][a-z0-9-]{0,31}$/;
@@ -25,7 +25,7 @@ function mcpLines(server: RoleMcpServer): string[] {
 }
 
 /** Codexnk reads SYSTEM_APPEND.md, config.toml and skills/ from --capabilities. */
-export async function materializeRole(stateDir: string, botId: string, snapshot: RoleSnapshot, mcpServers: Readonly<Record<string, string>>): Promise<string> {
+export async function materializeRole(stateDir: string, botId: string, snapshot: RoleSnapshot, mcpServers: Readonly<Record<string, string>>, cwd?: string): Promise<string> {
   const rendered = renderInstructions(snapshot);
   const parent = join(stateDir, "roles", botId);
   await mkdir(parent, { recursive: true, mode: 0o700 });
@@ -33,6 +33,16 @@ export async function materializeRole(stateDir: string, botId: string, snapshot:
   try {
     if (rendered) await writeFile(join(root, "SYSTEM_APPEND.md"), rendered, { mode: 0o600 });
     const lines: string[] = [];
+    if (cwd) {
+      const actualCwd = await realpath(cwd);
+      for (const value of snapshot.trustedProjects) {
+        const project = trustedProjectRecord.parse(value);
+        if (!project.enabled) continue;
+        const child = relative(project.path, actualCwd);
+        if (child === ".." || child.startsWith(`..${sep}`) || isAbsolute(child)) continue;
+        lines.push(`[projects.${toml(project.path)}]`, 'trust_level = "trusted"', "");
+      }
+    }
     for (const [name, url] of Object.entries(mcpServers).sort(([a], [b]) => a.localeCompare(b))) {
       let parsed: URL;
       try { parsed = new URL(url); }

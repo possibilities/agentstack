@@ -80,9 +80,10 @@ test("the api package serves structured documents for every workspace package", 
       "fragment_create", "fragment_delete", "fragment_reorder", "fragment_update",
       "skill_create", "skill_delete", "skill_reorder", "skill_update",
       "mcp_server_create", "mcp_server_delete", "mcp_server_reorder", "mcp_server_update",
+      "project_create", "project_delete", "project_reorder", "project_update",
     ].sort());
     const roleView = roles.operations.find((operation) => operation.name === "role_snapshot") as OperationDoc;
-    assert.deepEqual(Object.keys(roleView.outputSchema.properties as object).sort(), ["categories", "mcpServers", "revision", "skills"]);
+    assert.deepEqual(Object.keys(roleView.outputSchema.properties as object).sort(), ["categories", "mcpServers", "revision", "skills", "trustedProjects"]);
     assert.equal(roles.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
     assert.deepEqual(Object.keys(auth.events).sort(), ["accounts_changed", "login_changed"]);
     assert.deepEqual(

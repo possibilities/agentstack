@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isAbsolute } from "node:path";
 
 export const resourceId = z.uuid().describe("Stable role resource ID.");
 export const resourceName = z.string().regex(/^[a-z][a-z0-9-]{0,31}$/).describe("Unique lowercase name used in the private launch directory or MCP config.");
@@ -60,3 +61,9 @@ export const mcpRecord = z.strictObject({
   definition: mcpDefinition, enabled: z.boolean(),
 });
 export type RoleMcpServer = z.infer<typeof mcpRecord>;
+
+export const projectPath = z.string().min(1).max(4_096).refine(isAbsolute, "project root must be an absolute path").describe("Absolute project root whose config may be trusted for bots launched inside it.");
+export const trustedProjectRecord = z.strictObject({
+  id: resourceId, path: projectPath, description: resourceDescription, enabled: z.boolean(),
+});
+export type TrustedProject = z.infer<typeof trustedProjectRecord>;

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, rename } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, rename, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -150,5 +150,42 @@ test("role launch keeps bot-bound internal URLs and rejects an unbound internal 
     await assert.rejects(materializeRole(root, "bot-2", store.snapshot(), { auth: bound }), /another bot/);
     const withAlias = store.createMcpServer(0, "other", "Alias", { type: "http", url: base });
     await assert.rejects(materializeRole(root, "bot-1", withAlias, { auth: bound }), /cannot alias the internal MCP listener/);
+  } finally { store.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("only enabled, explicitly trusted project roots matching a Bot cwd enter its private launch config", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-role-project-"));
+  const project = join(root, "repo with spaces");
+  const nested = join(project, "src");
+  const unrelated = join(root, "other");
+  await mkdir(nested, { recursive: true });
+  await mkdir(join(project, ".git"));
+  await mkdir(unrelated);
+  const alias = join(root, "linked-repo");
+  await symlink(project, alias);
+  let store = new RoleStore(root);
+  try {
+    let state = store.createTrustedProject(0, alias, "Reviewed project");
+    const id = state.trustedProjects[0]!.id;
+    const canonical = await realpath(project);
+    assert.equal(state.trustedProjects[0]!.path, canonical);
+    assert.throws(() => store.createTrustedProject(state.revision, project), /UNIQUE/);
+    const first = await materializeRole(root, "bot-1", state, {}, nested);
+    assert.ok((await readFile(join(first, "config.toml"), "utf8")).includes(`[projects.${JSON.stringify(canonical)}]\ntrust_level = "trusted"`));
+    await removeRole(root, "bot-1", first);
+    const outside = await materializeRole(root, "bot-2", state, {}, unrelated);
+    assert.doesNotMatch(await readFile(join(outside, "config.toml"), "utf8"), /\[projects\./);
+    await removeRole(root, "bot-2", outside);
+    state = store.updateTrustedProject(state.revision, id, { enabled: false });
+    const disabled = await materializeRole(root, "bot-1", state, {}, nested);
+    assert.doesNotMatch(await readFile(join(disabled, "config.toml"), "utf8"), /\[projects\./);
+    await removeRole(root, "bot-1", disabled);
+    store.close();
+    store = new RoleStore(root);
+    assert.deepEqual(store.snapshot(), state);
+    state = store.reorderTrustedProjects(state.revision, [id]);
+    assert.equal(state.trustedProjects.length, 1);
+    state = store.deleteTrustedProject(state.revision, id);
+    assert.deepEqual(state.trustedProjects, []);
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 });

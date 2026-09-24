@@ -303,7 +303,7 @@ export class Supervisor {
       let child: RunningChild;
       try {
         const mcpServers = await this.options.mcpServers?.(id, url) ?? {};
-        rolePath = await materializeRole(this.options.stateDir, id, snapshot, mcpServers);
+        rolePath = await materializeRole(this.options.stateDir, id, snapshot, mcpServers, cwd);
         if (account) await writeFile(join(identity, "auth.json"), account.auth, { mode: 0o600 });
         const env = { ...process.env };
         for (const key of ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_BASE_URL", "CODEX_HOME", "AGENTUSAGE_AUTH_TOKEN", "AGENTUSAGE_ACCOUNT"]) delete env[key];

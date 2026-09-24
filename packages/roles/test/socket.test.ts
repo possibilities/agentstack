@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { serveApi, socketCall, socketSubscribe } from "@agentstack/api";
@@ -11,8 +11,8 @@ test("the roles Package API serves fragment CRUD and invalidates subscribers", a
   const notices: string[] = [];
   const subscription = await socketSubscribe(path, ["role_changed"], (topic) => notices.push(topic));
   try {
-    const empty = await socketCall(path, "tools/call", { name: "role_snapshot", arguments: {} }) as { revision: number; categories: unknown[]; skills: unknown[]; mcpServers: unknown[] };
-    assert.deepEqual(empty, { revision: 0, categories: [], skills: [], mcpServers: [] });
+    const empty = await socketCall(path, "tools/call", { name: "role_snapshot", arguments: {} }) as { revision: number; categories: unknown[]; skills: unknown[]; mcpServers: unknown[]; trustedProjects: unknown[] };
+    assert.deepEqual(empty, { revision: 0, categories: [], skills: [], mcpServers: [], trustedProjects: [] });
     const created = await socketCall(path, "tools/call", { name: "category_create", arguments: { expectedRevision: 0, title: "General" } }) as {
       revision: number; categories: Array<{ id: string }>;
     };
@@ -31,6 +31,28 @@ test("the roles Package API serves fragment CRUD and invalidates subscribers", a
     await served.close();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("trusted project operations expose explicit CRUD and enablement with role revisions", async () => {
+  const root = await mkdtemp("/tmp/as-role-project-");
+  const project = join(root, "project");
+  await mkdir(project);
+  const served = await serveApi({ name: "roles", transport: "socket", env: { ...process.env, AGENTSTACK_STATE_DIR: root } });
+  const socket = served.socketPath!;
+  const call = (name: string, args: Record<string, unknown>) => socketCall(socket, "tools/call", { name, arguments: args }) as Promise<{
+    revision: number; trustedProjects: Array<{ id: string; path: string; enabled: boolean }>;
+  }>;
+  try {
+    await assert.rejects(call("project_create", { expectedRevision: 0, path: "relative" }), /absolute/);
+    const created = await call("project_create", { expectedRevision: 0, path: project, description: "Reviewed repository" });
+    assert.deepEqual(created.trustedProjects.map(({ path, enabled }) => ({ path, enabled })), [{ path: await realpath(project), enabled: true }]);
+    const id = created.trustedProjects[0]!.id;
+    const disabled = await call("project_update", { expectedRevision: created.revision, id, enabled: false });
+    assert.equal(disabled.trustedProjects[0]?.enabled, false);
+    const reordered = await call("project_reorder", { expectedRevision: disabled.revision, ids: [id] });
+    const deleted = await call("project_delete", { expectedRevision: reordered.revision, id });
+    assert.deepEqual(deleted.trustedProjects, []);
+  } finally { await served.close(); await rm(root, { recursive: true, force: true }); }
 });
 
 test("role skill and MCP operations support complete create, update, disable, reorder, and delete", async () => {

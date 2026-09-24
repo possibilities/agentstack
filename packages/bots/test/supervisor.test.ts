@@ -266,6 +266,45 @@ test("owner MCP connections are materialized in each launch bundle without persi
   }
 });
 
+test("Bot launch passes only matching Role project trust to the private codexnk config", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-project-mcp-launch-"));
+  const project = join(stateDir, "project");
+  const cwd = join(project, "nested");
+  await mkdir(cwd, { recursive: true });
+  await mkdir(join(project, ".git"));
+  const launches: string[][] = [];
+  const supervisor = new Supervisor({
+    stateDir, endpoint: async () => `ws://127.0.0.1:${43500 + launches.length}`,
+    launch(spec) {
+      launches.push(spec.args);
+      let finish: (code: number | null) => void = () => undefined;
+      const child: RunningChild = { pid: 300 + launches.length, exited: new Promise((resolve) => { finish = resolve; }), kill() { child.exitCode = 0; finish(0); } };
+      return child;
+    },
+    waitReady: async () => undefined,
+  });
+  try {
+    await supervisor.load();
+    const role = supervisor.role.createTrustedProject(0, project, "Explicit project MCP");
+    await supervisor.start({ id: "project-bot", cwd });
+    const firstRoot = launches[0]?.[launches[0].indexOf("--capabilities") + 1];
+    assert.ok(firstRoot);
+    assert.match(await readFile(join(firstRoot, "config.toml"), "utf8"), /\[projects\..*\]\ntrust_level = "trusted"/);
+    await supervisor.stop("project-bot");
+    supervisor.role.updateTrustedProject(role.revision, role.trustedProjects[0]!.id, { enabled: false });
+    await supervisor.start({ id: "project-bot", cwd });
+    const secondRoot = launches[1]?.[launches[1].indexOf("--capabilities") + 1];
+    assert.ok(secondRoot);
+    assert.doesNotMatch(await readFile(join(secondRoot, "config.toml"), "utf8"), /\[projects\./);
+  } finally {
+    await supervisor.stopAll();
+    await supervisor.runtime.close();
+    supervisor.role.close();
+    supervisor.store.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("a new Server launches with credentials reconciled from an older Server", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-fresh-generation-"));
   const cwd = await mkdtemp(join(tmpdir(), "agentstack-fresh-cwd-"));

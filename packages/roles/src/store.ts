@@ -1,12 +1,17 @@
-import { chmodSync, closeSync, constants, existsSync, mkdirSync, openSync, renameSync } from "node:fs";
+import { chmodSync, closeSync, constants, existsSync, mkdirSync, openSync, realpathSync, renameSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { mcpRecord, skillRecord, type RoleMcpServer, type Skill } from "./resources.js";
+import { mcpRecord, skillRecord, trustedProjectRecord, type RoleMcpServer, type Skill, type TrustedProject } from "./resources.js";
 
 export type Fragment = { id: string; categoryId: string; title: string; description: string; body: string; enabled: boolean };
 export type Category = { id: string; title: string; description: string; enabled: boolean; fragments: Fragment[] };
-export type RoleSnapshot = { revision: number; categories: Category[]; skills: Skill[]; mcpServers: RoleMcpServer[] };
+export type RoleSnapshot = { revision: number; categories: Category[]; skills: Skill[]; mcpServers: RoleMcpServer[]; trustedProjects: TrustedProject[] };
+
+function canonicalProjectRoot(path: string): string {
+  if (!statSync(path).isDirectory()) throw new Error(`project root is not a directory: ${path}`);
+  return realpathSync(path);
+}
 
 export function renderInstructions(snapshot: RoleSnapshot): string {
   const bodies = snapshot.categories.flatMap((category) => category.enabled
@@ -59,6 +64,10 @@ export class RoleStore {
         id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, description TEXT NOT NULL,
         definition_json TEXT NOT NULL, enabled INTEGER NOT NULL, position INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS trusted_projects (
+        id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, description TEXT NOT NULL,
+        enabled INTEGER NOT NULL, position INTEGER NOT NULL
+      );
     `);
   }
 
@@ -90,7 +99,10 @@ export class RoleStore {
     const mcpServers = (this.db.prepare("SELECT id, name, description, definition_json, enabled FROM role_mcp_servers ORDER BY position, id").all() as Array<{
       id: string; name: string; description: string; definition_json: string; enabled: number;
     }>).map(({ definition_json, enabled, ...row }) => mcpRecord.parse({ ...row, definition: JSON.parse(definition_json), enabled: Boolean(enabled) }));
-    return { revision, categories, skills, mcpServers };
+    const trustedProjects = (this.db.prepare("SELECT id, path, description, enabled FROM trusted_projects ORDER BY position, id").all() as Array<{
+      id: string; path: string; description: string; enabled: number;
+    }>).map(({ enabled, ...row }) => trustedProjectRecord.parse({ ...row, enabled: Boolean(enabled) }));
+    return { revision, categories, skills, mcpServers, trustedProjects };
   }
 
   createCategory(expectedRevision: number, title: string, description = "", enabled = true): RoleSnapshot {
@@ -206,6 +218,31 @@ export class RoleStore {
     return this.change(expectedRevision, () => this.reorder("role_mcp_servers", ids));
   }
 
+  createTrustedProject(expectedRevision: number, path: string, description = "", enabled = true): RoleSnapshot {
+    return this.change(expectedRevision, () => {
+      const project = trustedProjectRecord.parse({ id: randomUUID(), path: canonicalProjectRoot(path), description, enabled });
+      this.db.prepare("INSERT INTO trusted_projects VALUES (?, ?, ?, ?, ?)")
+        .run(project.id, project.path, project.description, Number(project.enabled), this.count("trusted_projects"));
+    });
+  }
+
+  updateTrustedProject(expectedRevision: number, id: string, fields: Partial<Omit<TrustedProject, "id">>): RoleSnapshot {
+    return this.change(expectedRevision, () => {
+      const current = this.trustedProject(id);
+      const project = trustedProjectRecord.parse({ ...current, ...fields, path: fields.path === undefined ? current.path : canonicalProjectRoot(fields.path) });
+      this.db.prepare("UPDATE trusted_projects SET path = ?, description = ?, enabled = ? WHERE id = ?")
+        .run(project.path, project.description, Number(project.enabled), id);
+    });
+  }
+
+  deleteTrustedProject(expectedRevision: number, id: string): RoleSnapshot {
+    return this.change(expectedRevision, () => { this.trustedProject(id); this.db.prepare("DELETE FROM trusted_projects WHERE id = ?").run(id); this.reindex("trusted_projects"); });
+  }
+
+  reorderTrustedProjects(expectedRevision: number, ids: string[]): RoleSnapshot {
+    return this.change(expectedRevision, () => this.reorder("trusted_projects", ids));
+  }
+
   private change(expectedRevision: number, mutate: () => void): RoleSnapshot {
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -222,7 +259,7 @@ export class RoleStore {
   }
 
   private revision(): number { return (this.db.prepare("SELECT value FROM revision WHERE singleton = 1").get() as { value: number }).value; }
-  private count(table: "categories" | "fragments" | "skills" | "role_mcp_servers", categoryId?: string): number {
+  private count(table: "categories" | "fragments" | "skills" | "role_mcp_servers" | "trusted_projects", categoryId?: string): number {
     return (this.db.prepare(`SELECT COUNT(*) AS n FROM ${table}${categoryId ? " WHERE category_id = ?" : ""}`).get(...(categoryId ? [categoryId] : [])) as { n: number }).n;
   }
   private category(id: string): { title: string; description: string; enabled: boolean } {
@@ -253,17 +290,24 @@ export class RoleStore {
     const { definition_json, enabled, ...fields } = row;
     return mcpRecord.parse({ ...fields, definition: JSON.parse(definition_json), enabled: Boolean(enabled) });
   }
-  private ids(table: "categories" | "fragments" | "skills" | "role_mcp_servers", categoryId?: string): string[] {
+  private trustedProject(id: string): TrustedProject {
+    const row = this.db.prepare("SELECT id, path, description, enabled FROM trusted_projects WHERE id = ?").get(id) as {
+      id: string; path: string; description: string; enabled: number;
+    } | undefined;
+    if (!row) throw new Error(`unknown trusted project: ${id}`);
+    return trustedProjectRecord.parse({ ...row, enabled: Boolean(row.enabled) });
+  }
+  private ids(table: "categories" | "fragments" | "skills" | "role_mcp_servers" | "trusted_projects", categoryId?: string): string[] {
     return (this.db.prepare(`SELECT id FROM ${table}${categoryId ? " WHERE category_id = ?" : ""} ORDER BY position, id`)
       .all(...(categoryId ? [categoryId] : [])) as Array<{ id: string }>).map((row) => row.id);
   }
-  private reindex(table: "categories" | "fragments" | "skills" | "role_mcp_servers", categoryId?: string): void {
+  private reindex(table: "categories" | "fragments" | "skills" | "role_mcp_servers" | "trusted_projects", categoryId?: string): void {
     this.ids(table, categoryId).forEach((id, index) => this.db.prepare(`UPDATE ${table} SET position = ? WHERE id = ?`).run(index, id));
   }
-  private reorder(table: "categories" | "fragments" | "skills" | "role_mcp_servers", ids: string[], categoryId?: string): void {
+  private reorder(table: "categories" | "fragments" | "skills" | "role_mcp_servers" | "trusted_projects", ids: string[], categoryId?: string): void {
     const current = this.ids(table, categoryId);
     if (ids.length !== current.length || new Set(ids).size !== ids.length || ids.some((id) => !current.includes(id)))
-      throw new Error(`reorder must contain every ${categoryId ? "fragment in the category" : table === "skills" ? "skill" : table === "role_mcp_servers" ? "MCP server" : "category"} exactly once`);
+      throw new Error(`reorder must contain every ${categoryId ? "fragment in the category" : table === "skills" ? "skill" : table === "role_mcp_servers" ? "MCP server" : table === "trusted_projects" ? "trusted project" : "category"} exactly once`);
     ids.forEach((id, index) => this.db.prepare(`UPDATE ${table} SET position = ? WHERE id = ?`).run(index, id));
   }
 }

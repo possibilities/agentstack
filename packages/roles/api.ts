@@ -3,16 +3,16 @@ import { join } from "node:path";
 import { z } from "zod";
 import { configuredMcpPackages, operation, workspaceRoot, type PackageApi } from "@agentstack/api";
 import { RoleStore, renderInstructions } from "./src/store.js";
-import { mcpDefinition, mcpRecord, resourceName, resourceDescription, skillBody, skillFiles, skillRecord } from "./src/resources.js";
+import { mcpDefinition, mcpRecord, projectPath, resourceName, resourceDescription, skillBody, skillFiles, skillRecord, trustedProjectRecord } from "./src/resources.js";
 
-const id = z.uuid().describe("Stable category or fragment ID.");
+const id = z.uuid().describe("Stable Role record ID.");
 const revision = z.number().int().nonnegative().describe("Expected role revision; stale writes fail.");
 const title = z.string().trim().min(1).max(200);
 const description = z.string().max(4_000);
 const body = z.string().max(262_144).describe("Verbatim developer instruction body; metadata never renders.");
 const fragment = z.strictObject({ id, categoryId: id, title, description, body, enabled: z.boolean() });
 const category = z.strictObject({ id, title, description, enabled: z.boolean(), fragments: z.array(fragment) });
-const snapshot = z.strictObject({ revision, categories: z.array(category), skills: z.array(skillRecord), mcpServers: z.array(mcpRecord) });
+const snapshot = z.strictObject({ revision, categories: z.array(category), skills: z.array(skillRecord), mcpServers: z.array(mcpRecord), trustedProjects: z.array(trustedProjectRecord) });
 const preview = z.strictObject({ revision, rendered: z.string() });
 const write = z.strictObject({ expectedRevision: revision });
 
@@ -130,12 +130,36 @@ export const mcpServerReorder = operation({
   async call(ctx: RolesContext, { ids, expectedRevision }) { return changed(ctx, ctx.store.reorderMcpServers(expectedRevision, ids)); },
 });
 
+export const projectCreate = operation({
+  name: "project_create", description: "Allow bots launched inside this project root to load trusted project .codex configuration, including its MCP servers. Only later launches change.",
+  input: write.extend({ path: projectPath, description: resourceDescription.optional(), enabled: z.boolean().optional() }),
+  output: snapshot, annotations: { title: "Trust project for bots" },
+  async call(ctx: RolesContext, input) { return changed(ctx, ctx.store.createTrustedProject(input.expectedRevision, input.path, input.description, input.enabled)); },
+});
+export const projectUpdate = operation({
+  name: "project_update", description: "Edit a trusted project root, description, or enabled state. Disabling stops project config from entering later matching Bot launches.",
+  input: write.extend({ id, path: projectPath.optional(), description: resourceDescription.optional(), enabled: z.boolean().optional() }),
+  output: snapshot, annotations: { title: "Update trusted project" },
+  async call(ctx: RolesContext, { id, expectedRevision, ...fields }) { return changed(ctx, ctx.store.updateTrustedProject(expectedRevision, id, fields)); },
+});
+export const projectDelete = operation({
+  name: "project_delete", description: "Remove a trusted project root from later Bot launches; running Bots keep their launch configuration.",
+  input: write.extend({ id }), output: snapshot, annotations: { title: "Remove trusted project", destructiveHint: true },
+  async call(ctx: RolesContext, { id, expectedRevision }) { return changed(ctx, ctx.store.deleteTrustedProject(expectedRevision, id)); },
+});
+export const projectReorder = operation({
+  name: "project_reorder", description: "Atomically replace trusted project order with an exact permutation of all project IDs.",
+  input: write.extend({ ids: z.array(id) }), output: snapshot, annotations: { title: "Reorder trusted projects" },
+  async call(ctx: RolesContext, { ids, expectedRevision }) { return changed(ctx, ctx.store.reorderTrustedProjects(expectedRevision, ids)); },
+});
+
 export const topics = { role_changed: "The role was edited. Read role_snapshot after (re)subscribing." } as const;
 
 export const api: PackageApi<RolesContext, keyof typeof topics> = {
   operations: [roleSnapshot, rolePreview, categoryCreate, categoryUpdate, categoryDelete, categoryReorder,
     fragmentCreate, fragmentUpdate, fragmentDelete, fragmentReorder, skillCreate, skillUpdate, skillDelete, skillReorder,
-    mcpServerCreate, mcpServerUpdate, mcpServerDelete, mcpServerReorder],
+    mcpServerCreate, mcpServerUpdate, mcpServerDelete, mcpServerReorder,
+    projectCreate, projectUpdate, projectDelete, projectReorder],
   events: {
     topics,
     start(ctx, publish) { ctx.changed = () => publish("role_changed"); return () => { ctx.changed = undefined; }; },

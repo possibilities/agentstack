@@ -1,5 +1,5 @@
 name: roles
-description: Manage the single role's ordered instruction fragments rendered into every new bot launch.
+description: Manage the single role's instruction fragments, skills, additional MCP servers, and explicit trusted projects for new bot launches.
 socket:
   description: Unix socket for role operations and change events.
 mcp:
