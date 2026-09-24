@@ -18,7 +18,7 @@ The `auth` Package API creates an account through device sign-in (`account_login
 
 Each managed Server has a private `<state>/runtime/<id>` temporary root. codexnk creates its own runtime home beneath it. AgentStack watches that home's `auth.json` for a completed refresh and also reconciles it before another launch, after the Server exits, and after owner recovery. Only a valid, strictly later `last_refresh` from the Server's recorded credential generation can replace SQLite credentials. If either timestamp is missing, freshness cannot be established and the database is not overwritten. A missing or partial file is retried; ambiguous or conflicting runtime state remains private for diagnosis instead of replacing a newer database value. Several simultaneous Servers for one account can still race to refresh at the provider; this is best effort. Sign in again under the same account name when the saved token is exhausted or conflicting.
 
-The owner starts its required `api`, `auth`, `codex`, `bots`, WebSocket, and Inspector children in separate process groups and serves the `owner` Package API, docs, and MCP HTTP in-process. If a child fails or exits, the owner reports the failure and shuts down. Normal shutdown stops incoming calls, waits for in-flight calls, closes event subscriptions, then gracefully stops app servers. The owner signals its process groups with SIGTERM and escalates to SIGKILL after a bounded grace period. It does not restart failed children automatically.
+The owner starts its required `api`, `auth`, `codex`, `bots`, WebSocket, Inspector, and UI canvas children in separate process groups and serves the `owner` Package API, docs, and MCP HTTP in-process. If a child fails or exits, the owner reports the failure and shuts down. Normal shutdown stops incoming calls, waits for in-flight calls, closes event subscriptions, then gracefully stops app servers. The owner signals its process groups with SIGTERM and escalates to SIGKILL after a bounded grace period. It does not restart failed children automatically.
 
 `agentstack serve` hosts the read-only browser reference at its printed
 `http://127.0.0.1:<port>/docs` URL as part of the owner lifecycle. It binds
@@ -28,10 +28,18 @@ unavailable page. The owner closes the listener on shutdown. The docs listener d
 the other Package APIs or expose their control operations. The
 optional `agentstack docs` command can still run the reference independently.
 If `agentstack serve` is invoked again against a running owner, it reports that
-owner's PID and docs URL and exits without claiming sockets or starting
+owner's PID, docs URL, and UI canvas URL and exits without claiming sockets or starting
 children. A fixed MCP port already in use is refused before startup, even if
 the owner socket cannot be reached; an unrelated listener is never assumed to
 be AgentStack.
+
+The UI canvas is a standalone Next.js app served by an owned child on
+`127.0.0.1:8745` by default. Set `AGENTSTACK_UIX_PORT` to another available
+nonzero port before starting the owner. Its URL is printed and returned by
+`owner_status` as `uixUrl`; the child serves the built `packages/uix/.next`
+output and shuts down with the owner. Rebuild and restart the owner after
+changing the canvas. A port already in use is refused before the owner creates
+any sockets.
 
 The owner's MCP listener forwards tool calls to their socket Servers. Its
 Inspector child reads a generated, read-only file under `<state>/inspector-*`;

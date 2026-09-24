@@ -5,6 +5,9 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**"]
     },
+    "@agentstack/uix#build": {
+      "outputs": [".next/**", "!.next/cache/**"]
+    },
     "test": {
       "dependsOn": ["build", "^build"],
       "cache": false
