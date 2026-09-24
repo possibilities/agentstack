@@ -52,6 +52,7 @@ export type RunningChild = {
 
 export type SupervisorOptions = {
   stateDir: string;
+  mcpServers?: () => Promise<Record<string, string>>;
   launch?: (spec: LaunchSpec) => RunningChild;
   waitReady?: (url: string, exited: Promise<number | null>, timeoutMs: number) => Promise<void>;
   endpoint?: (id: string) => Promise<string>;
@@ -244,6 +245,7 @@ export class Supervisor {
     }
     // Reconciliation above may advance the saved credential generation.
     const account = selected ? this.store.accountCredentials(selected) : null;
+    const mcpServers = await this.options.mcpServers?.() ?? {};
     const capabilities = join(this.options.stateDir, "capabilities", "default");
     const privateHistory = join(this.options.stateDir, "history", id);
     const history = current?.mainThreadId && !existsSync(privateHistory) ? join(this.options.stateDir, "history") : privateHistory;
@@ -265,7 +267,7 @@ export class Supervisor {
         env.TMPDIR = runtimeRoot;
         child = this.launch({
           bin: codexBin,
-          args: [...appServerArgs(userArgs, url), "--identity", identity, "--capabilities", capabilities, "--history-dir", history],
+          args: [...appServerArgs(userArgs, url), ...ownerMcpArgs(mcpServers), "--identity", identity, "--capabilities", capabilities, "--history-dir", history],
           cwd,
           logPath,
           env,
@@ -458,6 +460,12 @@ export function appServerArgs(userArgs: readonly string[], url: string): string[
   }
   args.splice(appServerAt + 1, 0, "--listen", url);
   return args;
+}
+
+export function ownerMcpArgs(servers: Readonly<Record<string, string>>): string[] {
+  return Object.entries(servers).flatMap(([name, url]) => [
+    "-c", `mcp_servers.${name}={url=${JSON.stringify(url)},enabled=true}`,
+  ]);
 }
 
 function validateAppServerArgs(userArgs: readonly string[]): void {

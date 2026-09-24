@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { connect } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { appServerArgs, launchChild, Supervisor, waitForReady, type LaunchSpec, type RunningChild, type SupervisorOptions } from "../src/supervisor.js";
+import { appServerArgs, launchChild, ownerMcpArgs, Supervisor, waitForReady, type LaunchSpec, type RunningChild, type SupervisorOptions } from "../src/supervisor.js";
 import { codexRuntimePath } from "../src/paths.js";
 import type { StoredServer } from "../src/store.js";
 
@@ -172,6 +172,51 @@ test("launch arguments survive owner recovery and can change only while stopped"
     recovered?.store.close();
     await first.runtime.close();
     first.store.close();
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("owner MCP connections are applied to every launch without persisting as caller arguments", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-mcp-launch-"));
+  const cwd = await mkdtemp(join(tmpdir(), "agentstack-mcp-cwd-"));
+  const launches: string[][] = [];
+  let exposed: Record<string, string> = { auth: "http://127.0.0.1:43123/mcp/auth" };
+  const supervisor = new Supervisor({
+    stateDir,
+    endpoint: async () => `ws://127.0.0.1:${43400 + launches.length}`,
+    mcpServers: async () => exposed,
+    launch(spec) {
+      launches.push(spec.args);
+      let finish: (code: number | null) => void = () => undefined;
+      const child: RunningChild = {
+        pid: 200 + launches.length,
+        exited: new Promise((resolve) => { finish = resolve; }),
+        kill() { child.exitCode = 0; finish(0); },
+      };
+      return child;
+    },
+    waitReady: async () => undefined,
+    bindThread: async (_url, _cwd, id) => id ?? "main-mcp",
+  });
+  try {
+    await supervisor.load();
+    seedAccount(supervisor);
+    await supervisor.start({ id: "with-mcp", cwd, args: ["--model", "gpt-5.4"] });
+    assert.deepEqual(launches[0]?.slice(0, 7), [
+      "app-server", "--listen", "ws://127.0.0.1:43400", "--model", "gpt-5.4",
+      "-c", 'mcp_servers.auth={url="http://127.0.0.1:43123/mcp/auth",enabled=true}',
+    ]);
+    assert.deepEqual(supervisor.store.servers()[0]?.args, ["--model", "gpt-5.4"]);
+    await supervisor.stop("with-mcp");
+    exposed = { ...exposed, bots: "http://127.0.0.1:43123/mcp/bots" };
+    await supervisor.start({ id: "with-mcp", cwd });
+    assert.deepEqual(launches[1]?.slice(5, 9), ownerMcpArgs(exposed));
+    assert.equal(supervisor.list()[0]?.mainThreadId, "main-mcp");
+  } finally {
+    await supervisor.stopAll();
+    await supervisor.runtime.close();
+    supervisor.store.close();
     await rm(stateDir, { recursive: true, force: true });
     await rm(cwd, { recursive: true, force: true });
   }

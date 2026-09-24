@@ -123,6 +123,53 @@ test("a lost socket subscription tells the WebSocket client to resnapshot after 
   }
 });
 
+test("WebSocket admits current configuration while existing connections keep working", async () => {
+  const setup = await fixture();
+  const existing = await connect(setup.url);
+  const demoConfig = "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n";
+  const demoFile = join(setup.root, "packages", "demo", "api.yaml");
+  let betaSocket: Awaited<ReturnType<typeof serveSocket>> | undefined;
+  let beta: WebSocket | undefined;
+  let restored: WebSocket | undefined;
+  try {
+    existing.send(JSON.stringify({ id: 1, method: "events/subscribe", params: { topics: ["changed"], scope: "bot-1" } }));
+    assert.deepEqual(await nextMessage(existing), { id: 1, result: { topics: ["changed"], scope: "bot-1" } });
+    await writeFile(demoFile, "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\n");
+    await assert.rejects(connect(setup.url), /404|Unexpected server response/);
+    const notice = nextMessage(existing);
+    setup.socket.publish?.("changed", "bot-1");
+    assert.deepEqual(await notice, { method: "events/changed", params: { topic: "changed" } });
+
+    const betaDir = join(setup.root, "packages", "beta");
+    await mkdir(betaDir);
+    const betaFile = join(betaDir, "api.yaml");
+    await writeFile(betaFile, "name: beta\ndescription: Beta.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n");
+    betaSocket = await serveSocket({
+      info: { name: "beta", description: "Beta.", transportDescription: "Socket.", path: socketPath("beta", setup.env) },
+      context: {},
+      operations: [operation({ name: "ping", description: "Ping.", input: z.strictObject({}), output: z.object({ ok: z.boolean() }), async call() { return { ok: true }; } })],
+    });
+    const betaUrl = setup.url.replace("/demo", "/beta");
+    assert.deepEqual(Object.keys(setup.served.urls), ["demo"]); // Printed URLs describe startup, not subsequent configuration.
+    beta = await connect(betaUrl);
+    beta.send(JSON.stringify({ id: 2, method: "tools/call", params: { name: "ping", arguments: {} } }));
+    assert.deepEqual(await nextMessage(beta), { id: 2, result: { ok: true } });
+    await writeFile(betaFile, "name: beta\ndescription: Beta.\nsocket:\n  description: Socket.\n");
+    await assert.rejects(connect(betaUrl), /404|Unexpected server response/);
+    beta.send(JSON.stringify({ id: 3, method: "tools/call", params: { name: "ping", arguments: {} } }));
+    assert.deepEqual(await nextMessage(beta), { id: 3, result: { ok: true } });
+
+    await writeFile(demoFile, "name: [broken");
+    await assert.rejects(connect(betaUrl), /503|Unexpected server response/);
+    await writeFile(demoFile, demoConfig);
+    restored = await connect(setup.url);
+  } finally {
+    existing.close(); beta?.close(); restored?.close();
+    await betaSocket?.close();
+    await setup.close();
+  }
+});
+
 test("WebSocket port configuration rejects invalid values", () => {
   assert.equal(websocketPort({}), 8744);
   assert.equal(websocketPort({ AGENTSTACK_WEBSOCKET_PORT: "0" }), 0);

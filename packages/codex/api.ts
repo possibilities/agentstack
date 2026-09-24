@@ -1,10 +1,11 @@
 import { chmod, mkdir } from "node:fs/promises";
 import { z } from "zod";
-import { operation, type PackageApi } from "@agentstack/api";
+import { operation, workspaceRoot, type PackageApi } from "@agentstack/api";
 import { stateDir } from "./src/paths.js";
 import { Supervisor, type ServerView } from "./src/supervisor.js";
 import { watchThreadEvents } from "./src/threads.js";
 import { StateStore } from "./src/store.js";
+import { ownerMcpUrls } from "./src/owner-mcp.js";
 
 const idSchema = z
   .string()
@@ -137,10 +138,18 @@ export const api: PackageApi<CodexContext, CodexTopic> = {
   },
   async createContext(env) {
     const dir = stateDir(env);
+    const ownerMcpPort = env.AGENTSTACK_OWNER_MCP_PORT;
+    if (ownerMcpPort !== undefined && (!/^[1-9][0-9]*$/.test(ownerMcpPort) || Number(ownerMcpPort) > 65535)) {
+      throw new Error("AGENTSTACK_OWNER_MCP_PORT must be a bound TCP port");
+    }
     await mkdir(dir, { recursive: true, mode: 0o700 });
     await chmod(dir, 0o700);
     const store = new StateStore(dir);
-    const supervisor = new Supervisor({ stateDir: dir, store });
+    const supervisor = new Supervisor({
+      stateDir: dir,
+      store,
+      mcpServers: ownerMcpPort === undefined ? undefined : () => ownerMcpUrls(workspaceRoot(import.meta.dirname), Number(ownerMcpPort)),
+    });
     await supervisor.load();
     await supervisor.reap();
     await supervisor.resumeAll();

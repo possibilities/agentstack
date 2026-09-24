@@ -13,7 +13,7 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
   const port = options.port ?? websocketPort(env);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("WebSocket port must be an integer from 0 to 65535");
   const root = options.root ?? workspaceRoot(import.meta.dirname);
-  const names = new Set((await listPackages(root)).filter((item) => item.config.websocket).map((item) => item.config.name));
+  const names = await configuredWebSocketNames(root);
   if (names.size === 0) throw new Error("no Package APIs configure websocket");
 
   const clients = new Set<WebSocket>();
@@ -93,12 +93,29 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
   http.on("upgrade", (request, socket, head) => {
     const address = http.address();
     const name = /^\/websocket\/([a-z][a-z0-9-]{0,31})$/.exec(request.url ?? "")?.[1];
-    if (!name || !names.has(name)) { socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.destroy(); return; }
+    if (!name) { socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.destroy(); return; }
     if (!address || typeof address === "string" || ![`127.0.0.1:${address.port}`, `localhost:${address.port}`].includes(request.headers.host ?? "")
       || !originAllowed(request.headers.origin, env.AGENTSTACK_WEBSOCKET_ORIGIN)) {
       socket.write("HTTP/1.1 403 Forbidden\r\n\r\n"); socket.destroy(); return;
     }
-    wss.handleUpgrade(request, socket, head, (client) => wss.emit("connection", client, request));
+    void (async () => {
+      let current: Set<string>;
+      try {
+        current = await configuredWebSocketNames(root);
+      } catch (error) {
+        console.error(`WebSocket configuration unavailable: ${error instanceof Error ? error.message : String(error)}`);
+        if (!socket.destroyed) { socket.write("HTTP/1.1 503 Service Unavailable\r\n\r\n"); socket.destroy(); }
+        return;
+      }
+      if (closing || socket.destroyed) { socket.destroy(); return; }
+      if (!current.has(name)) { socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.destroy(); return; }
+      try {
+        wss.handleUpgrade(request, socket, head, (client) => wss.emit("connection", client, request));
+      } catch (error) {
+        console.error("WebSocket upgrade failed:", error);
+        socket.destroy();
+      }
+    })();
   });
   await new Promise<void>((resolve, reject) => {
     http.once("error", reject);
@@ -117,6 +134,10 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
       return closing;
     },
   };
+}
+
+async function configuredWebSocketNames(root: string): Promise<Set<string>> {
+  return new Set((await listPackages(root)).filter((item) => item.config.websocket).map((item) => item.config.name));
 }
 
 function originAllowed(header: string | undefined, configured: string | undefined): boolean {
