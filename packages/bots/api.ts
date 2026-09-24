@@ -12,6 +12,12 @@ import { watchThreadEvents } from "./src/threads.js";
 import { VoiceCalls } from "./src/voice.js";
 
 const botId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/).describe("Bot id. Omit for the next bot-N; supply a name to override it.");
+const botSettings = z.strictObject({
+  model: z.string().min(1).describe("Codex model identifier. Default: gpt-6-sol."),
+  reasoningEffort: z.enum(["low", "medium", "high", "xhigh", "max", "ultra"]).describe("Codex model reasoning effort. Default: medium; the selected model must support it."),
+  sandboxMode: z.enum(["read-only", "workspace-write", "danger-full-access"]).describe("Codex sandbox mode. Default: danger-full-access."),
+  approvalPolicy: z.enum(["untrusted", "on-failure", "on-request", "never"]).describe("Codex approval policy. Default: never."),
+});
 const botView = z.object({
   id: botId,
   pid: z.number().int().nullable().describe("Process id while running, otherwise null."),
@@ -23,6 +29,7 @@ const botView = z.object({
   mainThreadId: z.string().nullable().describe("First durable root thread, or null until a UI sends its first turn."),
   recoveryIssue: z.string().nullable().describe("Process-ownership issue requiring inspection; a running state is unverified while this is set."),
   roleRevision: z.number().int().nonnegative().nullable().describe("Last launched role revision, or null before launch. Compare with role_snapshot; restart to apply edits."),
+  settings: botSettings.nullable().describe("Saved launch settings for this Bot, or null for a pre-existing Bot that retains Codex's implicit model and effort. Caller args can override settings at launch."),
 });
 
 export type BotsContext = { root: string; ledger: BotLedger; store: StateStore; supervisor: Supervisor; voice: VoiceCalls };
@@ -30,6 +37,7 @@ export const topics = {
   bots_changed: "Published when a bot starts, stops, exits, changes assignment, or is fenced for recovery. Refresh bot_list.",
   threads_changed: "Published when loaded thread state for this bot changes or its Codex connection resumes. Read its app-server thread state.",
   voice_changed: "Published when the single voice call starts, connects, or ends. Refresh voice_status; the notice carries no SDP or audio.",
+  defaults_changed: "Published when the defaults for newly created Bots change. Refresh bot_defaults_get.",
 } as const;
 export type BotsTopic = keyof typeof topics;
 
@@ -64,11 +72,12 @@ async function claimNamedWorkspace(path: string): Promise<string> {
 
 export const botStart = operation({
   name: "bot_start",
-  description: "Start a bot or return its live process. Omit id for the next bot-N and a private workspace. New bots bind the active account and launch with full access and no approval prompts. Optional id, cwd, and args override defaults; later -c flags may narrow access. Saved args recur on restart; [] clears caller args while stopped. A running bot rejects changed args or account assignment.",
+  description: "Start a bot or return its live process. Omit id for the next bot-N and a private workspace. New bots copy bot_defaults_get settings and bind the active account. Optional settings override this Bot's saved launch settings; saved args follow and can override them. A running bot rejects changed settings, args, or account assignment; stop/start applies changes.",
   input: z.strictObject({
     id: botId.optional().describe("Existing or custom bot id. Omit to allocate the next bot-N."),
     cwd: z.string().optional().describe("Existing working directory override. Omit for a new private workspace or to reuse an existing bot's workspace. A supplied directory is never deleted by bot_remove."),
     args: z.array(z.string()).optional().describe("Extra Codex arguments retained for future launches. Omit to reuse saved args; [] clears them while stopped. AgentStack owns --listen, --identity, --capabilities, and --history-dir."),
+    settings: botSettings.partial().optional().describe("Override defaults for a new Bot, or update saved settings of a stopped Bot. Omit to reuse its saved settings."),
   }),
   output: botView, annotations: { title: "Start bot" },
   async call(ctx: BotsContext, input) {
@@ -83,7 +92,7 @@ export const botStart = operation({
       cwd = await claimNamedWorkspace(workspacePath(ctx.root, id));
       ctx.ledger.ownWorkspace(id);
     }
-    return ctx.supervisor.start({ id, cwd, args: input.args });
+    return ctx.supervisor.start({ id, cwd, args: input.args, settings: input.settings });
   },
 });
 export const botAssign = operation({
@@ -99,7 +108,7 @@ export const botStop = operation({
   async call(ctx: BotsContext, { id }) {
     if (ctx.supervisor.list().some((bot) => bot.id === id)) return ctx.supervisor.stop(id);
     if (!ctx.ledger.has(id) && !ctx.ledger.ownsWorkspace(id)) throw new Error(`unknown bot: ${id}`);
-    return { id, pid: null, cwd: workspacePath(ctx.root, id), url: null, state: "stopped" as const, account: null, runningAccount: null, mainThreadId: null, recoveryIssue: null, roleRevision: null };
+    return { id, pid: null, cwd: workspacePath(ctx.root, id), url: null, state: "stopped" as const, account: null, runningAccount: null, mainThreadId: null, recoveryIssue: null, roleRevision: null, settings: ctx.store.botDefaults() };
   },
 });
 export const botRemove = operation({
@@ -121,6 +130,19 @@ export const botList = operation({
   input: z.strictObject({}), output: z.object({ bots: z.array(botView) }),
   annotations: { title: "List bots", readOnlyHint: true },
   async call(ctx: BotsContext) { return { bots: ctx.supervisor.list() }; },
+});
+
+export const botDefaultsGet = operation({
+  name: "bot_defaults_get", description: "Read the saved settings copied into newly created Bots. Changing them does not retune existing Bots.",
+  input: z.strictObject({}), output: botSettings,
+  annotations: { title: "Get bot defaults", readOnlyHint: true },
+  async call(ctx: BotsContext) { return ctx.store.botDefaults(); },
+});
+export const botDefaultsSet = operation({
+  name: "bot_defaults_set", description: "Change settings for Bots created after this call. Existing Bots retain their saved settings; bot_start can update a stopped Bot explicitly.",
+  input: botSettings.partial(), output: botSettings,
+  annotations: { title: "Set bot defaults", idempotentHint: true },
+  async call(ctx: BotsContext, input) { return ctx.store.setBotDefaults(input); },
 });
 
 const sessionIdSchema = z.uuid().describe("Client-generated call ID, used to identify the exact call when hanging up.");
@@ -146,11 +168,11 @@ export const voiceHangup = operation({
 });
 
 export const api: PackageApi<BotsContext, BotsTopic> = {
-  operations: [botStart, botStop, botAssign, botRemove, botList, voiceStatus, voiceDial, voiceHangup],
+  operations: [botStart, botStop, botAssign, botRemove, botList, botDefaultsGet, botDefaultsSet, voiceStatus, voiceDial, voiceHangup],
   events: {
     topics,
     scope: {
-      description: "Optional bot ID. Scoped subscriptions receive changes only for that bot; omit scope to receive global voice and bot notices.",
+      description: "Optional bot ID. Scoped subscriptions receive changes only for that bot; omit scope to receive global voice, defaults, and bot notices.",
       example: "bot-1",
       valid: (ctx, scope) => ctx.ledger.has(scope) || ctx.ledger.ownsWorkspace(scope) || ctx.supervisor.list().some((bot) => bot.id === scope),
     },
@@ -165,9 +187,10 @@ export const api: PackageApi<BotsContext, BotsTopic> = {
         }) });
       };
       ctx.supervisor.onChange = (id) => { sync(); publish("bots_changed", id); };
+      ctx.store.onDefaultsChange = () => publish("defaults_changed");
       ctx.voice.onChange = () => publish("voice_changed");
       sync();
-      return () => { ctx.supervisor.onChange = undefined; ctx.voice.onChange = undefined; for (const watch of watches.values()) watch.stop(); watches.clear(); };
+      return () => { ctx.supervisor.onChange = undefined; ctx.store.onDefaultsChange = undefined; ctx.voice.onChange = undefined; for (const watch of watches.values()) watch.stop(); watches.clear(); };
     },
   },
   async createContext(env) {

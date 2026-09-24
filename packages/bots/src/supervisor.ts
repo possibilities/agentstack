@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { accessSync, constants, createWriteStream, existsSync } from "node:fs";
 import { connect } from "node:net";
 import { codexRuntimePath } from "./paths.js";
-import { StateStore, type StoredServer } from "./store.js";
+import { DEFAULT_BOT_SETTINGS, StateStore, type BotSettings, type StoredServer } from "./store.js";
 import { RuntimeAuth, type SyncStatus } from "./runtime-auth.js";
 import { bindMainThread, findEligibleMainThread } from "./threads.js";
 import { RoleStore, materializeRole, removeRole } from "@agentstack/roles";
@@ -28,6 +28,7 @@ export type ServerView = {
   mainThreadId: string | null;
   recoveryIssue: string | null;
   roleRevision: number | null;
+  settings: BotSettings | null;
 };
 
 type RecordFile = StoredServer;
@@ -36,6 +37,7 @@ export type StartInput = {
   cwd: string;
   id?: string;
   args?: string[];
+  settings?: Partial<BotSettings>;
 };
 
 export type LaunchSpec = {
@@ -246,6 +248,9 @@ export class Supervisor {
     const current = this.records.get(id);
     const userArgs = input.args ?? current?.args ?? [];
     validateAppServerArgs(userArgs);
+    const settings = input.settings === undefined
+      ? current ? current.settings ?? null : this.store.botDefaults()
+      : { ...(current?.settings ?? this.store.botDefaults()), ...input.settings };
     if (current && current.cwd !== cwd) throw new Error(`server ${id} is bound to ${current.cwd}, not ${cwd}`);
     let live = false;
     if (current) {
@@ -258,6 +263,9 @@ export class Supervisor {
       }
       if (input.args !== undefined && !sameArgs(input.args, current.args)) {
         throw new Error(`server ${id} is running with different launch arguments; stop it before changing args`);
+      }
+      if (input.settings !== undefined && !sameSettings(settings!, current.settings)) {
+        throw new Error(`server ${id} is running with different settings; stop it before changing settings`);
       }
       if (current.launchedAccount !== current.account) {
         throw new Error(`server ${id} is running with a different Codex account; stop it before the assigned account is used`);
@@ -310,7 +318,7 @@ export class Supervisor {
         env.TMPDIR = runtimeRoot;
         child = this.launch({
           bin: codexBin,
-          args: [...appServerArgs(userArgs, url), "--enable", "realtime_conversation", "--identity", identity, "--capabilities", rolePath, "--history-dir", history],
+          args: [...appServerArgs(userArgs, url, settings), "--enable", "realtime_conversation", "--identity", identity, "--capabilities", rolePath, "--history-dir", history],
           cwd,
           logPath,
           env,
@@ -324,7 +332,7 @@ export class Supervisor {
       this.children.set(id, child);
       const record: RecordFile = {
         id, pid: child.pid, cwd, url, state: "running", codexBin, account: account?.id ?? null, launchedAccount: account?.id ?? null, authVersion: account?.version ?? null, runtimeRoot,
-        mainThreadId: current?.mainThreadId ?? null, threadStarting: current?.threadStarting ?? false, args: [...userArgs],
+        mainThreadId: current?.mainThreadId ?? null, threadStarting: current?.threadStarting ?? false, args: [...userArgs], settings,
         roleRoot: rolePath, roleRevision: snapshot.revision,
       };
       this.records.set(id, record);
@@ -540,15 +548,16 @@ export class Supervisor {
   }
 }
 
-export function appServerArgs(userArgs: readonly string[], url: string): string[] {
+export function appServerArgs(userArgs: readonly string[], url: string, settings: BotSettings | null = DEFAULT_BOT_SETTINGS): string[] {
   validateAppServerArgs(userArgs);
   const args = [...userArgs];
   const appServerAt = args.indexOf("app-server");
   if (appServerAt !== -1) args.splice(appServerAt, 1);
-  // Codex applies later -c overrides last; callers can narrow either default.
+  // Codex applies later arguments last; saved caller args can override these settings.
   return ["app-server", "--listen", url,
-    "-c", 'sandbox_mode="danger-full-access"',
-    "-c", 'approval_policy="never"',
+    ...(settings ? ["-c", `model=${JSON.stringify(settings.model)}`, "-c", `model_reasoning_effort="${settings.reasoningEffort}"`] : []),
+    "-c", `sandbox_mode="${settings?.sandboxMode ?? DEFAULT_BOT_SETTINGS.sandboxMode}"`,
+    "-c", `approval_policy="${settings?.approvalPolicy ?? DEFAULT_BOT_SETTINGS.approvalPolicy}"`,
     ...args];
 }
 
@@ -569,6 +578,11 @@ function validateAppServerArgs(userArgs: readonly string[]): void {
 
 function sameArgs(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((arg, index) => arg === right[index]);
+}
+
+function sameSettings(left: BotSettings, right: BotSettings | null | undefined): boolean {
+  return right !== null && right !== undefined && left.model === right.model && left.reasoningEffort === right.reasoningEffort
+    && left.sandboxMode === right.sandboxMode && left.approvalPolicy === right.approvalPolicy;
 }
 
 async function unixEndpoint(stateDir: string): Promise<string> {
@@ -623,6 +637,7 @@ function viewOf(record: RecordFile, recoveryIssue: string | null): ServerView {
     mainThreadId: record.mainThreadId ?? null,
     recoveryIssue,
     roleRevision: record.roleRevision ?? null,
+    settings: record.settings ?? null,
   };
 }
 

@@ -37,6 +37,13 @@ export type PackageDoc = {
   transports: TransportDoc[];
 };
 
+export type BotSettings = {
+  model: string;
+  reasoningEffort: "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+  sandboxMode: "read-only" | "workspace-write" | "danger-full-access";
+  approvalPolicy: "untrusted" | "on-failure" | "on-request" | "never";
+};
+
 export type Bot = {
   id: string;
   pid: number | null;
@@ -48,6 +55,7 @@ export type Bot = {
   mainThreadId: string | null;
   recoveryIssue: string | null;
   roleRevision: number | null;
+  settings: BotSettings | null;
 };
 
 export type Account = { id: string; active: boolean; removing: boolean };
@@ -99,6 +107,7 @@ export type Snapshot = {
   workerRuntimes: Resource<WorkerRuntime[]>;
   login: Resource<Login | null>;
   bots: Resource<Bot[]>;
+  botDefaults: Resource<BotSettings>;
   voice: Resource<VoiceCall | null>;
   catalog: Resource<PackageDoc[]>;
   endpoints: Record<string, string>;

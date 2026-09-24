@@ -184,6 +184,7 @@ test("existing SQLite state gains runtime and credential generations without los
     assert.equal(upgraded.servers()[0]?.mainThreadId, null);
     assert.equal(upgraded.servers()[0]?.threadStarting, false);
     assert.deepEqual(upgraded.servers()[0]?.args, []);
+    assert.equal(upgraded.servers()[0]?.settings, null);
     upgraded.close();
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -204,11 +205,13 @@ test("legacy launch capabilities migrate once to role fields without resurrectin
     const record = migrated.servers()[0]!;
     assert.equal(record.roleRoot, join(root, "capabilities", "bot-1", "launch-legacy"));
     assert.equal(record.roleRevision, 3);
+    assert.equal(record.settings, null);
     migrated.saveServer({ ...record, roleRoot: null });
     migrated.close();
     const reopened = new StateStore(root);
     assert.equal(reopened.servers()[0]?.roleRoot, null);
     assert.equal(reopened.servers()[0]?.roleRevision, 3);
+    assert.equal(reopened.servers()[0]?.settings, null);
     reopened.close();
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -241,6 +244,7 @@ test("legacy JSON Server records follow the migrated immutable account ID", asyn
     assert.equal(supervisor.store.servers().find((server) => server.id === "old")?.account, id);
     assert.equal(supervisor.store.servers().find((server) => server.id === "old")?.launchedAccount, id);
     assert.deepEqual(supervisor.store.servers().find((server) => server.id === "old")?.args, []);
+    assert.equal(supervisor.store.servers().find((server) => server.id === "old")?.settings, null);
     const orphan = supervisor.list().find((server) => server.id === "orphan")?.account;
     assert.match(orphan ?? "", /^[0-9a-f-]{36}$/);
     assert.notEqual(orphan, id);
@@ -253,7 +257,7 @@ test("legacy JSON Server records follow the migrated immutable account ID", asyn
 test("Server launch arguments persist only in private secrets storage and are removed with the Server", async () => {
   const root = await mkdtemp(join(tmpdir(), "agentstack-private-args-"));
   const store = new StateStore(root);
-  const args = ["-c", "provider_token=private-example", "--model", "gpt-5.4"];
+  const args = ["-c", "provider_token=private-example", "-c", 'model="gpt-5.4"'];
   try {
     const account = store.addAccount(credential("account"));
     const record: StoredServer = { id: "private", pid: null, cwd: root, url: null, state: "stopped", codexBin: "codex", account: account.id, launchedAccount: null, authVersion: null, runtimeRoot: null, mainThreadId: null, threadStarting: false, args };

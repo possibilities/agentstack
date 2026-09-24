@@ -9,7 +9,7 @@ function section<T>(title: string, resource: Resource<T>, render: (data: T) => s
 }
 
 export function renderCanvasMarkdown(snapshot: Snapshot): string {
-  const { owner, accounts, workerAccounts, workerRuntimes, login, bots, voice, catalog, endpoints } = snapshot;
+  const { owner, accounts, workerAccounts, workerRuntimes, login, bots, botDefaults, voice, catalog, endpoints } = snapshot;
   const labels = accountLabels(accounts.data);
   const label = (id: string | null) => (id ? labels.get(id) ?? shortId(id) : "unbound");
 
@@ -37,12 +37,17 @@ export function renderCanvasMarkdown(snapshot: Snapshot): string {
         return `- **${account.provider}** ${code(account.id)} — ${account.removing ? "removing" : !account.enabled ? "disabled" : account.ready ? "ready" : "sign-in needed"}${runtime ? ` · ACP ${runtime.state}${runtime.error ? ` (${runtime.error})` : ""}` : ""}`;
       }) : ["No worker accounts."]), "",
     ]),
+    "## Bot defaults", "", botDefaults.data
+      ? `New Bots: ${code(botDefaults.data.model)} · ${code(botDefaults.data.reasoningEffort)} effort · ${code(botDefaults.data.sandboxMode)} · approval ${code(botDefaults.data.approvalPolicy)}.`
+      : `Unavailable: ${botDefaults.error ?? "no data"}.`, "",
     ...section("Bots", bots, (data) => [...(data.length ? data.flatMap((bot) => [
       `- **${bot.id}** — ${bot.recoveryIssue ? "needs inspection (reported running state unverified)" : bot.state}${bot.pid ? ` · pid ${bot.pid}` : ""} · account ${label(bot.account)}`,
       ...(bot.recoveryIssue ? [`  - Recovery: ${bot.recoveryIssue}`] : []),
       ...(bot.state === "running" && !bot.recoveryIssue && bot.account !== bot.runningAccount ? [`  - Running as ${label(bot.runningAccount)}; stop and start to apply ${label(bot.account)}`] : []),
       `  - Main thread ${code(bot.mainThreadId ?? "awaiting first turn")}`,
       `  - Last launched role revision ${code(bot.roleRevision ?? "never launched")}`,
+      bot.settings ? `  - Saved settings ${code(bot.settings.model)} · ${code(bot.settings.reasoningEffort)} effort · ${code(bot.settings.sandboxMode)} · approval ${code(bot.settings.approvalPolicy)} (caller args may override)`
+        : "  - Saved settings Legacy Bot: Codex selects model and effort; full access and no approval prompts remain the baseline.",
       `  - Workspace ${code(bot.cwd)}`,
       ...(bot.url ? [`  - Endpoint ${code(bot.url)}`] : []),
     ]) : ["No bots."]), ""]),
