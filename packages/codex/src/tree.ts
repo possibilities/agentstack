@@ -3,7 +3,7 @@ import { activeThreads, listActiveThreads } from "./threads.js";
 
 export async function runningTree(
   listServers: () => Promise<ServerView[]> | ServerView[],
-  listThreads: (url: string) => Promise<ReturnType<typeof activeThreads>> = listActiveThreads,
+  listThreads: (url: string, mainThreadId: string | null) => Promise<ReturnType<typeof activeThreads>> = listActiveThreads,
   includeThreads = false,
 ) {
   const running = (await listServers()).filter((server) => server.state === "running" && server.url);
@@ -16,7 +16,7 @@ export async function runningTree(
       cwd: server.cwd,
       url: server.url,
       account: server.runningAccount,
-      threads: await listThreads(server.url ?? ""),
+      threads: await listThreads(server.url ?? "", server.mainThreadId),
     })),
   );
   return { servers };

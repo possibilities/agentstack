@@ -7,7 +7,7 @@ import { connect } from "node:net";
 import { codexRuntimePath } from "./paths.js";
 import { StateStore, type StoredServer } from "./store.js";
 import { RuntimeAuth, type SyncStatus } from "./runtime-auth.js";
-import { bindMainThread } from "./threads.js";
+import { bindMainThread, findEligibleMainThread } from "./threads.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const DEFAULT_GRACE_MS = 10_000;
@@ -62,6 +62,7 @@ export type SupervisorOptions = {
   graceMs?: number;
   readyTimeoutMs?: number;
   bindThread?: typeof bindMainThread;
+  findMainThread?: typeof findEligibleMainThread;
   onChange?: (id: string) => void;
   store?: StateStore;
 };
@@ -80,6 +81,7 @@ export class Supervisor {
   private readonly graceMs: number;
   private readonly readyTimeoutMs: number;
   private readonly bindThread: typeof bindMainThread;
+  private readonly findMainThread: typeof findEligibleMainThread;
   readonly store: StateStore;
   readonly runtime: RuntimeAuth;
 
@@ -94,6 +96,7 @@ export class Supervisor {
     this.graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
     this.readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
     this.bindThread = options.bindThread ?? bindMainThread;
+    this.findMainThread = options.findMainThread ?? findEligibleMainThread;
     this.onChange = options.onChange;
   }
 
@@ -165,6 +168,21 @@ export class Supervisor {
   start(input: StartInput): Promise<ServerView> {
     const id = input.id ?? newId();
     return this.enqueue(id, () => this.startQueued(id, input));
+  }
+
+  /** Claim the first materialized root thread created through this Server's Codex socket. */
+  adoptMainThread(id: string, url: string): Promise<ServerView | null> {
+    return this.enqueue(id, async () => {
+      const record = this.records.get(id);
+      if (!record || record.state !== "running" || record.url !== url || record.mainThreadId || record.threadStarting) return null;
+      const threadId = await this.findMainThread(url);
+      if (!threadId) return null;
+      record.mainThreadId = threadId;
+      try { await this.persist(record); }
+      catch (error) { record.mainThreadId = null; throw error; }
+      this.notify(id);
+      return this.view(record);
+    });
   }
 
   assign(id: string, accountId: string): Promise<ServerView> {
@@ -307,15 +325,9 @@ export class Supervisor {
         persisted = true;
         await this.waitReady(url, child.exited, this.readyTimeoutMs);
         ready = true;
-        const threadId = await this.bindThread(url, cwd, record.mainThreadId, async () => {
-          // Only after the handshake, fence the allocation before sending thread/start.
-          record.threadStarting = true;
-          try { await this.persist(record); }
-          catch (error) { record.threadStarting = false; throw error; }
-        });
-        record.mainThreadId = threadId;
-        record.threadStarting = false;
-        await this.persist(record);
+        // A fresh Server owns the socket, but the first UI owns thread/start.
+        // Only a previously adopted main thread needs to be resumed here.
+        if (record.mainThreadId) await this.bindThread(url, cwd, record.mainThreadId);
         await rm(identity, { recursive: true, force: true });
         await this.runtime.watch(record);
         this.recoveryIssues.delete(id);

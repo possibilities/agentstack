@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { serveApi, socketCall, socketSubscribe } from "@agentstack/api";
 import { AuthStore } from "@agentstack/auth";
 import { StateStore } from "../src/store.js";
+import { appServerSocket } from "../src/threads.js";
 
 const fakeBin = fileURLToPath(new URL("../../test/fixtures/fake-app-server.mjs", import.meta.url));
 const credential = (token: string) => JSON.stringify({ tokens: { refresh_token: token, access_token: "access", id_token: "fixture.jwt.signature" } });
@@ -78,12 +79,12 @@ test("codex lifecycle and change events are served on the namespaced unix socket
     assert.equal(started.state, "running");
     assert.equal(started.account, secondAccount.id);
     assert.equal((started as typeof started & { recoveryIssue: string | null }).recoveryIssue, null);
-    assert.ok(started.mainThreadId);
+    assert.equal(started.mainThreadId, null);
     assert.match(started.url ?? "", /\/app\/[0-9a-f]{14}\.sock$/);
     const persisted = new StateStore(stateDir);
     assert.equal(persisted.servers().find((server) => server.id === "remote")?.codexBin, runtime);
     assert.equal(persisted.servers().find((server) => server.id === "remote")?.account, secondAccount.id);
-    assert.equal(persisted.servers().find((server) => server.id === "remote")?.mainThreadId, started.mainThreadId);
+    assert.equal(persisted.servers().find((server) => server.id === "remote")?.mainThreadId, null);
     persisted.close();
     for (let i = 0; i < 100 && received.length === 0; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
     assert.deepEqual(received, ["servers_changed"]);
@@ -131,12 +132,36 @@ test("codex lifecycle and change events are served on the namespaced unix socket
     await scopedEvents.close();
     await otherEvents.close();
     received.length = 0;
-    await socketCall(served.socketPath, "tools/call", {
+    const running = await socketCall(served.socketPath, "tools/call", {
       name: "server_start",
       arguments: { cwd, id: "remote" },
-    });
+    }) as { url: string };
     await new Promise((resolve) => setTimeout(resolve, 200));
     assert.deepEqual(received, []);
+
+    // A fresh remote UI creates a blank thread; its first real turn makes it the main thread.
+    const peer = appServerSocket(running.url);
+    try {
+      await new Promise<void>((resolve, reject) => { peer.once("open", resolve); peer.once("error", reject); });
+      await appCall(peer, 1, "initialize", { clientInfo: { name: "remote-tui", version: "0" } });
+      peer.send(JSON.stringify({ method: "initialized" }));
+      await appCall(peer, 2, "thread/start", { cwd }); // A blank root must not claim the Server.
+      const created = await appCall(peer, 3, "thread/start", { cwd }) as { thread: { id: string } };
+      assert.equal((await socketCall(served.socketPath, "tools/call", { name: "server_list", arguments: {} }) as { servers: Array<{ mainThreadId: string | null }> }).servers[0]?.mainThreadId, null);
+      await appCall(peer, 4, "turn/start", { threadId: created.thread.id, input: [{ type: "text", text: "first turn" }] });
+      let adopted: string | null = null;
+      for (let i = 0; i < 100 && !adopted; i += 1) {
+        const snapshot = await socketCall(served.socketPath, "tools/call", { name: "server_list", arguments: {} }) as { servers: Array<{ mainThreadId: string | null }> };
+        adopted = snapshot.servers[0]?.mainThreadId ?? null;
+        if (!adopted) await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      assert.equal(adopted, created.thread.id);
+      await appCall(peer, 5, "thread/start", { cwd });
+      assert.equal((await socketCall(served.socketPath, "tools/call", { name: "server_list", arguments: {} }) as { servers: Array<{ mainThreadId: string | null }> }).servers[0]?.mainThreadId, adopted);
+      await socketCall(served.socketPath, "tools/call", { name: "server_stop", arguments: { id: "remote" } });
+      const resumed = await socketCall(served.socketPath, "tools/call", { name: "server_start", arguments: { cwd, id: "remote" } }) as { mainThreadId: string | null };
+      assert.equal(resumed.mainThreadId, adopted);
+    } finally { peer.close(); }
 
     await assert.rejects(
       socketCall(served.socketPath, "tools/call", { name: "server_start", arguments: {} }),
@@ -161,3 +186,19 @@ test("codex lifecycle and change events are served on the namespaced unix socket
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+function appCall(peer: ReturnType<typeof appServerSocket>, id: number, method: string, params: unknown): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { peer.off("message", onMessage); reject(new Error(`${method} timed out`)); }, 5_000);
+    const onMessage = (raw: unknown) => {
+      const frame = JSON.parse(String(raw)) as { id?: number; result?: unknown; error?: { message?: string } };
+      if (frame.id !== id) return;
+      clearTimeout(timer);
+      peer.off("message", onMessage);
+      if (frame.error) reject(new Error(frame.error.message));
+      else resolve(frame.result);
+    };
+    peer.on("message", onMessage);
+    peer.send(JSON.stringify({ id, method, params }));
+  });
+}

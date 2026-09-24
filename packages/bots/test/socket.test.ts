@@ -71,7 +71,7 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     assert.equal(first.cwd, join(stateDir, "bots", "bot-1"));
     assert.match(first.url ?? "", /\/app\/[0-9a-f]{14}\.sock$/);
     assert.equal(first.account, accountId);
-    assert.ok(first.mainThreadId);
+    assert.equal(first.mainThreadId, null);
     const firstWorkspace = await lstat(first.cwd);
     assert.equal(firstWorkspace.isDirectory(), true);
     assert.equal(firstWorkspace.mode & 0o777, 0o700);
@@ -107,12 +107,12 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     codex.publish?.("threads_changed", "bot-1");
     for (let i = 0; i < 100 && !firstEvents.includes("threads_changed"); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
     assert.ok(firstEvents.includes("threads_changed"));
-    assert.equal(secondEvents.length, 0);
+    assert.ok(!secondEvents.includes("threads_changed"));
     firstEvents.length = 0;
     codex.publish?.("threads_changed", "bot-2");
     for (let i = 0; i < 100 && !secondEvents.includes("threads_changed"); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
     assert.ok(secondEvents.includes("threads_changed"));
-    assert.equal(firstEvents.length, 0);
+    assert.ok(!firstEvents.includes("threads_changed"));
     secondEvents.length = 0;
 
     const unrelated = (await call(codexSocket, "server_start", { id: "other", cwd: workDir })) as View;
@@ -200,7 +200,7 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     bots = await serveApi({ name: "bots", transport: "socket", env });
     const booted = (await call(botsSocket, "bot_list")) as { bots: View[] };
     assert.equal(booted.bots.length, 9); // bot-6 was reserved, but never successfully started.
-    assert.ok(booted.bots.every((bot) => bot.state === "running" && bot.mainThreadId));
+    assert.ok(booted.bots.every((bot) => bot.state === "running" && bot.mainThreadId === null));
     assert.equal(booted.bots.find((bot) => bot.id === "bot-1")?.mainThreadId, first.mainThreadId);
     const resumedStore = new StateStore(stateDir);
     assert.deepEqual(resumedStore.servers().find((server) => server.id === "bot-1")?.args, ["--model", "gpt-5.4"]);
@@ -216,10 +216,7 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     for (let i = 0; i < 200 && !resumedEvents.includes("threads_changed"); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
     assert.ok(resumedEvents.includes("threads_changed"));
     await resumedSubscription.close();
-    const history = (await readFile(join(stateDir, "history", "bot-1", "fake-threads.jsonl"), "utf8"))
-      .trim().split("\n").map((line) => JSON.parse(line) as { method: string; threadId: string; cwd: string });
-    assert.equal(history.filter((entry) => entry.method === "thread/start" && entry.cwd === first.cwd).length, 1);
-    assert.ok(history.filter((entry) => entry.method === "thread/resume" && entry.cwd === first.cwd).length >= 2);
+    await assert.rejects(readFile(join(stateDir, "history", "bot-1", "fake-threads.jsonl"), "utf8"), /ENOENT/);
     assert.deepEqual(await call(botsSocket, "bot_remove", { id: "bot-1" }), { id: "bot-1" });
     assert.equal((await call(botsSocket, "bot_list") as { bots: View[] }).bots.some((bot) => bot.id === "bot-1"), false);
     assert.equal((await call(codexSocket, "server_list") as { servers: View[] }).servers.some((server) => server.id === "bot-1"), false);

@@ -30,8 +30,8 @@ An AgentStack-owned sign-in credential with an immutable account ID managed by t
 
 ## Main thread
 
-The single Codex thread ID retained by a managed Server. Its first successful launch creates the thread; later launches resume that same ID. Child threads belong to the Codex session, not to the Server's main-thread binding.
+The single Codex thread ID retained by a managed Server. A fresh Server has no main thread until the first persistent root thread created by a connected UI has a durable turn; later Server launches resume that ID. Only this root and its descendants belong to AgentStack's view of the Server. Other Codex top-level threads on the same socket are ignored.
 
 ## Bot
 
-A numbered Codex Server with a private workspace and a durable main thread. A Bot may start without an account. Assign an account, then stop and start, before a turn. Turns require a bound account. Bots restart on AgentStack startup and resume their bound thread.
+A numbered Codex Server with a private workspace and, after its first turn, a durable main thread. A Bot may start without an account. Assign an account, then stop and start, before a turn. Turns require a bound account. Bots restart on AgentStack startup and resume their main thread when one exists.

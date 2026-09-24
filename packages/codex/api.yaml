@@ -1,5 +1,5 @@
 name: codex
-description: Start, stop, and list local Codex app-server processes with persistent main threads.
+description: Start, stop, and list local Codex app-server processes; their first durable UI thread becomes the persistent main thread.
 socket:
   description: Unix socket for Codex app-server lifecycle and change events, namespaced as codex.
 mcp:

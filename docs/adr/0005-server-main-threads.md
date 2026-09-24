@@ -1,6 +1,6 @@
 # 5. Bind every Codex Server to one main thread
 
-Status: accepted, 2026-09-23. Builds on [ADR 0004](0004-codex-account-state.md).
+Status: superseded in part by [ADR 0026](0026-lazy-server-main-thread.md), 2026-09-24. Builds on [ADR 0004](0004-codex-account-state.md).
 
 A Server owns one main Codex thread ID in `configuration.sqlite`. Its first
 successful launch calls `thread/start` in its working directory and stores the

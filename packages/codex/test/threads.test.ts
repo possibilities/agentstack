@@ -81,17 +81,24 @@ test("thread reads retain successes and notifications invalidate the watcher", a
   wss.on("connection", (peer) => peer.on("message", (raw) => {
     const frame = JSON.parse(String(raw)) as { id?: number; method?: string; params?: { threadId?: string } };
     if (frame.method === "initialize") peer.send(JSON.stringify({ id: frame.id, result: {} }));
-    if (frame.method === "thread/loaded/list") peer.send(JSON.stringify({ id: frame.id, result: { data: ["good", "bad"] } }));
+    if (frame.method === "thread/loaded/list") peer.send(JSON.stringify({ id: frame.id, result: { data: ["good", "child", "bad", "other", "other-child"] } }));
     if (frame.method === "thread/read") {
       if (frame.params?.threadId === "good") {
         peer.send(JSON.stringify({ id: frame.id, result: { thread: { id: "good", status: { type: "active" } } } }));
+      } else if (frame.params?.threadId === "child" || frame.params?.threadId === "other-child") {
+        peer.send(JSON.stringify({ id: frame.id, result: { thread: { id: frame.params.threadId, parentThreadId: frame.params.threadId === "child" ? "good" : "other", status: { type: "active" } } } }));
+      } else if (frame.params?.threadId === "other") {
+        peer.send(JSON.stringify({ id: frame.id, result: { thread: { id: "other", status: { type: "active" } } } }));
       } else peer.send(JSON.stringify({ id: frame.id, error: { message: "unavailable" } }));
     }
   }));
   await new Promise<void>((resolve) => http.listen(path, resolve));
   let stop: (() => void) | undefined;
   try {
-    assert.deepEqual((await listActiveThreads(`unix://${path}`)).map((thread) => thread.id), ["good"]);
+    assert.deepEqual(await listActiveThreads(`unix://${path}`, null), []);
+    assert.deepEqual((await listActiveThreads(`unix://${path}`, "good")).map((thread) => thread.id), ["good"]);
+    assert.deepEqual((await listActiveThreads(`unix://${path}`, "good"))[0]?.children?.map((thread) => thread.id), ["child"]);
+    assert.deepEqual(await listActiveThreads(`unix://${path}`, "missing"), []);
     let changes = 0;
     stop = watchThreadEvents(`unix://${path}`, () => { changes += 1; });
     await until(() => changes === 1);

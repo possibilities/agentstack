@@ -1,0 +1,7 @@
+# 26. Bind the first durable UI thread as a Server's main thread
+
+Status: accepted, 2026-09-24. Supersedes [ADR 0005](0005-server-main-threads.md)'s thread allocation on Server launch; retains its single durable binding and no-substitution rule.
+
+Starting a Server launches its Codex app-server without calling `thread/start`. A TUI or other UI connected to that Server creates a root thread and sends the first turn. The Codex Package API discovers the oldest persistent, non-forked root thread with a materialized turn in that Server's private history and atomically stores its ID as `mainThreadId`. Empty threads are not eligible. Thread notifications trigger discovery, and connecting after restart reconciles missed notifications. Once bound, later launches call `thread/resume`; failure does not allocate a replacement. The old unconfirmed-start fence remains for interrupted pre-existing allocations.
+
+This keeps Codex's default paginated history and permits the first turn to come from the TUI, without a dummy turn or a downstream Codex patch. A Server with no main thread can restart safely. Existing bound Servers keep their ID; an older empty preallocation with no rollout still needs diagnosis before its binding can be changed. The first durable root wins if several UIs create threads against one Server concurrently. AgentStack shows only that root and its descendants; additional top-level Codex threads remain accessible through Codex but are ignored by AgentStack. Thread change notices are invalidations, not proof that the sanctioned lineage changed.

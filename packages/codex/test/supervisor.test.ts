@@ -101,7 +101,7 @@ test("start is idempotent and stop is idempotent", async () => {
     assert.deepEqual(launched[0]?.args.slice(0, 3), ["app-server", "--listen", "ws://127.0.0.1:41000"]);
     assert.deepEqual(launched[0]?.args.filter((arg) => arg.startsWith("--") && arg !== "--listen"), ["--identity", "--capabilities", "--history-dir"]);
     assert.equal(first.account, supervisor.store.listAccounts()[0]?.id);
-    assert.equal(first.mainThreadId, "thread-alpha");
+    assert.equal(first.mainThreadId, null);
     assert.equal(launched[0]?.cwd, cwd);
     await assert.rejects(supervisor.start({ cwd: stateDir, id: "alpha" }), /bound to/);
     const stopped = await supervisor.stop("alpha");
@@ -114,6 +114,49 @@ test("start is idempotent and stop is idempotent", async () => {
     assert.deepEqual(killed, ["SIGTERM"]);
     assert.equal(supervisor.list().length, 1);
   } finally {
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("adoption is fenced to one live Server and rolls back a failed binding write", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-adopt-"));
+  const cwd = await mkdtemp(join(tmpdir(), "agentstack-adopt-cwd-"));
+  let resolveExit: (code: number | null) => void = () => undefined;
+  let scans = 0;
+  const supervisor = new Supervisor({ stateDir, graceMs: 20,
+    endpoint: async () => "ws://127.0.0.1:43010",
+    launch: () => ({ pid: 91, exited: new Promise((resolve) => { resolveExit = resolve; }), kill: () => resolveExit(0) }),
+    waitReady: async () => undefined,
+    findMainThread: async () => { scans += 1; return "ui-thread"; },
+    bindThread: async (_url, _cwd, id) => id,
+  });
+  try {
+    await supervisor.load();
+    const started = await supervisor.start({ cwd, id: "one" });
+    assert.equal(started.mainThreadId, null);
+    assert.equal(await supervisor.adoptMainThread("one", "ws://127.0.0.1:wrong"), null);
+    assert.equal(scans, 0);
+    const save = supervisor.store.saveServer.bind(supervisor.store);
+    try {
+      supervisor.store.saveServer = () => { throw new Error("write failed"); };
+      await assert.rejects(supervisor.adoptMainThread("one", started.url!), /write failed/);
+      assert.equal(supervisor.list()[0]?.mainThreadId, null);
+    } finally { supervisor.store.saveServer = save; }
+    const [first, second] = await Promise.all([
+      supervisor.adoptMainThread("one", started.url!),
+      supervisor.adoptMainThread("one", started.url!),
+    ]);
+    assert.equal(first?.mainThreadId, "ui-thread");
+    assert.equal(second, null);
+    assert.equal(scans, 2);
+    assert.equal(supervisor.store.servers()[0]?.mainThreadId, "ui-thread");
+    await supervisor.stop("one");
+    assert.equal(await supervisor.adoptMainThread("one", started.url!), null);
+    assert.equal((await supervisor.start({ cwd, id: "one" })).mainThreadId, "ui-thread");
+  } finally {
+    await supervisor.stopAll();
+    supervisor.store.close();
     await rm(stateDir, { recursive: true, force: true });
     await rm(cwd, { recursive: true, force: true });
   }
@@ -158,7 +201,7 @@ test("launch arguments survive owner recovery and can change only while stopped"
     assert.deepEqual(recovered.store.servers()[0]?.args, ["--model", "gpt-5.4"]);
     await recovered.resumeAll();
     assert.deepEqual(launches[1], ["--model", "gpt-5.4"]);
-    assert.equal(recovered.list()[0]?.mainThreadId, "thread-persisted");
+    assert.equal(recovered.list()[0]?.mainThreadId, null);
     await recovered.stop("configured");
     await recovered.start({ cwd, id: "configured", args: ["--model", "gpt-5.6"] });
     assert.deepEqual(launches[2], ["--model", "gpt-5.6"]);
@@ -212,7 +255,7 @@ test("owner MCP connections are applied to every launch without persisting as ca
     exposed = { ...exposed, bots: "http://127.0.0.1:43123/mcp/bots" };
     await supervisor.start({ id: "with-mcp", cwd });
     assert.deepEqual(launches[1]?.slice(5, 9), ownerMcpArgs(exposed));
-    assert.equal(supervisor.list()[0]?.mainThreadId, "main-mcp");
+    assert.equal(supervisor.list()[0]?.mainThreadId, null);
   } finally {
     await supervisor.stopAll();
     await supervisor.runtime.close();
@@ -813,7 +856,7 @@ test("a fake app-server becomes ready and can be stopped", async () => {
     seedAccount(supervisor);
     const started = await supervisor.start({ cwd, id: "live" });
     assert.equal(started.state, "running");
-    assert.ok(started.mainThreadId);
+    assert.equal(started.mainThreadId, null);
     assert.match(started.url ?? "", /\/app\/[0-9a-f]{14}\.sock$/);
     await new Promise<void>((resolve, reject) => {
       const socket = connect((started.url ?? "").slice("unix://".length));
@@ -826,9 +869,7 @@ test("a fake app-server becomes ready and can be stopped", async () => {
     const resumed = await supervisor.start({ cwd, id: "live" });
     assert.equal(resumed.mainThreadId, started.mainThreadId);
     assert.notEqual(resumed.url, started.url);
-    const entries = (await readFile(join(stateDir, "history", "live", "fake-threads.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { method: string; threadId: string });
-    assert.deepEqual(entries.map(({ method }) => method), ["thread/start", "thread/resume"]);
-    assert.ok(entries.every(({ threadId }) => threadId === started.mainThreadId));
+    await assert.rejects(readFile(join(stateDir, "history", "live", "fake-threads.jsonl"), "utf8"), /ENOENT/);
   } finally {
     await supervisor.stopAll();
     await rm(stateDir, { recursive: true, force: true });
@@ -841,59 +882,65 @@ test("failed resume retains the main thread and never creates a replacement", as
   const cwd = await mkdtemp(join(tmpdir(), "agentstack-resume-cwd-"));
   let resolveExit: (code: number | null) => void = () => undefined;
   const calls: Array<string | null> = [];
-  const supervisor = new Supervisor({ stateDir, graceMs: 20,
+  const options: SupervisorOptions = { stateDir, graceMs: 20,
     endpoint: async () => "ws://127.0.0.1:43111",
     launch: () => ({ pid: 77, exited: new Promise((resolve) => { resolveExit = resolve; }), kill: () => resolveExit(0) }),
     waitReady: async () => undefined,
     bindThread: async (_url, _cwd, id) => {
       calls.push(id);
-      if (id) throw new Error("thread missing");
-      return "main-1";
+      throw new Error("thread missing");
     },
-  });
+  };
+  const supervisor = new Supervisor(options);
   try {
     await supervisor.load();
     seedAccount(supervisor);
     await supervisor.start({ cwd, id: "one" });
     await supervisor.stop("one");
-    await assert.rejects(supervisor.start({ cwd, id: "one" }), /thread missing/);
-    assert.deepEqual(calls, [null, "main-1"]);
-    assert.equal(supervisor.list()[0]?.mainThreadId, "main-1");
-    assert.equal(supervisor.list()[0]?.state, "stopped");
-  } finally {
+    const record = supervisor.store.servers().find(({ id }) => id === "one")!;
+    record.mainThreadId = "main-1";
+    supervisor.store.saveServer(record);
     supervisor.store.close();
+    const recovered = new Supervisor(options);
+    try {
+      await recovered.load();
+      await assert.rejects(recovered.start({ cwd, id: "one" }), /thread missing/);
+      assert.deepEqual(calls, ["main-1"]);
+      assert.equal(recovered.list()[0]?.mainThreadId, "main-1");
+      assert.equal(recovered.list()[0]?.state, "stopped");
+    } finally { recovered.store.close(); }
+  } finally {
     await rm(stateDir, { recursive: true, force: true });
     await rm(cwd, { recursive: true, force: true });
   }
 });
 
-test("an unconfirmed first thread start blocks a second allocation after recovery", async () => {
+test("a legacy unconfirmed thread start still blocks automatic recovery", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-uncertain-thread-"));
   const cwd = await mkdtemp(join(tmpdir(), "agentstack-uncertain-cwd-"));
   let resolveExit: (code: number | null) => void = () => undefined;
-  let allocations = 0;
   const options: SupervisorOptions = { stateDir, graceMs: 20,
     endpoint: async () => "ws://127.0.0.1:43112",
     launch: () => ({ pid: 78, exited: new Promise<number | null>((resolve) => { resolveExit = resolve; }), kill: () => resolveExit(0) }),
     waitReady: async () => undefined,
-    bindThread: async (_url, _cwd, _id, beforeStart) => {
-      await beforeStart?.();
-      allocations += 1;
-      throw new Error("lost thread/start response");
-    },
+    bindThread: async () => { throw new Error("must not allocate a thread"); },
   };
   const first = new Supervisor(options);
   try {
     await first.load();
     seedAccount(first);
-    await assert.rejects(first.start({ cwd, id: "one" }), /lost thread\/start response/);
+    await first.start({ cwd, id: "one" });
+    await first.stop("one");
+    const record = first.store.servers()[0]!;
+    record.threadStarting = true;
+    first.store.saveServer(record);
     assert.equal(first.store.servers()[0]?.threadStarting, true);
     first.store.close();
     const recovered = new Supervisor(options);
     try {
       await recovered.load();
       await assert.rejects(recovered.start({ cwd, id: "one" }), /unconfirmed thread\/start/);
-      assert.equal(allocations, 1);
+      assert.equal(recovered.list()[0]?.mainThreadId, null);
     } finally { recovered.store.close(); }
   } finally {
     await rm(stateDir, { recursive: true, force: true });

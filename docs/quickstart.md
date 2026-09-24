@@ -60,5 +60,9 @@ See [operations](operations.md) for state, shutdown, and recovery, and [security
 
 All Codex app servers use `~/.local/libexec/codexnk/codex`. The `server_start`
 request accepts `cwd`, optional `id`, and optional `args`; executable selection
-is not configurable. `scripts/install.sh --check` prints the dependency pin and
-installation plan without changes. Setup never starts or restarts services.
+is not configurable. A new Server returns `mainThreadId: null`; connect a TUI
+with `codex --remote <url>` to create its first thread and send a turn. Once
+durable, that thread becomes `mainThreadId` and can be joined later with
+`codex --remote <url> resume <mainThreadId>`.
+`scripts/install.sh --check` prints the dependency pin and installation plan
+without changes. Setup never starts or restarts services.

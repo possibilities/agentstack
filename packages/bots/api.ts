@@ -134,7 +134,7 @@ async function ensureWorkspace(path: string): Promise<string> {
 export const botStart = operation({
   name: "bot_start",
   description:
-    "Start a Codex bot app-server in its private workspace, or return the live one. A new bot binds the active Codex account when one exists. Existing bots change account only through bot_assign. Stop a running bot before that assignment is used. Omit id to allocate the next never-reused bot-N id. Omit args to reuse saved args; pass [] to clear them while stopped. A running Bot rejects changed args.",
+    "Start a bot in its private workspace without creating a thread, or return the live one. Its first durable UI thread becomes the main thread. New bots bind the active Codex account; existing bots change account through bot_assign, then stop/start. Omit id to allocate the next bot-N id. Omit args to reuse saved args; [] clears them while stopped. Running bots reject changed args.",
   input: z.strictObject({
     id: botIdSchema.optional().describe("Existing bot id to restart. A new id is allocated when omitted."),
     args: z.array(z.string()).optional().describe("Extra Codex arguments saved for future launches. Omit to reuse saved args; [] clears them when stopped. Do not include --listen."),

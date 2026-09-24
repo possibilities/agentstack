@@ -1,5 +1,5 @@
 name: bots
-description: Start, stop, and list numbered Codex bot app-servers, each in its own private workspace with a main thread resumed on startup. Subscribe to change events for one bot ID.
+description: Start, stop, and list numbered Codex bot app-servers, each in its own private workspace. The first durable UI thread becomes the main thread and resumes on startup. Subscribe to change events for one bot ID.
 socket:
   description: Unix socket for Codex bot lifecycle and bot-scoped change events, namespaced as bots.
 mcp:

@@ -63,10 +63,51 @@ export function threadTree(threads: ActiveThread[]): ActiveThread[] {
   return roots;
 }
 
-/** Join the server's durable main thread, creating it only on its first launch. */
-export async function bindMainThread(url: string, cwd: string, threadId: string | null, beforeStart?: () => Promise<void>): Promise<string> {
+/** Rejoin the Server's already adopted main thread; never allocate one. */
+export async function bindMainThread(url: string, cwd: string, threadId: string): Promise<string> {
+  return withAppServer(url, async (call) => {
+    const method = "thread/resume";
+    const response = await call(method, { threadId, cwd }) as { thread?: { id?: unknown } };
+    const id = response?.thread?.id;
+    if (typeof id !== "string" || id !== threadId) {
+      throw new Error(`${method} returned an unexpected thread id`);
+    }
+    return id;
+  });
+}
+
+/** Discover the oldest persistent root with a real turn in this Server's private history. */
+export async function findEligibleMainThread(url: string): Promise<string | null> {
+  return withAppServer(url, async (call) => {
+    let cursor: string | null = null;
+    // A bounded scan is preferable to silently claiming an arbitrary thread in a large history.
+    for (let page = 0; page < 20; page += 1) {
+      const response = await call("thread/list", {
+        cursor, limit: 100, sortKey: "created_at", sortDirection: "asc",
+        sourceKinds: ["cli", "vscode", "exec", "appServer", "unknown"],
+      }) as { data?: unknown; nextCursor?: unknown };
+      if (!Array.isArray(response?.data)) throw new Error("thread/list returned invalid data");
+      for (const value of response.data) {
+        if (!value || typeof value !== "object") continue;
+        const thread = value as { id?: unknown; parentThreadId?: unknown; forkedFromId?: unknown; ephemeral?: unknown };
+        if (typeof thread.id !== "string" || thread.parentThreadId || thread.forkedFromId || thread.ephemeral !== false) continue;
+        try {
+          const result = await call("thread/read", { threadId: thread.id, includeTurns: true }) as { thread?: { turns?: unknown } };
+          if (Array.isArray(result?.thread?.turns) && result.thread.turns.length > 0) return thread.id;
+        } catch (error) {
+          if (!/no rollout found|not materialized yet|includeTurns is unavailable/.test(String(error))) throw error;
+        }
+      }
+      if (typeof response.nextCursor !== "string" || !response.nextCursor) return null;
+      cursor = response.nextCursor;
+    }
+    throw new Error("too many threads to select a main thread automatically");
+  });
+}
+
+async function withAppServer<T>(url: string, run: (call: (method: string, params: unknown) => Promise<unknown>) => Promise<T>): Promise<T> {
   const ws = appServerSocket(url);
-  ws.on("error", () => undefined); // The close event rejects any in-flight request.
+  ws.on("error", () => undefined);
   let nextId = 1;
   const call = (method: string, params: unknown): Promise<unknown> => new Promise((resolve, reject) => {
     const id = nextId++;
@@ -93,21 +134,15 @@ export async function bindMainThread(url: string, cwd: string, threadId: string 
     await once(ws, "open", 5_000);
     await call("initialize", { clientInfo: { name: "agentstack", version: "0.0.0" } });
     ws.send(JSON.stringify({ method: "initialized" }));
-    if (!threadId) await beforeStart?.();
-    const method = threadId ? "thread/resume" : "thread/start";
-    const response = await call(method, threadId ? { threadId, cwd } : { cwd }) as { thread?: { id?: unknown } };
-    const id = response?.thread?.id;
-    if (typeof id !== "string" || !id || (threadId && id !== threadId)) {
-      throw new Error(`${method} returned an unexpected thread id`);
-    }
-    return id;
+    return await run(call);
   } finally {
     if (ws.readyState === WebSocket.OPEN) ws.close();
     else ws.terminate();
   }
 }
 
-export async function listActiveThreads(url: string): Promise<ActiveThread[]> {
+export async function listActiveThreads(url: string, mainThreadId: string | null): Promise<ActiveThread[]> {
+  if (!mainThreadId) return [];
   const ws = appServerSocket(url);
   const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   let nextId = 1;
@@ -161,7 +196,7 @@ export async function listActiveThreads(url: string): Promise<ActiveThread[]> {
     if (results.some((result) => result.status === "rejected")) {
       console.error(`thread/read failed for ${results.filter((result) => result.status === "rejected").length} loaded threads`);
     }
-    return threadTree(activeThreads(records));
+    return threadTree(activeThreads(records)).filter((thread) => thread.id === mainThreadId);
   } catch {
     return [];
   } finally {

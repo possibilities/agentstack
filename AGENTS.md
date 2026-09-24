@@ -5,6 +5,7 @@
 - Keep operation schemas, descriptions, and package exports in sync. The live reference uses `docs_snapshot`; update its tests when the discovery contract changes.
 - `pnpm test` builds the packages and runs their compiled tests. Use a disposable `AGENTSTACK_STATE_DIR` for lifecycle checks; never claim or remove a live owner's socket to make a test pass.
 - `scripts/install.sh --check` prints the installation plan. `--install` installs the pinned codexnk runtime, builds, and links the command; neither command restarts a running owner.
+- A Codex Server's `mainThreadId` is its sanctioned root. AgentStack thread and future subagent views must include only that root and its descendants. Other top-level Codex threads on the same socket are not Bot/Server threads; `threads_changed` is an invalidation notice, not evidence that a sanctioned thread changed.
 
 ## The UI (`packages/uix`)
 

@@ -25,23 +25,51 @@ if (process.argv.includes("--device-auth")) {
   });
   const history = process.argv[process.argv.indexOf("--history-dir") + 1];
   const log = join(history, "fake-threads.jsonl");
+  const entries = () => {
+    try { return readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)); }
+    catch (error) { if (error.code === "ENOENT") return []; throw error; }
+  };
+  const notify = (method) => {
+    for (const client of wss.clients) client.send(JSON.stringify({ method }));
+  };
   const wss = new WebSocketServer({ server });
   wss.on("connection", (peer) => peer.on("message", (raw) => {
     const frame = JSON.parse(String(raw));
     if (frame.method === "initialize") peer.send(JSON.stringify({ id: frame.id, result: {} }));
     if (frame.method === "thread/start") {
       const id = randomUUID();
-      appendFileSync(log, JSON.stringify({ method: frame.method, cwd: frame.params.cwd, threadId: id }) + "\n");
+      appendFileSync(log, JSON.stringify({ method: frame.method, cwd: frame.params.cwd ?? process.cwd(), threadId: id }) + "\n");
       peer.send(JSON.stringify({ id: frame.id, result: { thread: { id } } }));
+      notify("thread/started");
     }
     if (frame.method === "thread/resume") {
-      const entries = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line));
-      if (!entries.some((entry) => entry.method === "thread/start" && entry.threadId === frame.params.threadId && entry.cwd === frame.params.cwd)) {
-        peer.send(JSON.stringify({ id: frame.id, error: { message: "unknown thread" } }));
+      if (!entries().some((entry) => entry.method === "turn/start" && entry.threadId === frame.params.threadId)) {
+        peer.send(JSON.stringify({ id: frame.id, error: { message: "no rollout found for thread id " + frame.params.threadId } }));
         return;
       }
       appendFileSync(log, JSON.stringify({ method: frame.method, cwd: frame.params.cwd, threadId: frame.params.threadId }) + "\n");
       peer.send(JSON.stringify({ id: frame.id, result: { thread: { id: frame.params.threadId } } }));
+    }
+    if (frame.method === "turn/start") {
+      const threadId = frame.params.threadId;
+      if (!entries().some((entry) => entry.method === "thread/start" && entry.threadId === threadId)) {
+        peer.send(JSON.stringify({ id: frame.id, error: { message: "unknown thread" } }));
+        return;
+      }
+      appendFileSync(log, JSON.stringify({ method: frame.method, threadId }) + "\n");
+      peer.send(JSON.stringify({ id: frame.id, result: { turn: { id: randomUUID() } } }));
+      notify("turn/completed");
+    }
+    if (frame.method === "thread/list") {
+      const seen = new Set();
+      const data = entries().filter((entry) => entry.method === "thread/start" && !seen.has(entry.threadId) && seen.add(entry.threadId))
+        .map((entry) => ({ id: entry.threadId, parentThreadId: null, forkedFromId: null, ephemeral: false }));
+      peer.send(JSON.stringify({ id: frame.id, result: { data, nextCursor: null } }));
+    }
+    if (frame.method === "thread/read") {
+      const turns = entries().filter((entry) => entry.method === "turn/start" && entry.threadId === frame.params.threadId);
+      if (frame.params.includeTurns && turns.length === 0) peer.send(JSON.stringify({ id: frame.id, error: { message: "not materialized yet" } }));
+      else peer.send(JSON.stringify({ id: frame.id, result: { thread: { id: frame.params.threadId, turns } } }));
     }
     if (frame.method === "thread/loaded/list") peer.send(JSON.stringify({ id: frame.id, result: { data: [] } }));
   }));

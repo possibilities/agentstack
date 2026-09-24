@@ -88,7 +88,7 @@ test("an existing unbound server stays unbound until assign, then the next start
     const started = await supervisor.start({ cwd, id: "open" });
     assert.equal(started.account, null);
     assert.equal(started.state, "running");
-    assert.equal(started.mainThreadId, "thread-unbound");
+    assert.equal(started.mainThreadId, null);
     assert.deepEqual(observed, [null]);
     await writeFile(join(root, "runtime", "open", "leftover"), "runtime");
     await supervisor.stop("open");
