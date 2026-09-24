@@ -2,10 +2,11 @@ import { chmodSync, closeSync, constants, existsSync, mkdirSync, openSync, renam
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { mcpRecord, skillRecord, type RoleMcpServer, type Skill } from "./resources.js";
 
 export type Fragment = { id: string; categoryId: string; title: string; description: string; body: string; enabled: boolean };
 export type Category = { id: string; title: string; description: string; enabled: boolean; fragments: Fragment[] };
-export type RoleSnapshot = { revision: number; categories: Category[] };
+export type RoleSnapshot = { revision: number; categories: Category[]; skills: Skill[]; mcpServers: RoleMcpServer[] };
 
 export function renderInstructions(snapshot: RoleSnapshot): string {
   const bodies = snapshot.categories.flatMap((category) => category.enabled
@@ -50,6 +51,14 @@ export class RoleStore {
         title TEXT NOT NULL, description TEXT NOT NULL, body TEXT NOT NULL, enabled INTEGER NOT NULL,
         position INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS skills (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, description TEXT NOT NULL,
+        body TEXT NOT NULL, files_json TEXT NOT NULL, enabled INTEGER NOT NULL, position INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS role_mcp_servers (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, description TEXT NOT NULL,
+        definition_json TEXT NOT NULL, enabled INTEGER NOT NULL, position INTEGER NOT NULL
+      );
     `);
   }
 
@@ -75,7 +84,13 @@ export class RoleStore {
     for (const { category_id, enabled, ...fragment } of fragments) {
       byId.get(category_id)?.fragments.push({ ...fragment, categoryId: category_id, enabled: Boolean(enabled) });
     }
-    return { revision, categories };
+    const skills = (this.db.prepare("SELECT id, name, description, body, files_json, enabled FROM skills ORDER BY position, id").all() as Array<{
+      id: string; name: string; description: string; body: string; files_json: string; enabled: number;
+    }>).map(({ files_json, enabled, ...row }) => skillRecord.parse({ ...row, files: JSON.parse(files_json), enabled: Boolean(enabled) }));
+    const mcpServers = (this.db.prepare("SELECT id, name, description, definition_json, enabled FROM role_mcp_servers ORDER BY position, id").all() as Array<{
+      id: string; name: string; description: string; definition_json: string; enabled: number;
+    }>).map(({ definition_json, enabled, ...row }) => mcpRecord.parse({ ...row, definition: JSON.parse(definition_json), enabled: Boolean(enabled) }));
+    return { revision, categories, skills, mcpServers };
   }
 
   createCategory(expectedRevision: number, title: string, description = "", enabled = true): RoleSnapshot {
@@ -141,6 +156,56 @@ export class RoleStore {
     return this.change(expectedRevision, () => { this.category(categoryId); this.reorder("fragments", ids, categoryId); });
   }
 
+  createSkill(expectedRevision: number, name: string, description: string, body: string, files: Skill["files"] = [], enabled = true): RoleSnapshot {
+    return this.change(expectedRevision, () => {
+      const skill = skillRecord.parse({ id: randomUUID(), name, description, body, files, enabled });
+      this.db.prepare("INSERT INTO skills VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(skill.id, skill.name, skill.description, skill.body, JSON.stringify(skill.files), Number(skill.enabled), this.count("skills"));
+    });
+  }
+
+  updateSkill(expectedRevision: number, id: string, fields: Partial<Omit<Skill, "id">>): RoleSnapshot {
+    return this.change(expectedRevision, () => {
+      const current = this.skill(id);
+      const skill = skillRecord.parse({ ...current, ...fields });
+      this.db.prepare("UPDATE skills SET name = ?, description = ?, body = ?, files_json = ?, enabled = ? WHERE id = ?")
+        .run(skill.name, skill.description, skill.body, JSON.stringify(skill.files), Number(skill.enabled), id);
+    });
+  }
+
+  deleteSkill(expectedRevision: number, id: string): RoleSnapshot {
+    return this.change(expectedRevision, () => { this.skill(id); this.db.prepare("DELETE FROM skills WHERE id = ?").run(id); this.reindex("skills"); });
+  }
+
+  reorderSkills(expectedRevision: number, ids: string[]): RoleSnapshot {
+    return this.change(expectedRevision, () => this.reorder("skills", ids));
+  }
+
+  createMcpServer(expectedRevision: number, name: string, description: string, definition: RoleMcpServer["definition"], enabled = true): RoleSnapshot {
+    return this.change(expectedRevision, () => {
+      const server = mcpRecord.parse({ id: randomUUID(), name, description, definition, enabled });
+      this.db.prepare("INSERT INTO role_mcp_servers VALUES (?, ?, ?, ?, ?, ?)")
+        .run(server.id, server.name, server.description, JSON.stringify(server.definition), Number(server.enabled), this.count("role_mcp_servers"));
+    });
+  }
+
+  updateMcpServer(expectedRevision: number, id: string, fields: Partial<Omit<RoleMcpServer, "id">>): RoleSnapshot {
+    return this.change(expectedRevision, () => {
+      const current = this.mcpServer(id);
+      const server = mcpRecord.parse({ ...current, ...fields });
+      this.db.prepare("UPDATE role_mcp_servers SET name = ?, description = ?, definition_json = ?, enabled = ? WHERE id = ?")
+        .run(server.name, server.description, JSON.stringify(server.definition), Number(server.enabled), id);
+    });
+  }
+
+  deleteMcpServer(expectedRevision: number, id: string): RoleSnapshot {
+    return this.change(expectedRevision, () => { this.mcpServer(id); this.db.prepare("DELETE FROM role_mcp_servers WHERE id = ?").run(id); this.reindex("role_mcp_servers"); });
+  }
+
+  reorderMcpServers(expectedRevision: number, ids: string[]): RoleSnapshot {
+    return this.change(expectedRevision, () => this.reorder("role_mcp_servers", ids));
+  }
+
   private change(expectedRevision: number, mutate: () => void): RoleSnapshot {
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -157,7 +222,7 @@ export class RoleStore {
   }
 
   private revision(): number { return (this.db.prepare("SELECT value FROM revision WHERE singleton = 1").get() as { value: number }).value; }
-  private count(table: "categories" | "fragments", categoryId?: string): number {
+  private count(table: "categories" | "fragments" | "skills" | "role_mcp_servers", categoryId?: string): number {
     return (this.db.prepare(`SELECT COUNT(*) AS n FROM ${table}${categoryId ? " WHERE category_id = ?" : ""}`).get(...(categoryId ? [categoryId] : [])) as { n: number }).n;
   }
   private category(id: string): { title: string; description: string; enabled: boolean } {
@@ -172,17 +237,33 @@ export class RoleStore {
     if (!row) throw new Error(`unknown fragment: ${id}`);
     return { id, categoryId: row.category_id, title: row.title, description: row.description, body: row.body, enabled: Boolean(row.enabled), position: row.position };
   }
-  private ids(table: "categories" | "fragments", categoryId?: string): string[] {
+  private skill(id: string): Skill {
+    const row = this.db.prepare("SELECT id, name, description, body, files_json, enabled FROM skills WHERE id = ?").get(id) as {
+      id: string; name: string; description: string; body: string; files_json: string; enabled: number;
+    } | undefined;
+    if (!row) throw new Error(`unknown skill: ${id}`);
+    const { files_json, enabled, ...fields } = row;
+    return skillRecord.parse({ ...fields, files: JSON.parse(files_json), enabled: Boolean(enabled) });
+  }
+  private mcpServer(id: string): RoleMcpServer {
+    const row = this.db.prepare("SELECT id, name, description, definition_json, enabled FROM role_mcp_servers WHERE id = ?").get(id) as {
+      id: string; name: string; description: string; definition_json: string; enabled: number;
+    } | undefined;
+    if (!row) throw new Error(`unknown MCP server: ${id}`);
+    const { definition_json, enabled, ...fields } = row;
+    return mcpRecord.parse({ ...fields, definition: JSON.parse(definition_json), enabled: Boolean(enabled) });
+  }
+  private ids(table: "categories" | "fragments" | "skills" | "role_mcp_servers", categoryId?: string): string[] {
     return (this.db.prepare(`SELECT id FROM ${table}${categoryId ? " WHERE category_id = ?" : ""} ORDER BY position, id`)
       .all(...(categoryId ? [categoryId] : [])) as Array<{ id: string }>).map((row) => row.id);
   }
-  private reindex(table: "categories" | "fragments", categoryId?: string): void {
+  private reindex(table: "categories" | "fragments" | "skills" | "role_mcp_servers", categoryId?: string): void {
     this.ids(table, categoryId).forEach((id, index) => this.db.prepare(`UPDATE ${table} SET position = ? WHERE id = ?`).run(index, id));
   }
-  private reorder(table: "categories" | "fragments", ids: string[], categoryId?: string): void {
+  private reorder(table: "categories" | "fragments" | "skills" | "role_mcp_servers", ids: string[], categoryId?: string): void {
     const current = this.ids(table, categoryId);
     if (ids.length !== current.length || new Set(ids).size !== ids.length || ids.some((id) => !current.includes(id)))
-      throw new Error(`reorder must contain every ${categoryId ? "fragment in the category" : "category"} exactly once`);
+      throw new Error(`reorder must contain every ${categoryId ? "fragment in the category" : table === "skills" ? "skill" : table === "role_mcp_servers" ? "MCP server" : "category"} exactly once`);
     ids.forEach((id, index) => this.db.prepare(`UPDATE ${table} SET position = ? WHERE id = ?`).run(index, id));
   }
 }

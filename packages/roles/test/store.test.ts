@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, readFile, rm, rename } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -90,4 +90,49 @@ test("a legacy capabilities database keeps its fragments, revision, and launch c
     await removeRole(root, "bot-1", legacyRoot);
     await assert.rejects(lstat(legacyRoot), /ENOENT/);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("enabled role resources materialize privately and disabled items stay out of bot launches", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-role-resources-"));
+  let store = new RoleStore(root);
+  try {
+    let state = store.createSkill(0, "review", "Review changes", "# Review", [{ path: "scripts/check.sh", contentBase64: Buffer.from("exit 0\n").toString("base64") }]);
+    const review = state.skills[0]!.id;
+    state = store.createSkill(state.revision, "draft", "Draft notes", "# Draft", [], false);
+    const draft = state.skills[1]!.id;
+    state = store.reorderSkills(state.revision, [draft, review]);
+    assert.deepEqual(state.skills.map((skill) => skill.name), ["draft", "review"]);
+    state = store.createMcpServer(state.revision, "remote", "Remote tools", { type: "http", url: "https://mcp.example.test/tools", bearerTokenEnvVar: "ROLE_TOKEN", httpHeaders: { "X-Role": "managed" } });
+    state = store.createMcpServer(state.revision, "local", "Local tools", { type: "stdio", command: "/usr/bin/env", args: ["true"], env: { MODE: "role" } }, false);
+    const local = state.mcpServers[1]!.id;
+    store.close();
+    store = new RoleStore(root);
+    assert.deepEqual(store.snapshot(), state);
+    const first = await materializeRole(root, "bot-1", state, { auth: "http://127.0.0.1:8743/mcp/auth" });
+    assert.deepEqual(await readdir(join(first, "skills")), ["review"]);
+    assert.match(await readFile(join(first, "skills", "review", "SKILL.md"), "utf8"), /name: "review"\ndescription: "Review changes"/);
+    assert.equal(await readFile(join(first, "skills", "review", "scripts", "check.sh"), "utf8"), "exit 0\n");
+    const config = await readFile(join(first, "config.toml"), "utf8");
+    assert.match(config, /\[mcp_servers.auth\]/);
+    assert.match(config, /\[mcp_servers.remote\]/);
+    assert.match(config, /bearer_token_env_var = "ROLE_TOKEN"/);
+    assert.match(config, /http_headers = \{ "X-Role" = "managed" \}/);
+    assert.doesNotMatch(config, /mcp_servers.local/);
+    await removeRole(root, "bot-1", first);
+    state = store.updateMcpServer(state.revision, local, { enabled: true });
+    const withLocal = await materializeRole(root, "bot-1", state, {});
+    const localConfig = await readFile(join(withLocal, "config.toml"), "utf8");
+    assert.match(localConfig, /\[mcp_servers.local\]\ncommand = "\/usr\/bin\/env"\nargs = \["true"\]\nenv = \{ "MODE" = "role" \}/);
+    await removeRole(root, "bot-1", withLocal);
+    assert.throws(() => store.createSkill(state.revision, "review", "Duplicate", "# Duplicate"), /UNIQUE/);
+    assert.equal(store.snapshot().revision, state.revision);
+    assert.throws(() => store.updateSkill(state.revision, review, { files: [{ path: "../escape", contentBase64: "" }] }), /path|invalid/i);
+    assert.equal(store.snapshot().revision, state.revision);
+    state = store.updateSkill(state.revision, review, { enabled: false });
+    const second = await materializeRole(root, "bot-1", state, {});
+    assert.deepEqual(await readdir(join(second, "skills")), []);
+    await removeRole(root, "bot-1", second);
+    state = store.createMcpServer(state.revision, "auth", "Collision", { type: "http", url: "https://mcp.example.test/other" }, false);
+    await assert.rejects(materializeRole(root, "bot-1", state, { auth: "http://127.0.0.1:8743/mcp/auth" }), /collides/);
+  } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 });

@@ -32,7 +32,7 @@ A Codex app-server process with, after its first turn, a durable main thread. By
 
 ## Role
 
-The single AgentStack-owned configuration shared by every new Bot launch: ordered developer-instruction fragments, owner MCP connections, and a reserved skills directory. Each Bot receives a private launch snapshot through codexnk's required `--capabilities` directory. Edits affect later launches, not a running process. _Avoid_: capability profile, system-prompt flag, live prompt file
+The single AgentStack-owned configuration shared by every new Bot launch: ordered developer-instruction fragments, enabled skills, internal owner MCP connections, and additional enabled MCP servers. Each Bot receives a private launch snapshot through codexnk's required `--capabilities` directory. Edits affect later launches, not a running process. _Avoid_: capability profile, system-prompt flag, live prompt file
 
 ## Category
 
@@ -41,6 +41,14 @@ An ordered group of instruction fragments in the Role. Its title and description
 ## Fragment
 
 A durable, ordered developer-instruction body with a stable ID and human-only title and description. Only enabled fragments in enabled categories enter `SYSTEM_APPEND.md`.
+
+## Role skill
+
+A named, enabled or disabled skill record containing Markdown instructions and optional supporting files. AgentStack stores the bytes in the Role and writes only enabled skills to a Bot's private launch snapshot. Codex may independently discover project or user skills; that ambient discovery is outside the current Role isolation guarantee.
+
+## Role MCP server
+
+An additional named, enabled or disabled HTTP or stdio MCP definition in the Role. Enabled definitions join the owner's internal Package API connections only in the Bot's private launch configuration. They do not change ambient Codex configuration or running Bots.
 
 ## Voice call
 

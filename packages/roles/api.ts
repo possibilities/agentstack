@@ -1,8 +1,9 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { operation, type PackageApi } from "@agentstack/api";
+import { configuredMcpPackages, operation, workspaceRoot, type PackageApi } from "@agentstack/api";
 import { RoleStore, renderInstructions } from "./src/store.js";
+import { mcpDefinition, mcpRecord, resourceName, resourceDescription, skillBody, skillFiles, skillRecord } from "./src/resources.js";
 
 const id = z.uuid().describe("Stable category or fragment ID.");
 const revision = z.number().int().nonnegative().describe("Expected role revision; stale writes fail.");
@@ -11,12 +12,16 @@ const description = z.string().max(4_000);
 const body = z.string().max(262_144).describe("Verbatim developer instruction body; metadata never renders.");
 const fragment = z.strictObject({ id, categoryId: id, title, description, body, enabled: z.boolean() });
 const category = z.strictObject({ id, title, description, enabled: z.boolean(), fragments: z.array(fragment) });
-const snapshot = z.strictObject({ revision, categories: z.array(category) });
+const snapshot = z.strictObject({ revision, categories: z.array(category), skills: z.array(skillRecord), mcpServers: z.array(mcpRecord) });
 const preview = z.strictObject({ revision, rendered: z.string() });
 const write = z.strictObject({ expectedRevision: revision });
 
 export type RolesContext = { store: RoleStore; changed?: () => void };
 function changed(ctx: RolesContext, result: z.infer<typeof snapshot>) { ctx.changed?.(); return result; }
+async function ensureAdditionalMcpName(name: string): Promise<void> {
+  const internal = await configuredMcpPackages(workspaceRoot(import.meta.dirname));
+  if (internal.some((pkg) => pkg.name === name)) throw new Error(`role MCP server ${name} collides with an internal Package API`);
+}
 
 export const roleSnapshot = operation({
   name: "role_snapshot", description: "Read the single role's categories, fragments, order, enabled flags, and current revision.",
@@ -73,11 +78,64 @@ export const fragmentReorder = operation({
   async call(ctx: RolesContext, { categoryId, ids, expectedRevision }) { return changed(ctx, ctx.store.reorderFragments(expectedRevision, categoryId, ids)); },
 });
 
+export const skillCreate = operation({
+  name: "skill_create", description: "Add a role-owned skill. AgentStack generates SKILL.md frontmatter from the name and description; supporting files are private base64-encoded bytes. Only enabled skills enter later bot launches.",
+  input: write.extend({ name: resourceName, description: resourceDescription.min(1), body: skillBody, files: skillFiles.optional(), enabled: z.boolean().optional() }),
+  output: snapshot, annotations: { title: "Create role skill" },
+  async call(ctx: RolesContext, input) { return changed(ctx, ctx.store.createSkill(input.expectedRevision, input.name, input.description, input.body, input.files, input.enabled)); },
+});
+export const skillUpdate = operation({
+  name: "skill_update", description: "Edit skill name, description, Markdown body, supporting files, or enabled state. Supplying files replaces the complete supporting-file set.",
+  input: write.extend({ id, name: resourceName.optional(), description: resourceDescription.min(1).optional(), body: skillBody.optional(), files: skillFiles.optional(), enabled: z.boolean().optional() }),
+  output: snapshot, annotations: { title: "Update role skill" },
+  async call(ctx: RolesContext, { id, expectedRevision, ...fields }) { return changed(ctx, ctx.store.updateSkill(expectedRevision, id, fields)); },
+});
+export const skillDelete = operation({
+  name: "skill_delete", description: "Delete a role-owned skill and all its supporting files from future launches.",
+  input: write.extend({ id }), output: snapshot, annotations: { title: "Delete role skill", destructiveHint: true },
+  async call(ctx: RolesContext, { id, expectedRevision }) { return changed(ctx, ctx.store.deleteSkill(expectedRevision, id)); },
+});
+export const skillReorder = operation({
+  name: "skill_reorder", description: "Atomically replace skill order with an exact permutation of all skill IDs.",
+  input: write.extend({ ids: z.array(id) }), output: snapshot, annotations: { title: "Reorder role skills" },
+  async call(ctx: RolesContext, { ids, expectedRevision }) { return changed(ctx, ctx.store.reorderSkills(expectedRevision, ids)); },
+});
+
+export const mcpServerCreate = operation({
+  name: "mcp_server_create", description: "Add an HTTP or stdio MCP server to the role. It joins the owner-provided internal MCP servers only on later bot launches.",
+  input: write.extend({ name: resourceName, description: resourceDescription, definition: mcpDefinition, enabled: z.boolean().optional() }),
+  output: snapshot, annotations: { title: "Create role MCP server" },
+  async call(ctx: RolesContext, input) {
+    await ensureAdditionalMcpName(input.name);
+    return changed(ctx, ctx.store.createMcpServer(input.expectedRevision, input.name, input.description, input.definition, input.enabled));
+  },
+});
+export const mcpServerUpdate = operation({
+  name: "mcp_server_update", description: "Edit a role MCP server's name, description, full transport definition, or enabled state. Existing bot connections are unchanged until restart.",
+  input: write.extend({ id, name: resourceName.optional(), description: resourceDescription.optional(), definition: mcpDefinition.optional(), enabled: z.boolean().optional() }),
+  output: snapshot, annotations: { title: "Update role MCP server" },
+  async call(ctx: RolesContext, { id, expectedRevision, ...fields }) {
+    if (fields.name) await ensureAdditionalMcpName(fields.name);
+    return changed(ctx, ctx.store.updateMcpServer(expectedRevision, id, fields));
+  },
+});
+export const mcpServerDelete = operation({
+  name: "mcp_server_delete", description: "Delete an additional role MCP server from later launches; internal owner MCP connections are unaffected.",
+  input: write.extend({ id }), output: snapshot, annotations: { title: "Delete role MCP server", destructiveHint: true },
+  async call(ctx: RolesContext, { id, expectedRevision }) { return changed(ctx, ctx.store.deleteMcpServer(expectedRevision, id)); },
+});
+export const mcpServerReorder = operation({
+  name: "mcp_server_reorder", description: "Atomically replace additional MCP server order with an exact permutation of their IDs.",
+  input: write.extend({ ids: z.array(id) }), output: snapshot, annotations: { title: "Reorder role MCP servers" },
+  async call(ctx: RolesContext, { ids, expectedRevision }) { return changed(ctx, ctx.store.reorderMcpServers(expectedRevision, ids)); },
+});
+
 export const topics = { role_changed: "The role was edited. Read role_snapshot after (re)subscribing." } as const;
 
 export const api: PackageApi<RolesContext, keyof typeof topics> = {
   operations: [roleSnapshot, rolePreview, categoryCreate, categoryUpdate, categoryDelete, categoryReorder,
-    fragmentCreate, fragmentUpdate, fragmentDelete, fragmentReorder],
+    fragmentCreate, fragmentUpdate, fragmentDelete, fragmentReorder, skillCreate, skillUpdate, skillDelete, skillReorder,
+    mcpServerCreate, mcpServerUpdate, mcpServerDelete, mcpServerReorder],
   events: {
     topics,
     start(ctx, publish) { ctx.changed = () => publish("role_changed"); return () => { ctx.changed = undefined; }; },
