@@ -13,13 +13,13 @@ test("watcher imports a completed refresh and recovery catches one missed while 
   const store = new StateStore(root);
   const monitor = new RuntimeAuth(store);
   try {
-    store.addAccount(auth("2026-09-23T10:00:00Z", "first"));
+    const accountId = store.addAccount(auth("2026-09-23T10:00:00Z", "first")).id;
     const runtimeRoot = await monitor.prepare("watched");
     const home = join(runtimeRoot, "codex-runtime");
     await mkdir(home);
     const file = join(home, "auth.json");
     await writeFile(file, store.activeAccount().auth);
-    const record: StoredServer = { id: "watched", pid: 1, cwd: root, url: "ws://127.0.0.1:40001", state: "running", codexBin: "codex", account: "codex-1", authVersion: 1, runtimeRoot, mainThreadId: "thread-watched", threadStarting: false };
+    const record: StoredServer = { id: "watched", pid: 1, cwd: root, url: "ws://127.0.0.1:40001", state: "running", codexBin: "codex", account: accountId, authVersion: 1, runtimeRoot, mainThreadId: "thread-watched", threadStarting: false };
     store.saveServer(record);
     await monitor.watch(record);
     await writeFile(file, '{"tokens":'); // A watcher event can arrive during a truncate/write.

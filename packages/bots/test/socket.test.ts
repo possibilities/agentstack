@@ -25,9 +25,10 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
   await mkdir(join(runtime, ".."), { recursive: true });
   await symlink(fakeBin, runtime);
   const store = new StateStore(stateDir);
-  store.addAccount(JSON.stringify({ tokens: { refresh_token: "test-refresh", access_token: "access", id_token: "fixture.jwt.signature" } }));
+  const accountId = store.addAccount(JSON.stringify({ tokens: { refresh_token: "test-refresh", access_token: "access", id_token: "fixture.jwt.signature" } })).id;
   store.close();
   const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir };
+  const auth = await serveApi({ name: "auth", transport: "socket", env });
   let codex = await serveApi({ name: "codex", transport: "socket", env });
   const codexSocket = codex.socketPath ?? "";
   const botsSocket = join(stateDir, "sockets", "bots.sock");
@@ -52,7 +53,7 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     assert.equal(listedTools.events.scope.example, "bot-1");
     assert.deepEqual(
       listedTools.tools.map((tool) => tool.name),
-      ["bot_start", "bot_stop", "bot_list"],
+      ["bot_start", "bot_stop", "bot_remove", "bot_list"],
     );
     const startSchema = listedTools.tools.find((tool) => tool.name === "bot_start")?.inputSchema;
     assert.deepEqual(Object.keys(startSchema?.properties ?? {}).sort(), ["args", "id"]);
@@ -69,7 +70,7 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     assert.equal(first.state, "running");
     assert.equal(first.cwd, join(stateDir, "bots", "bot-1"));
     assert.equal(first.url, `unix://${join(stateDir, "app", "bot-1.sock")}`);
-    assert.equal(first.account, "codex-1");
+    assert.equal(first.account, accountId);
     assert.ok(first.mainThreadId);
     const firstWorkspace = await lstat(first.cwd);
     assert.equal(firstWorkspace.isDirectory(), true);
@@ -215,15 +216,24 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     for (let i = 0; i < 100 && !resumedEvents.includes("inputs_changed"); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
     assert.ok(resumedEvents.includes("inputs_changed"));
     await resumedSubscription.close();
-    const history = (await readFile(join(stateDir, "history", "fake-threads.jsonl"), "utf8"))
+    const history = (await readFile(join(stateDir, "history", "bot-1", "fake-threads.jsonl"), "utf8"))
       .trim().split("\n").map((line) => JSON.parse(line) as { method: string; threadId: string; cwd: string });
     assert.equal(history.filter((entry) => entry.method === "thread/start" && entry.cwd === first.cwd).length, 1);
     assert.ok(history.filter((entry) => entry.method === "thread/resume" && entry.cwd === first.cwd).length >= 2);
+    assert.deepEqual(await call(botsSocket, "bot_remove", { id: "bot-1" }), { id: "bot-1" });
+    assert.equal((await call(botsSocket, "bot_list") as { bots: View[] }).bots.some((bot) => bot.id === "bot-1"), false);
+    assert.equal((await call(codexSocket, "server_list") as { servers: View[] }).servers.some((server) => server.id === "bot-1"), false);
+    await assert.rejects(lstat(first.cwd), /ENOENT/);
+    await assert.rejects(lstat(join(stateDir, "history", "bot-1")), /ENOENT/);
+    assert.deepEqual(await call(auth.socketPath ?? "", "account_remove", { id: accountId }), { accounts: [] });
+    assert.deepEqual((await call(botsSocket, "bot_list") as { bots: View[] }).bots, []);
+    assert.deepEqual((await call(codexSocket, "server_list") as { servers: View[] }).servers, []);
   } finally {
     await firstSubscription?.close();
     await secondSubscription?.close();
     await bots?.close();
     await codex.close();
+    await auth.close();
     if (savedHome === undefined) delete process.env.HOME;
     else process.env.HOME = savedHome;
     await rm(stateDir, { recursive: true, force: true });

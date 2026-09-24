@@ -26,7 +26,7 @@ export class LoginManager {
   }
 
   private async launch(replace: string | null): Promise<LoginState> {
-    if (replace && !this.store.listAccounts().some((account) => account.name === replace)) throw new Error(`unknown Codex account: ${replace}`);
+    if (replace && !this.store.listAccounts().some((account) => account.id === replace && !account.removing)) throw new Error(`unknown Codex account: ${replace}`);
     for (const entry of [...this.pending.values()]) await this.supersede(entry);
     const directory = await mkdtemp(join(this.store.stateDir, ".login-"));
     const id = randomBytes(12).toString("hex");
@@ -140,7 +140,7 @@ export class LoginManager {
           if (entry.replace) {
             this.store.replaceCredentials(entry.replace, auth);
             completedAccount = entry.replace;
-          } else completedAccount = this.store.addAccount(auth).name;
+          } else completedAccount = this.store.addAccount(auth).id;
         }
       } else if (state.status === "pending") {
         failure = "Codex sign-in did not finish. Try again.";

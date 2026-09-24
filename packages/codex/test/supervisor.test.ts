@@ -98,7 +98,7 @@ test("start is idempotent and stop is idempotent", async () => {
     assert.equal(launched[0]?.bin, codexRuntimePath());
     assert.deepEqual(launched[0]?.args.slice(0, 3), ["app-server", "--listen", "ws://127.0.0.1:41000"]);
     assert.deepEqual(launched[0]?.args.filter((arg) => arg.startsWith("--") && arg !== "--listen"), ["--identity", "--capabilities", "--history-dir"]);
-    assert.equal(first.account, "codex-1");
+    assert.equal(first.account, supervisor.store.listAccounts()[0]?.id);
     assert.equal(first.mainThreadId, "thread-alpha");
     assert.equal(launched[0]?.cwd, cwd);
     await assert.rejects(supervisor.start({ cwd: stateDir, id: "alpha" }), /bound to/);
@@ -489,7 +489,7 @@ test("a fake app-server becomes ready and can be stopped", async () => {
     assert.equal(stopped.url, null);
     const resumed = await supervisor.start({ cwd, id: "live" });
     assert.equal(resumed.mainThreadId, started.mainThreadId);
-    const entries = (await readFile(join(stateDir, "history", "fake-threads.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { method: string; threadId: string });
+    const entries = (await readFile(join(stateDir, "history", "live", "fake-threads.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { method: string; threadId: string });
     assert.deepEqual(entries.map(({ method }) => method), ["thread/start", "thread/resume"]);
     assert.ok(entries.every(({ threadId }) => threadId === started.mainThreadId));
   } finally {
