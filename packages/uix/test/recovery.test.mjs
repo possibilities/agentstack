@@ -80,7 +80,8 @@ test("the index and canvas render a fenced Server and Bot honestly in HTML and M
     assert.match(canvas, /bot-1/);
     assert.match(canvasMd, /Recovery: Recorded process ownership could not be verified/);
     assert.match(canvas, /Voice call/);
-    assert.match(canvas, /No callable Servers/);
+    assert.match(canvas, /No ready main threads/);
+    assert.match(canvas, /Running Servers need recovery inspection before they can be called/);
     assert.match(canvasMd, /No active voice call/);
     assert.doesNotMatch(index, /server-1[^<]*Running · PID/);
   } finally {

@@ -37,6 +37,18 @@ export function VoiceWidget() {
   const generation = useRef(0);
 
   const available = (servers.data ?? []).filter(ready);
+  const running = (servers.data ?? []).filter((server) => server.state === "running");
+  const unavailableReason = servers.error
+    ? "Server list unavailable. Try again when Codex reconnects."
+    : !servers.data
+      ? "Loading Servers and Bots…"
+    : !running.length
+      ? "Start a Server or Bot to make a call."
+      : !running.some((server) => server.mainThreadId)
+        ? "A running Server needs a durable first turn before its main thread can be called."
+        : !running.some((server) => server.mainThreadId && !server.recoveryIssue)
+          ? "Running Servers need recovery inspection before they can be called."
+          : "No running Server has a launched account and endpoint ready for voice.";
   const botIds = new Set(bots.data?.map((bot) => bot.id));
   const selected = available.some((server) => server.id === target) ? target : available[0]?.id ?? "";
   const active = voice.data;
@@ -141,7 +153,7 @@ export function VoiceWidget() {
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold">Voice call</h2>
           <p role="status" className="text-xs text-muted-foreground">
-            {active ? `${active.phase === "connected" ? "Connected" : "Dialing"} · ${active.serverId}` : phase === "preparing" ? "Preparing microphone…" : phase === "dialing" ? "Connecting to Codex…" : phase === "ending" ? "Hanging up…" : "Call into a running main thread"}
+            {active ? `${active.phase === "connected" ? "Connected" : "Dialing"} · ${active.serverId}` : phase === "preparing" ? "Preparing microphone…" : phase === "dialing" ? "Connecting to Codex…" : phase === "ending" ? "Hanging up…" : "Call an existing main thread"}
           </p>
         </div>
         <span aria-hidden className={cn("size-2 rounded-full", active ? "bg-success" : "bg-muted-foreground/40")} />
@@ -152,7 +164,7 @@ export function VoiceWidget() {
             <span className="sr-only">Server or Bot</span>
             <select value={selected} onChange={(event) => setTarget(event.target.value)} disabled={!available.length}
               className="h-10 w-full rounded-lg border bg-background px-2.5 text-sm focus-visible:outline-2 focus-visible:outline-ring">
-              {available.length ? available.map((server) => <option key={server.id} value={server.id}>{server.id}{botIds.has(server.id) ? " · Bot" : " · Server"}</option>) : <option value="">No callable Servers</option>}
+              {available.length ? available.map((server) => <option key={server.id} value={server.id}>{server.id}{botIds.has(server.id) ? " · Bot" : " · Server"}</option>) : <option value="">No ready main threads</option>}
             </select>
           </label>
           <Button onClick={() => void dial()} disabled={!selected || status.codex !== "open"} className="h-10 gap-2 rounded-lg"><PhoneIcon /> Dial</Button>
@@ -169,7 +181,7 @@ export function VoiceWidget() {
         </div>
       )}
       {message ? <p role="alert" className="mt-3 text-xs text-destructive">{message}</p> : null}
-      {!available.length && !active ? <p className="mt-3 text-xs text-muted-foreground">Start a Server with an account and send its first turn to create a main thread.</p> : null}
+      {!available.length && !active ? <p className="mt-3 text-xs text-muted-foreground">{unavailableReason}</p> : null}
     </aside>
   );
 }
