@@ -22,8 +22,8 @@ The owner starts its required `api`, `auth`, `codex`, `bots`, WebSocket, Inspect
 
 `agentstack serve` hosts the read-only browser reference at its printed
 `http://127.0.0.1:<port>/docs` URL as part of the owner lifecycle. It binds
-only to `127.0.0.1` and reads `docs_list` and `docs_get` from the `api` socket
-on each page load. An unavailable discovery socket produces a retryable
+only to `127.0.0.1` and reads one `docs_snapshot` from the `api` socket
+on each request. An unavailable discovery socket produces a retryable
 unavailable page. The owner closes the listener on shutdown. The page also
 serves a markdown twin at `index.md` (or with `.md` appended) with the same
 live catalog and unavailable handling. The docs listener does not call

@@ -43,7 +43,6 @@ export function packageEventTopics<Ctx>(name: string, events: PackageEvents<Ctx,
     if (!namePattern.test(topic)) throw new Error(`${name} event topic is invalid: ${topic}`);
     const blurb = description.trim();
     if (blurb.length === 0 || blurb.length > 400) throw new Error(`${name} event ${topic} description must be 1-400 characters`);
-    if (topics[topic] !== undefined) throw new Error(`${name} declares duplicate event topic: ${topic}`);
     topics[topic] = blurb;
   }
   if (Object.keys(topics).length === 0) throw new Error(`${name} must declare at least one event topic`);

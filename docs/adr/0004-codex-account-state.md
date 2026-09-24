@@ -1,6 +1,6 @@
 # 4. Bind managed Codex servers to AgentStack accounts
 
-Status: accepted, 2026-09-23. Builds on [ADR 0003](0003-required-codexnk-runtime.md).
+Status: accepted, 2026-09-23. Builds on [ADR 0003](0003-required-codexnk-runtime.md). Ordinal account names and shared history for new Servers were superseded by [ADR 0012](0012-stable-codex-account-ids.md); the account-binding model later evolved through [ADR 0018](0018-unbound-server-launch.md) and [ADR 0022](0022-server-account-assignment.md). The credential-refresh rationale remains.
 
 The Codex package owns sign-in and account selection for app servers it creates.
 The browser UI starts the installed codexnk CLI's OAuth login in a private,

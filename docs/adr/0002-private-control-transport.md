@@ -1,6 +1,6 @@
 # 2. Keep local control on private Unix sockets
 
-Status: accepted, 2026-09-23. Supersedes the Codex transport details in [ADR 0001](0001-package-apis.md).
+Status: accepted, 2026-09-23. Supersedes the Codex transport details in [ADR 0001](0001-package-apis.md). The standalone event-only WebSocket details below were superseded by [ADR 0010](0010-shared-websocket-transport.md); the earlier browser admission design was superseded by the read-only owner-hosted reference in [ADR 0009](0009-serve-docs-with-owner.md).
 
 The Codex Package API remains a typed library served on a namespaced Unix socket. It also publishes lifecycle and thread invalidation events on a loopback WebSocket for its UI. Managed Codex app servers listen on private Unix WebSocket sockets under the state directory. Their thread reads use the normal WebSocket handshake over that socket.
 

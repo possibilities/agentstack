@@ -2,7 +2,7 @@ import { readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { configuredTransports, isTransportType, readConfig, type PackageConfig, type TransportType } from "./config.js";
+import { isTransportType, readConfig, type PackageConfig } from "./config.js";
 
 export function mcpPort(env: NodeJS.ProcessEnv = process.env): number {
   const value = env.AGENTSTACK_MCP_PORT;
@@ -69,24 +69,6 @@ export async function listPackages(root: string): Promise<PackageLocation[]> {
     found.push({ dir, config });
   }
   return found.sort((a, b) => a.config.name.localeCompare(b.config.name));
-}
-
-export function transportEndpoint(
-  config: PackageConfig,
-  type: TransportType,
-  env: NodeJS.ProcessEnv,
-): { type: TransportType; description: string; available: boolean; endpoint?: string } {
-  const transport = configuredTransports(config).find((item) => item.type === type);
-  if (!transport) throw new Error(`${config.name} does not configure ${type}`);
-  if (type === "socket") {
-    return { type, description: transport.description, available: true, endpoint: socketPath(config.name, env) };
-  }
-  if (type === "websocket") {
-    const port = websocketPort(env);
-    return { type, description: transport.description, available: true, endpoint: port ? `ws://127.0.0.1:${port}/websocket/${config.name}` : undefined };
-  }
-  const port = mcpPort(env);
-  return { type, description: transport.description, available: true, endpoint: port ? `http://127.0.0.1:${port}/mcp/${config.name}` : undefined };
 }
 
 export function assertTransport(name: string, config: PackageConfig, transport: string): "socket" {
