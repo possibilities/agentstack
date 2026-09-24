@@ -20,10 +20,11 @@ search?.addEventListener('input', () => {
 });
 
 const status = document.querySelector('#source-status');
+const revisionUrl = `${document.documentElement.dataset.basePath ?? ''}/revision`;
 if (document.documentElement.dataset.revision) {
   setInterval(async () => {
     try {
-      const response = await fetch('/revision', { cache: 'no-store' });
+      const response = await fetch(revisionUrl, { cache: 'no-store' });
       if (!response.ok) throw new Error('offline');
       const { revision } = await response.json();
       if (revision !== document.documentElement.dataset.revision) location.reload();

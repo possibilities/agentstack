@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { runApi, runMcp, serveApi } from "@agentstack/api";
-import { runDocs } from "@agentstack/docs";
+import { runDocs, serveDocs } from "@agentstack/docs";
 import { apiChild, authChild, mcpChild } from "./children.js";
 import { botsChild } from "./bots.js";
 import { codexChild } from "./codex.js";
@@ -28,6 +28,19 @@ try {
   process.exit(1);
 }
 
+let docs: Awaited<ReturnType<typeof serveDocs>>;
+try {
+  docs = await serveDocs({
+    env: process.env,
+    port: process.env.AGENTSTACK_DOCS_PORT === undefined ? 0 : Number(process.env.AGENTSTACK_DOCS_PORT),
+    basePath: "/docs",
+  });
+} catch (error) {
+  await events.close();
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+
 let owner: ReturnType<typeof startOwner>;
 let closing = false;
 let childFailed = false;
@@ -36,7 +49,7 @@ const shutdown = () => {
   closing = true;
   const force = setTimeout(() => process.exit(1), 16_000);
   force.unref();
-  void Promise.allSettled([owner.close(), events.close()]).then((results) => {
+  void Promise.allSettled([owner.close(), events.close(), docs.close()]).then((results) => {
     const failed = results.some((result) => result.status === "rejected");
     for (const result of results) {
       if (result.status === "rejected") console.error(result.reason);
@@ -55,6 +68,7 @@ owner = startOwner([apiChild(), authChild(), codexChild(), botsChild(), mcpChild
 statusSource.attach(owner);
 
 if (events.socketPath) console.error(events.socketPath);
+console.error(`AgentStack reference: ${docs.url}`);
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

@@ -13,7 +13,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
 const socketNames = ["api", "auth", "codex", "bots", "owner"];
 
-test("serve owns its sockets and HTTP MCP child, then shuts them down", { timeout: 120_000 }, async () => {
+test("serve owns its sockets, HTTP MCP child, and live docs, then shuts them down", { timeout: 120_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-serve-"));
   const child = spawn(process.execPath, [cli, "serve"], {
     stdio: ["ignore", "pipe", "pipe"],
@@ -62,6 +62,24 @@ test("serve owns its sockets and HTTP MCP child, then shuts them down", { timeou
 
     const subscription = await socketSubscribe(ownerSock, ["pids_changed"], () => undefined);
 
+    for (let i = 0; i < 200 && !/AgentStack reference: (http:\/\/\S+\/docs)/.test(stderr); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const docsUrl = /AgentStack reference: (http:\/\/\S+\/docs)/.exec(stderr)?.[1];
+    assert.ok(docsUrl, stderr);
+    const page = await fetch(docsUrl);
+    assert.equal(page.status, 200);
+    assert.equal(page.headers.get("cache-control"), "no-store");
+    const html = await page.text();
+    assert.match(html, /id="package-codex"/);
+    assert.match(html, /href="\/docs\/site\.css"/);
+    assert.match(html, /src="\/docs\/site\.js"/);
+    const revision = await fetch(`${docsUrl}/revision`);
+    assert.equal(revision.status, 200);
+    assert.match(html, new RegExp((await revision.json() as { revision: string }).revision));
+    assert.equal((await fetch(`${docsUrl}/site.css`)).status, 200);
+    assert.equal((await fetch(new URL("/", docsUrl))).status, 404);
+
     assert.ok(!stderr.includes("https://"), stderr);
     assert.ok(!stderr.includes("token="), stderr);
     assert.ok(stderr.includes("owner.sock"), stderr);
@@ -69,6 +87,7 @@ test("serve owns its sockets and HTTP MCP child, then shuts them down", { timeou
     child.kill("SIGTERM");
     const code = await new Promise<number | null>((resolve) => child.once("exit", (exitCode) => resolve(exitCode)));
     assert.equal(code, 0, stderr);
+    await assert.rejects(fetch(docsUrl));
     await subscription.closed;
     for (const name of socketNames) {
       const sock = join(stateDir, "sockets", `${name}.sock`);

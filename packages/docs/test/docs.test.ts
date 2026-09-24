@@ -63,3 +63,28 @@ test("API-authored text is escaped in the generated reference", () => {
   assert.match(html, /&lt;img src=x&gt;/);
   assert.match(html, /&lt;b&gt;bad&lt;\/b&gt;/);
 });
+
+test("the owner-mounted reference keeps assets and live revision under /docs", { timeout: 60_000 }, async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-docs-mounted-"));
+  const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir };
+  const discovery = await serveApi({ name: "api", transport: "socket", env });
+  const docs = await serveDocs({ env, basePath: "/docs" });
+  try {
+    assert.match(docs.url, /\/docs$/);
+    const page = await fetch(docs.url);
+    assert.equal(page.status, 200);
+    const html = await page.text();
+    assert.match(html, /data-base-path="\/docs"/);
+    assert.match(html, /href="\/docs\/site\.css"/);
+    assert.match(html, /src="\/docs\/site\.js"/);
+    assert.equal((await fetch(`${docs.url}/revision`)).status, 200);
+    const script = await fetch(`${docs.url}/site.js`);
+    assert.match(await script.text(), /dataset\.basePath/);
+    assert.equal((await fetch(new URL("/site.css", docs.url))).status, 404);
+    assert.equal((await fetch(new URL("/", docs.url))).status, 404);
+  } finally {
+    await docs.close();
+    await discovery.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});

@@ -1,6 +1,6 @@
 # 6. Render the Package API reference from discovery
 
-Status: accepted, 2026-09-23. Builds on [ADR 0001](0001-package-apis.md) and [ADR 0002](0002-private-control-transport.md).
+Status: superseded on 2026-09-24 by [ADR 0009](0009-serve-docs-with-owner.md). Accepted 2026-09-23. Builds on [ADR 0001](0001-package-apis.md) and [ADR 0002](0002-private-control-transport.md).
 
 The optional `@agentstack/docs` package renders a local browser reference from the running `api` Package API's `docs_list` and `docs_get` operations. It presents the four current non-discovery packages, their supported socket/WebSocket transports, operations with JSON Schemas, and change-event topics. The page fetches fresh documents on each request and checks for changes while open. No generated copy of the operation definitions is committed.
 

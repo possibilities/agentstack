@@ -13,9 +13,10 @@ const headers = {
   "Referrer-Policy": "no-referrer",
 };
 
-export async function serveDocs(options: { env?: NodeJS.ProcessEnv; port?: number } = {}): Promise<DocsServer> {
+export async function serveDocs(options: { env?: NodeJS.ProcessEnv; port?: number; basePath?: "" | "/docs" } = {}): Promise<DocsServer> {
   const env = options.env ?? process.env;
   const port = options.port ?? 0;
+  const basePath = options.basePath ?? "";
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("docs port must be an integer from 0 to 65535");
   const assets = join(import.meta.dirname, "..", "..", "public");
   const [css, js] = await Promise.all([readFile(join(assets, "site.css")), readFile(join(assets, "site.js"))]);
@@ -30,25 +31,25 @@ export async function serveDocs(options: { env?: NodeJS.ProcessEnv; port?: numbe
       return;
     }
     const path = new URL(request.url ?? "/", "http://localhost").pathname;
-    if (path === "/site.css" || path === "/site.js") {
+    if (path === `${basePath}/site.css` || path === `${basePath}/site.js`) {
       response.writeHead(200, { ...headers, "Content-Type": path.endsWith(".css") ? "text/css; charset=utf-8" : "text/javascript; charset=utf-8" }).end(path.endsWith(".css") ? css : js);
       return;
     }
-    if (path !== "/" && path !== "/revision") {
+    if (path !== (basePath || "/") && path !== `${basePath}/revision`) {
       response.writeHead(404, headers).end();
       return;
     }
     try {
       const docs = await loadDocs(env);
       const revision = createHash("sha256").update(JSON.stringify(docs)).digest("hex");
-      if (path === "/revision") {
+      if (path === `${basePath}/revision`) {
         response.writeHead(200, { ...headers, "Cache-Control": "no-store", "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify({ revision }));
       } else {
-        response.writeHead(200, { ...headers, "Cache-Control": "no-store", "Content-Type": "text/html; charset=utf-8" }).end(renderDocs(docs, revision));
+        response.writeHead(200, { ...headers, "Cache-Control": "no-store", "Content-Type": "text/html; charset=utf-8" }).end(renderDocs(docs, revision, basePath));
       }
     } catch {
-      response.writeHead(503, { ...headers, "Cache-Control": "no-store", "Content-Type": path === "/revision" ? "application/json; charset=utf-8" : "text/html; charset=utf-8" })
-        .end(path === "/revision" ? JSON.stringify({ error: "Discovery API unavailable" }) : renderUnavailable());
+      response.writeHead(503, { ...headers, "Cache-Control": "no-store", "Content-Type": path === `${basePath}/revision` ? "application/json; charset=utf-8" : "text/html; charset=utf-8" })
+        .end(path === `${basePath}/revision` ? JSON.stringify({ error: "Discovery API unavailable" }) : renderUnavailable(basePath));
     }
   });
   await new Promise<void>((resolve, reject) => {
@@ -59,7 +60,7 @@ export async function serveDocs(options: { env?: NodeJS.ProcessEnv; port?: numbe
   if (!address || typeof address === "string") throw new Error("docs server has no TCP address");
   let closing: Promise<void> | undefined;
   return {
-    url: `http://127.0.0.1:${address.port}/`,
+    url: `http://127.0.0.1:${address.port}${basePath || "/"}`,
     close() {
       closing ??= new Promise<void>((resolve, reject) => {
         server.close((error) => error ? reject(error) : resolve());

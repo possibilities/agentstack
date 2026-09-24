@@ -20,7 +20,13 @@ Each managed Server has a private `<state>/runtime/<id>` temporary root. codexnk
 
 The owner starts its required `api`, `auth`, `codex`, and `bots` children in separate process groups and serves the `owner` Package API on its own socket before they spawn. If a child fails or exits, the owner reports the failure and shuts down. Normal shutdown stops incoming socket calls, waits for in-flight calls, closes event subscriptions, then gracefully stops app servers. The owner signals its process groups with SIGTERM and escalates to SIGKILL after a bounded grace period. It does not restart failed children automatically.
 
-`agentstack docs` is an optional read-only browser reference, independent of the owner lifecycle. It binds only to `127.0.0.1`, prints its selected URL, and reads `docs_list` and `docs_get` from the `api` socket on each page load. An unavailable discovery socket produces a retryable unavailable page. It does not call the other Package APIs or expose their control operations over HTTP.
+`agentstack serve` hosts the read-only browser reference at its printed
+`http://127.0.0.1:<port>/docs` URL as part of the owner lifecycle. It binds
+only to `127.0.0.1` and reads `docs_list` and `docs_get` from the `api` socket
+on each page load. An unavailable discovery socket produces a retryable
+unavailable page. The owner closes the listener on shutdown. It does not call
+the other Package APIs or expose their control operations over HTTP. The
+optional `agentstack docs` command can still run the reference independently.
 
 When the Codex Package API starts, it reaps recorded child processes from a prior owner and launches every recorded Server again, including Bots and manually created Servers. Each Server creates one main thread on its first successful launch and resumes that stored thread ID later. An explicit `server_stop` lasts until the next AgentStack startup. If the first `thread/start` has an uncertain result, that Server remains stopped with an unconfirmed-start error instead of creating another thread. Inspect its Codex history before recovering that binding; other Servers continue starting.
 
