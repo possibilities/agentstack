@@ -210,6 +210,34 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  packages/bots:
+    dependencies:
+      '@agentstack/api':
+        specifier: workspace:*
+        version: link:../api
+      '@agentstack/codex':
+        specifier: workspace:*
+        version: link:../codex
+      react:
+        specifier: 19.3.0
+        version: 19.3.0
+      react-dom:
+        specifier: 19.3.0
+        version: 19.3.0(react@19.3.0)
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.2
+        version: 26.6.2
+      '@types/react':
+        specifier: ^19.3.0
+        version: 19.3.0
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   packages/codex:
     dependencies:
       '@agentstack/api':
@@ -246,6 +274,9 @@ importers:
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.1
+      next:
+        specifier: 16.3.5
+        version: 16.3.5(@types/node@26.6.2)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -255,6 +286,9 @@ importers:
       '@agentstack/api':
         specifier: workspace:*
         version: link:../api
+      '@agentstack/bots':
+        specifier: workspace:*
+        version: link:../bots
       '@agentstack/codex':
         specifier: workspace:*
         version: link:../codex

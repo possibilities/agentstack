@@ -7,6 +7,33 @@ import type { ActiveThread } from "../src/threads";
 import type { InputObservation, InputObservationTarget, InputObservationIssue } from "../src/input-observer";
 import type { TreeNode } from "./agent-tree";
 
+export type Account = { name: string; active: boolean };
+export type LoginState = { id: string; status: "pending" | "complete" | "failed"; authUrl: string | null; userCode: string | null; account: string | null; error: string | null; targetAccount: string | null };
+
+async function call<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
+  return socketCall(socketPath("codex"), "tools/call", { name, arguments: args }) as Promise<T>;
+}
+
+export async function codexAccounts(): Promise<Account[]> {
+  return (await call<{ accounts: Account[] }>("account_list")).accounts;
+}
+
+export async function selectCodexAccount(name: string): Promise<Account[]> {
+  await call("account_activate", { name });
+  return codexAccounts();
+}
+
+export async function removeCodexAccount(name: string): Promise<Account[]> {
+  return (await call<{ accounts: Account[] }>("account_remove", { name })).accounts;
+}
+
+export async function startCodexLogin(name?: string): Promise<LoginState> { return call("account_login_start", name ? { name } : {}); }
+export async function codexLoginStatus(id: string): Promise<LoginState> { return call("account_login_status", { id }); }
+export async function codexCurrentLogin(): Promise<LoginState | null> {
+  return (await call<{ login: LoginState | null }>("account_login_current")).login;
+}
+export async function cancelCodexLogin(id: string): Promise<void> { await call("account_login_cancel", { id }); }
+
 export async function codexVersion(): Promise<string | null> {
   return installedRuntimeVersion();
 }
@@ -47,7 +74,7 @@ export async function codexTree(includeThreads: boolean): Promise<TreeNode[]> {
     id: server.id,
     kind: "manager",
     label: server.id,
-    detail: server.cwd,
+    detail: `${server.account ?? "account unknown"} · ${server.cwd}`,
     activity: "working",
     children: (server.threads ?? []).map(mapThread),
   }));

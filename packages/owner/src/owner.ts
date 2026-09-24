@@ -29,7 +29,7 @@ export function startOwner(children: OwnedChild[], env: NodeJS.ProcessEnv = proc
     error: null as string | null,
     proc: spawn(child.command, child.args, {
       env: { ...env, ...child.env },
-      stdio: "inherit",
+      stdio: ["inherit", "inherit", "inherit", "ipc"],
       detached: process.platform !== "win32",
     }),
   }));

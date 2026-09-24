@@ -24,12 +24,11 @@ test("readiness times out when an HTTP listener never answers", async () => {
   }
 });
 
-test("a failed record rename rolls back the launched child", async () => {
+test("a failed database write rolls back the launched child", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-persist-"));
   const cwd = await mkdtemp(join(tmpdir(), "agentstack-cwd-"));
   const signals: string[] = [];
   try {
-    await mkdir(join(stateDir, "servers", "blocked.json"), { recursive: true });
     const supervisor = new Supervisor({
       stateDir,
       endpoint: async () => "ws://127.0.0.1:40001",
@@ -41,7 +40,9 @@ test("a failed record rename rolls back the launched child", async () => {
       waitReady: async () => undefined,
     });
     await supervisor.load();
-    await assert.rejects(supervisor.start({ cwd, id: "blocked" }), /EISDIR|directory/);
+    seedAccount(supervisor);
+    supervisor.store.saveServer = () => { throw new Error("database unavailable"); };
+    await assert.rejects(supervisor.start({ cwd, id: "blocked" }), /database unavailable/);
     assert.deepEqual(signals, ["SIGTERM"]);
     assert.equal(supervisor.list().find((server) => server.id === "blocked")?.state, "stopped");
   } finally {
@@ -86,13 +87,16 @@ test("start is idempotent and stop is idempotent", async () => {
       },
     });
     await supervisor.load();
+    seedAccount(supervisor);
     const first = await supervisor.start({ cwd, id: "alpha" });
     const second = await supervisor.start({ cwd, id: "alpha" });
     assert.equal(first.pid, second.pid);
     assert.equal(first.url, "ws://127.0.0.1:41000");
     assert.equal(launched.length, 1);
     assert.equal(launched[0]?.bin, codexRuntimePath());
-    assert.deepEqual(launched[0]?.args, ["app-server", "--listen", "ws://127.0.0.1:41000"]);
+    assert.deepEqual(launched[0]?.args.slice(0, 3), ["app-server", "--listen", "ws://127.0.0.1:41000"]);
+    assert.deepEqual(launched[0]?.args.filter((arg) => arg.startsWith("--") && arg !== "--listen"), ["--identity", "--capabilities", "--history-dir"]);
+    assert.equal(first.account, "codex-1");
     assert.equal(launched[0]?.cwd, cwd);
     const stopped = await supervisor.stop("alpha");
     assert.equal(stopped.state, "stopped");
@@ -144,6 +148,7 @@ test("onChange fires only on persisted running/stopped transitions", async () =>
       },
     });
     await supervisor.load();
+    seedAccount(supervisor);
     await supervisor.start({ cwd, id: "alpha" });
     assert.equal(events.length, 1);
     await supervisor.start({ cwd, id: "alpha" });
@@ -188,6 +193,7 @@ test("caller arguments are merged and --listen is rejected", async () => {
   ]);
   assert.throws(() => appServerArgs(["--listen", "ws://127.0.0.1:1"], url), /do not pass --listen/);
   assert.throws(() => appServerArgs(["--listen=ws://127.0.0.1:1"], url), /do not pass --listen/);
+  assert.throws(() => appServerArgs(["--identity", "/tmp/other"], url), /agentstack owns these axes/);
 
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-args-"));
   const cwd = await mkdtemp(join(tmpdir(), "agentstack-args-cwd-"));
@@ -207,8 +213,9 @@ test("caller arguments are merged and --listen is rejected", async () => {
       },
     });
     await supervisor.load();
+    seedAccount(supervisor);
     await supervisor.start({ cwd, id: "flags", args: ["--model", "gpt-5.4"] });
-    assert.deepEqual(launched[0]?.args, ["app-server", "--listen", url, "--model", "gpt-5.4"]);
+    assert.deepEqual(launched[0]?.args.slice(0, 5), ["app-server", "--listen", url, "--model", "gpt-5.4"]);
     await assert.rejects(supervisor.start({ cwd, id: "nope", args: ["--listen", url] }), /do not pass --listen/);
     assert.equal(launched.length, 1);
   } finally {
@@ -294,6 +301,7 @@ test("a dead in-memory server is stopped and can start again", async () => {
       },
     });
     await supervisor.load();
+    seedAccount(supervisor);
     const first = await supervisor.start({ cwd, id: "alpha" });
     assert.equal(first.pid, 21);
     child.exitCode = 0;
@@ -334,10 +342,13 @@ test("an exited in-memory server is recorded as stopped", async () => {
       },
     });
     await supervisor.load();
+    seedAccount(supervisor);
     await supervisor.start({ cwd, id: "alpha" });
     child.exitCode = 0;
     resolveExit(0);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    for (let i = 0; i < 100 && supervisor.list().find((server) => server.id === "alpha")?.state !== "stopped"; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     const listed = supervisor.list().find((server) => server.id === "alpha");
     assert.equal(listed?.state, "stopped");
     assert.equal(listed?.pid, null);
@@ -436,6 +447,7 @@ test("a reused pid is not treated as the recorded server", async () => {
       }),
     );
     await supervisor.load();
+    seedAccount(supervisor);
     const started = await supervisor.start({ cwd, id: "old" });
     assert.equal(launched.length, 1);
     assert.notEqual(started.pid, 70);
@@ -452,6 +464,7 @@ test("a fake app-server becomes ready and can be stopped", async () => {
   const supervisor = new Supervisor({ stateDir, graceMs: 1_000, launch: (spec) => launchChild({ ...spec, bin: fakeBin }) });
   try {
     await supervisor.load();
+    seedAccount(supervisor);
     const started = await supervisor.start({ cwd, id: "live" });
     assert.equal(started.state, "running");
     assert.equal(started.url, `unix://${join(stateDir, "app", "live.sock")}`);
@@ -485,6 +498,7 @@ test("a persisted live server from another runtime is not returned as codexnk", 
       id: "legacy", pid: 12345, cwd, url: "ws://127.0.0.1:41000", state: "running", codexBin: "codex",
     }));
     await supervisor.load();
+    seedAccount(supervisor);
     await assert.rejects(supervisor.start({ cwd, id: "legacy" }), /different Codex runtime; stop it/);
     assert.equal(launched, false);
     assert.equal(supervisor.list()[0]?.state, "running");
@@ -493,3 +507,7 @@ test("a persisted live server from another runtime is not returned as codexnk", 
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+function seedAccount(supervisor: Supervisor): void {
+  supervisor.store.addAccount(JSON.stringify({ tokens: { refresh_token: "test-refresh", access_token: "access", id_token: "fixture.jwt.signature" } }));
+}

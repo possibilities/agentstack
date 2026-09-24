@@ -8,13 +8,14 @@ export async function runningTree(
 ) {
   const running = (await listServers()).filter((server) => server.state === "running" && server.url);
   if (!includeThreads) {
-    return { servers: running.map((server) => ({ id: server.id, cwd: server.cwd, url: server.url, threads: [] })) };
+    return { servers: running.map((server) => ({ id: server.id, cwd: server.cwd, url: server.url, account: server.account, threads: [] })) };
   }
   const servers = await Promise.all(
     running.map(async (server) => ({
       id: server.id,
       cwd: server.cwd,
       url: server.url,
+      account: server.account,
       threads: await listThreads(server.url ?? ""),
     })),
   );

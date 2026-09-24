@@ -122,10 +122,10 @@ function AgentTree({ nodes }: { nodes: TreeNode[] }) {
   );
 }
 
-export function CodexTree({ initial, eventsUrl }: { initial: TreeNode[] | null; eventsUrl: string | null }) {
+export function CodexTree({ initial, eventsUrl, emptyLabel = "No running agents" }: { initial: TreeNode[] | null; eventsUrl: string | null; emptyLabel?: string }) {
   usePubsub(eventsUrl, ["servers_changed", "threads_changed", "inputs_changed"]);
   const nodes = initial;
   if (nodes === null) return <p role="status" className="m-2 text-base text-muted-foreground">Unavailable</p>;
-  if (nodes.length === 0) return <p role="status" className="m-2 text-base text-muted-foreground">No running agents</p>;
+  if (nodes.length === 0) return <p role="status" className="m-2 text-base text-muted-foreground">{emptyLabel}</p>;
   return <AgentTree nodes={nodes} />;
 }

@@ -6,7 +6,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 export default {
   distDir: process.env.AGENTSTACK_NEXT_DIST_DIR ?? ".next",
-  transpilePackages: ["@agentstack/api", "@agentstack/codex", "@agentstack/owner"],
+  transpilePackages: ["@agentstack/api", "@agentstack/bots", "@agentstack/codex", "@agentstack/owner"],
   turbopack: { root },
   async rewrites() {
     return [{ source: "/_ui/:path*", destination: "/:path*" }];

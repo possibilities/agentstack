@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { runApi, serveApi } from "@agentstack/api";
+import { botsChild } from "./bots.js";
 import { codexChild } from "./codex.js";
 import { startOwner } from "./owner.js";
 import { setOwnerUiSource } from "./ui-source.js";
@@ -60,7 +61,7 @@ const shutdown = () => {
     process.exit(childFailed || failed ? 1 : 0);
   });
 };
-owner = startOwner([codexChild()], env, () => {
+owner = startOwner([codexChild(), botsChild()], env, () => {
   events.publish?.("pids_changed");
   if (!closing && owner.children().some((child) => !child.running)) {
     childFailed = true;
@@ -72,6 +73,7 @@ setOwnerUiSource(() => ({ pid: process.pid, children: owner.children(), websocke
 
 console.error(uiPageUrl(ui.port, "owner", ui.token));
 console.error(uiPageUrl(ui.port, "codex", ui.token));
+console.error(uiPageUrl(ui.port, "bots", ui.token));
 console.error(uiPageUrl(ui.port, "api", ui.token));
 
 process.on("SIGINT", shutdown);

@@ -1,10 +1,12 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { accessSync, constants, createWriteStream } from "node:fs";
 import { connect } from "node:net";
 import { codexRuntimePath } from "./paths.js";
+import { StateStore, type StoredServer } from "./store.js";
+import { RuntimeAuth } from "./runtime-auth.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const DEFAULT_GRACE_MS = 10_000;
@@ -19,11 +21,10 @@ export type ServerView = {
   cwd: string;
   url: string | null;
   state: ServerState;
+  account: string | null;
 };
 
-type RecordFile = ServerView & {
-  codexBin: string;
-};
+type RecordFile = StoredServer;
 
 export type StartInput = {
   cwd: string;
@@ -36,6 +37,7 @@ export type LaunchSpec = {
   args: string[];
   cwd: string;
   logPath: string;
+  env: NodeJS.ProcessEnv;
 };
 
 export type RunningChild = {
@@ -54,6 +56,7 @@ export type SupervisorOptions = {
   graceMs?: number;
   readyTimeoutMs?: number;
   onChange?: () => void;
+  store?: StateStore;
 };
 
 export class Supervisor {
@@ -67,8 +70,12 @@ export class Supervisor {
   private readonly commandLine: (pid: number) => Promise<string | null>;
   private readonly graceMs: number;
   private readonly readyTimeoutMs: number;
+  readonly store: StateStore;
+  readonly runtime: RuntimeAuth;
 
   constructor(private readonly options: SupervisorOptions) {
+    this.store = options.store ?? new StateStore(options.stateDir);
+    this.runtime = new RuntimeAuth(this.store);
     this.launch = options.launch ?? launchChild;
     this.waitReady = options.waitReady ?? waitForReady;
     this.endpoint = options.endpoint ?? ((id) => unixEndpoint(options.stateDir, id));
@@ -79,15 +86,22 @@ export class Supervisor {
   }
 
   async load(): Promise<void> {
-    await mkdir(this.recordsDir(), { recursive: true, mode: 0o700 });
-    await mkdir(this.options.stateDir, { recursive: true, mode: 0o700 });
+    for (const record of this.store.servers()) this.records.set(record.id, record);
+    // One-time import of the former JSON records, including children that need reaping.
     const names = await readdir(this.recordsDir()).catch(() => []);
     for (const name of names) {
       if (!name.endsWith(".json")) continue;
       try {
         const parsed = JSON.parse(await readFile(join(this.recordsDir(), name), "utf8")) as RecordFile;
         if (!parsed?.id || !ID_PATTERN.test(parsed.id)) continue;
-        this.records.set(parsed.id, parsed);
+        if (!this.store.hasServer(parsed.id)) {
+          parsed.account ??= null;
+          parsed.authVersion ??= null;
+          parsed.runtimeRoot ??= null;
+          this.store.saveServer(parsed);
+          this.records.set(parsed.id, parsed);
+        }
+        await rm(join(this.recordsDir(), name));
       } catch {
         continue;
       }
@@ -98,10 +112,14 @@ export class Supervisor {
     for (const record of this.records.values()) {
       if (record.state !== "running" || record.pid === null || record.url === null) continue;
       if (await this.ownsProcess(record.pid, record.url)) await this.signalPid(record.pid, record.url);
+      await this.finishRuntime(record);
       await cleanupEndpoint(record.url);
       this.markStopped(record);
       await this.persist(record);
       this.notify();
+    }
+    for (const record of this.records.values()) {
+      if (record.state === "stopped" && record.runtimeRoot) await this.finishRuntime(record);
     }
   }
 
@@ -136,6 +154,21 @@ export class Supervisor {
       }
       return viewOf(current);
     }
+    if (current?.runtimeRoot) {
+      await this.runtime.finish(current);
+      if (current.runtimeRoot) throw new Error(`server ${id} has unreconciled Codex credentials; sign in again or inspect its private runtime`);
+    }
+    const selected = this.store.activeAccount().name;
+    for (const record of this.records.values()) {
+      if (record.account === selected && record.runtimeRoot) {
+        if (record.state === "stopped") await this.finishRuntime(record);
+        else await this.runtime.reconcile(record);
+      }
+    }
+    const account = this.store.activeAccount();
+    const capabilities = join(this.options.stateDir, "capabilities", "default");
+    const history = join(this.options.stateDir, "history");
+    await Promise.all([mkdir(capabilities, { recursive: true, mode: 0o700 }), mkdir(history, { recursive: true, mode: 0o700 })]);
 
     let lastError: Error | undefined;
     for (let attempt = 0; attempt < PORT_ATTEMPTS; attempt += 1) {
@@ -143,19 +176,28 @@ export class Supervisor {
       await prepareEndpoint(url);
       const logPath = join(this.options.stateDir, "logs", `${id}.log`);
       await mkdir(join(this.options.stateDir, "logs"), { recursive: true, mode: 0o700 });
+      const runtimeRoot = await this.runtime.prepare(id);
+      const identity = await mkdtemp(join(this.options.stateDir, ".identity-"));
       let child: RunningChild;
       try {
+        await writeFile(join(identity, "auth.json"), account.auth, { mode: 0o600 });
+        const env = { ...process.env };
+        for (const key of ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_BASE_URL", "CODEX_HOME", "AGENTUSAGE_AUTH_TOKEN", "AGENTUSAGE_ACCOUNT"]) delete env[key];
+        env.TMPDIR = runtimeRoot;
         child = this.launch({
           bin: codexBin,
-          args: appServerArgs(userArgs, url),
+          args: [...appServerArgs(userArgs, url), "--identity", identity, "--capabilities", capabilities, "--history-dir", history],
           cwd,
           logPath,
+          env,
         });
       } catch (error) {
+        await rm(identity, { recursive: true, force: true });
+        await rm(runtimeRoot, { recursive: true, force: true });
         throw new Error(error instanceof Error ? error.message : String(error));
       }
       this.children.set(id, child);
-      const record: RecordFile = { id, pid: child.pid, cwd, url, state: "running", codexBin };
+      const record: RecordFile = { id, pid: child.pid, cwd, url, state: "running", codexBin, account: account.name, authVersion: account.version, runtimeRoot };
       this.records.set(id, record);
       this.watchExit(id, child, record);
       let persisted = false;
@@ -163,16 +205,21 @@ export class Supervisor {
         await this.persist(record);
         persisted = true;
         await this.waitReady(url, child.exited, this.readyTimeoutMs);
+        await rm(identity, { recursive: true, force: true });
+        await this.runtime.watch(record);
         this.notify();
         return viewOf(record);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         await this.killChild(id, child);
+        await this.finishRuntime(record);
+        await rm(identity, { recursive: true, force: true });
         await cleanupEndpoint(url);
         this.markStopped(record);
         await this.persist(record).catch(() => undefined);
         this.notify();
         if (!persisted) throw lastError;
+        if (record.runtimeRoot) throw lastError;
       }
     }
     throw lastError ?? new Error("failed to start app-server");
@@ -188,6 +235,7 @@ export class Supervisor {
     } else if (record.pid !== null && record.url !== null) {
       await this.signalPid(record.pid, record.url);
     }
+    await this.finishRuntime(record);
     if (record.url) await cleanupEndpoint(record.url);
     this.markStopped(record);
     await this.persist(record);
@@ -207,6 +255,7 @@ export class Supervisor {
       void this.enqueue(id, async () => {
         if (this.children.get(id) !== child || this.records.get(id) !== record) return;
         this.children.delete(id);
+        await this.finishRuntime(record);
         if (record.url) await cleanupEndpoint(record.url);
         this.markStopped(record);
         await this.persist(record);
@@ -296,21 +345,19 @@ export class Supervisor {
   }
 
   private async persist(record: RecordFile): Promise<void> {
-    const path = join(this.recordsDir(), `${record.id}.json`);
-    const temporary = `${path}.${randomBytes(8).toString("hex")}.tmp`;
-    try {
-      await writeFile(temporary, JSON.stringify(record), { mode: 0o600 });
-      await rename(temporary, path);
-    } finally {
-      await rm(temporary, { force: true });
-    }
+    this.store.saveServer(record);
+  }
+
+  private async finishRuntime(record: RecordFile): Promise<void> {
+    try { await this.runtime.finish(record); }
+    catch (error) { console.error(`Codex auth reconciliation for ${record.id} failed: ${error}`); }
   }
 }
 
 export function appServerArgs(userArgs: readonly string[], url: string): string[] {
   for (const arg of userArgs) {
-    if (arg === "--listen" || arg.startsWith("--listen=")) {
-      throw new Error("do not pass --listen; agentstack sets the websocket listener");
+    if (["--listen", "--identity", "--capabilities", "--history-dir"].some((flag) => arg === flag || arg.startsWith(`${flag}=`))) {
+      throw new Error("do not pass --listen, --identity, --capabilities, or --history-dir; agentstack owns these axes");
     }
   }
   const args = [...userArgs];
@@ -370,6 +417,7 @@ function viewOf(record: RecordFile): ServerView {
     cwd: record.cwd,
     url: record.url,
     state: record.state,
+    account: record.account,
   };
 }
 
@@ -410,7 +458,7 @@ export function launchChild(spec: LaunchSpec): RunningChild {
       cwd: spec.cwd,
       detached: false,
       stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
+      env: spec.env,
     });
   } catch (error) {
     log.end();
