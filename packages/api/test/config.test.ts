@@ -19,7 +19,7 @@ test("codex declares socket, MCP, and WebSocket transports", async () => {
   assert.match(codex.config.mcp?.description ?? "", /codex/);
   assert.match(codex.config.websocket?.description ?? "", /codex/i);
   const codexApi = await loadPackageApi(codex.dir);
-  assert.deepEqual(Object.keys(codexApi.events?.topics ?? {}).sort(), ["inputs_changed", "servers_changed", "threads_changed"]);
+  assert.deepEqual(Object.keys(codexApi.events?.topics ?? {}).sort(), ["servers_changed", "threads_changed"]);
 });
 
 test("a package API loads from the built sibling api.ts without an index", async () => {

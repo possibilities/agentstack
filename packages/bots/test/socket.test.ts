@@ -48,7 +48,7 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     assert.equal(listedTools.transport.type, "socket");
     assert.equal(listedTools.transport.path, botsSocket);
     assert.equal(listedTools.websocket, null);
-    assert.deepEqual(Object.keys(listedTools.events.topics).sort(), ["bots_changed", "inputs_changed", "threads_changed"]);
+    assert.deepEqual(Object.keys(listedTools.events.topics).sort(), ["bots_changed", "threads_changed"]);
     assert.equal(listedTools.events.scope.required, true);
     assert.equal(listedTools.events.scope.example, "bot-1");
     assert.deepEqual(
@@ -92,8 +92,9 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     await assert.rejects(socketSubscribe(botsSocket, ["bots_changed"], () => undefined, { scope: "bot-999" }), /invalid event scope/);
     const firstEvents: string[] = [];
     const secondEvents: string[] = [];
-    firstSubscription = await socketSubscribe(botsSocket, ["bots_changed", "threads_changed", "inputs_changed"], (topic) => firstEvents.push(topic), { scope: "bot-1" });
-    secondSubscription = await socketSubscribe(botsSocket, ["bots_changed", "threads_changed", "inputs_changed"], (topic) => secondEvents.push(topic), { scope: "bot-2" });
+    firstSubscription = await socketSubscribe(botsSocket, ["bots_changed", "threads_changed"], (topic) => firstEvents.push(topic), { scope: "bot-1" });
+    secondSubscription = await socketSubscribe(botsSocket, ["bots_changed", "threads_changed"], (topic) => secondEvents.push(topic), { scope: "bot-2" });
+    await assert.rejects(socketSubscribe(botsSocket, ["inputs_changed"], () => undefined, { scope: "bot-1" }), /unknown topic/);
     codex.publish?.("servers_changed", "bot-1");
     codex.publish?.("servers_changed", "bot-2");
     for (let i = 0; i < 100 && (!firstEvents.includes("bots_changed") || !secondEvents.includes("bots_changed")); i += 1) {
@@ -105,11 +106,6 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     codex.publish?.("threads_changed", "bot-1");
     for (let i = 0; i < 100 && !firstEvents.includes("threads_changed"); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
     assert.ok(firstEvents.includes("threads_changed"));
-    assert.equal(secondEvents.length, 0);
-    firstEvents.length = 0;
-    codex.publish?.("inputs_changed", "bot-1");
-    for (let i = 0; i < 100 && !firstEvents.includes("inputs_changed"); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.ok(firstEvents.includes("inputs_changed"));
     assert.equal(secondEvents.length, 0);
     firstEvents.length = 0;
     codex.publish?.("threads_changed", "bot-2");
@@ -156,7 +152,7 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     const foreignReserved = (await call(codexSocket, "server_start", { id: "bot-6", cwd: workDir })) as View;
     assert.equal(foreignReserved.cwd, workDir);
     const foreignEvents: string[] = [];
-    const foreignSubscription = await socketSubscribe(botsSocket, ["bots_changed", "threads_changed", "inputs_changed"], (topic) => foreignEvents.push(topic), { scope: "bot-6" });
+    const foreignSubscription = await socketSubscribe(botsSocket, ["bots_changed", "threads_changed"], (topic) => foreignEvents.push(topic), { scope: "bot-6" });
     codex.publish?.("threads_changed", "bot-6");
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.equal(foreignEvents.length, 0);
@@ -206,15 +202,11 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     assert.equal(afterBoot.servers.find((server) => server.id === "other")?.mainThreadId, unrelated.mainThreadId);
     assert.equal(afterBoot.servers.find((server) => server.id === "bot-11")?.state, "running");
     const resumedEvents: string[] = [];
-    const resumedSubscription = await socketSubscribe(botsSocket, ["bots_changed", "threads_changed", "inputs_changed"], (topic) => resumedEvents.push(topic), { scope: "bot-1" });
+    const resumedSubscription = await socketSubscribe(botsSocket, ["bots_changed", "threads_changed"], (topic) => resumedEvents.push(topic), { scope: "bot-1" });
     await codex.close();
     codex = await serveApi({ name: "codex", transport: "socket", env });
     for (let i = 0; i < 200 && !resumedEvents.includes("threads_changed"); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
     assert.ok(resumedEvents.includes("threads_changed"));
-    resumedEvents.length = 0;
-    codex.publish?.("inputs_changed", "bot-1");
-    for (let i = 0; i < 100 && !resumedEvents.includes("inputs_changed"); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.ok(resumedEvents.includes("inputs_changed"));
     await resumedSubscription.close();
     const history = (await readFile(join(stateDir, "history", "bot-1", "fake-threads.jsonl"), "utf8"))
       .trim().split("\n").map((line) => JSON.parse(line) as { method: string; threadId: string; cwd: string });
