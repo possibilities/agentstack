@@ -56,7 +56,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     const client = new Client({ name: "owner-test", version: "1.0.0" });
     await client.connect(new StreamableHTTPClientTransport(new URL(url)));
     try {
-      assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), ["owner_status"]);
+      assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), ["owner_status", "events_catalog", "events_subscribe", "events_status", "events_unsubscribe"]);
       const result = await client.callTool({ name: "owner_status", arguments: {} });
       assert.equal((result.structuredContent as { pid?: number } | undefined)?.pid, child.pid);
     } finally {

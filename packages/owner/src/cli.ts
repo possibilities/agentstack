@@ -4,6 +4,7 @@ import { connect } from "node:net";
 import { runDocs, serveDocs } from "@agentstack/docs";
 import { apiChild, authChild, rolesChild, websocketChild } from "./children.js";
 import { botsChild } from "./bots.js";
+import { createMcpEventSubscriptions } from "./mcp-delivery.js";
 import { serveInspectorCatalog } from "./inspector-catalog.js";
 import { inspectorChild, inspectorPort } from "./inspector.js";
 import { startOwner } from "./owner.js";
@@ -67,6 +68,7 @@ try {
 let docs: Awaited<ReturnType<typeof serveDocs>> | undefined;
 let mcp: Awaited<ReturnType<typeof serveMcp>> | undefined;
 let catalog: Awaited<ReturnType<typeof serveInspectorCatalog>> | undefined;
+const subscriptions = createMcpEventSubscriptions(process.env);
 try {
   docs = await serveDocs({
     env: process.env,
@@ -74,11 +76,11 @@ try {
     basePath: "/docs",
   });
   statusSource.setDocsUrl(docs.url);
-  mcp = await serveMcp({ env: process.env });
+  mcp = await serveMcp({ env: process.env, subscriptions });
   statusSource.setMcpUrls(mcp.urls);
   catalog = await serveInspectorCatalog({ env: process.env, mcpPort: mcp.port });
 } catch (error) {
-  await Promise.allSettled([catalog?.close(), mcp?.close(), docs?.close(), events.close()]);
+  await Promise.allSettled([subscriptions.close(), catalog?.close(), mcp?.close(), docs?.close(), events.close()]);
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 }
@@ -94,7 +96,7 @@ const shutdown = () => {
   void (async () => {
     // Refuse new requests first. The remaining socket Servers drain their
     // active calls while the dependencies they call are still running.
-    const ingress = await Promise.allSettled([owner.stop(["websocket", "inspector", "uix"]), events.close(), docs?.close(), mcp?.close(), catalog?.close()]);
+    const ingress = await Promise.allSettled([subscriptions.close(), owner.stop(["websocket", "inspector", "uix"]), events.close(), docs?.close(), mcp?.close(), catalog?.close()]);
     const children = await Promise.allSettled([owner.close()]);
     return [...ingress, ...children];
   })().then((results) => {
@@ -114,6 +116,7 @@ owner = startOwner([apiChild(), authChild(), rolesChild(), botsChild(mcp.port), 
   }
 }, [["auth"], ["bots"], ["roles"], ["api"]]);
 statusSource.attach(owner);
+subscriptions.resume();
 const indexUrl = `http://127.0.0.1:${uixListenPort}/`;
 const uixUrl = `http://127.0.0.1:${uixListenPort}/x`;
 statusSource.setIndexUrl(indexUrl);

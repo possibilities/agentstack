@@ -8,15 +8,19 @@ _Avoid_: MCP server, endpoint, route
 
 ## Transport
 
-A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are the names. `mcp` exposes operations over loopback HTTP through the running socket Package APIs; it does not expose event subscriptions. `websocket` exposes operations and event subscriptions over a shared loopback listener, forwarding to those same socket Package APIs.
+A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are the names. `mcp` exposes operations over loopback HTTP through the running socket Package APIs and, under the owner, offers generated agent-facing event tools. `websocket` exposes operations and event subscriptions over a shared loopback listener, forwarding to those same socket Package APIs.
 
 _Avoid_: protocol, binding
 
 ## Event
 
-A named change notice a Package API publishes on an event-capable transport. Topics and descriptions are declared in TypeScript on the PackageApi (`events`); the socket transport delivers them to connections that call `events/subscribe`. A Package API can require a subscription scope (such as a bot ID), which filters notices without adding data to them. A notice carries only the topic name — never a payload or credentials — so callers snapshot state after (re)subscribing.
+A named change notice a Package API publishes on an event-capable transport. Topics and descriptions are declared in TypeScript on the PackageApi (`events`); the socket transport delivers them to connections that call `events/subscribe`. A Package API can require a subscription scope (such as a bot ID), which filters notices without adding data to them. A notice carries only the topic name — never a payload or credentials — so callers snapshot state after (re)subscribing. The owner-managed MCP event tools turn notices into fresh read-only operation values for subscribed Bot threads.
 
 _Avoid_: stream, feed, pubsub
+
+## MCP event subscription
+
+A durable, revisionless request by a verified Bot thread to watch one Package API topic and re-read one read-only operation after each invalidation. The owner records the request, reconnects and resnapshots after interruptions, coalesces unchanged values, and starts a Codex turn on that same sanctioned thread for a changed value. The initial value is returned to the subscribing tool call; event notices themselves carry no values.
 
 ## Codex account
 

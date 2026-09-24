@@ -12,6 +12,7 @@ import { serveSocket } from "../src/socket.js";
 import { mcpPort, socketPath } from "../src/workspace.js";
 import { botMcpUrl } from "../src/bot-mcp-identity.js";
 import type { InvocationContext } from "../src/operation.js";
+import { McpEventSubscriptions, type EventValue } from "../src/mcp-subscriptions.js";
 
 test("one HTTP process exposes each configured Package API and forwards operations to socket owners", { timeout: 30_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-mcp-"));
@@ -87,7 +88,9 @@ test("a bot-bound MCP URL forwards verified bot and Codex thread context without
   await mkdir(packageDir, { recursive: true });
   await writeFile(join(packageDir, "api.yaml"), "name: sample\ndescription: Sample.\nmcp:\n  description: Sample MCP.\n");
   let endpoint = "unix:///tmp/bot-instance-1.sock";
+  let snapshotValue = 0;
   const seen: Array<{ input: unknown; invocation: InvocationContext | undefined }> = [];
+  const delivered: EventValue[] = [];
   const bots = await serveSocket({
     info: { name: "bots", description: "Bots.", transportDescription: "Socket.", path: socketPath("bots", env) }, context: {},
     operations: [operation({ name: "bot_list", description: "List bots.", input: z.strictObject({}), output: z.object({ bots: z.array(z.unknown()) }),
@@ -95,14 +98,34 @@ test("a bot-bound MCP URL forwards verified bot and Codex thread context without
   });
   const sample = await serveSocket({
     info: { name: "sample", description: "Sample.", transportDescription: "Socket.", path: socketPath("sample", env) }, context: {},
-    operations: [operation({ name: "who", description: "Read the caller.", input: z.strictObject({ value: z.string() }), output: z.object({ invocation: z.unknown() }),
-      async call(_ctx, input, invocation) { seen.push({ input, invocation }); return { invocation }; } })],
+    operations: [
+      operation({ name: "who", description: "Read the caller.", input: z.strictObject({ value: z.string() }), output: z.object({ invocation: z.unknown() }),
+        async call(_ctx, input, invocation) { seen.push({ input, invocation }); return { invocation }; } }),
+      operation({ name: "snapshot", description: "Read state.", input: z.strictObject({}), output: z.object({ value: z.number() }), annotations: { readOnlyHint: true },
+        async call() { return { value: snapshotValue }; } }),
+    ],
+    events: { topics: { sample_changed: "Refresh snapshot." } },
   });
-  const served = await serveMcp({ root, env });
+  const subscriptions = new McpEventSubscriptions(env, async (target) => { assert.equal(target.botId, "bot-1"); }, async (event) => { delivered.push(event); });
+  const served = await serveMcp({ root, env, subscriptions });
   const url = botMcpUrl(served.urls.sample!, "bot-1", endpoint, env);
   const client = new Client({ name: "bot-bound", version: "1.0.0" });
   try {
     await client.connect(new StreamableHTTPClientTransport(new URL(url)));
+    assert.ok((await client.listTools()).tools.some((tool) => tool.name === "events_subscribe"));
+    const catalog = await client.callTool({ name: "events_catalog", arguments: {}, _meta: { threadId: "thread-1" } });
+    assert.deepEqual((catalog.structuredContent as { topics: Record<string, string> }).topics, { sample_changed: "Refresh snapshot." });
+    const subscribed = await client.callTool({ name: "events_subscribe", arguments: { topic: "sample_changed", readOperation: "snapshot" }, _meta: { threadId: "thread-1" } });
+    const sub = subscribed.structuredContent as { subscription: { id: string }; value: { value: number } };
+    assert.deepEqual(sub.value, { value: 0 });
+    snapshotValue = 1;
+    sample.publish?.("sample_changed");
+    for (let i = 0; i < 100 && !delivered.length; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.deepEqual(delivered[0]?.value, { value: 1 });
+    const status = await client.callTool({ name: "events_status", arguments: {}, _meta: { threadId: "thread-1" } });
+    assert.equal((status.structuredContent as { subscriptions: unknown[] }).subscriptions.length, 1);
+    const removed = await client.callTool({ name: "events_unsubscribe", arguments: { id: sub.subscription.id }, _meta: { threadId: "thread-1" } });
+    assert.deepEqual(removed.structuredContent, { id: sub.subscription.id, removed: true });
     const call = await client.callTool({ name: "who", arguments: { value: "unchanged" }, _meta: { threadId: "thread-1", sessionId: "session-1" } });
     assert.equal(call.isError, undefined);
     assert.deepEqual(seen, [{ input: { value: "unchanged" }, invocation: {
@@ -123,6 +146,7 @@ test("a bot-bound MCP URL forwards verified bot and Codex thread context without
     assert.equal((await lstat(join(env.AGENTSTACK_STATE_DIR, "mcp-bot-identity.key"))).mode & 0o777, 0o600);
   } finally {
     await client.close();
+    await subscriptions.close();
     await served.close();
     await sample.close();
     await bots.close();
