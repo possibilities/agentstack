@@ -177,7 +177,8 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     const canvas = await fetch(uixUrl);
     assert.equal(canvas.status, 200);
     const canvasHtml = await canvas.text();
-    assert.match(canvasHtml, /<main class="min-h-dvh bg-background"><\/main>/);
+    assert.match(canvasHtml, /<main[^>]*data-canvas="workbench"/);
+    assert.match(canvasHtml, /<h1[^>]*>AgentStack canvas<\/h1>/);
     assert.doesNotMatch(canvasHtml, /Local links and running Servers/);
     const stylesheet = /href="(\/_next\/static\/[^"]+\.css)"/.exec(canvasHtml)?.[1];
     assert.ok(stylesheet);

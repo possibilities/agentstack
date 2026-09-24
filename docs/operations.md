@@ -37,7 +37,9 @@ be AgentStack.
 
 The standalone Next.js UI app is served by an owned child on `127.0.0.1:8745`
 by default. Its `/` index snapshots the owner and Codex Package APIs on each
-request; `/x` is the blank experiment canvas. Both pages serve markdown twins
+request; `/x` is the experiment canvas, currently a live read-only workbench that
+snapshots every Package API over sockets and then follows the loopback WebSocket
+in the browser. Both pages serve markdown twins
 (`/index.md`, `/x.md`). Set `AGENTSTACK_UIX_PORT` to
 another available nonzero port before starting the owner. The canvas URL is
 printed and returned by `owner_status` as `uixUrl`, alongside `indexUrl` and the

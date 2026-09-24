@@ -1,10 +1,14 @@
 import type { Metadata } from "next";
+import { Workbench } from "@/components/canvas/workbench";
+import { loadSnapshot } from "@/lib/stack/snapshot";
+
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "UI Experiments",
+  title: "AgentStack canvas",
   alternates: { types: { "text/markdown": "/x.md" } },
 };
 
-export default function Page() {
-  return <main className="min-h-dvh bg-background" />;
+export default async function Page() {
+  return <Workbench snapshot={await loadSnapshot()} />;
 }
