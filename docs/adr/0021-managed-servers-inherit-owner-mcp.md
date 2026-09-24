@@ -1,4 +1,4 @@
-# 20. Connect managed Codex Servers to the owner's MCP Package APIs
+# 21. Connect managed Codex Servers to the owner's MCP Package APIs
 
 Status: accepted, 2026-09-24. Extends [ADR 0011](0011-owner-managed-mcp-inspector.md)'s live MCP catalogue and [ADR 0017](0017-persist-server-launch-arguments.md)'s separation of caller and launch-owned arguments.
 
