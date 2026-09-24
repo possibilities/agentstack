@@ -117,9 +117,17 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     }
     const docsUrl = /AgentStack reference: (http:\/\/\S+\/docs)/.exec(stderr)?.[1];
     assert.ok(docsUrl, stderr);
-    const uixUrl = `http://127.0.0.1:${uixPort}/`;
+    const indexUrl = `http://127.0.0.1:${uixPort}/`;
+    const uixUrl = `http://127.0.0.1:${uixPort}/x`;
+    assert.ok(stderr.includes(`AgentStack index: ${indexUrl}`), stderr);
     assert.ok(stderr.includes(`AgentStack UI canvas: ${uixUrl}`), stderr);
-    assert.equal((await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} }) as { uixUrl: string }).uixUrl, uixUrl);
+    const ownerStatus = await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} }) as {
+      indexUrl: string; uixUrl: string; inspectorUrl: string; mcpUrls: Record<string, string>;
+    };
+    assert.equal(ownerStatus.indexUrl, indexUrl);
+    assert.equal(ownerStatus.uixUrl, uixUrl);
+    assert.equal(ownerStatus.inspectorUrl, inspectorUrl);
+    assert.equal(ownerStatus.mcpUrls.owner, url);
     const duplicate = spawn(process.execPath, [cli, "serve"], {
       stdio: ["ignore", "ignore", "pipe"],
       env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0" },
@@ -129,6 +137,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     assert.equal(await new Promise<number | null>((resolve) => duplicate.once("exit", resolve)), 0);
     assert.match(duplicateError, /AgentStack is already running/);
     assert.ok(duplicateError.includes(docsUrl), duplicateError);
+    assert.ok(duplicateError.includes(indexUrl), duplicateError);
     assert.ok(duplicateError.includes(uixUrl), duplicateError);
     assert.doesNotMatch(duplicateError, /a required child stopped|EADDRINUSE/);
     assert.equal((await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} }) as { pid: number }).pid, child.pid);
@@ -144,22 +153,37 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     assert.match(html, new RegExp((await revision.json() as { revision: string }).revision));
     assert.equal((await fetch(`${docsUrl}/site.css`)).status, 200);
     assert.equal((await fetch(new URL("/", docsUrl))).status, 404);
-    let canvas: Response | undefined;
+    let index: Response | undefined;
     for (let i = 0; i < 200; i += 1) {
       try {
-        canvas = await fetch(uixUrl);
-        if (canvas.ok) break;
+        index = await fetch(new URL("/", uixUrl));
+        if (index.ok) break;
       } catch {
         // Next.js may still be starting.
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    assert.equal(canvas?.status, 200, stderr);
+    assert.equal(index?.status, 200, stderr);
+    const indexHtml = await index.text();
+    assert.match(indexHtml, /<h1[^>]*>AgentStack<\/h1>/);
+    assert.match(indexHtml, /Local links and running Servers/);
+    assert.match(indexHtml, /Package API reference/);
+    assert.match(indexHtml, /MCP Inspector/);
+    assert.match(indexHtml, /No running Codex Servers/);
+    assert.match(indexHtml, /Package API URLs/);
+    assert.ok(indexHtml.includes(uixUrl));
+    assert.ok(indexHtml.includes(docsUrl));
+    assert.ok(indexHtml.includes(ownerStatus.mcpUrls.owner));
+    const canvas = await fetch(uixUrl);
+    assert.equal(canvas.status, 200);
     const canvasHtml = await canvas.text();
     assert.match(canvasHtml, /<main class="min-h-dvh bg-background"><\/main>/);
+    assert.doesNotMatch(canvasHtml, /Local links and running Servers/);
     const stylesheet = /href="(\/_next\/static\/[^"]+\.css)"/.exec(canvasHtml)?.[1];
     assert.ok(stylesheet);
-    assert.equal((await fetch(new URL(stylesheet, uixUrl))).status, 200);
+    const css = await fetch(new URL(stylesheet, uixUrl));
+    assert.equal(css.status, 200);
+    assert.match(await css.text(), /prefers-color-scheme:\s*dark/);
 
     assert.ok(!stderr.includes("https://"), stderr);
     assert.ok(!stderr.includes("token="), stderr);

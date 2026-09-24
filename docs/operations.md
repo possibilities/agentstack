@@ -33,13 +33,14 @@ children. A fixed MCP port already in use is refused before startup, even if
 the owner socket cannot be reached; an unrelated listener is never assumed to
 be AgentStack.
 
-The UI canvas is a standalone Next.js app served by an owned child on
-`127.0.0.1:8745` by default. Set `AGENTSTACK_UIX_PORT` to another available
-nonzero port before starting the owner. Its URL is printed and returned by
-`owner_status` as `uixUrl`; the child serves the built `packages/uix/.next`
-output and shuts down with the owner. Rebuild and restart the owner after
-changing the canvas. A port already in use is refused before the owner creates
-any sockets.
+The standalone Next.js UI app is served by an owned child on `127.0.0.1:8745`
+by default. Its `/` index snapshots the owner and Codex Package APIs on each
+request; `/x` is the blank experiment canvas. Set `AGENTSTACK_UIX_PORT` to
+another available nonzero port before starting the owner. The canvas URL is
+printed and returned by `owner_status` as `uixUrl`, alongside `indexUrl` and the
+current docs, Inspector, and MCP URLs. The child serves the built `packages/uix/.next` output
+and shuts down with the owner. Rebuild and restart the owner after changing the
+app. A port already in use is refused before the owner creates any sockets.
 
 The owner's MCP listener forwards tool calls to their socket Servers. Its
 Inspector child reads a generated, read-only file under `<state>/inspector-*`;

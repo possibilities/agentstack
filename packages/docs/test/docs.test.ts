@@ -31,7 +31,10 @@ test("the reference renders all current Package APIs from the discovery socket",
     assert.match(html, new RegExp((await revision.json() as { revision: string }).revision));
     const css = await fetch(new URL("site.css", docs.url));
     assert.equal(css.status, 200);
-    assert.match(await css.text(), /\.schema-grid/);
+    const stylesheet = await css.text();
+    assert.match(stylesheet, /\.schema-grid/);
+    assert.match(stylesheet, /@media \(prefers-color-scheme: dark\)/);
+    assert.match(html, /<meta name="color-scheme" content="light dark">/);
     const badHost = await new Promise<number>((resolve, reject) => {
       const client = request(docs.url, { headers: { Host: "example.com" } }, (reply) => {
         reply.resume();
@@ -44,7 +47,9 @@ test("the reference renders all current Package APIs from the discovery socket",
     await discovery.close();
     const unavailable = await fetch(docs.url);
     assert.equal(unavailable.status, 503);
-    assert.match(await unavailable.text(), /Discovery API unavailable/);
+    const unavailableHtml = await unavailable.text();
+    assert.match(unavailableHtml, /Discovery API unavailable/);
+    assert.match(unavailableHtml, /<meta name="color-scheme" content="light dark">/);
   } finally {
     await docs.close();
     await discovery.close();

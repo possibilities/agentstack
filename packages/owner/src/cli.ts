@@ -31,9 +31,9 @@ if (command === "api") {
 // and then fail after trying to claim the first owner's ports.
 const existing = await socketCall(socketPath("owner"), "tools/call", {
   name: "owner_status", arguments: {},
-}, { timeoutMs: 1_000 }).catch(() => null) as { pid?: unknown; docsUrl?: unknown; uixUrl?: unknown } | null;
+}, { timeoutMs: 1_000 }).catch(() => null) as { pid?: unknown; docsUrl?: unknown; indexUrl?: unknown; uixUrl?: unknown } | null;
 if (existing && typeof existing.pid === "number") {
-  console.error(`AgentStack is already running (pid ${existing.pid}).${typeof existing.docsUrl === "string" ? ` Reference: ${existing.docsUrl}` : ""}${typeof existing.uixUrl === "string" ? ` UI canvas: ${existing.uixUrl}` : ""}`);
+  console.error(`AgentStack is already running (pid ${existing.pid}).${typeof existing.docsUrl === "string" ? ` Reference: ${existing.docsUrl}` : ""}${typeof existing.indexUrl === "string" ? ` Index: ${existing.indexUrl}` : ""}${typeof existing.uixUrl === "string" ? ` UI canvas: ${existing.uixUrl}` : ""}`);
   process.exit(0);
 }
 
@@ -76,6 +76,7 @@ try {
   });
   statusSource.setDocsUrl(docs.url);
   mcp = await serveMcp({ env: process.env });
+  statusSource.setMcpUrls(mcp.urls);
   catalog = await serveInspectorCatalog({ env: process.env, mcpPort: mcp.port });
 } catch (error) {
   await Promise.allSettled([catalog?.close(), mcp?.close(), docs?.close(), events.close()]);
@@ -114,11 +115,15 @@ owner = startOwner([apiChild(), authChild(), codexChild(), botsChild(), websocke
   }
 }, [["auth"], ["bots"], ["codex"], ["api"]]);
 statusSource.attach(owner);
-const uixUrl = `http://127.0.0.1:${uixListenPort}/`;
+const indexUrl = `http://127.0.0.1:${uixListenPort}/`;
+const uixUrl = `http://127.0.0.1:${uixListenPort}/x`;
+statusSource.setIndexUrl(indexUrl);
 statusSource.setUixUrl(uixUrl);
+statusSource.setInspectorUrl(`http://127.0.0.1:${inspectorListenPort}/`);
 
 if (events.socketPath) console.error(events.socketPath);
 console.error(`AgentStack reference: ${docs.url}`);
+console.error(`AgentStack index: ${indexUrl}`);
 console.error(`AgentStack UI canvas: ${uixUrl}`);
 for (const [name, url] of Object.entries(mcp.urls)) console.error(`${name} MCP: ${url}`);
 console.error(`AgentStack Inspector: http://127.0.0.1:${inspectorListenPort}/`);
