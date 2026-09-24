@@ -20,10 +20,3 @@ Call `detach()` to end observation and restore the unregistered path. An
 unexpected `close()` leaves the configured unavailable policy active until
 another owner attaches. This library API
 does not expose input authority to the browser UI.
-
-`input_observe_start` explicitly attaches a pass-through observer to one loaded
-thread; `input_observe_stop` detaches it; `input_observe_list` returns the latest
-200 in-process candidates and outcomes for the Codex UI. Input text travels
-through the package's private socket response, never through the browser's
-`inputs_changed` pub/sub event, which only triggers a refresh. No observer is
-attached by simply starting an app-server.

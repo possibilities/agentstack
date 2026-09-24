@@ -48,11 +48,10 @@ test("codex lifecycle and change events are served on the namespaced unix socket
     assert.deepEqual(listedTools.events?.topics, {
       servers_changed: "Published when a Codex app-server record starts, stops, exits, or is reaped.",
       threads_changed: "Published when a loaded Codex thread starts, changes status, or closes.",
-      inputs_changed: "Published when an observed middleware candidate or its outcome changes; prompt bodies are never sent on this channel.",
     });
     assert.deepEqual(
       listedTools.tools.map((tool) => tool.name),
-      ["server_start", "server_stop", "server_remove", "server_list", "input_observe_start", "input_observe_stop", "input_observe_list"],
+      ["server_start", "server_stop", "server_remove", "server_list"],
     );
     assert.ok(listedTools.tools.every((tool) => tool.description.length > 0));
 
@@ -64,9 +63,11 @@ test("codex lifecycle and change events are served on the namespaced unix socket
     const otherEvents = await socketSubscribe(served.socketPath ?? "", ["servers_changed"], (topic) => unrelated.push(topic), { scope: "other" });
     assert.deepEqual(events.topics, ["servers_changed"]);
     await assert.rejects(socketCall(served.socketPath, "events/subscribe", { topics: ["accounts_changed"] }), /unknown topic/);
+    await assert.rejects(socketCall(served.socketPath, "events/subscribe", { topics: ["inputs_changed"] }), /unknown topic/);
     await assert.rejects(socketSubscribe(served.socketPath ?? "", ["servers_changed"], () => undefined, { scope: "invalid/id" }), /invalid event scope/);
 
     await assert.rejects(socketCall(served.socketPath, "tools/call", { name: "account_list", arguments: {} }), /unknown operation/);
+    await assert.rejects(socketCall(served.socketPath, "tools/call", { name: "input_observe_list", arguments: {} }), /unknown operation/);
     await socketCall(auth.socketPath ?? "", "tools/call", { name: "account_activate", arguments: { id: secondAccount.id } });
 
     const started = (await socketCall(served.socketPath, "tools/call", {

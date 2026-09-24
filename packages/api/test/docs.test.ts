@@ -44,11 +44,11 @@ test("the api package serves structured documents for every workspace package", 
     }
 
     const codex = found.get("codex") as PackageDoc;
-    assert.deepEqual(Object.keys(codex.events).sort(), ["inputs_changed", "servers_changed", "threads_changed"]);
+    assert.deepEqual(Object.keys(codex.events).sort(), ["servers_changed", "threads_changed"]);
     assert.equal(codex.eventScope?.required, false);
     assert.deepEqual(
       codex.operations.map((operation) => operation.name).sort(),
-      ["input_observe_list", "input_observe_start", "input_observe_stop", "server_list", "server_remove", "server_start", "server_stop"],
+      ["server_list", "server_remove", "server_start", "server_stop"],
     );
     const start = codex.operations.find((operation) => operation.name === "server_start") as OperationDoc;
     assert.ok(start.description.length > 0);
@@ -74,7 +74,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.deepEqual((auth.operations.find((operation) => operation.name === "account_login_start")?.inputSchema.properties ?? {}), {});
 
     const bots = found.get("bots") as PackageDoc;
-    assert.deepEqual(Object.keys(bots.events).sort(), ["bots_changed", "inputs_changed", "threads_changed"]);
+    assert.deepEqual(Object.keys(bots.events).sort(), ["bots_changed", "threads_changed"]);
     assert.deepEqual(bots.eventScope, {
       description: "Required bot ID. Only changes to that bot are delivered on this subscription.",
       example: "bot-1",
