@@ -14,6 +14,7 @@ import { botsChild } from "../src/bots.js";
 import { codexChild } from "../src/codex.js";
 import { startOwner } from "../src/owner.js";
 import { statusSource } from "../src/status.js";
+import { uixChild, uixPort } from "../src/uix.js";
 
 const childBin = fileURLToPath(new URL("../../test/fixtures/child.mjs", import.meta.url));
 
@@ -88,6 +89,15 @@ test("the owner starts the four required socket children", () => {
   assert.deepEqual(inspector.args.slice(1), ["/tmp/mcp.json"]);
   assert.equal(inspectorPort({}), 6274);
   assert.throws(() => inspectorPort({ AGENTSTACK_INSPECTOR_PORT: "0" }), /AGENTSTACK_INSPECTOR_PORT/);
+  const uix = uixChild(8745);
+  assert.equal(uix.name, "uix");
+  assert.equal(uix.command, process.execPath);
+  assert.equal(existsSync(uix.args[0] ?? ""), true);
+  assert.deepEqual(uix.args.slice(1), ["start", "--hostname", "127.0.0.1", "--port", "8745"]);
+  assert.equal(existsSync(join(uix.cwd ?? "", "app", "page.tsx")), true);
+  assert.equal(uixPort({}), 8745);
+  assert.equal(uixPort({ AGENTSTACK_UIX_PORT: "8123" }), 8123);
+  assert.throws(() => uixPort({ AGENTSTACK_UIX_PORT: "0" }), /AGENTSTACK_UIX_PORT/);
 });
 
 function orphanParent(stateDir: string, keepAlive: boolean) {
@@ -232,10 +242,12 @@ test("owner api serves status and pids_changed on its socket", async () => {
     const empty = (await socketCall(served.socketPath, "tools/call", { name: "owner_status", arguments: {} })) as {
       pid: number;
       docsUrl: string | null;
+      uixUrl: string | null;
       children: Array<{ name: string; running: boolean }>;
     };
     assert.equal(empty.pid, process.pid);
     assert.equal(empty.docsUrl, null);
+    assert.equal(empty.uixUrl, null);
     assert.deepEqual(empty.children, []);
 
     const subscription = await socketSubscribe(served.socketPath ?? "", ["pids_changed"], (topic) => received.push(topic));

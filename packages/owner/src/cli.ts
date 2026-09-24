@@ -9,6 +9,7 @@ import { serveInspectorCatalog } from "./inspector-catalog.js";
 import { inspectorChild, inspectorPort } from "./inspector.js";
 import { startOwner } from "./owner.js";
 import { statusSource } from "./status.js";
+import { uixChild, uixPort } from "./uix.js";
 
 const command = process.argv[2];
 
@@ -30,17 +31,19 @@ if (command === "api") {
 // and then fail after trying to claim the first owner's ports.
 const existing = await socketCall(socketPath("owner"), "tools/call", {
   name: "owner_status", arguments: {},
-}, { timeoutMs: 1_000 }).catch(() => null) as { pid?: unknown; docsUrl?: unknown } | null;
+}, { timeoutMs: 1_000 }).catch(() => null) as { pid?: unknown; docsUrl?: unknown; uixUrl?: unknown } | null;
 if (existing && typeof existing.pid === "number") {
-  console.error(`AgentStack is already running (pid ${existing.pid}).${typeof existing.docsUrl === "string" ? ` Reference: ${existing.docsUrl}` : ""}`);
+  console.error(`AgentStack is already running (pid ${existing.pid}).${typeof existing.docsUrl === "string" ? ` Reference: ${existing.docsUrl}` : ""}${typeof existing.uixUrl === "string" ? ` UI canvas: ${existing.uixUrl}` : ""}`);
   process.exit(0);
 }
 
 const inspectorListenPort = inspectorPort(process.env);
+const uixListenPort = uixPort(process.env);
 for (const [transport, port, setting] of [
   ["MCP", mcpPort(process.env), "AGENTSTACK_MCP_PORT"],
   ["WebSocket", websocketPort(process.env), "AGENTSTACK_WEBSOCKET_PORT"],
   ["Inspector", inspectorListenPort, "AGENTSTACK_INSPECTOR_PORT"],
+  ["UI canvas", uixListenPort, "AGENTSTACK_UIX_PORT"],
 ] as const) {
   if (port !== 0 && await new Promise<boolean>((resolve) => {
     const probe = connect({ host: "127.0.0.1", port });
@@ -102,7 +105,7 @@ const shutdown = () => {
     process.exit(childFailed || failed ? 1 : 0);
   });
 };
-owner = startOwner([apiChild(), authChild(), codexChild(), botsChild(), websocketChild(), inspectorChild(catalog.path, inspectorListenPort)], process.env, () => {
+owner = startOwner([apiChild(), authChild(), codexChild(), botsChild(), websocketChild(), inspectorChild(catalog.path, inspectorListenPort), uixChild(uixListenPort)], process.env, () => {
   statusSource.notify();
   if (!closing && owner.children().some((child) => !child.running)) {
     childFailed = true;
@@ -111,9 +114,12 @@ owner = startOwner([apiChild(), authChild(), codexChild(), botsChild(), websocke
   }
 }, [["auth"], ["bots"], ["codex"], ["api"]]);
 statusSource.attach(owner);
+const uixUrl = `http://127.0.0.1:${uixListenPort}/`;
+statusSource.setUixUrl(uixUrl);
 
 if (events.socketPath) console.error(events.socketPath);
 console.error(`AgentStack reference: ${docs.url}`);
+console.error(`AgentStack UI canvas: ${uixUrl}`);
 for (const [name, url] of Object.entries(mcp.urls)) console.error(`${name} MCP: ${url}`);
 console.error(`AgentStack Inspector: http://127.0.0.1:${inspectorListenPort}/`);
 

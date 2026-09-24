@@ -4,6 +4,7 @@ export type OwnedChild = {
   name: string;
   command: string;
   args: string[];
+  cwd?: string;
   env?: Record<string, string>;
 };
 
@@ -29,6 +30,7 @@ export function startOwner(children: OwnedChild[], env: NodeJS.ProcessEnv = proc
     child,
     error: null as string | null,
     proc: spawn(child.command, child.args, {
+      cwd: child.cwd,
       env: { ...env, ...child.env },
       stdio: ["inherit", "inherit", "inherit", "ipc"],
       detached: process.platform !== "win32",

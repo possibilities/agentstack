@@ -17,11 +17,12 @@ export type OwnerContext = {
 
 export const ownerStatus = operation({
   name: "owner_status",
-  description: "Read the owner process, its docs URL, and each required child's status: pid, running, exit code, signal, and spawn error.",
+  description: "Read the owner process, its docs and UI canvas URLs, and each required child's status: pid, running, exit code, signal, and spawn error.",
   input: z.strictObject({}),
   output: z.object({
     pid: z.number().int().describe("Owner process id."),
     docsUrl: z.string().nullable().describe("Loopback docs URL while the owner serves it."),
+    uixUrl: z.string().nullable().describe("Loopback UI canvas URL while the owner runs it."),
     children: z.array(childStatusSchema),
   }),
   annotations: { title: "Owner status", readOnlyHint: true },

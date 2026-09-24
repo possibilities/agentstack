@@ -12,13 +12,13 @@ whose consumer pin must stay aligned. Vendor Codex remains untouched.
 
 ## State and processes
 
-State defaults to `~/.local/state/agentstack`. Set `AGENTSTACK_STATE_DIR` to use another location. Each Package API owns `<state>/sockets/<name>.sock` (`api`, `auth`, `codex`, `bots`, and `owner` under `agentstack serve`); Codex app servers use `<state>/app/<id>.sock`. Configuration, account names, active choice and server records are in `<state>/configuration.sqlite`; Codex credentials are in `<state>/secrets.sqlite`. Existing `<state>/servers/*.json` records are imported once and removed after successful import. App-server output lives under `<state>/logs/<id>.log`. These directories are private to the local user; sockets and databases use mode `0600`.
+State defaults to `~/.local/state/agentstack`. Set `AGENTSTACK_STATE_DIR` to use another location. Each Package API owns `<state>/sockets/<name>.sock` (`api`, `auth`, `codex`, `bots`, and `owner` under `agentstack serve`); Codex app servers use `<state>/app/<id>.sock`. Configuration, account IDs, active choice and server records are in `<state>/configuration.sqlite`; Codex credentials are in `<state>/secrets.sqlite`. Existing `<state>/servers/*.json` records are imported once and removed after successful import. App-server output lives under `<state>/logs/<id>.log`. These directories are private to the local user; sockets and databases use mode `0600`.
 
 The `auth` Package API creates an account through device sign-in (`account_login_start` with `{}`, then `account_login_status` or `login_changed` events for its verification URL, one-time code, and result), makes an ID active for new Servers (`account_activate`), signs in again under the same ID (`account_login_replace`), or removes one (`account_remove`). IDs are immutable UUIDs; a UI can number the current accounts densely without changing Server bindings. The first successful sign-in becomes active. Removing an account fences new launches, stops and deletes its bound Servers (including bot workspaces), deletes its credentials, then selects the oldest remaining account if necessary. A failed removal remains marked for retry under the same ID. New Server history is isolated per Server so it can be removed with it; ambiguous older shared history remains untouched. The login process has a sixteen-minute limit and does not modify ordinary Codex or AgentUsage storage. New app servers require an active account. codexnk receives an ephemeral credential input, an initially empty AgentStack capabilities directory, and private history storage for its session records.
 
 Each managed Server has a private `<state>/runtime/<id>` temporary root. codexnk creates its own runtime home beneath it. AgentStack watches that home's `auth.json` for a completed refresh and also reconciles it before another launch, after the Server exits, and after owner recovery. Only a valid, strictly later `last_refresh` from the Server's recorded credential generation can replace SQLite credentials. If either timestamp is missing, freshness cannot be established and the database is not overwritten. A missing or partial file is retried; ambiguous or conflicting runtime state remains private for diagnosis instead of replacing a newer database value. Several simultaneous Servers for one account can still race to refresh at the provider; this is best effort. Sign in again under the same account ID when the saved token is exhausted or conflicting. When a stopped Server's runtime copy is definitively stale and the saved generation has advanced, its next launch moves that copy under `<state>/runtime-recovery/<id>/<uuid>` for diagnosis and uses the saved generation. Invalid or ambiguous copies still block the launch. Removing the Server removes its recovery copies.
 
-The owner starts its required `api`, `auth`, `codex`, `bots`, WebSocket, and Inspector children in separate process groups and serves the `owner` Package API, docs, and MCP HTTP in-process. If a child fails or exits, the owner reports the failure and shuts down. Normal shutdown closes public ingress and the WebSocket and Inspector children, drains in-flight calls, then stops `auth`, `bots`, `codex`, and `api` in dependency order. The Codex Server gracefully stops its app servers. Each child is signalled with SIGTERM and escalated to SIGKILL after a bounded grace period. The owner does not restart failed children automatically.
+The owner starts its required `api`, `auth`, `codex`, `bots`, WebSocket, Inspector, and UI canvas children in separate process groups and serves the `owner` Package API, docs, and MCP HTTP in-process. If a child fails or exits, the owner reports the failure and shuts down. Normal shutdown closes public ingress and the WebSocket, Inspector, and UI canvas children, drains in-flight calls, then stops `auth`, `bots`, `codex`, and `api` in dependency order. The Codex Server gracefully stops its app servers. Each child is signalled with SIGTERM and escalated to SIGKILL after a bounded grace period. The owner does not restart failed children automatically.
 
 `agentstack serve` hosts the read-only browser reference at its printed
 `http://127.0.0.1:<port>/docs` URL as part of the owner lifecycle. It binds
@@ -28,10 +28,18 @@ unavailable page. The owner closes the listener on shutdown. The docs listener d
 the other Package APIs or expose their control operations. The
 optional `agentstack docs` command can still run the reference independently.
 If `agentstack serve` is invoked again against a running owner, it reports that
-owner's PID and docs URL and exits without claiming sockets or starting
+owner's PID, docs URL, and UI canvas URL and exits without claiming sockets or starting
 children. A fixed MCP port already in use is refused before startup, even if
 the owner socket cannot be reached; an unrelated listener is never assumed to
 be AgentStack.
+
+The UI canvas is a standalone Next.js app served by an owned child on
+`127.0.0.1:8745` by default. Set `AGENTSTACK_UIX_PORT` to another available
+nonzero port before starting the owner. Its URL is printed and returned by
+`owner_status` as `uixUrl`; the child serves the built `packages/uix/.next`
+output and shuts down with the owner. Rebuild and restart the owner after
+changing the canvas. A port already in use is refused before the owner creates
+any sockets.
 
 The owner's MCP listener forwards tool calls to their socket Servers. Its
 Inspector child reads a generated, read-only file under `<state>/inspector-*`;
