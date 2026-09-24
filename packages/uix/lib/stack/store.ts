@@ -78,7 +78,7 @@ export class StackStore {
     this.scopedChannels.clear();
   }
 
-  /** Call any operation on a Package API's main channel. Auth mutations refresh accounts and sign-in state. */
+  /** Call any operation on a Package API's main channel. Auth mutations refresh accounts and sign-in state; voice calls refresh the call. */
   call = async <T>(pkg: string, name: string, args: Record<string, unknown> = {}): Promise<T> => {
     const channel = this.main.get(pkg);
     if (!channel || channel.status !== "open") throw new Error(`${pkg} WebSocket is not connected`);
@@ -91,6 +91,7 @@ export class StackStore {
         this.refresh("login");
       }
     }
+    if (pkg === "bots" && (name === "voice_dial" || name === "voice_hangup")) this.refresh("voice");
     return result;
   };
 

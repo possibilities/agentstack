@@ -33,7 +33,7 @@ import { StatusDot } from "./primitives";
 import { StackProvider, useStack, WorkbenchContext, type Mode, type WorkbenchValue } from "./provider";
 import { accentTile, PlacementContext, type Accent, type WindowPlacement } from "./window";
 import { AccountsWindow, ActivityWindow, ApiWindow, BotsWindow, SystemWindow } from "./windows";
-import { VoiceWidget } from "./voice-widget";
+import { CallLauncher, VoiceProvider } from "./voice";
 
 type Point = { x: number; y: number };
 type View = Point & { k: number };
@@ -392,50 +392,51 @@ function Shell() {
   return (
     <WorkbenchContext value={workbench}>
       <AuthActionsProvider>
-        <PlacementContext value={placement}>
-          <main
-            ref={viewport}
-            data-canvas="workbench"
-            onPointerDown={onBackgroundPointerDown}
-            className={cn("canvas-dots", canvas ? "fixed inset-0 touch-none overflow-hidden overscroll-none" : "min-h-dvh", canvas && (panning ? "cursor-grabbing" : "cursor-grab"))}
-            style={canvas ? { backgroundSize: `${22 * view.k}px ${22 * view.k}px`, backgroundPosition: `${view.x}px ${view.y}px` } : { backgroundSize: "22px 22px" }}
-          >
-            <div aria-hidden className="pointer-events-none fixed inset-0 bg-[radial-gradient(90%_60%_at_50%_-10%,color-mix(in_oklch,var(--pkg-codex)_9%,transparent),transparent_70%)]" />
-            <h1 className="sr-only">AgentStack canvas</h1>
-            {canvas ? (
-              <div
-                ref={setWorld}
-                className={cn("absolute top-0 left-0 origin-top-left transition-opacity duration-500", ready ? "opacity-100" : "opacity-0", animating && "transition-[transform,opacity] duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]", dragging && "select-none")}
-                style={{ transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.k})` }}
-              >
-                <Lines world={world} scale={view.k} version={[layout, mode]} animating={animating || dragging !== null} subtle={false} />
-                {windows.map(({ id, render: Render }) => <Render key={id} />)}
-              </div>
-            ) : (
-              <div className={cn("relative mx-auto max-w-[1760px] px-4 pt-20 pb-16 transition-opacity duration-500 sm:px-6", ready ? "opacity-100" : "opacity-0")}>
-                <div ref={setWorld} className="relative">
-                  <Lines world={world} scale={1} version={[layout, mode, gridColumns]} animating={false} subtle />
-                  <div className="flex items-start gap-5">
-                    {gridColumns.map((column, index) => (
-                      <div key={index} className="flex min-w-0 flex-1 flex-col gap-5">
-                        {column.map((id) => {
-                          const Render = renderers.get(id)!;
-                          return <Render key={id} />;
-                        })}
-                      </div>
-                    ))}
+        <VoiceProvider>
+          <PlacementContext value={placement}>
+            <main
+              ref={viewport}
+              data-canvas="workbench"
+              onPointerDown={onBackgroundPointerDown}
+              className={cn("canvas-dots", canvas ? "fixed inset-0 touch-none overflow-hidden overscroll-none" : "min-h-dvh", canvas && (panning ? "cursor-grabbing" : "cursor-grab"))}
+              style={canvas ? { backgroundSize: `${22 * view.k}px ${22 * view.k}px`, backgroundPosition: `${view.x}px ${view.y}px` } : { backgroundSize: "22px 22px" }}
+            >
+              <div aria-hidden className="pointer-events-none fixed inset-0 bg-[radial-gradient(90%_60%_at_50%_-10%,color-mix(in_oklch,var(--pkg-bots)_9%,transparent),transparent_70%)]" />
+              <h1 className="sr-only">AgentStack canvas</h1>
+              {canvas ? (
+                <div
+                  ref={setWorld}
+                  className={cn("absolute top-0 left-0 origin-top-left transition-opacity duration-500", ready ? "opacity-100" : "opacity-0", animating && "transition-[transform,opacity] duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]", dragging && "select-none")}
+                  style={{ transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.k})` }}
+                >
+                  <Lines world={world} scale={view.k} version={[layout, mode]} animating={animating || dragging !== null} subtle={false} />
+                  {windows.map(({ id, render: Render }) => <Render key={id} />)}
+                </div>
+              ) : (
+                <div className={cn("relative mx-auto max-w-[1760px] px-4 pt-20 pb-16 transition-opacity duration-500 sm:px-6", ready ? "opacity-100" : "opacity-0")}>
+                  <div ref={setWorld} className="relative">
+                    <Lines world={world} scale={1} version={[layout, mode, gridColumns]} animating={false} subtle />
+                    <div className="flex items-start gap-5">
+                      {gridColumns.map((column, index) => (
+                        <div key={index} className="flex min-w-0 flex-1 flex-col gap-5">
+                          {column.map((id) => {
+                            const Render = renderers.get(id)!;
+                            return <Render key={id} />;
+                          })}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-          </main>
-          {canvas && ready ? <OffscreenHints view={view} positions={layout.positions} collapsed={layout.collapsed} size={size} viewport={viewport.current} onFocus={focusWindow} /> : null}
-          <TopBar mode={mode} setMode={setMode} openPalette={() => setPaletteOpen(true)} />
-          {canvas ? <CanvasToolbar scale={view.k} zoom={(factor) => animate(() => zoomAt(factor))} fit={fit} tidy={tidy} /> : null}
-          <Inspector />
-          <Palette open={paletteOpen} onOpenChange={setPaletteOpen} actions={actions} />
-          <VoiceWidget />
-        </PlacementContext>
+              )}
+            </main>
+            {canvas && ready ? <OffscreenHints view={view} positions={layout.positions} collapsed={layout.collapsed} size={size} viewport={viewport.current} onFocus={focusWindow} /> : null}
+            <TopBar mode={mode} setMode={setMode} openPalette={() => setPaletteOpen(true)} />
+            {canvas ? <CanvasToolbar scale={view.k} zoom={(factor) => animate(() => zoomAt(factor))} fit={fit} tidy={tidy} /> : null}
+            <Inspector />
+            <Palette open={paletteOpen} onOpenChange={setPaletteOpen} actions={actions} />
+          </PlacementContext>
+        </VoiceProvider>
       </AuthActionsProvider>
     </WorkbenchContext>
   );
@@ -479,6 +480,7 @@ function TopBar({ mode, setMode, openPalette }: { mode: Mode; setMode(mode: Mode
         </Tooltip>
       </div>
       <div className="pointer-events-auto flex items-center gap-2">
+        <CallLauncher />
         <Button variant="outline" className="h-10 gap-2 rounded-xl bg-card/80 pr-1.5 pl-3 text-muted-foreground shadow-sm backdrop-blur-xl" onClick={openPalette}>
           <SearchIcon data-icon="inline-start" />
           <span className="hidden sm:inline">Jump to…</span>

@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpenIcon, BotIcon, CircleCheckIcon, CpuIcon, RefreshCwIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
+import { BookOpenIcon, BotIcon, CircleCheckIcon, CpuIcon, MicIcon, MicOffIcon, PhoneIcon, PhoneOffIcon, RefreshCwIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
 import { operationTitle } from "@/lib/stack/catalog";
 import { accountLabels, shortId } from "@/lib/stack/derive";
@@ -8,12 +8,14 @@ import type { Account, NodeRef } from "@/lib/stack/types";
 import { useAuthActions } from "./auth-actions";
 import { Orb, StatusDot } from "./primitives";
 import { useStack, useWorkbench } from "./provider";
+import { useVoice } from "./voice";
 
 export type PaletteAction = { id: string; label: string; shortcut?: string; icon: React.ComponentType; run(): void };
 
 export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpenChange(open: boolean): void; actions: PaletteAction[] }) {
   const { bots, accounts, owner, catalog, attempt } = useStack();
   const auth = useAuthActions();
+  const voice = useVoice();
   const { focus } = useWorkbench();
   const labels = accountLabels(accounts.data);
   const go = (ref: NodeRef) => {
@@ -110,6 +112,28 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
               </CommandItem>
             ) : null}
           </CommandGroup>
+          {voice.busy || bots.data?.some((bot) => voice.callable(bot) === null) ? (
+            <CommandGroup heading="Voice">
+              {!voice.busy ? bots.data?.filter((bot) => voice.callable(bot) === null).map((bot) => (
+                <CommandItem key={`${bot.id}-call`} value={`action call ${bot.id} voice`} onSelect={() => act(() => voice.dial(bot.id))}>
+                  <PhoneIcon />
+                  Call {bot.id}
+                </CommandItem>
+              )) : null}
+              {voice.busy ? (
+                <CommandItem value="action hang up voice call end" onSelect={() => act(() => voice.hangup())}>
+                  <PhoneOffIcon />
+                  Hang up
+                </CommandItem>
+              ) : null}
+              {voice.sessionId !== null && voice.phase === "connected" ? (
+                <CommandItem value={`action ${voice.muted ? "unmute" : "mute"} microphone voice call`} onSelect={() => act(() => voice.toggleMute())}>
+                  {voice.muted ? <MicIcon /> : <MicOffIcon />}
+                  {voice.muted ? "Unmute" : "Mute"}
+                </CommandItem>
+              ) : null}
+            </CommandGroup>
+          ) : null}
           {catalog.data?.length ? (
             <CommandGroup heading="Package APIs">
               {catalog.data.map((doc) => (

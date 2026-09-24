@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowRightIcon, CircleCheckIcon, LockIcon, RadioIcon, RefreshCwIcon, SquareArrowOutUpRightIcon, Trash2Icon, XIcon } from "lucide-react";
+import { ArrowRightIcon, CircleCheckIcon, LockIcon, PhoneIcon, PhoneOffIcon, RadioIcon, RefreshCwIcon, SquareArrowOutUpRightIcon, Trash2Icon, XIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -10,11 +10,12 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { fieldsOf, findOperation, operationTitle, recordFields, recordOperations, type Field } from "@/lib/stack/catalog";
 import { accountLabels, clockTime, shortId } from "@/lib/stack/derive";
 import type { StackState } from "@/lib/stack/store";
-import { nodeKey, type Account, type Login, type NodeRef, type OperationDoc, type PackageDoc, type StackEvent } from "@/lib/stack/types";
+import { nodeKey, type Account, type Bot, type Login, type NodeRef, type OperationDoc, type PackageDoc, type StackEvent } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
 import { CopyButton, Orb } from "./primitives";
 import { useOperation, useStack, useWorkbench } from "./provider";
+import { useVoice } from "./voice";
 import { accentBg, accentOf, accentText, type Accent } from "./window";
 import { OperationBadges, RecoveryWarning } from "./windows";
 
@@ -60,11 +61,11 @@ function resolve(ref: NodeRef, state: StackState): View | null {
     case "account": {
       const account = state.accounts.data?.find((item) => item.id === ref.id);
       if (!account) return null;
-       const bound = (state.bots.data ?? []).filter((bot) => bot.account === account.id || bot.runningAccount === account.id);
+      const bound = (state.bots.data ?? []).filter((bot) => bot.account === account.id || bot.runningAccount === account.id);
       return {
         eyebrow: "Codex account", accent: "auth", title: labels.get(account.id) ?? shortId(account.id), orb: account.id, record: account,
         fields: recordFields(catalog, "auth", "account_list"),
-         related: bound.map((bot) => ({ ref: { kind: "bot", id: bot.id } as NodeRef, label: bot.id })),
+        related: bound.map((bot) => ({ ref: { kind: "bot", id: bot.id } as NodeRef, label: bot.id })),
         operations: { pkg: "auth", list: recordOperations(catalog, "auth").filter((operation) => !accountControls.has(operation.name) && !operation.name.startsWith("account_login")) },
         controls: <AccountControls account={account} />,
         events: state.events.filter((event) => event.pkg === "auth"),
@@ -88,11 +89,13 @@ function resolve(ref: NodeRef, state: StackState): View | null {
       const related: View["related"] = [];
       if (bot.account) related.push({ ref: { kind: "account", id: bot.account }, label: `${labels.get(bot.account) ?? shortId(bot.account)} · assigned` });
       if (bot.runningAccount && bot.runningAccount !== bot.account) related.push({ ref: { kind: "account", id: bot.runningAccount }, label: `${labels.get(bot.runningAccount) ?? shortId(bot.runningAccount)} · ${bot.recoveryIssue ? "last launched" : "running"}` });
+      const voiceStatus = findOperation(catalog, "bots", "voice_status");
       return {
         eyebrow: "Bot", accent: "bots", title: bot.id, record: bot,
         recoveryIssue: bot.recoveryIssue,
         fields: recordFields(catalog, "bots", "bot_list"),
-        related, operations: { pkg: "bots", list: recordOperations(catalog, "bots") },
+        related, operations: { pkg: "bots", list: [...recordOperations(catalog, "bots"), ...(voiceStatus ? [voiceStatus] : [])] },
+        controls: <BotControls bot={bot} />,
         events: state.events.filter((event) => event.scope === bot.id),
       };
     }
@@ -116,6 +119,30 @@ function resolve(ref: NodeRef, state: StackState): View | null {
 
 const accountControls = new Set(["account_activate", "account_remove", "account_login_replace"]);
 const loginControls = new Set(["account_login_cancel", "account_login_status"]);
+
+function BotControls({ bot }: { bot: Bot }) {
+  const voice = useVoice();
+  const reason = voice.callable(bot);
+  const onCall = voice.botId === bot.id;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex flex-wrap gap-1.5">
+        {onCall ? (
+          <Button size="sm" variant="destructive" disabled={voice.phase === "ending"} onClick={voice.hangup}>
+            <PhoneOffIcon data-icon="inline-start" />
+            Hang up
+          </Button>
+        ) : (
+          <Button size="sm" variant="outline" disabled={reason !== null || voice.busy} onClick={() => voice.dial(bot.id)}>
+            <PhoneIcon data-icon="inline-start" />
+            Call main thread
+          </Button>
+        )}
+      </div>
+      {!onCall && reason ? <p className="text-[0.72rem] text-muted-foreground">Cannot call: {reason}.</p> : null}
+    </div>
+  );
+}
 
 function AccountControls({ account }: { account: Account }) {
   const actions = useAuthActions();

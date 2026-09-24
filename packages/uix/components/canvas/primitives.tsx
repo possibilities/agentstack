@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { CheckIcon, CopyIcon } from "lucide-react";
+import { BotIcon, CheckIcon, CopyIcon } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { hueOf, relativeTime } from "@/lib/stack/derive";
-import { nodeKey, type NodeRef, type StackEvent } from "@/lib/stack/types";
+import { nodeKey, type Bot, type NodeRef, type StackEvent } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useNow, useWorkbench } from "./provider";
 
@@ -49,6 +49,24 @@ export function Orb({ id, size = "md", className }: { id: string; size?: "sm" | 
 
 export function accountColor(id: string): string {
   return `oklch(0.68 0.15 ${hueOf(id)})`;
+}
+
+/** The numbered bot tile, with its liveness dot. Resize through className. */
+export function BotTile({ bot, pulse, className }: { bot?: Bot; pulse?: boolean; className?: string }) {
+  const number = bot ? /^bot-(\d+)$/.exec(bot.id)?.[1] : null;
+  return (
+    <span className={cn("relative flex size-11 shrink-0 items-center justify-center rounded-xl bg-pkg-bots/12 font-mono text-lg font-semibold text-pkg-bots ring-1 ring-pkg-bots/25 ring-inset", className)}>
+      {number ?? <BotIcon className="size-5" />}
+      {bot ? (
+        <StatusDot
+          tone={bot.recoveryIssue ? "warning" : bot.state === "running" ? "success" : "muted"}
+          pulse={pulse}
+          className="absolute -right-0.5 -bottom-0.5 rounded-full ring-2 ring-card"
+          label={bot.recoveryIssue ? "Needs inspection" : bot.state}
+        />
+      ) : null}
+    </span>
+  );
 }
 
 export function CopyButton({ value, label, className }: { value: string; label: string; className?: string }) {

@@ -76,9 +76,7 @@ test("the index and canvas render a fenced bot honestly in HTML and Markdown", {
     }
     assert.match(canvas, /bot-1/);
     assert.match(canvasMd, /Recovery: Recorded process ownership could not be verified/);
-    assert.match(canvas, /Voice call/);
-    assert.match(canvas, /No ready main threads/);
-    assert.match(canvas, /Running bots need recovery inspection before they can be called/);
+    assert.match(canvas, /Call a bot/);
     assert.match(canvasMd, /No active voice call/);
     assert.doesNotMatch(index, /bot-1[^<]*Running · PID/);
   } finally {

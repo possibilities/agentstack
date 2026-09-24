@@ -12,6 +12,7 @@ import {
   CpuIcon,
   EllipsisVerticalIcon,
   KeyRoundIcon,
+  PhoneIcon,
   RadioIcon,
   RefreshCwIcon,
   ShieldAlertIcon,
@@ -38,8 +39,9 @@ import { accountLabels, botsFor, clockTime, histogram, pathParts, shortId } from
 import type { Account, Bot, Login, OperationDoc, PackageDoc } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
-import { CopyButton, Empty, NodeCard, Orb, Row, Sparkline, StatusDot, Time } from "./primitives";
+import { BotTile, CopyButton, Empty, NodeCard, Orb, Row, Sparkline, StatusDot, Time } from "./primitives";
 import { useActivity, useNow, useStack, useWorkbench } from "./provider";
+import { useVoice } from "./voice";
 import { accentBg, accentOf, accentText, Section, Window } from "./window";
 
 const activitySpan = 5 * 60_000;
@@ -365,10 +367,10 @@ function AccountCard({ account, label, bots }: { account: Account; label: string
         </DropdownMenu>
       </div>
       <div className="flex flex-wrap items-center gap-1">
-        {used.length ? used.map((server) => (
-          <span key={server.id} className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem]">
-            <StatusDot tone={server.recoveryIssue ? "warning" : server.state === "running" ? "success" : "muted"} label={server.recoveryIssue ? "Needs inspection" : server.state} className="size-1.5 [&>span]:size-1.5" />
-            {server.id}
+        {used.length ? used.map((bot) => (
+          <span key={bot.id} className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem]">
+            <StatusDot tone={bot.recoveryIssue ? "warning" : bot.state === "running" ? "success" : "muted"} label={bot.recoveryIssue ? "Needs inspection" : bot.state} className="size-1.5 [&>span]:size-1.5" />
+            {bot.id}
           </span>
         )) : <span className="text-[0.7rem] text-muted-foreground">No bots bound</span>}
       </div>
@@ -409,6 +411,7 @@ export function RecoveryWarning({ message }: { message: string }) {
 
 export function BotsWindow() {
   const { bots, accounts, scoped, status, endpoints } = useStack();
+  const voice = useVoice();
   const activity = useActivity();
   const labels = accountLabels(accounts.data);
   const now = useNow();
@@ -420,32 +423,43 @@ export function BotsWindow() {
         <div className="flex flex-col gap-2">
           {sortBots(bots.data).map((bot) => {
             const events = activity.get(`bot:${bot.id}`) ?? [];
-            const number = /^bot-(\d+)$/.exec(bot.id)?.[1];
             const subscription = scoped[bot.id];
             const threads = events.filter((event) => event.topic === "threads_changed").length;
             const lifecycle = events.length - threads;
+            const onCall = voice.botId === bot.id;
+            const callReason = voice.callable(bot);
             return (
-              <NodeCard key={bot.id} node={{ kind: "bot", id: bot.id }} label={`bot ${bot.id}`} lastEvent={events[0]} accent="var(--pkg-bots)">
+              <NodeCard key={bot.id} node={{ kind: "bot", id: bot.id }} label={`bot ${bot.id}`} lastEvent={events[0]} accent="var(--pkg-bots)"
+                className={cn(onCall && "border-pkg-bots/40")}>
+                {onCall ? <span aria-hidden className="pointer-events-none absolute inset-0 rounded-[inherit] ring-1 ring-pkg-bots/40 motion-safe:animate-pulse" /> : null}
                 <div className="flex items-center gap-3">
-                  <span className="relative flex size-11 shrink-0 items-center justify-center rounded-xl bg-pkg-bots/12 font-mono text-lg font-semibold text-pkg-bots ring-1 ring-pkg-bots/25 ring-inset">
-                    {number ?? <BotIcon className="size-5" />}
-                    <StatusDot tone={bot.recoveryIssue ? "warning" : bot.state === "running" ? "success" : "muted"} pulse={!bot.recoveryIssue && Boolean(events[0] && now - events[0].at < 4_000)}
-                      className="absolute -right-0.5 -bottom-0.5 rounded-full ring-2 ring-card" label={bot.recoveryIssue ? "Needs inspection" : bot.state} />
-                  </span>
+                  <BotTile bot={bot} pulse={!bot.recoveryIssue && Boolean(events[0] && now - events[0].at < 4_000)} />
                   <div className="flex min-w-0 flex-col">
                     <span className="font-mono text-sm font-semibold">{bot.id}</span>
                     <span className="text-[0.72rem] text-muted-foreground">{bot.recoveryIssue ? "Needs inspection" : bot.state}{bot.pid ? ` · pid ${bot.pid}` : ""}</span>
                   </div>
-                  <span className="ml-auto text-pkg-bots"><Sparkline values={histogram(events.map((event) => event.at), now, 12, activitySpan)} /></span>
+                  {onCall ? (
+                    <Badge variant="secondary" className="ml-auto gap-1 bg-pkg-bots/10 text-pkg-bots">
+                      <PhoneIcon className="size-3" />
+                      On call{voice.startedAt ? ` · ${elapsedClock(voice.startedAt, now)}` : voice.phase !== "idle" ? ` · ${voice.phase}` : ""}
+                    </Badge>
+                  ) : (
+                    <span className="ml-auto text-pkg-bots"><Sparkline values={histogram(events.map((event) => event.at), now, 12, activitySpan)} /></span>
+                  )}
                 </div>
                 <dl className="flex flex-col">
                   <Row label="Account"><AccountChip id={bot.account} labels={labels} /></Row>
-                   <Row label="Main thread" mono copy={bot.mainThreadId}>{bot.mainThreadId ? shortId(bot.mainThreadId) : "Awaiting first turn"}</Row>
-                   <Row label="Role revision" mono>{bot.roleRevision ?? "Never launched"}</Row>
-                   <Row label="Workspace" copy={bot.cwd}><Path path={bot.cwd} /></Row>
+                  <Row label="Main thread" mono copy={bot.mainThreadId}>{bot.mainThreadId ? shortId(bot.mainThreadId) : "Awaiting first turn"}</Row>
+                  <Row label="Role revision" mono>{bot.roleRevision ?? "Never launched"}</Row>
+                  <Row label="Workspace" copy={bot.cwd}><Path path={bot.cwd} /></Row>
                 </dl>
-                 {bot.recoveryIssue ? <RecoveryWarning message={bot.recoveryIssue} /> : null}
-                 {bot.state === "running" && !bot.recoveryIssue && bot.account !== bot.runningAccount ? <p className="rounded-lg bg-warning/10 px-2 py-1.5 text-[0.72rem] text-warning">Running as {bot.runningAccount ? labels.get(bot.runningAccount) ?? shortId(bot.runningAccount) : "unbound"}. Stop and start to apply {bot.account ? labels.get(bot.account) ?? shortId(bot.account) : "unbound"}.</p> : null}
+                {bot.recoveryIssue ? <RecoveryWarning message={bot.recoveryIssue} /> : null}
+                {bot.state === "running" && !bot.recoveryIssue && bot.account !== bot.runningAccount ? (
+                  <p className="flex items-start gap-1.5 rounded-lg bg-warning/10 px-2 py-1.5 text-[0.72rem] text-pretty text-warning">
+                    <TriangleAlertIcon aria-hidden className="mt-px size-3.5 shrink-0" />
+                    <span>Running as {bot.runningAccount ? labels.get(bot.runningAccount) ?? shortId(bot.runningAccount) : "unbound"}. Stop and start to apply {bot.account ? labels.get(bot.account) ?? shortId(bot.account) : "unbound"}.</span>
+                  </p>
+                ) : null}
                 <div className="flex items-center gap-2 rounded-lg bg-muted/60 px-2 py-1.5 text-[0.7rem]">
                   <RadioIcon className={cn("size-3.5", subscription?.status === "open" ? "text-pkg-bots" : "text-muted-foreground")} />
                   <span className="text-muted-foreground">{subscription?.status === "open" ? "Subscribed" : subscription ? "Connecting…" : "Not subscribed"}</span>
@@ -455,6 +469,12 @@ export function BotsWindow() {
                     <span title="bots_changed notices">{lifecycle} lifecycle</span>
                   </span>
                 </div>
+                {!onCall && callReason === null && !voice.busy ? (
+                  <Button size="xs" variant="outline" className="w-fit" onClick={() => voice.dial(bot.id)}>
+                    <PhoneIcon data-icon="inline-start" />
+                    Call
+                  </Button>
+                ) : null}
               </NodeCard>
             );
           })}

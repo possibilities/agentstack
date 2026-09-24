@@ -208,10 +208,10 @@ function RemoveAccountDialog({ account, label, used, pending, error, onConfirm, 
                 {used.length} {used.length === 1 ? "bot" : "bots"} will be stopped and deleted
               </span>
               <ul className="flex flex-col gap-1">
-                {used.map((server) => (
-                  <li key={server.id} className="flex items-center gap-2 font-mono text-[0.78rem]">
-                    <StatusDot tone={server.state === "running" ? "success" : "muted"} />
-                    {server.id}
+                {used.map((bot) => (
+                  <li key={bot.id} className="flex items-center gap-2 font-mono text-[0.78rem]">
+                    <StatusDot tone={bot.state === "running" ? "success" : "muted"} />
+                    {bot.id}
                   </li>
                 ))}
               </ul>
