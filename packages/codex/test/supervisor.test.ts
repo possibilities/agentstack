@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +9,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { appServerArgs, launchChild, Supervisor, waitForReady, type LaunchSpec, type RunningChild, type SupervisorOptions } from "../src/supervisor.js";
 import { codexRuntimePath } from "../src/paths.js";
+import type { StoredServer } from "../src/store.js";
 
 const fakeBin = fileURLToPath(new URL("../../test/fixtures/fake-app-server.mjs", import.meta.url));
 
@@ -112,6 +114,81 @@ test("start is idempotent and stop is idempotent", async () => {
     assert.deepEqual(killed, ["SIGTERM"]);
     assert.equal(supervisor.list().length, 1);
   } finally {
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("a new Server launches with credentials reconciled from an older Server", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-fresh-generation-"));
+  const cwd = await mkdtemp(join(tmpdir(), "agentstack-fresh-cwd-"));
+  const auth = (stamp: string, token: string) => JSON.stringify({ last_refresh: stamp, tokens: { refresh_token: token, access_token: "access", id_token: "fixture.jwt.signature" } });
+  let launchedWith = "";
+  const supervisor = new Supervisor({ stateDir,
+    endpoint: async () => "ws://127.0.0.1:43210",
+    launch(spec) {
+      const at = spec.args.indexOf("--identity");
+      launchedWith = readFileSync(join(spec.args[at + 1]!, "auth.json"), "utf8");
+      return { pid: 12345, exited: new Promise(() => undefined), kill() {} };
+    },
+    waitReady: async () => undefined,
+    bindThread: async () => "thread-new",
+  });
+  try {
+    const account = supervisor.store.addAccount(auth("2026-09-23T10:00:00Z", "old"));
+    const runtimeRoot = await supervisor.runtime.prepare("older");
+    const home = join(runtimeRoot, "codex-runtime");
+    await mkdir(home);
+    await writeFile(join(home, "auth.json"), auth("2026-09-23T11:00:00Z", "refreshed"));
+    const older: StoredServer = { id: "older", pid: null, cwd, url: null, state: "stopped", codexBin: codexRuntimePath(), account: account.id, authVersion: 1, runtimeRoot, mainThreadId: "thread-old", threadStarting: false };
+    supervisor.store.saveServer(older);
+    await supervisor.load();
+    await supervisor.start({ cwd, id: "new" });
+    assert.equal(launchedWith, auth("2026-09-23T11:00:00Z", "refreshed"));
+    assert.equal(supervisor.store.servers().find(({ id }) => id === "new")?.authVersion, 2);
+  } finally {
+    await supervisor.runtime.close();
+    supervisor.store.close();
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("a stopped Server resumes after re-sign-in while preserving its old runtime", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-replaced-generation-"));
+  const cwd = await mkdtemp(join(tmpdir(), "agentstack-replaced-cwd-"));
+  const auth = (token: string) => JSON.stringify({ last_refresh: "2026-09-23T10:00:00Z", tokens: { refresh_token: token, access_token: "access", id_token: "fixture.jwt.signature" } });
+  let launchedWith = "";
+  const supervisor = new Supervisor({ stateDir,
+    endpoint: async () => "ws://127.0.0.1:43211",
+    launch(spec) {
+      const at = spec.args.indexOf("--identity");
+      launchedWith = readFileSync(join(spec.args[at + 1]!, "auth.json"), "utf8");
+      return { pid: 12346, exited: new Promise(() => undefined), kill() {} };
+    },
+    waitReady: async () => undefined,
+    bindThread: async (_url, _cwd, id) => id ?? "unexpected-new-thread",
+  });
+  try {
+    const account = supervisor.store.addAccount(auth("old"));
+    const runtimeRoot = await supervisor.runtime.prepare("bound");
+    const home = join(runtimeRoot, "codex-runtime");
+    await mkdir(home);
+    await writeFile(join(home, "auth.json"), auth("old"));
+    const bound: StoredServer = { id: "bound", pid: null, cwd, url: null, state: "stopped", codexBin: codexRuntimePath(), account: account.id, authVersion: 1, runtimeRoot, mainThreadId: "thread-bound", threadStarting: false };
+    supervisor.store.saveServer(bound);
+    supervisor.store.replaceCredentials(account.id, auth("new"));
+    await supervisor.load();
+    const resumed = await supervisor.start({ cwd, id: "bound" });
+    assert.equal(resumed.mainThreadId, "thread-bound");
+    assert.equal(launchedWith, auth("new"));
+    assert.equal(supervisor.store.servers()[0]?.authVersion, 2);
+    const archived = await readdir(join(stateDir, "runtime-recovery", "bound"));
+    assert.equal(archived.length, 1);
+    assert.equal(await readFile(join(stateDir, "runtime-recovery", "bound", archived[0]!, "codex-runtime", "auth.json"), "utf8"), auth("old"));
+  } finally {
+    await supervisor.runtime.close();
+    supervisor.store.close();
     await rm(stateDir, { recursive: true, force: true });
     await rm(cwd, { recursive: true, force: true });
   }

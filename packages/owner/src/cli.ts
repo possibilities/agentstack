@@ -86,9 +86,15 @@ let childFailed = false;
 const shutdown = () => {
   if (closing) process.exit(1);
   closing = true;
-  const force = setTimeout(() => process.exit(1), 16_000);
+  const force = setTimeout(() => process.exit(1), 240_000);
   force.unref();
-  void Promise.allSettled([owner.close(), events.close(), docs?.close(), mcp?.close(), catalog?.close()]).then((results) => {
+  void (async () => {
+    // Refuse new requests first. The remaining socket Servers drain their
+    // active calls while the dependencies they call are still running.
+    const ingress = await Promise.allSettled([owner.stop(["websocket", "inspector", "uix"]), events.close(), docs?.close(), mcp?.close(), catalog?.close()]);
+    const children = await Promise.allSettled([owner.close()]);
+    return [...ingress, ...children];
+  })().then((results) => {
     const failed = results.some((result) => result.status === "rejected");
     for (const result of results) {
       if (result.status === "rejected") console.error(result.reason);
@@ -103,7 +109,7 @@ owner = startOwner([apiChild(), authChild(), codexChild(), botsChild(), websocke
     console.error("a required child stopped; shutting down agentstack");
     shutdown();
   }
-});
+}, [["auth"], ["bots"], ["codex"], ["api"]]);
 statusSource.attach(owner);
 
 if (events.socketPath) console.error(events.socketPath);

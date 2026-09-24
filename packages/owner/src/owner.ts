@@ -17,13 +17,14 @@ export type ChildStatus = {
 };
 
 export type RunningOwner = {
+  stop(names: readonly string[]): Promise<void>;
   close(): Promise<void>;
   children(): ChildStatus[];
 };
 
-const haltMs = 14_000;
+const haltMs = 65_000;
 
-export function startOwner(children: OwnedChild[], env: NodeJS.ProcessEnv = process.env, onChange?: () => void): RunningOwner {
+export function startOwner(children: OwnedChild[], env: NodeJS.ProcessEnv = process.env, onChange?: () => void, shutdownStages: readonly (readonly string[])[] = []): RunningOwner {
   const running = children.map((child) => ({
     child,
     error: null as string | null,
@@ -72,8 +73,20 @@ export function startOwner(children: OwnedChild[], env: NodeJS.ProcessEnv = proc
   }
 
   return {
-    close() {
-      return halt(running.map((item) => item.proc));
+    stop(names) {
+      return halt(running.filter((item) => names.includes(item.child.name)).map((item) => item.proc));
+    },
+    async close() {
+      const staged = new Set(shutdownStages.flat());
+      let failure: unknown;
+      for (const stage of [...shutdownStages, running.filter((item) => !staged.has(item.child.name)).map((item) => item.child.name)]) {
+        try {
+          await halt(running.filter((item) => stage.includes(item.child.name)).map((item) => item.proc));
+        } catch (error) {
+          failure ??= error;
+        }
+      }
+      if (failure !== undefined) throw failure;
     },
     children() {
       return statuses();

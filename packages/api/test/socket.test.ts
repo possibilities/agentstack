@@ -118,7 +118,6 @@ test("socket rejects null frames and waits for active calls before closing", asy
     });
     assert.match(response, /invalid json/);
     const call = socketCall(path, "tools/call", { name: "slow", arguments: {} });
-    const rejection = assert.rejects(call, /complete response/);
     await started;
     const firstClose = served.close();
     assert.equal(served.close(), firstClose);
@@ -127,8 +126,8 @@ test("socket rejects null frames and waits for active calls before closing", asy
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(done, false);
     release();
+    assert.deepEqual(await call, { done: true });
     await firstClose;
-    await rejection;
   } finally {
     release();
     await served.close();

@@ -39,6 +39,38 @@ test("the owner signals descendants in its process group", { skip: process.platf
   }
 });
 
+test("shutdown drains a dependent child before stopping its dependency", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentstack-owner-drain-"));
+  const ingressStopped = join(dir, "ingress-stopped");
+  const botStopped = join(dir, "bot-stopped");
+  const drained = join(dir, "drained");
+  const script = (name: string) => `
+    const fs = require("node:fs");
+    fs.writeFileSync(${JSON.stringify(join(dir, `${name}-ready`))}, "ready");
+    process.on("SIGTERM", () => {
+      if (${JSON.stringify(name)} === "auth") {
+        const safe = fs.existsSync(${JSON.stringify(ingressStopped)}) && !fs.existsSync(${JSON.stringify(botStopped)});
+        setTimeout(() => { fs.writeFileSync(${JSON.stringify(drained)}, safe ? "yes" : "no"); process.exit(0); }, 100);
+      } else {
+        fs.writeFileSync(${JSON.stringify(name === "ingress" ? ingressStopped : botStopped)}, "stopped");
+        process.exit(0);
+      }
+    });
+    setInterval(() => {}, 1000);
+  `;
+  const owner = startOwner(["ingress", "auth", "bots"].map((name) => ({ name, command: process.execPath, args: ["-e", script(name)] })), process.env, undefined, [["auth"], ["bots"]]);
+  try {
+    await waitFor(() => ["ingress", "auth", "bots"].every((name) => existsSync(join(dir, `${name}-ready`))), 5_000);
+    await owner.stop(["ingress"]);
+    await owner.close();
+    assert.equal(await readFile(drained, "utf8"), "yes");
+    assert.ok(existsSync(botStopped));
+  } finally {
+    await owner.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("the owner starts the four required socket children", () => {
   for (const child of [apiChild(), authChild(), codexChild(), botsChild()]) {
     assert.equal(child.command, process.execPath);

@@ -1,0 +1,7 @@
+# 14. Retire superseded runtime copies and drain dependent Servers in order
+
+Status: accepted, 2026-09-24. Extends [ADR 0004](0004-codex-account-state.md)'s credential-generation fencing and [ADR 0005](0005-server-main-threads.md)'s restart behavior.
+
+A stopped Server may retain a runtime credential from an older generation after another Server refreshes the account or a person signs in again. That copy must not replace the newer saved credential. On the next launch, AgentStack reconciles it once more; only when it is definitively stale and the saved account generation has advanced does AgentStack move the entire private runtime to `<state>/runtime-recovery/<server-id>/<uuid>`. The new launch reads the current saved generation after reconciling other Servers. Invalid, unreadable, or ambiguous runtime copies still block a restart for inspection. Server removal also removes its retained recovery copies.
+
+Owner shutdown first closes public ingress and the WebSocket, Inspector and UI canvas children. It then stops the auth Server, the bots Server, the codex Server and finally the api Server, so an in-flight account removal can still call bots and codex, and bots can still call codex. Each child gets a bounded drain before its process group is forced to exit. This ordering does not turn an uncertain external effect into a completed one; callers must still inspect state before retrying interrupted work.

@@ -6,7 +6,7 @@ import { accessSync, constants, createWriteStream, existsSync } from "node:fs";
 import { connect } from "node:net";
 import { codexRuntimePath } from "./paths.js";
 import { StateStore, type StoredServer } from "./store.js";
-import { RuntimeAuth } from "./runtime-auth.js";
+import { RuntimeAuth, type SyncStatus } from "./runtime-auth.js";
 import { bindMainThread } from "./threads.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -163,6 +163,7 @@ export class Supervisor {
       if (record.state === "running") await this.stopQueued(id);
       await this.runtime.finish(record).catch((error) => console.error(`Codex auth cleanup for removed server ${id}: ${error}`));
       await rm(this.runtime.rootFor(id), { recursive: true, force: true });
+      await rm(join(this.options.stateDir, "runtime-recovery", id), { recursive: true, force: true });
       if (record.url) await cleanupEndpoint(record.url);
       await rm(join(this.options.stateDir, "logs", `${id}.log`), { force: true });
       // Legacy shared history cannot be attributed safely to one account.
@@ -196,17 +197,19 @@ export class Supervisor {
       throw new Error(`server ${id} has an unconfirmed thread/start; inspect its Codex history before retrying to avoid a second main thread`);
     }
     if (current?.runtimeRoot) {
-      await this.runtime.finish(current);
-      if (current.runtimeRoot) throw new Error(`server ${id} has unreconciled Codex credentials; sign in again or inspect its private runtime`);
+      const status = await this.finishRuntime(current);
+      if (current.runtimeRoot && status) await this.runtime.retireSuperseded(current, status);
+      if (current.runtimeRoot) throw new Error(`server ${id} has unreconciled Codex credentials; inspect its private runtime`);
     }
-    const account = current?.account ? this.store.accountCredentials(current.account) : this.store.activeAccount();
-    const selected = account.id;
+    const selected = current?.account ?? this.store.activeAccount().id;
     for (const record of this.records.values()) {
       if (record.account === selected && record.runtimeRoot) {
         if (record.state === "stopped") await this.finishRuntime(record);
         else await this.runtime.reconcile(record);
       }
     }
+    // Reconciliation above may advance the saved credential generation.
+    const account = this.store.accountCredentials(selected);
     const capabilities = join(this.options.stateDir, "capabilities", "default");
     const privateHistory = join(this.options.stateDir, "history", id);
     const history = current?.mainThreadId && !existsSync(privateHistory) ? join(this.options.stateDir, "history") : privateHistory;
@@ -405,9 +408,9 @@ export class Supervisor {
     this.store.saveServer(record);
   }
 
-  private async finishRuntime(record: RecordFile): Promise<void> {
-    try { await this.runtime.finish(record); }
-    catch (error) { console.error(`Codex auth reconciliation for ${record.id} failed: ${error}`); }
+  private async finishRuntime(record: RecordFile): Promise<SyncStatus | null> {
+    try { return await this.runtime.finish(record); }
+    catch (error) { console.error(`Codex auth reconciliation for ${record.id} failed: ${error}`); return null; }
   }
 }
 

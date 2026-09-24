@@ -57,6 +57,7 @@ export async function serveSocket<Ctx>(options: {
   await prepareSocket(options.info.path);
   const clients = new Set<Socket>();
   const active = new Set<Promise<void>>();
+  const activeClients = new Map<Socket, number>();
   let closing: Promise<void> | undefined;
   const server = createServer((socket) => {
     if (closing) {
@@ -80,11 +81,21 @@ export async function serveSocket<Ctx>(options: {
         if (line) {
           const request = handleLine(socket, line, handler);
           active.add(request);
+          activeClients.set(socket, (activeClients.get(socket) ?? 0) + 1);
+          const finished = () => {
+            const count = (activeClients.get(socket) ?? 1) - 1;
+            if (count) activeClients.set(socket, count);
+            else {
+              activeClients.delete(socket);
+              if (closing) socket.end();
+            }
+          };
           void request.then(
-            () => active.delete(request),
+            () => { active.delete(request); finished(); },
             (error) => {
               active.delete(request);
               write(socket, { id: null, error: { message: errorMessage(error) } });
+              finished();
             },
           );
         }
@@ -94,6 +105,7 @@ export async function serveSocket<Ctx>(options: {
     const drop = () => {
       clients.delete(socket);
       subscriptions.delete(socket);
+      activeClients.delete(socket);
     };
     socket.on("close", drop);
     socket.on("error", drop);
@@ -116,9 +128,10 @@ export async function serveSocket<Ctx>(options: {
     close() {
       if (closing) return closing;
       closing = (async () => {
-        for (const socket of clients) socket.destroy();
         subscriptions.clear();
+        for (const socket of clients) if (!activeClients.has(socket)) socket.destroy();
         await Promise.allSettled([...active]);
+        for (const socket of clients) socket.end();
         await closeServer(server);
         await rm(options.info.path, { force: true });
       })();

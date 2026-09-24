@@ -1,9 +1,10 @@
 import { watch, type FSWatcher } from "node:fs";
-import { lstat, mkdir, readFile, readdir, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { lstat, mkdir, readFile, readdir, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { StateStore, type StoredServer } from "./store.js";
 
-type SyncStatus = "updated" | "unchanged" | "stale" | "invalid" | "missing" | "unavailable";
+export type SyncStatus = "updated" | "unchanged" | "stale" | "invalid" | "missing" | "unavailable";
 
 // codexnk creates a random, retained runtime home with tempfile::TempDir::new().
 // A private TMPDIR per Server makes that home discoverable without changing Codex.
@@ -49,7 +50,7 @@ export class RuntimeAuth {
     this.scanTimer.unref();
   }
 
-  async finish(record: StoredServer): Promise<void> {
+  async finish(record: StoredServer): Promise<SyncStatus> {
     this.unwatch(record.id);
     const removedAccount = record.account !== null && !this.store.listAccounts().some(({ id }) => id === record.account);
     const status = removedAccount ? "missing" : await this.reconcile(record);
@@ -62,6 +63,20 @@ export class RuntimeAuth {
     } else if (record.runtimeRoot && status !== "unavailable") {
       console.error(`Codex auth for ${record.id} was not reconciled (${status}); retaining its private runtime for recovery`);
     }
+    return status;
+  }
+
+  /** Preserve a superseded runtime for diagnosis without blocking a new launch. */
+  async retireSuperseded(record: StoredServer, status: SyncStatus): Promise<boolean> {
+    if (status !== "stale" || record.runtimeRoot !== this.rootFor(record.id) || !record.account || record.authVersion === null) return false;
+    const current = this.store.accountCredentials(record.account);
+    if (current.version <= record.authVersion) return false;
+    const recovery = join(this.store.stateDir, "runtime-recovery", record.id);
+    await mkdir(recovery, { recursive: true, mode: 0o700 });
+    await rename(record.runtimeRoot, join(recovery, randomUUID()));
+    record.runtimeRoot = null;
+    this.store.saveServer(record);
+    return true;
   }
 
   async close(): Promise<void> {
