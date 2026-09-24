@@ -4,7 +4,6 @@ import { operation, type PackageApi } from "@agentstack/api";
 import { stateDir } from "./src/paths.js";
 import { Supervisor, type ServerView } from "./src/supervisor.js";
 import { watchThreadEvents } from "./src/threads.js";
-import { InputObserver } from "./src/input-observer.js";
 import { StateStore } from "./src/store.js";
 
 const idSchema = z
@@ -28,65 +27,8 @@ const serverListSchema = z.object({
 
 export type CodexContext = {
   supervisor: Supervisor;
-  observer: InputObserver;
   store: StateStore;
 };
-
-const observationTargetSchema = z.strictObject({
-  serverId: idSchema,
-  threadId: z.string().min(1),
-});
-
-const observationSchema = observationTargetSchema.extend({
-  inputId: z.string(),
-  origin: z.enum(["client", "realtime"]),
-  originalText: z.string(),
-  selectedText: z.string().nullable(),
-  observedAt: z.string(),
-  disposition: z.enum(["pending", "passed", "replaced", "intercepted", "rejected", "unresolved"]),
-  operationId: z.string().nullable(),
-  effect: z.object({ status: z.enum(["succeeded", "failed", "unknown"]), summary: z.string() }).nullable(),
-});
-const observationIssueSchema = observationTargetSchema.extend({ message: z.string(), at: z.string() });
-
-export const inputObserveStart = operation({
-  name: "input_observe_start",
-  description: "Register a pass-through human-input observer for one loaded Codex thread. Its candidates and resolutions are retained in a bounded in-memory log readable via input_observe_list.",
-  input: observationTargetSchema,
-  output: observationTargetSchema.extend({ status: z.enum(["observing", "failed"]), message: z.string().nullable() }),
-  annotations: { title: "Observe input" },
-  async call(ctx: CodexContext, input) {
-    const server = ctx.supervisor.list().find((item) => item.id === input.serverId);
-    if (!server) return { ...input, status: "failed" as const, message: `unknown Codex server: ${input.serverId}` };
-    try {
-      await ctx.observer.start(server, input.threadId);
-      return { ...input, status: "observing" as const, message: null };
-    } catch (error) {
-      return { ...input, status: "failed" as const, message: String(error instanceof Error ? error.message : error).slice(0, 256) };
-    }
-  },
-});
-
-export const inputObserveStop = operation({
-  name: "input_observe_stop",
-  description: "Detach the input observer from a Codex thread and restore its unregistered input path.",
-  input: observationTargetSchema,
-  output: observationTargetSchema,
-  annotations: { title: "Stop observing", idempotentHint: true },
-  async call(ctx: CodexContext, input) {
-    await ctx.observer.stop(input.serverId, input.threadId);
-    return input;
-  },
-});
-
-export const inputObserveList = operation({
-  name: "input_observe_list",
-  description: "Read current observation targets and the latest 200 input middleware candidates and outcomes.",
-  input: z.strictObject({}),
-  output: z.strictObject({ targets: z.array(observationTargetSchema), entries: z.array(observationSchema), issues: z.array(observationIssueSchema) }),
-  annotations: { title: "Input observations", readOnlyHint: true },
-  async call(ctx: CodexContext) { return ctx.observer.snapshot(); },
-});
 
 export const serverStart = operation({
   name: "server_start",
@@ -139,13 +81,12 @@ export const serverList = operation({
 export const topics = {
   servers_changed: "Published when a Codex app-server record starts, stops, exits, or is reaped.",
   threads_changed: "Published when a loaded Codex thread starts, changes status, or closes.",
-  inputs_changed: "Published when an observed middleware candidate or its outcome changes; prompt bodies are never sent on this channel.",
 } as const;
 
 export type CodexTopic = keyof typeof topics;
 
 export const api: PackageApi<CodexContext, CodexTopic> = {
-  operations: [serverStart, serverStop, serverRemove, serverList, inputObserveStart, inputObserveStop, inputObserveList],
+  operations: [serverStart, serverStop, serverRemove, serverList],
   events: {
     topics,
     scope: {
@@ -169,14 +110,11 @@ export const api: PackageApi<CodexContext, CodexTopic> = {
       };
       ctx.supervisor.onChange = (id) => {
         sync();
-        ctx.observer.reconcile(ctx.supervisor.list());
         publish("servers_changed", id);
       };
-      ctx.observer.setPublisher((id) => publish("inputs_changed", id));
       sync();
       return () => {
         ctx.supervisor.onChange = undefined;
-        ctx.observer.setPublisher(undefined);
         for (const watch of watches.values()) watch.stop();
         watches.clear();
       };
@@ -191,10 +129,9 @@ export const api: PackageApi<CodexContext, CodexTopic> = {
     await supervisor.load();
     await supervisor.reap();
     await supervisor.resumeAll();
-    return { supervisor, store, observer: new InputObserver() };
+    return { supervisor, store };
   },
   async closeContext(ctx) {
-    ctx.observer.close();
     await ctx.supervisor.stopAll();
     await ctx.supervisor.runtime.close();
     ctx.store.close();

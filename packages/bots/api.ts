@@ -26,7 +26,6 @@ export type BotsContext = {
 export const topics = {
   bots_changed: "Published when this bot's Codex Server starts, stops, exits, or is reaped. Refresh bot_list.",
   threads_changed: "Published when loaded thread state for this bot changes or its Codex connection resumes. Read its app-server thread state.",
-  inputs_changed: "Published when this bot's observed input or outcome changes or its Codex connection resumes. Read Codex input_observe_list for this bot; notices never contain prompt bodies.",
 } as const;
 
 export type BotsTopic = keyof typeof topics;
@@ -46,7 +45,6 @@ function watchBot(ctx: BotsContext, id: string, publish: (topic: BotsTopic, scop
       if (!stopped && (owned || wasOwned)) publish("bots_changed", id);
       if (!stopped && owned) {
         publish("threads_changed", id);
-        publish("inputs_changed", id);
       }
     }).catch(() => undefined);
   };
@@ -55,7 +53,7 @@ function watchBot(ctx: BotsContext, id: string, publish: (topic: BotsTopic, scop
     try {
       const current = await socketSubscribe(
         ctx.codexSocket,
-        ["servers_changed", "threads_changed", "inputs_changed"],
+        ["servers_changed", "threads_changed"],
         (topic) => {
           if (stopped) return;
           if (topic === "servers_changed") checkOwnership();
