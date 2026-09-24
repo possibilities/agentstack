@@ -134,10 +134,10 @@ async function ensureWorkspace(path: string): Promise<string> {
 export const botStart = operation({
   name: "bot_start",
   description:
-    "Start a Codex bot app-server in its private workspace under the agentstack state bots directory, or return the live one. Omit id to allocate the next never-reused bot-N id. Extra args pass through to Codex.",
+    "Start a Codex bot app-server in its private workspace, or return the live one. Omit id to allocate the next never-reused bot-N id. Omit args to reuse saved args; pass [] to clear them while stopped. A running Bot rejects changed args.",
   input: z.strictObject({
     id: botIdSchema.optional().describe("Existing bot id to restart. A new id is allocated when omitted."),
-    args: z.array(z.string()).optional().describe("Extra Codex arguments. Do not include --listen."),
+    args: z.array(z.string()).optional().describe("Extra Codex arguments saved for future launches. Omit to reuse saved args; [] clears them when stopped. Do not include --listen."),
   }),
   output: serverStart.output,
   annotations: { title: "Start bot" },

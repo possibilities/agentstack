@@ -106,6 +106,8 @@ export class Supervisor {
           parsed.runtimeRoot ??= null;
           parsed.mainThreadId ??= null;
           parsed.threadStarting ??= false;
+          parsed.args ??= [];
+          if (!Array.isArray(parsed.args) || !parsed.args.every((arg) => typeof arg === "string")) throw new Error(`invalid launch arguments for Server ${parsed.id}`);
           this.store.saveServer(parsed);
           this.records.set(parsed.id, parsed);
         }
@@ -184,12 +186,16 @@ export class Supervisor {
     if (!ID_PATTERN.test(id)) throw new Error(`invalid id: ${id}`);
     const cwd = await existingDirectory(input.cwd);
     const codexBin = codexRuntimePath();
-    const userArgs = input.args ?? [];
     const current = this.records.get(id);
+    const userArgs = input.args ?? current?.args ?? [];
+    validateAppServerArgs(userArgs);
     if (current && current.cwd !== cwd) throw new Error(`server ${id} is bound to ${current.cwd}, not ${cwd}`);
     if (current && (await this.isRunning(current))) {
       if (current.codexBin !== codexBin) {
         throw new Error(`server ${id} uses a different Codex runtime; stop it before starting it with codexnk`);
+      }
+      if (input.args !== undefined && !sameArgs(input.args, current.args)) {
+        throw new Error(`server ${id} is running with different launch arguments; stop it before changing args`);
       }
       return viewOf(current);
     }
@@ -244,7 +250,7 @@ export class Supervisor {
       this.children.set(id, child);
       const record: RecordFile = {
         id, pid: child.pid, cwd, url, state: "running", codexBin, account: account.id, authVersion: account.version, runtimeRoot,
-        mainThreadId: current?.mainThreadId ?? null, threadStarting: current?.threadStarting ?? false,
+        mainThreadId: current?.mainThreadId ?? null, threadStarting: current?.threadStarting ?? false, args: [...userArgs],
       };
       this.records.set(id, record);
       this.watchExit(id, child, record);
@@ -415,11 +421,7 @@ export class Supervisor {
 }
 
 export function appServerArgs(userArgs: readonly string[], url: string): string[] {
-  for (const arg of userArgs) {
-    if (["--listen", "--identity", "--capabilities", "--history-dir"].some((flag) => arg === flag || arg.startsWith(`${flag}=`))) {
-      throw new Error("do not pass --listen, --identity, --capabilities, or --history-dir; agentstack owns these axes");
-    }
-  }
+  validateAppServerArgs(userArgs);
   const args = [...userArgs];
   let appServerAt = args.indexOf("app-server");
   if (appServerAt === -1) {
@@ -428,6 +430,18 @@ export function appServerArgs(userArgs: readonly string[], url: string): string[
   }
   args.splice(appServerAt + 1, 0, "--listen", url);
   return args;
+}
+
+function validateAppServerArgs(userArgs: readonly string[]): void {
+  for (const arg of userArgs) {
+    if (["--listen", "--identity", "--capabilities", "--history-dir"].some((flag) => arg === flag || arg.startsWith(`${flag}=`))) {
+      throw new Error("do not pass --listen, --identity, --capabilities, or --history-dir; agentstack owns these axes");
+    }
+  }
+}
+
+function sameArgs(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((arg, index) => arg === right[index]);
 }
 
 async function unixEndpoint(stateDir: string, id: string): Promise<string> {

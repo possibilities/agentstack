@@ -33,11 +33,11 @@ export type CodexContext = {
 export const serverStart = operation({
   name: "server_start",
   description:
-    "Start the required codexnk runtime with its persistent main thread, or return the live one with this id. Servers resume when agentstack starts. Extra args are passed through. Do not pass --listen.",
+    "Start the required codexnk runtime with its persistent main thread, or return the live one with this id. Servers resume with saved args. Omit args to reuse them; pass [] to clear them while stopped. A running Server rejects changed args. Do not pass --listen.",
   input: z.strictObject({
     cwd: z.string().describe("Working directory for the app-server."),
     id: idSchema.optional().describe("Existing server id to reuse. A new id is generated when omitted."),
-    args: z.array(z.string()).optional().describe("Extra Codex arguments. Do not include --listen."),
+    args: z.array(z.string()).optional().describe("Extra Codex arguments saved for future launches. Omit to reuse saved args; [] clears them when stopped. Do not include --listen."),
   }),
   output: serverViewSchema,
   annotations: { title: "Start server" },

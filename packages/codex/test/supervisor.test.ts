@@ -119,6 +119,64 @@ test("start is idempotent and stop is idempotent", async () => {
   }
 });
 
+test("launch arguments survive owner recovery and can change only while stopped", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-persist-args-"));
+  const cwd = await mkdtemp(join(tmpdir(), "agentstack-persist-args-cwd-"));
+  const launches: string[][] = [];
+  const options: SupervisorOptions = {
+    stateDir, graceMs: 20,
+    endpoint: async () => `ws://127.0.0.1:${43300 + launches.length}`,
+    launch(spec): RunningChild {
+      launches.push(spec.args.slice(spec.args.indexOf("--listen") + 2, spec.args.indexOf("--identity")));
+      let finish: (code: number | null) => void = () => undefined;
+      const child: RunningChild = {
+        pid: 100 + launches.length,
+        exited: new Promise((resolve) => { finish = resolve; }),
+        kill() { child.exitCode = 0; finish(0); },
+      };
+      return child;
+    },
+    waitReady: async () => undefined,
+    bindThread: async (_url, _cwd, id) => id ?? "thread-persisted",
+  };
+  const first = new Supervisor(options);
+  let recovered: Supervisor | undefined;
+  try {
+    await first.load();
+    seedAccount(first);
+    await first.start({ cwd, id: "configured", args: ["--model", "gpt-5.4"] });
+    assert.deepEqual(launches, [["--model", "gpt-5.4"]]);
+    await first.start({ cwd, id: "configured" });
+    await first.start({ cwd, id: "configured", args: ["--model", "gpt-5.4"] });
+    await assert.rejects(first.start({ cwd, id: "configured", args: ["--model", "gpt-5.6"] }), /stop it before changing args/);
+    await assert.rejects(first.start({ cwd, id: "configured", args: ["--listen", "other"] }), /agentstack owns these axes/);
+    assert.equal(launches.length, 1);
+    await first.stop("configured");
+
+    recovered = new Supervisor(options);
+    await recovered.load();
+    assert.deepEqual(recovered.store.servers()[0]?.args, ["--model", "gpt-5.4"]);
+    await recovered.resumeAll();
+    assert.deepEqual(launches[1], ["--model", "gpt-5.4"]);
+    assert.equal(recovered.list()[0]?.mainThreadId, "thread-persisted");
+    await recovered.stop("configured");
+    await recovered.start({ cwd, id: "configured", args: ["--model", "gpt-5.6"] });
+    assert.deepEqual(launches[2], ["--model", "gpt-5.6"]);
+    await recovered.stop("configured");
+    await recovered.start({ cwd, id: "configured", args: [] });
+    assert.deepEqual(launches[3], []);
+    assert.deepEqual(recovered.store.servers()[0]?.args, []);
+  } finally {
+    await recovered?.stopAll();
+    await recovered?.runtime.close();
+    recovered?.store.close();
+    await first.runtime.close();
+    first.store.close();
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("a new Server launches with credentials reconciled from an older Server", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-fresh-generation-"));
   const cwd = await mkdtemp(join(tmpdir(), "agentstack-fresh-cwd-"));
@@ -140,7 +198,7 @@ test("a new Server launches with credentials reconciled from an older Server", a
     const home = join(runtimeRoot, "codex-runtime");
     await mkdir(home);
     await writeFile(join(home, "auth.json"), auth("2026-09-23T11:00:00Z", "refreshed"));
-    const older: StoredServer = { id: "older", pid: null, cwd, url: null, state: "stopped", codexBin: codexRuntimePath(), account: account.id, authVersion: 1, runtimeRoot, mainThreadId: "thread-old", threadStarting: false };
+    const older: StoredServer = { id: "older", pid: null, cwd, url: null, state: "stopped", codexBin: codexRuntimePath(), account: account.id, authVersion: 1, runtimeRoot, mainThreadId: "thread-old", threadStarting: false, args: [] };
     supervisor.store.saveServer(older);
     await supervisor.load();
     await supervisor.start({ cwd, id: "new" });
@@ -175,7 +233,7 @@ test("a stopped Server resumes after re-sign-in while preserving its old runtime
     const home = join(runtimeRoot, "codex-runtime");
     await mkdir(home);
     await writeFile(join(home, "auth.json"), auth("old"));
-    const bound: StoredServer = { id: "bound", pid: null, cwd, url: null, state: "stopped", codexBin: codexRuntimePath(), account: account.id, authVersion: 1, runtimeRoot, mainThreadId: "thread-bound", threadStarting: false };
+    const bound: StoredServer = { id: "bound", pid: null, cwd, url: null, state: "stopped", codexBin: codexRuntimePath(), account: account.id, authVersion: 1, runtimeRoot, mainThreadId: "thread-bound", threadStarting: false, args: [] };
     supervisor.store.saveServer(bound);
     supervisor.store.replaceCredentials(account.id, auth("new"));
     await supervisor.load();

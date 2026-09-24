@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { StateStore } from "../src/store.js";
+import { StateStore, type StoredServer } from "../src/store.js";
 import { Supervisor, type LaunchSpec } from "../src/supervisor.js";
 
 const credential = (token: string) => JSON.stringify({ tokens: { refresh_token: token, access_token: "access", id_token: "fixture.jwt.signature" } });
@@ -78,6 +78,7 @@ test("existing SQLite state gains runtime and credential generations without los
     assert.equal(upgraded.activeAccount().version, 1);
     assert.equal(upgraded.servers()[0]?.mainThreadId, null);
     assert.equal(upgraded.servers()[0]?.threadStarting, false);
+    assert.deepEqual(upgraded.servers()[0]?.args, []);
     upgraded.close();
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -108,6 +109,7 @@ test("legacy JSON Server records follow the migrated immutable account ID", asyn
     assert.notEqual(id, "codex-1");
     assert.equal(supervisor.list().find((server) => server.id === "old")?.account, id);
     assert.equal(supervisor.store.servers().find((server) => server.id === "old")?.account, id);
+    assert.deepEqual(supervisor.store.servers().find((server) => server.id === "old")?.args, []);
     const orphan = supervisor.list().find((server) => server.id === "orphan")?.account;
     assert.match(orphan ?? "", /^[0-9a-f-]{36}$/);
     assert.notEqual(orphan, id);
@@ -115,4 +117,28 @@ test("legacy JSON Server records follow the migrated immutable account ID", asyn
     assert.equal(supervisor.store.resolveLegacyAccount("codex-9"), "codex-9");
     supervisor.store.close();
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("Server launch arguments persist only in private secrets storage and are removed with the Server", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-private-args-"));
+  const store = new StateStore(root);
+  const args = ["-c", "provider_token=private-example", "--model", "gpt-5.4"];
+  try {
+    const account = store.addAccount(credential("account"));
+    const record: StoredServer = { id: "private", pid: null, cwd: root, url: null, state: "stopped", codexBin: "codex", account: account.id, authVersion: null, runtimeRoot: null, mainThreadId: null, threadStarting: false, args };
+    store.saveServer(record);
+    assert.deepEqual(store.servers()[0]?.args, args);
+    assert.equal(readFileSync(join(root, "configuration.sqlite")).includes(Buffer.from("provider_token=private-example")), false);
+    assert.equal(readFileSync(join(root, "secrets.sqlite")).includes(Buffer.from("provider_token=private-example")), true);
+    assert.throws(() => store.saveServer({ ...record, id: "invalid", account: "missing" }), /account is unavailable/i);
+    assert.equal(store.servers().some(({ id }) => id === "invalid"), false);
+    const secrets = new DatabaseSync(join(root, "secrets.sqlite"));
+    assert.equal(secrets.prepare("SELECT 1 FROM server_args WHERE id = 'invalid'").get(), undefined);
+    secrets.close();
+    store.deleteServer(record.id);
+    assert.deepEqual(store.servers(), []);
+    const after = new DatabaseSync(join(root, "secrets.sqlite"));
+    assert.equal(after.prepare("SELECT 1 FROM server_args WHERE id = 'private'").get(), undefined);
+    after.close();
+  } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 });

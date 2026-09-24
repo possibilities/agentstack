@@ -65,7 +65,7 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     await assert.rejects(call(botsSocket, "bot_start", { cwd: workDir }), /cwd|Unrecognized/);
     await assert.rejects(call(botsSocket, "bot_stop", { id: "bot-4" }), /unknown bot: bot-4/);
 
-    const first = (await call(botsSocket, "bot_start")) as View;
+    const first = (await call(botsSocket, "bot_start", { args: ["--model", "gpt-5.4"] })) as View;
     assert.equal(first.id, "bot-1");
     assert.equal(first.state, "running");
     assert.equal(first.cwd, join(stateDir, "bots", "bot-1"));
@@ -83,6 +83,7 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     assert.equal(again.state, "running");
     assert.equal(again.pid, first.pid);
     assert.equal(again.mainThreadId, first.mainThreadId);
+    await assert.rejects(call(botsSocket, "bot_start", { id: "bot-1", args: ["--model", "gpt-5.6"] }), /stop it before changing args/);
 
     const second = (await call(botsSocket, "bot_start")) as View;
     assert.equal(second.id, "bot-2");
@@ -135,6 +136,9 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     const restarted = (await call(botsSocket, "bot_start", { id: "bot-1" })) as View;
     assert.equal(restarted.state, "running");
     assert.equal(restarted.mainThreadId, first.mainThreadId);
+    const saved = new StateStore(stateDir);
+    assert.deepEqual(saved.servers().find((server) => server.id === "bot-1")?.args, ["--model", "gpt-5.4"]);
+    saved.close();
 
     const concurrent = (await Promise.all([
       call(botsSocket, "bot_start"),
@@ -197,6 +201,9 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     assert.equal(booted.bots.length, 9); // bot-6 was reserved, but never successfully started.
     assert.ok(booted.bots.every((bot) => bot.state === "running" && bot.mainThreadId));
     assert.equal(booted.bots.find((bot) => bot.id === "bot-1")?.mainThreadId, first.mainThreadId);
+    const resumedStore = new StateStore(stateDir);
+    assert.deepEqual(resumedStore.servers().find((server) => server.id === "bot-1")?.args, ["--model", "gpt-5.4"]);
+    resumedStore.close();
     const afterBoot = (await call(codexSocket, "server_list")) as { servers: View[] };
     assert.equal(afterBoot.servers.find((server) => server.id === "other")?.state, "running");
     assert.equal(afterBoot.servers.find((server) => server.id === "other")?.mainThreadId, unrelated.mainThreadId);
