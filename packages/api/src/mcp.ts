@@ -2,37 +2,36 @@ import { createServer } from "node:http";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
-import { loadPackageApi } from "./catalog.js";
 import { socketCall } from "./socket.js";
-import { publishedJsonSchema } from "./schema.js";
 import { listPackages, mcpPort, socketPath, workspaceRoot } from "./workspace.js";
 
-export type ServedMcp = { urls: Record<string, string>; close(): Promise<void> };
+export type ServedMcp = { port: number; urls: Record<string, string>; close(): Promise<void> };
+
+export async function configuredMcpPackages(root: string): Promise<Array<{ name: string; description: string }>> {
+  return (await listPackages(root)).filter((item) => item.config.mcp).map((item) => ({
+    name: item.config.name,
+    description: item.config.description,
+  }));
+}
 
 export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string; port?: number } = {}): Promise<ServedMcp> {
   const env = options.env ?? process.env;
   const port = options.port ?? mcpPort(env);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("MCP port must be an integer from 0 to 65535");
   const root = options.root ?? workspaceRoot(import.meta.dirname);
-  const packages = (await listPackages(root)).filter((item) => item.config.mcp);
+  const packages = await configuredMcpPackages(root);
   if (packages.length === 0) throw new Error("no Package APIs configure mcp");
-  // Import only the operation definitions. Contexts are owned by the socket Servers.
-  const definitions = new Map(await Promise.all(packages.map(async (item) => {
-    const api = await loadPackageApi(item.dir);
-    const tools: Tool[] = api.operations.map((operation) => ({
-      name: operation.name,
-      title: operation.annotations?.title,
-      description: operation.description,
-      inputSchema: publishedJsonSchema(operation.input) as Tool["inputSchema"],
-      outputSchema: publishedJsonSchema(operation.output) as Tool["outputSchema"],
-      annotations: operation.annotations,
-    }));
-    return [item.config.name, { description: item.config.description, tools }] as const;
-  })));
 
   const server = createServer(async (request, response) => {
     const name = /^\/mcp\/([a-z][a-z0-9-]{0,31})$/.exec(request.url ?? "")?.[1];
-    const definition = name ? definitions.get(name) : undefined;
+    let definition: { name: string; description: string } | undefined;
+    try {
+      definition = (await configuredMcpPackages(root)).find((item) => item.name === name);
+    } catch (error) {
+      console.error(error);
+      response.writeHead(503).end();
+      return;
+    }
     if (!name || !definition) {
       response.writeHead(404).end();
       return;
@@ -55,9 +54,11 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
       allowedOrigins: hosts.map((host) => `http://${host}`),
     });
     const mcp = new Server({ name, version: "0.0.0" }, { capabilities: { tools: {} }, instructions: definition.description });
-    mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: definition.tools }));
+    mcp.setRequestHandler(ListToolsRequestSchema, async () => {
+      const listed = await socketCall(socketPath(name, env), "tools/list") as { tools: Tool[] };
+      return { tools: listed.tools.map((tool) => ({ ...tool, title: tool.annotations?.title })) };
+    });
     mcp.setRequestHandler(CallToolRequestSchema, async ({ params }, extra) => {
-      if (!definition.tools.some((tool) => tool.name === params.name)) throw new Error(`unknown operation: ${params.name}`);
       try {
         const result = await socketCall(socketPath(name, env), "tools/call", {
           name: params.name,
@@ -85,9 +86,10 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
   });
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("MCP server has no TCP address");
-  const urls = Object.fromEntries([...definitions.keys()].map((name) => [name, `http://127.0.0.1:${address.port}/mcp/${name}`]));
+  const urls = Object.fromEntries(packages.map(({ name }) => [name, `http://127.0.0.1:${address.port}/mcp/${name}`]));
   let closing: Promise<void> | undefined;
   return {
+    port: address.port,
     urls,
     close() {
       closing ??= new Promise<void>((resolve, reject) => {

@@ -7,3 +7,11 @@ Codex account credentials live in `<state>/secrets.sqlite`, separate from accoun
 The package sockets own the control operations. MCP forwards tools over loopback HTTP; WebSocket forwards operations and scoped event subscriptions over a separate loopback listener. Neither has authentication or per-client authorization: a local process that can reach either port can invoke mutating operations. Host and Origin checks reject DNS-rebinding and cross-origin browser requests, but are not authentication. Do not expose either port through a public proxy. Event subscriptions deliver only a topic name — never a payload or credentials — over the private socket and WebSocket, and are not offered over MCP. `tools/list` and the `api` package's `docs_list`/`docs_get` operations expose schemas and metadata, never stored credential material. The optional `agentstack docs` command serves that metadata read-only over loopback HTTP with a local Host check; it exposes no operation-call bridge or credential state. It has no browser admission token or cookie, so keep it local and do not put it behind a public proxy.
 
 These controls do not provide isolation between mutually untrusted processes running as the same OS user. Agentstack should not be exposed through a public reverse proxy or a shared host account without an additional authentication and isolation design.
+
+The owned MCP Inspector binds to loopback separately from the MCP transport.
+Its API requires a per-launch token, injected into the locally served page;
+the owner suppresses its token-bearing startup banner and prints only the bare
+local URL. Its generated server list is read-only in Inspector and lives in a
+private, temporary directory under the state directory. The Inspector's
+authenticated UI can initiate tool calls, so it shares the local-user trust
+boundary described above.

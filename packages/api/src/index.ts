@@ -30,7 +30,7 @@ export {
   type SocketSubscription,
 } from "./socket.js";
 export { serveWebSocket, type ServedWebSocket } from "./websocket.js";
-export { serveMcp, type ServedMcp } from "./mcp.js";
+export { configuredMcpPackages, serveMcp, type ServedMcp } from "./mcp.js";
 export { runMcp } from "./run-mcp.js";
 export { runWebSocket } from "./run-websocket.js";
 export { serveApi, type ServedApi } from "./serve.js";

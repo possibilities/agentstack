@@ -25,6 +25,7 @@
     "@agentstack/bots": "workspace:*",
     "@agentstack/codex": "workspace:*",
     "@agentstack/docs": "workspace:*",
+    "@modelcontextprotocol/inspector": "2.7.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {

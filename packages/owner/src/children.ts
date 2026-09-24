@@ -22,15 +22,6 @@ export function authChild(): OwnedChild {
     args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "auth", "socket"],
   };
 }
-
-export function mcpChild(): OwnedChild {
-  return {
-    name: "mcp",
-    command: process.execPath,
-    args: [fileURLToPath(new URL("./cli.js", import.meta.url)), "mcp"],
-  };
-}
-
 export function websocketChild(): OwnedChild {
   return {
     name: "websocket",

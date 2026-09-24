@@ -8,7 +8,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { serveApi, socketCall, socketSubscribe } from "@agentstack/api";
-import { apiChild, authChild, mcpChild, websocketChild } from "../src/children.js";
+import { apiChild, authChild, websocketChild } from "../src/children.js";
+import { inspectorChild, inspectorPort } from "../src/inspector.js";
 import { botsChild } from "../src/bots.js";
 import { codexChild } from "../src/codex.js";
 import { startOwner } from "../src/owner.js";
@@ -45,14 +46,16 @@ test("the owner starts the four required socket children", () => {
     assert.equal(existsSync(child.args[0] ?? ""), true);
   }
   assert.deepEqual([apiChild(), authChild(), codexChild(), botsChild()].map((child) => child.name), ["api", "auth", "codex", "bots"]);
-  const mcp = mcpChild();
-  assert.equal(mcp.command, process.execPath);
-  assert.equal(existsSync(mcp.args[0] ?? ""), true);
-  assert.deepEqual(mcp.args.slice(1), ["mcp"]);
   const websocket = websocketChild();
   assert.equal(websocket.command, process.execPath);
   assert.equal(existsSync(websocket.args[0] ?? ""), true);
   assert.deepEqual(websocket.args.slice(1), ["websocket"]);
+  const inspector = inspectorChild("/tmp/mcp.json", 6274);
+  assert.equal(inspector.command, process.execPath);
+  assert.equal(existsSync(inspector.args[0] ?? ""), true);
+  assert.deepEqual(inspector.args.slice(1), ["/tmp/mcp.json"]);
+  assert.equal(inspectorPort({}), 6274);
+  assert.throws(() => inspectorPort({ AGENTSTACK_INSPECTOR_PORT: "0" }), /AGENTSTACK_INSPECTOR_PORT/);
 });
 
 function orphanParent(stateDir: string, keepAlive: boolean) {

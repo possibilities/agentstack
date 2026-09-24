@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-import { mcpPort, runApi, runMcp, runWebSocket, serveApi, socketCall, socketPath, websocketPort } from "@agentstack/api";
+import { mcpPort, runApi, runMcp, runWebSocket, serveApi, serveMcp, socketCall, socketPath, websocketPort } from "@agentstack/api";
 import { connect } from "node:net";
 import { runDocs, serveDocs } from "@agentstack/docs";
-import { apiChild, authChild, mcpChild, websocketChild } from "./children.js";
+import { apiChild, authChild, websocketChild } from "./children.js";
 import { botsChild } from "./bots.js";
 import { codexChild } from "./codex.js";
+import { serveInspectorCatalog } from "./inspector-catalog.js";
+import { inspectorChild, inspectorPort } from "./inspector.js";
 import { startOwner } from "./owner.js";
 import { statusSource } from "./status.js";
 
@@ -23,7 +25,7 @@ if (command === "api") {
   process.exit(1);
 }
 
-// Check owner identity and both fixed listeners before creating any
+// Check owner identity and fixed listeners before creating any
 // sockets or starting children. A second invocation must not partially start
 // and then fail after trying to claim the first owner's ports.
 const existing = await socketCall(socketPath("owner"), "tools/call", {
@@ -34,9 +36,11 @@ if (existing && typeof existing.pid === "number") {
   process.exit(0);
 }
 
+const inspectorListenPort = inspectorPort(process.env);
 for (const [transport, port, setting] of [
   ["MCP", mcpPort(process.env), "AGENTSTACK_MCP_PORT"],
   ["WebSocket", websocketPort(process.env), "AGENTSTACK_WEBSOCKET_PORT"],
+  ["Inspector", inspectorListenPort, "AGENTSTACK_INSPECTOR_PORT"],
 ] as const) {
   if (port !== 0 && await new Promise<boolean>((resolve) => {
     const probe = connect({ host: "127.0.0.1", port });
@@ -58,7 +62,9 @@ try {
   process.exit(1);
 }
 
-let docs: Awaited<ReturnType<typeof serveDocs>>;
+let docs: Awaited<ReturnType<typeof serveDocs>> | undefined;
+let mcp: Awaited<ReturnType<typeof serveMcp>> | undefined;
+let catalog: Awaited<ReturnType<typeof serveInspectorCatalog>> | undefined;
 try {
   docs = await serveDocs({
     env: process.env,
@@ -66,8 +72,10 @@ try {
     basePath: "/docs",
   });
   statusSource.setDocsUrl(docs.url);
+  mcp = await serveMcp({ env: process.env });
+  catalog = await serveInspectorCatalog({ env: process.env, mcpPort: mcp.port });
 } catch (error) {
-  await events.close();
+  await Promise.allSettled([catalog?.close(), mcp?.close(), docs?.close(), events.close()]);
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 }
@@ -80,7 +88,7 @@ const shutdown = () => {
   closing = true;
   const force = setTimeout(() => process.exit(1), 16_000);
   force.unref();
-  void Promise.allSettled([owner.close(), events.close(), docs.close()]).then((results) => {
+  void Promise.allSettled([owner.close(), events.close(), docs?.close(), mcp?.close(), catalog?.close()]).then((results) => {
     const failed = results.some((result) => result.status === "rejected");
     for (const result of results) {
       if (result.status === "rejected") console.error(result.reason);
@@ -88,7 +96,7 @@ const shutdown = () => {
     process.exit(childFailed || failed ? 1 : 0);
   });
 };
-owner = startOwner([apiChild(), authChild(), codexChild(), botsChild(), mcpChild(), websocketChild()], process.env, () => {
+owner = startOwner([apiChild(), authChild(), codexChild(), botsChild(), websocketChild(), inspectorChild(catalog.path, inspectorListenPort)], process.env, () => {
   statusSource.notify();
   if (!closing && owner.children().some((child) => !child.running)) {
     childFailed = true;
@@ -100,6 +108,8 @@ statusSource.attach(owner);
 
 if (events.socketPath) console.error(events.socketPath);
 console.error(`AgentStack reference: ${docs.url}`);
+for (const [name, url] of Object.entries(mcp.urls)) console.error(`${name} MCP: ${url}`);
+console.error(`AgentStack Inspector: http://127.0.0.1:${inspectorListenPort}/`);
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

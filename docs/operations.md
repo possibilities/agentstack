@@ -18,20 +18,26 @@ The `auth` Package API adds an account through device sign-in (`account_login_st
 
 Each managed Server has a private `<state>/runtime/<id>` temporary root. codexnk creates its own runtime home beneath it. AgentStack watches that home's `auth.json` for a completed refresh and also reconciles it before another launch, after the Server exits, and after owner recovery. Only a valid, strictly later `last_refresh` from the Server's recorded credential generation can replace SQLite credentials. If either timestamp is missing, freshness cannot be established and the database is not overwritten. A missing or partial file is retried; ambiguous or conflicting runtime state remains private for diagnosis instead of replacing a newer database value. Several simultaneous Servers for one account can still race to refresh at the provider; this is best effort. Sign in again under the same account name when the saved token is exhausted or conflicting.
 
-The owner starts its required `api`, `auth`, `codex`, and `bots` children in separate process groups and serves the `owner` Package API on its own socket before they spawn. If a child fails or exits, the owner reports the failure and shuts down. Normal shutdown stops incoming socket calls, waits for in-flight calls, closes event subscriptions, then gracefully stops app servers. The owner signals its process groups with SIGTERM and escalates to SIGKILL after a bounded grace period. It does not restart failed children automatically.
+The owner starts its required `api`, `auth`, `codex`, `bots`, WebSocket, and Inspector children in separate process groups and serves the `owner` Package API, docs, and MCP HTTP in-process. If a child fails or exits, the owner reports the failure and shuts down. Normal shutdown stops incoming calls, waits for in-flight calls, closes event subscriptions, then gracefully stops app servers. The owner signals its process groups with SIGTERM and escalates to SIGKILL after a bounded grace period. It does not restart failed children automatically.
 
 `agentstack serve` hosts the read-only browser reference at its printed
 `http://127.0.0.1:<port>/docs` URL as part of the owner lifecycle. It binds
 only to `127.0.0.1` and reads `docs_list` and `docs_get` from the `api` socket
 on each page load. An unavailable discovery socket produces a retryable
-unavailable page. The owner closes the listener on shutdown. It does not call
-the other Package APIs or expose their control operations over HTTP. The
+unavailable page. The owner closes the listener on shutdown. The docs listener does not call
+the other Package APIs or expose their control operations. The
 optional `agentstack docs` command can still run the reference independently.
 If `agentstack serve` is invoked again against a running owner, it reports that
 owner's PID and docs URL and exits without claiming sockets or starting
 children. A fixed MCP port already in use is refused before startup, even if
 the owner socket cannot be reached; an unrelated listener is never assumed to
 be AgentStack.
+
+The owner's MCP listener forwards tool calls to their socket Servers. Its
+Inspector child reads a generated, read-only file under `<state>/inspector-*`;
+the file is rewritten when configured MCP Package APIs change and removed on
+shutdown. The Inspector binds to loopback on `AGENTSTACK_INSPECTOR_PORT` (6274
+by default), keeps its own API token, and does not open a browser automatically.
 
 When the Codex Package API starts, it reaps recorded child processes from a prior owner and launches every recorded Server again, including Bots and manually created Servers. Each Server creates one main thread on its first successful launch and resumes that stored thread ID later. An explicit `server_stop` lasts until the next AgentStack startup. If the first `thread/start` has an uncertain result, that Server remains stopped with an unconfirmed-start error instead of creating another thread. Inspect its Codex history before recovering that binding; other Servers continue starting.
 
