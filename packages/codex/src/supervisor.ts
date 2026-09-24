@@ -1,5 +1,5 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { accessSync, constants, createWriteStream, existsSync } from "node:fs";
@@ -57,6 +57,7 @@ export type SupervisorOptions = {
   waitReady?: (url: string, exited: Promise<number | null>, timeoutMs: number) => Promise<void>;
   endpoint?: (id: string) => Promise<string>;
   commandLine?: (pid: number) => Promise<string | null>;
+  endpointOwner?: (pid: number, url: string) => Promise<boolean | null>;
   graceMs?: number;
   readyTimeoutMs?: number;
   bindThread?: typeof bindMainThread;
@@ -73,6 +74,7 @@ export class Supervisor {
   private readonly waitReady: (url: string, exited: Promise<number | null>, timeoutMs: number) => Promise<void>;
   private readonly endpoint: (id: string) => Promise<string>;
   private readonly commandLine: (pid: number) => Promise<string | null>;
+  private readonly endpointOwner: (pid: number, url: string) => Promise<boolean | null>;
   private readonly graceMs: number;
   private readonly readyTimeoutMs: number;
   private readonly bindThread: typeof bindMainThread;
@@ -84,8 +86,9 @@ export class Supervisor {
     this.runtime = new RuntimeAuth(this.store);
     this.launch = options.launch ?? launchChild;
     this.waitReady = options.waitReady ?? waitForReady;
-    this.endpoint = options.endpoint ?? ((id) => unixEndpoint(options.stateDir, id));
+    this.endpoint = options.endpoint ?? (() => unixEndpoint(options.stateDir));
     this.commandLine = options.commandLine ?? processCommandLine;
+    this.endpointOwner = options.endpointOwner ?? processOwnsEndpoint;
     this.graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
     this.readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
     this.bindThread = options.bindThread ?? bindMainThread;
@@ -125,9 +128,11 @@ export class Supervisor {
   async reap(): Promise<void> {
     for (const record of this.records.values()) {
       if (record.state !== "running" || record.pid === null || record.url === null) continue;
-      if (await this.ownsProcess(record.pid, record.url)) await this.signalPid(record.pid, record.url);
+      let owned: boolean;
+      try { owned = await this.signalPid(record.pid, record.url); }
+      catch (error) { console.error(`cannot verify prior app-server ${record.id}: ${error}`); continue; }
       await this.finishRuntime(record);
-      await cleanupEndpoint(record.url);
+      if (owned) await cleanupEndpoint(record.url);
       this.markStopped(record);
       await this.persist(record);
       this.notify(record.id);
@@ -188,7 +193,6 @@ export class Supervisor {
       await this.runtime.finish(record).catch((error) => console.error(`Codex auth cleanup for removed server ${id}: ${error}`));
       await rm(this.runtime.rootFor(id), { recursive: true, force: true });
       await rm(join(this.options.stateDir, "runtime-recovery", id), { recursive: true, force: true });
-      if (record.url) await cleanupEndpoint(record.url);
       await rm(join(this.options.stateDir, "logs", `${id}.log`), { force: true });
       // Legacy shared history cannot be attributed safely to one account.
       await rm(join(this.options.stateDir, "history", id), { recursive: true, force: true });
@@ -326,13 +330,15 @@ export class Supervisor {
     if (!record) throw new Error(`unknown server: ${id}`);
     if (record.state === "stopped") return viewOf(record);
     const child = this.children.get(id);
+    let owned = false;
     if (child) {
       await this.killChild(id, child);
+      owned = true;
     } else if (record.pid !== null && record.url !== null) {
-      await this.signalPid(record.pid, record.url);
+      owned = await this.signalPid(record.pid, record.url);
     }
     await this.finishRuntime(record);
-    if (record.url) await cleanupEndpoint(record.url);
+    if (owned && record.url) await cleanupEndpoint(record.url);
     this.markStopped(record);
     await this.persist(record);
     this.notify(id);
@@ -361,28 +367,42 @@ export class Supervisor {
   }
 
   private async ownsProcess(pid: number, url: string): Promise<boolean> {
-    const command = await this.commandLine(pid);
-    return Boolean(command && isOurChild(command, url));
+    if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error(`invalid recorded app-server PID: ${pid}`);
+    const [command, endpointOwner] = await Promise.all([this.commandLine(pid), this.endpointOwner(pid, url)]);
+    const commandMatches = command !== null && isOurChild(command, url);
+    if (commandMatches && endpointOwner === true) return true;
+    if (!processAlive(pid) || (command !== null && !commandMatches && endpointOwner === false)) return false;
+    throw new Error(`process ${pid} and its listening endpoint could not both be verified`);
   }
 
-  private async signalPid(pid: number, url: string): Promise<void> {
-    if (!(await this.ownsProcess(pid, url))) return;
+  private async signalPid(pid: number, url: string): Promise<boolean> {
+    if (!(await this.ownsProcess(pid, url))) return false;
     try {
       process.kill(pid, "SIGTERM");
-    } catch {
-      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      return true;
     }
     const deadline = Date.now() + this.graceMs;
     while (Date.now() < deadline) {
-      if (!(await this.ownsProcess(pid, url))) return;
+      if (!processAlive(pid)) return true;
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    if (!(await this.ownsProcess(pid, url))) return;
+    // A reused PID or a process that released its socket must never be killed.
+    if (!(await this.ownsProcess(pid, url))) return true;
     try {
       process.kill(pid, "SIGKILL");
-    } catch {
-      // The process exited during the grace window.
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      return true;
     }
+    const forceDeadline = Date.now() + 1_000;
+    while (Date.now() < forceDeadline) {
+      if (!processAlive(pid)) return true;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    if (await this.ownsProcess(pid, url)) throw new Error(`app-server process ${pid} did not exit after SIGKILL`);
+    return true;
   }
 
   private markStopped(record: RecordFile): void {
@@ -480,12 +500,12 @@ function sameArgs(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((arg, index) => arg === right[index]);
 }
 
-async function unixEndpoint(stateDir: string, id: string): Promise<string> {
+async function unixEndpoint(stateDir: string): Promise<string> {
   const directory = join(stateDir, "app");
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const { chmod } = await import("node:fs/promises");
   await chmod(directory, 0o700);
-  return `unix://${join(directory, `${id}.sock`)}`;
+  return `unix://${join(directory, `${randomBytes(7).toString("hex")}.sock`)}`;
 }
 
 function endpointPath(url: string): string | null {
@@ -495,27 +515,27 @@ function endpointPath(url: string): string | null {
 async function prepareEndpoint(url: string): Promise<void> {
   const path = endpointPath(url);
   if (!path) return;
-  const exists = await import("node:fs/promises").then(({ lstat }) => lstat(path).then(() => true, () => false));
-  if (!exists) return;
-  if (await unixSocketListening(path)) throw new Error(`app-server socket already listening at ${path}`);
-  await rm(path, { force: true });
+  if (await lstat(path).then(() => true, (error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  })) throw new Error(`app-server socket path already exists at ${path}; inspect it before removal`);
 }
 
 async function cleanupEndpoint(url: string): Promise<void> {
   const path = endpointPath(url);
-  if (path && !(await unixSocketListening(path))) await rm(path, { force: true });
+  if (path && (await unixSocketListening(path)) === false) await rm(path, { force: true });
 }
 
-function unixSocketListening(path: string): Promise<boolean> {
+function unixSocketListening(path: string): Promise<boolean | null> {
   return new Promise((resolve) => {
     const socket = connect(path);
     socket.once("connect", () => {
       socket.destroy();
       resolve(true);
     });
-    socket.once("error", () => {
+    socket.once("error", (error: NodeJS.ErrnoException) => {
       socket.destroy();
-      resolve(false);
+      resolve(error.code === "ENOENT" || error.code === "ECONNREFUSED" ? false : null);
     });
   });
 }
@@ -552,8 +572,19 @@ async function existingDirectory(cwd: string): Promise<string> {
 }
 
 function isOurChild(command: string, url: string): boolean {
-  const tokens = command.split(/\s+/).filter((token) => token.length > 0);
-  return tokens.includes("app-server") && tokens.includes("--listen") && tokens.includes(url);
+  if (!/(?:^|\s)app-server(?:\s|$)/.test(command)) return false;
+  const marker = `--listen ${url}`;
+  let at = command.indexOf(marker);
+  while (at !== -1) {
+    if ((at === 0 || /\s/.test(command[at - 1]!)) && (at + marker.length === command.length || /\s/.test(command[at + marker.length]!))) return true;
+    at = command.indexOf(marker, at + 1);
+  }
+  return false;
+}
+
+function processAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; }
+  catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
 }
 
 export function launchChild(spec: LaunchSpec): RunningChild {
@@ -642,6 +673,36 @@ export function processCommandLine(pid: number): Promise<string | null> {
     execFile("ps", ["-p", String(pid), "-ww", "-o", "command="], (error, stdout) => {
       if (error) resolve(null);
       else resolve(stdout.trim() || null);
+    });
+  });
+}
+
+/** Verify a recorded PID still owns its exact listening endpoint. Null means inspection failed. */
+export function processOwnsEndpoint(pid: number, url: string): Promise<boolean | null> {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return Promise.resolve(null);
+  const path = endpointPath(url);
+  let args: string[];
+  let names: string[];
+  if (path) {
+    args = ["-nP", "-a", "-p", String(pid), "-U", "-F0pn"];
+    names = [path];
+  } else {
+    let address: URL;
+    try { address = new URL(url); } catch { return Promise.resolve(null); }
+    const port = Number(address.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535 || !["127.0.0.1", "localhost", "[::1]"].includes(address.hostname)) return Promise.resolve(null);
+    args = ["-nP", "-a", "-p", String(pid), `-iTCP:${port}`, "-sTCP:LISTEN", "-F0pn"];
+    names = [`127.0.0.1:${port}`, `[::1]:${port}`];
+  }
+  return new Promise((resolve) => {
+    execFile(process.platform === "darwin" ? "/usr/sbin/lsof" : "lsof", args, { maxBuffer: 1_000_000 }, (error, stdout, stderr) => {
+      const code = (error as { code?: number | string } | null)?.code;
+      if (error && ((code !== 1 && code !== "1") || stderr.trim())) {
+        resolve(null);
+        return;
+      }
+      const fields = stdout.split("\0");
+      resolve(fields.includes(`p${pid}`) && fields.some((field) => field.startsWith("n") && names.includes(field.slice(1))));
     });
   });
 }

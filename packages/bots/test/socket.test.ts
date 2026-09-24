@@ -69,7 +69,7 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     assert.equal(first.id, "bot-1");
     assert.equal(first.state, "running");
     assert.equal(first.cwd, join(stateDir, "bots", "bot-1"));
-    assert.equal(first.url, `unix://${join(stateDir, "app", "bot-1.sock")}`);
+    assert.match(first.url ?? "", /\/app\/[0-9a-f]{14}\.sock$/);
     assert.equal(first.account, accountId);
     assert.ok(first.mainThreadId);
     const firstWorkspace = await lstat(first.cwd);

@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { connect } from "node:net";
+import { connect, createServer as createNetServer } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { appServerArgs, launchChild, ownerMcpArgs, Supervisor, waitForReady, type LaunchSpec, type RunningChild, type SupervisorOptions } from "../src/supervisor.js";
+import { appServerArgs, launchChild, ownerMcpArgs, processOwnsEndpoint, Supervisor, waitForReady, type LaunchSpec, type RunningChild, type SupervisorOptions } from "../src/supervisor.js";
 import { codexRuntimePath } from "../src/paths.js";
 import type { StoredServer } from "../src/store.js";
 
@@ -412,19 +412,24 @@ test("caller arguments are merged and --listen is rejected", async () => {
 });
 
 test("reap kills only a recorded app-server command", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack recovery "));
+  const url = `unix://${join(stateDir, "app", "keep.sock")}`;
   const killed: string[] = [];
+  const dead = new Set<number>();
   const supervisor = new Supervisor({
     stateDir,
     graceMs: 30,
     async commandLine(pid) {
-      if (pid === 7) return "codex app-server --listen ws://127.0.0.1:9";
+      if (pid === 7) return `codex app-server --listen ${url}`;
       return "unrelated process";
     },
+    endpointOwner: async (pid) => pid === 7,
   });
   const originalKill = process.kill;
   process.kill = ((pid: number, signal?: NodeJS.Signals | 0) => {
-    killed.push(`${pid}:${signal ?? "SIGTERM"}`);
+    if (signal === 0 && dead.has(pid)) throw Object.assign(new Error("exited"), { code: "ESRCH" });
+    if (signal === "SIGKILL") dead.add(pid);
+    if (signal !== 0) killed.push(`${pid}:${signal ?? "SIGTERM"}`);
     return true;
   }) as typeof process.kill;
   try {
@@ -437,7 +442,7 @@ test("reap kills only a recorded app-server command", async () => {
         id: "keep",
         pid: 7,
         cwd: "/tmp",
-        url: "ws://127.0.0.1:9",
+        url,
         state: "running",
         codexBin: "codex",
       }),
@@ -459,6 +464,141 @@ test("reap kills only a recorded app-server command", async () => {
     assert.equal(supervisor.list().every((server) => server.state === "stopped" && server.pid === null && server.url === null), true);
   } finally {
     process.kill = originalKill;
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("an unverifiable recorded process remains fenced during recovery", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-unknown-owner-"));
+  const cwd = await mkdtemp(join(tmpdir(), "agentstack-unknown-cwd-"));
+  const url = `unix://${join(stateDir, "app", "uncertain.sock")}`;
+  const signals: string[] = [];
+  const originalKill = process.kill;
+  process.kill = ((_pid: number, signal?: NodeJS.Signals | 0) => {
+    if (signal !== 0) signals.push(String(signal));
+    return true; // The recorded PID is still present, but inspection is unavailable.
+  }) as typeof process.kill;
+  const supervisor = new Supervisor({ stateDir, commandLine: async () => `codex app-server --listen ${url}`, endpointOwner: async () => null });
+  try {
+    await mkdir(join(stateDir, "servers"));
+    await writeFile(join(stateDir, "servers", "uncertain.json"), JSON.stringify({
+      id: "uncertain", pid: 99999, cwd, url, state: "running", codexBin: "codex",
+    }));
+    await supervisor.load();
+    await supervisor.reap();
+    assert.equal(supervisor.list()[0]?.state, "running");
+    await assert.rejects(supervisor.start({ cwd, id: "uncertain" }), /could not both be verified/);
+    await assert.rejects(supervisor.stop("uncertain"), /could not both be verified/);
+    assert.deepEqual(signals, []);
+  } finally {
+    process.kill = originalKill;
+    supervisor.store.close();
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("recovery retains a Server if its verified process survives SIGKILL", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-stubborn-owner-"));
+  const url = "ws://127.0.0.1:41001";
+  const signals: string[] = [];
+  const originalKill = process.kill;
+  process.kill = ((_pid: number, signal?: NodeJS.Signals | 0) => {
+    if (signal !== 0) signals.push(String(signal));
+    return true;
+  }) as typeof process.kill;
+  const supervisor = new Supervisor({ stateDir, graceMs: 20, commandLine: async () => `codex app-server --listen ${url}`, endpointOwner: async () => true });
+  try {
+    await mkdir(join(stateDir, "servers"));
+    await writeFile(join(stateDir, "servers", "stubborn.json"), JSON.stringify({
+      id: "stubborn", pid: 99998, cwd: stateDir, url, state: "running", codexBin: "codex",
+    }));
+    await supervisor.load();
+    await supervisor.reap();
+    assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+    assert.equal(supervisor.list()[0]?.state, "running");
+  } finally {
+    process.kill = originalKill;
+    supervisor.store.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("a pre-existing app socket path is never unlinked during launch", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-stale-path-"));
+  const cwd = await mkdtemp(join(tmpdir(), "agentstack-stale-cwd-"));
+  const path = join(stateDir, "app", "stale.sock");
+  const supervisor = new Supervisor({ stateDir, endpoint: async () => `unix://${path}`, launch: () => { throw new Error("must not launch"); } });
+  try {
+    await mkdir(join(stateDir, "app"));
+    await writeFile(path, "leave intact");
+    await supervisor.load();
+    seedAccount(supervisor);
+    await assert.rejects(supervisor.start({ cwd, id: "stale" }), /socket path already exists/);
+    assert.equal(await readFile(path, "utf8"), "leave intact");
+  } finally {
+    supervisor.store.close();
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("macOS endpoint inspection distinguishes an exact Unix socket path with spaces", { skip: process.platform !== "darwin" }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentstack socket probe "));
+  const path = join(dir, "live.sock");
+  const server = createNetServer();
+  try {
+    await new Promise<void>((resolve) => server.listen(path, resolve));
+    assert.equal(await processOwnsEndpoint(process.pid, `unix://${path}`), true);
+    assert.equal(await processOwnsEndpoint(process.pid, `unix://${path}2`), false);
+    assert.equal(await processOwnsEndpoint(-1, `unix://${path}`), null);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("macOS endpoint inspection verifies an exact legacy loopback TCP listener", { skip: process.platform !== "darwin" }, async () => {
+  const server = createNetServer();
+  try {
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    assert.equal(await processOwnsEndpoint(process.pid, `ws://127.0.0.1:${address.port}`), true);
+    assert.equal(await processOwnsEndpoint(process.pid, `ws://127.0.0.1:${address.port + 1}`), false);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("recovery reaps a real recorded app-server with a spaced socket path", { skip: process.platform !== "darwin" }, async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack prior "));
+  const path = join(stateDir, "app", "prior.sock");
+  const url = `unix://${path}`;
+  await Promise.all(["app", "logs", "history"].map((name) => mkdir(join(stateDir, name))));
+  const child = launchChild({
+    bin: fakeBin,
+    args: ["app-server", "--listen", url, "--history-dir", join(stateDir, "history")],
+    cwd: stateDir,
+    logPath: join(stateDir, "logs", "prior.log"),
+    env: { ...process.env },
+  });
+  const supervisor = new Supervisor({ stateDir, graceMs: 1_000 });
+  try {
+    await waitForReady(url, child.exited, 2_000);
+    const account = supervisor.store.addAccount(JSON.stringify({ tokens: { refresh_token: "fixture", access_token: "access", id_token: "fixture.jwt.signature" } }));
+    const record: StoredServer = { id: "prior", pid: child.pid, cwd: stateDir, url, state: "running", codexBin: fakeBin,
+      account: account.id, launchedAccount: account.id, authVersion: 1, runtimeRoot: null, mainThreadId: "thread-prior", threadStarting: false, args: [] };
+    supervisor.store.saveServer(record);
+    await supervisor.load();
+    await supervisor.reap();
+    await child.exited;
+    assert.equal(supervisor.list()[0]?.state, "stopped");
+    await assert.rejects(lstat(path), /ENOENT/);
+  } finally {
+    child.kill("SIGTERM");
+    await child.exited;
+    supervisor.store.close();
     await rm(stateDir, { recursive: true, force: true });
   }
 });
@@ -551,6 +691,7 @@ test("an exited in-memory server is recorded as stopped", async () => {
 test("a listen url is not owned when it is only a prefix of another port", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-prefix-"));
   const killed: string[] = [];
+  const dead = new Set<number>();
   const supervisor = new Supervisor({
     stateDir,
     graceMs: 30,
@@ -559,10 +700,13 @@ test("a listen url is not owned when it is only a prefix of another port", async
       if (pid === 12) return "codex app-server --listen ws://127.0.0.1:4100";
       return null;
     },
+    endpointOwner: async (pid) => pid === 12,
   });
   const originalKill = process.kill;
   process.kill = ((pid: number, signal?: NodeJS.Signals | 0) => {
-    killed.push(`${pid}:${signal ?? "SIGTERM"}`);
+    if (signal === 0 && dead.has(pid)) throw Object.assign(new Error("exited"), { code: "ESRCH" });
+    if (signal === "SIGKILL") dead.add(pid);
+    if (signal !== 0) killed.push(`${pid}:${signal ?? "SIGTERM"}`);
     return true;
   }) as typeof process.kill;
   try {
@@ -622,6 +766,7 @@ test("a reused pid is not treated as the recorded server", async () => {
       async commandLine() {
         return "unrelated process";
       },
+      endpointOwner: async () => false,
     });
     await mkdir(join(stateDir, "servers"), { recursive: true });
     const { writeFile } = await import("node:fs/promises");
@@ -658,7 +803,7 @@ test("a fake app-server becomes ready and can be stopped", async () => {
     const started = await supervisor.start({ cwd, id: "live" });
     assert.equal(started.state, "running");
     assert.ok(started.mainThreadId);
-    assert.equal(started.url, `unix://${join(stateDir, "app", "live.sock")}`);
+    assert.match(started.url ?? "", /\/app\/[0-9a-f]{14}\.sock$/);
     await new Promise<void>((resolve, reject) => {
       const socket = connect((started.url ?? "").slice("unix://".length));
       socket.once("connect", () => { socket.destroy(); resolve(); });
@@ -669,6 +814,7 @@ test("a fake app-server becomes ready and can be stopped", async () => {
     assert.equal(stopped.url, null);
     const resumed = await supervisor.start({ cwd, id: "live" });
     assert.equal(resumed.mainThreadId, started.mainThreadId);
+    assert.notEqual(resumed.url, started.url);
     const entries = (await readFile(join(stateDir, "history", "live", "fake-threads.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { method: string; threadId: string });
     assert.deepEqual(entries.map(({ method }) => method), ["thread/start", "thread/resume"]);
     assert.ok(entries.every(({ threadId }) => threadId === started.mainThreadId));
@@ -751,6 +897,7 @@ test("a persisted live server from another runtime is not returned as codexnk", 
   const supervisor = new Supervisor({
     stateDir,
     commandLine: async () => "vendor-codex app-server --listen ws://127.0.0.1:41000",
+    endpointOwner: async () => true,
     launch: () => { launched = true; throw new Error("unexpected launch"); },
   });
   try {

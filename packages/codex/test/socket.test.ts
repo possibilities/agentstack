@@ -78,7 +78,7 @@ test("codex lifecycle and change events are served on the namespaced unix socket
     assert.equal(started.state, "running");
     assert.equal(started.account, secondAccount.id);
     assert.ok(started.mainThreadId);
-    assert.equal(started.url, `unix://${join(stateDir, "app", "remote.sock")}`);
+    assert.match(started.url ?? "", /\/app\/[0-9a-f]{14}\.sock$/);
     const persisted = new StateStore(stateDir);
     assert.equal(persisted.servers().find((server) => server.id === "remote")?.codexBin, runtime);
     assert.equal(persisted.servers().find((server) => server.id === "remote")?.account, secondAccount.id);

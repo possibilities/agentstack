@@ -1,0 +1,7 @@
+# 25. Verify recovered app-server ownership and use per-launch sockets
+
+Status: accepted, 2026-09-24. Extends [ADR 0002](0002-private-control-transport.md)'s private socket ownership and [ADR 0005](0005-server-main-threads.md)'s recovery behavior.
+
+The supervisor signals a recorded process only after its command identifies `app-server` with the exact `--listen` URL and macOS `lsof` confirms that the same PID owns that listening Unix or legacy loopback TCP endpoint. The command check preserves paths containing spaces instead of tokenizing `ps` output on whitespace. Missing or contradictory evidence while the PID remains alive fences that Server for inspection; it cannot justify a signal or a second launch. Other Server records continue recovering.
+
+New app-server launches use short random socket names under `<state>/app/`, with the actual URL persisted and returned to clients. A new launch refuses an existing path rather than probing and unlinking it; known children are cleaned up after exit. Older recorded URLs remain readable for recovery. Opaque per-launch paths avoid collisions with stale paths from a previous crash and shorten Unix socket names for macOS's path limit. An ambiguous old socket remains for the operator to inspect and remove only after confirming it is not listening. This boundary does not isolate mutually untrusted processes under the same OS user or eliminate the inherent PID-reuse interval between a final verification and signalling.
