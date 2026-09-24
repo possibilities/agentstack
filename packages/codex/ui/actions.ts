@@ -7,7 +7,7 @@ import type { ActiveThread } from "../src/threads";
 import type { TreeNode } from "./agent-tree";
 
 export type Account = { name: string; active: boolean };
-export type LoginState = { id: string; status: "pending" | "complete" | "failed"; authUrl: string | null; account: string | null; error: string | null };
+export type LoginState = { id: string; status: "pending" | "complete" | "failed"; authUrl: string | null; userCode: string | null; account: string | null; error: string | null; targetAccount: string | null };
 
 async function call<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
   return socketCall(socketPath("codex"), "tools/call", { name, arguments: args }) as Promise<T>;
@@ -28,6 +28,9 @@ export async function removeCodexAccount(name: string): Promise<Account[]> {
 
 export async function startCodexLogin(name?: string): Promise<LoginState> { return call("account_login_start", name ? { name } : {}); }
 export async function codexLoginStatus(id: string): Promise<LoginState> { return call("account_login_status", { id }); }
+export async function codexCurrentLogin(): Promise<LoginState | null> {
+  return (await call<{ login: LoginState | null }>("account_login_current")).login;
+}
 export async function cancelCodexLogin(id: string): Promise<void> { await call("account_login_cancel", { id }); }
 
 export async function codexVersion(): Promise<string | null> {

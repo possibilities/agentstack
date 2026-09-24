@@ -34,6 +34,10 @@ test("package UIs render through Next.js", { timeout: 120_000 }, async () => {
   const bots = await serveApi({ name: "bots", transport: "socket", env: apiEnv });
   await socketCall(bots.socketPath ?? "", "tools/call", { name: "bot_start", arguments: {} });
   await socketCall(codex.socketPath ?? "", "tools/call", { name: "server_start", arguments: { id: "notabot", cwd: webDir } });
+  const pendingLogin = (await socketCall(codex.socketPath ?? "", "tools/call", {
+    name: "account_login_start",
+    arguments: {},
+  })) as { id: string };
   const child = spawn(
     process.execPath,
     [
@@ -71,7 +75,11 @@ test("package UIs render through Next.js", { timeout: 120_000 }, async () => {
     });
     const { port, token } = session;
     assert.equal((await fetch(`http://127.0.0.1:${port}/_ui/owner`)).status, 401);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/_ui/codex/auth`)).status, 401);
     assert.equal((await fetch(`http://127.0.0.1:${port}/_ui/owner?token=${encodeURIComponent("é".repeat(64))}`)).status, 401);
+    const nestedAdmission = await fetch(`http://127.0.0.1:${port}/_ui/codex/auth?token=${token}`, { redirect: "manual" });
+    assert.equal(nestedAdmission.status, 302);
+    assert.equal(nestedAdmission.headers.get("location"), "/_ui/codex/auth");
     const admission = await fetch(`http://127.0.0.1:${port}/_ui/owner?token=${token}`, { redirect: "manual" });
     assert.equal(admission.status, 302);
     const cookie = admission.headers.get("set-cookie")?.split(";")[0];
@@ -86,6 +94,46 @@ test("package UIs render through Next.js", { timeout: 120_000 }, async () => {
     const codexHtml = await codexResponse.text();
     assert.ok(codexHtml.includes(`Installed runtime: codexnk ${expectedVersion ?? "version unavailable"}`));
     assert.ok(codexHtml.includes(`codexnk ${expectedVersion ?? "version unavailable"}`));
+    assert.ok(codexHtml.includes('href="/_ui/codex"'));
+    assert.ok(codexHtml.includes('href="/_ui/codex/auth"'));
+    assert.match(codexHtml, /<a[^>]*aria-current="page"[^>]*>Servers</);
+    assert.equal(codexHtml.match(/aria-current="page"/g)?.length, 1);
+    assert.ok(codexHtml.includes("Running servers"));
+    assert.ok(codexHtml.includes("notabot"));
+    assert.ok(!codexHtml.includes("Add account"));
+    assert.ok(!codexHtml.includes('aria-label="Codex accounts"'));
+    assert.ok(!codexHtml.includes("ABCD-EFGH"));
+    assert.ok(!codexHtml.includes("Copy code"));
+    let currentLogin: { login: { id: string; authUrl: string | null } | null } = { login: null };
+    for (let i = 0; i < 100 && !(currentLogin.login?.id === pendingLogin.id && currentLogin.login.authUrl); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      currentLogin = (await socketCall(codex.socketPath ?? "", "tools/call", {
+        name: "account_login_current",
+        arguments: {},
+      })) as { login: { id: string; authUrl: string | null } | null };
+    }
+    assert.equal(currentLogin.login?.authUrl, "https://auth.openai.com/codex/device");
+    const authResponse = await fetch(`http://127.0.0.1:${port}/_ui/codex/auth`, authenticated);
+    assert.equal(authResponse.status, 200);
+    const authHtml = await authResponse.text();
+    assert.ok(authHtml.includes('href="/_ui/codex"'));
+    assert.ok(authHtml.includes('href="/_ui/codex/auth"'));
+    assert.match(authHtml, /<a[^>]*aria-current="page"[^>]*>Auth</);
+    assert.equal(authHtml.match(/aria-current="page"/g)?.length, 1);
+    assert.ok(authHtml.includes("Add account"));
+    assert.ok(authHtml.includes("codex-1"));
+    assert.ok(authHtml.includes("https://auth.openai.com/codex/device"));
+    assert.ok(authHtml.includes("ABCD-EFGH"));
+    assert.ok(authHtml.includes("Copy URL"));
+    assert.ok(authHtml.includes("Copy code"));
+    assert.ok(authHtml.includes("Cancel sign-in"));
+    assert.ok(authHtml.includes("Start over"));
+    assert.ok(!authHtml.includes("Running servers"));
+    assert.ok(!authHtml.includes("notabot"));
+    await socketCall(codex.socketPath ?? "", "tools/call", {
+      name: "account_login_cancel",
+      arguments: { id: pendingLogin.id },
+    });
     const botsResponse = await fetch(`http://127.0.0.1:${port}/_ui/bots`, authenticated);
     assert.equal(botsResponse.status, 200);
     const botsHtml = await botsResponse.text();

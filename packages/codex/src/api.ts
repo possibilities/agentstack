@@ -75,7 +75,8 @@ const accountSchema = z.object({ name: z.string(), active: z.boolean() });
 const accountName = z.string().regex(/^codex-[1-9][0-9]*$/);
 const loginStateSchema = z.object({
   id: z.string(), status: z.enum(["pending", "complete", "failed"]),
-  authUrl: z.string().nullable(), account: z.string().nullable(), error: z.string().nullable(),
+  authUrl: z.string().nullable(), userCode: z.string().nullable(),
+  account: z.string().nullable(), error: z.string().nullable(), targetAccount: z.string().nullable(),
 });
 
 export const accountList = operation({
@@ -108,7 +109,7 @@ export const accountRemove = operation({
 });
 
 export const accountLoginStart = operation({
-  name: "account_login_start", description: "Start a browser Codex sign-in in an isolated temporary home. Optionally replace credentials for an existing name. Poll account_login_status for its URL and result.",
+  name: "account_login_start", description: "Start a Codex device sign-in in an isolated temporary home, superseding any attempt already in progress. Optionally replace credentials for an existing name. Poll account_login_status for its verification URL, one-time code, and result.",
   input: z.object({ name: accountName.optional() }), output: loginStateSchema,
   annotations: { title: "Sign in to Codex" },
   async call(ctx: CodexContext, { name }) { return ctx.login.start(name ?? null); },
@@ -121,6 +122,13 @@ export const accountLoginStatus = operation({
   async call(ctx: CodexContext, { id }) { return ctx.login.status(id); },
 });
 
+export const accountLoginCurrent = operation({
+  name: "account_login_current", description: "Read the Codex sign-in currently in progress, if any, without credentials.",
+  input: z.object({}), output: z.object({ login: loginStateSchema.nullable() }),
+  annotations: { title: "Current Codex sign-in", readOnlyHint: true },
+  async call(ctx: CodexContext) { return { login: ctx.login.current() }; },
+});
+
 export const accountLoginCancel = operation({
   name: "account_login_cancel", description: "Cancel an in-progress Codex sign-in.",
   input: z.object({ id: z.string() }), output: loginStateSchema,
@@ -129,7 +137,7 @@ export const accountLoginCancel = operation({
 });
 
 export const api: PackageApi<CodexContext> = {
-  operations: [serverStart, serverStop, serverList, accountList, accountActivate, accountRemove, accountLoginStart, accountLoginStatus, accountLoginCancel],
+  operations: [serverStart, serverStop, serverList, accountList, accountActivate, accountRemove, accountLoginStart, accountLoginStatus, accountLoginCurrent, accountLoginCancel],
   async createContext(env) {
     const dir = stateDir(env);
     await mkdir(dir, { recursive: true, mode: 0o700 });

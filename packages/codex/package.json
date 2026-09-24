@@ -10,6 +10,7 @@
     },
     "./ui": "./ui/page.tsx",
     "./ui/agent-tree": "./ui/agent-tree.tsx",
+    "./ui/auth": "./ui/auth.tsx",
     "./package.json": "./package.json"
   },
   "agentstack": {

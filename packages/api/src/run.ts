@@ -6,6 +6,14 @@ export async function runApi(args: string[], env: NodeJS.ProcessEnv = process.en
     console.error("usage: agentstack api <package> <transport>");
     process.exit(1);
   }
+  let orphaned = false;
+  let disconnect: (() => void) | undefined;
+  if (process.channel) {
+    process.on("disconnect", () => {
+      if (disconnect) disconnect();
+      else orphaned = true;
+    });
+  }
   let served: Awaited<ReturnType<typeof serveApi>>;
   try {
     served = await serveApi({ name, transport, env });
@@ -27,8 +35,13 @@ export async function runApi(args: string[], env: NodeJS.ProcessEnv = process.en
       () => process.exit(1),
     );
   };
+  disconnect = () => {
+    if (closing) return;
+    shutdown();
+  };
   return new Promise(() => {
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
+    if (orphaned) shutdown();
   });
 }
