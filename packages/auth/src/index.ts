@@ -16,3 +16,5 @@ export {
 export { AuthStore } from "./store.js";
 export { LoginManager } from "./login.js";
 export { codexRuntimePath, stateDir } from "./paths.js";
+export { accountEnvironment, accountRoot, credentialEvidence, prepareAccountProfile } from "./worker-accounts.js";
+export type { WorkerAccount } from "./worker-accounts.js";

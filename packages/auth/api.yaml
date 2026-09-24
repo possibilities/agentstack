@@ -1,5 +1,5 @@
 name: auth
-description: Manage Codex accounts and device sign-in for AgentStack-owned app servers without exposing credentials.
+description: Manage Codex Bot accounts and native Grok, Devin, and Codex worker sign-ins without exposing credentials.
 socket:
   description: Unix socket for Codex account and sign-in operations, namespaced as auth.
 mcp:

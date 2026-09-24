@@ -12,7 +12,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
-const socketNames = ["api", "auth", "roles", "bots", "owner"];
+const socketNames = ["api", "auth", "roles", "bots", "workers", "owner"];
 
 test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then shuts them down", { timeout: 120_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-serve-"));
@@ -41,7 +41,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
       children: Array<{ name: string; pid: number | null; running: boolean }>;
     };
     assert.equal(status.pid, child.pid);
-    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["api", "auth", "bots", "inspector", "roles", "uix", "websocket"]);
+    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["api", "auth", "bots", "inspector", "roles", "uix", "websocket", "workers"]);
     for (let i = 0; i < 200 && status.children.some((entry) => !entry.running); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
       status = (await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} })) as typeof status;
@@ -92,7 +92,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     assert.equal(servers?.status, 200, stderr);
-    assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["auth", "bots", "owner", "roles"]);
+    assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["auth", "bots", "owner", "roles", "workers"]);
     const inspectorUrl = `http://127.0.0.1:${inspectorPort}/`;
     assert.equal((await fetch(inspectorUrl)).status, 200);
     const catalogDir = (await readdir(stateDir)).find((entry) => entry.startsWith("inspector-"));

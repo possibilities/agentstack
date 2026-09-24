@@ -2,6 +2,7 @@ import { closeSync, constants, mkdirSync, openSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import type { WorkerAccount, WorkerProvider } from "./worker-accounts.js";
 
 export type Account = { id: string; active: boolean; removing: boolean };
 
@@ -37,6 +38,11 @@ export class AuthStore {
       CREATE TABLE IF NOT EXISTS account_aliases (legacy_name TEXT PRIMARY KEY, id TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS secrets.credentials (name TEXT PRIMARY KEY, auth_json TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1);
+      CREATE TABLE IF NOT EXISTS worker_accounts (
+        id TEXT PRIMARY KEY, provider TEXT NOT NULL CHECK(provider IN ('codex','grok','devin')),
+        enabled INTEGER NOT NULL DEFAULT 1, ready INTEGER NOT NULL DEFAULT 0, removing INTEGER NOT NULL DEFAULT 0,
+        credential_digest TEXT
+      );
     `);
     const secretColumns = this.db.prepare("PRAGMA secrets.table_info(credentials)").all() as Array<{ name: string }>;
     if (!secretColumns.some(({ name }) => name === "version")) this.db.exec("ALTER TABLE secrets.credentials ADD COLUMN version INTEGER NOT NULL DEFAULT 1");
@@ -82,6 +88,57 @@ export class AuthStore {
   }
 
   close(): void { this.db.close(); }
+
+  workerAccounts(): WorkerAccount[] {
+    const records = (this.db.prepare("SELECT id, provider, enabled, ready, removing FROM worker_accounts ORDER BY rowid").all() as Array<{
+      id: string; provider: WorkerProvider; enabled: number; ready: number; removing: number;
+    }>).map(({ id, provider, enabled, ready, removing }) => ({ id, provider, enabled: Boolean(enabled), ready: Boolean(ready), removing: Boolean(removing) }));
+    for (const codex of this.listAccounts()) {
+      const bound = records.find((item) => item.id === codex.id);
+      if (bound) { bound.enabled = !codex.removing; bound.removing ||= codex.removing; }
+      else records.push({ id: codex.id, provider: "codex", enabled: !codex.removing, ready: false, removing: codex.removing });
+    }
+    return records;
+  }
+
+  hasWorkerBinding(id: string): boolean {
+    return Boolean(this.db.prepare("SELECT 1 FROM worker_accounts WHERE id = ?").get(id));
+  }
+
+  prepareWorker(provider: WorkerProvider, existingId?: string): WorkerAccount {
+    if (provider === "codex" && (!existingId || !this.listAccounts().some((account) => account.id === existingId && !account.removing)))
+      throw new Error("a valid Codex account ID is required");
+    const id = existingId ?? randomUUID();
+    const existing = this.workerAccounts().find((item) => item.id === id);
+    if (existingId && !existing) throw new Error("unknown worker account");
+    if (existing?.removing || (existing && existing.provider !== provider)) throw new Error("worker account is unavailable");
+    this.db.prepare("INSERT OR IGNORE INTO worker_accounts (id, provider) VALUES (?, ?)").run(id, provider);
+    if (existing?.ready) this.db.prepare("UPDATE worker_accounts SET ready = 0 WHERE id = ?").run(id);
+    return this.workerAccounts().find((item) => item.id === id)!;
+  }
+
+  confirmWorker(id: string, digest: string): WorkerAccount {
+    const account = this.workerAccounts().find((item) => item.id === id);
+    if (!account || account.removing) throw new Error("unknown worker account");
+    const duplicate = this.db.prepare("SELECT id FROM worker_accounts WHERE provider = ? AND credential_digest = ? AND id != ?").get(account.provider, digest, id);
+    if (duplicate) throw new Error("these native credentials are already bound to another worker account");
+    this.db.prepare("UPDATE worker_accounts SET ready = 1, credential_digest = ? WHERE id = ?").run(digest, id);
+    return this.workerAccounts().find((item) => item.id === id)!;
+  }
+
+  enableWorker(id: string, enabled: boolean): WorkerAccount {
+    if (!this.db.prepare("UPDATE worker_accounts SET enabled = ? WHERE id = ? AND removing = 0").run(Number(enabled), id).changes)
+      throw new Error("unknown worker account");
+    return this.workerAccounts().find((item) => item.id === id)!;
+  }
+
+  beginWorkerRemoval(id: string): WorkerAccount {
+    if (!this.db.prepare("UPDATE worker_accounts SET enabled = 0, removing = 1 WHERE id = ?").run(id).changes)
+      throw new Error("unknown worker account");
+    return this.workerAccounts().find((item) => item.id === id)!;
+  }
+
+  finishWorkerRemoval(id: string): void { this.db.prepare("DELETE FROM worker_accounts WHERE id = ? AND removing = 1").run(id); }
 
   resolveLegacyAccount(id: string, createOrphan = false): string {
     const found = (this.db.prepare("SELECT id FROM account_aliases WHERE legacy_name = ?").get(id) as { id: string } | undefined)?.id;

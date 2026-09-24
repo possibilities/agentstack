@@ -18,7 +18,8 @@
         "@agentstack/auth#build",
         "@agentstack/bots#build",
         "@agentstack/roles#build",
-        "@agentstack/owner#build"
+        "@agentstack/owner#build",
+        "@agentstack/workers#build"
       ],
       "cache": false
     },
@@ -28,7 +29,8 @@
         "@agentstack/auth#build",
         "@agentstack/bots#build",
         "@agentstack/roles#build",
-        "@agentstack/owner#build"
+        "@agentstack/owner#build",
+        "@agentstack/workers#build"
       ],
       "cache": false
     }

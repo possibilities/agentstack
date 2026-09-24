@@ -30,7 +30,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.deepEqual(
       docs.packages.map((item) => item.name),
-      ["api", "auth", "bots", "owner", "roles"],
+      ["api", "auth", "bots", "owner", "roles", "workers"],
     );
     assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@agentstack/${item.name}`));
 
@@ -85,12 +85,16 @@ test("the api package serves structured documents for every workspace package", 
     const roleView = roles.operations.find((operation) => operation.name === "role_snapshot") as OperationDoc;
     assert.deepEqual(Object.keys(roleView.outputSchema.properties as object).sort(), ["categories", "mcpServers", "revision", "skills", "trustedProjects"]);
     assert.equal(roles.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
-    assert.deepEqual(Object.keys(auth.events).sort(), ["accounts_changed", "login_changed"]);
+    assert.deepEqual(Object.keys(auth.events).sort(), ["accounts_changed", "login_changed", "worker_accounts_changed"]);
     assert.deepEqual(
       auth.operations.map((operation) => operation.name).sort(),
-      ["account_activate", "account_list", "account_login_cancel", "account_login_current", "account_login_replace", "account_login_start", "account_login_status", "account_remove"],
+      ["account_activate", "account_list", "account_login_cancel", "account_login_current", "account_login_replace", "account_login_start", "account_login_status", "account_remove",
+        "worker_account_list", "worker_account_prepare", "worker_account_confirm", "worker_account_set_enabled", "worker_account_remove"].sort(),
     );
     assert.deepEqual((auth.operations.find((operation) => operation.name === "account_login_start")?.inputSchema.properties ?? {}), {});
+    const workers = found.get("workers") as PackageDoc;
+    assert.deepEqual(Object.keys(workers.events), ["workers_changed"]);
+    assert.deepEqual(workers.operations.map((operation) => operation.name), ["worker_catalog", "worker_runtime_list", "worker_account_drain"]);
 
     assert.deepEqual(bots.eventScope, {
       description: "Optional bot ID. Scoped subscriptions receive changes only for that bot; omit scope to receive global voice and bot notices.",

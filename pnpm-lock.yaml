@@ -266,6 +266,9 @@ importers:
       '@agentstack/uix':
         specifier: workspace:*
         version: link:../uix
+      '@agentstack/workers':
+        specifier: workspace:*
+        version: link:../workers
       '@modelcontextprotocol/inspector':
         specifier: 2.7.0
         version: 2.7.0(@types/node@26.6.2)(@types/react@19.3.0)(express@5.2.1)(jiti@2.7.0)(react-dom@19.3.0(react@19.3.0))
@@ -359,6 +362,25 @@ importers:
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  packages/workers:
+    dependencies:
+      '@agentstack/api':
+        specifier: workspace:*
+        version: link:../api
+      '@agentstack/auth':
+        specifier: workspace:*
+        version: link:../auth
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.2
+        version: 26.6.2
       typescript:
         specifier: ^7.0.2
         version: 7.0.2

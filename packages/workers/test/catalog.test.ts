@@ -1,0 +1,133 @@
+import assert from "node:assert/strict";
+import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { serveApi, socketCall, socketPath } from "@agentstack/api";
+import { WorkerSupervisor } from "../src/supervisor.js";
+import { nativeDevinModels, optionsOf } from "../src/catalog.js";
+
+const fake = `#!/usr/bin/env node
+import { basename } from 'node:path';
+if (process.argv[2] === '--version') { console.log('fake-acp 1.0'); process.exit(0); }
+let buffer = '';
+let selected = '';
+const id = basename(process.env.XDG_DATA_HOME.replace(/\\/data$/, ''));
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  for (;;) {
+    const end = buffer.indexOf('\\n');
+    if (end < 0) break;
+    const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
+    const message = JSON.parse(line);
+    let result;
+    if (message.method === 'initialize') result = { protocolVersion: 1, agentInfo: { name: 'fake', version: 'test' }, agentCapabilities: { loadSession: true } };
+    else if (message.method === 'session/new' || message.method === 'session/load') result = { sessionId: id, configOptions: [
+      { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: id + '-small', options: [
+        { value: id + '-small', name: 'Small' }, { value: id + '-large', name: 'Large' }] },
+      { id: 'thinking', name: 'Effort', category: 'thought_level', type: 'select', currentValue: 'low', options: [{ value: 'low', name: 'Low' }] }] };
+    else if (message.method === 'session/set_config_option') {
+      selected = message.params.value;
+      result = { configOptions: [{ id: 'thinking', name: 'Effort', category: 'thought_level', type: 'select', currentValue: 'low',
+        options: selected.endsWith('large') ? [{ value: 'high', name: 'High' }, { value: 'max', name: 'Max' }] : [{ value: 'low', name: 'Low' }] }] };
+    } else throw new Error('unexpected method: ' + message.method);
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }) + '\\n');
+  }
+});`;
+
+test("ACP catalog reflects the exact account process and dependent effort choices without turns", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentstack-worker-catalog-"));
+  const binary = join(dir, "fake-acp");
+  await writeFile(binary, fake);
+  await chmod(binary, 0o700);
+  const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, AGENTSTACK_OPENCODE_BIN: binary };
+  const auth = await serveApi({ name: "auth", transport: "socket", env });
+  const supervisor = new WorkerSupervisor(dir, env);
+  try {
+    const prepare = async () => {
+      const response = await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_prepare", arguments: { provider: "grok" } }) as { account: { id: string } };
+      const id = response.account.id;
+      const accountDir = join(dir, "worker-accounts", id, "data", "opencode");
+      await (await import("node:fs/promises")).mkdir(accountDir, { recursive: true });
+      await writeFile(join(accountDir, "auth.json"), JSON.stringify({ xai: { type: "oauth", access: id, refresh: id } }));
+      await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_confirm", arguments: { id } });
+      return id;
+    };
+    const first = await prepare();
+    const second = await prepare();
+    await supervisor.reconcile();
+    const a = await supervisor.catalog(first, true);
+    const b = await supervisor.catalog(second, true);
+    assert.equal(a.models.length, 2);
+    assert.deepEqual(a.models.map((model) => model.efforts), [["low"], ["high", "max"]]);
+    assert.ok(a.models.every((model) => model.id.startsWith(first)));
+    assert.ok(b.models.every((model) => model.id.startsWith(second)));
+    assert.notEqual(a.models[0]!.id, b.models[0]!.id);
+    assert.equal((await supervisor.catalog(first, false)).observedAt, a.observedAt);
+    assert.equal(supervisor.runtimeList().length, 2);
+    await supervisor.drain(second);
+    const stale = await supervisor.catalog(second, true);
+    assert.equal(stale.stale, true);
+    assert.equal(stale.observedAt, b.observedAt);
+    assert.equal((await supervisor.catalog(second, false)).stale, true);
+    await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_set_enabled", arguments: { id: first, enabled: false } }).catch(() => undefined);
+    await supervisor.reconcile();
+    assert.equal(supervisor.runtimeList().length, 1);
+  } finally {
+    await supervisor.close();
+    await auth.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("catalog parsing preserves native IDs and grouped ACP options", () => {
+  assert.deepEqual(nativeDevinModels({ families: [{ variants: [{ model_uid: "exact-native-id" }] }] }), ["exact-native-id"]);
+  assert.deepEqual(optionsOf({ configOptions: [{ id: "model", name: "Model", category: "model", type: "select", options: [
+    { group: "recommended", name: "Recommended", options: [{ value: "exact-acp-id", name: "Model" }] },
+  ] }] })[0]?.values, [{ value: "exact-acp-id", name: "Model" }]);
+});
+
+test("operator disable and removal drain the exact account process before deleting credentials", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentstack-worker-lifecycle-"));
+  const binary = join(dir, "fake-acp");
+  await writeFile(binary, fake);
+  await chmod(binary, 0o700);
+  const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, AGENTSTACK_OPENCODE_BIN: binary };
+  const auth = await serveApi({ name: "auth", transport: "socket", env });
+  const workers = await serveApi({ name: "workers", transport: "socket", env });
+  const call = (name: string, args: object) => socketCall(socketPath("auth", env), "tools/call", { name, arguments: args });
+  try {
+    const { account } = await call("worker_account_prepare", { provider: "grok" }) as { account: { id: string } };
+    const root = join(dir, "worker-accounts", account.id);
+    await (await import("node:fs/promises")).mkdir(join(root, "data", "opencode"), { recursive: true });
+    await writeFile(join(root, "data", "opencode", "auth.json"), JSON.stringify({ xai: { type: "oauth", access: "first", refresh: "first" } }));
+    await call("worker_account_confirm", { id: account.id });
+    const runtimes = async () => (await socketCall(socketPath("workers", env), "tools/call", {
+      name: "worker_runtime_list", arguments: {},
+    }) as { runtimes: Array<{ id: string }> }).runtimes;
+    for (let attempt = 0; attempt < 40 && !(await runtimes()).some((item) => item.id === account.id); attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal((await runtimes()).length, 1);
+    const catalog = await socketCall(socketPath("workers", env), "tools/call", {
+      name: "worker_catalog", arguments: { accountId: account.id },
+    }) as { models: unknown[]; runtimeVersion: string; stale: boolean };
+    assert.equal(catalog.models.length, 2);
+    assert.equal(catalog.runtimeVersion, "fake-acp 1.0");
+    assert.equal(catalog.stale, false);
+    await call("worker_account_set_enabled", { id: account.id, enabled: false });
+    assert.equal((await runtimes()).length, 0);
+    await call("worker_account_set_enabled", { id: account.id, enabled: true });
+    for (let attempt = 0; attempt < 40 && !(await runtimes()).some((item) => item.id === account.id); attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal((await runtimes()).length, 1);
+    await call("worker_account_remove", { id: account.id });
+    assert.equal((await runtimes()).length, 0);
+    await assert.rejects(stat(root), /ENOENT/);
+    assert.deepEqual((await call("worker_account_list", {}) as { accounts: unknown[] }).accounts, []);
+  } finally {
+    await workers.close();
+    await auth.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

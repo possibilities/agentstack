@@ -25,6 +25,7 @@
     "@agentstack/bots": "workspace:*",
     "@agentstack/docs": "workspace:*",
     "@agentstack/uix": "workspace:*",
+    "@agentstack/workers": "workspace:*",
     "@modelcontextprotocol/inspector": "2.7.0",
     "zod": "^4.6.5"
   },

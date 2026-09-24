@@ -26,6 +26,18 @@ A durable, revisionless request by a verified Bot thread to watch one Package AP
 
 An AgentStack-owned sign-in credential with an immutable account ID managed by the `auth` Package API for Bots. One account is active for new Bots. A Bot may be created unbound. An existing Bot changes account only through assignment, then the next start after a stop. A running Bot reports both its assignment and its launched identity. Removing either account deletes that Bot. Accounts never take a durable human-facing ordinal. A UI may present dense `codex-N` labels derived from the current account list. _Avoid_: Codex home, capability profile
 
+## Worker account
+
+A stable account ID for an isolated, native ACP sign-in managed through `auth`. Grok and Devin accounts can be enabled or disabled independently; they have no active account. A Codex worker binding uses an existing Codex account ID but requires a separately verified OpenCode login. Only a ready, enabled account may have an owner-managed ACP process. _Avoid_: active worker account, credential copy
+
+## ACP runtime
+
+An owner-supervised stdio ACP process for one ready Worker account: OpenCode for Grok or Codex, Devin CLI for Devin. Its pipe is private to AgentStack and is not itself a Package API Transport. The `workers` Package API reports health and account-bound capabilities.
+
+## Worker catalog
+
+A no-turn observation of model and dependent effort choices actually offered by one account's ACP session, with native Devin model IDs as separately labelled evidence. Cached values retain source, observation time and stale/error state; they do not by themselves prove successful inference or spendable quota.
+
 ## Main thread
 
 The single Codex thread ID retained by a Bot. A fresh Bot has no main thread until the first persistent root thread created by a connected UI has a durable turn; later Bot launches resume that ID. Only this root and its descendants belong to AgentStack's view of the Bot. Other Codex top-level threads on the same socket are ignored.

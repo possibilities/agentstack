@@ -51,6 +51,8 @@ export type Bot = {
 };
 
 export type Account = { id: string; active: boolean; removing: boolean };
+export type WorkerAccount = { id: string; provider: "codex" | "grok" | "devin"; enabled: boolean; ready: boolean; removing: boolean };
+export type WorkerRuntime = { id: string; provider: WorkerAccount["provider"]; state: "running" | "stopped" | "error"; pid: number | null; error: string | null };
 
 export type Login = {
   id: string;
@@ -93,6 +95,8 @@ export type Resource<T> = { data: T | null; error: string | null; at: number | n
 export type Snapshot = {
   owner: Resource<OwnerStatus>;
   accounts: Resource<Account[]>;
+  workerAccounts: Resource<WorkerAccount[]>;
+  workerRuntimes: Resource<WorkerRuntime[]>;
   login: Resource<Login | null>;
   bots: Resource<Bot[]>;
   voice: Resource<VoiceCall | null>;

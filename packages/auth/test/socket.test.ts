@@ -43,12 +43,14 @@ test("auth serves accounts and device sign-in on its namespaced socket", { timeo
       topics: {
         accounts_changed: "Published when a Codex account signs in, is selected, or is removed.",
         login_changed: "Published when a Codex device sign-in starts, shows its prompt, is superseded or cancelled, or finishes. Never carries the prompt or credentials.",
+        worker_accounts_changed: "Published when a worker account is prepared, confirmed, enabled, disabled or removed. Refresh worker_account_list.",
       },
       subscribe: "events/subscribe",
     });
     assert.deepEqual(
       listed.tools.map((tool) => tool.name),
-      ["account_list", "account_activate", "account_remove", "account_login_start", "account_login_replace", "account_login_status", "account_login_current", "account_login_cancel"],
+      ["account_list", "account_activate", "account_remove", "account_login_start", "account_login_replace", "account_login_status", "account_login_current", "account_login_cancel",
+        "worker_account_list", "worker_account_prepare", "worker_account_confirm", "worker_account_set_enabled", "worker_account_remove"],
     );
 
     await assert.rejects(socketCall(served.socketPath, "events/subscribe", { topics: [] }), /non-empty/);

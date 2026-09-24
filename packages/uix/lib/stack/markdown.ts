@@ -9,7 +9,7 @@ function section<T>(title: string, resource: Resource<T>, render: (data: T) => s
 }
 
 export function renderCanvasMarkdown(snapshot: Snapshot): string {
-  const { owner, accounts, login, bots, voice, catalog, endpoints } = snapshot;
+  const { owner, accounts, workerAccounts, workerRuntimes, login, bots, voice, catalog, endpoints } = snapshot;
   const labels = accountLabels(accounts.data);
   const label = (id: string | null) => (id ? labels.get(id) ?? shortId(id) : "unbound");
 
@@ -30,6 +30,12 @@ export function renderCanvasMarkdown(snapshot: Snapshot): string {
         return `- **${label(account.id)}** — ${code(account.id)}${account.active ? " · active" : ""}${account.removing ? " · removing" : ""}${bound.length ? ` · ${bound.join(", ")}` : ""}`;
       }) : ["No Codex accounts."]),
       "",
+    ]),
+    ...section("Worker accounts", workerAccounts, (data) => [
+      ...(data.length ? data.map((account) => {
+        const runtime = workerRuntimes.data?.find((item) => item.id === account.id);
+        return `- **${account.provider}** ${code(account.id)} — ${account.removing ? "removing" : !account.enabled ? "disabled" : account.ready ? "ready" : "sign-in needed"}${runtime ? ` · ACP ${runtime.state}${runtime.error ? ` (${runtime.error})` : ""}` : ""}`;
+      }) : ["No worker accounts."]), "",
     ]),
     ...section("Bots", bots, (data) => [...(data.length ? data.flatMap((bot) => [
       `- **${bot.id}** — ${bot.recoveryIssue ? "needs inspection (reported running state unverified)" : bot.state}${bot.pid ? ` · pid ${bot.pid}` : ""} · account ${label(bot.account)}`,

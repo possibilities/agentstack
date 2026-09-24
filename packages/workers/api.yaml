@@ -1,0 +1,8 @@
+name: workers
+description: Discover account-bound ACP worker models and runtime health. Worker turns are added after the no-turn account foundation.
+socket:
+  description: Private socket for ACP worker catalog and runtime operations.
+mcp:
+  description: Bot-facing account-bound worker catalog, forwarded to the workers socket.
+websocket:
+  description: Loopback WebSocket for worker catalog and change notices.
