@@ -12,21 +12,21 @@ A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are
 
 _Avoid_: protocol, binding
 
+## Event
+
+A named change notice a Package API publishes on an event-capable transport. Topics and descriptions are declared in TypeScript on the PackageApi (`events`); the socket transport delivers them to connections that call `events/subscribe`. A notice carries only the topic name — never a payload or credentials — so callers snapshot state after (re)subscribing.
+
+_Avoid_: stream, feed, pubsub
+
 ## Server
 
 One named composition of a Package API. The name is the namespace for its socket.
 
 _Avoid_: daemon, service, app
 
-## UI
-
-Each package's page is a React Server Component under `ui/`, rendered by a Next.js dev server embedded in `agentstack serve` (`packages/owner/web`). Pages call the package's own server actions — no HTTP data endpoints. A loopback websocket event invalidates the client, which calls `router.refresh()` to repaint. Styling is Tailwind with shadcn conventions (`cn`, `cva`, CSS-variable tokens in `web/app/globals.css`) — no other UI libraries.
-
-_Avoid_: endpoint, widget
-
 ## Codex account
 
-An AgentStack-owned sign-in credential and stable `codex-N` name for a managed Codex Server. One account is active for new Servers; an existing Server retains the account recorded at its launch. _Avoid_: Codex home, capability profile
+An AgentStack-owned sign-in credential and stable `codex-N` name managed by the `auth` Package API for a managed Codex Server. One account is active for new Servers; an existing Server retains the account recorded at its launch. _Avoid_: Codex home, capability profile
 
 ## Main thread
 

@@ -1,3 +1,3 @@
 # Agentstack
 
-Process owner for local agent servers. Package pages are React Server Components served by an embedded Next.js dev server at `/_ui/<package>` on http://127.0.0.1:3000 (`agentstack serve`).
+Process owner for local agent servers. Each package exposes a typed Package API on a private Unix socket under `<state>/sockets/`; `agentstack serve` owns the `api`, `auth`, `codex`, and `bots` children and serves `owner` status and change events in-process.

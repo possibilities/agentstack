@@ -6,6 +6,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import { parseConfig } from "../src/config.js";
+import { loadPackageApi } from "../src/catalog.js";
 import { serveApi } from "../src/serve.js";
 import { findPackage, workspaceRoot } from "../src/workspace.js";
 
@@ -16,7 +17,9 @@ test("codex declares one namespaced socket server", async () => {
   assert.match(codex.config.description, /Start, stop, and list/);
   assert.match(codex.config.socket?.description ?? "", /codex/);
   assert.equal(codex.config.mcp, undefined);
-  assert.deepEqual(Object.keys(codex.config.websocket?.pubsub ?? {}), ["servers_changed", "accounts_changed", "threads_changed", "inputs_changed"]);
+  assert.equal(codex.config.websocket, undefined);
+  const codexApi = await loadPackageApi(codex.dir);
+  assert.deepEqual(Object.keys(codexApi.events?.topics ?? {}).sort(), ["inputs_changed", "servers_changed", "threads_changed"]);
 });
 
 test("config rejects unknown transports and empty blurbs", () => {

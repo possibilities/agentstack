@@ -1,41 +1,49 @@
 import { readFile, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { PackageApi } from "./operation.js";
+import { packageEventTopics, type PackageApi } from "./operation.js";
 import { publishedJsonSchema } from "./schema.js";
 import { configuredTransports } from "./config.js";
 import { listPackages, socketPath, workspaceRoot } from "./workspace.js";
 
+export type CatalogTransport = {
+  type: string;
+  description: string;
+  supported: boolean;
+  subscriptions: boolean;
+  endpoint: string | null;
+};
+
+export type CatalogOperation = {
+  name: string;
+  title?: string;
+  description: string;
+  annotations: Record<string, boolean | string>;
+  inputSchema: Record<string, unknown>;
+  outputSchema: Record<string, unknown>;
+};
+
+export type CatalogServer = {
+  name: string;
+  description: string;
+  packageName: string;
+  operations: CatalogOperation[];
+  events: Record<string, string>;
+  transports: CatalogTransport[];
+};
+
 export type Catalog = {
-  servers: Array<{
-    name: string;
-    description: string;
-    packageName: string;
-    operations: Array<{
-      name: string;
-      title?: string;
-      description: string;
-      annotations: Record<string, boolean | string>;
-      inputSchema: Record<string, unknown>;
-      outputSchema: Record<string, unknown>;
-    }>;
-    transports: Array<{
-      type: string;
-      description: string;
-      available: boolean;
-      endpoint?: string;
-      topics?: Record<string, string>;
-    }>;
-  }>;
+  servers: CatalogServer[];
 };
 
 export async function loadCatalog(env: NodeJS.ProcessEnv = process.env, from = import.meta.dirname): Promise<Catalog> {
   const root = workspaceRoot(from);
   const packages = await listPackages(root);
-  const servers = [];
+  const servers: CatalogServer[] = [];
   for (const item of packages) {
     const api = await loadPackageApi(item.dir);
     const manifest = JSON.parse(await readFile(join(item.dir, "package.json"), "utf8")) as { name?: string };
+    const events = api.events ? packageEventTopics(item.config.name, api.events) : (item.config.websocket?.pubsub ?? {});
     servers.push({
       name: item.config.name,
       description: item.config.description,
@@ -48,22 +56,25 @@ export async function loadCatalog(env: NodeJS.ProcessEnv = process.env, from = i
         inputSchema: publishedJsonSchema(operation.input),
         outputSchema: publishedJsonSchema(operation.output),
       })),
+      events,
       transports: configuredTransports(item.config).map((transport) =>
         transport.type === "socket"
           ? {
               type: transport.type,
               description: transport.description,
-              available: true,
+              supported: true,
+              subscriptions: api.events !== undefined,
               endpoint: socketPath(item.config.name, env),
             }
           : transport.type === "websocket"
             ? {
                 type: transport.type,
                 description: transport.description,
-                available: true,
-                topics: item.config.websocket?.pubsub,
+                supported: true,
+                subscriptions: api.events !== undefined || Object.keys(item.config.websocket?.pubsub ?? {}).length > 0,
+                endpoint: null,
               }
-            : { type: transport.type, description: transport.description, available: false },
+            : { type: transport.type, description: transport.description, supported: false, subscriptions: false, endpoint: null },
       ),
     });
   }

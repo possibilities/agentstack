@@ -1,4 +1,5 @@
 import type { PackageApi } from "./operation.js";
+import { packageEventTopics } from "./operation.js";
 import { loadPackageApi } from "./catalog.js";
 import { serveSocket, type ServedSocket, type SocketServerInfo } from "./socket.js";
 import { serveWebSocket, type ServedWebSocket } from "./websocket.js";
@@ -28,8 +29,20 @@ export async function serveApi(options: {
     throw new Error(`${options.name} websocket is served alongside its socket transport`);
   }
   const api = await loadPackageApi(located.dir);
+  if (api.events && located.config.websocket?.pubsub && Object.keys(located.config.websocket.pubsub).length > 0) {
+    throw new Error(`${options.name} declares both events and websocket.pubsub`);
+  }
+  const eventTopics = api.events ? packageEventTopics(options.name, api.events) : undefined;
+  if (eventTopics && transport !== "socket" && transport !== "websocket") {
+    throw new Error(`${options.name} events cannot be served over ${transport}`);
+  }
+  const publishTargets: Array<(topic: string) => void> = [];
+  const publish = (topic: string): void => {
+    for (const target of publishTargets) target(topic);
+  };
   let socket: ServedSocket | undefined;
   let websocket: ServedWebSocket | undefined;
+  let stopEvents: (() => void) | void = undefined;
   let context: unknown;
   let contextCreated = false;
   let resolveContext: (value: unknown) => void = () => undefined;
@@ -58,18 +71,23 @@ export async function serveApi(options: {
         info: socketInfo,
         context: contextReady,
         operations: api.operations,
+        events: eventTopics ? { topics: eventTopics } : undefined,
       });
+      if (socket.publish) publishTargets.push(socket.publish);
     }
     context = await api.createContext(env);
     contextCreated = true;
+    if (api.events) {
+      stopEvents = await api.events.start(context, publish);
+    }
     resolveContext(context);
     if (websocketConfig) {
       websocket = await serveWebSocket({
-        topics: websocketConfig.pubsub ?? {},
-        origin: env.AGENTSTACK_UI_ORIGIN,
-        subscribe: api.subscribe ? (publish) => api.subscribe!(context, publish) : undefined,
+        topics: eventTopics ?? websocketConfig.pubsub ?? {},
+        origin: env.AGENTSTACK_WEBSOCKET_ORIGIN,
       });
-      if (socketInfo) socketInfo.websocket = { url: websocket.url, topics: websocketConfig.pubsub ?? {} };
+      if (eventTopics && websocket.publish) publishTargets.push(websocket.publish);
+      if (socketInfo) socketInfo.websocket = { url: websocket.url, topics: eventTopics ?? websocketConfig.pubsub ?? {} };
     }
     let closing: Promise<void> | undefined;
     return {
@@ -77,12 +95,17 @@ export async function serveApi(options: {
       transport,
       socketPath: socket?.path,
       websocketUrl: websocket?.url,
-      publish: websocket?.publish,
+      publish: websocket?.publish ?? (publishTargets.length > 0 ? publish : undefined),
       close() {
         if (closing) return closing;
         closing = (async () => {
           let failure: unknown;
-          for (const close of [() => socket?.close(), () => websocket?.close(), () => api.closeContext(context, { halt: true })]) {
+          for (const close of [
+            () => stopEvents?.(),
+            () => socket?.close(),
+            () => websocket?.close(),
+            () => api.closeContext(context, { halt: true }),
+          ]) {
             try {
               await close();
             } catch (error) {
@@ -95,6 +118,10 @@ export async function serveApi(options: {
       },
     };
   } catch (error) {
+    try {
+      await stopEvents?.();
+    } catch {
+    }
     rejectContext(error);
     await socket?.close().catch(() => undefined);
     await websocket?.close().catch(() => undefined);

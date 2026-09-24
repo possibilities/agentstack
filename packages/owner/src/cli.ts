@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { runApi, serveApi } from "@agentstack/api";
+import { apiChild, authChild } from "./children.js";
 import { botsChild } from "./bots.js";
 import { codexChild } from "./codex.js";
 import { startOwner } from "./owner.js";
-import { setOwnerUiSource } from "./ui-source.js";
-import { startUiServer, uiListenPort, uiPageUrl } from "./ui.js";
+import { statusSource } from "./status.js";
 
 const command = process.argv[2];
 
@@ -15,33 +15,11 @@ if (command === "api") {
   process.exit(1);
 }
 
-let port: number;
-try {
-  port = uiListenPort();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-}
-
-// Start Next before children: the dev server exits the process itself when it
-// cannot start (for example when its lockfile is held), so nothing can be
-// spawned yet at that point.
-let ui: Awaited<ReturnType<typeof startUiServer>>;
-try {
-  ui = await startUiServer(port);
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-}
-
-const env = { ...process.env, AGENTSTACK_UI_ORIGIN: `http://127.0.0.1:${ui.port}` };
-
 let events: Awaited<ReturnType<typeof serveApi>>;
 try {
-  events = await serveApi({ name: "owner", transport: "websocket", env });
+  events = await serveApi({ name: "owner", transport: "socket", env: process.env });
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
-  await ui.close().catch((closeError) => console.error(closeError));
   process.exit(1);
 }
 
@@ -53,7 +31,7 @@ const shutdown = () => {
   closing = true;
   const force = setTimeout(() => process.exit(1), 16_000);
   force.unref();
-  void Promise.allSettled([ui.close(), owner.close(), events.close()]).then((results) => {
+  void Promise.allSettled([owner.close(), events.close()]).then((results) => {
     const failed = results.some((result) => result.status === "rejected");
     for (const result of results) {
       if (result.status === "rejected") console.error(result.reason);
@@ -61,20 +39,17 @@ const shutdown = () => {
     process.exit(childFailed || failed ? 1 : 0);
   });
 };
-owner = startOwner([codexChild(), botsChild()], env, () => {
-  events.publish?.("pids_changed");
+owner = startOwner([apiChild(), authChild(), codexChild(), botsChild()], process.env, () => {
+  statusSource.notify();
   if (!closing && owner.children().some((child) => !child.running)) {
     childFailed = true;
     console.error("a required child stopped; shutting down agentstack");
     shutdown();
   }
 });
-setOwnerUiSource(() => ({ pid: process.pid, children: owner.children(), websocketUrl: events.websocketUrl }));
+statusSource.attach(owner);
 
-console.error(uiPageUrl(ui.port, "owner", ui.token));
-console.error(uiPageUrl(ui.port, "codex", ui.token));
-console.error(uiPageUrl(ui.port, "bots", ui.token));
-console.error(uiPageUrl(ui.port, "api", ui.token));
+if (events.socketPath) console.error(events.socketPath);
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

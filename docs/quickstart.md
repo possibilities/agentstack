@@ -1,6 +1,6 @@
 # Quickstart
 
-Agentstack runs the local Codex Package API and package UIs under one process owner. It requires Node 24 or newer, pnpm 12.5.1, and the sibling `~/code/codexnk` workshop checkout for setup. Setup installs the pinned GitHub release through that workshop's verified installer; no `codex` command on PATH is required.
+Agentstack runs the local Codex Package APIs under one process owner. It requires Node 24 or newer, pnpm 12.5.1, and the sibling `~/code/codexnk` workshop checkout for setup. Setup installs the pinned GitHub release through that workshop's verified installer; no `codex` command on PATH is required.
 
 From the repository root:
 
@@ -10,11 +10,13 @@ pnpm test
 node packages/owner/dist/src/cli.js serve
 ```
 
-The last command prints admission URLs for the owner, Codex, and API pages. Open one of those exact URLs in a browser on the same machine. The first request exchanges its token in the address for an HttpOnly cookie and redirects to a clean URL. The UI defaults to `127.0.0.1:3000`; set `PORT=0` to let the operating system choose a free port or set `PORT` to another local port.
+`agentstack serve` starts the required `api`, `auth`, `codex`, and `bots` children and serves `owner` status and `pids_changed` events on its own socket in-process. Each Package API is a line-delimited JSON socket under `<state>/sockets/<name>.sock`; the serve output prints their paths.
 
-On the Codex page, choose **Add account**, follow the sign-in link, and return to the page after authentication. The first account becomes active; with several accounts, **Make active** chooses the identity used by newly created app servers. Existing Servers retain their account and main thread when restarted, including after AgentStack restarts. Running server rows show their account. Sign-in does not alter the regular Codex CLI account.
+To sign in, call `account_login_start` on the auth socket, open the returned `authUrl` in a browser on the same machine, and enter the `userCode` at the provider. Poll `account_login_status` (or subscribe to `login_changed`) until the attempt completes. The first account becomes active; `account_activate` chooses the identity used by newly created app servers. Existing Servers retain their account and main thread when restarted, including after AgentStack restarts. Sign-in does not alter the regular Codex CLI account.
 
-To serve only the Codex Package API, without the UI or process owner:
+Structured documents for every package API — operations with their JSON Schemas, event topics, and configured transports — come from the `api` socket: `docs_list` names the packages and `docs_get` returns one package's document.
+
+To serve only the Codex Package API, without the process owner:
 
 ```sh
 node packages/api/dist/src/cli.js codex socket

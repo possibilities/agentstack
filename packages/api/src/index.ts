@@ -1,4 +1,11 @@
-export { operation, type Annotations, type AnyOperation, type PackageApi } from "./operation.js";
+export {
+  operation,
+  packageEventTopics,
+  type Annotations,
+  type AnyOperation,
+  type PackageApi,
+  type PackageEvents,
+} from "./operation.js";
 export { publishedJsonSchema } from "./schema.js";
 export {
   configuredTransports,
@@ -12,8 +19,17 @@ export {
   type WebsocketConfig,
 } from "./config.js";
 export { findPackage, listPackages, socketPath, workspaceRoot } from "./workspace.js";
-export { loadCatalog, loadPackageApi, type Catalog } from "./catalog.js";
-export { serveSocket, socketCall, type ServedSocket, type SocketServerInfo } from "./socket.js";
+export { loadCatalog, loadPackageApi, type Catalog, type CatalogServer, type CatalogTransport } from "./catalog.js";
+export {
+  serveSocket,
+  socketCall,
+  socketSubscribe,
+  type ServedSocket,
+  type SocketEvents,
+  type SocketServerInfo,
+  type SocketSubscription,
+} from "./socket.js";
 export { serveWebSocket, type ServedWebSocket, type WebSocketSource } from "./websocket.js";
 export { serveApi, type ServedApi } from "./serve.js";
 export { runApi } from "./run.js";
+export { api, docsGet, docsList, type DocsContext } from "./docs.js";

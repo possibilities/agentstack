@@ -8,6 +8,16 @@
     "test": {
       "dependsOn": ["build", "^build"],
       "cache": false
+    },
+    "@agentstack/api#test": {
+      "dependsOn": [
+        "build",
+        "@agentstack/auth#build",
+        "@agentstack/bots#build",
+        "@agentstack/codex#build",
+        "@agentstack/owner#build"
+      ],
+      "cache": false
     }
   }
 }

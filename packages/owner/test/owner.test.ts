@@ -7,12 +7,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import WebSocket from "ws";
-import { serveApi } from "@agentstack/api";
+import { serveApi, socketCall, socketSubscribe } from "@agentstack/api";
+import { apiChild, authChild } from "../src/children.js";
 import { botsChild } from "../src/bots.js";
 import { codexChild } from "../src/codex.js";
 import { startOwner } from "../src/owner.js";
-import { ownerUiData, setOwnerUiSource } from "../src/ui-source.js";
+import { statusSource } from "../src/status.js";
 
 const childBin = fileURLToPath(new URL("../../test/fixtures/child.mjs", import.meta.url));
 
@@ -38,29 +38,22 @@ test("the owner signals descendants in its process group", { skip: process.platf
   }
 });
 
-test("the codex child serves the codex socket", () => {
-  const child = codexChild();
-  assert.equal(child.name, "codex");
-  assert.equal(child.command, process.execPath);
-  assert.deepEqual(child.args.slice(1), ["codex", "socket"]);
-  assert.equal(existsSync(child.args[0] ?? ""), true);
-});
-
-test("the bots child serves the bots socket as a separate child", () => {
-  const child = botsChild();
-  assert.equal(child.name, "bots");
-  assert.equal(child.command, process.execPath);
-  assert.deepEqual(child.args.slice(1), ["bots", "socket"]);
-  assert.equal(existsSync(child.args[0] ?? ""), true);
-  assert.notDeepEqual(child.args.slice(1), codexChild().args.slice(1));
+test("the owner starts the four required socket children", () => {
+  for (const child of [apiChild(), authChild(), codexChild(), botsChild()]) {
+    assert.equal(child.command, process.execPath);
+    assert.deepEqual(child.args.slice(1), [child.name, "socket"]);
+    assert.equal(existsSync(child.args[0] ?? ""), true);
+  }
+  assert.deepEqual([apiChild(), authChild(), codexChild(), botsChild()].map((child) => child.name), ["api", "auth", "codex", "bots"]);
 });
 
 function orphanParent(stateDir: string, keepAlive: boolean) {
   const script = `
     import { startOwner } from ${JSON.stringify(fileURLToPath(new URL("../src/owner.js", import.meta.url)))};
+    import { apiChild, authChild } from ${JSON.stringify(fileURLToPath(new URL("../src/children.js", import.meta.url)))};
     import { codexChild } from ${JSON.stringify(fileURLToPath(new URL("../src/codex.js", import.meta.url)))};
     import { botsChild } from ${JSON.stringify(fileURLToPath(new URL("../src/bots.js", import.meta.url)))};
-    const owner = startOwner([codexChild(), botsChild()], { ...process.env, AGENTSTACK_STATE_DIR: ${JSON.stringify(stateDir)} });
+    const owner = startOwner([apiChild(), authChild(), codexChild(), botsChild()], { ...process.env, AGENTSTACK_STATE_DIR: ${JSON.stringify(stateDir)} });
     for (const child of owner.children()) console.log(\`PID \${child.name} \${child.pid}\`);
     ${keepAlive ? "setInterval(() => {}, 1000);" : "process.exit(0);"}
   `;
@@ -114,18 +107,18 @@ async function connectable(path: string, timeoutMs = 10_000): Promise<void> {
   throw failure;
 }
 
+const sockets = (stateDir: string) => ["api", "auth", "codex", "bots"].map((name) => join(stateDir, "sockets", `${name}.sock`));
+
 test("api children shut down when the owner parent dies abruptly", { skip: process.platform === "win32", timeout: 60_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-orphan-"));
   const { parent, pids } = orphanParent(stateDir, true);
-  const codexSock = join(stateDir, "sockets", "codex.sock");
-  const botsSock = join(stateDir, "sockets", "bots.sock");
+  const socks = sockets(stateDir);
   try {
-    await waitFor(() => pids.has("codex") && pids.has("bots") && existsSync(codexSock) && existsSync(botsSock), 15_000);
-    await connectable(codexSock);
-    await connectable(botsSock);
+    await waitFor(() => pids.size === 4 && socks.every(existsSync), 15_000);
+    for (const sock of socks) await connectable(sock);
     parent.kill("SIGKILL");
-    await waitFor(() => !processAlive(pids.get("codex")) && !processAlive(pids.get("bots")), 15_000);
-    await waitFor(() => !existsSync(codexSock) && !existsSync(botsSock), 15_000);
+    await waitFor(() => [apiChild(), authChild(), codexChild(), botsChild()].every((child) => !processAlive(pids.get(child.name))), 15_000);
+    await waitFor(() => socks.every((sock) => !existsSync(sock)), 15_000);
   } finally {
     if (parent.exitCode === null && parent.signalCode === null) parent.kill("SIGKILL");
     for (const pid of pids.values()) killProcessGroup(pid);
@@ -136,13 +129,11 @@ test("api children shut down when the owner parent dies abruptly", { skip: proce
 test("api children shut down when the owner exits before they finish starting", { skip: process.platform === "win32", timeout: 60_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-orphan-early-"));
   const { parent, pids } = orphanParent(stateDir, false);
-  const codexSock = join(stateDir, "sockets", "codex.sock");
-  const botsSock = join(stateDir, "sockets", "bots.sock");
+  const socks = sockets(stateDir);
   try {
-    await waitFor(() => pids.has("codex") && pids.has("bots"), 5_000);
-    await waitFor(() => !processAlive(pids.get("codex")) && !processAlive(pids.get("bots")), 15_000);
-    assert.equal(existsSync(codexSock), false);
-    assert.equal(existsSync(botsSock), false);
+    await waitFor(() => pids.size === 4, 5_000);
+    await waitFor(() => [apiChild(), authChild(), codexChild(), botsChild()].every((child) => !processAlive(pids.get(child.name))), 15_000);
+    for (const sock of socks) assert.equal(existsSync(sock), false);
   } finally {
     if (parent.exitCode === null && parent.signalCode === null) parent.kill("SIGKILL");
     for (const pid of pids.values()) killProcessGroup(pid);
@@ -181,49 +172,63 @@ test("owner close resolves promptly after a failed spawn", async () => {
   ]);
 });
 
-test("owner api serves its websocket transport and publishes pids_changed", async () => {
+test("owner api serves status and pids_changed on its socket", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-owner-sock-"));
+  const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir };
   await assert.rejects(
-    serveApi({ name: "codex", transport: "websocket", env: { ...process.env } }),
-    /served alongside its socket/,
+    serveApi({ name: "owner", transport: "websocket", env }),
+    /does not configure websocket/,
   );
-  const served = await serveApi({ name: "owner", transport: "websocket", env: { ...process.env } });
-  const ws = new WebSocket(served.websocketUrl ?? "");
+  const served = await serveApi({ name: "owner", transport: "socket", env });
+  const received: string[] = [];
   try {
-    assert.equal(served.socketPath, undefined);
-    assert.match(served.websocketUrl ?? "", /^ws:\/\/127\.0\.0\.1:\d+$/);
-    await new Promise<void>((resolve, reject) => {
-      ws.once("open", () => resolve());
-      ws.once("error", reject);
-    });
-    ws.send(JSON.stringify({ type: "subscribe", topic: "pids_changed" }));
-    assert.deepEqual(await nextFrame(ws), { type: "subscribed", topic: "pids_changed" });
-    served.publish?.("pids_changed");
-    assert.deepEqual(await nextFrame(ws), { type: "event", topic: "pids_changed" });
+    assert.equal(served.socketPath, join(stateDir, "sockets", "owner.sock"));
+    const listed = (await socketCall(served.socketPath, "tools/list")) as {
+      events: { topics: Record<string, string> } | null;
+      tools: Array<{ name: string }>;
+    };
+    assert.deepEqual(listed.tools.map((tool) => tool.name), ["owner_status"]);
+    assert.deepEqual(Object.keys(listed.events?.topics ?? {}), ["pids_changed"]);
+
+    const empty = (await socketCall(served.socketPath, "tools/call", { name: "owner_status", arguments: {} })) as {
+      pid: number;
+      children: Array<{ name: string; running: boolean }>;
+    };
+    assert.equal(empty.pid, process.pid);
+    assert.deepEqual(empty.children, []);
+
+    const subscription = await socketSubscribe(served.socketPath ?? "", ["pids_changed"], (topic) => received.push(topic));
+    const owner = startOwner(
+      [
+        { name: "fixture", command: process.execPath, args: [childBin] },
+        { name: "exit", command: process.execPath, args: ["-e", "process.exit(0)"] },
+      ],
+      env,
+      () => statusSource.notify(),
+    );
+    statusSource.attach(owner);
+    try {
+      const status = (await socketCall(served.socketPath, "tools/call", { name: "owner_status", arguments: {} })) as {
+        pid: number;
+        children: Array<{ name: string; pid: number | null; running: boolean; exitCode: number | null; signal: string | null; error: string | null }>;
+      };
+      const fixture = status.children.find((child) => child.name === "fixture");
+      assert.equal(status.pid, process.pid);
+      assert.equal(fixture?.running, true);
+      assert.ok(fixture?.pid);
+      assert.equal(fixture?.error, null);
+      for (let i = 0; i < 100 && received.length === 0; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+      assert.deepEqual(received, ["pids_changed"]);
+    } finally {
+      statusSource.detach();
+      await owner.close();
+    }
+    await subscription.close();
   } finally {
-    ws.close();
     await served.close();
-    await served.close();
+    await rm(stateDir, { recursive: true, force: true });
   }
 });
-
-test("owner ui source carries the websocket url", () => {
-  setOwnerUiSource(() => ({ pid: 1, children: [], websocketUrl: "ws://127.0.0.1:9" }));
-  assert.equal(ownerUiData().websocketUrl, "ws://127.0.0.1:9");
-  setOwnerUiSource(() => ({ pid: 1, children: [] }));
-  assert.equal(ownerUiData().websocketUrl, undefined);
-});
-
-type Frame = { type?: string; topic?: string };
-
-function nextFrame(ws: WebSocket, timeoutMs = 5_000): Promise<Frame> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("no frame received")), timeoutMs);
-    ws.once("message", (raw) => {
-      clearTimeout(timer);
-      resolve(JSON.parse(String(raw)) as Frame);
-    });
-  });
-}
 
 async function waitFor(check: () => boolean, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;

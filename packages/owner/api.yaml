@@ -1,6 +1,4 @@
 name: owner
 description: Owns agentstack child processes and reports their status.
-websocket:
-  description: Loopback websocket publishing owned-process changes.
-  pubsub:
-    pids_changed: Published when the set of owned child process ids changes.
+socket:
+  description: Unix socket for owned-process status and change events, namespaced as owner.
