@@ -3,6 +3,7 @@
 @source "../../ui";
 @source "../../../api/ui";
 @source "../../../codex/ui";
+@source "../../../bots/ui";
 
 :root {
   --background: #0a0a0a;

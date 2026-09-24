@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import { serveApi } from "@agentstack/api";
+import { botsChild } from "../src/bots.js";
 import { codexChild } from "../src/codex.js";
 import { startOwner } from "../src/owner.js";
 import { ownerUiData, setOwnerUiSource } from "../src/ui-source.js";
@@ -41,6 +42,15 @@ test("the codex child serves the codex socket", () => {
   assert.equal(child.command, process.execPath);
   assert.deepEqual(child.args.slice(1), ["codex", "socket"]);
   assert.equal(existsSync(child.args[0] ?? ""), true);
+});
+
+test("the bots child serves the bots socket as a separate child", () => {
+  const child = botsChild();
+  assert.equal(child.name, "bots");
+  assert.equal(child.command, process.execPath);
+  assert.deepEqual(child.args.slice(1), ["bots", "socket"]);
+  assert.equal(existsSync(child.args[0] ?? ""), true);
+  assert.notDeepEqual(child.args.slice(1), codexChild().args.slice(1));
 });
 
 test("owner retains running and failed child statuses", async () => {

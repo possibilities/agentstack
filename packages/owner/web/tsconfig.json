@@ -38,6 +38,7 @@
     ".next/types/**/*.ts",
     "../ui/**/*",
     "../../api/ui/**/*",
+    "../../bots/ui/**/*",
     "../../codex/ui/**/*",
     ".next/dev/types/**/*.ts",
     ".next/build/types/**/*.ts",

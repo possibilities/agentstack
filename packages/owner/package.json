@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@agentstack/api": "workspace:*",
+    "@agentstack/bots": "workspace:*",
     "@agentstack/codex": "workspace:*",
     "@tailwindcss/postcss": "4.3.3",
     "class-variance-authority": "0.7.1",

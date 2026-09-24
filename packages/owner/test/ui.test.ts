@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { request } from "node:http";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { serveApi, socketCall } from "@agentstack/api";
+import { installedRuntimeVersion, StateStore } from "@agentstack/codex";
 import { uiListenPort, uiPageUrl } from "../src/ui.js";
-import { installedRuntimeVersion } from "@agentstack/codex";
+
+const fakeBin = fileURLToPath(new URL("../../../codex/test/fixtures/fake-app-server.mjs", import.meta.url));
 
 test("package UIs render through Next.js", { timeout: 120_000 }, async () => {
   const uiModule = fileURLToPath(new URL("../src/ui.js", import.meta.url));
@@ -15,6 +19,21 @@ test("package UIs render through Next.js", { timeout: 120_000 }, async () => {
   const webDir = fileURLToPath(new URL("../../web/", import.meta.url));
   const tsconfigPath = join(webDir, "tsconfig.json");
   const originalTsconfig = await readFile(tsconfigPath, "utf8");
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-ui-state-"));
+  const home = await mkdtemp(join(tmpdir(), "agentstack-ui-home-"));
+  const savedHome = process.env.HOME;
+  process.env.HOME = home;
+  const runtime = join(home, ".local", "libexec", "codexnk", "codex");
+  await mkdir(join(runtime, ".."), { recursive: true });
+  await symlink(fakeBin, runtime);
+  const store = new StateStore(stateDir);
+  store.addAccount(JSON.stringify({ tokens: { refresh_token: "test-refresh", access_token: "access", id_token: "fixture.jwt.signature" } }));
+  store.close();
+  const apiEnv = { ...process.env, AGENTSTACK_STATE_DIR: stateDir };
+  const codex = await serveApi({ name: "codex", transport: "socket", env: apiEnv });
+  const bots = await serveApi({ name: "bots", transport: "socket", env: apiEnv });
+  await socketCall(bots.socketPath ?? "", "tools/call", { name: "bot_start", arguments: {} });
+  await socketCall(codex.socketPath ?? "", "tools/call", { name: "server_start", arguments: { id: "notabot", cwd: webDir } });
   const child = spawn(
     process.execPath,
     [
@@ -25,7 +44,10 @@ test("package UIs render through Next.js", { timeout: 120_000 }, async () => {
        console.log("PORT " + ui.port + " TOKEN " + ui.token);
        setInterval(() => {}, 1000);`,
     ],
-    { stdio: ["ignore", "pipe", "inherit"], env: { ...process.env, AGENTSTACK_NEXT_DIST_DIR: distDir } },
+    {
+      stdio: ["ignore", "pipe", "inherit"],
+      env: { ...process.env, AGENTSTACK_NEXT_DIST_DIR: distDir, AGENTSTACK_STATE_DIR: stateDir },
+    },
   );
   try {
     const session = await new Promise<{ port: number; token: string }>((resolve, reject) => {
@@ -58,12 +80,18 @@ test("package UIs render through Next.js", { timeout: 120_000 }, async () => {
     const owner = await fetch(`http://127.0.0.1:${port}/_ui/owner`, authenticated);
     assert.equal(owner.status, 200);
     assert.match(await owner.text(), /owner/);
-    const codex = await fetch(`http://127.0.0.1:${port}/_ui/codex`, authenticated);
-    assert.equal(codex.status, 200);
+    const codexResponse = await fetch(`http://127.0.0.1:${port}/_ui/codex`, authenticated);
+    assert.equal(codexResponse.status, 200);
     const expectedVersion = await installedRuntimeVersion();
-    const codexHtml = await codex.text();
+    const codexHtml = await codexResponse.text();
     assert.ok(codexHtml.includes(`Installed runtime: codexnk ${expectedVersion ?? "version unavailable"}`));
     assert.ok(codexHtml.includes(`codexnk ${expectedVersion ?? "version unavailable"}`));
+    const botsResponse = await fetch(`http://127.0.0.1:${port}/_ui/bots`, authenticated);
+    assert.equal(botsResponse.status, 200);
+    const botsHtml = await botsResponse.text();
+    assert.match(botsHtml, /Bots/);
+    assert.ok(botsHtml.includes("bot-1"));
+    assert.ok(!botsHtml.includes("notabot"));
     const api = await fetch(`http://127.0.0.1:${port}/_ui/api`, authenticated);
     assert.equal(api.status, 200);
     assert.match(await api.text(), /server_start/);
@@ -81,6 +109,12 @@ test("package UIs render through Next.js", { timeout: 120_000 }, async () => {
   } finally {
     child.kill("SIGKILL");
     if (child.exitCode === null && child.signalCode === null) await new Promise((resolve) => child.once("exit", resolve));
+    await bots.close();
+    await codex.close();
+    if (savedHome === undefined) delete process.env.HOME;
+    else process.env.HOME = savedHome;
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true });
     await rm(join(webDir, distDir), { recursive: true, force: true });
     await writeFile(tsconfigPath, originalTsconfig);
   }
