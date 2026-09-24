@@ -123,7 +123,10 @@ export class VoiceCalls {
     const setup = (async () => {
       await ready;
       if (this.current !== call) return;
-      await request("initialize", { clientInfo: { name: "agentstack-voice", version: "0.0.0" } });
+      await request("initialize", {
+        clientInfo: { name: "agentstack-voice", version: "0.0.0" },
+        capabilities: { experimentalApi: true, requestAttestation: false },
+      });
       if (this.current !== call) return;
       ws.send(JSON.stringify({ method: "initialized" }));
       // WebRTC v3 is the compatible native audio path; leave Codex's prompt,

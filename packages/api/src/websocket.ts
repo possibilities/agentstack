@@ -82,7 +82,7 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
           });
         }).catch(fail);
       } else if (message.method === "tools/list" || message.method === "tools/call") {
-        const voiceDial = name === "codex" && message.method === "tools/call"
+        const voiceDial = name === "bots" && message.method === "tools/call"
           && (message.params as { name?: unknown } | undefined)?.name === "voice_dial";
         void socketCall(socketPath(name, env), message.method, message.params, { signal: controller.signal, timeoutMs: voiceDial ? 75_000 : undefined }).then(respond, fail);
       } else {
