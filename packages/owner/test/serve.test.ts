@@ -166,7 +166,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     assert.equal(index?.status, 200, stderr);
     const indexHtml = await index.text();
     assert.match(indexHtml, /<h1[^>]*>AgentStack<\/h1>/);
-    assert.match(indexHtml, /Local links and running Servers/);
+    assert.match(indexHtml, /Local links and Server processes/);
     assert.match(indexHtml, /Package API reference/);
     assert.match(indexHtml, /MCP Inspector/);
     assert.match(indexHtml, /No running Codex Servers/);
@@ -179,7 +179,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     const canvasHtml = await canvas.text();
     assert.match(canvasHtml, /<main[^>]*data-canvas="workbench"/);
     assert.match(canvasHtml, /<h1[^>]*>AgentStack canvas<\/h1>/);
-    assert.doesNotMatch(canvasHtml, /Local links and running Servers/);
+    assert.doesNotMatch(canvasHtml, /Local links and Server processes/);
     const stylesheet = /href="(\/_next\/static\/[^"]+\.css)"/.exec(canvasHtml)?.[1];
     assert.ok(stylesheet);
     const css = await fetch(new URL(stylesheet, uixUrl));

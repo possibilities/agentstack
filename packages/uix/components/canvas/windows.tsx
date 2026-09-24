@@ -216,7 +216,7 @@ function AccountCard({ account, label, servers }: { account: Account; label: str
       <div className="flex flex-wrap items-center gap-1">
         {used.length ? used.map((server) => (
           <span key={server.id} className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem]">
-            <StatusDot tone={server.state === "running" ? "success" : "muted"} className="size-1.5 [&>span]:size-1.5" />
+            <StatusDot tone={server.recoveryIssue ? "warning" : server.state === "running" ? "success" : "muted"} label={server.recoveryIssue ? "Needs inspection" : server.state} className="size-1.5 [&>span]:size-1.5" />
             {server.id}
           </span>
         )) : <span className="text-[0.7rem] text-muted-foreground">No Servers bound</span>}
@@ -228,7 +228,16 @@ function AccountCard({ account, label, servers }: { account: Account; label: str
 /* ─── Servers ────────────────────────────────────────────────────────── */
 
 function sortServers(servers: Server[]): Server[] {
-  return [...servers].sort((a, b) => Number(b.state === "running") - Number(a.state === "running") || a.id.localeCompare(b.id, undefined, { numeric: true }));
+  return [...servers].sort((a, b) => Number(Boolean(b.recoveryIssue)) - Number(Boolean(a.recoveryIssue)) || Number(b.state === "running") - Number(a.state === "running") || a.id.localeCompare(b.id, undefined, { numeric: true }));
+}
+
+export function RecoveryWarning({ message }: { message: string }) {
+  return (
+    <p className="flex items-start gap-1.5 rounded-lg bg-warning/10 px-2 py-1.5 text-[0.72rem] text-pretty text-warning">
+      <TriangleAlertIcon aria-hidden className="mt-px size-3.5 shrink-0" />
+      <span><strong className="font-semibold">Needs inspection.</strong> {message}</span>
+    </p>
+  );
 }
 
 export function ServersWindow() {
@@ -237,10 +246,11 @@ export function ServersWindow() {
   const labels = accountLabels(accounts.data);
   const fields = recordFields(catalog.data, "codex", "server_list");
   const botIds = new Set(bots.data?.map((bot) => bot.id));
-  const running = servers.data?.filter((server) => server.state === "running").length ?? 0;
+  const running = servers.data?.filter((server) => server.state === "running" && !server.recoveryIssue).length ?? 0;
+  const fenced = servers.data?.filter((server) => server.recoveryIssue).length ?? 0;
 
   return (
-    <Window id="servers" title="Servers" subtitle={servers.data ? `codex · ${running} running · ${servers.data.length - running} stopped` : "codex · app-servers"}
+    <Window id="servers" title="Servers" subtitle={servers.data ? `codex · ${running} running · ${fenced} need inspection · ${servers.data.length - running - fenced} stopped` : "codex · app-servers"}
       icon={ServerIcon} accent="codex" count={servers.data?.length} status={status.codex} endpoint={endpoints.codex} updatedAt={servers.at} error={servers.error}>
       {servers.data?.length ? (
         <div className="flex flex-col gap-2">
@@ -265,14 +275,15 @@ function ServerCard({ server, bot, labels, fields, events }: {
   events: StackEvent[];
 }) {
   const now = useNow();
-  const running = server.state === "running";
+  const fenced = Boolean(server.recoveryIssue);
+  const running = server.state === "running" && !fenced;
   const pendingAssignment = running && server.account !== server.runningAccount;
   const recent = events[0] && now - events[0].at < 4_000;
   const hint = (name: string) => fields.get(name)?.description;
   return (
     <NodeCard node={{ kind: "server", id: server.id }} label={`server ${server.id}`} lastEvent={events[0]} accent="var(--pkg-codex)">
       <div className="flex items-center gap-2">
-        <StatusDot tone={running ? "success" : "muted"} pulse={recent} label={running ? "Running" : "Stopped"} />
+        <StatusDot tone={fenced ? "warning" : running ? "success" : "muted"} pulse={!fenced && Boolean(recent)} label={fenced ? "Needs inspection" : running ? "Running" : "Stopped"} />
         <span className="font-mono text-sm font-semibold">{server.id}</span>
         {bot ? <Badge variant="outline" className="h-4 gap-1 px-1.5 text-[0.62rem]"><BotIcon />bot</Badge> : null}
         <span className="ml-auto flex items-center gap-2 text-pkg-codex" title="Thread activity, last 5 minutes">
@@ -285,6 +296,7 @@ function ServerCard({ server, bot, labels, fields, events }: {
         <Row label="Thread" hint={hint("mainThreadId")} mono copy={server.mainThreadId}>{shortId(server.mainThreadId)}</Row>
         <Row label="Workspace" hint={hint("cwd")} copy={server.cwd}><Path path={server.cwd} /></Row>
       </dl>
+      {server.recoveryIssue ? <RecoveryWarning message={server.recoveryIssue} /> : null}
       {pendingAssignment ? (
         <p className="flex items-start gap-1.5 rounded-lg bg-warning/10 px-2 py-1.5 text-[0.72rem] text-pretty text-warning">
           <TriangleAlertIcon className="mt-px size-3.5 shrink-0" />
@@ -292,7 +304,7 @@ function ServerCard({ server, bot, labels, fields, events }: {
         </p>
       ) : null}
       <div className="flex items-center justify-between text-[0.7rem] text-muted-foreground">
-        <span>{events.length ? <>Thread activity <Time at={events[0].at} /></> : running ? "No thread activity yet" : "Stopped"}</span>
+        <span>{fenced ? "Recovery fenced" : events.length ? <>Thread activity <Time at={events[0].at} /></> : running ? "No thread activity yet" : "Stopped"}</span>
         {server.url ? <span className="truncate font-mono" title={server.url}>{server.url.replace(/^unix:\/\/.*\//, "unix://…/")}</span> : null}
       </div>
     </NodeCard>
@@ -323,12 +335,12 @@ export function BotsWindow() {
                 <div className="flex items-center gap-3">
                   <span className="relative flex size-11 shrink-0 items-center justify-center rounded-xl bg-pkg-bots/12 font-mono text-lg font-semibold text-pkg-bots ring-1 ring-pkg-bots/25 ring-inset">
                     {number ?? <BotIcon className="size-5" />}
-                    <StatusDot tone={bot.state === "running" ? "success" : "muted"} pulse={events[0] && now - events[0].at < 4_000}
-                      className="absolute -right-0.5 -bottom-0.5 rounded-full ring-2 ring-card" label={bot.state} />
+                    <StatusDot tone={bot.recoveryIssue ? "warning" : bot.state === "running" ? "success" : "muted"} pulse={!bot.recoveryIssue && Boolean(events[0] && now - events[0].at < 4_000)}
+                      className="absolute -right-0.5 -bottom-0.5 rounded-full ring-2 ring-card" label={bot.recoveryIssue ? "Needs inspection" : bot.state} />
                   </span>
                   <div className="flex min-w-0 flex-col">
                     <span className="font-mono text-sm font-semibold">{bot.id}</span>
-                    <span className="text-[0.72rem] text-muted-foreground capitalize">{bot.state}{bot.pid ? ` · pid ${bot.pid}` : ""}</span>
+                    <span className="text-[0.72rem] text-muted-foreground">{bot.recoveryIssue ? "Needs inspection" : bot.state}{bot.pid ? ` · pid ${bot.pid}` : ""}</span>
                   </div>
                   <span className="ml-auto text-pkg-bots"><Sparkline values={histogram(events.map((event) => event.at), now, 12, activitySpan)} /></span>
                 </div>
@@ -337,6 +349,7 @@ export function BotsWindow() {
                   <Row label="Main thread" mono copy={bot.mainThreadId}>{shortId(bot.mainThreadId)}</Row>
                   <Row label="Workspace" copy={bot.cwd}><Path path={bot.cwd} /></Row>
                 </dl>
+                {bot.recoveryIssue ? <RecoveryWarning message={bot.recoveryIssue} /> : null}
                 <div className="flex items-center gap-2 rounded-lg bg-muted/60 px-2 py-1.5 text-[0.7rem]">
                   <RadioIcon className={cn("size-3.5", subscription?.status === "open" ? "text-pkg-bots" : "text-muted-foreground")} />
                   <span className="text-muted-foreground">{subscription?.status === "open" ? "Subscribed" : subscription ? "Connecting…" : "Not subscribed"}</span>
@@ -481,4 +494,3 @@ function PackageSection({ doc, counts }: { doc: PackageDoc; counts: Map<string, 
     </div>
   );
 }
-

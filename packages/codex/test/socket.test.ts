@@ -46,7 +46,7 @@ test("codex lifecycle and change events are served on the namespaced unix socket
     assert.equal(listedTools.websocket, null);
     assert.deepEqual(listedTools.events?.subscribe, "events/subscribe");
     assert.deepEqual(listedTools.events?.topics, {
-      servers_changed: "Published when a Codex app-server record starts, stops, exits, or is reaped.",
+      servers_changed: "Published when a Codex app-server record starts, stops, exits, is reaped, or becomes fenced for recovery inspection.",
       threads_changed: "Published when a loaded Codex thread starts, changes status, or closes.",
     });
     assert.deepEqual(
@@ -77,6 +77,7 @@ test("codex lifecycle and change events are served on the namespaced unix socket
     assert.equal(started.id, "remote");
     assert.equal(started.state, "running");
     assert.equal(started.account, secondAccount.id);
+    assert.equal((started as typeof started & { recoveryIssue: string | null }).recoveryIssue, null);
     assert.ok(started.mainThreadId);
     assert.match(started.url ?? "", /\/app\/[0-9a-f]{14}\.sock$/);
     const persisted = new StateStore(stateDir);

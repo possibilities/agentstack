@@ -58,6 +58,7 @@ test("the api package serves structured documents for every workspace package", 
     const start = codex.operations.find((operation) => operation.name === "server_start") as OperationDoc;
     assert.ok(start.description.length > 0);
     assert.deepEqual(Object.keys((start.inputSchema.properties ?? {}) as object).sort(), ["args", "cwd", "id"]);
+    assert.ok((start.outputSchema.properties as Record<string, unknown>).recoveryIssue);
     const codexSocket = codex.transports.find((transport) => transport.type === "socket") as TransportDoc;
     assert.equal(codexSocket.supported, true);
     assert.equal(codexSocket.subscriptions, true);

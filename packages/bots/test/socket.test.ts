@@ -151,6 +151,7 @@ test("bots lifecycle is served on the namespaced unix socket", { timeout: 120_00
     await assert.rejects(call(botsSocket, "bot_start"), /required codexnk runtime is missing/);
     const neverStarted = (await call(botsSocket, "bot_stop", { id: "bot-6" })) as View;
     assert.equal(neverStarted.state, "stopped");
+    assert.equal((neverStarted as View & { recoveryIssue: string | null }).recoveryIssue, null);
     assert.equal(neverStarted.cwd, join(stateDir, "bots", "bot-6"));
     await symlink(fakeBin, runtime);
     const foreignReserved = (await call(codexSocket, "server_start", { id: "bot-6", cwd: workDir })) as View;

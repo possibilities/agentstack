@@ -8,7 +8,7 @@ export type Owner = {
   mcpUrls: Record<string, string>;
   children: Child[];
 };
-export type Server = { id: string; pid: number | null; cwd: string; url: string | null; state: "running" | "stopped" };
+export type Server = { id: string; pid: number | null; cwd: string; url: string | null; state: "running" | "stopped"; recoveryIssue: string | null };
 
 export type IndexData = {
   owner: Owner | null;

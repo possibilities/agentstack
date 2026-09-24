@@ -5,7 +5,7 @@ const code = (value: unknown): string => `\`${String(value ?? "")}\``;
 export function renderIndexMarkdown({ owner, servers, links, mcp, children }: IndexData): string {
   const lines = [
     "# AgentStack", "",
-    "Local links and running Servers.", "",
+    "Local links and Server processes.", "",
     "## Open", "",
     ...(owner === null
       ? ["Owner status unavailable.", ""]
@@ -22,7 +22,8 @@ export function renderIndexMarkdown({ owner, servers, links, mcp, children }: In
       : servers.length === 0
         ? ["No running Codex Servers.", ""]
         : servers.flatMap((server) => [
-            `- **${server.id}** — Running · PID ${server.pid}`,
+            `- **${server.id}** — ${server.recoveryIssue ? "Needs inspection (reported running state unverified)" : "Running"} · PID ${server.pid}`,
+            ...(server.recoveryIssue ? [`  - Recovery: ${server.recoveryIssue}`] : []),
             `  - ${code(server.cwd)}`,
             ...(server.url ? [`  - ${code(server.url)}`] : []),
             "",

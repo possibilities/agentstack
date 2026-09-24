@@ -21,6 +21,7 @@ const serverViewSchema = z.object({
   account: z.uuid().nullable().describe("Stable Codex account ID bound to this Server, or null while unbound."),
   runningAccount: z.uuid().nullable().describe("Account used by the running process, or null when stopped or launched unbound. If different from account, stop and start to apply the assignment."),
   mainThreadId: z.string().nullable().describe("The one durable main thread for this Server; null until its first successful start."),
+  recoveryIssue: z.string().nullable().describe("Why a recorded process is fenced for inspection; null when recovery has no known ownership issue. A reported running state is unverified while this is set."),
 });
 
 const serverListSchema = z.object({
@@ -95,7 +96,7 @@ export const serverList = operation({
 });
 
 export const topics = {
-  servers_changed: "Published when a Codex app-server record starts, stops, exits, or is reaped.",
+  servers_changed: "Published when a Codex app-server record starts, stops, exits, is reaped, or becomes fenced for recovery inspection.",
   threads_changed: "Published when a loaded Codex thread starts, changes status, or closes.",
 } as const;
 
@@ -113,7 +114,7 @@ export const api: PackageApi<CodexContext, CodexTopic> = {
     start(ctx: CodexContext, publish: (topic: CodexTopic, scope?: string) => void) {
       const watches = new Map<string, { url: string; stop: () => void }>();
       const sync = () => {
-        const active = new Map(ctx.supervisor.list().flatMap((server) => server.state === "running" && server.url ? [[server.id, server.url] as const] : []));
+        const active = new Map(ctx.supervisor.list().flatMap((server) => server.state === "running" && !server.recoveryIssue && server.url ? [[server.id, server.url] as const] : []));
         for (const [id, watch] of watches) {
           if (active.get(id) !== watch.url) {
             watch.stop();

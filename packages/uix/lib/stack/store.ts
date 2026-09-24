@@ -118,7 +118,7 @@ export class StackStore {
     const wanted = new Map<string, { pkg: string; topics: string[] }>();
     for (const server of servers.data) {
       if (botIds.has(server.id) && endpoints.bots) wanted.set(server.id, { pkg: "bots", topics: ["bots_changed", "threads_changed"] });
-      else if (endpoints.codex) wanted.set(server.id, { pkg: "codex", topics: ["threads_changed"] });
+      else if (endpoints.codex && !server.recoveryIssue) wanted.set(server.id, { pkg: "codex", topics: ["threads_changed"] });
     }
     for (const bot of bots.data ?? []) {
       if (!wanted.has(bot.id) && endpoints.bots) wanted.set(bot.id, { pkg: "bots", topics: ["bots_changed", "threads_changed"] });

@@ -15,7 +15,7 @@ export default async function Page() {
       <header className="flex flex-wrap items-end justify-between gap-6">
         <div className="flex flex-col gap-2">
           <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">AgentStack</h1>
-          <p className="text-muted-foreground">Local links and running Servers.</p>
+          <p className="text-muted-foreground">Local links and Server processes.</p>
         </div>
         <a className="text-sm underline underline-offset-4 hover:text-muted-foreground focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring" href="/">Refresh</a>
       </header>
@@ -70,8 +70,9 @@ export default async function Page() {
               <li key={server.id} className="flex flex-col gap-1 py-4">
                 <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
                   <span className="font-medium">{server.id}</span>
-                  <span className="text-sm text-muted-foreground">Running · PID {server.pid}</span>
+                  <span className="text-sm text-muted-foreground">{server.recoveryIssue ? "Needs inspection · reported running state unverified" : "Running"} · PID {server.pid}</span>
                 </div>
+                {server.recoveryIssue ? <p className="text-sm text-warning">{server.recoveryIssue}</p> : null}
                 <code className="break-all text-sm text-muted-foreground">{server.cwd}</code>
                 {server.url ? <code className="break-all text-sm text-muted-foreground">{server.url}</code> : null}
               </li>

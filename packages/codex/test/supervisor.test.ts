@@ -473,12 +473,15 @@ test("an unverifiable recorded process remains fenced during recovery", async ()
   const cwd = await mkdtemp(join(tmpdir(), "agentstack-unknown-cwd-"));
   const url = `unix://${join(stateDir, "app", "uncertain.sock")}`;
   const signals: string[] = [];
+  const changes: string[] = [];
+  let command = `codex app-server --listen ${url}`;
+  let endpointOwner: boolean | null = null;
   const originalKill = process.kill;
   process.kill = ((_pid: number, signal?: NodeJS.Signals | 0) => {
     if (signal !== 0) signals.push(String(signal));
     return true; // The recorded PID is still present, but inspection is unavailable.
   }) as typeof process.kill;
-  const supervisor = new Supervisor({ stateDir, commandLine: async () => `codex app-server --listen ${url}`, endpointOwner: async () => null });
+  const supervisor = new Supervisor({ stateDir, commandLine: async () => command, endpointOwner: async () => endpointOwner, onChange: (id) => changes.push(id) });
   try {
     await mkdir(join(stateDir, "servers"));
     await writeFile(join(stateDir, "servers", "uncertain.json"), JSON.stringify({
@@ -487,9 +490,16 @@ test("an unverifiable recorded process remains fenced during recovery", async ()
     await supervisor.load();
     await supervisor.reap();
     assert.equal(supervisor.list()[0]?.state, "running");
+    assert.match(supervisor.list()[0]?.recoveryIssue ?? "", /ownership could not be verified/);
     await assert.rejects(supervisor.start({ cwd, id: "uncertain" }), /could not both be verified/);
     await assert.rejects(supervisor.stop("uncertain"), /could not both be verified/);
     assert.deepEqual(signals, []);
+    assert.deepEqual(changes, ["uncertain"]);
+    command = "unrelated process";
+    endpointOwner = false;
+    assert.equal((await supervisor.stop("uncertain")).recoveryIssue, null);
+    assert.equal(supervisor.list()[0]?.state, "stopped");
+    assert.deepEqual(changes, ["uncertain", "uncertain"]);
   } finally {
     process.kill = originalKill;
     supervisor.store.close();
@@ -517,6 +527,7 @@ test("recovery retains a Server if its verified process survives SIGKILL", async
     await supervisor.reap();
     assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
     assert.equal(supervisor.list()[0]?.state, "running");
+    assert.match(supervisor.list()[0]?.recoveryIssue ?? "", /did not exit after SIGKILL/);
   } finally {
     process.kill = originalKill;
     supervisor.store.close();

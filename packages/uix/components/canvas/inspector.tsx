@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { CopyButton, Orb } from "./primitives";
 import { useStack, useWorkbench } from "./provider";
 import { accentBg, accentOf, accentText, type Accent } from "./window";
-import { OperationBadges } from "./windows";
+import { OperationBadges, RecoveryWarning } from "./windows";
 
 type View = {
   eyebrow: string;
@@ -27,6 +27,7 @@ type View = {
   operations?: { pkg: string; list: OperationDoc[] };
   events?: StackEvent[];
   body?: React.ReactNode;
+  recoveryIssue?: string | null;
 };
 
 function resolve(ref: NodeRef, state: StackState): View | null {
@@ -84,11 +85,12 @@ function resolve(ref: NodeRef, state: StackState): View | null {
       const isBot = state.bots.data?.some((bot) => bot.id === server.id);
       const related: View["related"] = [];
       if (server.account) related.push({ ref: { kind: "account", id: server.account }, label: `${labels.get(server.account) ?? shortId(server.account)} · assigned` });
-      if (server.runningAccount && server.runningAccount !== server.account) related.push({ ref: { kind: "account", id: server.runningAccount }, label: `${labels.get(server.runningAccount) ?? shortId(server.runningAccount)} · running` });
+      if (server.runningAccount && server.runningAccount !== server.account) related.push({ ref: { kind: "account", id: server.runningAccount }, label: `${labels.get(server.runningAccount) ?? shortId(server.runningAccount)} · ${server.recoveryIssue ? "last launched" : "running"}` });
       if (ref.kind === "server" && isBot) related.push({ ref: { kind: "bot", id: server.id }, label: `Bot ${server.id}` });
       if (ref.kind === "bot") related.push({ ref: { kind: "server", id: server.id }, label: `Codex Server ${server.id}` });
       return {
         eyebrow: ref.kind === "bot" ? "Bot" : "Codex Server", accent: ref.kind === "bot" ? "bots" : "codex", title: server.id, record: server,
+        recoveryIssue: server.recoveryIssue,
         fields: recordFields(catalog, pkg, ref.kind === "bot" ? "bot_list" : "server_list"),
         related, operations: { pkg, list: recordOperations(catalog, pkg) },
         events: state.events.filter((event) => event.scope === server.id),
@@ -266,6 +268,7 @@ export function Inspector() {
         ) : (
           <>
             {view.body}
+            {view.recoveryIssue ? <RecoveryWarning message={view.recoveryIssue} /> : null}
             {view.record ? (
               <Block title="Fields" aside={<CopyButton value={JSON.stringify(view.record, null, 2)} label="JSON" className="opacity-100" />}>
                 <dl className="flex flex-col divide-y rounded-xl border bg-background/50">

@@ -13,8 +13,9 @@ export function renderCanvasMarkdown(snapshot: Snapshot): string {
   const labels = accountLabels(accounts.data);
   const label = (id: string | null) => (id ? labels.get(id) ?? shortId(id) : "unbound");
   const server = (item: Server) => [
-    `- **${item.id}** — ${item.state}${item.pid ? ` · pid ${item.pid}` : ""} · account ${label(item.account)}`,
-    ...(item.state === "running" && item.account !== item.runningAccount ? [`  - Running as ${label(item.runningAccount)}; stop and start to apply ${label(item.account)}`] : []),
+    `- **${item.id}** — ${item.recoveryIssue ? "needs inspection (reported running state unverified)" : item.state}${item.pid ? ` · pid ${item.pid}` : ""} · account ${label(item.account)}`,
+    ...(item.recoveryIssue ? [`  - Recovery: ${item.recoveryIssue}`] : []),
+    ...(item.state === "running" && !item.recoveryIssue && item.account !== item.runningAccount ? [`  - Running as ${label(item.runningAccount)}; stop and start to apply ${label(item.account)}`] : []),
     `  - Main thread ${code(item.mainThreadId ?? "none")}`,
     `  - Workspace ${code(item.cwd)}`,
     ...(item.url ? [`  - Endpoint ${code(item.url)}`] : []),
@@ -39,7 +40,10 @@ export function renderCanvasMarkdown(snapshot: Snapshot): string {
       "",
     ]),
     ...section("Servers", servers, (data) => [...(data.length ? data.flatMap(server) : ["No Codex Servers."]), ""]),
-    ...section("Bots", bots, (data) => [...(data.length ? data.map((bot) => `- **${bot.id}** — ${bot.state} · account ${label(bot.account)} · ${code(bot.cwd)}`) : ["No bots."]), ""]),
+    ...section("Bots", bots, (data) => [...(data.length ? data.flatMap((bot) => [
+      `- **${bot.id}** — ${bot.recoveryIssue ? "needs inspection (reported running state unverified)" : bot.state} · account ${label(bot.account)} · ${code(bot.cwd)}`,
+      ...(bot.recoveryIssue ? [`  - Recovery: ${bot.recoveryIssue}`] : []),
+    ]) : ["No bots."]), ""]),
     ...section("API", catalog, (data) => data.flatMap((doc) => [
       `### ${doc.name}`, "",
       `${doc.description} ${code(doc.packageName)}`, "",

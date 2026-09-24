@@ -25,6 +25,7 @@ export type ServerView = {
   account: string | null;
   runningAccount: string | null;
   mainThreadId: string | null;
+  recoveryIssue: string | null;
 };
 
 type RecordFile = StoredServer;
@@ -70,6 +71,7 @@ export class Supervisor {
   private readonly records = new Map<string, RecordFile>();
   private readonly queues = new Map<string, Promise<void>>();
   private readonly children = new Map<string, RunningChild>();
+  private readonly recoveryIssues = new Map<string, string>();
   private readonly launch: (spec: LaunchSpec) => RunningChild;
   private readonly waitReady: (url: string, exited: Promise<number | null>, timeoutMs: number) => Promise<void>;
   private readonly endpoint: (id: string) => Promise<string>;
@@ -130,7 +132,11 @@ export class Supervisor {
       if (record.state !== "running" || record.pid === null || record.url === null) continue;
       let owned: boolean;
       try { owned = await this.signalPid(record.pid, record.url); }
-      catch (error) { console.error(`cannot verify prior app-server ${record.id}: ${error}`); continue; }
+      catch (error) {
+        this.noteRecoveryIssue(record.id, error);
+        console.error(`cannot verify prior app-server ${record.id}: ${error}`);
+        continue;
+      }
       await this.finishRuntime(record);
       if (owned) await cleanupEndpoint(record.url);
       this.markStopped(record);
@@ -153,7 +159,7 @@ export class Supervisor {
   }
 
   list(): ServerView[] {
-    return [...this.records.values()].map(viewOf);
+    return [...this.records.values()].map((record) => this.view(record));
   }
 
   start(input: StartInput): Promise<ServerView> {
@@ -169,13 +175,13 @@ export class Supervisor {
       if (!this.store.listAccounts().some((account) => account.id === accountId && !account.removing)) {
         throw new Error(`unknown Codex account: ${accountId}`);
       }
-      if (record.account === accountId) return viewOf(record);
+      if (record.account === accountId) return this.view(record);
       const previous = record.account;
       record.account = accountId;
       try { await this.persist(record); }
       catch (error) { record.account = previous; throw error; }
       this.notify(id);
-      return viewOf(record);
+      return this.view(record);
     });
   }
 
@@ -198,6 +204,7 @@ export class Supervisor {
       await rm(join(this.options.stateDir, "history", id), { recursive: true, force: true });
       this.store.deleteServer(id);
       this.records.delete(id);
+      this.recoveryIssues.delete(id);
       this.notify(id);
       return { id };
     });
@@ -216,7 +223,12 @@ export class Supervisor {
     const userArgs = input.args ?? current?.args ?? [];
     validateAppServerArgs(userArgs);
     if (current && current.cwd !== cwd) throw new Error(`server ${id} is bound to ${current.cwd}, not ${cwd}`);
-    if (current && (await this.isRunning(current))) {
+    let live = false;
+    if (current) {
+      try { live = await this.isRunning(current); }
+      catch (error) { this.noteRecoveryIssue(id, error); throw error; }
+    }
+    if (current && live) {
       if (current.codexBin !== codexBin) {
         throw new Error(`server ${id} uses a different Codex runtime; stop it before starting it with codexnk`);
       }
@@ -226,7 +238,7 @@ export class Supervisor {
       if (current.launchedAccount !== current.account) {
         throw new Error(`server ${id} is running with a different Codex account; stop it before the assigned account is used`);
       }
-      return viewOf(current);
+      return this.view(current);
     }
     if (current?.threadStarting && !current.mainThreadId) {
       throw new Error(`server ${id} has an unconfirmed thread/start; inspect its Codex history before retrying to avoid a second main thread`);
@@ -306,8 +318,9 @@ export class Supervisor {
         await this.persist(record);
         await rm(identity, { recursive: true, force: true });
         await this.runtime.watch(record);
+        this.recoveryIssues.delete(id);
         this.notify(id);
-        return viewOf(record);
+        return this.view(record);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         await this.killChild(id, child);
@@ -328,21 +341,26 @@ export class Supervisor {
   private async stopQueued(id: string): Promise<ServerView> {
     const record = this.records.get(id);
     if (!record) throw new Error(`unknown server: ${id}`);
-    if (record.state === "stopped") return viewOf(record);
+    if (record.state === "stopped") return this.view(record);
     const child = this.children.get(id);
     let owned = false;
-    if (child) {
-      await this.killChild(id, child);
-      owned = true;
-    } else if (record.pid !== null && record.url !== null) {
-      owned = await this.signalPid(record.pid, record.url);
+    try {
+      if (child) {
+        await this.killChild(id, child);
+        owned = true;
+      } else if (record.pid !== null && record.url !== null) {
+        owned = await this.signalPid(record.pid, record.url);
+      }
+    } catch (error) {
+      this.noteRecoveryIssue(id, error);
+      throw error;
     }
     await this.finishRuntime(record);
     if (owned && record.url) await cleanupEndpoint(record.url);
     this.markStopped(record);
     await this.persist(record);
     this.notify(id);
-    return viewOf(record);
+    return this.view(record);
   }
 
   private async isRunning(record: RecordFile): Promise<boolean> {
@@ -409,6 +427,21 @@ export class Supervisor {
     record.state = "stopped";
     record.pid = null;
     record.url = null;
+    this.recoveryIssues.delete(record.id);
+  }
+
+  private view(record: RecordFile): ServerView {
+    return viewOf(record, this.recoveryIssues.get(record.id) ?? null);
+  }
+
+  private noteRecoveryIssue(id: string, error: unknown): void {
+    const detail = error instanceof Error ? error.message : String(error);
+    const message = detail.includes("did not exit after SIGKILL")
+      ? "Recorded process did not exit after SIGKILL. Inspect its PID and endpoint before retrying."
+      : "Recorded process ownership could not be verified. Inspect its PID and endpoint before retrying.";
+    if (this.recoveryIssues.get(id) === message) return;
+    this.recoveryIssues.set(id, message);
+    this.notify(id);
   }
 
   private notify(id: string): void {
@@ -540,7 +573,7 @@ function unixSocketListening(path: string): Promise<boolean | null> {
   });
 }
 
-function viewOf(record: RecordFile): ServerView {
+function viewOf(record: RecordFile, recoveryIssue: string | null): ServerView {
   return {
     id: record.id,
     pid: record.pid,
@@ -550,6 +583,7 @@ function viewOf(record: RecordFile): ServerView {
     account: record.account,
     runningAccount: record.state === "running" ? record.launchedAccount : null,
     mainThreadId: record.mainThreadId ?? null,
+    recoveryIssue,
   };
 }
 
