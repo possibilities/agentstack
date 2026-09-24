@@ -1,17 +1,17 @@
 "use client";
 
 import { createContext, use, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { StackStore, type StackState } from "@/lib/stack/store";
+import { StackStore, type StackConnections, type StackState } from "@/lib/stack/store";
 import type { NodeRef, Snapshot, StackEvent } from "@/lib/stack/types";
 
 const StoreContext = createContext<StackStore | null>(null);
 
-export function StackProvider({ snapshot, children }: { snapshot: Snapshot; children: React.ReactNode }) {
+export function StackProvider({ snapshot, children, connections }: { snapshot: Snapshot; children: React.ReactNode; connections?: StackConnections }) {
   const [store] = useState(() => new StackStore(snapshot));
   useEffect(() => {
-    store.start();
+    store.start(connections);
     return () => store.stop();
-  }, [store]);
+  }, [store, connections]);
   return <StoreContext value={store}>{children}</StoreContext>;
 }
 

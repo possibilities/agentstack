@@ -15,7 +15,9 @@ export type ChannelOptions = {
  * resubscribes and calls `onOpen` so the owner can snapshot state again.
  */
 export class Channel {
+  readonly url: string;
   status: ChannelStatus = "idle";
+  private options: ChannelOptions;
   private ws: WebSocket | null = null;
   private seq = 0;
   private pending = new Map<number, Pending>();
@@ -24,7 +26,10 @@ export class Channel {
   private disposed = false;
   private subscription: { topics: string[]; scope?: string } | null = null;
 
-  constructor(readonly url: string, private options: ChannelOptions = {}) {}
+  constructor(url: string, options: ChannelOptions = {}) {
+    this.url = url;
+    this.options = options;
+  }
 
   connect(): this {
     if (this.disposed || this.ws) return this;
