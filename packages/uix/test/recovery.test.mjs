@@ -35,7 +35,7 @@ async function availablePort() {
   return port;
 }
 
-test("the index and canvas render a fenced bot honestly in HTML and Markdown", { timeout: 30_000 }, async () => {
+test("the index and canvas render a fenced bot honestly", { timeout: 30_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-uix-recovery-"));
   const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, NEXT_TELEMETRY_DISABLED: "1" };
   const served = [];
@@ -66,21 +66,28 @@ test("the index and canvas render a fenced bot honestly in HTML and Markdown", {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     assert.ok(ready, `Next did not become ready: ${output}`);
-    const [index, indexMd, canvas, canvasMd] = await Promise.all(["/", "/index.md", "/x", "/x.md"].map(async (path) => {
+    const [index, canvas] = await Promise.all(["/", "/x"].map(async (path) => {
       const response = await fetch(`${origin}${path}`);
       assert.equal(response.status, 200, `${path}: ${output}`);
       return response.text();
     }));
-    for (const page of [index, indexMd, canvas, canvasMd]) {
+    for (const page of [index, canvas]) {
       assert.match(page, /Needs inspection|needs inspection/);
       assert.match(page, /Recorded process ownership could not be verified/);
     }
     assert.match(canvas, /bot-1/);
-    assert.match(canvasMd, /Recovery: Recorded process ownership could not be verified/);
     assert.match(canvas, /Call a bot/);
-    assert.match(canvasMd, /No active voice call/);
-    assert.match(canvasMd, /New Bots: `gpt-6-sol` · `medium` effort/);
     assert.doesNotMatch(index, /bot-1[^<]*Running · PID/);
+
+    const [system, api] = await Promise.all(["/x/system", "/x/api"].map(async (path) => {
+      const response = await fetch(`${origin}${path}`);
+      assert.equal(response.status, 200, `${path}: ${output}`);
+      return response.text();
+    }));
+    assert.match(api, /bot_list/);
+    assert.equal((await fetch(`${origin}/x/nope`)).status, 404);
+    assert.equal((await fetch(`${origin}/x.md`)).status, 404);
+    assert.equal((await fetch(`${origin}/index.md`)).status, 404);
   } finally {
     if (next?.pid) {
       try { process.kill(process.platform === "win32" ? next.pid : -next.pid, "SIGTERM"); } catch (error) { if (error.code !== "ESRCH") throw error; }

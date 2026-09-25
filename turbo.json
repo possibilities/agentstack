@@ -19,7 +19,8 @@
         "@agentstack/bots#build",
         "@agentstack/roles#build",
         "@agentstack/owner#build",
-        "@agentstack/workers#build"
+        "@agentstack/workers#build",
+        "@agentstack/wiki#build"
       ],
       "cache": false
     },
@@ -30,7 +31,8 @@
         "@agentstack/bots#build",
         "@agentstack/roles#build",
         "@agentstack/owner#build",
-        "@agentstack/workers#build"
+        "@agentstack/workers#build",
+        "@agentstack/wiki#build"
       ],
       "cache": false
     }

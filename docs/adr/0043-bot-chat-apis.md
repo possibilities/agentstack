@@ -1,4 +1,4 @@
-# 41. Expose sanctioned Codex chats through Bots
+# 43. Expose sanctioned Codex chats through Bots
 
 Status: accepted, 2026-09-25. Extends [ADR 0029](0029-bots-own-codex-lifecycle.md) and [ADR 0026](0026-lazy-server-main-thread.md).
 

@@ -30,7 +30,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.deepEqual(
       docs.packages.map((item) => item.name),
-      ["api", "auth", "bots", "owner", "roles", "workers"],
+      ["api", "auth", "bots", "owner", "roles", "wiki", "workers"],
     );
     assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@agentstack/${item.name}`));
 
@@ -99,6 +99,10 @@ test("the api package serves structured documents for every workspace package", 
     );
     assert.deepEqual((auth.operations.find((operation) => operation.name === "account_login_start")?.inputSchema.properties ?? {}), {});
     const workers = found.get("workers") as PackageDoc;
+    const wiki = found.get("wiki") as PackageDoc;
+    assert.ok(wiki.operations.some((op) => op.name === "publish"));
+    assert.ok(wiki.operations.some((op) => op.name === "wiki_status"));
+    assert.equal(wiki.transports.find((transport) => transport.type === "mcp")?.supported, true);
     assert.deepEqual(Object.keys(workers.events).sort(), ["worker_changed", "workers_changed"]);
     assert.equal(workers.eventScope?.required, false);
     assert.deepEqual(workers.operations.map((operation) => operation.name), ["worker_catalog", "worker_runtime_list", "worker_account_drain",

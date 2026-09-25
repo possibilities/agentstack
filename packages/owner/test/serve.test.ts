@@ -12,7 +12,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
-const socketNames = ["api", "auth", "roles", "bots", "workers", "owner"];
+const socketNames = ["api", "auth", "roles", "bots", "workers", "wiki", "owner"];
 
 test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then shuts them down", { timeout: 120_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-serve-"));
@@ -20,7 +20,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
   const uixPort = await availablePort();
   const child = spawn(process.execPath, [cli, "serve"], {
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UIX_PORT: String(uixPort), MCP_INSPECTOR_API_TOKEN: "test-token" },
+    env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UIX_PORT: String(uixPort), AGENTSTACK_WIKI_PORT: "0", AGENTSTACK_WIKI_ARTIFACT_PORT: "0", MCP_INSPECTOR_API_TOKEN: "test-token" },
   });
   let stderr = "";
   child.stderr?.setEncoding("utf8");
@@ -41,7 +41,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
       children: Array<{ name: string; pid: number | null; running: boolean }>;
     };
     assert.equal(status.pid, child.pid);
-    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["api", "auth", "bots", "inspector", "roles", "uix", "websocket", "workers"]);
+    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["api", "auth", "bots", "inspector", "roles", "uix", "websocket", "wiki", "workers"]);
     for (let i = 0; i < 200 && status.children.some((entry) => !entry.running); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
       status = (await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} })) as typeof status;
@@ -92,7 +92,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     assert.equal(servers?.status, 200, stderr);
-    assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["auth", "bots", "owner", "roles", "workers"]);
+    assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["auth", "bots", "owner", "roles", "wiki", "workers"]);
     const inspectorUrl = `http://127.0.0.1:${inspectorPort}/`;
     assert.equal((await fetch(inspectorUrl)).status, 200);
     const catalogDir = (await readdir(stateDir)).find((entry) => entry.startsWith("inspector-"));
@@ -178,7 +178,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     assert.equal(canvas.status, 200);
     const canvasHtml = await canvas.text();
     assert.match(canvasHtml, /<main[^>]*data-canvas="workbench"/);
-    assert.match(canvasHtml, /<h1[^>]*>AgentStack canvas<\/h1>/);
+    assert.match(canvasHtml, /<h1[^>]*>AgentStack Fleet canvas<\/h1>/);
     assert.doesNotMatch(canvasHtml, /Local links and Server processes/);
     const stylesheet = /href="(\/_next\/static\/[^"]+\.css)"/.exec(canvasHtml)?.[1];
     assert.ok(stylesheet);
@@ -296,6 +296,30 @@ test("a claimed UI canvas port refuses startup before the owner creates a socket
     child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
     assert.equal(await new Promise<number | null>((resolve) => child.once("exit", resolve)), 1);
     assert.match(stderr, new RegExp(`UI canvas port ${address.port} is already in use`));
+    assert.equal(existsSync(join(stateDir, "sockets", "owner.sock")), false);
+  } finally {
+    await new Promise<void>((resolve) => listener.close(() => resolve()));
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("a claimed wiki document port refuses startup before the owner creates a socket", { timeout: 30_000 }, async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-wiki-occupied-"));
+  const inspectorPort = await availablePort();
+  const uixPort = await availablePort();
+  const listener = createServer();
+  await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  const address = listener.address();
+  assert.ok(address && typeof address !== "string");
+  try {
+    const child = spawn(process.execPath, [cli, "serve"], {
+      stdio: ["ignore", "ignore", "pipe"],
+      env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UIX_PORT: String(uixPort), AGENTSTACK_WIKI_PORT: String(address.port), AGENTSTACK_WIKI_ARTIFACT_PORT: "0" },
+    });
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    assert.equal(await new Promise<number | null>((resolve) => child.once("exit", resolve)), 1);
+    assert.match(stderr, new RegExp(`Wiki documents port ${address.port} is already in use`));
     assert.equal(existsSync(join(stateDir, "sockets", "owner.sock")), false);
   } finally {
     await new Promise<void>((resolve) => listener.close(() => resolve()));

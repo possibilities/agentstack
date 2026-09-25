@@ -1,0 +1,8 @@
+name: wiki
+description: Capture and search plain-file documents, link them as a graph, and publish versioned static artifacts in an isolated AgentStack vault.
+socket:
+  description: Unix socket for document and artifact operations.
+mcp:
+  description: HTTP MCP operations forwarded to the wiki socket.
+websocket:
+  description: Loopback WebSocket for wiki operations forwarded to the wiki socket.

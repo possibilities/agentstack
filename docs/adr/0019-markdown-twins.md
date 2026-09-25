@@ -1,6 +1,6 @@
 # 19. Serve markdown twins from the local pages
 
-Status: accepted, 2026-09-24. Extends [ADR 0009](0009-serve-docs-with-owner.md) and [ADR 0016](0016-live-ui-index-and-system-theme.md).
+Status: accepted, 2026-09-24. Extends [ADR 0009](0009-serve-docs-with-owner.md) and [ADR 0016](0016-live-ui-index-and-system-theme.md). The UI app's twins (`/index.md`, `/x.md`) were removed by [ADR 0042](0042-canvas-spaces.md); the reference's twin remains.
 
 Both loopback HTTP surfaces serve a markdown twin of every page at the page URL with `.md` appended, using `index.md` for filename-less URLs: `/index.md` and `/x.md` on the UI app, `/docs/index.md` (also reachable as `/docs.md`, and `/index.md` or `/.md` when the reference runs standalone at `/`). Unknown `.md` paths still 404.
 

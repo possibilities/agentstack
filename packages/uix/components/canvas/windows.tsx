@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { annotationBadges, fieldsOf, findOperation, operationTitle, recordFields } from "@/lib/stack/catalog";
+import { annotationBadges, fieldsOf, findOperation, operationTitle } from "@/lib/stack/catalog";
 import { accountLabels, botsFor, clockTime, histogram, pathParts, shortId } from "@/lib/stack/derive";
 import type { Account, Bot, Login, OperationDoc, PackageDoc } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
@@ -503,7 +503,7 @@ export function ActivityWindow() {
         <div className="flex justify-between text-[0.65rem] text-muted-foreground tabular-nums"><span>10 min ago</span><span>now</span></div>
       </div>
       {events.length ? (
-        <ol data-scroll className="-mx-1 flex max-h-80 flex-col overflow-y-auto overscroll-contain">
+        <ol data-scroll className="-mx-1 flex max-h-[32rem] flex-col overflow-y-auto overscroll-contain">
           {events.map((event) => (
             <li key={event.seq}>
               <button
@@ -531,81 +531,160 @@ export function ActivityWindow() {
 
 /* ─── API catalog ────────────────────────────────────────────────────── */
 
-export function ApiWindow() {
-  const { catalog, events, status, endpoints } = useStack();
+export function PackagesWindow() {
+  const { catalog, status, endpoints } = useStack();
+  const { focus } = useWorkbench();
   const packages = catalog.data ?? [];
   const operations = packages.reduce((sum, doc) => sum + doc.operations.length, 0);
   const topics = packages.reduce((sum, doc) => sum + Object.keys(doc.events).length, 0);
-  const counts = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const event of events) map.set(`${event.pkg}:${event.topic}`, (map.get(`${event.pkg}:${event.topic}`) ?? 0) + 1);
-    return map;
-  }, [events]);
 
   return (
-    <Window id="api" title="API" subtitle={`discovery · ${packages.length} packages · ${operations} operations · ${topics} events`}
+    <Window id="packages" title="Packages" subtitle={`discovery · ${packages.length} packages · ${operations} operations · ${topics} events`}
       icon={BookOpenIcon} accent="api" status={status.api} endpoint={endpoints.api} updatedAt={catalog.at} error={catalog.error}>
-      {packages.length ? packages.map((doc) => <PackageSection key={doc.name} doc={doc} counts={counts} />) : (
+      {packages.length ? (
+        <div className="-mx-1 flex flex-col">
+          {packages.map((doc) => {
+            const accent = accentOf(doc.name);
+            const endpoint = endpoints[doc.name];
+            const channel = status[doc.name];
+            return (
+              <NodeCard key={doc.name} node={{ kind: "package", id: doc.name }} label={`package ${doc.name}`} variant="row"
+                activate={() => focus({ kind: "package", id: doc.name })}>
+                <div className="flex items-center gap-2 text-[0.8rem]">
+                  <span className={cn("size-2 shrink-0 rounded-full", accentBg[accent])} aria-hidden />
+                  <span className="font-medium">{doc.name}</span>
+                  <span className="truncate font-mono text-[0.68rem] text-muted-foreground">{doc.packageName}</span>
+                  <span className="ml-auto shrink-0 text-[0.68rem] text-muted-foreground tabular-nums">
+                    {doc.operations.length} ops · {Object.keys(doc.events).length} events
+                  </span>
+                </div>
+                <div className="flex items-center gap-1">
+                  {doc.transports.map((transport) => (
+                    <Badge key={transport.type} variant="outline" className="h-5 gap-1 font-mono text-[0.65rem]" title={transport.endpoint ?? transport.description}>
+                      {transport.type}{transport.subscriptions ? <RadioIcon /> : null}
+                    </Badge>
+                  ))}
+                  <span className="ml-auto flex items-center gap-1.5 text-[0.68rem] text-muted-foreground">
+                    <StatusDot tone={channel === "open" ? "success" : channel === "closed" ? "destructive" : endpoint ? "muted" : "warning"} label={endpoint ? `WebSocket ${channel ?? "idle"}` : "no WebSocket"} />
+                    {endpoint ? channel ?? "idle" : "no WebSocket"}
+                  </span>
+                </div>
+              </NodeCard>
+            );
+          })}
+        </div>
+      ) : (
         <Empty icon={ShieldAlertIcon} title="Discovery unavailable">{catalog.error ?? "Waiting for the api socket."}</Empty>
       )}
     </Window>
   );
 }
 
-function PackageSection({ doc, counts }: { doc: PackageDoc; counts: Map<string, number> }) {
-  const [open, setOpen] = useState(true);
+export function PackageWindow({ name }: { name: string }) {
+  const { catalog, events, status, endpoints } = useStack();
   const { select } = useWorkbench();
-  const accent = accentOf(doc.name);
+  const doc = catalog.data?.find((item) => item.name === name);
+  const accent = accentOf(name);
+  const counts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const event of events) if (event.pkg === name) map.set(event.topic, (map.get(event.topic) ?? 0) + 1);
+    return map;
+  }, [events, name]);
+  const reads = doc?.operations.filter((operation) => operation.annotations.readOnlyHint === true) ?? [];
+  const actions = doc?.operations.filter((operation) => operation.annotations.readOnlyHint !== true) ?? [];
+
   return (
-    <div className="flex flex-col gap-2 rounded-xl border bg-background/40 p-2.5">
-      <div className="flex items-center gap-2">
-        <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left focus-visible:outline-2 focus-visible:outline-ring">
-          <ChevronRightIcon className={cn("size-3.5 text-muted-foreground transition-transform", open && "rotate-90")} />
-          <span className={cn("size-2 rounded-full", accentBg[accent])} aria-hidden />
-          <span className="text-sm font-semibold">{doc.name}</span>
-          <span className="truncate font-mono text-[0.68rem] text-muted-foreground">{doc.packageName}</span>
-        </button>
-        <button type="button" onClick={() => select({ kind: "package", id: doc.name })}
-          className="rounded-md px-1.5 py-0.5 text-[0.68rem] text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
-          Inspect
-        </button>
-      </div>
-      {open ? (
+    <Window id={`package:${name}`} title={name} subtitle={doc?.packageName ?? "package"} icon={BookOpenIcon} accent={accent}
+      status={status[name]} endpoint={endpoints[name]} updatedAt={catalog.at} error={doc ? null : catalog.error}
+      actions={
+        <Tooltip>
+          <TooltipTrigger render={<Button variant="ghost" size="xs" aria-label={`Inspect ${name} package`} onClick={() => select({ kind: "package", id: name })} />}>
+            Inspect
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Open in inspector</TooltipContent>
+        </Tooltip>
+      }>
+      {doc ? (
         <>
-          <p className="px-0.5 text-[0.75rem] text-pretty text-muted-foreground">{doc.description}</p>
-          <div className="flex flex-wrap gap-1">
-            {doc.transports.map((transport) => (
-              <Badge key={transport.type} variant="outline" className="h-5 gap-1 font-mono text-[0.65rem]" title={transport.endpoint ?? transport.description}>
-                {transport.type}{transport.subscriptions ? <RadioIcon /> : null}
-              </Badge>
-            ))}
-          </div>
-          {Object.keys(doc.events).length ? (
-            <div className="flex flex-col gap-0.5">
-              {Object.entries(doc.events).map(([topic, description]) => (
-                <div key={topic} className="flex items-center gap-2 px-0.5 text-[0.72rem]" title={description}>
-                  <RadioIcon className={cn("size-3", accentText[accent])} />
-                  <span className="font-mono">{topic}</span>
-                  <span className="ml-auto font-mono text-muted-foreground tabular-nums">{counts.get(`${doc.name}:${topic}`) ?? 0}</span>
-                </div>
-              ))}
-              {doc.eventScope ? <p className="px-0.5 text-[0.68rem] text-muted-foreground">{doc.eventScope.required ? "Requires" : "Optional"} scope · {doc.eventScope.description}</p> : null}
-            </div>
+          <p className="text-sm text-pretty text-muted-foreground">{doc.description}</p>
+          {doc.transports.length ? (
+            <Section title="Transports">
+              <ul className="flex flex-col gap-2">
+                {doc.transports.map((transport) => (
+                  <li key={transport.type} className="group/row flex flex-col gap-0.5 rounded-lg border bg-background/50 p-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs font-medium">{transport.type}</span>
+                      {transport.subscriptions ? <Badge variant="secondary" className="h-4 gap-1 text-[0.62rem]"><RadioIcon />events</Badge> : null}
+                      {transport.endpoint ? <CopyButton value={transport.endpoint} label={`${transport.type} endpoint`} className="ml-auto" /> : null}
+                    </div>
+                    <p className="text-xs text-muted-foreground">{transport.description}</p>
+                    {transport.endpoint ? <p className="font-mono text-[0.7rem] break-all">{transport.endpoint}</p> : null}
+                  </li>
+                ))}
+              </ul>
+            </Section>
           ) : null}
-          <div className="-mx-1 flex flex-col">
-            {doc.operations.map((operation) => (
-              <NodeCard key={operation.name} node={{ kind: "operation", id: operation.name, pkg: doc.name }} label={`operation ${operation.name}`} variant="row">
-                <div className="flex items-center gap-2 text-[0.78rem]">
-                  <span className="truncate font-medium">{operationTitle(operation)}</span>
-                  <span className="truncate font-mono text-[0.68rem] text-muted-foreground">{operation.name}</span>
-                  <span className="ml-auto flex shrink-0 gap-1"><OperationBadges operation={operation} /></span>
-                </div>
-              </NodeCard>
-            ))}
-          </div>
+          {Object.keys(doc.events).length ? (
+            <Section title="Events">
+              <ul className="flex flex-col gap-2">
+                {Object.entries(doc.events).map(([topic, description]) => (
+                  <li key={topic} className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-2">
+                      <RadioIcon className={cn("size-3", accentText[accent])} />
+                      <span className="font-mono text-[0.78rem] font-medium">{topic}</span>
+                      <span className="ml-auto font-mono text-[0.7rem] text-muted-foreground tabular-nums" title="notices seen this session">{counts.get(topic) ?? 0}</span>
+                    </div>
+                    <p className="text-xs text-pretty text-muted-foreground">{description}</p>
+                  </li>
+                ))}
+              </ul>
+              {doc.eventScope ? (
+                <p className="rounded-lg bg-muted/60 p-2.5 text-xs text-pretty text-muted-foreground">
+                  <span className="font-medium text-foreground">{doc.eventScope.required ? "Required" : "Optional"} scope</span> — {doc.eventScope.description} Example: <span className="font-mono">{doc.eventScope.example}</span>
+                </p>
+              ) : null}
+            </Section>
+          ) : null}
+          {reads.length ? (
+            <Section title={`Reads · ${reads.length}`}>
+              <div className="flex flex-col gap-2">
+                {reads.map((operation) => <OperationCard key={operation.name} doc={doc} operation={operation} />)}
+              </div>
+            </Section>
+          ) : null}
+          {actions.length ? (
+            <Section title={`Actions · ${actions.length}`}>
+              <div className="flex flex-col gap-2">
+                {actions.map((operation) => <OperationCard key={operation.name} doc={doc} operation={operation} />)}
+              </div>
+            </Section>
+          ) : null}
         </>
-      ) : null}
-    </div>
+      ) : (
+        <Empty icon={ShieldAlertIcon} title="Package unavailable">{catalog.error ?? "Waiting for the api socket."}</Empty>
+      )}
+    </Window>
+  );
+}
+
+function OperationCard({ doc, operation }: { doc: PackageDoc; operation: OperationDoc }) {
+  const input = fieldsOf(operation.inputSchema);
+  return (
+    <NodeCard node={{ kind: "operation", id: operation.name, pkg: doc.name }} label={`operation ${operation.name}`}>
+      <div className="flex items-center gap-2 text-[0.8rem]">
+        <span className="truncate font-medium">{operationTitle(operation)}</span>
+        <span className="truncate font-mono text-[0.68rem] text-muted-foreground">{operation.name}</span>
+        <span className="ml-auto flex shrink-0 gap-1"><OperationBadges operation={operation} /></span>
+      </div>
+      <p className="line-clamp-3 text-xs text-pretty text-muted-foreground">{operation.description}</p>
+      <div className="flex flex-wrap items-center gap-1">
+        {input.length ? input.map((field) => (
+          <span key={field.name} title={field.required ? "required" : field.description ?? undefined}
+            className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.65rem] text-muted-foreground">
+            {field.name}{field.required ? "*" : ""}
+          </span>
+        )) : <span className="text-[0.7rem] text-muted-foreground">No input</span>}
+      </div>
+    </NodeCard>
   );
 }
