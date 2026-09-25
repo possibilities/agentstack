@@ -1,18 +1,20 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { AcpProcess, record } from "../src/acp.js";
 import { effortOption, modelOption, optionsOf } from "../src/catalog.js";
 
-test("installed Grok/OpenCode and Devin ACP complete bounded text turns", {
+test("installed Grok/OpenCode V2 and native Devin ACP complete bounded text turns", {
   skip: process.env.AGENTSTACK_NATIVE_WORKER_TURN !== "1", timeout: 180_000,
 }, async () => {
   const cwd = await mkdtemp(join(tmpdir(), "agentstack-native-worker-turn-"));
   try {
+    const opencodeV2 = join(homedir(), ".local", "bin", "opencode");
+    const devinNative = join(homedir(), ".local", "share", "devin", "cli", "_versions", "current", "bin", "devin");
     for (const harness of ["grok", "devin"] as const) {
-      const child = new AcpProcess(harness === "grok" ? "opencode" : "devin", ["acp"], cwd, process.env);
+      const child = new AcpProcess(harness === "grok" ? opencodeV2 : devinNative, ["acp"], cwd, process.env);
       const streamed: string[] = [];
       child.onNotification = (method, params) => {
         if (method !== "session/update" || !record(params) || !record(params.update)) return;

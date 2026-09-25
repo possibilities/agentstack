@@ -12,6 +12,7 @@ import { WorkerSupervisor } from "../src/supervisor.js";
 import { WorkerManager } from "../src/manager.js";
 import { claimWorktree, removeWorktree } from "../src/worktree.js";
 import { api as workersApi } from "../api.js";
+import { writeV2Credential } from "./v2-credential-fixture.js";
 
 const role: RoleSnapshot = { revision: 7, categories: [{ id: randomUUID(), title: "Guidance", description: "", enabled: true,
   fragments: [{ id: randomUUID(), categoryId: randomUUID(), title: "Brief", description: "", body: "Check your work.", enabled: true }] }],
@@ -68,6 +69,7 @@ test("worker Role resources are private and ignored in only the owned worktree",
 const acpFixture = `#!/usr/bin/env node
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+if (process.argv[2] === '--version') { console.log('fake-acp 2.0'); process.exit(0); }
 let buffer = '';
 let cwd = '';
 let promptId = null;
@@ -154,7 +156,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     const accountId = prepared.account.id;
     const accountPath = join(root, "worker-accounts", accountId, "data", "opencode");
     await mkdir(accountPath, { recursive: true });
-    await writeFile(join(accountPath, "auth.json"), JSON.stringify({ xai: { type: "oauth", access: "fixture", refresh: "fixture" } }));
+    await writeV2Credential(join(accountPath, "opencode.db"), "xai", JSON.stringify({ type: "oauth", access: "fixture", refresh: "fixture" }));
     await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_confirm", arguments: { id: accountId } });
     const supervisor = new WorkerSupervisor(root, env);
     manager = new WorkerManager(root, supervisor, env);

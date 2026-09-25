@@ -30,8 +30,10 @@ export class WorkerSupervisor {
   private readonly bin: Record<"codex" | "grok" | "devin", string>;
 
   constructor(private readonly stateDir: string, private readonly env: NodeJS.ProcessEnv = process.env) {
-    this.bin = { codex: env.AGENTSTACK_OPENCODE_BIN ?? "opencode", grok: env.AGENTSTACK_OPENCODE_BIN ?? "opencode",
-      devin: env.AGENTSTACK_DEVIN_BIN ?? join(env.HOME ?? homedir(), ".local", "share", "devin", "cli", "_versions", "current", "bin", "devin") };
+    const home = env.HOME ?? homedir();
+    const opencodeV2 = env.AGENTSTACK_OPENCODE_BIN ?? join(home, ".local", "bin", "opencode");
+    this.bin = { codex: opencodeV2, grok: opencodeV2,
+      devin: env.AGENTSTACK_DEVIN_BIN ?? join(home, ".local", "share", "devin", "cli", "_versions", "current", "bin", "devin") };
   }
 
   start(): void {
@@ -75,10 +77,17 @@ export class WorkerSupervisor {
   private async launch(account: WorkerAccount): Promise<void> {
     const cwd = join(accountRoot(this.stateDir, account.id), "probe");
     await mkdir(cwd, { recursive: true, mode: 0o700 });
+    const version = await this.binaryVersion(account);
+    if (account.provider !== "devin" && !/(?:^|\s)v?2\.[0-9]+(?:\.|$)/.test(version)) {
+      this.errors.set(account.id, { provider: account.provider, message: "Required OpenCode V2 ACP binary is unavailable; inspect ~/.local/bin/opencode" });
+      const delay = Math.min((this.launchRetry.get(account.id)?.delay ?? 30_000) * 2, 30 * 60_000);
+      this.launchRetry.set(account.id, { after: Date.now() + delay, delay });
+      this.onChange?.();
+      return;
+    }
     const child = new AcpProcess(this.bin[account.provider], ["acp"], cwd, accountEnvironment(this.stateDir, account, this.env));
     try {
       const initialized = await child.initialize();
-      const version = await this.binaryVersion(account);
       const canClose = record(initialized.agentCapabilities) && record(initialized.agentCapabilities.sessionCapabilities)
         && record(initialized.agentCapabilities.sessionCapabilities.close);
       const canLoad = record(initialized.agentCapabilities) && initialized.agentCapabilities.loadSession === true;
@@ -151,7 +160,7 @@ export class WorkerSupervisor {
       return result;
     }).catch(() => {
       const message = "ACP catalog refresh failed; inspect the private account runtime";
-      const failed: Catalog = saved ? { ...saved, stale: true, error: message } : { accountId: id, provider: account.provider, observedAt: new Date(0).toISOString(), source: "acp-v1-session",
+      const failed: Catalog = saved ? { ...saved, stale: true, error: message } : { accountId: id, provider: account.provider, observedAt: new Date(0).toISOString(), source: account.provider === "devin" ? "acp-session" : "acp-v2-session",
         runtimeVersion: "unknown", modelConfigId: null, models: [], nativeModelIds: [], stale: true, error: message } satisfies Catalog;
       this.catalogs.set(id, failed);
       this.retryAfter.set(id, Date.now() + 60_000);
@@ -187,7 +196,7 @@ export class WorkerSupervisor {
     }
     const nativeModelIds = account.provider === "devin" ? await this.devinModelIds(account) : [];
     const catalog: Catalog = { accountId: account.id, provider: account.provider, observedAt: new Date().toISOString(),
-      source: "acp-v1-session", runtimeVersion: runtime.version, modelConfigId: model.id, models, nativeModelIds, stale: false, error: null };
+      source: account.provider === "devin" ? "acp-session" : "acp-v2-session", runtimeVersion: runtime.version, modelConfigId: model.id, models, nativeModelIds, stale: false, error: null };
     await this.saveCatalog(catalog);
     return catalog;
   }

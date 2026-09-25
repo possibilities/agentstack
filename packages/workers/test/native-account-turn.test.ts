@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { z } from "zod";
 import { operation, serveApi, serveMcp, serveSocket, socketCall, socketPath } from "@agentstack/api";
@@ -11,6 +12,7 @@ import { accountEnvironment, type WorkerAccount } from "@agentstack/auth";
 import type { RoleSnapshot } from "@agentstack/roles";
 import { WorkerManager } from "../src/manager.js";
 import { WorkerSupervisor } from "../src/supervisor.js";
+import { record } from "../src/acp.js";
 import { api as workersApi } from "../api.js";
 
 const git = (cwd: string, args: string[]) => new Promise<void>((resolve, reject) =>
@@ -53,11 +55,13 @@ test("isolated native Grok and Devin accounts finish Worker turns in owned workt
   const mcp = await serveMcp({ root: catalogRoot, env, port: 0 });
   mcpUrls = { workers: mcp.urls.workers! };
   try {
-    const native = JSON.parse(await readFile(join(homedir(), ".local", "share", "opencode", "auth.json"), "utf8")) as {
-      xai?: { type?: string; expires?: number };
-    };
-    if (native.xai?.type !== "oauth" || typeof native.xai.expires !== "number" || native.xai.expires < Date.now() + 10 * 60_000) {
-      t.skip("native xAI credential is too close to expiry to copy without a competing refresh writer");
+    const source = new DatabaseSync(join(homedir(), ".local", "share", "opencode", "opencode.db"), { readOnly: true });
+    let value: string | undefined;
+    try { value = (source.prepare("SELECT value FROM credential WHERE integration_id = 'xai'").get() as { value?: string } | undefined)?.value; }
+    finally { source.close(); }
+    const native = value ? JSON.parse(value) as { type?: string; expires?: number } : null;
+    if (native?.type !== "oauth" || typeof native.expires !== "number" || native.expires < Date.now() + 10 * 60_000) {
+      t.skip("native OpenCode V2 xAI credential is too close to expiry for a disposable no-refresh copy");
       return;
     }
     const provision = async (provider: "grok" | "devin"): Promise<string> => {
@@ -65,11 +69,19 @@ test("isolated native Grok and Devin accounts finish Worker turns in owned workt
         name: "worker_account_prepare", arguments: { provider },
       }) as { account: { id: string } };
       const id = prepared.account.id;
-      const destination = provider === "grok" ? join(root, "worker-accounts", id, "data", "opencode", "auth.json")
+      const destination = provider === "grok" ? join(root, "worker-accounts", id, "data", "opencode", "opencode.db")
         : join(root, "worker-accounts", id, "data", "devin", "credentials.toml");
       await mkdir(join(destination, ".."), { recursive: true, mode: 0o700 });
-      if (provider === "grok") await writeFile(destination, JSON.stringify({ xai: native.xai }), { mode: 0o600 });
-      else {
+      if (provider === "grok") {
+        const account: WorkerAccount = { id, provider, enabled: true, ready: false, removing: false };
+        await skillList(join(homedir(), ".local", "bin", "opencode"), ["auth", "list", "--format", "json", "--standalone"],
+          join(root, "worker-accounts", id, "probe"), accountEnvironment(root, account, env));
+        const db = new DatabaseSync(destination);
+        try { db.prepare("INSERT INTO credential (id, integration_id, label, value, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?)")
+          .run(`cred_${randomUUID().replaceAll("-", "")}`, "xai", "OAuth", value!, Date.now(), Date.now()); }
+        finally { db.close(); }
+        await chmod(destination, 0o600);
+      } else {
         await copyFile(join(homedir(), ".local", "share", "devin", "credentials.toml"), destination);
         await chmod(destination, 0o600);
       }
@@ -79,12 +91,28 @@ test("isolated native Grok and Devin accounts finish Worker turns in owned workt
     const grokId = await provision("grok");
     const devinId = await provision("devin");
     await supervisor.reconcile();
+    const grokRuntime = supervisor.runtime(grokId);
+    assert.ok(grokRuntime);
+    const originalNotice = grokRuntime.process.onNotification;
+    const toolEvidence: Array<{ title: string | null; status: string | null; skillId: string | null }> = [];
+    grokRuntime.process.onNotification = (method, params) => {
+      if (method === "session/update" && record(params) && record(params.update) &&
+          (params.update.sessionUpdate === "tool_call" || params.update.sessionUpdate === "tool_call_update")) {
+        const input = record(params.update.rawInput) ? params.update.rawInput : null;
+        toolEvidence.push({ title: typeof params.update.title === "string" ? params.update.title : null,
+          status: typeof params.update.status === "string" ? params.update.status : null,
+          skillId: typeof input?.id === "string" ? input.id : null });
+      }
+      originalNotice?.(method, params);
+    };
     for (const [provider, accountId, model] of [["grok", grokId, "xai/grok-build-0.1"], ["devin", devinId, "swe-1-6-fast"]] as const) {
       const catalog = await supervisor.catalog(accountId, true);
       assert.equal(catalog.stale, false);
       assert.ok(catalog.models.some((item) => item.id === model));
       const marker = `AGENTSTACK_${provider.toUpperCase()}_WORKER_READY`;
-      const started = await manager.start({ accountId, model, repo, task: `Reply exactly ${marker}. Do not call tools or change files.`, requestId: randomUUID() });
+      const task = provider === "grok" ? `Load the agentstack-smoke skill, then reply exactly ${marker}. Do not change files.`
+        : `Reply exactly ${marker}. Do not call tools or change files.`;
+      const started = await manager.start({ accountId, model, repo, task, requestId: randomUUID() });
       assert.notEqual(started.worker.phase, "failed");
       for (let i = 0; i < 240 && (await manager.status(started.worker.id)).worker.phase !== "idle"; i++)
         await new Promise((resolve) => setTimeout(resolve, 500));
@@ -93,13 +121,19 @@ test("isolated native Grok and Devin accounts finish Worker turns in owned workt
       assert.equal(status.turn?.stopReason, "end_turn");
       const transcript = await manager.read(started.worker.id, 0, 50);
       assert.match(transcript.entries.filter((entry) => entry.kind === "agent").map((entry) => entry.text).join(""), new RegExp(marker));
+      console.log(JSON.stringify({ provider, toolCalls: transcript.entries.filter((entry) => entry.kind === "tool").map((entry) => entry.text),
+        ...(provider === "grok" ? { toolEvidence } : {}) }));
       assert.ok(status.worker.cwd?.includes(`/workers/worktrees/${started.worker.id}`));
       const account: WorkerAccount = { id: accountId, provider, enabled: true, ready: true, removing: false };
-      const discovered = provider === "grok"
-        ? await skillList("opencode", ["debug", "skill"], status.worker.cwd!, accountEnvironment(root, account, env))
-        : await skillList("devin", ["skills", "list"], status.worker.cwd!, accountEnvironment(root, account, env));
-      assert.match(discovered, /agentstack-smoke/);
-      if (provider === "devin") assert.match(discovered, /prime/);
+      if (provider === "grok") {
+        assert.ok(toolEvidence.some((item) => item.title === "skill" && item.skillId === "agentstack-smoke"));
+        assert.ok(toolEvidence.some((item) => item.status === "completed"));
+      }
+      else {
+        const discovered = await skillList("devin", ["skills", "list"], status.worker.cwd!, accountEnvironment(root, account, env));
+        assert.match(discovered, /agentstack-smoke/);
+        assert.match(discovered, /prime/);
+      }
       console.log(JSON.stringify({ provider, model, worktree: true, stopReason: status.turn.stopReason, reply: true, skillsVisible: true }));
       await manager.closeWorker(started.worker.id);
       await manager.remove(started.worker.id, true);

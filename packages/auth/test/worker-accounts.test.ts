@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat, writeFile, mkdir } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { AuthStore } from "../src/store.js";
 import { accountEnvironment, accountRoot, credentialEvidence, loginCommand, prepareAccountProfile } from "../src/worker-accounts.js";
@@ -21,16 +22,34 @@ test("two native account profiles keep sign-ins and configuration separate", asy
     assert.equal(envA.OPENCODE_CONFIG_CONTENT, undefined);
     assert.match(await readFile(envA.OPENCODE_CONFIG!, "utf8"), /"xai"/);
     assert.match(loginCommand(dir, devin), /devin auth login/);
+    assert.match(loginCommand(dir, a), /opencode' auth login --standalone xai/);
     assert.equal((await stat(accountRoot(dir, a.id))).mode & 0o777, 0o700);
     for (const [account, secret] of [[a, "first"], [b, "second"]] as const) {
       const folder = join(accountRoot(dir, account.id), "data", "opencode");
       await mkdir(folder, { recursive: true });
-      await writeFile(join(folder, "auth.json"), JSON.stringify({ xai: { type: "oauth", access: secret, refresh: secret } }), { mode: 0o600 });
+      const path = join(folder, "opencode.db");
+      const db = new DatabaseSync(path);
+      db.exec("CREATE TABLE credential (integration_id TEXT, value TEXT)");
+      db.prepare("INSERT INTO credential VALUES (?, ?)").run("xai", JSON.stringify({ type: "oauth", access: secret, refresh: secret }));
+      db.close();
+      await chmod(path, 0o600);
       store.confirmWorker(account.id, (await credentialEvidence(dir, account)).digest);
     }
     assert.equal(store.workerAccounts().filter((account) => account.provider === "grok" && account.ready).length, 2);
     const duplicate = (await credentialEvidence(dir, a)).digest;
     assert.throws(() => store.confirmWorker(b.id, duplicate), /another worker account/);
+    const codex = store.addAccount(JSON.stringify({ tokens: { refresh_token: "refresh", access_token: "access",
+      id_token: "fixture.jwt.signature", account_id: "matching-account" } }));
+    const bound = store.prepareWorker("codex", codex.id);
+    await prepareAccountProfile(dir, bound);
+    const codexPath = join(accountRoot(dir, bound.id), "data", "opencode", "opencode.db");
+    await mkdir(join(accountRoot(dir, bound.id), "data", "opencode"), { recursive: true });
+    const db = new DatabaseSync(codexPath);
+    db.exec("CREATE TABLE credential (integration_id TEXT, value TEXT)");
+    db.prepare("INSERT INTO credential VALUES (?, ?)").run("openai", JSON.stringify({ type: "oauth", access: "codex", refresh: "codex", metadata: { accountID: "matching-account" } }));
+    db.close();
+    await chmod(codexPath, 0o600);
+    assert.equal((await credentialEvidence(dir, bound)).identity, "matching-account");
     store.enableWorker(a.id, false);
     assert.equal(store.workerAccounts().find((account) => account.id === a.id)?.enabled, false);
     store.beginWorkerRemoval(a.id);

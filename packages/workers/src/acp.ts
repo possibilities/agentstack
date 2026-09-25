@@ -118,9 +118,16 @@ export class AcpProcess {
     if (this.closed) return;
     this.cancelPermissions();
     this.child.stdin.end();
-    const timer = setTimeout(() => this.child.kill("SIGKILL"), 2_000);
+    const wait = async (ms: number) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try { return await Promise.race([this.exited.then(() => true), new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), ms); })]); }
+      finally { if (timer) clearTimeout(timer); }
+    };
+    if (await wait(2_000)) return;
     this.child.kill("SIGTERM");
-    try { await this.exited; } finally { clearTimeout(timer); }
+    if (await wait(2_000)) return;
+    this.child.kill("SIGKILL");
+    if (!await wait(2_000)) throw new Error("owned ACP process did not exit after SIGKILL");
   }
 }
 

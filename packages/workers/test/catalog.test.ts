@@ -6,10 +6,11 @@ import test from "node:test";
 import { serveApi, socketCall, socketPath } from "@agentstack/api";
 import { WorkerSupervisor } from "../src/supervisor.js";
 import { nativeDevinModels, optionsOf } from "../src/catalog.js";
+import { writeV2Credential } from "./v2-credential-fixture.js";
 
 const fake = `#!/usr/bin/env node
 import { basename } from 'node:path';
-if (process.argv[2] === '--version') { console.log('fake-acp 1.0'); process.exit(0); }
+if (process.argv[2] === '--version') { console.log('fake-acp 2.0'); process.exit(0); }
 let buffer = '';
 let selected = '';
 const id = basename(process.env.XDG_DATA_HOME.replace(/\\/data$/, ''));
@@ -50,7 +51,7 @@ test("ACP catalog reflects the exact account process and dependent effort choice
       const id = response.account.id;
       const accountDir = join(dir, "worker-accounts", id, "data", "opencode");
       await (await import("node:fs/promises")).mkdir(accountDir, { recursive: true });
-      await writeFile(join(accountDir, "auth.json"), JSON.stringify({ xai: { type: "oauth", access: id, refresh: id } }));
+      await writeV2Credential(join(accountDir, "opencode.db"), "xai", JSON.stringify({ type: "oauth", access: id, refresh: id }));
       await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_confirm", arguments: { id } });
       return id;
     };
@@ -101,7 +102,7 @@ test("operator disable and removal drain the exact account process before deleti
     const { account } = await call("worker_account_prepare", { provider: "grok" }) as { account: { id: string } };
     const root = join(dir, "worker-accounts", account.id);
     await (await import("node:fs/promises")).mkdir(join(root, "data", "opencode"), { recursive: true });
-    await writeFile(join(root, "data", "opencode", "auth.json"), JSON.stringify({ xai: { type: "oauth", access: "first", refresh: "first" } }));
+     await writeV2Credential(join(root, "data", "opencode", "opencode.db"), "xai", JSON.stringify({ type: "oauth", access: "first", refresh: "first" }));
     await call("worker_account_confirm", { id: account.id });
     const runtimes = async () => (await socketCall(socketPath("workers", env), "tools/call", {
       name: "worker_runtime_list", arguments: {},
@@ -113,7 +114,7 @@ test("operator disable and removal drain the exact account process before deleti
       name: "worker_catalog", arguments: { accountId: account.id },
     }) as { models: unknown[]; runtimeVersion: string; stale: boolean };
     assert.equal(catalog.models.length, 2);
-    assert.equal(catalog.runtimeVersion, "fake-acp 1.0");
+     assert.equal(catalog.runtimeVersion, "fake-acp 2.0");
     assert.equal(catalog.stale, false);
     await call("worker_account_set_enabled", { id: account.id, enabled: false });
     assert.equal((await runtimes()).length, 0);
