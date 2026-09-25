@@ -1,8 +1,8 @@
 name: bots
-description: Start, stop, assign, and list Codex bots. Read or change the model, effort, sandbox, and approval defaults copied into new Bots; each Bot can override its saved settings. New bots use numbered private workspaces and default to gpt-6-sol at medium effort with full access and no approval prompts. The first durable UI thread becomes the main thread and resumes on startup.
+description: Own Codex Bots and their sanctioned chats. Search history, browse paged turns and items, send and steer live turns, interrupt, stage files, and queue messages. Only a Bot's main thread and descendants are visible; ACP Workers are excluded. For token deltas and approval responses, a live UI connects to the Bot's app-server endpoint; Package API notices are invalidations.
 socket:
-  description: Unix socket for bot lifecycle, scoped thread notices, and global voice call notices.
+  description: Unix socket for bot lifecycle, chat search, transcript reading, live turn controls, durable queue, scoped change notices, and voice calls.
 mcp:
-  description: HTTP MCP tools for Codex bot lifecycle, forwarded to the bots socket.
+  description: HTTP MCP operations for Bots and chats, forwarded to the bots socket.
 websocket:
-  description: Loopback WebSocket for bot operations and bot-scoped change events, forwarded to the bots socket.
+  description: Loopback WebSocket for Bot and chat operations, with scoped chat and queue invalidations forwarded to the bots socket.

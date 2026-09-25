@@ -56,10 +56,13 @@ if (process.argv.includes("--device-auth")) {
         peer.send(JSON.stringify({ id: frame.id, error: { message: "unknown thread" } }));
         return;
       }
-      appendFileSync(log, JSON.stringify({ method: frame.method, threadId }) + "\n");
-      peer.send(JSON.stringify({ id: frame.id, result: { turn: { id: randomUUID() } } }));
+      const turnId = randomUUID();
+      appendFileSync(log, JSON.stringify({ method: frame.method, threadId, turnId, input: frame.params.input }) + "\n");
+      peer.send(JSON.stringify({ id: frame.id, result: { turn: { id: turnId } } }));
       notify("turn/completed");
     }
+    if (frame.method === "turn/steer") peer.send(JSON.stringify({ id: frame.id, result: { turnId: frame.params.expectedTurnId } }));
+    if (frame.method === "turn/interrupt") peer.send(JSON.stringify({ id: frame.id, result: {} }));
     if (frame.method === "thread/list") {
       const seen = new Set();
       const data = entries().filter((entry) => entry.method === "thread/start" && !seen.has(entry.threadId) && seen.add(entry.threadId))
@@ -69,8 +72,19 @@ if (process.argv.includes("--device-auth")) {
     if (frame.method === "thread/read") {
       const turns = entries().filter((entry) => entry.method === "turn/start" && entry.threadId === frame.params.threadId);
       if (frame.params.includeTurns && turns.length === 0) peer.send(JSON.stringify({ id: frame.id, error: { message: "not materialized yet" } }));
-      else peer.send(JSON.stringify({ id: frame.id, result: { thread: { id: frame.params.threadId, turns } } }));
+      else peer.send(JSON.stringify({ id: frame.id, result: { thread: { id: frame.params.threadId, status: { type: "idle" }, turns } } }));
     }
+    if (frame.method === "thread/turns/list") peer.send(JSON.stringify({ id: frame.id, result: { data: entries().filter((entry) => entry.method === "turn/start" && entry.threadId === frame.params.threadId).map((entry) => ({ id: entry.turnId, items: entry.input, status: "completed" })), nextCursor: null } }));
+    if (frame.method === "thread/items/list") peer.send(JSON.stringify({ id: frame.id, result: { data: entries().filter((entry) => entry.method === "turn/start" && entry.threadId === frame.params.threadId).flatMap((entry) => entry.input.map((item) => ({ turnId: entry.turnId, item }))), nextCursor: null } }));
+    if (frame.method === "thread/searchOccurrences") peer.send(JSON.stringify({ id: frame.id, result: { data: [], nextCursor: null } }));
+    if (frame.method === "thread/queue/add" || frame.method === "thread/queue/update") peer.send(JSON.stringify({ id: frame.id, result: { queuedSubmission: { id: frame.params.queuedSubmissionId ?? randomUUID(), input: frame.params.input, clientUserMessageId: frame.params.clientUserMessageId ?? "existing" } } }));
+    if (frame.method === "thread/queue/list") peer.send(JSON.stringify({ id: frame.id, result: { data: [], nextCursor: null } }));
+    if (frame.method === "thread/queue/delete") peer.send(JSON.stringify({ id: frame.id, result: { deleted: true } }));
+    if (frame.method === "thread/queue/reorder") peer.send(JSON.stringify({ id: frame.id, result: {} }));
+    if (frame.method === "thread/queue/start") peer.send(JSON.stringify({ id: frame.id, result: { turn: { id: randomUUID() } } }));
+    if (frame.method === "thread/attachment/add") peer.send(JSON.stringify({ id: frame.id, result: { outcome: "created", attachment: { id: randomUUID(), attachmentType: frame.params.attachmentType, identityKey: frame.params.identityKey, payload: frame.params.payload, createdAt: 1 } } }));
+    if (frame.method === "thread/attachment/list") peer.send(JSON.stringify({ id: frame.id, result: { data: [], nextCursor: null } }));
+    if (frame.method === "thread/attachment/remove") peer.send(JSON.stringify({ id: frame.id, result: {} }));
     if (frame.method === "thread/loaded/list") peer.send(JSON.stringify({ id: frame.id, result: { data: [] } }));
   }));
   if (listen.startsWith("unix://")) server.listen(listen.slice("unix://".length));

@@ -1,0 +1,19 @@
+# Bot chat API
+
+The `bots` Package API serves chat operations on the same socket, MCP and WebSocket transports as Bot lifecycle. Every call takes a Bot ID; a chat thread ID must belong to that Bot's durable `mainThreadId` or one of its descendants. Reads include descendants; direct interaction is limited to the main thread. `bot_list` returns the root ID and, when running, the Codex app-server URL. Other top-level threads and ACP Workers are not Bot chats.
+
+## Find and read
+
+- `chat_list` pages owned threads, including stopped history. `chat_search` finds keyword matches in indexed user/assistant prose, tool input/output and available reasoning text, returning a thread, snippet, role and rollout line. Scores rank only one query; use a page limit and offset. Search indexes up to 16 KiB per response item. An empty query is not a listing: use `chat_list`.
+- `chat_records` pages raw `response_item` and `event_msg` records in rollout order, including harness-specific payloads. Records too large for one response carry `truncated: true` and `payload: null`; `chat_record_chunk` reads their complete original JSONL line in bounded segments. These work for stopped Bots. Offsets returned by `nextLine` are continuation positions, not chat message IDs.
+- While running, `chat_thread_read` exposes native status, lineage and model; `chat_turns` and `chat_items` page native typed turns/items with opaque Codex cursors. `chat_occurrences` gives turn/item IDs and a native turn cursor for precise within-thread navigation. The native operations need a running, verified, account-bound Bot.
+- The index refreshes from the Bot's private history on each search or read. It is derived state, not the transcript authority. Legacy shared-history rollouts are admitted only by adopted root/parent metadata. No `.codex` or external workspace transcript is scanned.
+
+## Compose and follow
+
+- `chat_open` creates the Bot's first thread and first turn. Once `mainThreadId` is bound, `chat_send` starts a turn, `chat_steer` requires an exact expected active turn ID, and `chat_interrupt` requires the exact turn ID. A caller must inspect state before repeating any mutation whose response was lost.
+- Inputs accept text, image URLs/data URLs, workspace file mentions, and finalized uploaded `localImage` or `localAudio` paths. Use `chat_upload_start` with byte length and SHA-256, `chat_upload_chunk` with exact offset and ≤256 KiB of base64, `chat_upload_status` after a lost response, and `chat_upload_finish` before referencing the file. Uploaded files are removed with their Bot. Codex attachment *records* are managed separately with `chat_attachment_add/list/remove`; adding a record does not upload bytes.
+- `chat_enqueue` is AgentStack's automatic, persistent FIFO. `chat_queue_list` reports pending, dispatching, sent, unknown and cancelled entries; `chat_queue_resolve` requires explicit reconciliation for unknown delivery, and an unknown entry fences later dispatch. `chat_codex_queue_add/list/update/delete/reorder/start` operate Codex's distinct native, manually started queue, including submissions from other native clients.
+- Subscribe to Bot-scoped `chats_changed` and `chat_queue_changed`, then re-read after each notice and after reconnect. They carry no payload and may also be raised by unrelated socket activity. For per-token deltas, user-input/approval prompts, and complete native control, UIs connect directly to the running Bot's app-server URL from `bot_list`, initialize with `capabilities.experimentalApi: true` where required, and constrain their own thread view to the adopted lineage. The Package API does not proxy a lossless Codex notification stream.
+
+All outputs pass through the Package API socket's bounded JSON transport; page long histories and use `chat_record_chunk` for large raw records. The owner-served canvas continues to show the API catalog but does not yet include a chat browser or composer.
