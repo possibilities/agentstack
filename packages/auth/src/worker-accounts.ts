@@ -63,7 +63,7 @@ export function loginCommand(stateDir: string, account: WorkerAccount): string {
     .flatMap((key) => env[key] ? [`${key}=${quote(env[key])}`] : []);
   const command = account.provider === "devin" ? "devin auth login"
     : `${quote(join(process.env.HOME ?? homedir(), ".local", "bin", "opencode"))} auth login --standalone ${account.provider === "grok" ? "xai" : "openai"}`;
-  return `cd ${quote(join(accountRoot(stateDir, account.id), "probe"))} && env -u OPENAI_API_KEY -u CODEX_API_KEY -u CODEX_ACCESS_TOKEN -u XAI_API_KEY -u WINDSURF_API_KEY -u OPENAI_BASE_URL -u OPENCODE_AUTH_CONTENT -u OPENCODE_CONFIG_CONTENT -u OPENCODE_DB -u AGENTUSAGE_ACCOUNT -u AGENTUSAGE_AUTH_TOKEN ${assignments.join(" ")} ${command}`;
+  return `cd ${quote(join(accountRoot(stateDir, account.id), "probe"))} && umask 077 && env -u OPENAI_API_KEY -u CODEX_API_KEY -u CODEX_ACCESS_TOKEN -u XAI_API_KEY -u WINDSURF_API_KEY -u OPENAI_BASE_URL -u OPENCODE_AUTH_CONTENT -u OPENCODE_CONFIG_CONTENT -u OPENCODE_DB -u AGENTUSAGE_ACCOUNT -u AGENTUSAGE_AUTH_TOKEN ${assignments.join(" ")} ${command}`;
 }
 
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }

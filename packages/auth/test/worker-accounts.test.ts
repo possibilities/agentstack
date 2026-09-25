@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, rm, stat, mkdir } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { chmod, mkdtemp, readFile, rm, stat, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -22,6 +23,11 @@ test("two native account profiles keep sign-ins and configuration separate", asy
     assert.equal(envA.OPENCODE_CONFIG_CONTENT, undefined);
     assert.match(await readFile(envA.OPENCODE_CONFIG!, "utf8"), /"xai"/);
     assert.match(loginCommand(dir, devin), /devin auth login/);
+    const fakeBin = join(dir, "fake-bin");
+    await mkdir(fakeBin);
+    await writeFile(join(fakeBin, "devin"), '#!/bin/sh\nmkdir -p "$XDG_DATA_HOME/devin"\n: > "$XDG_DATA_HOME/devin/credentials.toml"\n', { mode: 0o755 });
+    execFileSync("/bin/sh", ["-c", loginCommand(dir, devin)], { env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` }, timeout: 5_000 });
+    assert.equal((await stat(join(accountRoot(dir, devin.id), "data", "devin", "credentials.toml"))).mode & 0o777, 0o600);
     assert.match(loginCommand(dir, a), /opencode' auth login --standalone xai/);
     assert.equal((await stat(accountRoot(dir, a.id))).mode & 0o777, 0o700);
     for (const [account, secret] of [[a, "first"], [b, "second"]] as const) {
