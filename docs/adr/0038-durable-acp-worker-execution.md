@@ -1,4 +1,4 @@
-# 37. Keep ACP Worker sessions and turns durable in owned worktrees
+# 38. Keep ACP Worker sessions and turns durable in owned worktrees
 
 Status: accepted, 2026-09-24. Extends [ADR 0036](0036-account-bound-acp-foundation.md)'s account-bound ACP processes and [ADR 0032](0032-bot-mcp-invocation-context.md)'s Bot identity. Completion delivery into a Bot thread is a later decision under [ADR 0033](0033-agent-facing-event-subscriptions.md).
 
