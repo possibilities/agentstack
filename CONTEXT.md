@@ -24,11 +24,11 @@ A durable, revisionless request by a verified Bot thread to watch one Package AP
 
 ## Codex account
 
-An AgentStack-owned sign-in credential with an immutable account ID managed by the `auth` Package API for Bots. One account is active for new Bots. A Bot may be created unbound. An existing Bot changes account only through assignment, then the next start after a stop. A running Bot reports both its assignment and its launched identity. Removing either account deletes that Bot. Accounts never take a durable human-facing ordinal. A UI may present dense `codex-N` labels derived from the current account list. _Avoid_: Codex home, capability profile
+An AgentStack-owned sign-in credential with an immutable account ID managed by the `auth` Package API for Bots. Accounts can be enabled or disabled; `bot_start` requires an explicit enabled Codex account ID. An existing Bot changes account only through assignment, then the next start after a stop. A running Bot reports both its assignment and its launched identity. Removing either account deletes that Bot. Accounts never take a durable human-facing ordinal. A UI may present dense `codex-N` labels derived from the current Codex account list. _Avoid_: active account, Codex home, capability profile
 
 ## Worker account
 
-A stable account ID for an isolated, native ACP sign-in managed through `auth`. Grok and Devin accounts can be enabled or disabled independently; they have no active account. A Codex worker binding uses an existing Codex account ID but requires a separately verified OpenCode login. Only a ready, enabled account may have an owner-managed ACP process. _Avoid_: active worker account, credential copy
+A stable account ID for an isolated, native ACP sign-in managed through `auth`. All three providers appear in `account_list` and share enablement and removal operations. A Codex worker binding uses an existing Codex account ID but requires a separately verified OpenCode login; `ready` reports ACP sign-in, not Codex Bot sign-in. Only a ready, enabled account may have an owner-managed ACP process. _Avoid_: active worker account, credential copy
 
 ## ACP runtime
 
@@ -66,7 +66,7 @@ A Codex app-server thread in an AgentStack-owned Bot's sanctioned main-thread li
 
 ## Bot
 
-A Codex app-server process with, after its first turn, a durable main thread. By default it is numbered `bot-N` with a private workspace and copies the current Bot defaults: Sol at medium reasoning effort, unrestricted sandbox, and no approval prompts. The Bots Package API can change defaults for future Bots; `bot_start` can override a Bot's ID, working directory, saved settings, and launch arguments. A Bot may start without an account. Assign an account, then stop and start, before a turn. Turns require a bound account. Bots restart on AgentStack startup with their saved settings and resume their main thread when one exists.
+A Codex app-server process with, after its first turn, a durable main thread. By default it is numbered `bot-N` with a private workspace and copies the current Bot defaults: Sol at medium reasoning effort, unrestricted sandbox, and no approval prompts. The Bots Package API can change defaults for future Bots; `bot_start` requires an explicit enabled Codex account and can override a Bot's ID, working directory, saved settings, and launch arguments. Legacy unbound Bots require assignment before a turn. Bots restart on AgentStack startup with their saved account and settings and resume their main thread when one exists.
 
 ## Role
 

@@ -24,6 +24,7 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
   await symlink(fakeBin, runtime);
   const store = new StateStore(stateDir);
   const account = store.addAccount(JSON.stringify({ tokens: { refresh_token: "test", access_token: "access", id_token: "fixture.jwt.signature" } })).id;
+  const otherAccount = store.addAccount(JSON.stringify({ tokens: { refresh_token: "other", access_token: "access", id_token: "fixture.jwt.signature" } })).id;
   store.close();
   const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir };
   const auth = await serveApi({ name: "auth", transport: "socket", env });
@@ -34,12 +35,16 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
   try {
     const tools = await socketCall(socket, "tools/list") as { tools: Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }>; events: { scope: { required: boolean } } };
     assert.deepEqual(tools.tools.map((tool) => tool.name), ["bot_start", "bot_stop", "bot_assign", "bot_remove", "bot_list", "bot_defaults_get", "bot_defaults_set", "voice_status", "voice_dial", "voice_hangup", "chat_list", "chat_search", "chat_records", "chat_record_chunk", "chat_thread_read", "chat_turns", "chat_items", "chat_occurrences", "chat_open", "chat_send", "chat_steer", "chat_interrupt", "chat_enqueue", "chat_queue_list", "chat_queue_resolve", "chat_codex_queue_add", "chat_codex_queue_list", "chat_codex_queue_update", "chat_codex_queue_delete", "chat_codex_queue_reorder", "chat_codex_queue_start", "chat_upload_start", "chat_upload_status", "chat_upload_chunk", "chat_upload_finish", "chat_attachment_add", "chat_attachment_list", "chat_attachment_remove"]);
-    assert.deepEqual(Object.keys(tools.tools[0].inputSchema.properties).sort(), ["args", "cwd", "id", "settings"]);
+    assert.deepEqual(Object.keys(tools.tools[0].inputSchema.properties).sort(), ["account", "args", "cwd", "id", "settings"]);
     assert.equal(tools.events.scope.required, false);
     const initial = await call(socket, "bot_defaults_get") as View["settings"];
     assert.deepEqual(initial, { model: "gpt-6-sol", reasoningEffort: "medium", sandboxMode: "danger-full-access", approvalPolicy: "never" });
 
-    const first = await call(socket, "bot_start", { args: ["-c", 'model="gpt-5.4"'] }) as View;
+    await assert.rejects(call(socket, "bot_start", {}), /account/);
+    await call(auth.socketPath ?? "", "account_set_enabled", { id: account, enabled: false });
+    await assert.rejects(call(socket, "bot_start", { account }), /unavailable or disabled/);
+    await call(auth.socketPath ?? "", "account_set_enabled", { id: account, enabled: true });
+    const first = await call(socket, "bot_start", { account, args: ["-c", 'model="gpt-5.4"'] }) as View;
     assert.equal(first.id, "bot-1");
     assert.equal(first.cwd, join(stateDir, "bots", "bot-1"));
     assert.equal(first.account, account);
@@ -88,9 +93,10 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
     assert.deepEqual(first.settings, initial);
     assert.equal((await lstat(first.cwd)).mode & 0o777, 0o700);
     assert.equal((await lstat(join(stateDir, "bots", "ledger.sqlite"))).mode & 0o777, 0o600);
-    assert.equal((await call(socket, "bot_start", { id: first.id }) as View).pid, first.pid);
-    await assert.rejects(call(socket, "bot_start", { id: first.id, args: [] }), /stop it before changing args/);
-    await assert.rejects(call(socket, "bot_start", { id: first.id, settings: { reasoningEffort: "high" } }), /stop it before changing settings/);
+    assert.equal((await call(socket, "bot_start", { id: first.id, account }) as View).pid, first.pid);
+    await assert.rejects(call(socket, "bot_start", { id: first.id, account: otherAccount }), /assigned to a different account/);
+    await assert.rejects(call(socket, "bot_start", { id: first.id, account, args: [] }), /stop it before changing args/);
+    await assert.rejects(call(socket, "bot_start", { id: first.id, account, settings: { reasoningEffort: "high" } }), /stop it before changing settings/);
 
     const defaultNotices: string[] = [];
     defaultsSubscription = await socketSubscribe(socket, ["defaults_changed"], (topic) => defaultNotices.push(topic));
@@ -104,10 +110,10 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
     subscription = await socketSubscribe(socket, ["bots_changed", "threads_changed"], (topic) => notices.push(topic), { scope: first.id });
     await new Promise((resolve) => setTimeout(resolve, 30)); // Initial thread-watch invalidation may arrive after subscribing.
     notices.length = 0;
-    const custom = await call(socket, "bot_start", { id: "custom", cwd: external }) as View;
+    const custom = await call(socket, "bot_start", { id: "custom", cwd: external, account }) as View;
     assert.equal(custom.cwd, external);
     assert.deepEqual(custom.settings, changed);
-    const named = await call(socket, "bot_start", { id: "named", settings: { model: "gpt-6-sol", reasoningEffort: "medium" } }) as View;
+    const named = await call(socket, "bot_start", { id: "named", account, settings: { model: "gpt-6-sol", reasoningEffort: "medium" } }) as View;
     assert.equal(named.cwd, join(stateDir, "bots", "named"));
     assert.deepEqual(named.settings, { ...changed, model: "gpt-6-sol", reasoningEffort: "medium" });
     assert.equal((await call(socket, "bot_list") as { bots: View[] }).bots.length, 3);
@@ -115,12 +121,12 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
     await call(socket, "bot_stop", { id: first.id });
     for (let i = 0; i < 100 && !notices.includes("bots_changed"); i++) await new Promise((resolve) => setTimeout(resolve, 10));
     assert.ok(notices.includes("bots_changed"));
-    await call(socket, "bot_start", { id: first.id, args: [] });
+    await call(socket, "bot_start", { id: first.id, account, args: [] });
     const saved = new StateStore(stateDir);
     assert.deepEqual(saved.servers().find((entry) => entry.id === first.id)?.args, []);
     saved.close();
 
-    const second = await call(socket, "bot_start") as View;
+    const second = await call(socket, "bot_start", { account }) as View;
     assert.equal(second.id, "bot-2");
     assert.deepEqual(second.settings, changed);
     await bots.close();

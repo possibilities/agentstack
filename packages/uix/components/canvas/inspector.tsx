@@ -117,7 +117,7 @@ function resolve(ref: NodeRef, state: StackState): View | null {
   }
 }
 
-const accountControls = new Set(["account_activate", "account_remove", "account_login_replace"]);
+const accountControls = new Set(["account_set_enabled", "account_remove", "account_login_replace"]);
 const loginControls = new Set(["account_login_cancel", "account_login_status"]);
 
 function BotControls({ bot }: { bot: Bot }) {
@@ -146,13 +146,13 @@ function BotControls({ bot }: { bot: Bot }) {
 
 function AccountControls({ account }: { account: Account }) {
   const actions = useAuthActions();
-  const pending = actions.activating === account.id;
+  const pending = actions.changingAvailability === account.id;
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex flex-wrap gap-1.5">
-        <Button size="sm" variant="outline" disabled={account.active || account.removing || pending} onClick={() => actions.activate(account)}>
+        <Button size="sm" variant="outline" disabled={account.removing || pending} onClick={() => actions.setEnabled(account, !account.enabled)}>
           {pending ? <Spinner data-icon="inline-start" /> : <CircleCheckIcon data-icon="inline-start" />}
-          Make active
+          {account.enabled ? "Disable" : "Enable"}
         </Button>
         <Button size="sm" variant="outline" disabled={account.removing || actions.pendingSignIn} onClick={() => actions.startSignIn(account.id)}>
           <RefreshCwIcon data-icon="inline-start" />
@@ -163,7 +163,7 @@ function AccountControls({ account }: { account: Account }) {
           Remove…
         </Button>
       </div>
-      {actions.error?.op === "activate" && actions.error.target === account.id ? (
+      {actions.error?.op === "availability" && actions.error.target === account.id ? (
         <p className="text-[0.72rem] text-pretty text-destructive">{actions.error.message}</p>
       ) : null}
       {account.removing ? (

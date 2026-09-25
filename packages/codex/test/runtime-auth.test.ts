@@ -19,22 +19,22 @@ test("watcher imports a completed refresh and recovery catches one missed while 
     const home = join(runtimeRoot, "codex-runtime");
     await mkdir(home);
     const file = join(home, "auth.json");
-    await writeFile(file, store.activeAccount().auth);
+    await writeFile(file, store.accountCredentials(store.codexAccounts()[0]!.id).auth);
     const record: StoredServer = { id: "watched", pid: 1, cwd: root, url: "ws://127.0.0.1:40001", state: "running", codexBin: "codex", account: accountId, launchedAccount: accountId, authVersion: 1, runtimeRoot, mainThreadId: "thread-watched", threadStarting: false, args: [] };
     store.saveServer(record);
     await monitor.watch(record);
     await writeFile(file, '{"tokens":'); // A watcher event can arrive during a truncate/write.
     await new Promise((resolve) => setTimeout(resolve, 30));
     await writeFile(file, auth("2026-09-23T11:00:00Z", "second"));
-    for (let i = 0; i < 50 && store.activeAccount().version === 1; i += 1) await new Promise((resolve) => setTimeout(resolve, 25));
-    assert.equal(store.activeAccount().auth, auth("2026-09-23T11:00:00Z", "second"));
+    for (let i = 0; i < 50 && store.accountCredentials(store.codexAccounts()[0]!.id).version === 1; i += 1) await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(store.accountCredentials(store.codexAccounts()[0]!.id).auth, auth("2026-09-23T11:00:00Z", "second"));
     assert.equal(store.servers()[0]?.authVersion, 2);
 
     await monitor.close(); // Simulate the owner not observing the next write.
     await writeFile(file, auth("2026-09-23T12:00:00Z", "third"));
     const recovered = new RuntimeAuth(store);
     assert.equal(await recovered.reconcile(record), "updated");
-    assert.equal(store.activeAccount().auth, auth("2026-09-23T12:00:00Z", "third"));
+    assert.equal(store.accountCredentials(store.codexAccounts()[0]!.id).auth, auth("2026-09-23T12:00:00Z", "third"));
     await recovered.finish(record);
     assert.equal(record.runtimeRoot, null);
     await assert.rejects(readFile(file), /ENOENT/);

@@ -68,7 +68,7 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
                   <Orb id={account.id} size="sm" />
                   <span>{labels.get(account.id)}</span>
                   <span className="font-mono text-xs text-muted-foreground">{shortId(account.id)}</span>
-                  {account.active ? <CommandShortcut className="tracking-normal">active</CommandShortcut> : null}
+                  <CommandShortcut className="tracking-normal">{account.enabled ? "enabled" : "disabled"}</CommandShortcut>
                 </CommandItem>
               ))}
             </CommandGroup>
@@ -104,10 +104,10 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
             {accounts.data?.filter(removable).flatMap((account) => {
               const label = labels.get(account.id) ?? shortId(account.id);
               return [
-                ...(!account.active ? [
-                  <CommandItem key={`${account.id}-activate`} value={`action make ${label} active ${account.id}`} onSelect={() => act(() => auth.activate(account))}>
+                ...(!account.enabled ? [
+                  <CommandItem key={`${account.id}-enable`} value={`action enable ${label} ${account.id}`} onSelect={() => act(() => auth.setEnabled(account, true))}>
                     <CircleCheckIcon />
-                    Make {label} active
+                    Enable {label}
                   </CommandItem>,
                 ] : []),
                 <CommandItem key={`${account.id}-replace`} value={`action sign in again ${label} replace ${account.id}`} onSelect={() => act(() => auth.startSignIn(account.id))}>

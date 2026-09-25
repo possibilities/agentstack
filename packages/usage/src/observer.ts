@@ -32,7 +32,7 @@ export class UsageObserver {
 
   constructor(readonly stateDir: string, private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly accounts: LoadAccounts = async () => {
-      const value = await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_list", arguments: {} }, { timeoutMs: 5_000 }) as { accounts: Registered[] };
+      const value = await socketCall(socketPath("auth", env), "tools/call", { name: "account_list", arguments: {} }, { timeoutMs: 5_000 }) as { accounts: Registered[] };
       return value.accounts;
     },
     private readonly fetchAccount: FetchAccount = (id, provider) => collectAccount(stateDir, id, provider, fetch, this.controller.signal),

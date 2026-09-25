@@ -200,7 +200,7 @@ export function AccountsWindow() {
         </div>
       ) : accounts.data ? (
         <div className="flex flex-col gap-2.5">
-          <Empty icon={KeyRoundIcon} title="No Codex accounts">Device sign-in creates the first one; it becomes active.</Empty>
+          <Empty icon={KeyRoundIcon} title="No Codex accounts">Device sign-in creates an enabled account. Choose its ID when starting a bot.</Empty>
           <div className="flex justify-center">
             <Button size="sm" variant="outline" onClick={() => actions.startSignIn()} disabled={actions.pendingSignIn}>
               {actions.pendingSignIn ? <Spinner data-icon="inline-start" /> : <UserRoundPlusIcon data-icon="inline-start" />}
@@ -211,7 +211,7 @@ export function AccountsWindow() {
       ) : (
         <Empty icon={ShieldAlertIcon} title="Accounts unavailable">{accounts.error ?? "Waiting for the auth socket."}</Empty>
       )}
-      {accounts.data?.length ? <p className="px-0.5 text-[0.7rem] text-pretty text-muted-foreground">The active account binds to newly created bots. Labels are numbered from the current list; IDs never change.</p> : null}
+      {accounts.data?.length ? <p className="px-0.5 text-[0.7rem] text-pretty text-muted-foreground">Choose an enabled account ID when starting a bot. Labels are numbered from this list; IDs never change.</p> : null}
     </Window>
   );
 }
@@ -288,10 +288,10 @@ function SignInCard({ attempt, labels, accounts, catalog }: { attempt: Login; la
               <span className="font-medium">{target ? `${resultLabel} credentials replaced` : `${resultLabel} is signed in`}</span>
             </p>
             <div className="flex items-center gap-1.5">
-              {result && !result.active && !result.removing ? (
-                <Button size="sm" variant="secondary" disabled={actions.activating === result.id} onClick={() => actions.activate(result)}>
-                  {actions.activating === result.id ? <Spinner data-icon="inline-start" /> : null}
-                  Make active
+              {result && !result.enabled && !result.removing ? (
+                <Button size="sm" variant="secondary" disabled={actions.changingAvailability === result.id} onClick={() => actions.setEnabled(result, true)}>
+                  {actions.changingAvailability === result.id ? <Spinner data-icon="inline-start" /> : null}
+                  Enable
                 </Button>
               ) : null}
               <Button size="sm" variant="ghost" onClick={actions.dismissAttempt}>Dismiss</Button>
@@ -326,8 +326,8 @@ function AccountCard({ account, label, bots }: { account: Account; label: string
   const used = botsFor(account.id, bots);
   const removing = account.removing || actions.removing === account.id;
   const busy = actions.removing === account.id;
-  const activating = actions.activating === account.id;
-  const errorFor = (op: "activate" | "remove") =>
+  const changingAvailability = actions.changingAvailability === account.id;
+  const errorFor = (op: "availability" | "remove") =>
     actions.error?.op === op && actions.error.target === account.id ? actions.error.message : null;
   return (
     <NodeCard node={{ kind: "account", id: account.id }} label={`account ${label}`} className={cn(removing && "opacity-60")}>
@@ -336,7 +336,7 @@ function AccountCard({ account, label, bots }: { account: Account; label: string
         <div className="flex min-w-0 flex-col">
           <span className="flex items-center gap-2 text-sm font-semibold">
             {label}
-            {account.active ? <Badge className="h-4 bg-success/15 px-1.5 text-[0.62rem] text-success">Active</Badge> : null}
+            <Badge className={cn("h-4 px-1.5 text-[0.62rem]", account.enabled ? "bg-success/15 text-success" : "bg-muted text-muted-foreground")}>{account.enabled ? "Enabled" : "Disabled"}</Badge>
             {removing ? <Badge variant="destructive" className="h-4 px-1.5 text-[0.62rem]">Removing</Badge> : null}
           </span>
           <span className="group/row flex items-center gap-1 font-mono text-[0.7rem] text-muted-foreground">
@@ -350,8 +350,8 @@ function AccountCard({ account, label, bots }: { account: Account; label: string
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuGroup>
-              <DropdownMenuItem disabled={account.active || removing || activating} onClick={() => actions.activate(account)}>
-                <CircleCheckIcon />Make active
+              <DropdownMenuItem disabled={removing || changingAvailability} onClick={() => actions.setEnabled(account, !account.enabled)}>
+                <CircleCheckIcon />{account.enabled ? "Disable" : "Enable"}
               </DropdownMenuItem>
               <DropdownMenuItem disabled={removing} onClick={() => actions.startSignIn(account.id)}>
                 <RefreshCwIcon />Sign in again
@@ -381,13 +381,13 @@ function AccountCard({ account, label, bots }: { account: Account; label: string
           <Button size="xs" variant="outline" className="w-fit" onClick={() => actions.finishRemoval(account)}>Finish removal</Button>
           {errorFor("remove") ? <p className="text-[0.72rem] text-pretty text-destructive">{errorFor("remove")}</p> : null}
         </div>
-      ) : !account.active ? (
+      ) : !account.enabled ? (
         <div className="flex flex-col gap-1">
-          <Button size="xs" variant="secondary" className="w-fit" disabled={activating} onClick={() => actions.activate(account)}>
-            {activating ? <Spinner data-icon="inline-start" /> : null}
-            Make active
+          <Button size="xs" variant="secondary" className="w-fit" disabled={changingAvailability} onClick={() => actions.setEnabled(account, true)}>
+            {changingAvailability ? <Spinner data-icon="inline-start" /> : null}
+            Enable
           </Button>
-          {errorFor("activate") ? <p className="text-[0.72rem] text-pretty text-destructive">{errorFor("activate")}</p> : null}
+          {errorFor("availability") ? <p className="text-[0.72rem] text-pretty text-destructive">{errorFor("availability")}</p> : null}
         </div>
       ) : null}
     </NodeCard>

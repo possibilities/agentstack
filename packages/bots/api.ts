@@ -75,9 +75,10 @@ async function claimNamedWorkspace(path: string): Promise<string> {
 
 export const botStart = operation({
   name: "bot_start",
-  description: "Start a bot or return its live process. Omit id for the next bot-N and a private workspace. New bots copy bot_defaults_get settings and bind the active account. Optional settings override this Bot's saved launch settings; saved args follow and can override them. A running bot rejects changed settings, args, or account assignment; stop/start applies changes.",
+  description: "Start a bot or return its live process under the explicitly named enabled Codex account. Omit id for the next bot-N and a private workspace. Existing bots retain their assignment; use bot_assign, stop, then start to change it. New bots copy bot_defaults_get settings; optional settings and saved args override them.",
   input: z.strictObject({
     id: botId.optional().describe("Existing or custom bot id. Omit to allocate the next bot-N."),
+    account: z.uuid().describe("Required enabled Codex account ID from account_list. For an existing bot, must equal its assignment."),
     cwd: z.string().optional().describe("Existing working directory override. Omit for a new private workspace or to reuse an existing bot's workspace. A supplied directory is never deleted by bot_remove."),
     args: z.array(z.string()).optional().describe("Extra Codex arguments retained for future launches. Omit to reuse saved args; [] clears them while stopped. AgentStack owns --listen, --identity, --capabilities, and --history-dir."),
     settings: botSettings.partial().optional().describe("Override defaults for a new Bot, or update saved settings of a stopped Bot. Omit to reuse its saved settings."),
@@ -85,6 +86,9 @@ export const botStart = operation({
   output: botView, annotations: { title: "Start bot" },
   async call(ctx: BotsContext, input) {
     const existing = input.id === undefined ? undefined : ctx.supervisor.list().find((bot) => bot.id === input.id);
+    if (!ctx.store.codexAccounts().some((account) => account.id === input.account && account.enabled && !account.removing))
+      throw new Error(`Codex account ${input.account} is unavailable or disabled`);
+    if (existing && existing.account !== input.account) throw new Error(`bot ${existing.id} is assigned to a different account; use bot_assign before starting it`);
     let id = input.id;
     if (!id) id = ctx.ledger.reserve(claimWorkspace(ctx.root, new Set(ctx.supervisor.list().map((bot) => bot.id)), input.cwd === undefined), input.cwd === undefined);
     let cwd: string;
@@ -95,7 +99,7 @@ export const botStart = operation({
       cwd = await claimNamedWorkspace(workspacePath(ctx.root, id));
       ctx.ledger.ownWorkspace(id);
     }
-    return ctx.supervisor.start({ id, cwd, args: input.args, settings: input.settings });
+    return ctx.supervisor.start({ id, cwd, account: input.account, args: input.args, settings: input.settings });
   },
 });
 export const botAssign = operation({

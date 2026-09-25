@@ -47,7 +47,7 @@ test("device login imports only finished credentials into the secrets database",
     assert.equal(result.authUrl, null);
     assert.equal(result.userCode, null);
     assert.equal(login.current(), null);
-    assert.equal(store.activeAccount().auth, credential("fixture-secret"));
+    assert.equal(store.accountCredentials(result.account!).auth, credential("fixture-secret"));
     const id = result.account!;
     const replacement = await login.start(id);
     assert.equal(replacement.targetAccount, id);
@@ -55,7 +55,7 @@ test("device login imports only finished credentials into the secrets database",
     assert.equal(updated.status, "complete");
     assert.equal(updated.authUrl, null);
     assert.equal(updated.userCode, null);
-    assert.deepEqual(store.listAccounts(), [{ id, active: true, removing: false }]);
+    assert.deepEqual(store.listAccounts(), [{ id, provider: "codex", enabled: true, ready: false, removing: false }]);
   } finally { await login.close(); store.close(); await rm(root, { recursive: true, force: true }); }
 });
 

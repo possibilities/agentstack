@@ -40,7 +40,7 @@ test("package notices keep bot membership and worker accounts live", async () =>
   let workerAccounts = [];
   const results = {
     bot_list: () => ({ bots }), voice_status: () => ({ call: null }),
-    account_list: () => ({ accounts: [] }), worker_account_list: () => ({ accounts: workerAccounts }),
+    account_list: () => ({ accounts: workerAccounts }),
     account_login_current: () => ({ login: null }),
   };
 
@@ -104,7 +104,7 @@ test("package notices keep bot membership and worker accounts live", async () =>
     await until(store, () => store.getState().bots.data?.[0]?.id === "bot-2" && !store.getState().scoped["bot-1"]);
 
     workerAccounts = [{ id: "worker-1", provider: "grok", enabled: true, ready: true, removing: false }];
-    publish("auth", "worker_accounts_changed");
+    publish("auth", "accounts_changed");
     await until(store, () => store.getState().workerAccounts.data?.[0]?.id === "worker-1");
 
     // A reconnect snapshots membership even when a change occurred while offline.

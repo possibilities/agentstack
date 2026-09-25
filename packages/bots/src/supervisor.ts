@@ -37,6 +37,7 @@ type RecordFile = StoredServer;
 export type StartInput = {
   cwd: string;
   id?: string;
+  account?: string;
   args?: string[];
   settings?: Partial<BotSettings>;
 };
@@ -229,7 +230,7 @@ export class Supervisor {
     return this.enqueue(id, async () => {
       const record = this.records.get(id);
       if (!record) throw new Error(`unknown server: ${id}`);
-      if (!this.store.listAccounts().some((account) => account.id === accountId && !account.removing)) {
+      if (!this.store.codexAccounts().some((account) => account.id === accountId && account.enabled && !account.removing)) {
         throw new Error(`unknown Codex account: ${accountId}`);
       }
       if (record.account === accountId) return this.view(record);
@@ -313,9 +314,11 @@ export class Supervisor {
       if (current.runtimeRoot) throw new Error(`server ${id} has unreconciled Codex credentials; inspect its private runtime`);
     }
     if (current?.roleRoot) await this.releaseRole(current, true);
-    const selected = current
-      ? current.account
-      : this.store.listAccounts().find((account) => account.active && !account.removing)?.id ?? null;
+    if (current && input.account !== undefined && current.account !== input.account)
+      throw new Error(`server ${id} is assigned to a different Codex account; use bot_assign first`);
+    const selected = current ? current.account : input.account ?? null;
+    if (selected && !this.store.codexAccounts().some((account) => account.id === selected && account.enabled && !account.removing))
+      throw new Error(`Codex account ${selected} is unavailable or disabled`);
     if (selected) {
       for (const record of this.records.values()) {
         if (record.launchedAccount === selected && record.runtimeRoot) {

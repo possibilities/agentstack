@@ -77,7 +77,7 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
   const fleet = spaceAttention({
     ...quiet,
     bots: { data: [{ id: "bot-1", pid: null, cwd: "/tmp", url: null, state: "stopped", account: null, runningAccount: null, mainThreadId: null, recoveryIssue: "orphaned app-server", roleRevision: null, settings: null }], error: null, at: null },
-    accounts: { data: [{ id: "a1", active: true, removing: false }, { id: "a2", active: false, removing: true }], error: null, at: null },
+    accounts: { data: [{ id: "a1", provider: "codex", enabled: true, ready: false, removing: false }, { id: "a2", provider: "codex", enabled: false, ready: false, removing: true }], error: null, at: null },
     attempt: { id: "l1", status: "failed", authUrl: null, userCode: null, account: null, error: "denied", targetAccount: null },
     status: { auth: "closed", bots: "closed" },
   });

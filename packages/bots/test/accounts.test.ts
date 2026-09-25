@@ -34,9 +34,9 @@ test("a server snapshots its account at launch and never falls back to ambient C
       bindThread: async (_url, _cwd, id) => id ?? `thread-${observed.length}`,
     });
     await supervisor.load();
-    const first = await supervisor.start({ cwd, id: "one" });
-    store.activate(secondAccount.id);
-    const second = await supervisor.start({ cwd, id: "two" });
+    const first = await supervisor.start({ cwd, id: "one", account: firstAccount.id });
+    store.setEnabled(firstAccount.id, false);
+    const second = await supervisor.start({ cwd, id: "two", account: secondAccount.id });
     assert.deepEqual([first.account, second.account], [firstAccount.id, secondAccount.id]);
     assert.deepEqual(observed.map(({ auth }) => auth), [credential("first-secret"), credential("second-secret")]);
     assert.deepEqual(observed.map(({ spec }) => spec.env.CODEX_HOME), [undefined, undefined]);
@@ -44,13 +44,15 @@ test("a server snapshots its account at launch and never falls back to ambient C
     assert.equal((await supervisor.start({ cwd, id: "one" })).account, firstAccount.id);
     assert.equal(supervisor.list().find((server) => server.id === "two")?.account, secondAccount.id);
     await supervisor.stop("one");
+    await assert.rejects(supervisor.start({ cwd, id: "one" }), /unavailable or disabled/);
+    store.setEnabled(firstAccount.id, true);
     const resumed = await supervisor.start({ cwd, id: "one" });
     assert.equal(resumed.account, firstAccount.id);
     assert.equal(resumed.mainThreadId, first.mainThreadId);
     assert.equal(observed.at(-1)?.auth, credential("first-secret"));
     await supervisor.remove("one");
     store.removeAccount(firstAccount.id);
-    assert.deepEqual(store.listAccounts(), [{ id: secondAccount.id, active: true, removing: false }]);
+    assert.deepEqual(store.listAccounts(), [{ id: secondAccount.id, provider: "codex", enabled: true, ready: false, removing: false }]);
     assert.equal(supervisor.list().find((server) => server.id === "two")?.account, secondAccount.id);
     assert.equal((await supervisor.start({ cwd, id: "two" })).account, secondAccount.id);
   } finally { store.close(); await rm(root, { recursive: true, force: true }); await rm(cwd, { recursive: true, force: true }); }
@@ -179,8 +181,8 @@ test("existing SQLite state gains runtime and credential generations without los
     secrets.exec("ALTER TABLE credentials DROP COLUMN version");
     secrets.close();
     const upgraded = new StateStore(root);
-    assert.equal(upgraded.activeAccount().auth, credential("before-upgrade"));
-    assert.equal(upgraded.activeAccount().version, 1);
+    assert.equal(upgraded.accountCredentials(upgraded.codexAccounts()[0]!.id).auth, credential("before-upgrade"));
+    assert.equal(upgraded.accountCredentials(upgraded.codexAccounts()[0]!.id).version, 1);
     assert.equal(upgraded.servers()[0]?.mainThreadId, null);
     assert.equal(upgraded.servers()[0]?.threadStarting, false);
     assert.deepEqual(upgraded.servers()[0]?.args, []);

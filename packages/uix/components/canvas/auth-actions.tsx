@@ -26,14 +26,14 @@ export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export type ActionError = { op: "activate" | "cancel" | "remove" | "signin"; target: string | null; message: string };
+export type ActionError = { op: "availability" | "cancel" | "remove" | "signin"; target: string | null; message: string };
 
 export type AuthActions = {
   /** Start a device sign-in (or replace an account's credentials); confirms first when one is pending. */
   startSignIn(targetAccount?: string | null): void;
   pendingSignIn: boolean;
-  activate(account: Account): void;
-  activating: string | null;
+  setEnabled(account: Account, enabled: boolean): void;
+  changingAvailability: string | null;
   /** Open the shared destructive remove confirmation for an account. */
   confirmRemove(account: Account): void;
   /** Retry `account_remove` directly, for accounts already marked removing. */
@@ -60,12 +60,12 @@ export function AuthActionsProvider({ children }: { children: React.ReactNode })
   const { accounts, bots, attempt } = useStack();
   const start = useOperation<Login>("auth", "account_login_start");
   const replace = useOperation<Login>("auth", "account_login_replace");
-  const activateOp = useOperation<Account>("auth", "account_activate");
+  const enableOp = useOperation<Account>("auth", "account_set_enabled");
   const removeOp = useOperation<{ accounts: Account[] }>("auth", "account_remove");
   const cancelOp = useOperation<Login>("auth", "account_login_cancel");
   const [removeTarget, setRemoveTarget] = useState<Account | null>(null);
   const [restart, setRestart] = useState<{ target: string | null } | null>(null);
-  const [activating, setActivating] = useState<string | null>(null);
+  const [changingAvailability, setChangingAvailability] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [error, setError] = useState<ActionError | null>(null);
 
@@ -108,19 +108,19 @@ export function AuthActionsProvider({ children }: { children: React.ReactNode })
       else void launch(targetAccount);
     },
     pendingSignIn: start.pending || replace.pending,
-    activate: (account) => {
+    setEnabled: (account, enabled) => {
       setError(null);
-      setActivating(account.id);
-      void activateOp.run({ id: account.id }).then(
-        () => toast.success(`${label(account.id)} is now active`),
+      setChangingAvailability(account.id);
+      void enableOp.run({ id: account.id, enabled }).then(
+        () => toast.success(`${label(account.id)} ${enabled ? "enabled" : "disabled"}`),
         (cause) => {
           const message = errorMessage(cause);
-          setError({ op: "activate", target: account.id, message });
+          setError({ op: "availability", target: account.id, message });
           toast.error(message);
         },
-      ).finally(() => setActivating(null));
+      ).finally(() => setChangingAvailability(null));
     },
-    activating,
+    changingAvailability,
     confirmRemove: setRemoveTarget,
     finishRemoval: (account) => void runRemove(account),
     removing,
@@ -199,9 +199,6 @@ function RemoveAccountDialog({ account, label, used, pending, error, onConfirm, 
           <AlertDialogDescription className="font-mono text-[0.72rem] break-all">{account.id}</AlertDialogDescription>
         </AlertDialogHeader>
         <div className="flex flex-col gap-3 text-[0.8rem]">
-          {account.active ? (
-            <p className="rounded-lg bg-warning/10 px-2.5 py-2 text-[0.75rem] text-pretty text-warning">This is the active account. The next remaining account becomes active.</p>
-          ) : null}
           {used.length ? (
             <div className="flex flex-col gap-1.5 rounded-lg border bg-background/50 p-2.5">
               <span className="text-[0.72rem] font-medium text-muted-foreground">

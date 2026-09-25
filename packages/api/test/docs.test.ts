@@ -59,7 +59,8 @@ test("the api package serves structured documents for every workspace package", 
     );
     const start = bots.operations.find((operation) => operation.name === "bot_start") as OperationDoc;
     assert.ok(start.description.length > 0);
-    assert.deepEqual(Object.keys((start.inputSchema.properties ?? {}) as object).sort(), ["args", "cwd", "id", "settings"]);
+    assert.deepEqual(Object.keys((start.inputSchema.properties ?? {}) as object).sort(), ["account", "args", "cwd", "id", "settings"]);
+    assert.deepEqual(start.inputSchema.required, ["account"]);
     assert.ok((start.outputSchema.properties as Record<string, unknown>).recoveryIssue);
     assert.ok((start.outputSchema.properties as Record<string, unknown>).roleRevision);
     assert.ok((start.outputSchema.properties as Record<string, unknown>).settings);
@@ -91,11 +92,11 @@ test("the api package serves structured documents for every workspace package", 
     const roleView = roles.operations.find((operation) => operation.name === "role_snapshot") as OperationDoc;
     assert.deepEqual(Object.keys(roleView.outputSchema.properties as object).sort(), ["categories", "mcpServers", "revision", "skills", "trustedProjects"]);
     assert.equal(roles.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
-    assert.deepEqual(Object.keys(auth.events).sort(), ["accounts_changed", "login_changed", "worker_accounts_changed"]);
+    assert.deepEqual(Object.keys(auth.events).sort(), ["accounts_changed", "login_changed"]);
     assert.deepEqual(
       auth.operations.map((operation) => operation.name).sort(),
-      ["account_activate", "account_list", "account_login_cancel", "account_login_current", "account_login_replace", "account_login_start", "account_login_status", "account_remove",
-        "worker_account_list", "worker_account_prepare", "worker_account_confirm", "worker_account_set_enabled", "worker_account_remove"].sort(),
+      ["account_set_enabled", "account_list", "account_login_cancel", "account_login_current", "account_login_replace", "account_login_start", "account_login_status", "account_remove",
+        "worker_account_prepare", "worker_account_confirm"].sort(),
     );
     assert.deepEqual((auth.operations.find((operation) => operation.name === "account_login_start")?.inputSchema.properties ?? {}), {});
     const workers = found.get("workers") as PackageDoc;

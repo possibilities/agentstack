@@ -72,7 +72,7 @@ test("ACP catalog reflects the exact account process and dependent effort choice
     assert.equal(stale.stale, true);
     assert.equal(stale.observedAt, b.observedAt);
     assert.equal((await supervisor.catalog(second, false)).stale, true);
-    await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_set_enabled", arguments: { id: first, enabled: false } }).catch(() => undefined);
+    await socketCall(socketPath("auth", env), "tools/call", { name: "account_set_enabled", arguments: { id: first, enabled: false } }).catch(() => undefined);
     await supervisor.reconcile();
     assert.equal(supervisor.runtimeList().length, 1);
   } finally {
@@ -100,6 +100,9 @@ test("operator disable and removal drain the exact account process before deleti
   const call = (name: string, args: object) => socketCall(socketPath("auth", env), "tools/call", { name, arguments: args });
   try {
     const { account } = await call("worker_account_prepare", { provider: "grok" }) as { account: { id: string } };
+    assert.deepEqual((await call("account_list", {}) as { accounts: unknown[] }).accounts, [
+      { id: account.id, provider: "grok", enabled: true, ready: false, removing: false },
+    ]);
     const root = join(dir, "worker-accounts", account.id);
     await (await import("node:fs/promises")).mkdir(join(root, "data", "opencode"), { recursive: true });
      await writeV2Credential(join(root, "data", "opencode", "opencode.db"), "xai", JSON.stringify({ type: "oauth", access: "first", refresh: "first" }));
@@ -116,16 +119,16 @@ test("operator disable and removal drain the exact account process before deleti
     assert.equal(catalog.models.length, 2);
      assert.equal(catalog.runtimeVersion, "fake-acp 2.0");
     assert.equal(catalog.stale, false);
-    await call("worker_account_set_enabled", { id: account.id, enabled: false });
+    await call("account_set_enabled", { id: account.id, enabled: false });
     assert.equal((await runtimes()).length, 0);
-    await call("worker_account_set_enabled", { id: account.id, enabled: true });
+    await call("account_set_enabled", { id: account.id, enabled: true });
     for (let attempt = 0; attempt < 40 && !(await runtimes()).some((item) => item.id === account.id); attempt++)
       await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal((await runtimes()).length, 1);
-    await call("worker_account_remove", { id: account.id });
+    await call("account_remove", { id: account.id });
     assert.equal((await runtimes()).length, 0);
     await assert.rejects(stat(root), /ENOENT/);
-    assert.deepEqual((await call("worker_account_list", {}) as { accounts: unknown[] }).accounts, []);
+    assert.deepEqual((await call("account_list", {}) as { accounts: unknown[] }).accounts, []);
   } finally {
     await workers.close();
     await auth.close();

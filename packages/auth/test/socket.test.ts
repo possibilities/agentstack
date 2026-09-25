@@ -41,16 +41,15 @@ test("auth serves accounts and device sign-in on its namespaced socket", { timeo
     assert.equal(listed.websocket, null);
     assert.deepEqual(listed.events, {
       topics: {
-        accounts_changed: "Published when a Codex account signs in, is selected, or is removed.",
+        accounts_changed: "Published when an account signs in, is prepared, confirmed, enabled, disabled or removed. Refresh account_list.",
         login_changed: "Published when a Codex device sign-in starts, shows its prompt, is superseded or cancelled, or finishes. Never carries the prompt or credentials.",
-        worker_accounts_changed: "Published when a worker account is prepared, confirmed, enabled, disabled or removed. Refresh worker_account_list.",
       },
       subscribe: "events/subscribe",
     });
     assert.deepEqual(
       listed.tools.map((tool) => tool.name),
-      ["account_list", "account_activate", "account_remove", "account_login_start", "account_login_replace", "account_login_status", "account_login_current", "account_login_cancel",
-        "worker_account_list", "worker_account_prepare", "worker_account_confirm", "worker_account_set_enabled", "worker_account_remove"],
+      ["account_list", "account_set_enabled", "account_remove", "account_login_start", "account_login_replace", "account_login_status", "account_login_current", "account_login_cancel",
+        "worker_account_prepare", "worker_account_confirm"],
     );
 
     await assert.rejects(socketCall(served.socketPath, "events/subscribe", { topics: [] }), /non-empty/);
@@ -85,7 +84,7 @@ test("auth serves accounts and device sign-in on its namespaced socket", { timeo
     assert.equal(settled.authUrl, null);
     assert.equal(settled.userCode, null);
     assert.deepEqual(await call(served.socketPath, "account_login_current"), { login: null });
-    assert.deepEqual(await call(served.socketPath, "account_list"), { accounts: [{ id: firstId, active: true, removing: false }] });
+    assert.deepEqual(await call(served.socketPath, "account_list"), { accounts: [{ id: firstId, provider: "codex", enabled: true, ready: false, removing: false }] });
 
     const reauth = (await call(served.socketPath, "account_login_replace", { id: firstId })) as ServedLogin;
     assert.equal(reauth.targetAccount, firstId);
@@ -104,9 +103,9 @@ test("auth serves accounts and device sign-in on its namespaced socket", { timeo
     }
     const secondId = settledSecond.account!;
     assert.notEqual(secondId, firstId);
-    assert.deepEqual(await call(served.socketPath, "account_activate", { id: firstId }), { id: firstId, active: true, removing: false });
-    assert.deepEqual(await call(served.socketPath, "account_remove", { id: firstId }), { accounts: [{ id: secondId, active: true, removing: false }] });
-    await assert.rejects(call(served.socketPath, "account_activate", { id: firstId }), /unknown Codex account/);
+    assert.deepEqual(await call(served.socketPath, "account_set_enabled", { id: firstId, enabled: false }), { id: firstId, provider: "codex", enabled: false, ready: false, removing: false });
+    assert.deepEqual(await call(served.socketPath, "account_remove", { id: firstId }), { accounts: [{ id: secondId, provider: "codex", enabled: true, ready: false, removing: false }] });
+    await assert.rejects(call(served.socketPath, "account_set_enabled", { id: firstId, enabled: true }), /unknown/);
     await assert.rejects(socketCall(served.socketPath, "tools/call", { name: "server_list", arguments: {} }), /unknown operation/);
 
     for (let i = 0; i < 100 && !events.includes("accounts_changed"); i += 1) {

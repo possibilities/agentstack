@@ -10,7 +10,7 @@ import { AuthStore } from "../src/store.js";
 
 const credential = (token: string) => JSON.stringify({ tokens: { refresh_token: token, access_token: "access", id_token: "fixture.jwt.signature" } });
 
-test("accounts have stable IDs, are selectable, and store credentials separately", async () => {
+test("accounts have stable IDs, can be disabled, and store credentials separately", async () => {
   const root = await mkdtemp(join(tmpdir(), "agentstack-accounts-"));
   try {
     const store = new AuthStore(root);
@@ -19,22 +19,23 @@ test("accounts have stable IDs, are selectable, and store credentials separately
     const second = store.addAccount(credential("second-secret"));
     assert.match(first.id, /^[0-9a-f-]{36}$/);
     assert.notEqual(first.id, second.id);
-    assert.deepEqual(store.listAccounts(), [{ id: first.id, active: true, removing: false }, { id: second.id, active: false, removing: false }]);
-    store.activate(second.id);
-    assert.equal(store.activeAccount().auth, credential("second-secret"));
+    assert.deepEqual(store.listAccounts(), [first, second]);
+    store.setEnabled(first.id, false);
+    assert.equal(store.listAccounts()[0]?.enabled, false);
+    assert.equal(store.accountCredentials(second.id).auth, credential("second-secret"));
     store.replaceCredentials(second.id, credential("replacement-secret"));
-    assert.equal(store.activeAccount().auth, credential("replacement-secret"));
+    assert.equal(store.accountCredentials(second.id).auth, credential("replacement-secret"));
     store.removeAccount(first.id);
     const third = store.addAccount(credential("third-secret"));
     assert.notEqual(third.id, first.id);
-    assert.throws(() => store.activate(first.id), /unknown/);
+    assert.throws(() => store.setEnabled(first.id, true), /unknown/);
     assert.throws(() => store.addAccount("{}"), /ChatGPT credentials/);
     store.close();
 
     const reopened = new AuthStore(root);
-    assert.deepEqual(reopened.listAccounts(), [{ id: second.id, active: true, removing: false }, { id: third.id, active: false, removing: false }]);
+    assert.deepEqual(reopened.listAccounts(), [second, third]);
     reopened.removeAccount(second.id);
-    assert.deepEqual(reopened.listAccounts(), [{ id: third.id, active: true, removing: false }]);
+    assert.deepEqual(reopened.listAccounts(), [third]);
     reopened.close();
     assert.equal((await stat(join(root, "configuration.sqlite"))).mode & 0o777, 0o600);
     assert.equal((await stat(join(root, "secrets.sqlite"))).mode & 0o777, 0o600);
@@ -53,7 +54,7 @@ test("legacy ordinal references migrate atomically across credentials and Server
     const secrets = new DatabaseSync(join(root, "secrets.sqlite"));
     config.prepare("UPDATE accounts SET name = 'codex-1' WHERE name = ?").run(original.id);
     config.exec("ALTER TABLE accounts DROP COLUMN removing");
-    config.prepare("UPDATE settings SET value = 'codex-1' WHERE key = 'active_account'").run();
+    config.prepare("INSERT INTO settings (key, value) VALUES ('active_account', 'codex-1')").run();
     config.exec("CREATE TABLE servers (id TEXT PRIMARY KEY, account TEXT)");
     config.prepare("INSERT INTO servers VALUES ('bound', 'codex-1')").run();
     secrets.prepare("UPDATE credentials SET name = 'codex-1' WHERE name = ?").run(original.id);
@@ -63,8 +64,11 @@ test("legacy ordinal references migrate atomically across credentials and Server
     const migrated = new AuthStore(root);
     const account = migrated.listAccounts()[0]!;
     assert.notEqual(account.id, "codex-1");
-    assert.equal(migrated.activeAccount().id, account.id);
-    assert.equal(migrated.activeAccount().auth, credential("legacy-secret"));
+    const migratedConfig = new DatabaseSync(join(root, "configuration.sqlite"));
+    assert.equal(migratedConfig.prepare("SELECT 1 FROM settings WHERE key = 'active_account'").get(), undefined);
+    migratedConfig.close();
+    assert.equal(migrated.accountCredentials(account.id).id, account.id);
+    assert.equal(migrated.accountCredentials(account.id).auth, credential("legacy-secret"));
     assert.equal(migrated.resolveLegacyAccount("codex-1"), account.id);
     assert.deepEqual(migrated.boundServerIds(account.id), ["bound"]);
     migrated.beginRemoval(account.id);
@@ -111,7 +115,7 @@ test("refreshed credentials advance only on a strictly newer timestamp and match
     assert.deepEqual(store.syncCredential(id, 2, auth("2026-09-23T11:00:00Z", "different")), { status: "stale", version: 2 });
     assert.deepEqual(store.syncCredential(id, 2, auth("2026-09-23T13:00:00Z", "wrong-account", "another")), { status: "invalid", version: 2 });
     assert.deepEqual(store.syncCredential(id, 2, '{"tokens":'), { status: "invalid", version: null });
-    assert.equal(store.activeAccount().auth, auth("2026-09-23T11:00:00Z", "updated"));
+    assert.equal(store.accountCredentials(id).auth, auth("2026-09-23T11:00:00Z", "updated"));
     store.replaceCredentials(id, auth("2026-09-23T14:00:00Z", "signed-in-again"));
     assert.deepEqual(store.syncCredential(id, 2, auth("2026-09-23T15:00:00Z", "old-runtime")), { status: "stale", version: 3 });
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
@@ -127,7 +131,7 @@ test("a missing timestamp cannot establish that a runtime credential is newer", 
       last_refresh: "2026-09-23T12:00:00Z",
       tokens: { refresh_token: "candidate", access_token: "access", id_token: "fixture.jwt.signature" },
     })), { status: "stale", version: 1 });
-    assert.equal(store.activeAccount().auth, original);
+    assert.equal(store.accountCredentials(id).auth, original);
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 });
 
@@ -141,16 +145,16 @@ test("a second auth store connection sees committed accounts and fences stale re
   try {
     const first = writer.addAccount(auth("2026-09-23T10:00:00Z", "original"));
     const second = writer.addAccount(auth("2026-09-23T10:00:00Z", "other"));
-    writer.activate(second.id);
-    assert.deepEqual(reader.listAccounts(), [{ id: first.id, active: false, removing: false }, { id: second.id, active: true, removing: false }]);
-    assert.equal(reader.activeAccount().auth, auth("2026-09-23T10:00:00Z", "other"));
+    writer.setEnabled(first.id, false);
+    assert.deepEqual(reader.listAccounts(), [{ id: first.id, provider: "codex", enabled: false, ready: false, removing: false }, { id: second.id, provider: "codex", enabled: true, ready: false, removing: false }]);
+    assert.equal(reader.accountCredentials(second.id).auth, auth("2026-09-23T10:00:00Z", "other"));
     writer.replaceCredentials(second.id, auth("2026-09-23T12:00:00Z", "replaced"));
     assert.equal(reader.accountCredentials(second.id).version, 2);
     assert.deepEqual(reader.syncCredential(second.id, 1, auth("2026-09-23T13:00:00Z", "stale-refresh")), { status: "stale", version: 2 });
     assert.deepEqual(reader.syncCredential(second.id, 2, auth("2026-09-23T13:00:00Z", "fresh-refresh")), { status: "updated", version: 3 });
-    assert.equal(writer.activeAccount().auth, auth("2026-09-23T13:00:00Z", "fresh-refresh"));
+    assert.equal(writer.accountCredentials(second.id).auth, auth("2026-09-23T13:00:00Z", "fresh-refresh"));
     writer.removeAccount(first.id);
-    assert.deepEqual(reader.listAccounts(), [{ id: second.id, active: true, removing: false }]);
+    assert.deepEqual(reader.listAccounts(), [{ id: second.id, provider: "codex", enabled: true, ready: false, removing: false }]);
   } finally { writer.close(); reader.close(); await rm(root, { recursive: true, force: true }); }
 });
 

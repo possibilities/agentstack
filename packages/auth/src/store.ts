@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type { WorkerAccount, WorkerProvider } from "./worker-accounts.js";
 
-export type Account = { id: string; active: boolean; removing: boolean };
+export type Account = WorkerAccount;
 
 function privateDatabase(path: string): void {
   try {
@@ -34,7 +34,7 @@ export class AuthStore {
       PRAGMA secrets.secure_delete = ON;
       -- The legacy name columns now hold immutable UUIDs. Keep the columns
       -- so existing attached databases and Server records migrate in place.
-      CREATE TABLE IF NOT EXISTS accounts (number INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, removing INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS accounts (number INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, removing INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1);
       CREATE TABLE IF NOT EXISTS account_aliases (legacy_name TEXT PRIMARY KEY, id TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS secrets.credentials (name TEXT PRIMARY KEY, auth_json TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1);
@@ -54,6 +54,7 @@ export class AuthStore {
     try {
       const columns = this.db.prepare("PRAGMA table_info(accounts)").all() as Array<{ name: string }>;
       if (!columns.some(({ name }) => name === "removing")) this.db.exec("ALTER TABLE accounts ADD COLUMN removing INTEGER NOT NULL DEFAULT 0");
+      if (!columns.some(({ name }) => name === "enabled")) this.db.exec("ALTER TABLE accounts ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1");
       const hasServers = Boolean(this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'servers'").get());
       const hasLaunchedAccount = hasServers && (this.db.prepare("PRAGMA table_info(servers)").all() as Array<{ name: string }>).some(({ name }) => name === "launched_account");
       const legacy = this.db.prepare("SELECT number, name FROM accounts WHERE name GLOB 'codex-[0-9]*'").all() as Array<{ number: number; name: string }>;
@@ -63,7 +64,6 @@ export class AuthStore {
         this.db.prepare("INSERT INTO account_aliases (legacy_name, id) VALUES (?, ?)").run(name, id);
         this.db.prepare("UPDATE accounts SET name = ? WHERE number = ?").run(id, number);
         this.db.prepare("UPDATE secrets.credentials SET name = ? WHERE name = ?").run(id, name);
-        this.db.prepare("UPDATE settings SET value = ? WHERE key = 'active_account' AND value = ?").run(id, name);
         if (hasServers) {
           this.db.prepare("UPDATE servers SET account = ? WHERE account = ?").run(id, name);
           if (hasLaunchedAccount) this.db.prepare("UPDATE servers SET launched_account = ? WHERE launched_account = ?").run(id, name);
@@ -80,6 +80,7 @@ export class AuthStore {
           if (hasLaunchedAccount) this.db.prepare("UPDATE servers SET launched_account = ? WHERE launched_account = ?").run(mapped, account);
         }
       }
+      this.db.prepare("DELETE FROM settings WHERE key = 'active_account'").run();
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -93,12 +94,11 @@ export class AuthStore {
     const records = (this.db.prepare("SELECT id, provider, enabled, ready, removing FROM worker_accounts ORDER BY rowid").all() as Array<{
       id: string; provider: WorkerProvider; enabled: number; ready: number; removing: number;
     }>).map(({ id, provider, enabled, ready, removing }) => ({ id, provider, enabled: Boolean(enabled), ready: Boolean(ready), removing: Boolean(removing) }));
-    for (const codex of this.listAccounts()) {
-      const bound = records.find((item) => item.id === codex.id);
-      if (bound) { bound.enabled = !codex.removing; bound.removing ||= codex.removing; }
-      else records.push({ id: codex.id, provider: "codex", enabled: !codex.removing, ready: false, removing: codex.removing });
-    }
-    return records;
+    const codex = this.codexAccounts().map((account): WorkerAccount => ({
+      ...account, provider: "codex", ready: records.find((item) => item.id === account.id && item.provider === "codex")?.ready ?? false,
+      enabled: account.enabled && !account.removing,
+    }));
+    return [...codex, ...records.filter((item) => item.provider !== "codex")];
   }
 
   hasWorkerBinding(id: string): boolean {
@@ -106,7 +106,7 @@ export class AuthStore {
   }
 
   prepareWorker(provider: WorkerProvider, existingId?: string): WorkerAccount {
-    if (provider === "codex" && (!existingId || !this.listAccounts().some((account) => account.id === existingId && !account.removing)))
+    if (provider === "codex" && (!existingId || !this.codexAccounts().some((account) => account.id === existingId && !account.removing)))
       throw new Error("a valid Codex account ID is required");
     const id = existingId ?? randomUUID();
     const existing = this.workerAccounts().find((item) => item.id === id);
@@ -149,20 +149,12 @@ export class AuthStore {
     return orphanId;
   }
 
-  listAccounts(): Account[] {
-    const active = this.activeId();
-    return (this.db.prepare("SELECT name, removing FROM accounts ORDER BY number").all() as Array<{ name: string; removing: number }>).map(({ name, removing }) => ({ id: name, active: name === active, removing: Boolean(removing) }));
+  codexAccounts(): Array<{ id: string; enabled: boolean; removing: boolean }> {
+    return (this.db.prepare("SELECT name, enabled, removing FROM accounts ORDER BY number").all() as Array<{ name: string; enabled: number; removing: number }>)
+      .map(({ name, enabled, removing }) => ({ id: name, enabled: Boolean(enabled), removing: Boolean(removing) }));
   }
 
-  protected activeId(): string | null {
-    return (this.db.prepare("SELECT value FROM settings WHERE key = 'active_account'").get() as { value: string } | undefined)?.value ?? null;
-  }
-
-  activeAccount(): { id: string; auth: string; version: number } {
-    const id = this.activeId();
-    if (!id) throw new Error("No active Codex account. Start a device sign-in through the auth API (account_login_start) first.");
-    return this.accountCredentials(id);
-  }
+  listAccounts(): Account[] { return this.workerAccounts(); }
 
   accountCredentials(id: string): { id: string; auth: string; version: number } {
     const row = this.db.prepare("SELECT auth_json, version FROM secrets.credentials JOIN accounts ON accounts.name = secrets.credentials.name WHERE accounts.name = ? AND removing = 0").get(id) as { auth_json: string; version: number } | undefined;
@@ -177,18 +169,19 @@ export class AuthStore {
     try {
       this.db.prepare("INSERT INTO accounts (name) VALUES (?)").run(id);
       this.db.prepare("INSERT INTO secrets.credentials (name, auth_json) VALUES (?, ?)").run(id, auth);
-      if (!this.activeId()) this.db.prepare("INSERT INTO settings (key, value) VALUES ('active_account', ?)").run(id);
       this.db.exec("COMMIT");
-      return { id, active: this.activeId() === id, removing: false };
+      return { id, provider: "codex", enabled: true, ready: false, removing: false };
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;
     }
   }
 
-  activate(id: string): void {
-    if (!this.db.prepare("SELECT 1 FROM accounts WHERE name = ? AND removing = 0").get(id)) throw new Error(`unknown Codex account: ${id}`);
-    this.db.prepare("INSERT INTO settings (key, value) VALUES ('active_account', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(id);
+  setEnabled(id: string, enabled: boolean): Account {
+    if (this.db.prepare("UPDATE accounts SET enabled = ? WHERE name = ? AND removing = 0").run(Number(enabled), id).changes)
+      return this.listAccounts().find((account) => account.id === id)!;
+    if (this.db.prepare("SELECT 1 FROM accounts WHERE name = ?").get(id)) throw new Error("account is being removed");
+    return this.enableWorker(id, enabled);
   }
 
   replaceCredentials(id: string, auth: string): void {
@@ -245,11 +238,6 @@ export class AuthStore {
       this.db.prepare("DELETE FROM accounts WHERE name = ?").run(id);
       this.db.prepare("DELETE FROM account_aliases WHERE id = ?").run(id);
       this.db.prepare("DELETE FROM secrets.credentials WHERE name = ?").run(id);
-      if (this.activeId() === id) {
-        const next = (this.db.prepare("SELECT name FROM accounts WHERE removing = 0 ORDER BY number LIMIT 1").get() as { name: string } | undefined)?.name;
-        if (next) this.db.prepare("UPDATE settings SET value = ? WHERE key = 'active_account'").run(next);
-        else this.db.prepare("DELETE FROM settings WHERE key = 'active_account'").run();
-      }
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");

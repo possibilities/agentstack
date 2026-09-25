@@ -92,8 +92,8 @@ test("start is idempotent and stop is idempotent", async () => {
       bindThread: async (_url, _cwd, id) => id ?? "thread-alpha",
     });
     await supervisor.load();
-    seedAccount(supervisor);
-    const first = await supervisor.start({ cwd, id: "alpha" });
+    const account = seedAccount(supervisor);
+    const first = await supervisor.start({ cwd, id: "alpha", account });
     const second = await supervisor.start({ cwd, id: "alpha" });
     assert.equal(first.pid, second.pid);
     assert.equal(first.url, "ws://127.0.0.1:41000");
@@ -379,7 +379,7 @@ test("a new Server launches with credentials reconciled from an older Server", a
     const older: StoredServer = { id: "older", pid: null, cwd, url: null, state: "stopped", codexBin: codexRuntimePath(), account: account.id, launchedAccount: account.id, authVersion: 1, runtimeRoot, mainThreadId: "thread-old", threadStarting: false, args: [] };
     supervisor.store.saveServer(older);
     await supervisor.load();
-    await supervisor.start({ cwd, id: "new" });
+    await supervisor.start({ cwd, id: "new", account: account.id });
     assert.equal(launchedWith, auth("2026-09-23T11:00:00Z", "refreshed"));
     assert.equal(supervisor.store.servers().find(({ id }) => id === "new")?.authVersion, 2);
   } finally {
@@ -1077,6 +1077,6 @@ test("a persisted live server from another runtime is not returned as codexnk", 
   }
 });
 
-function seedAccount(supervisor: Supervisor): void {
-  supervisor.store.addAccount(JSON.stringify({ tokens: { refresh_token: "test-refresh", access_token: "access", id_token: "fixture.jwt.signature" } }));
+function seedAccount(supervisor: Supervisor): string {
+  return supervisor.store.addAccount(JSON.stringify({ tokens: { refresh_token: "test-refresh", access_token: "access", id_token: "fixture.jwt.signature" } })).id;
 }

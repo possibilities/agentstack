@@ -1,8 +1,8 @@
 name: auth
-description: Manage Codex Bot accounts and native Grok, Devin, and Codex worker sign-ins without exposing credentials.
+description: Manage Codex, Grok and Devin accounts in one inventory, with provider-specific sign-ins and no exposed credentials.
 socket:
-  description: Unix socket for Codex account and sign-in operations, namespaced as auth.
+  description: Unix socket for account and sign-in operations, namespaced as auth.
 mcp:
-  description: HTTP MCP tools for Codex account and sign-in operations, forwarded to the auth socket.
+  description: HTTP MCP tools for account and sign-in operations, forwarded to the auth socket.
 websocket:
   description: Loopback WebSocket for account operations and change events, forwarded to the auth socket.
