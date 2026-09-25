@@ -11,9 +11,14 @@ export {
   accountLoginCancel,
   workerAccountPrepare,
   workerAccountConfirm,
+  workerAccountList,
+  workerAccountSetEnabled,
+  workerAccountRemove,
   type AuthContext,
   type AuthTopic,
   type Account,
+  type BotAccountView,
+  type WorkerAccountView,
   type LoginState,
 } from "../api.js";
 export { AuthStore } from "./store.js";

@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type { WorkerAccount, WorkerProvider } from "./worker-accounts.js";
 
-export type Account = WorkerAccount;
+export type Account = { id: string; enabled: boolean; removing: boolean };
 
 function privateDatabase(path: string): void {
   try {
@@ -91,23 +91,12 @@ export class AuthStore {
   close(): void { this.db.close(); }
 
   workerAccounts(): WorkerAccount[] {
-    const records = (this.db.prepare("SELECT id, provider, enabled, ready, removing FROM worker_accounts ORDER BY rowid").all() as Array<{
+    return (this.db.prepare("SELECT id, provider, enabled, ready, removing FROM worker_accounts ORDER BY rowid").all() as Array<{
       id: string; provider: WorkerProvider; enabled: number; ready: number; removing: number;
     }>).map(({ id, provider, enabled, ready, removing }) => ({ id, provider, enabled: Boolean(enabled), ready: Boolean(ready), removing: Boolean(removing) }));
-    const codex = this.codexAccounts().map((account): WorkerAccount => ({
-      ...account, provider: "codex", ready: records.find((item) => item.id === account.id && item.provider === "codex")?.ready ?? false,
-      enabled: account.enabled && !account.removing,
-    }));
-    return [...codex, ...records.filter((item) => item.provider !== "codex")];
-  }
-
-  hasWorkerBinding(id: string): boolean {
-    return Boolean(this.db.prepare("SELECT 1 FROM worker_accounts WHERE id = ?").get(id));
   }
 
   prepareWorker(provider: WorkerProvider, existingId?: string): WorkerAccount {
-    if (provider === "codex" && (!existingId || !this.codexAccounts().some((account) => account.id === existingId && !account.removing)))
-      throw new Error("a valid Codex account ID is required");
     const id = existingId ?? randomUUID();
     const existing = this.workerAccounts().find((item) => item.id === id);
     if (existingId && !existing) throw new Error("unknown worker account");
@@ -149,17 +138,30 @@ export class AuthStore {
     return orphanId;
   }
 
-  codexAccounts(): Array<{ id: string; enabled: boolean; removing: boolean }> {
+  codexAccounts(): Account[] {
     return (this.db.prepare("SELECT name, enabled, removing FROM accounts ORDER BY number").all() as Array<{ name: string; enabled: number; removing: number }>)
       .map(({ name, enabled, removing }) => ({ id: name, enabled: Boolean(enabled), removing: Boolean(removing) }));
   }
 
-  listAccounts(): Account[] { return this.workerAccounts(); }
+  listAccounts(): Account[] { return this.codexAccounts(); }
 
   accountCredentials(id: string): { id: string; auth: string; version: number } {
     const row = this.db.prepare("SELECT auth_json, version FROM secrets.credentials JOIN accounts ON accounts.name = secrets.credentials.name WHERE accounts.name = ? AND removing = 0").get(id) as { auth_json: string; version: number } | undefined;
     if (!row) throw new Error(`Credentials for account ${id} are unavailable; sign in again.`);
     return { id, auth: row.auth_json, version: row.version };
+  }
+
+  /** Native identity is used only to correlate independently signed-in accounts. */
+  botAccountIdentity(id: string): string | null {
+    try {
+      const auth = JSON.parse(this.accountCredentials(id).auth) as { tokens?: { account_id?: unknown; access_token?: unknown } };
+      if (typeof auth.tokens?.account_id === "string" && auth.tokens.account_id) return auth.tokens.account_id;
+      const access = auth.tokens?.access_token;
+      if (typeof access !== "string") return null;
+      const claims = JSON.parse(Buffer.from(access.split(".")[1] ?? "", "base64url").toString("utf8")) as Record<string, unknown>;
+      const identity = (claims["https://api.openai.com/auth"] as Record<string, unknown> | undefined)?.chatgpt_account_id;
+      return typeof identity === "string" && identity ? identity : null;
+    } catch { return null; }
   }
 
   addAccount(auth: string): Account {
@@ -170,7 +172,7 @@ export class AuthStore {
       this.db.prepare("INSERT INTO accounts (name) VALUES (?)").run(id);
       this.db.prepare("INSERT INTO secrets.credentials (name, auth_json) VALUES (?, ?)").run(id, auth);
       this.db.exec("COMMIT");
-      return { id, provider: "codex", enabled: true, ready: false, removing: false };
+      return { id, enabled: true, removing: false };
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;
@@ -180,8 +182,7 @@ export class AuthStore {
   setEnabled(id: string, enabled: boolean): Account {
     if (this.db.prepare("UPDATE accounts SET enabled = ? WHERE name = ? AND removing = 0").run(Number(enabled), id).changes)
       return this.listAccounts().find((account) => account.id === id)!;
-    if (this.db.prepare("SELECT 1 FROM accounts WHERE name = ?").get(id)) throw new Error("account is being removed");
-    return this.enableWorker(id, enabled);
+    throw new Error(`unknown or removing Codex Bot account: ${id}`);
   }
 
   replaceCredentials(id: string, auth: string): void {
@@ -234,7 +235,7 @@ export class AuthStore {
     this.beginRemoval(id);
     this.db.exec("BEGIN IMMEDIATE");
     try {
-    if (this.boundServerIds(id).length) throw new Error(`account ${id} still has bound bots`);
+      if (this.boundServerIds(id).length) throw new Error(`account ${id} still has bound bots`);
       this.db.prepare("DELETE FROM accounts WHERE name = ?").run(id);
       this.db.prepare("DELETE FROM account_aliases WHERE id = ?").run(id);
       this.db.prepare("DELETE FROM secrets.credentials WHERE name = ?").run(id);

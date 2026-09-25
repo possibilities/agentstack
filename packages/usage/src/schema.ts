@@ -2,6 +2,8 @@ import { z } from "zod";
 
 export const provider = z.enum(["codex", "grok", "devin"]);
 export type Provider = z.infer<typeof provider>;
+export const accountScope = z.enum(["bot", "worker"]);
+export type AccountScope = z.infer<typeof accountScope>;
 const nullableString = z.string().max(256).nullable();
 const nullableNumber = z.number().finite().nullable();
 const nullableBoolean = z.boolean().nullable();
@@ -38,16 +40,18 @@ const observation = {
   fresh: z.boolean().describe("Successful observation no older than five minutes; account freshness also requires a current inventory and completed sign-in."),
   error: observationError.nullable().describe("Sanitized code for the latest failed attempt; last-good usage may remain alongside it."),
 };
+const linkedAccounts = z.array(z.strictObject({ scope: accountScope, id: z.uuid() }))
+  .describe("Other AgentStack accounts with a matching native sign-in identity; no credential or provider account ID is exposed.");
 export const account = z.discriminatedUnion("provider", [
-  z.strictObject({ id: z.uuid(), provider: z.literal("codex"), enabled: z.boolean(), ready: z.boolean(),
+  z.strictObject({ id: z.uuid(), scope: accountScope, provider: z.literal("codex"), enabled: z.boolean(), ready: z.boolean(), linkedAccounts,
     ...observation, usage: codexUsage.nullable() }),
-  z.strictObject({ id: z.uuid(), provider: z.literal("grok"), enabled: z.boolean(), ready: z.boolean(),
+  z.strictObject({ id: z.uuid(), scope: z.literal("worker"), provider: z.literal("grok"), enabled: z.boolean(), ready: z.boolean(), linkedAccounts,
     ...observation, usage: grokUsage.nullable() }),
-  z.strictObject({ id: z.uuid(), provider: z.literal("devin"), enabled: z.boolean(), ready: z.boolean(),
+  z.strictObject({ id: z.uuid(), scope: z.literal("worker"), provider: z.literal("devin"), enabled: z.boolean(), ready: z.boolean(), linkedAccounts,
     ...observation, usage: devinUsage.nullable() }),
 ]);
 export const snapshotSchema = z.strictObject({ atMs: z.number().int(), inventoryAtMs: z.number().int().nullable(),
-  inventoryError: z.enum(["not_observed", "auth_unavailable"]).nullable(), accounts: z.array(account).describe("Registered AgentStack account IDs, including disabled accounts and Codex accounts without a Worker binding."),
+  inventoryError: z.enum(["not_observed", "auth_unavailable"]).nullable(), accounts: z.array(account).describe("Bot Codex and independent Worker accounts, including disabled accounts. Scope and ID together identify a record."),
   grokBot: z.strictObject({ ...observation, usage: grokBotUsage.nullable() }).describe("Machine-level Grok Bot CLI login; not an AgentStack Worker account.") });
 export type Snapshot = z.infer<typeof snapshotSchema>;
 export type Account = z.infer<typeof account>;

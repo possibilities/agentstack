@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { serveApi, socketCall, socketSubscribe } from "@agentstack/api";
+import { AuthStore } from "../src/store.js";
+import { accountRoot, prepareAccountProfile } from "../src/worker-accounts.js";
 
 const fakeLogin = fileURLToPath(new URL("../../test/fixtures/fake-login.mjs", import.meta.url));
 
@@ -41,15 +44,16 @@ test("auth serves accounts and device sign-in on its namespaced socket", { timeo
     assert.equal(listed.websocket, null);
     assert.deepEqual(listed.events, {
       topics: {
-        accounts_changed: "Published when an account signs in, is prepared, confirmed, enabled, disabled or removed. Refresh account_list.",
+        accounts_changed: "Published when Bot account state or cross-inventory identity links change. Refresh account_list.",
         login_changed: "Published when a Codex device sign-in starts, shows its prompt, is superseded or cancelled, or finishes. Never carries the prompt or credentials.",
+        worker_accounts_changed: "Published when Worker account state or cross-inventory identity links change. Refresh worker_account_list.",
       },
       subscribe: "events/subscribe",
     });
     assert.deepEqual(
       listed.tools.map((tool) => tool.name),
       ["account_list", "account_set_enabled", "account_remove", "account_login_start", "account_login_replace", "account_login_status", "account_login_current", "account_login_cancel",
-        "worker_account_prepare", "worker_account_confirm"],
+        "worker_account_list", "worker_account_prepare", "worker_account_confirm", "worker_account_set_enabled", "worker_account_remove"],
     );
 
     await assert.rejects(socketCall(served.socketPath, "events/subscribe", { topics: [] }), /non-empty/);
@@ -57,8 +61,8 @@ test("auth serves accounts and device sign-in on its namespaced socket", { timeo
     await assert.rejects(socketCall(served.socketPath, "events/subscribe", { topics: ["accounts_changed", "accounts_changed"] }), /duplicate topic/);
     await assert.rejects(socketCall(served.socketPath, "events/subscribe", {}), /non-empty/);
 
-    const subscription = await socketSubscribe(served.socketPath ?? "", ["accounts_changed", "login_changed"], (topic) => events.push(topic));
-    assert.deepEqual([...subscription.topics].sort(), ["accounts_changed", "login_changed"]);
+    const subscription = await socketSubscribe(served.socketPath ?? "", ["accounts_changed", "login_changed", "worker_accounts_changed"], (topic) => events.push(topic));
+    assert.deepEqual([...subscription.topics].sort(), ["accounts_changed", "login_changed", "worker_accounts_changed"]);
 
     await assert.rejects(call(served.socketPath, "account_login_start", { name: "codex-1" }), /Unrecognized key: "name"/);
     await assert.rejects(call(served.socketPath, "account_login_replace", { id: "codex-1" }), /id:/);
@@ -84,7 +88,8 @@ test("auth serves accounts and device sign-in on its namespaced socket", { timeo
     assert.equal(settled.authUrl, null);
     assert.equal(settled.userCode, null);
     assert.deepEqual(await call(served.socketPath, "account_login_current"), { login: null });
-    assert.deepEqual(await call(served.socketPath, "account_list"), { accounts: [{ id: firstId, provider: "codex", enabled: true, ready: false, removing: false }] });
+    assert.deepEqual(await call(served.socketPath, "account_list"), { accounts: [{ id: firstId, enabled: true, removing: false, linkedAccounts: [] }] });
+    assert.deepEqual(await call(served.socketPath, "worker_account_list"), { accounts: [] });
 
     const reauth = (await call(served.socketPath, "account_login_replace", { id: firstId })) as ServedLogin;
     assert.equal(reauth.targetAccount, firstId);
@@ -103,8 +108,8 @@ test("auth serves accounts and device sign-in on its namespaced socket", { timeo
     }
     const secondId = settledSecond.account!;
     assert.notEqual(secondId, firstId);
-    assert.deepEqual(await call(served.socketPath, "account_set_enabled", { id: firstId, enabled: false }), { id: firstId, provider: "codex", enabled: false, ready: false, removing: false });
-    assert.deepEqual(await call(served.socketPath, "account_remove", { id: firstId }), { accounts: [{ id: secondId, provider: "codex", enabled: true, ready: false, removing: false }] });
+    assert.deepEqual(await call(served.socketPath, "account_set_enabled", { id: firstId, enabled: false }), { id: firstId, enabled: false, removing: false, linkedAccounts: [] });
+    assert.deepEqual(await call(served.socketPath, "account_remove", { id: firstId }), { accounts: [{ id: secondId, enabled: true, removing: false, linkedAccounts: [] }] });
     await assert.rejects(call(served.socketPath, "account_set_enabled", { id: firstId, enabled: true }), /unknown/);
     await assert.rejects(socketCall(served.socketPath, "tools/call", { name: "server_list", arguments: {} }), /unknown operation/);
 
@@ -113,6 +118,7 @@ test("auth serves accounts and device sign-in on its namespaced socket", { timeo
     }
     assert.ok(events.includes("login_changed"));
     assert.ok(events.includes("accounts_changed"));
+    assert.ok(events.includes("worker_accounts_changed"));
 
     const allResponses = JSON.stringify([
       settled, settledReauth, settledSecond,
@@ -132,6 +138,65 @@ test("auth serves accounts and device sign-in on its namespaced socket", { timeo
     await rm(stateDir, { recursive: true, force: true });
     await rm(home, { recursive: true, force: true });
   }
+});
+
+test("Bot and Worker auth operations do not couple even for a legacy shared ID", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-auth-independent-"));
+  const store = new AuthStore(stateDir);
+  const credentials = JSON.stringify({ tokens: { access_token: "access", refresh_token: "refresh", id_token: "fixture.jwt.signature" } });
+  const nativeIdentity = "unrelated-native-identity";
+  const access = `header.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: nativeIdentity } })).toString("base64url")}.signature`;
+  const first = store.addAccount(credentials);
+  const second = store.addAccount(credentials);
+  const matchingBot = store.addAccount(JSON.stringify({ tokens: { access_token: access, refresh_token: "refresh", id_token: "fixture.jwt.signature" } }));
+  const config = new DatabaseSync(join(stateDir, "configuration.sqlite"));
+  for (const id of [first.id, second.id]) {
+    config.prepare("INSERT INTO worker_accounts (id, provider) VALUES (?, 'codex')").run(id);
+    await prepareAccountProfile(stateDir, { id, provider: "codex", enabled: true, ready: false, removing: false });
+  }
+  config.close();
+  store.close();
+  const served = await serveApi({ name: "auth", transport: "socket", env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir } });
+  const request = (name: string, args: Record<string, unknown> = {}) => call(served.socketPath ?? "", name, args);
+  try {
+    assert.equal(((await request("worker_account_list")) as { accounts: unknown[] }).accounts.length, 2);
+    await request("account_set_enabled", { id: first.id, enabled: false });
+    assert.deepEqual(await request("worker_account_set_enabled", { id: first.id, enabled: false }),
+      { id: first.id, provider: "codex", enabled: false, ready: false, removing: false, linkedAccounts: [] });
+    await request("worker_account_set_enabled", { id: first.id, enabled: true });
+    await request("account_remove", { id: first.id });
+    assert.equal((await stat(accountRoot(stateDir, first.id))).isDirectory(), true);
+    assert.ok(((await request("worker_account_list")) as { accounts: Array<{ id: string }> }).accounts.some((account) => account.id === first.id));
+    await request("worker_account_remove", { id: second.id });
+    assert.ok(((await request("account_list")) as { accounts: Array<{ id: string }> }).accounts.some((account) => account.id === second.id));
+    await request("account_set_enabled", { id: second.id, enabled: false });
+    const prepared = await request("worker_account_prepare", { provider: "codex" }) as { account: { id: string; ready: boolean } };
+    assert.notEqual(prepared.account.id, second.id);
+    assert.equal(prepared.account.ready, false);
+    await assert.rejects(request("worker_account_prepare", { provider: "codex", id: second.id }), /worker account is unavailable/);
+    await mkdir(join(accountRoot(stateDir, prepared.account.id), "data/opencode"), { recursive: true });
+    const path = join(accountRoot(stateDir, prepared.account.id), "data/opencode/opencode.db");
+    const native = new DatabaseSync(path);
+    native.exec("CREATE TABLE credential (integration_id TEXT, value TEXT)");
+    native.prepare("INSERT INTO credential VALUES (?, ?)").run("openai", JSON.stringify({ type: "oauth", access, refresh: "worker-refresh" }));
+    native.close();
+    await chmod(path, 0o600);
+    const confirmed = await request("worker_account_confirm", { id: prepared.account.id }) as { ready: boolean };
+    assert.equal(confirmed.ready, true);
+    assert.ok(((await request("account_list")) as { accounts: Array<{ id: string }> }).accounts.every((account) => account.id !== prepared.account.id));
+    const bots = (await request("account_list")) as { accounts: Array<{ id: string; linkedAccounts: Array<{ scope: string; id: string }> }> };
+    const workers = (await request("worker_account_list")) as { accounts: Array<{ id: string; linkedAccounts: Array<{ scope: string; id: string }> }> };
+    assert.deepEqual(bots.accounts.find((account) => account.id === matchingBot.id)?.linkedAccounts,
+      [{ scope: "worker", id: prepared.account.id }]);
+    assert.deepEqual(workers.accounts.find((account) => account.id === prepared.account.id)?.linkedAccounts,
+      [{ scope: "bot", id: matchingBot.id }]);
+    assert.equal(JSON.stringify({ bots, workers }).includes(nativeIdentity), false);
+    assert.equal(JSON.stringify({ bots, workers }).includes(access), false);
+    assert.equal(JSON.stringify({ bots, workers }).includes("worker-refresh"), false);
+    await request("account_remove", { id: matchingBot.id });
+    assert.deepEqual(((await request("worker_account_list")) as typeof workers).accounts.find((account) => account.id === prepared.account.id)?.linkedAccounts, []);
+    await request("worker_account_remove", { id: first.id });
+  } finally { await served.close(); await rm(stateDir, { recursive: true, force: true }); }
 });
 
 test("auth subscription ends when the connection drops and shutdown does not hang", async () => {

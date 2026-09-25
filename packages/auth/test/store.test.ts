@@ -146,7 +146,7 @@ test("a second auth store connection sees committed accounts and fences stale re
     const first = writer.addAccount(auth("2026-09-23T10:00:00Z", "original"));
     const second = writer.addAccount(auth("2026-09-23T10:00:00Z", "other"));
     writer.setEnabled(first.id, false);
-    assert.deepEqual(reader.listAccounts(), [{ id: first.id, provider: "codex", enabled: false, ready: false, removing: false }, { id: second.id, provider: "codex", enabled: true, ready: false, removing: false }]);
+    assert.deepEqual(reader.listAccounts(), [{ id: first.id, enabled: false, removing: false }, { id: second.id, enabled: true, removing: false }]);
     assert.equal(reader.accountCredentials(second.id).auth, auth("2026-09-23T10:00:00Z", "other"));
     writer.replaceCredentials(second.id, auth("2026-09-23T12:00:00Z", "replaced"));
     assert.equal(reader.accountCredentials(second.id).version, 2);
@@ -154,7 +154,7 @@ test("a second auth store connection sees committed accounts and fences stale re
     assert.deepEqual(reader.syncCredential(second.id, 2, auth("2026-09-23T13:00:00Z", "fresh-refresh")), { status: "updated", version: 3 });
     assert.equal(writer.accountCredentials(second.id).auth, auth("2026-09-23T13:00:00Z", "fresh-refresh"));
     writer.removeAccount(first.id);
-    assert.deepEqual(reader.listAccounts(), [{ id: second.id, provider: "codex", enabled: true, ready: false, removing: false }]);
+    assert.deepEqual(reader.listAccounts(), [{ id: second.id, enabled: true, removing: false }]);
   } finally { writer.close(); reader.close(); await rm(root, { recursive: true, force: true }); }
 });
 

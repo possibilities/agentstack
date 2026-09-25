@@ -35,8 +35,8 @@ export function websocketEndpoints(catalog: PackageDoc[] | null): Record<string,
 export async function loadSnapshot(): Promise<Snapshot> {
   const [owner, accounts, workerAccounts, workerRuntimes, workerSessions, login, bots, botDefaults, voice, catalog] = await Promise.all([
     resource(() => call<OwnerStatus>("owner", "owner_status")),
-    resource(async () => (await call<{ accounts: Account[] }>("auth", "account_list")).accounts.filter((account) => account.provider === "codex")),
-    resource(async () => (await call<{ accounts: WorkerAccount[] }>("auth", "account_list")).accounts),
+    resource(async () => (await call<{ accounts: Account[] }>("auth", "account_list")).accounts),
+    resource(async () => (await call<{ accounts: WorkerAccount[] }>("auth", "worker_account_list")).accounts),
     resource(async () => (await call<{ runtimes: WorkerRuntime[] }>("workers", "worker_runtime_list")).runtimes),
     resource(async () => (await call<{ workers: WorkerSession[] }>("workers", "worker_list")).workers),
     resource(async () => (await call<{ login: Login | null }>("auth", "account_login_current")).login),

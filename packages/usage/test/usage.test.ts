@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { collectAccount, collectGrokBot } from "../src/collect.js";
+import { accountIdentity, collectAccount, collectGrokBot } from "../src/collect.js";
 import { UsageObserver } from "../src/observer.js";
 import { snapshotSchema, type Provider } from "../src/schema.js";
 
@@ -24,6 +24,12 @@ test("observes each registered account with its own credentials and projects onl
     } }));
     db.close();
     await chmod(secrets, 0o600);
+    await mkdir(join(root, "worker-accounts", codexId, "data/opencode"), { recursive: true });
+    const codexWorkerDb = new DatabaseSync(join(root, "worker-accounts", codexId, "data/opencode/opencode.db"));
+    codexWorkerDb.exec("CREATE TABLE credential (integration_id TEXT, value TEXT)");
+    codexWorkerDb.prepare("INSERT INTO credential VALUES (?, ?)").run("openai", JSON.stringify({ type: "oauth", access: "codex-worker-secret", refresh: "never-publish", metadata: { accountID: "native-worker" } }));
+    codexWorkerDb.close();
+    await chmod(join(root, "worker-accounts", codexId, "data/opencode/opencode.db"), 0o600);
     for (const id of [grokId, devinId]) await mkdir(join(root, "worker-accounts", id, "data", id === grokId ? "opencode" : "devin"), { recursive: true });
     const grokDb = new DatabaseSync(join(root, "worker-accounts", grokId, "data/opencode/opencode.db"));
     grokDb.exec("CREATE TABLE credential (integration_id TEXT, value TEXT)");
@@ -38,8 +44,10 @@ test("observes each registered account with its own credentials and projects onl
       seen.push(url);
       assert.notEqual((init?.headers as Record<string, string>)?.authorization, "Bearer never-publish");
       if (url.endsWith("/wham/usage")) {
-        assert.equal((init?.headers as Record<string, string>)["ChatGPT-Account-ID"], "native-codex");
-        return Response.json({ plan_type: "pro", rate_limit: { primary_window: { used_percent: 12, limit_window_seconds: 18000, reset_after_seconds: 200 } },
+        const headers = init?.headers as Record<string, string>;
+        const worker = headers.authorization === "Bearer codex-worker-secret";
+        assert.equal(headers["ChatGPT-Account-ID"], worker ? "native-worker" : "native-codex");
+        return Response.json({ plan_type: "pro", rate_limit: { primary_window: { used_percent: worker ? 34 : 12, limit_window_seconds: 18000, reset_after_seconds: 200 } },
           additional_rate_limits: [{ limit_name: "Spark", rate_limit: { primary_window: { used_percent: 88 } } }] });
       }
       if (url.endsWith("/userinfo")) return Response.json({ sub: "grok-user" });
@@ -54,10 +62,13 @@ test("observes each registered account with its own credentials and projects onl
         planInfo: { planName: "Pro", billingStrategy: "BILLING_STRATEGY_QUOTA", monthlyPromptCredits: 100 } } } });
     };
     const results = await Promise.all((["codex", "grok", "devin"] as const).map((provider) => collectAccount(root, ids[provider], provider, fetcher)));
+    const workerUsage = await collectAccount(root, codexId, "codex", fetcher, undefined, "worker");
     assert.equal((results[0] as { lanes: Array<{ windows: Array<{ usedPercent: number }> }> }).lanes[0]?.windows[0]?.usedPercent, 12);
+    assert.equal((workerUsage as { lanes: Array<{ windows: Array<{ usedPercent: number }> }> }).lanes[0]?.windows[0]?.usedPercent, 34);
+    assert.equal(await accountIdentity(root, codexId, "codex", "worker"), "native-worker");
     assert.equal((results[1] as { prepaidBalanceUsd: number }).prepaidBalanceUsd, 2.5);
     assert.equal((results[2] as { dailyRemainingPercent: number }).dailyRemainingPercent, 76);
-    assert.equal(seen.length, 4);
+    assert.equal(seen.length, 5);
     assert.ok(!JSON.stringify(results).includes("secret"));
     assert.ok(!JSON.stringify(results).includes("native-codex"));
     const path = join(root, "worker-accounts", devinId, "data/devin/credentials.toml");
@@ -71,8 +82,8 @@ test("owner observer keeps last-good records, removes deleted accounts and paces
   const root = await mkdtemp(join(tmpdir(), "agentstack-usage-"));
   try {
     let available = true, successes = true, calls = 0, changes = 0;
-    const observer = new UsageObserver(root, {}, async () => available ? [{ id: codexId, provider: "codex", enabled: true, ready: false, removing: false },
-      { id: grokId, provider: "grok", enabled: false, ready: true, removing: false }] : [],
+    const observer = new UsageObserver(root, {}, async () => available ? [{ id: codexId, scope: "bot", provider: "codex", enabled: true, ready: true, removing: false },
+      { id: grokId, scope: "worker", provider: "grok", enabled: false, ready: true, removing: false }] : [],
       async (_id, provider) => { calls++; if (!successes) throw new Error("provider echoed private credentials");
         return provider === "codex" ? { planType: "pro", limitReached: false, resetCreditsAvailable: null, resetCreditExpirations: null, lanes: [] } : {
           subscriptionTier: null, included: { usedPercent: 10, remainingPercent: 90, periodType: null, periodStart: null, resetsAt: null },
@@ -112,6 +123,81 @@ test("owner observer keeps last-good records, removes deleted accounts and paces
     await restored.load();
     assert.equal(restored.snapshot().accounts.length, 0);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("usage links independent Bot and Worker Codex accounts by native identity without publishing it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-usage-links-"));
+  const codexWorkerId = "00000000-0000-4000-8000-000000000004";
+  let workerReady = true;
+  const accounts = async () => [
+    { id: codexId, scope: "bot" as const, provider: "codex" as const, enabled: true, ready: true, removing: false },
+    { id: codexWorkerId, scope: "worker" as const, provider: "codex" as const, enabled: true, ready: workerReady, removing: false },
+  ];
+  const observer = new UsageObserver(root, {}, accounts,
+    async () => ({ planType: "pro", limitReached: false, resetCreditsAvailable: null, resetCreditExpirations: null, lanes: [] }),
+    async () => null, async () => "native-account-never-published");
+  try {
+    await observer.cycle();
+    const rows = observer.snapshot().accounts;
+    assert.deepEqual(rows.map(({ scope, linkedAccounts }) => ({ scope, linkedAccounts })), [
+      { scope: "bot", linkedAccounts: [{ scope: "worker", id: codexWorkerId }] },
+      { scope: "worker", linkedAccounts: [{ scope: "bot", id: codexId }] },
+    ]);
+    const snapshot = observer.snapshot();
+    assert.deepEqual(snapshotSchema.parse(snapshot), snapshot);
+    assert.equal(JSON.stringify(snapshot).includes("native-account-never-published"), false);
+    assert.equal((await readFile(join(root, "usage/observations.json"), "utf8")).includes("native-account-never-published"), false);
+    workerReady = false;
+    await observer.cycle();
+    assert.deepEqual(observer.snapshot().accounts.map((row) => row.linkedAccounts), [[], []]);
+  } finally { await observer.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("a legacy shared UUID remains two scoped usage records and two independent links", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-usage-overlap-"));
+  const observer = new UsageObserver(root, {}, async () => [
+    { id: codexId, scope: "bot", provider: "codex", enabled: true, ready: true, removing: false },
+    { id: codexId, scope: "worker", provider: "codex", enabled: true, ready: true, removing: false },
+  ], async (_id, _provider, scope) => ({ planType: scope, limitReached: false, resetCreditsAvailable: null, resetCreditExpirations: null, lanes: [] }),
+  async () => null, async () => "same-private-identity");
+  try {
+    await observer.cycle();
+    const rows = observer.snapshot().accounts;
+    assert.equal(rows.length, 2);
+    assert.deepEqual(rows.map((row) => ({ scope: row.scope, linkedAccounts: row.linkedAccounts })), [
+      { scope: "bot", linkedAccounts: [{ scope: "worker", id: codexId }] },
+      { scope: "worker", linkedAccounts: [{ scope: "bot", id: codexId }] },
+    ]);
+    assert.equal(rows[0]?.provider === "codex" ? rows[0].usage?.planType : null, "bot");
+    assert.equal(rows[1]?.provider === "codex" ? rows[1].usage?.planType : null, "worker");
+    const restored = new UsageObserver(root, {}, async () => [], async () => null, async () => null);
+    await restored.load();
+    assert.equal(restored.snapshot().accounts.length, 2);
+    assert.deepEqual(restored.snapshot().accounts.map((row) => row.linkedAccounts), [[], []]); // No persisted identities.
+  } finally { await observer.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("version-one usage rows migrate as Bot Codex and Worker Grok/Devin", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-usage-migrate-"));
+  const path = join(root, "usage/observations.json");
+  await mkdir(join(root, "usage"));
+  const empty = { observedAtMs: null, lastAttemptAtMs: null, error: null, usage: null };
+  await writeFile(path, JSON.stringify({ schemaVersion: 1, accounts: [
+    { id: codexId, provider: "codex", enabled: true, ready: false, measurement: empty, nextAttemptAtMs: 0 },
+    { id: grokId, provider: "grok", enabled: true, ready: false, measurement: empty, nextAttemptAtMs: 0 },
+  ], bot: empty }), { mode: 0o600 });
+  const observer = new UsageObserver(root, {}, async () => [
+    { id: codexId, scope: "bot", provider: "codex", enabled: true, ready: true, removing: false },
+    { id: grokId, scope: "worker", provider: "grok", enabled: true, ready: false, removing: false },
+  ], async () => null, async () => null);
+  try {
+    await observer.load();
+    assert.deepEqual(observer.snapshot().accounts.map((row) => row.scope), ["bot", "worker"]);
+    await observer.cycle();
+    const persisted = JSON.parse(await readFile(path, "utf8")) as { schemaVersion: number; accounts: Array<{ scope: string }> };
+    assert.equal(persisted.schemaVersion, 2);
+    assert.deepEqual(persisted.accounts.map((row) => row.scope), ["bot", "worker"]);
+  } finally { await observer.close(); await rm(root, { recursive: true, force: true }); }
 });
 
 test("Grok Bot CLI output is bounded and its provider identifiers are never published", async () => {

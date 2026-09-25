@@ -72,7 +72,7 @@ test("ACP catalog reflects the exact account process and dependent effort choice
     assert.equal(stale.stale, true);
     assert.equal(stale.observedAt, b.observedAt);
     assert.equal((await supervisor.catalog(second, false)).stale, true);
-    await socketCall(socketPath("auth", env), "tools/call", { name: "account_set_enabled", arguments: { id: first, enabled: false } }).catch(() => undefined);
+    await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_set_enabled", arguments: { id: first, enabled: false } }).catch(() => undefined);
     await supervisor.reconcile();
     assert.equal(supervisor.runtimeList().length, 1);
   } finally {
@@ -100,8 +100,8 @@ test("operator disable and removal drain the exact account process before deleti
   const call = (name: string, args: object) => socketCall(socketPath("auth", env), "tools/call", { name, arguments: args });
   try {
     const { account } = await call("worker_account_prepare", { provider: "grok" }) as { account: { id: string } };
-    assert.deepEqual((await call("account_list", {}) as { accounts: unknown[] }).accounts, [
-      { id: account.id, provider: "grok", enabled: true, ready: false, removing: false },
+    assert.deepEqual((await call("worker_account_list", {}) as { accounts: unknown[] }).accounts, [
+      { id: account.id, provider: "grok", enabled: true, ready: false, removing: false, linkedAccounts: [] },
     ]);
     const root = join(dir, "worker-accounts", account.id);
     await (await import("node:fs/promises")).mkdir(join(root, "data", "opencode"), { recursive: true });
@@ -119,16 +119,29 @@ test("operator disable and removal drain the exact account process before deleti
     assert.equal(catalog.models.length, 2);
      assert.equal(catalog.runtimeVersion, "fake-acp 2.0");
     assert.equal(catalog.stale, false);
-    await call("account_set_enabled", { id: account.id, enabled: false });
+    await call("worker_account_set_enabled", { id: account.id, enabled: false });
     assert.equal((await runtimes()).length, 0);
-    await call("account_set_enabled", { id: account.id, enabled: true });
+    await call("worker_account_set_enabled", { id: account.id, enabled: true });
     for (let attempt = 0; attempt < 40 && !(await runtimes()).some((item) => item.id === account.id); attempt++)
       await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal((await runtimes()).length, 1);
-    await call("account_remove", { id: account.id });
+    await call("worker_account_remove", { id: account.id });
     assert.equal((await runtimes()).length, 0);
     await assert.rejects(stat(root), /ENOENT/);
+    assert.deepEqual((await call("worker_account_list", {}) as { accounts: unknown[] }).accounts, []);
+
+    const { account: codex } = await call("worker_account_prepare", { provider: "codex" }) as { account: { id: string } };
     assert.deepEqual((await call("account_list", {}) as { accounts: unknown[] }).accounts, []);
+    const codexRoot = join(dir, "worker-accounts", codex.id);
+    await (await import("node:fs/promises")).mkdir(join(codexRoot, "data", "opencode"), { recursive: true });
+    await writeV2Credential(join(codexRoot, "data", "opencode", "opencode.db"), "openai",
+      JSON.stringify({ type: "oauth", access: "codex-access", refresh: "codex-refresh", metadata: { accountID: "worker-only-codex" } }));
+    await call("worker_account_confirm", { id: codex.id });
+    for (let attempt = 0; attempt < 40 && !(await runtimes()).some((item) => item.id === codex.id); attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.deepEqual((await runtimes()).map((item) => item.id), [codex.id]);
+    await call("worker_account_remove", { id: codex.id });
+    assert.equal((await runtimes()).length, 0);
   } finally {
     await workers.close();
     await auth.close();

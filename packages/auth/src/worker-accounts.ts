@@ -86,8 +86,15 @@ export async function credentialEvidence(stateDir: string, account: WorkerAccoun
         typeof value.refresh !== "string" || !value.refresh) throw new Error("native worker OAuth credentials are unavailable");
     const metadata = value.metadata && typeof value.metadata === "object" && !Array.isArray(value.metadata)
       ? value.metadata as Record<string, unknown> : null;
-    return { digest: createHash("sha256").update(rows[0].value).digest("hex"),
-      identity: typeof metadata?.accountID === "string" ? metadata.accountID : null };
+    let identity = typeof metadata?.accountID === "string" && metadata.accountID ? metadata.accountID : null;
+    if (!identity && account.provider === "codex") {
+      try {
+        const claims = JSON.parse(Buffer.from(value.access.split(".")[1] ?? "", "base64url").toString("utf8")) as Record<string, unknown>;
+        const native = (claims["https://api.openai.com/auth"] as Record<string, unknown> | undefined)?.chatgpt_account_id;
+        if (typeof native === "string" && native) identity = native;
+      } catch { /* Some native access tokens do not contain a readable account claim. */ }
+    }
+    return { digest: createHash("sha256").update(rows[0].value).digest("hex"), identity };
   }
   const content = await readFile(path);
   if (content.length < 8 || content.length > 128_000) throw new Error("native Devin credentials are missing or invalid");

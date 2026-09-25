@@ -14,7 +14,7 @@ export type StackState = Snapshot & {
 
 export type StackConnections = { packages?: readonly string[]; scopedBots?: boolean };
 
-const authReads = new Set(["account_list", "account_login_current", "account_login_status"]);
+const authReads = new Set(["account_list", "account_login_current", "account_login_status", "worker_account_list"]);
 
 function isLoginState(value: unknown): value is Login {
   return typeof value === "object" && value !== null && "status" in value && "authUrl" in value;
@@ -67,9 +67,9 @@ export class StackStore {
     open("owner", () => this.refresh("owner"), () => this.refresh("owner"), ["pids_changed"]);
     open("auth", () => { this.refresh("accounts"); this.refresh("workerAccounts"); this.refresh("login"); }, (topic) => {
       this.refresh("accounts");
-      if (topic === "accounts_changed") this.refresh("workerAccounts");
+      if (topic === "worker_accounts_changed") this.refresh("workerAccounts");
       if (topic === "login_changed") this.refresh("login");
-    }, ["accounts_changed", "login_changed"]);
+    }, ["accounts_changed", "login_changed", "worker_accounts_changed"]);
     open("bots", () => { this.refresh("bots"); this.refresh("botDefaults"); this.refresh("voice"); }, (topic) => {
       if (topic === "bots_changed") this.refresh("bots");
       if (topic === "defaults_changed") this.refresh("botDefaults");
@@ -143,8 +143,8 @@ export class StackStore {
     };
     switch (key) {
       case "owner": return call<OwnerStatus>("owner", "owner_status");
-      case "accounts": return call<{ accounts: Account[] }>("auth", "account_list").then((result) => result.accounts.filter((account) => account.provider === "codex"));
-      case "workerAccounts": return call<{ accounts: WorkerAccount[] }>("auth", "account_list").then((result) => result.accounts);
+      case "accounts": return call<{ accounts: Account[] }>("auth", "account_list").then((result) => result.accounts);
+      case "workerAccounts": return call<{ accounts: WorkerAccount[] }>("auth", "worker_account_list").then((result) => result.accounts);
       case "workerRuntimes": return call<{ runtimes: WorkerRuntime[] }>("workers", "worker_runtime_list").then((result) => result.runtimes);
       case "workerSessions": return call<{ workers: WorkerSession[] }>("workers", "worker_list").then((result) => result.workers);
       case "login": return call<{ login: Login | null }>("auth", "account_login_current").then((result) => result.login);

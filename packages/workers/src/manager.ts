@@ -113,7 +113,7 @@ export class WorkerManager {
   }
 
   private async account(id: string) {
-    const result = await socketCall(socketPath("auth", this.env), "tools/call", { name: "account_list", arguments: {} }, { timeoutMs: 5_000 }) as {
+    const result = await socketCall(socketPath("auth", this.env), "tools/call", { name: "worker_account_list", arguments: {} }, { timeoutMs: 5_000 }) as {
       accounts: Array<{ id: string; provider: WorkerRecord["provider"]; enabled: boolean; ready: boolean; removing: boolean }>;
     };
     const account = result.accounts.find((entry) => entry.id === id);

@@ -46,7 +46,9 @@ test("two native account profiles keep sign-ins and configuration separate", asy
     assert.throws(() => store.confirmWorker(b.id, duplicate), /another worker account/);
     const codex = store.addAccount(JSON.stringify({ tokens: { refresh_token: "refresh", access_token: "access",
       id_token: "fixture.jwt.signature", account_id: "matching-account" } }));
-    const bound = store.prepareWorker("codex", codex.id);
+    const bound = store.prepareWorker("codex");
+    assert.notEqual(bound.id, codex.id);
+    assert.throws(() => store.prepareWorker("codex", codex.id), /unknown worker account/);
     await prepareAccountProfile(dir, bound);
     const codexPath = join(accountRoot(dir, bound.id), "data", "opencode", "opencode.db");
     await mkdir(join(accountRoot(dir, bound.id), "data", "opencode"), { recursive: true });
@@ -56,6 +58,12 @@ test("two native account profiles keep sign-ins and configuration separate", asy
     db.close();
     await chmod(codexPath, 0o600);
     assert.equal((await credentialEvidence(dir, bound)).identity, "matching-account");
+    store.confirmWorker(bound.id, (await credentialEvidence(dir, bound)).digest);
+    store.setEnabled(codex.id, false);
+    assert.equal(store.workerAccounts().find((account) => account.id === bound.id)?.enabled, true);
+    store.removeAccount(codex.id);
+    assert.equal(store.workerAccounts().find((account) => account.id === bound.id)?.ready, true);
+    assert.equal(store.listAccounts().length, 0);
     store.enableWorker(a.id, false);
     assert.equal(store.workerAccounts().find((account) => account.id === a.id)?.enabled, false);
     store.beginWorkerRemoval(a.id);

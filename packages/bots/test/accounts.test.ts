@@ -52,7 +52,7 @@ test("a server snapshots its account at launch and never falls back to ambient C
     assert.equal(observed.at(-1)?.auth, credential("first-secret"));
     await supervisor.remove("one");
     store.removeAccount(firstAccount.id);
-    assert.deepEqual(store.listAccounts(), [{ id: secondAccount.id, provider: "codex", enabled: true, ready: false, removing: false }]);
+    assert.deepEqual(store.listAccounts(), [{ id: secondAccount.id, enabled: true, removing: false }]);
     assert.equal(supervisor.list().find((server) => server.id === "two")?.account, secondAccount.id);
     assert.equal((await supervisor.start({ cwd, id: "two" })).account, secondAccount.id);
   } finally { store.close(); await rm(root, { recursive: true, force: true }); await rm(cwd, { recursive: true, force: true }); }

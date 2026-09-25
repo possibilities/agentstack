@@ -4,7 +4,7 @@ import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { Provider, Measurement } from "./schema.js";
+import type { AccountScope, Provider, Measurement } from "./schema.js";
 import { codexUsage, grokUsage, devinUsage, grokBotUsage } from "./schema.js";
 import type { z } from "zod";
 
@@ -20,6 +20,12 @@ const integer = (value: unknown): number | null => typeof value === "number" && 
 const flag = (value: unknown): boolean | null => typeof value === "boolean" ? value : null;
 const iso = (value: unknown): string | null => typeof value === "string" && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
 const epoch = (value: unknown): string | null => { const seconds = integer(value); return seconds && seconds > 0 ? new Date(seconds * 1000).toISOString() : null; };
+const codexIdentity = (access: string): string | null => {
+  try {
+    const claims = record(JSON.parse(Buffer.from(access.split(".")[1] ?? "", "base64url").toString("utf8")));
+    return string(record(claims?.["https://api.openai.com/auth"])?.chatgpt_account_id);
+  } catch { return null; }
+};
 const clamp = (value: number | null) => value === null ? null : Math.min(100, Math.max(0, value));
 
 export class ObservationFailure extends Error {
@@ -50,9 +56,9 @@ async function privateDatabase(path: string): Promise<void> {
 }
 
 /** No file or token leaves this module. Sign-in and token rotation stay with auth and native runtimes. */
-async function credential(stateDir: string, id: string, provider: Provider): Promise<{ access: string; userId?: string; server?: string }> {
+async function credential(stateDir: string, id: string, provider: Provider, scope: AccountScope): Promise<{ access: string; userId?: string; server?: string }> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw new ObservationFailure("account_invalid");
-  if (provider === "codex") {
+  if (provider === "codex" && scope === "bot") {
     const path = join(stateDir, "secrets.sqlite");
     await privateDatabase(path);
     const db = new DatabaseSync(path, { readOnly: true });
@@ -62,29 +68,25 @@ async function credential(stateDir: string, id: string, provider: Provider): Pro
       const tokens = record(auth?.tokens);
       const access = string(tokens?.access_token);
       if (!access) throw new ObservationFailure("credentials_unavailable");
-      let nativeId = string(tokens?.account_id);
-      if (!nativeId) {
-        try {
-          const claims = record(JSON.parse(Buffer.from(access.split(".")[1] ?? "", "base64url").toString("utf8")));
-          nativeId = string(record(claims?.["https://api.openai.com/auth"])?.chatgpt_account_id);
-        } catch { /* Omit the optional header when the native token has no readable account claim. */ }
-      }
+      const nativeId = string(tokens?.account_id) ?? codexIdentity(access);
       if (nativeId && /[\r\n]/.test(nativeId)) throw new ObservationFailure("credentials_unavailable");
       return { access, userId: nativeId ?? undefined };
     } finally { db.close(); }
   }
   const root = join(stateDir, "worker-accounts", id, "data");
-  if (provider === "grok") {
+  if (provider === "codex" || provider === "grok") {
     const path = join(root, "opencode", "opencode.db");
     await privateDatabase(path);
     const db = new DatabaseSync(path, { readOnly: true });
     try {
       const rows = db.prepare("SELECT integration_id, value FROM credential").all() as Array<{ integration_id: string; value: string }>;
-      if (rows.length !== 1 || rows[0]?.integration_id !== "xai") throw new ObservationFailure("credentials_unavailable");
+      if (rows.length !== 1 || rows[0]?.integration_id !== (provider === "codex" ? "openai" : "xai")) throw new ObservationFailure("credentials_unavailable");
       const entry = record(JSON.parse(rows[0].value));
       const access = string(entry?.access);
       if (entry?.type !== "oauth" || !access) throw new ObservationFailure("credentials_unavailable");
-      return { access };
+      const userId = provider === "codex" ? string(record(entry.metadata)?.accountID) ?? codexIdentity(access) : null;
+      if (userId && /[\r\n]/.test(userId)) throw new ObservationFailure("credentials_unavailable");
+      return { access, userId: userId ?? undefined };
     } finally { db.close(); }
   }
   const text = await privateFile(join(root, "devin", "credentials.toml"));
@@ -99,6 +101,12 @@ async function credential(stateDir: string, id: string, provider: Provider): Pro
   if (!access || access.length > 4096 || url.protocol !== "https:" || url.username || url.password || url.hash)
     throw new ObservationFailure("credentials_unavailable");
   return { access, server: url.origin };
+}
+
+/** Read a native identity for optional correlation; never publish the identity or an OAuth token. */
+export async function accountIdentity(stateDir: string, id: string, provider: Provider, scope: AccountScope): Promise<string | null> {
+  if (provider !== "codex") return null;
+  return (await credential(stateDir, id, provider, scope)).userId ?? null;
 }
 
 async function boundedJson(response: Response): Promise<RecordValue> {
@@ -227,8 +235,8 @@ function devin(value: RecordValue): Measurement {
 }
 
 export async function collectAccount(stateDir: string, id: string, provider: Provider, fetcher: typeof fetch = fetch,
-  signal: AbortSignal = new AbortController().signal): Promise<Measurement> {
-  const credentials = await credential(stateDir, id, provider);
+  signal: AbortSignal = new AbortController().signal, scope: AccountScope = provider === "codex" ? "bot" : "worker"): Promise<Measurement> {
+  const credentials = await credential(stateDir, id, provider, scope);
   if (provider === "codex") {
     const headers = { authorization: `Bearer ${credentials.access}`, ...(credentials.userId ? { "ChatGPT-Account-ID": credentials.userId } : {}) };
     let data: RecordValue;

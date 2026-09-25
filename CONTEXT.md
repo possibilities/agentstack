@@ -24,11 +24,11 @@ A durable, revisionless request by a verified Bot thread to watch one Package AP
 
 ## Codex account
 
-An AgentStack-owned sign-in credential with an immutable account ID managed by the `auth` Package API for Bots. Accounts can be enabled or disabled; `bot_start` requires an explicit enabled Codex account ID. An existing Bot changes account only through assignment, then the next start after a stop. A running Bot reports both its assignment and its launched identity. Removing either account deletes that Bot. Accounts never take a durable human-facing ordinal. A UI may present dense `codex-N` labels derived from the current Codex account list. _Avoid_: active account, Codex home, capability profile
+An AgentStack-owned Codex sign-in credential with an immutable account ID managed by the `auth` Package API for Bots. It is independent of any Codex Worker account, even if both sign-ins use the same native ChatGPT identity; both inventories may automatically correlate matching identities in optional `linkedAccounts` metadata. Accounts can be enabled or disabled; `bot_start` requires an explicit enabled Bot account ID. An existing Bot changes account only through assignment, then the next start after a stop. A running Bot reports both its assignment and its launched identity. Removing either its assigned or launched Bot account deletes that Bot; removing a Worker account does not. Accounts never take a durable human-facing ordinal. A UI may present dense `codex-N` labels derived from the Bot account list. _Avoid_: active account, Codex home, capability profile
 
 ## Worker account
 
-A stable account ID for an isolated, native ACP sign-in managed through `auth`. All three providers appear in `account_list` and share enablement and removal operations. A Codex worker binding uses an existing Codex account ID but requires a separately verified OpenCode login; `ready` reports ACP sign-in, not Codex Bot sign-in. Only a ready, enabled account may have an owner-managed ACP process. _Avoid_: active worker account, credential copy
+A stable account ID for an isolated, native ACP sign-in managed through `auth`. Codex, Grok and Devin appear in `worker_account_list`, with independent enablement and removal operations. A Codex Worker account uses its own OpenCode login; it does not require, share credentials with, or control a Codex Bot account. Older Worker profiles that share a UUID with a Bot account remain independent. Only a ready, enabled Worker account may have an owner-managed ACP process. _Avoid_: active worker account, credential copy
 
 ## ACP runtime
 
@@ -40,7 +40,7 @@ A no-turn observation of model and dependent effort choices actually offered by 
 
 ## Usage observation
 
-A read-only, account-ID-bound measurement of provider quota or billing, collected by the owner-managed `usage` Package API. It retains the last good value with an explicit observation time, freshness and sanitized failure code. It is evidence for a human or agent, not an eligibility verdict or a balancing recommendation; Grok Bot is the machine's separate CLI login rather than a Worker account.
+A read-only, scope-and-account-ID-bound measurement of provider quota or billing, collected by the owner-managed `usage` Package API. Bot Codex and Worker Codex observations read their own credentials. Optional links correlate accounts by native identity without exposing it or making their lifecycles interdependent. It retains the last good value with an explicit observation time, freshness and sanitized failure code. It is evidence for a human or agent, not an eligibility verdict or a balancing recommendation; Grok Bot is the machine's separate CLI login rather than a Worker account.
 
 _Avoid_: account score, capacity decision, balance action
 
