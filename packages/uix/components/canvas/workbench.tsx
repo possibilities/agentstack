@@ -656,12 +656,10 @@ function TopBar({ space, setSpace, controls, openPalette }: { space: SpaceId; se
       className="pointer-events-none fixed top-3 left-3 z-30 flex items-start justify-between gap-3 transition-[right] duration-200 ease-out motion-reduce:transition-none"
       style={{ right: "calc(var(--sheet) + 0.75rem)" }}>
       <div className="pointer-events-auto flex items-center gap-2 rounded-xl border bg-card/80 py-1.5 pr-3 pl-1.5 shadow-sm backdrop-blur-xl sm:gap-3">
-        <span className="flex size-9 items-center justify-center rounded-lg bg-muted shadow-inner">
-          <picture className="block size-7">
-            <source media="(prefers-color-scheme: dark)" srcSet={brandMarkDarkUrl} />
-            <img src={brandMarkLightUrl} width={28} height={28} alt="AgentStack" className="size-7" />
-          </picture>
-        </span>
+        <picture className="flex size-9 shrink-0 items-center justify-center">
+          <source media="(prefers-color-scheme: dark)" srcSet={brandMarkDarkUrl} />
+          <img src={brandMarkLightUrl} width={28} height={28} alt="AgentStack" className="size-7" />
+        </picture>
         <div className="hidden flex-col leading-tight lg:flex">
           <span className="text-sm font-semibold tracking-tight">AgentStack</span>
         </div>
