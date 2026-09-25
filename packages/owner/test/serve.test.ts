@@ -12,7 +12,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
-const socketNames = ["api", "auth", "roles", "bots", "workers", "owner"];
+const socketNames = ["api", "auth", "roles", "bots", "workers", "usage", "owner"];
 
 test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then shuts them down", { timeout: 120_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-serve-"));
@@ -20,7 +20,8 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
   const uixPort = await availablePort();
   const child = spawn(process.execPath, [cli, "serve"], {
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UIX_PORT: String(uixPort), MCP_INSPECTOR_API_TOKEN: "test-token" },
+    env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_AGENTGROK_BIN: join(stateDir, "missing-agentgrok"),
+      AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UIX_PORT: String(uixPort), MCP_INSPECTOR_API_TOKEN: "test-token" },
   });
   let stderr = "";
   child.stderr?.setEncoding("utf8");
@@ -41,12 +42,15 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
       children: Array<{ name: string; pid: number | null; running: boolean }>;
     };
     assert.equal(status.pid, child.pid);
-    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["api", "auth", "bots", "inspector", "roles", "uix", "websocket", "workers"]);
+    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["api", "auth", "bots", "inspector", "roles", "uix", "usage", "websocket", "workers"]);
     for (let i = 0; i < 200 && status.children.some((entry) => !entry.running); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
       status = (await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} })) as typeof status;
     }
     assert.ok(status.children.every((entry) => entry.running));
+    const usage = await socketCall(join(stateDir, "sockets", "usage.sock"), "tools/call", { name: "usage_snapshot", arguments: {} }) as { accounts: unknown[]; grokBot: { fresh: boolean } };
+    assert.deepEqual(usage.accounts, []);
+    assert.equal(typeof usage.grokBot.fresh, "boolean");
 
     for (let i = 0; i < 200 && !/owner MCP: (http:\/\/\S+)/.test(stderr); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -92,7 +96,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     assert.equal(servers?.status, 200, stderr);
-    assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["auth", "bots", "owner", "roles", "workers"]);
+    assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["auth", "bots", "owner", "roles", "usage", "workers"]);
     const inspectorUrl = `http://127.0.0.1:${inspectorPort}/`;
     assert.equal((await fetch(inspectorUrl)).status, 200);
     const catalogDir = (await readdir(stateDir)).find((entry) => entry.startsWith("inspector-"));

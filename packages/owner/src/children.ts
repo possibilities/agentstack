@@ -37,6 +37,13 @@ export function workersChild(): OwnedChild {
     args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "workers", "socket"],
   };
 }
+export function usageChild(): OwnedChild {
+  const apiPackage = require.resolve("@agentstack/api/package.json");
+  return {
+    name: "usage", command: process.execPath,
+    args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "usage", "socket"],
+  };
+}
 export function websocketChild(): OwnedChild {
   return {
     name: "websocket",

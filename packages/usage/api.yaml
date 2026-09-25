@@ -1,0 +1,8 @@
+name: usage
+description: Observe every registered Codex, Grok and Devin account's usage and the local Grok Bot allowance without routing or balancing.
+socket:
+  description: Private read-only usage snapshots maintained by the owner-owned observer.
+mcp:
+  description: Agent-facing read-only usage snapshots forwarded to the usage socket.
+websocket:
+  description: Loopback read-only usage snapshots and change notices.

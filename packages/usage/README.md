@@ -1,0 +1,7 @@
+# Usage Package API
+
+`usage_snapshot` reads the latest observations for every registered AgentStack Codex account and every Grok/Devin Worker account, plus the machine-level Grok Bot CLI login. It is informational only: measurements are not dispatch authorization. `usage_changed` tells subscribers to read again. Account IDs match `auth.account_list` / `auth.worker_account_list`; Grok Bot has no Worker account ID.
+
+The owner-managed child observes accounts roughly every three minutes (with jitter), retaining the last good data on failures. It reads credentials only from the existing native/account stores and writes **measurements only** to `AGENTSTACK_STATE_DIR/usage/observations.json` (private mode). It neither owns nor rotates refresh tokens. If the native login expires, expect `auth_unavailable` until its owner refreshes it or the operator signs in again. `observedAtMs` is the last successful sample; `lastAttemptAtMs` and `error` describe the last attempt. `fresh` requires a healthy successful sample no older than five minutes and a current auth inventory.
+
+Devin reads each account's native `credentials.toml`; Grok reads each account's native OpenCode OAuth credential; Codex reads the account's Codex auth store. These are deliberately **not** AgentUsage's independent account keys. The Grok Bot check runs the installed `agentgrok usage --json`; `AGENTSTACK_AGENTGROK_BIN` can point to its binary if it is not under `~/.local/bin/`. No balancing, selection, leasing or credential-management operation is exposed here.

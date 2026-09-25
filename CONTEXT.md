@@ -38,6 +38,12 @@ An owner-supervised stdio ACP process for one ready Worker account: OpenCode for
 
 A no-turn observation of model and dependent effort choices actually offered by one account's ACP session, with native Devin model IDs as separately labelled evidence. Cached values retain source, observation time and stale/error state; they do not by themselves prove successful inference or spendable quota.
 
+## Usage observation
+
+A read-only, account-ID-bound measurement of provider quota or billing, collected by the owner-managed `usage` Package API. It retains the last good value with an explicit observation time, freshness and sanitized failure code. It is evidence for a human or agent, not an eligibility verdict or a balancing recommendation; Grok Bot is the machine's separate CLI login rather than a Worker account.
+
+_Avoid_: account score, capacity decision, balance action
+
 ## Worker
 
 An AgentStack-owned ACP session started by a Bot (or the local operator) under one enabled Worker account in an owned Git worktree. It retains its account, model/effort, Role revision, transcript and origin across turns. Closing a Worker retains the worktree and branch for review. _Avoid_: Bot, active account, disposable prompt

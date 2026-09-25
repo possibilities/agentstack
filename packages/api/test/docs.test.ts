@@ -30,7 +30,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.deepEqual(
       docs.packages.map((item) => item.name),
-      ["api", "auth", "bots", "owner", "roles", "workers"],
+      ["api", "auth", "bots", "owner", "roles", "usage", "workers"],
     );
     assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@agentstack/${item.name}`));
 
@@ -99,6 +99,14 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(workers.eventScope?.required, false);
     assert.deepEqual(workers.operations.map((operation) => operation.name), ["worker_catalog", "worker_runtime_list", "worker_account_drain",
       "worker_start", "worker_list", "worker_status", "worker_read", "worker_send", "worker_respond", "worker_cancel", "worker_resume", "worker_close", "worker_remove"]);
+
+    const usage = found.get("usage") as PackageDoc;
+    assert.deepEqual(Object.keys(usage.events), ["usage_changed"]);
+    assert.deepEqual(usage.operations.map((operation) => operation.name), ["usage_snapshot"]);
+    assert.equal(usage.operations[0]?.annotations.readOnlyHint, true);
+    assert.deepEqual(Object.keys(usage.operations[0]?.outputSchema.properties ?? {}).sort(), ["accounts", "atMs", "grokBot", "inventoryAtMs", "inventoryError"]);
+    assert.equal(usage.transports.find((transport) => transport.type === "socket")?.endpoint, join(stateDir, "sockets", "usage.sock"));
+    assert.equal(usage.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
 
     assert.deepEqual(bots.eventScope, {
       description: "Optional bot ID. Scoped subscriptions receive changes only for that bot; omit scope to receive global voice, defaults, and bot notices.",
