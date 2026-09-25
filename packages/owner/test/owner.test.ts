@@ -8,7 +8,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { serveApi, socketCall, socketSubscribe } from "@agentstack/api";
-import { apiChild, authChild, rolesChild, workersChild, websocketChild } from "../src/children.js";
+import { apiChild, authChild, rolesChild, workersChild, wikiChild, websocketChild } from "../src/children.js";
 import { inspectorChild, inspectorPort } from "../src/inspector.js";
 import { botsChild } from "../src/bots.js";
 import { startOwner } from "../src/owner.js";
@@ -72,12 +72,12 @@ test("shutdown drains a dependent child before stopping its dependency", async (
 });
 
 test("the owner starts the required socket children", () => {
-  for (const child of [apiChild(), authChild(), rolesChild(), botsChild(), workersChild()]) {
+  for (const child of [apiChild(), authChild(), rolesChild(), botsChild(), workersChild(), wikiChild()]) {
     assert.equal(child.command, process.execPath);
     assert.deepEqual(child.args.slice(1), [child.name, "socket"]);
     assert.equal(existsSync(child.args[0] ?? ""), true);
   }
-  assert.deepEqual([apiChild(), authChild(), rolesChild(), botsChild(), workersChild()].map((child) => child.name), ["api", "auth", "roles", "bots", "workers"]);
+  assert.deepEqual([apiChild(), authChild(), rolesChild(), botsChild(), workersChild(), wikiChild()].map((child) => child.name), ["api", "auth", "roles", "bots", "workers", "wiki"]);
   assert.deepEqual(botsChild(43123).env, { AGENTSTACK_OWNER_MCP_PORT: "43123" });
   const websocket = websocketChild();
   assert.equal(websocket.command, process.execPath);

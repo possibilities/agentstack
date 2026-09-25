@@ -97,3 +97,21 @@ Transport-supplied information about one Package API operation invoked through M
 One ephemeral, full-duplex WebRTC audio session into a running Bot's existing main thread. The Bots Package API relays an SDP offer and answer, tracks the exact call ID, and stops only native realtime on hang-up; it never creates a thread or ends a turn. The browser owns microphone capture and speaker playback.
 
 _Avoid_: voice agent, voice thread
+
+## Vault
+
+The `wiki` Package API's directory of plain-text documents. Files are authoritative; its SQLite Index is derived and reconciles on reads. This vault is under AgentStack state, separate from the original agentwiki vault. _Avoid_: notebook, workspace
+
+## Artifact
+
+A named static file or directory held by `wiki` with an immutable content-hash Version and a mutable latest pointer. Its manifest and bytes live in AgentStack state, and a stub Document in the Vault makes it searchable and linkable. _Avoid_: attachment, upload
+
+## Artifact origin
+
+The second loopback HTTP origin owned by the `wiki` Package API. It serves only static Artifact bytes and has no access to the document origin; the separate origin and CSP isolate Artifact scripts from the Vault. _Avoid_: sandbox
+
+## Canvas space
+
+One focused canvas of related windows in the `/x` UI, addressed as `/x/<space>`: Fleet, System, or API. Spaces share one live connection, inspector, and voice call; each keeps its own arrangement. Every card has one home space, so focusing a card from anywhere moves to that space.
+
+_Avoid_: page, tab, workspace (a Bot's working directory)

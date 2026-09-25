@@ -1,0 +1,90 @@
+/** Two edge kinds live in the graph: a wikilink an author typed, and a
+ * mention the engine noticed. Both are derived from body text alone, so a
+ * document's outgoing edges never depend on index state. */
+
+export interface Wikilink {
+  /** Raw link text as written; resolution to a slug happens against the index. */
+  target: string;
+  alias?: string;
+}
+
+const WIKILINK = /\[\[([^[\]|]+)(?:\|([^[\]]*))?\]\]/g;
+const FENCED_CODE = /^[ \t]{0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^[ \t]{0,3}\1[ \t]*$|$)/gm;
+const INLINE_CODE = /`+[^`\n]*`+/g;
+
+/** Code is quoted text, not authorship: [[x]] inside a fence is an example,
+ * not an edge. Replacing with spaces keeps offsets stable for callers. */
+export function stripCode(body: string): string {
+  return body.replace(FENCED_CODE, blank).replace(INLINE_CODE, blank);
+}
+
+function blank(match: string): string {
+  return match.replace(/[^\n]/g, " ");
+}
+
+export function extractWikilinks(body: string): Wikilink[] {
+  const links: Wikilink[] = [];
+  const seen = new Set<string>();
+  for (const match of stripCode(body).matchAll(WIKILINK)) {
+    const target = (match[1] ?? "").trim();
+    if (target === "") continue;
+    const alias = (match[2] ?? "").trim();
+    const key = `${target}\0${alias}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    links.push(alias === "" ? { target } : { target, alias });
+  }
+  return links;
+}
+
+/** Title mentions are soft links, so they are deliberately conservative:
+ * short titles ("Log", "TODO") would match everywhere and drown the graph. */
+export const MIN_MENTION_LENGTH = 4;
+
+export interface MentionCandidate {
+  slug: string;
+  title: string;
+}
+
+/** Returns the slugs whose title appears verbatim in the body. The body is
+ * expected to have had code and wikilinks removed by the caller so an
+ * explicit link is never double-counted as a mention. */
+export function findMentions(
+  body: string,
+  candidates: readonly MentionCandidate[],
+  selfSlug: string,
+): string[] {
+  const haystack = body.toLowerCase();
+  const found: string[] = [];
+  for (const candidate of candidates) {
+    if (candidate.slug === selfSlug) continue;
+    const title = candidate.title.trim();
+    if (title.length < MIN_MENTION_LENGTH) continue;
+    if (!/[a-z]/i.test(title)) continue;
+    if (containsBounded(haystack, title.toLowerCase())) found.push(candidate.slug);
+  }
+  return found;
+}
+
+/** Word-bounded substring search without building a regex per title —
+ * mention detection runs title-count times per document. */
+function containsBounded(haystack: string, needle: string): boolean {
+  let from = 0;
+  for (;;) {
+    const at = haystack.indexOf(needle, from);
+    if (at === -1) return false;
+    const before = at === 0 ? "" : haystack.charAt(at - 1);
+    const after = haystack.charAt(at + needle.length);
+    if (!isWordCharacter(before) && !isWordCharacter(after)) return true;
+    from = at + 1;
+  }
+}
+
+function isWordCharacter(character: string): boolean {
+  return character !== "" && /[a-z0-9_]/i.test(character);
+}
+
+/** The mention scan runs over body text with explicit links removed. */
+export function mentionHaystack(body: string): string {
+  return stripCode(body).replace(WIKILINK, blank);
+}

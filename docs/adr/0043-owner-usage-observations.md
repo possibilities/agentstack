@@ -1,4 +1,4 @@
-# 41. Observe registered accounts without routing them
+# 43. Observe registered accounts without routing them
 
 Status: accepted, 2026-09-25. Extends [ADR 0036](0036-account-bound-acp-foundation.md)'s isolated Worker accounts and [ADR 0012](0012-stable-codex-account-ids.md)'s immutable Codex identities.
 

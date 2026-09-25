@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, use, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import type { SpaceId } from "@/lib/stack/spaces";
 import { StackStore, type StackConnections, type StackState } from "@/lib/stack/store";
 import type { NodeRef, Snapshot, StackEvent } from "@/lib/stack/types";
 
@@ -72,6 +73,8 @@ export type Mode = "canvas" | "grid";
 
 export type WorkbenchValue = {
   mode: Mode;
+  space: SpaceId;
+  setSpace(space: SpaceId): void;
   selected: NodeRef | null;
   hovered: string | null;
   select(ref: NodeRef | null): void;

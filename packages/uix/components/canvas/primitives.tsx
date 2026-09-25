@@ -153,7 +153,7 @@ export function Sparkline({ values, className }: { values: number[]; className?:
  * A selectable card on the canvas. The full-card button provides selection
  * and keyboard access; nested controls sit above it with `relative z-10`.
  */
-export function NodeCard({ node, label, children, className, lastEvent, accent, variant = "card" }: {
+export function NodeCard({ node, label, children, className, lastEvent, accent, variant = "card", activate }: {
   node: NodeRef;
   label: string;
   children: React.ReactNode;
@@ -161,6 +161,8 @@ export function NodeCard({ node, label, children, className, lastEvent, accent, 
   lastEvent?: StackEvent;
   accent?: string;
   variant?: "card" | "row";
+  /** Overrides the default click (select toggle), e.g. to focus the node across spaces. */
+  activate?: () => void;
 }) {
   const { selected, hovered, select, hover } = useWorkbench();
   const key = nodeKey(node);
@@ -187,7 +189,7 @@ export function NodeCard({ node, label, children, className, lastEvent, accent, 
         aria-label={`Inspect ${label}`}
         aria-pressed={isSelected}
         className="absolute inset-0 rounded-[inherit] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        onClick={() => select(isSelected ? null : node)}
+        onClick={() => (activate ? activate() : select(isSelected ? null : node))}
       />
       <div className="pointer-events-none relative flex flex-col gap-2 [&_a]:relative [&_a]:z-10 [&_a]:pointer-events-auto [&_button]:pointer-events-auto [&_[data-interactive]]:pointer-events-auto">
         {children}

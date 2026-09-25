@@ -4,10 +4,12 @@ import { BookOpenIcon, BotIcon, CircleCheckIcon, CpuIcon, MicIcon, MicOffIcon, P
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
 import { operationTitle } from "@/lib/stack/catalog";
 import { accountLabels, shortId } from "@/lib/stack/derive";
+import { spaces } from "@/lib/stack/spaces";
 import type { Account, NodeRef } from "@/lib/stack/types";
 import { useAuthActions } from "./auth-actions";
 import { Orb, StatusDot } from "./primitives";
 import { useStack, useWorkbench } from "./provider";
+import { spaceViews } from "./spaces";
 import { useVoice } from "./voice";
 
 export type PaletteAction = { id: string; label: string; shortcut?: string; icon: React.ComponentType; run(): void };
@@ -16,7 +18,7 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
   const { bots, accounts, owner, catalog, attempt } = useStack();
   const auth = useAuthActions();
   const voice = useVoice();
-  const { focus } = useWorkbench();
+  const { focus, setSpace } = useWorkbench();
   const labels = accountLabels(accounts.data);
   const go = (ref: NodeRef) => {
     onOpenChange(false);
@@ -34,6 +36,19 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
         <CommandInput placeholder="Jump to a bot, account, operation…" />
         <CommandList className="max-h-96">
           <CommandEmpty>No matches.</CommandEmpty>
+          <CommandGroup heading="Spaces">
+            {spaces.map((item) => {
+              const Icon = spaceViews[item.id].icon;
+              return (
+                <CommandItem key={item.id} value={`space ${item.title} ${item.description}`} onSelect={() => { onOpenChange(false); setSpace(item.id); }}>
+                  <Icon />
+                  <span>{item.title}</span>
+                  <span className="text-xs text-muted-foreground">{item.description}</span>
+                  <CommandShortcut>{item.key}</CommandShortcut>
+                </CommandItem>
+              );
+            })}
+          </CommandGroup>
           {bots.data?.length ? (
             <CommandGroup heading="Bots">
               {bots.data.map((bot) => (
