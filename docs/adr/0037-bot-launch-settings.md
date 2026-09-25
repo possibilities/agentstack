@@ -1,0 +1,7 @@
+# 37. Snapshot API-owned launch defaults for each Bot
+
+Status: accepted, 2026-09-24. Extends [ADR 0017](0017-persist-server-launch-arguments.md), [ADR 0029](0029-bots-own-codex-lifecycle.md), and [ADR 0035](0035-full-access-bot-default.md).
+
+The Bots Package API owns four explicit launch settings: model, reasoning effort, sandbox mode, and approval policy. `bot_defaults_get` reads their persistent defaults and `bot_defaults_set` changes them for future Bots, publishing `defaults_changed`. The initial settings are `gpt-6-sol`, `medium`, `danger-full-access`, and `never`. `bot_start` can override any setting when creating a Bot, or change a stopped Bot; each new Bot retains its own snapshot across restarts and owner recovery. Existing Bot records without saved settings retain their former implicit Codex model and effort on restart (and report `settings: null`) until explicitly changed while stopped. Their full-access and no-approval baseline continues.
+
+At launch, AgentStack passes model and other settings through codexnk app-server's `-c` config overrides before saved caller arguments. Those arguments remain private and last in precedence, so an explicit caller `-c model=…` or other config override continues to work. The Bot view exposes the saved settings, not an inferred effective setting after arbitrary caller arguments. Running Bots reject changes to saved settings until stopped, just as they reject changed launch arguments. Defaults are stored in the public configuration database; the private argument table remains separate.

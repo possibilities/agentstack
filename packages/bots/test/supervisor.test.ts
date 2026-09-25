@@ -9,6 +9,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { appServerArgs, launchChild, processOwnsEndpoint, Supervisor, waitForReady, type LaunchSpec, type RunningChild, type SupervisorOptions } from "../src/supervisor.js";
 import { codexRuntimePath } from "../src/paths.js";
+import { DEFAULT_BOT_SETTINGS } from "../src/store.js";
 import type { StoredServer } from "../src/store.js";
 
 const fakeBin = fileURLToPath(new URL("../../test/fixtures/fake-app-server.mjs", import.meta.url));
@@ -170,7 +171,7 @@ test("launch arguments survive owner recovery and can change only while stopped"
     stateDir, graceMs: 20,
     endpoint: async () => `ws://127.0.0.1:${43300 + launches.length}`,
       launch(spec): RunningChild {
-        launches.push(spec.args.slice(spec.args.indexOf("--listen") + 6, spec.args.indexOf("--enable")));
+        launches.push(spec.args.slice(spec.args.indexOf("approval_policy=\"never\"") + 1, spec.args.indexOf("--enable")));
       let finish: (code: number | null) => void = () => undefined;
       const child: RunningChild = {
         pid: 100 + launches.length,
@@ -187,24 +188,24 @@ test("launch arguments survive owner recovery and can change only while stopped"
   try {
     await first.load();
     seedAccount(first);
-    await first.start({ cwd, id: "configured", args: ["--model", "gpt-5.4"] });
-    assert.deepEqual(launches, [["--model", "gpt-5.4"]]);
+    await first.start({ cwd, id: "configured", args: ["-c", 'model="gpt-5.4"'] });
+    assert.deepEqual(launches, [["-c", 'model="gpt-5.4"']]);
     await first.start({ cwd, id: "configured" });
-    await first.start({ cwd, id: "configured", args: ["--model", "gpt-5.4"] });
-    await assert.rejects(first.start({ cwd, id: "configured", args: ["--model", "gpt-5.6"] }), /stop it before changing args/);
+    await first.start({ cwd, id: "configured", args: ["-c", 'model="gpt-5.4"'] });
+    await assert.rejects(first.start({ cwd, id: "configured", args: ["-c", 'model="gpt-5.6"'] }), /stop it before changing args/);
     await assert.rejects(first.start({ cwd, id: "configured", args: ["--listen", "other"] }), /agentstack owns these axes/);
     assert.equal(launches.length, 1);
     await first.stop("configured");
 
     recovered = new Supervisor(options);
     await recovered.load();
-    assert.deepEqual(recovered.store.servers()[0]?.args, ["--model", "gpt-5.4"]);
+    assert.deepEqual(recovered.store.servers()[0]?.args, ["-c", 'model="gpt-5.4"']);
     await recovered.resumeAll();
-    assert.deepEqual(launches[1], ["--model", "gpt-5.4"]);
+    assert.deepEqual(launches[1], ["-c", 'model="gpt-5.4"']);
     assert.equal(recovered.list()[0]?.mainThreadId, null);
     await recovered.stop("configured");
-    await recovered.start({ cwd, id: "configured", args: ["--model", "gpt-5.6"] });
-    assert.deepEqual(launches[2], ["--model", "gpt-5.6"]);
+    await recovered.start({ cwd, id: "configured", args: ["-c", 'model="gpt-5.6"'] });
+    assert.deepEqual(launches[2], ["-c", 'model="gpt-5.6"']);
     await recovered.stop("configured");
     await recovered.start({ cwd, id: "configured", args: [] });
     assert.deepEqual(launches[3], []);
@@ -214,6 +215,55 @@ test("launch arguments survive owner recovery and can change only while stopped"
     await recovered?.runtime.close();
     recovered?.store.close();
     await first.runtime.close();
+    first.store.close();
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("saved Bot settings survive defaults changes and override only when stopped", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-settings-"));
+  const cwd = await mkdtemp(join(tmpdir(), "agentstack-settings-cwd-"));
+  const launches: string[][] = [];
+  const options: SupervisorOptions = {
+    stateDir,
+    endpoint: async () => `ws://127.0.0.1:${43900 + launches.length}`,
+    launch(spec) {
+      launches.push(spec.args);
+      let finish: (code: number | null) => void = () => undefined;
+      const child: RunningChild = { pid: 500 + launches.length, exited: new Promise((resolve) => { finish = resolve; }), kill() { child.exitCode = 0; finish(0); } };
+      return child;
+    },
+    waitReady: async () => undefined,
+  };
+  const first = new Supervisor(options);
+  let recovered: Supervisor | undefined;
+  try {
+    await first.load();
+    first.store.setBotDefaults({ model: "gpt-new", reasoningEffort: "high", sandboxMode: "read-only" });
+    const created = await first.start({ id: "one", cwd, settings: { model: "gpt-local" } });
+    assert.deepEqual(created.settings, { model: "gpt-local", reasoningEffort: "high", sandboxMode: "read-only", approvalPolicy: "never" });
+    assert.deepEqual(launches[0]?.slice(3, 11), ["-c", 'model="gpt-local"', "-c", 'model_reasoning_effort="high"', "-c", 'sandbox_mode="read-only"', "-c", 'approval_policy="never"']);
+    await assert.rejects(first.start({ id: "one", cwd, settings: { reasoningEffort: "medium" } }), /stop it before changing settings/);
+    await first.stop("one");
+    first.store.setBotDefaults({ model: "gpt-future", reasoningEffort: "low" });
+    recovered = new Supervisor(options);
+    await recovered.load();
+    assert.equal(recovered.store.botDefaults().model, "gpt-future");
+    await recovered.resumeAll();
+    assert.equal(recovered.list()[0]?.settings?.model, "gpt-local");
+    assert.deepEqual(launches[1]?.slice(3, 7), ["-c", 'model="gpt-local"', "-c", 'model_reasoning_effort="high"']);
+    await recovered.stop("one");
+    const changed = await recovered.start({ id: "one", cwd, settings: { reasoningEffort: "medium" } });
+    assert.equal(changed.settings?.reasoningEffort, "medium");
+    assert.equal(launches[2]?.[6], 'model_reasoning_effort="medium"');
+  } finally {
+    await recovered?.stopAll();
+    await recovered?.runtime.close();
+    recovered?.role.close();
+    recovered?.store.close();
+    await first.runtime.close();
+    first.role.close();
     first.store.close();
     await rm(stateDir, { recursive: true, force: true });
     await rm(cwd, { recursive: true, force: true });
@@ -245,11 +295,11 @@ test("owner MCP connections are materialized in each launch bundle without persi
   try {
     await supervisor.load();
     seedAccount(supervisor);
-    await supervisor.start({ id: "with-mcp", cwd, args: ["--model", "gpt-5.4"] });
+    await supervisor.start({ id: "with-mcp", cwd, args: ["-c", 'model="gpt-5.4"'] });
     const firstRoot = launches[0]?.[launches[0].indexOf("--capabilities") + 1];
     assert.ok(firstRoot);
     assert.match(await readFile(join(firstRoot, "config.toml"), "utf8"), /\[mcp_servers.auth\]/);
-    assert.deepEqual(supervisor.store.servers()[0]?.args, ["--model", "gpt-5.4"]);
+    assert.deepEqual(supervisor.store.servers()[0]?.args, ["-c", 'model="gpt-5.4"']);
     await supervisor.stop("with-mcp");
     exposed = { ...exposed, bots: "http://127.0.0.1:43123/mcp/bots" };
     await supervisor.start({ id: "with-mcp", cwd });
@@ -345,9 +395,11 @@ test("a stopped Server resumes after re-sign-in while preserving its old runtime
   const cwd = await mkdtemp(join(tmpdir(), "agentstack-replaced-cwd-"));
   const auth = (token: string) => JSON.stringify({ last_refresh: "2026-09-23T10:00:00Z", tokens: { refresh_token: token, access_token: "access", id_token: "fixture.jwt.signature" } });
   let launchedWith = "";
+  let launchedArgs: string[] = [];
   const supervisor = new Supervisor({ stateDir,
     endpoint: async () => "ws://127.0.0.1:43211",
     launch(spec) {
+      launchedArgs = spec.args;
       const at = spec.args.indexOf("--identity");
       launchedWith = readFileSync(join(spec.args[at + 1]!, "auth.json"), "utf8");
       return { pid: 12346, exited: new Promise(() => undefined), kill() {} };
@@ -368,6 +420,8 @@ test("a stopped Server resumes after re-sign-in while preserving its old runtime
     const resumed = await supervisor.start({ cwd, id: "bound" });
     assert.equal(resumed.mainThreadId, "thread-bound");
     assert.equal(launchedWith, auth("new"));
+    assert.equal(resumed.settings, null);
+    assert.equal(launchedArgs.some((arg) => arg.startsWith("model=") || arg.startsWith("model_reasoning_effort=")), false);
     assert.equal(supervisor.store.servers()[0]?.authVersion, 2);
     const archived = await readdir(join(stateDir, "runtime-recovery", "bound"));
     assert.equal(archived.length, 1);
@@ -441,16 +495,18 @@ test("onChange fires only on persisted running/stopped transitions", async () =>
   }
 });
 
-test("full access defaults precede caller overrides, and owned launch axes are rejected", async () => {
+test("model, effort, and access defaults precede caller overrides, and owned launch axes are rejected", async () => {
   const url = "ws://127.0.0.1:41000";
-  const defaults = ["-c", 'sandbox_mode="danger-full-access"', "-c", 'approval_policy="never"'];
-  assert.deepEqual(appServerArgs(["--model", "gpt-5.4", "-c", "foo=bar"], url), [
+  const defaults = ["-c", 'model="gpt-6-sol"', "-c", 'model_reasoning_effort="medium"', "-c", 'sandbox_mode="danger-full-access"', "-c", 'approval_policy="never"'];
+  assert.deepEqual(appServerArgs([], url), ["app-server", "--listen", url, ...defaults]);
+  assert.deepEqual(appServerArgs([], url, null), ["app-server", "--listen", url, "-c", 'sandbox_mode="danger-full-access"', "-c", 'approval_policy="never"']);
+  assert.deepEqual(appServerArgs(["-c", 'model="gpt-5.4"', "-c", "foo=bar"], url), [
     "app-server",
     "--listen",
     url,
     ...defaults,
-    "--model",
-    "gpt-5.4",
+    "-c",
+    'model="gpt-5.4"',
     "-c",
     "foo=bar",
   ]);
@@ -466,6 +522,7 @@ test("full access defaults precede caller overrides, and owned launch axes are r
   assert.deepEqual(appServerArgs(["-c", 'sandbox_mode="read-only"', "-c", 'approval_policy="on-request"'], url).slice(3), [
     ...defaults, "-c", 'sandbox_mode="read-only"', "-c", 'approval_policy="on-request"',
   ]);
+  assert.deepEqual(appServerArgs([], url, { ...DEFAULT_BOT_SETTINGS, model: "gpt-custom", reasoningEffort: "high" }).slice(3, 7), ["-c", 'model="gpt-custom"', "-c", 'model_reasoning_effort="high"']);
   assert.throws(() => appServerArgs(["--listen", "ws://127.0.0.1:1"], url), /do not pass --listen/);
   assert.throws(() => appServerArgs(["--listen=ws://127.0.0.1:1"], url), /do not pass --listen/);
   assert.throws(() => appServerArgs(["--identity", "/tmp/other"], url), /agentstack owns these axes/);
@@ -490,8 +547,8 @@ test("full access defaults precede caller overrides, and owned launch axes are r
     });
     await supervisor.load();
     seedAccount(supervisor);
-    await supervisor.start({ cwd, id: "flags", args: ["--model", "gpt-5.4"] });
-    assert.deepEqual(launched[0]?.args.slice(0, 9), ["app-server", "--listen", url, ...defaults, "--model", "gpt-5.4"]);
+    await supervisor.start({ cwd, id: "flags", args: ["-c", 'model="gpt-5.4"'] });
+    assert.deepEqual(launched[0]?.args.slice(0, 3 + defaults.length + 2), ["app-server", "--listen", url, ...defaults, "-c", 'model="gpt-5.4"']);
     await assert.rejects(supervisor.start({ cwd, id: "nope", args: ["--listen", url] }), /do not pass --listen/);
     assert.equal(launched.length, 1);
   } finally {

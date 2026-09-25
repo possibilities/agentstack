@@ -1,6 +1,6 @@
 import { loadCatalog } from "./catalog";
 import { Channel } from "./channel";
-import type { Account, Bot, ChannelStatus, Login, OwnerStatus, PackageDoc, Resource, Snapshot, StackEvent, VoiceCall, WorkerAccount, WorkerRuntime, WorkerSession } from "./types";
+import type { Account, Bot, BotSettings, ChannelStatus, Login, OwnerStatus, PackageDoc, Resource, Snapshot, StackEvent, VoiceCall, WorkerAccount, WorkerRuntime, WorkerSession } from "./types";
 
 export type StackState = Snapshot & {
   /** Main channel status by Package API name. */
@@ -20,7 +20,7 @@ function isLoginState(value: unknown): value is Login {
   return typeof value === "object" && value !== null && "status" in value && "authUrl" in value;
 }
 
-type ResourceKey = "owner" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "bots" | "voice" | "catalog";
+type ResourceKey = "owner" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "bots" | "botDefaults" | "voice" | "catalog";
 
 const maxEvents = 250;
 
@@ -70,10 +70,11 @@ export class StackStore {
       if (topic === "worker_accounts_changed") this.refresh("workerAccounts");
       if (topic === "login_changed") this.refresh("login");
     }, ["accounts_changed", "login_changed", "worker_accounts_changed"]);
-    open("bots", () => { this.refresh("bots"); this.refresh("voice"); }, (topic) => {
+    open("bots", () => { this.refresh("bots"); this.refresh("botDefaults"); this.refresh("voice"); }, (topic) => {
       if (topic === "bots_changed") this.refresh("bots");
+      if (topic === "defaults_changed") this.refresh("botDefaults");
       if (topic === "voice_changed") this.refresh("voice");
-    }, ["bots_changed", "voice_changed"]);
+    }, ["bots_changed", "defaults_changed", "voice_changed"]);
     open("workers", () => { this.refresh("workerRuntimes"); this.refresh("workerSessions"); }, () => {
       this.refresh("workerRuntimes"); this.refresh("workerSessions");
     }, ["workers_changed"]);
@@ -148,6 +149,7 @@ export class StackStore {
       case "workerSessions": return call<{ workers: WorkerSession[] }>("workers", "worker_list").then((result) => result.workers);
       case "login": return call<{ login: Login | null }>("auth", "account_login_current").then((result) => result.login);
       case "bots": return call<{ bots: Bot[] }>("bots", "bot_list").then((result) => result.bots);
+      case "botDefaults": return call<BotSettings>("bots", "bot_defaults_get");
       case "voice": return call<{ call: VoiceCall | null }>("bots", "voice_status").then((result) => result.call);
       case "catalog": return loadCatalog((name, args) => call<never>("api", name, args)) as Promise<PackageDoc[]>;
     }

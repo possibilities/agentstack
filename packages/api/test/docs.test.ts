@@ -49,17 +49,19 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok(responseLength < 750_000, `discovery snapshot exceeds the socket response budget: ${responseLength} characters`);
 
     const bots = found.get("bots") as PackageDoc;
-    assert.deepEqual(Object.keys(bots.events).sort(), ["bots_changed", "threads_changed", "voice_changed"]);
+    assert.deepEqual(Object.keys(bots.events).sort(), ["bots_changed", "defaults_changed", "threads_changed", "voice_changed"]);
     assert.equal(bots.eventScope?.required, false);
     assert.deepEqual(
       bots.operations.map((operation) => operation.name).sort(),
-      ["bot_assign", "bot_list", "bot_remove", "bot_start", "bot_stop", "voice_dial", "voice_hangup", "voice_status"],
+      ["bot_assign", "bot_defaults_get", "bot_defaults_set", "bot_list", "bot_remove", "bot_start", "bot_stop", "voice_dial", "voice_hangup", "voice_status"],
     );
     const start = bots.operations.find((operation) => operation.name === "bot_start") as OperationDoc;
     assert.ok(start.description.length > 0);
-    assert.deepEqual(Object.keys((start.inputSchema.properties ?? {}) as object).sort(), ["args", "cwd", "id"]);
+    assert.deepEqual(Object.keys((start.inputSchema.properties ?? {}) as object).sort(), ["args", "cwd", "id", "settings"]);
     assert.ok((start.outputSchema.properties as Record<string, unknown>).recoveryIssue);
     assert.ok((start.outputSchema.properties as Record<string, unknown>).roleRevision);
+    assert.ok((start.outputSchema.properties as Record<string, unknown>).settings);
+    assert.deepEqual(Object.keys(bots.operations.find((operation) => operation.name === "bot_defaults_get")?.outputSchema.properties ?? {}).sort(), ["approvalPolicy", "model", "reasoningEffort", "sandboxMode"]);
     const botsSocket = bots.transports.find((transport) => transport.type === "socket") as TransportDoc;
     assert.equal(botsSocket.supported, true);
     assert.equal(botsSocket.subscriptions, true);
@@ -98,7 +100,7 @@ test("the api package serves structured documents for every workspace package", 
       "worker_start", "worker_list", "worker_status", "worker_read", "worker_send", "worker_respond", "worker_cancel", "worker_resume", "worker_close", "worker_remove"]);
 
     assert.deepEqual(bots.eventScope, {
-      description: "Optional bot ID. Scoped subscriptions receive changes only for that bot; omit scope to receive global voice and bot notices.",
+      description: "Optional bot ID. Scoped subscriptions receive changes only for that bot; omit scope to receive global voice, defaults, and bot notices.",
       example: "bot-1",
       required: false,
     });

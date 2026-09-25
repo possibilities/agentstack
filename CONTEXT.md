@@ -52,7 +52,7 @@ The single Codex thread ID retained by a Bot. A fresh Bot has no main thread unt
 
 ## Bot
 
-A Codex app-server process with, after its first turn, a durable main thread. By default it is numbered `bot-N` with a private workspace and runs with unrestricted sandbox and no approval prompts; `bot_start` can override its ID, working directory, and launch arguments, including narrower access. A Bot may start without an account. Assign an account, then stop and start, before a turn. Turns require a bound account. Bots restart on AgentStack startup and resume their main thread when one exists.
+A Codex app-server process with, after its first turn, a durable main thread. By default it is numbered `bot-N` with a private workspace and copies the current Bot defaults: Sol at medium reasoning effort, unrestricted sandbox, and no approval prompts. The Bots Package API can change defaults for future Bots; `bot_start` can override a Bot's ID, working directory, saved settings, and launch arguments. A Bot may start without an account. Assign an account, then stop and start, before a turn. Turns require a bound account. Bots restart on AgentStack startup with their saved settings and resume their main thread when one exists.
 
 ## Role
 
