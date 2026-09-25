@@ -66,8 +66,8 @@ export const accountRemove = operation({
   },
 });
 
-function operatorOnly(invocation?: { botId: string | null }): void {
-  if (invocation?.botId) throw new Error("worker account management is operator-only");
+function operatorOnly(invocation?: { botId: string | null; workerId?: string | null }): void {
+  if (invocation?.botId || invocation?.workerId) throw new Error("worker account management is operator-only");
 }
 
 export const workerAccountList = operation({

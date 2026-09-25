@@ -95,7 +95,8 @@ test("the api package serves structured documents for every workspace package", 
     );
     assert.deepEqual((auth.operations.find((operation) => operation.name === "account_login_start")?.inputSchema.properties ?? {}), {});
     const workers = found.get("workers") as PackageDoc;
-    assert.deepEqual(Object.keys(workers.events), ["workers_changed"]);
+    assert.deepEqual(Object.keys(workers.events).sort(), ["worker_changed", "workers_changed"]);
+    assert.equal(workers.eventScope?.required, false);
     assert.deepEqual(workers.operations.map((operation) => operation.name), ["worker_catalog", "worker_runtime_list", "worker_account_drain",
       "worker_start", "worker_list", "worker_status", "worker_read", "worker_send", "worker_respond", "worker_cancel", "worker_resume", "worker_close", "worker_remove"]);
 

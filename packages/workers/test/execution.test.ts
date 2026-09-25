@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { operation, serveApi, serveSocket, socketCall, socketPath } from "@agentstack/api";
+import { operation, parseWorkerMcpIdentity, serveApi, serveSocket, socketCall, socketPath } from "@agentstack/api";
 import { type RoleSnapshot } from "@agentstack/roles";
 import { WorkerSupervisor } from "../src/supervisor.js";
 import { WorkerManager } from "../src/manager.js";
@@ -91,6 +91,7 @@ process.stdin.on('data', (chunk) => {
       agentInfo: { version: 'fixture' } } });
     else if (frame.method === 'session/new') { cwd = frame.params.cwd;
       void writeFile(join(cwd, 'mcp-names.json'), JSON.stringify(frame.params.mcpServers.map((entry) => entry.name)));
+      void writeFile(join(cwd, 'mcp-urls.json'), JSON.stringify(frame.params.mcpServers.filter((entry) => entry.type === 'http').map((entry) => ({ name: entry.name, url: entry.url }))));
       send({ id: frame.id, result: { sessionId: 'session-' + Date.now(), configOptions: options() } }); }
     else if (frame.method === 'session/load') { cwd = frame.params.cwd; send({ id: frame.id, result: { configOptions: options() } }); }
     else if (frame.method === 'session/set_config_option') {
@@ -145,6 +146,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
       async call() { return { bots: [] }; } })] });
   let manager: WorkerManager | undefined;
   let workerSocket: Awaited<ReturnType<typeof serveSocket>> | undefined;
+  const scopedChanges: string[] = [];
   try {
     const prepared = await socketCall(socketPath("auth", env), "tools/call", {
       name: "worker_account_prepare", arguments: { provider: "grok" },
@@ -156,6 +158,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_confirm", arguments: { id: accountId } });
     const supervisor = new WorkerSupervisor(root, env);
     manager = new WorkerManager(root, supervisor, env);
+    manager.onChange = (id) => { if (id) scopedChanges.push(id); };
     workerSocket = await serveSocket({ info: { name: "workers", description: "Workers", transportDescription: "Socket", path: socketPath("workers", env) },
       context: { supervisor, manager }, operations: workersApi.operations });
     await supervisor.reconcile();
@@ -174,7 +177,11 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     const id = started.worker.id;
     for (let i = 0; i < 100 && (await manager.status(id)).worker.phase !== "idle"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal((await manager.status(id)).turn?.stopReason, "end_turn");
+    assert.ok(scopedChanges.includes(id));
     assert.deepEqual(JSON.parse(await readFile(join(started.worker.cwd!, "mcp-names.json"), "utf8")), ["roles", "fixture-mcp"]);
+    const wiring = JSON.parse(await readFile(join(started.worker.cwd!, "mcp-urls.json"), "utf8")) as Array<{ name: string; url: string }>;
+    assert.equal(wiring[0]?.name, "roles");
+    assert.deepEqual(parseWorkerMcpIdentity(new URL(wiring[0]!.url), env), { workerId: id, instance: started.worker.runtimeInstance });
     assert.equal(JSON.stringify(await manager.status(id)).includes("fixture-secret"), false);
     const output = await readFile(join(started.worker.cwd!, "output.txt"), "utf8");
     assert.match(output, /Check your work/);
@@ -193,6 +200,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     for (let i = 0; i < 100 && (await manager.status(id)).worker.phase !== "awaiting_input"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
     const pending = (await manager.status(id)).pending;
     assert.equal(pending.length, 1);
+    assert.ok(scopedChanges.filter((value) => value === id).length >= 2);
     await manager.respond(id, pending[0]!.id, "allow-once");
     for (let i = 0; i < 100 && (await manager.status(id)).worker.phase !== "idle"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.match(await readFile(join(started.worker.cwd!, "approved.txt"), "utf8"), /allow-once/);

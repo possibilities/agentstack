@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { McpEventSubscriptions, botInstance, socketCall, socketPath, type EventTarget, type EventValue } from "@agentstack/api";
+import { McpEventSubscriptions, botInstance, socketCall, socketPath, type EventSubscription, type EventTarget, type EventValue } from "@agentstack/api";
 import { appServerSocket, listActiveThreads, type ActiveThread } from "@agentstack/bots";
 
 type RunningBot = { id: string; url: string | null; state: string; recoveryIssue: string | null; mainThreadId: string | null };
@@ -33,6 +33,20 @@ async function rebindTarget(botId: string, threadId: string, env: NodeJS.Process
   const target = { botId, threadId, instance: botInstance(bot.url) };
   await verifiedTarget(target, env);
   return target;
+}
+
+/** Worker subscriptions may read only the originating Bot thread's exact Worker. */
+export async function authorizeWorkerRead(subscription: EventSubscription, env: NodeJS.ProcessEnv): Promise<void> {
+  if (subscription.pkg !== "workers") return;
+  const args = subscription.readArguments;
+  if (subscription.topic !== "worker_changed" || !subscription.scope || subscription.readOperation !== "worker_status" ||
+      Object.keys(args).length !== 1 || args.id !== subscription.scope)
+    throw new Error("worker wakeup requires an exact worker_changed scope and worker_status read");
+  const result = await socketCall(socketPath("workers", env), "tools/call", {
+    name: "worker_status", arguments: { id: subscription.scope },
+  }, { timeoutMs: 2_000 }) as { worker: { botId: string; threadId: string } };
+  if (result.worker.botId !== subscription.botId || result.worker.threadId !== subscription.threadId)
+    throw new Error("worker wakeup is not owned by this Bot thread");
 }
 
 const wait = (ms: number, signal: AbortSignal) => new Promise<void>((resolve, reject) => {
@@ -138,5 +152,5 @@ export function createMcpEventSubscriptions(env: NodeJS.ProcessEnv): McpEventSub
       if (Date.now() >= deadline) throw new Error("subscription thread stayed busy; latest value awaits the next event");
       await wait(1_000, signal);
     }
-  }, (botId, threadId) => rebindTarget(botId, threadId, env));
+  }, (botId, threadId) => rebindTarget(botId, threadId, env), (subscription) => authorizeWorkerRead(subscription, env));
 }

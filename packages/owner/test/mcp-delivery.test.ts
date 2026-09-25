@@ -53,6 +53,15 @@ test("event values start a turn only on a loaded descendant of the Bot's sanctio
     operations: [operation({ name: "snapshot", description: "Read state.", input: z.strictObject({}), output: z.object({ value: z.number() }), annotations: { readOnlyHint: true },
       async call() { return { value }; } })], events: { topics: { changed: "Refresh snapshot." } },
   });
+  const workerId = "11111111-1111-4111-8111-111111111111";
+  let workerOwner = "bot-1";
+  let workerPhase = "running";
+  const workers = await serveSocket({
+    info: { name: "workers", description: "Workers.", transportDescription: "Socket.", path: socketPath("workers", env) }, context: {},
+    operations: [operation({ name: "worker_status", description: "Read Worker.", input: z.strictObject({ id: z.string() }), output: z.any(), annotations: { readOnlyHint: true },
+      async call(_ctx, { id }) { assert.equal(id, workerId); return { worker: { id, botId: workerOwner, threadId: "child", phase: workerPhase }, turn: { stopReason: workerPhase === "completed" ? "end_turn" : null }, pending: [] }; } })],
+    events: { topics: { worker_changed: "Worker changed." }, scope: { description: "Worker ID.", example: workerId, required: false, valid: (_ctx, id) => id === workerId } },
+  });
   const subscriptions = createMcpEventSubscriptions(env);
   const target: EventTarget = { botId: "bot-1", instance: botInstance(endpoint), threadId: "child" };
   const invocation: InvocationContext = { transport: "mcp", ...target, sessionId: "session-1" };
@@ -73,8 +82,26 @@ test("event values start a turn only on a loaded descendant of the Bot's sanctio
     assert.match(turns[0]?.input[0]?.text ?? "", /Current value: \{"value":1\}/);
     assert.match(turns[0]?.input[0]?.text ?? "", /Topic: changed/);
     await until(() => typeof subscriptions.status(invocation).subscriptions[0]?.lastDeliveredAt === "number");
+    const choice = { topic: "worker_changed", scope: workerId, readOperation: "worker_status", readArguments: { id: workerId } };
+    await assert.rejects(subscriptions.subscribe("workers", { ...choice, readArguments: { id: "other" } }, invocation), /exact worker_changed scope/);
+    await assert.rejects(subscriptions.subscribe("workers", choice, { ...invocation, threadId: "main" }), /not owned by this Bot thread/);
+    const workerSub = await subscriptions.subscribe("workers", choice, invocation);
+    assert.equal((workerSub.value as { worker: { phase: string } }).worker.phase, "running");
+    workerPhase = "completed";
+    workers.publish?.("worker_changed", workerId);
+    await until(() => turns.length === 2);
+    assert.equal(turns[1]?.threadId, "child");
+    assert.match(turns[1]?.input[0]?.text ?? "", /Topic: worker_changed · Scope:/);
+    assert.match(turns[1]?.input[0]?.text ?? "", /"stopReason":"end_turn"/);
+    workerOwner = "bot-2";
+    workerPhase = "idle";
+    workers.publish?.("worker_changed", workerId);
+    for (let i = 0; i < 100 && subscriptions.status(invocation).subscriptions.find((item) => item.id === workerSub.subscription.id)?.state !== "error"; i++) await pause(10);
+    assert.equal(subscriptions.status(invocation).subscriptions.find((item) => item.id === workerSub.subscription.id)?.state, "error");
+    assert.equal(turns.length, 2, "a Worker ownership change must not wake the previous Bot thread");
   } finally {
     await subscriptions.close();
+    await workers.close();
     await sample.close();
     await bots.close();
     for (const peer of wss.clients) peer.terminate();

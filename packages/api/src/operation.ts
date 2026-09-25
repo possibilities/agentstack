@@ -16,6 +16,9 @@ export type InvocationContext = {
   /** Claimed by Codex in MCP _meta; validate lineage before targeting a thread. */
   threadId: string | null;
   sessionId: string | null;
+  /** Verified against the exact owned ACP runtime; never a Bot identity. */
+  workerId?: string | null;
+  workerInstance?: string | null;
 };
 
 export type AnyOperation<Ctx> = {

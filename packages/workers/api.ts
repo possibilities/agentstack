@@ -13,6 +13,7 @@ const turnPhase = z.enum(["queued", "running", "awaiting_input", "cancelling", "
 const workerSchema = z.strictObject({ id, botId: z.string(), threadId: z.string(), accountId: id, provider: z.enum(["codex", "grok", "devin"]),
   model: z.string(), effort: z.string().nullable(), repo: z.string(), cwd: z.string().nullable(), branch: z.string().nullable(),
   baseCommit: z.string().nullable(), sourceDirty: z.boolean(), roleRevision: z.number().int().nullable(), acpSessionId: z.string().nullable(),
+  runtimeInstance: id.nullable(),
   phase, currentTurnId: id.nullable(), issue: z.string().nullable(), createdAt: z.number().int(), updatedAt: z.number().int() });
 const turnSchema = z.strictObject({ id, workerId: id, phase: turnPhase, stopReason: z.string().nullable(), issue: z.string().nullable(),
   createdAt: z.number().int(), updatedAt: z.number().int() });
@@ -31,7 +32,7 @@ export const workerCatalog = operation({
 export const workerRuntimeList = operation({
   name: "worker_runtime_list", description: "Read owned per-account ACP process health without exposing credentials or the ACP pipes.",
   input: z.strictObject({}), output: z.strictObject({ runtimes: z.array(z.strictObject({ id, provider: z.enum(["codex", "grok", "devin"]),
-    state: z.enum(["running", "stopped", "error"]), pid: z.number().int().nullable(), error: z.string().nullable() })) }),
+    state: z.enum(["running", "stopped", "error"]), pid: z.number().int().nullable(), instance: id.nullable(), error: z.string().nullable() })) }),
   annotations: { title: "List ACP runtimes", readOnlyHint: true },
   async call(ctx: WorkersContext) { return { runtimes: ctx.supervisor.runtimeList() }; },
 });
@@ -39,7 +40,7 @@ export const workerAccountDrain = operation({
   name: "worker_account_drain", description: "Internal operator lifecycle: stop one exact ACP process before disabling or removing its account.",
   input: z.strictObject({ id }), output: z.strictObject({ id }), annotations: { title: "Drain ACP account", idempotentHint: true },
   async call(ctx: WorkersContext, { id }, invocation) {
-    if (invocation?.botId) throw new Error("account lifecycle is operator-only");
+    if (invocation?.botId || invocation?.workerId) throw new Error("account lifecycle is operator-only");
     await ctx.supervisor.drain(id);
     return { id };
   },
@@ -107,11 +108,25 @@ export const workerRemove = operation({
   async call(ctx: WorkersContext, { id, discardWorktree }, invocation) { return ctx.manager.remove(id, discardWorktree, invocation); },
 });
 
-export const topics = { workers_changed: "ACP account, catalog, worker session, turn or permission state changed. Refresh the relevant read operation." } as const;
+export const topics = {
+  workers_changed: "ACP account, catalog or Worker state changed. Refresh the relevant read operation.",
+  worker_changed: "One Worker's turn, permission or recovery state changed. Subscribe with its Worker ID and re-read worker_status for the latest value.",
+} as const;
 export const api: PackageApi<WorkersContext, keyof typeof topics> = {
   operations: [workerCatalog, workerRuntimeList, workerAccountDrain, workerStart, workerList, workerStatus, workerRead,
     workerSend, workerRespond, workerCancel, workerResume, workerClose, workerRemove],
-  events: { topics, start(ctx, publish) { ctx.manager.onChange = () => publish("workers_changed"); return () => { ctx.manager.onChange = undefined; }; } },
+  events: {
+    topics,
+    scope: { description: "Optional Worker ID. A Bot subscription to worker_changed requires this exact ID and a matching worker_status read.",
+      example: "00000000-0000-4000-8000-000000000001", valid: (ctx, scope) => Boolean(ctx.manager.ledger.worker(scope)) },
+    start(ctx, publish) {
+      ctx.manager.onChange = (workerId) => {
+        publish("workers_changed");
+        if (workerId && ctx.manager.ledger.worker(workerId)) publish("worker_changed", workerId);
+      };
+      return () => { ctx.manager.onChange = undefined; };
+    },
+  },
   async createContext(env) {
     const dir = stateDir(env);
     await mkdir(dir, { recursive: true, mode: 0o700 });

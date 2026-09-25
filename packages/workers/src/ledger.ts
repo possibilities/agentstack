@@ -9,6 +9,7 @@ export type WorkerRecord = {
   id: string; botId: string; threadId: string; accountId: string; provider: "codex" | "grok" | "devin";
   model: string; effort: string | null; repo: string; cwd: string | null; branch: string | null; baseCommit: string | null;
   sourceDirty: boolean; roleRevision: number | null; acpSessionId: string | null; phase: WorkerPhase;
+  runtimeInstance: string | null;
   currentTurnId: string | null; issue: string | null; createdAt: number; updatedAt: number;
 };
 export type TurnRecord = { id: string; workerId: string; phase: TurnPhase; stopReason: string | null; issue: string | null;
@@ -37,7 +38,7 @@ export class WorkerLedger {
         id TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE, input_digest TEXT NOT NULL,
         bot_id TEXT NOT NULL, thread_id TEXT NOT NULL, account_id TEXT NOT NULL, provider TEXT NOT NULL,
         model TEXT NOT NULL, effort TEXT, repo TEXT NOT NULL, cwd TEXT, branch TEXT, base_commit TEXT,
-        source_dirty INTEGER NOT NULL DEFAULT 0, role_revision INTEGER, acp_session_id TEXT, phase TEXT NOT NULL,
+        source_dirty INTEGER NOT NULL DEFAULT 0, role_revision INTEGER, acp_session_id TEXT, runtime_instance TEXT, phase TEXT NOT NULL,
         current_turn_id TEXT, issue TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS turns (
@@ -56,6 +57,8 @@ export class WorkerLedger {
         options_json TEXT NOT NULL, state TEXT NOT NULL
       );
     `);
+    const columns = this.db.prepare("PRAGMA table_info(workers)").all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === "runtime_instance")) this.db.exec("ALTER TABLE workers ADD COLUMN runtime_instance TEXT");
     this.db.prepare("UPDATE workers SET phase = 'needs_recovery', issue = 'Owner restarted during a worker operation; inspect before resuming', updated_at = ? WHERE phase IN ('preparing','running','awaiting_input','cancelling')").run(Date.now());
     this.db.prepare("UPDATE turns SET phase = 'unknown', issue = 'Turn outcome is unknown after owner restart', updated_at = ? WHERE phase IN ('queued','running','awaiting_input','cancelling')").run(Date.now());
     this.db.prepare("UPDATE pending_requests SET state = 'unknown' WHERE state = 'pending'").run();
@@ -72,6 +75,7 @@ export class WorkerLedger {
       cwd: row.cwd as string | null, branch: row.branch as string | null, baseCommit: row.base_commit as string | null,
       sourceDirty: Boolean(row.source_dirty), roleRevision: row.role_revision as number | null,
       acpSessionId: row.acp_session_id as string | null, phase: row.phase as WorkerPhase,
+      runtimeInstance: row.runtime_instance as string | null,
       currentTurnId: row.current_turn_id as string | null, issue: row.issue as string | null,
       createdAt: row.created_at as number, updatedAt: row.updated_at as number,
     };
@@ -133,6 +137,10 @@ export class WorkerLedger {
   setSession(id: string, acpSessionId: string): WorkerRecord {
     this.db.prepare("UPDATE workers SET acp_session_id = ?, phase = 'idle', issue = NULL, updated_at = ? WHERE id = ?")
       .run(acpSessionId, Date.now(), id);
+    return this.worker(id)!;
+  }
+  setRuntimeInstance(id: string, instance: string): WorkerRecord {
+    this.db.prepare("UPDATE workers SET runtime_instance = ?, updated_at = ? WHERE id = ?").run(instance, Date.now(), id);
     return this.worker(id)!;
   }
   setWorkerPhase(id: string, phase: WorkerPhase, issue: string | null = null): WorkerRecord {

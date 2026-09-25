@@ -46,6 +46,10 @@ An AgentStack-owned ACP session started by a Bot (or the local operator) under o
 
 One `session/prompt` request on an existing Worker. Admission returns durable Worker and turn IDs before completion; status and transcript reads establish the outcome. A lost response is `unknown`, never a reason to resubmit the turn automatically. A subsequent turn can request corrections in the same ACP session after it is idle or explicitly loaded for recovery.
 
+## Worker MCP invocation context
+
+Transport-supplied Worker ID and exact ACP runtime instance from a private signed MCP URL. The owner checks both against the durable Worker and live account process before admitting tools; the URL exposes read-only Package API operations and cannot subscribe a Bot thread. It is a same-user correlation and stale-runtime fence, not an OS sandbox. _Avoid_: Bot identity, operator authority
+
 ## Main thread
 
 The single Codex thread ID retained by a Bot. A fresh Bot has no main thread until the first persistent root thread created by a connected UI has a durable turn; later Bot launches resume that ID. Only this root and its descendants belong to AgentStack's view of the Bot. Other Codex top-level threads on the same socket are ignored.

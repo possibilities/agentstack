@@ -6,11 +6,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { z } from "zod";
-import { operation, serveApi, serveSocket, socketCall, socketPath } from "@agentstack/api";
+import { operation, serveApi, serveMcp, serveSocket, socketCall, socketPath } from "@agentstack/api";
 import { accountEnvironment, type WorkerAccount } from "@agentstack/auth";
 import type { RoleSnapshot } from "@agentstack/roles";
 import { WorkerManager } from "../src/manager.js";
 import { WorkerSupervisor } from "../src/supervisor.js";
+import { api as workersApi } from "../api.js";
 
 const git = (cwd: string, args: string[]) => new Promise<void>((resolve, reject) =>
   execFile("git", ["-C", cwd, ...args], { timeout: 10_000 }, (error) => error ? reject(error) : resolve()));
@@ -38,11 +39,19 @@ test("isolated native Grok and Devin accounts finish Worker turns in owned workt
   const roles = await serveSocket({ info: { name: "roles", description: "Roles", transportDescription: "Socket", path: socketPath("roles", env) },
     context: {}, operations: [operation({ name: "role_snapshot", description: "Role", input: z.object({}), output: z.any(),
       async call() { return role; } })] });
+  let mcpUrls: Record<string, string> = {};
   const owner = await serveSocket({ info: { name: "owner", description: "Owner", transportDescription: "Socket", path: socketPath("owner", env) },
     context: {}, operations: [operation({ name: "owner_status", description: "Status", input: z.object({}), output: z.any(),
-      async call() { return { mcpUrls: {} }; } })] });
+      async call() { return { mcpUrls }; } })] });
   const supervisor = new WorkerSupervisor(root, env);
   const manager = new WorkerManager(root, supervisor, env);
+  const workers = await serveSocket({ info: { name: "workers", description: "Workers", transportDescription: "Socket", path: socketPath("workers", env) },
+    context: { supervisor, manager }, operations: workersApi.operations });
+  const catalogRoot = join(root, "catalog");
+  await mkdir(join(catalogRoot, "packages", "workers"), { recursive: true });
+  await writeFile(join(catalogRoot, "packages", "workers", "api.yaml"), "name: workers\ndescription: Workers.\nmcp:\n  description: Worker MCP.\n");
+  const mcp = await serveMcp({ root: catalogRoot, env, port: 0 });
+  mcpUrls = { workers: mcp.urls.workers! };
   try {
     const native = JSON.parse(await readFile(join(homedir(), ".local", "share", "opencode", "auth.json"), "utf8")) as {
       xai?: { type?: string; expires?: number };
@@ -97,6 +106,7 @@ test("isolated native Grok and Devin accounts finish Worker turns in owned workt
     }
   } finally {
     await manager.close();
+    await mcp.close(); await workers.close();
     await owner.close(); await roles.close(); await auth.close();
     await rm(root, { recursive: true, force: true });
   }

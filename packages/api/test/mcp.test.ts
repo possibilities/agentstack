@@ -10,7 +10,7 @@ import { operation } from "../src/operation.js";
 import { serveMcp } from "../src/mcp.js";
 import { serveSocket } from "../src/socket.js";
 import { mcpPort, socketPath } from "../src/workspace.js";
-import { botMcpUrl } from "../src/bot-mcp-identity.js";
+import { botMcpUrl, workerMcpUrl, parseWorkerMcpIdentity } from "../src/bot-mcp-identity.js";
 import type { InvocationContext } from "../src/operation.js";
 import { McpEventSubscriptions, type EventValue } from "../src/mcp-subscriptions.js";
 
@@ -130,6 +130,7 @@ test("a bot-bound MCP URL forwards verified bot and Codex thread context without
     assert.equal(call.isError, undefined);
     assert.deepEqual(seen, [{ input: { value: "unchanged" }, invocation: {
       transport: "mcp", botId: "bot-1", instance: new URL(url).searchParams.get("instance"), threadId: "thread-1", sessionId: "session-1",
+      workerId: null, workerInstance: null,
     } }]);
     assert.deepEqual(call.structuredContent, { invocation: seen[0]!.invocation });
     const missing = await client.callTool({ name: "who", arguments: { value: "no-thread" } });
@@ -150,6 +151,54 @@ test("a bot-bound MCP URL forwards verified bot and Codex thread context without
     await served.close();
     await sample.close();
     await bots.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a Worker-bound MCP URL exposes only read operations and fences a replaced ACP process", { timeout: 30_000 }, async () => {
+  const root = await mkdtemp("/tmp/as-mcp-w-");
+  const env = { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_MCP_PORT: "0" };
+  const packageDir = join(root, "packages", "sample");
+  await mkdir(packageDir, { recursive: true });
+  await writeFile(join(packageDir, "api.yaml"), "name: sample\ndescription: Sample.\nmcp:\n  description: Sample MCP.\n");
+  const workerId = "11111111-1111-4111-8111-111111111111";
+  const accountId = "22222222-2222-4222-8222-222222222222";
+  let instance = "33333333-3333-4333-8333-333333333333";
+  const seen: Array<InvocationContext | undefined> = [];
+  const workers = await serveSocket({ info: { name: "workers", description: "Workers", transportDescription: "Socket", path: socketPath("workers", env) },
+    context: {}, operations: [
+      operation({ name: "worker_status", description: "Status", input: z.strictObject({ id: z.string() }), output: z.any(),
+        async call(_ctx, { id }) { assert.equal(id, workerId); return { worker: { accountId, phase: "running", runtimeInstance: instance } }; } }),
+      operation({ name: "worker_runtime_list", description: "Runtimes", input: z.strictObject({}), output: z.any(),
+        async call() { return { runtimes: [{ id: accountId, state: "running", instance }] }; } }),
+    ] });
+  const sample = await serveSocket({ info: { name: "sample", description: "Sample", transportDescription: "Socket", path: socketPath("sample", env) },
+    context: {}, operations: [
+      operation({ name: "read", description: "Read", input: z.strictObject({}), output: z.object({ ok: z.boolean() }), annotations: { readOnlyHint: true },
+        async call(_ctx, _input, invocation) { seen.push(invocation); return { ok: true }; } }),
+      operation({ name: "change", description: "Change", input: z.strictObject({}), output: z.object({ ok: z.boolean() }),
+        async call() { throw new Error("must never reach the package"); } }),
+    ], events: { topics: { changed: "Refresh." } } });
+  const served = await serveMcp({ root, env });
+  const url = workerMcpUrl(served.urls.sample!, workerId, instance, env);
+  const client = new Client({ name: "worker-bound", version: "1.0.0" });
+  try {
+    assert.deepEqual(parseWorkerMcpIdentity(new URL(url), env), { workerId, instance });
+    await client.connect(new StreamableHTTPClientTransport(new URL(url)));
+    assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), ["read"]);
+    assert.deepEqual((await client.callTool({ name: "read", arguments: {} })).structuredContent, { ok: true });
+    assert.equal(seen[0]?.workerId, workerId);
+    assert.equal(seen[0]?.workerInstance, instance);
+    assert.equal(seen[0]?.botId, null);
+    assert.equal((await client.callTool({ name: "change", arguments: {} })).isError, true);
+    assert.equal((await client.callTool({ name: "events_subscribe", arguments: {} })).isError, true);
+    const tampered = new URL(url); tampered.searchParams.set("proof", "0".repeat(64));
+    assert.equal((await fetch(tampered, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" }, body: "{}" })).status, 403);
+    instance = "44444444-4444-4444-8444-444444444444";
+    assert.equal((await client.callTool({ name: "read", arguments: {} })).isError, true);
+    assert.equal(seen.length, 1);
+  } finally {
+    await client.close(); await served.close(); await sample.close(); await workers.close();
     await rm(root, { recursive: true, force: true });
   }
 });

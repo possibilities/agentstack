@@ -516,6 +516,7 @@ async function callTool<Ctx>(
   const invocation = record.invocation === undefined ? undefined : z.strictObject({
     transport: z.literal("mcp"), botId: z.string().nullable(), instance: z.string().nullable(),
     threadId: z.string().nullable(), sessionId: z.string().nullable(),
+    workerId: z.string().nullable().optional(), workerInstance: z.string().nullable().optional(),
   }).parse(record.invocation) as InvocationContext;
   const output = await operation.call(options.context, input, invocation);
   return operation.output.parse(output);

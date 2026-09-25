@@ -34,11 +34,11 @@ export function renderCanvasMarkdown(snapshot: Snapshot): string {
     ...section("Worker accounts", workerAccounts, (data) => [
       ...(data.length ? data.map((account) => {
         const runtime = workerRuntimes.data?.find((item) => item.id === account.id);
-        return `- **${account.provider}** ${code(account.id)} — ${account.removing ? "removing" : !account.enabled ? "disabled" : account.ready ? "ready" : "sign-in needed"}${runtime ? ` · ACP ${runtime.state}${runtime.error ? ` (${runtime.error})` : ""}` : ""}`;
+        return `- **${account.provider}** ${code(account.id)} — ${account.removing ? "removing" : !account.enabled ? "disabled" : account.ready ? "ready" : "sign-in needed"}${runtime ? ` · ACP ${runtime.state}${runtime.instance ? ` · instance ${code(runtime.instance)}` : ""}${runtime.error ? ` (${runtime.error})` : ""}` : ""}`;
       }) : ["No worker accounts."]), "",
     ]),
     ...section("Workers", workerSessions, (data) => [
-      ...(data.length ? data.map((worker) => `- **${code(worker.id)}** — ${worker.phase} · ${worker.provider} ${code(worker.accountId)} · ${code(worker.model)}${worker.effort ? `/${worker.effort}` : ""} · Bot ${code(worker.botId)}${worker.issue ? ` · ${worker.issue}` : ""}\n  - Worktree ${code(worker.cwd ?? "not prepared")} · branch ${code(worker.branch ?? "none")} · Role revision ${code(worker.roleRevision ?? "none")}`) : ["No workers."]), "",
+      ...(data.length ? data.map((worker) => `- **${code(worker.id)}** — ${worker.phase} · ${worker.provider} ${code(worker.accountId)} · ${code(worker.model)}${worker.effort ? `/${worker.effort}` : ""} · Bot ${code(worker.botId)}${worker.issue ? ` · ${worker.issue}` : ""}\n  - Worktree ${code(worker.cwd ?? "not prepared")} · branch ${code(worker.branch ?? "none")} · Role revision ${code(worker.roleRevision ?? "none")} · ACP instance ${code(worker.runtimeInstance ?? "none")}`) : ["No workers."]), "",
     ]),
     "## Bot defaults", "", botDefaults.data
       ? `New Bots: ${code(botDefaults.data.model)} · ${code(botDefaults.data.reasoningEffort)} effort · ${code(botDefaults.data.sandboxMode)} · approval ${code(botDefaults.data.approvalPolicy)}.`

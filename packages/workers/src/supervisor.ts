@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { accountEnvironment, accountRoot, type WorkerAccount } from "@agentstack/auth";
 import { socketCall, socketPath, socketSubscribe, type SocketSubscription } from "@agentstack/api";
@@ -10,7 +11,7 @@ import { effortOption, modelOption, nativeDevinModels, optionsOf, type Catalog, 
 export type Runtime = { account: WorkerAccount; process: AcpProcess; version: string; probeSession: string | null;
   canClose: boolean; canLoad: boolean; supportsHttp: boolean; instance: string };
 export type RuntimeView = { id: string; provider: WorkerAccount["provider"]; state: "running" | "stopped" | "error";
-  pid: number | null; error: string | null };
+  pid: number | null; instance: string | null; error: string | null };
 
 export class WorkerSupervisor {
   onChange?: () => void;
@@ -29,7 +30,8 @@ export class WorkerSupervisor {
   private readonly bin: Record<"codex" | "grok" | "devin", string>;
 
   constructor(private readonly stateDir: string, private readonly env: NodeJS.ProcessEnv = process.env) {
-    this.bin = { codex: env.AGENTSTACK_OPENCODE_BIN ?? "opencode", grok: env.AGENTSTACK_OPENCODE_BIN ?? "opencode", devin: env.AGENTSTACK_DEVIN_BIN ?? "devin" };
+    this.bin = { codex: env.AGENTSTACK_OPENCODE_BIN ?? "opencode", grok: env.AGENTSTACK_OPENCODE_BIN ?? "opencode",
+      devin: env.AGENTSTACK_DEVIN_BIN ?? join(env.HOME ?? homedir(), ".local", "share", "devin", "cli", "_versions", "current", "bin", "devin") };
   }
 
   start(): void {
@@ -126,7 +128,8 @@ export class WorkerSupervisor {
   runtimeList(): RuntimeView[] {
     return [...new Set([...this.live.keys(), ...this.errors.keys()])].map((id) => {
       const runtime = this.live.get(id);
-      return { id, provider: runtime?.account.provider ?? this.errors.get(id)?.provider ?? "devin", state: runtime ? "running" : "error", pid: runtime?.process.pid ?? null, error: this.errors.get(id)?.message ?? null };
+      return { id, provider: runtime?.account.provider ?? this.errors.get(id)?.provider ?? "devin", state: runtime ? "running" : "error", pid: runtime?.process.pid ?? null,
+        instance: runtime?.instance ?? null, error: this.errors.get(id)?.message ?? null };
     });
   }
 

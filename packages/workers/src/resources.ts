@@ -1,7 +1,7 @@
 import { access, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
-import { socketCall, socketPath } from "@agentstack/api";
+import { socketCall, socketPath, workerMcpUrl } from "@agentstack/api";
 import { mcpRecord, type RoleSnapshot } from "@agentstack/roles";
 
 export type AcpMcp = { name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> } |
@@ -20,7 +20,8 @@ export async function roleSnapshot(env: NodeJS.ProcessEnv): Promise<RoleSnapshot
   return socketCall(socketPath("roles", env), "tools/call", { name: "role_snapshot", arguments: {} }, { timeoutMs: 5_000 }) as Promise<RoleSnapshot>;
 }
 
-export async function sessionMcpServers(snapshot: RoleSnapshot, env: NodeJS.ProcessEnv, supportsHttp: boolean, cwd: string): Promise<AcpMcp[]> {
+export async function sessionMcpServers(snapshot: RoleSnapshot, env: NodeJS.ProcessEnv, supportsHttp: boolean, cwd: string,
+  worker: { id: string; instance: string }): Promise<AcpMcp[]> {
   const owner = await socketCall(socketPath("owner", env), "tools/call", { name: "owner_status", arguments: {} }, { timeoutMs: 5_000 }) as { mcpUrls: Record<string, string> };
   const names = new Set<string>();
   const output: AcpMcp[] = [];
@@ -30,7 +31,7 @@ export async function sessionMcpServers(snapshot: RoleSnapshot, env: NodeJS.Proc
     if (parsed.protocol !== "http:" || parsed.hostname !== "127.0.0.1" || parsed.pathname !== `/mcp/${name}` || parsed.search)
       throw new Error("owner reported an invalid internal MCP URL");
     names.add(name.toLowerCase());
-    output.push({ type: "http", name, url, headers: [] });
+    output.push({ type: "http", name, url: workerMcpUrl(url, worker.id, worker.instance, env), headers: [] });
   }
   for (const value of snapshot.mcpServers) {
     const item = mcpRecord.parse(value);

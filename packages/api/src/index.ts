@@ -20,7 +20,7 @@ export {
   type WebsocketConfig,
 } from "./config.js";
 export { findPackage, listPackages, mcpPort, socketPath, stateDir, websocketPort, workspaceRoot } from "./workspace.js";
-export { botInstance, botMcpUrl, parseBotMcpIdentity } from "./bot-mcp-identity.js";
+export { botInstance, botMcpUrl, parseBotMcpIdentity, workerMcpUrl, parseWorkerMcpIdentity } from "./bot-mcp-identity.js";
 export { loadCatalog, loadPackageApi, type Catalog, type CatalogServer, type CatalogTransport } from "./catalog.js";
 export {
   serveSocket,

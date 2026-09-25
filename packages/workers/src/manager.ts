@@ -12,7 +12,7 @@ export type SendInput = { id: string; message: string; requestId: string; model?
 
 export class WorkerManager {
   readonly ledger: WorkerLedger;
-  onChange?: () => void;
+  onChange?: (workerId?: string) => void;
   private progressTimer: ReturnType<typeof setTimeout> | undefined;
   private closing = false;
   private readonly sessions = new Map<string, string>();
@@ -25,7 +25,8 @@ export class WorkerManager {
     supervisor.onRuntimeReady = (runtime) => this.attach(runtime);
     supervisor.onRuntimeExit = (accountId) => {
       this.ledger.interruptAccount(accountId);
-      this.onChange?.();
+      for (const worker of this.ledger.workers().filter((item) => item.accountId === accountId && item.phase === "needs_recovery"))
+        this.onChange?.(worker.id);
     };
   }
 
@@ -36,8 +37,8 @@ export class WorkerManager {
     this.ledger.close();
   }
 
-  private changed(progress = false): void {
-    if (!progress) { this.onChange?.(); return; }
+  private changed(progress = false, workerId?: string): void {
+    if (!progress) { this.onChange?.(workerId); return; }
     if (this.progressTimer) return;
     this.progressTimer = setTimeout(() => { this.progressTimer = undefined; this.onChange?.(); }, 1_000);
     this.progressTimer.unref();
@@ -86,7 +87,7 @@ export class WorkerManager {
     const toolCall = request.params.toolCall;
     const title = record(toolCall) && typeof toolCall.title === "string" ? toolCall.title : "Worker requests permission";
     this.ledger.addPermission(worker.id, worker.currentTurnId, request.id, title, options);
-    this.changed();
+    this.changed(false, worker.id);
     return true;
   }
 
@@ -171,7 +172,8 @@ export class WorkerManager {
       stage = "ACP session";
       const runtime = this.supervisor.runtime(input.accountId);
       if (!runtime) throw new Error("account ACP process is unavailable");
-      const mcpServers = await sessionMcpServers(snapshot, this.env, runtime.supportsHttp, claim.cwd);
+      this.ledger.setRuntimeInstance(id, runtime.instance);
+      const mcpServers = await sessionMcpServers(snapshot, this.env, runtime.supportsHttp, claim.cwd, { id, instance: runtime.instance });
       const result = await runtime.process.request("session/new", { cwd: claim.cwd, mcpServers });
       if (!record(result) || typeof result.sessionId !== "string") throw new Error("ACP returned no session ID");
       await this.select(runtime, result.sessionId, result, input.model, input.effort ?? null);
@@ -185,7 +187,7 @@ export class WorkerManager {
       this.ledger.setWorkerPhase(id, "failed", issue);
       this.ledger.append(id, reserved.turn.id, "turn", issue);
     }
-    this.changed();
+    this.changed(false, id);
     return { worker: this.ledger.worker(id)!, turn: this.ledger.turn(reserved.turn.id)!, duplicate: false };
   }
 
@@ -193,7 +195,7 @@ export class WorkerManager {
     const pending = this.ledger.turn(turnId);
     if (!pending || pending.phase === "cancelling") {
       if (pending) this.ledger.completeTurn(turnId, "cancelled", "cancelled", null);
-      this.changed();
+      this.changed(false, id);
       return;
     }
     const worker = this.ledger.worker(id)!;
@@ -201,13 +203,13 @@ export class WorkerManager {
     if (!runtime || !worker.acpSessionId) {
       this.ledger.completeTurn(turnId, "unknown", null, "ACP process unavailable before prompt dispatch");
       this.ledger.append(id, turnId, "turn", "outcome unknown · ACP process unavailable before prompt dispatch");
-      this.changed();
+      this.changed(false, id);
       return;
     }
     this.ledger.setTurnPhase(turnId, "running");
     this.ledger.setWorkerPhase(id, "running");
     this.ledger.append(id, turnId, "user", visibleMessage);
-    this.changed();
+    this.changed(false, id);
     void runtime.process.request("session/prompt", { sessionId: worker.acpSessionId, prompt: [{ type: "text", text: promptText }] }, 0)
       .then((result) => {
         if (this.closing) return;
@@ -217,12 +219,12 @@ export class WorkerManager {
         this.ledger.completeTurn(turnId, reason === "cancelled" ? "cancelled" : reason ? "completed" : "unknown", reason,
           reason ? null : "ACP prompt returned no stop reason; inspect before continuing");
         this.ledger.append(id, turnId, "turn", reason ? `stopped · ${reason}` : "outcome unknown · no stop reason");
-        this.changed();
+        this.changed(false, id);
       }).catch(() => {
         if (this.closing) return;
         this.ledger.completeTurn(turnId, "unknown", null, "ACP prompt outcome is unknown; inspect the worktree before resuming");
         this.ledger.append(id, turnId, "turn", "outcome unknown · ACP connection failed");
-        this.changed();
+        this.changed(false, id);
       });
   }
 
@@ -260,7 +262,7 @@ export class WorkerManager {
       this.ledger.completeTurn(reserved.turn.id, "unknown", null, "ACP selection outcome is unknown; inspect before retrying");
       this.ledger.append(worker.id, reserved.turn.id, "turn", "outcome unknown · ACP selection failed");
     }
-    this.changed();
+    this.changed(false, worker.id);
     return { worker: this.ledger.worker(worker.id)!, turn: this.ledger.turn(reserved.turn.id)!, duplicate: false };
   }
 
@@ -273,7 +275,7 @@ export class WorkerManager {
     if (!runtime || worker.phase !== "awaiting_input") throw new Error("worker is not awaiting this permission");
     runtime.process.respondRequest(pending.acpRequestId, { outcome: optionId ? { outcome: "selected", optionId } : { outcome: "cancelled" } });
     this.ledger.resolvePermission(permissionId);
-    this.changed();
+    this.changed(false, id);
     return this.ledger.permission(permissionId)!;
   }
 
@@ -288,7 +290,7 @@ export class WorkerManager {
     this.ledger.setTurnPhase(turn.id, "cancelling");
     this.ledger.setWorkerPhase(id, "cancelling");
     runtime.process.notify("session/cancel", { sessionId: worker.acpSessionId });
-    this.changed();
+    this.changed(false, id);
     return { worker: this.ledger.worker(id)!, turn: this.ledger.turn(turn.id) };
   }
 
@@ -300,10 +302,17 @@ export class WorkerManager {
     const runtime = this.supervisor.runtime(worker.accountId);
     if (!runtime?.canLoad) throw new Error("account ACP process cannot load saved sessions");
     const snapshot = await loadWorkerRole(this.stateDir, id);
-    const mcpServers = await sessionMcpServers(snapshot, this.env, runtime.supportsHttp, worker.cwd);
-    await runtime.process.request("session/load", { sessionId: worker.acpSessionId, cwd: worker.cwd, mcpServers }, 60_000);
-    this.ledger.setWorkerPhase(id, "idle");
-    this.changed();
+    this.ledger.setRuntimeInstance(id, runtime.instance);
+    this.ledger.setWorkerPhase(id, "preparing");
+    try {
+      const mcpServers = await sessionMcpServers(snapshot, this.env, runtime.supportsHttp, worker.cwd, { id, instance: runtime.instance });
+      await runtime.process.request("session/load", { sessionId: worker.acpSessionId, cwd: worker.cwd, mcpServers }, 60_000);
+      this.ledger.setWorkerPhase(id, "idle");
+    } catch {
+      this.ledger.setWorkerPhase(id, "needs_recovery", "ACP session load failed; inspect before retrying");
+      throw new Error("ACP session load failed; inspect before retrying");
+    }
+    this.changed(false, id);
     return this.ledger.worker(id)!;
   }
 
@@ -316,7 +325,7 @@ export class WorkerManager {
       await runtime.process.request("session/close", { sessionId: worker.acpSessionId });
     this.ledger.setWorkerPhase(id, "closed");
     if (worker.acpSessionId) this.sessions.delete(`${worker.accountId}:${worker.acpSessionId}`);
-    this.changed();
+    this.changed(false, id);
     return this.ledger.worker(id)!;
   }
 
@@ -328,7 +337,7 @@ export class WorkerManager {
     await removeWorkerRole(this.stateDir, id);
     this.ledger.removeWorker(id);
     if (worker.acpSessionId) this.sessions.delete(`${worker.accountId}:${worker.acpSessionId}`);
-    this.changed();
+    this.changed(false, id);
     return { id, retainedBranch: worker.branch };
   }
 }

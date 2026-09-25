@@ -4,7 +4,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ListToolsRequestSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
 import { socketCall } from "./socket.js";
 import { listPackages, mcpPort, socketPath, workspaceRoot } from "./workspace.js";
-import { botInstance, parseBotMcpIdentity } from "./bot-mcp-identity.js";
+import { botInstance, parseBotMcpIdentity, parseWorkerMcpIdentity } from "./bot-mcp-identity.js";
 import type { InvocationContext } from "./operation.js";
 import { McpEventSubscriptions } from "./mcp-subscriptions.js";
 import { z } from "zod";
@@ -29,6 +29,20 @@ export async function configuredMcpPackages(root: string): Promise<Array<{ name:
     name: item.config.name,
     description: item.config.description,
   }));
+}
+
+async function verifiedWorker(workerId: string, instance: string, env: NodeJS.ProcessEnv): Promise<void> {
+  const [status, runtimes] = await Promise.all([
+    socketCall(socketPath("workers", env), "tools/call", { name: "worker_status", arguments: { id: workerId } }, { timeoutMs: 2_000 }) as Promise<{
+      worker: { accountId: string; phase: string; runtimeInstance: string | null };
+    }>,
+    socketCall(socketPath("workers", env), "tools/call", { name: "worker_runtime_list", arguments: {} }, { timeoutMs: 2_000 }) as Promise<{
+      runtimes: Array<{ id: string; state: string; instance: string | null }>;
+    }>,
+  ]);
+  if (status.worker.runtimeInstance !== instance || !["preparing", "idle", "running", "awaiting_input", "cancelling"].includes(status.worker.phase) ||
+      !runtimes.runtimes.some((runtime) => runtime.id === status.worker.accountId && runtime.state === "running" && runtime.instance === instance))
+    throw new Error("worker MCP connection is no longer bound to a live ACP session");
 }
 
 export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string; port?: number; subscriptions?: McpEventSubscriptions } = {}): Promise<ServedMcp> {
@@ -59,7 +73,11 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
       return;
     }
     let identity: { botId: string; instance: string } | null;
-    try { identity = parseBotMcpIdentity(target, env); }
+    let workerIdentity: { workerId: string; instance: string } | null;
+    try {
+      workerIdentity = target.searchParams.has("worker") || target.searchParams.has("runtime") ? parseWorkerMcpIdentity(target, env) : null;
+      identity = workerIdentity ? null : parseBotMcpIdentity(target, env);
+    }
     catch { response.writeHead(403).end(); return; }
     const address = server.address();
     if (!address || typeof address === "string") {
@@ -76,10 +94,11 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
     });
     const mcp = new Server({ name, version: "0.0.0" }, { capabilities: { tools: {} }, instructions: definition.description });
     mcp.setRequestHandler(ListToolsRequestSchema, async () => {
+      if (workerIdentity) await verifiedWorker(workerIdentity.workerId, workerIdentity.instance, env);
       const listed = await socketCall(socketPath(name, env), "tools/list") as { tools: Tool[]; events?: { topics: Record<string, string> } | null };
-      const extra = options.subscriptions && listed.events && Object.keys(listed.events.topics).length ? subscriptionTools : [];
+      const extra = !workerIdentity && options.subscriptions && listed.events && Object.keys(listed.events.topics).length ? subscriptionTools : [];
       if (extra.some((tool) => listed.tools.some((item) => item.name === tool.name))) throw new Error(`${name} has an operation reserved for MCP event subscriptions`);
-      return { tools: [...listed.tools.map((tool) => ({ ...tool, title: tool.annotations?.title })), ...extra] };
+      return { tools: [...listed.tools.filter((tool) => !workerIdentity || tool.annotations?.readOnlyHint).map((tool) => ({ ...tool, title: tool.annotations?.title })), ...extra] };
     });
     mcp.setRequestHandler(CallToolRequestSchema, async ({ params }, extra) => {
       try {
@@ -92,6 +111,13 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
             throw new Error("bot MCP connection is no longer bound to a running instance");
           }
         }
+        if (workerIdentity) {
+          await verifiedWorker(workerIdentity.workerId, workerIdentity.instance, env);
+          if (params.name.startsWith("events_")) throw new Error("worker MCP connections cannot subscribe Bot threads");
+          const listed = await socketCall(socketPath(name, env), "tools/list") as { tools: Tool[] };
+          if (!listed.tools.some((tool) => tool.name === params.name && tool.annotations?.readOnlyHint))
+            throw new Error("worker MCP connections may call only read-only Package API operations");
+        }
         const meta = (params as { _meta?: unknown })._meta;
         const ids = meta && typeof meta === "object" && !Array.isArray(meta) ? meta as Record<string, unknown> : {};
         const identifier = (value: unknown) => typeof value === "string" && value.length > 0 && value.length <= 128 ? value : null;
@@ -100,6 +126,7 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
         const invocation: InvocationContext = {
           transport: "mcp", botId: identity?.botId ?? null, instance: identity?.instance ?? null,
           threadId, sessionId: identifier(ids.sessionId),
+          workerId: workerIdentity?.workerId ?? null, workerInstance: workerIdentity?.instance ?? null,
         };
         if (params.name.startsWith("events_") && options.subscriptions) {
           const service = options.subscriptions;

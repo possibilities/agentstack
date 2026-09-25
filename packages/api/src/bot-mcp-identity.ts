@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { stateDir } from "./workspace.js";
 
 const botIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const workerIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const keyFile = "mcp-bot-identity.key";
 
 function identityKey(env: NodeJS.ProcessEnv): Buffer {
@@ -60,4 +61,30 @@ export function parseBotMcpIdentity(url: URL, env: NodeJS.ProcessEnv = process.e
   if (!botIdPattern.test(botId) || !/^[0-9a-f]{32}$/.test(instance) || !/^[0-9a-f]{64}$/.test(raw)) throw new Error("invalid bot MCP identity");
   if (!timingSafeEqual(Buffer.from(raw, "hex"), proof(identityKey(env), botId, instance))) throw new Error("invalid bot MCP identity");
   return { botId, instance };
+}
+
+function workerProof(key: Buffer, workerId: string, instance: string): Buffer {
+  return createHmac("sha256", key).update(`worker-mcp-v1\0${workerId}\0${instance}`).digest();
+}
+
+/** Mint an exact Worker/runtime-bound URL for one ACP session's internal MCP list. */
+export function workerMcpUrl(base: string, workerId: string, instance: string, env: NodeJS.ProcessEnv = process.env): string {
+  if (!workerIdPattern.test(workerId) || !workerIdPattern.test(instance)) throw new Error("invalid worker MCP identity");
+  const url = new URL(base);
+  if (url.search) throw new Error("internal MCP base URL must have no query");
+  url.searchParams.set("worker", workerId);
+  url.searchParams.set("runtime", instance);
+  url.searchParams.set("proof", workerProof(identityKey(env), workerId, instance).toString("hex"));
+  return url.toString();
+}
+
+export function parseWorkerMcpIdentity(url: URL, env: NodeJS.ProcessEnv = process.env): { workerId: string; instance: string } | null {
+  if (!url.search) return null;
+  if ([...url.searchParams.keys()].sort().join(",") !== "proof,runtime,worker") throw new Error("invalid worker MCP URL parameters");
+  const workerId = url.searchParams.get("worker") ?? "";
+  const instance = url.searchParams.get("runtime") ?? "";
+  const raw = url.searchParams.get("proof") ?? "";
+  if (!workerIdPattern.test(workerId) || !workerIdPattern.test(instance) || !/^[0-9a-f]{64}$/.test(raw)) throw new Error("invalid worker MCP identity");
+  if (!timingSafeEqual(Buffer.from(raw, "hex"), workerProof(identityKey(env), workerId, instance))) throw new Error("invalid worker MCP identity");
+  return { workerId, instance };
 }

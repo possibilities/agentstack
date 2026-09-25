@@ -48,7 +48,8 @@ export class McpEventSubscriptions {
 
   constructor(private readonly env: NodeJS.ProcessEnv, private readonly validate: (target: EventTarget) => Promise<void>,
     private readonly deliver: (event: EventValue, signal: AbortSignal) => Promise<void>,
-    private readonly rebind?: (botId: string, threadId: string) => Promise<EventTarget | null>) {
+    private readonly rebind?: (botId: string, threadId: string) => Promise<EventTarget | null>,
+    private readonly authorizeRead?: (subscription: EventSubscription) => Promise<void>) {
     const root = stateDir(env);
     mkdirSync(root, { recursive: true, mode: 0o700 });
     const file = join(root, "event-subscriptions.sqlite");
@@ -129,6 +130,7 @@ export class McpEventSubscriptions {
       abort: new AbortController(), pending: false, flushing: false, reconnect: false, lastValueHash: null, retryDelay: 2_000,
     };
     try {
+      await this.authorizeRead?.(state);
       // Subscribe before reading, because notices are invalidations without replay.
       state.socket = await socketSubscribe(socketPath(pkg, this.env), [state.topic], () => { state.pending = true; if (this.records.has(state.id)) void this.flush(state); },
         { scope, signal: state.abort.signal });
@@ -185,7 +187,10 @@ export class McpEventSubscriptions {
   }
 
   private read(state: RecordState): Promise<unknown> {
-    return socketCall(socketPath(state.pkg, this.env), "tools/call", { name: state.readOperation, arguments: state.readArguments }, { timeoutMs: 10_000 });
+    return (async () => {
+      await this.authorizeRead?.(state);
+      return socketCall(socketPath(state.pkg, this.env), "tools/call", { name: state.readOperation, arguments: state.readArguments }, { timeoutMs: 10_000 });
+    })();
   }
 
   private watchClosed(state: RecordState): void {
@@ -213,6 +218,7 @@ export class McpEventSubscriptions {
       await this.validate(target);
       state.instance = target.instance;
       this.db.prepare("UPDATE subscriptions SET instance = ? WHERE id = ?").run(state.instance, state.id);
+      await this.authorizeRead?.(state);
       state.socket = await socketSubscribe(socketPath(state.pkg, this.env), [state.topic], () => { state.pending = true; void this.flush(state); },
         { scope: state.scope ?? undefined, signal: state.abort.signal });
       state.pending = true;
