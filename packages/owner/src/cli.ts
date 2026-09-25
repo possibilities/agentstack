@@ -8,6 +8,7 @@ import { createMcpEventSubscriptions } from "./mcp-delivery.js";
 import { serveInspectorCatalog } from "./inspector-catalog.js";
 import { inspectorChild, inspectorPort } from "./inspector.js";
 import { startOwner } from "./owner.js";
+import { startWithOwnerSocketRecovery } from "./owner-socket.js";
 import { statusSource } from "./status.js";
 import { uixChild, uixPort } from "./uix.js";
 
@@ -73,7 +74,7 @@ for (const [transport, port, setting] of [
 
 let events: Awaited<ReturnType<typeof serveApi>>;
 try {
-  events = await serveApi({ name: "owner", transport: "socket", env: process.env });
+  events = await startWithOwnerSocketRecovery(socketPath("owner"), () => serveApi({ name: "owner", transport: "socket", env: process.env }));
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);

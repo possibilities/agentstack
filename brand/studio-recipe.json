@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "brand": {
+    "name": "ArtHack"
+  },
+  "shape": "dodecahedron",
+  "scene": {
+    "rotation": [
+      34.1566866160614,
+      -6.068554746656113,
+      137.1501841545372
+    ],
+    "scale": 299.9210774256783,
+    "center": [
+      349.68654201636116,
+      349.4127885789302
+    ],
+    "perspective": 0,
+    "gap": 30.2,
+    "color": "#000000",
+    "darkColor": "#ffffff",
+    "background": "#ffffff",
+    "darkBackground": "#151a23",
+    "transparent": true
+  }
+}
