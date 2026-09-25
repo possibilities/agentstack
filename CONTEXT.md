@@ -103,3 +103,9 @@ A named static file or directory held by `wiki` with an immutable content-hash V
 ## Artifact origin
 
 The second loopback HTTP origin owned by the `wiki` Package API. It serves only static Artifact bytes and has no access to the document origin; the separate origin and CSP isolate Artifact scripts from the Vault. _Avoid_: sandbox
+
+## Canvas space
+
+One focused canvas of related windows in the `/x` UI, addressed as `/x/<space>`: Fleet, System, or API. Spaces share one live connection, inspector, and voice call; each keeps its own arrangement. Every card has one home space, so focusing a card from anywhere moves to that space.
+
+_Avoid_: page, tab, workspace (a Bot's working directory)

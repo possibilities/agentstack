@@ -1,13 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIcon,
   ArrowRightIcon,
-  BookOpenIcon,
-  BotIcon,
-  CpuIcon,
-  KeyRoundIcon,
   LayersIcon,
   LayoutDashboardIcon,
   LayoutGridIcon,
@@ -23,6 +18,7 @@ import { Kbd } from "@/components/ui/kbd";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { homeOf, parseNodeKey, parseSpacePath, spaceHref, spaces, spaceTitle, type SpaceId } from "@/lib/stack/spaces";
 import { nodeKey, type NodeRef, type Snapshot } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { AuthActionsProvider } from "./auth-actions";
@@ -30,31 +26,28 @@ import { Inspector } from "./inspector";
 import { Lines } from "./lines";
 import { Palette, type PaletteAction } from "./palette";
 import { StatusDot } from "./primitives";
-import { StackProvider, useStack, WorkbenchContext, type Mode, type WorkbenchValue } from "./provider";
-import { accentTile, PlacementContext, type Accent, type WindowPlacement } from "./window";
-import { AccountsWindow, ActivityWindow, ApiWindow, BotsWindow, SystemWindow } from "./windows";
+import { StackProvider, useStack, useWorkbench, WorkbenchContext, type Mode, type WorkbenchValue } from "./provider";
+import { spaceViews, type WindowDef } from "./spaces";
+import { accentTile, PlacementContext, type WindowPlacement } from "./window";
 import { CallLauncher, VoiceProvider } from "./voice";
 
 type Point = { x: number; y: number };
 type View = Point & { k: number };
 type Layout = { positions: Record<string, Point>; collapsed: Record<string, boolean>; order: string[] };
 
-type WindowDef = { id: string; title: string; icon: React.ComponentType<{ className?: string }>; accent: Accent; width: number; column: number; render: React.ComponentType };
-
-const windows: WindowDef[] = [
-  { id: "system", title: "System", icon: CpuIcon, accent: "owner", width: 340, column: 0, render: SystemWindow },
-  { id: "activity", title: "Activity", icon: ActivityIcon, accent: "events", width: 340, column: 0, render: ActivityWindow },
-  { id: "accounts", title: "Accounts", icon: KeyRoundIcon, accent: "auth", width: 320, column: 1, render: AccountsWindow },
-  { id: "bots", title: "Bots", icon: BotIcon, accent: "bots", width: 380, column: 2, render: BotsWindow },
-  { id: "api", title: "API", icon: BookOpenIcon, accent: "api", width: 420, column: 3, render: ApiWindow },
-];
-const renderers = new Map(windows.map((item) => [item.id, item.render]));
-const gridOrder = ["system", "accounts", "bots", "activity", "api"];
-const homeWindow: Record<NodeRef["kind"], string> = {
-  owner: "system", child: "system", account: "accounts", login: "accounts", bot: "bots", package: "api", operation: "api",
+/** View controls a mounted space reports upward for the shared chrome to use. */
+export type SpaceControls = {
+  mode: Mode;
+  setMode(mode: Mode): void;
+  fit(): void;
+  tidy(): void;
+  focusNode(ref: NodeRef): void;
 };
 
-const storageKey = "agentstack.uix.canvas.v1";
+type Persisted = { spaces?: Partial<Record<SpaceId, { mode?: Mode; layout?: Partial<Layout>; view?: View }>> };
+
+const storageKey = "agentstack.uix.canvas.v2";
+const legacyStorageKey = "agentstack.uix.canvas.v1";
 const gapX = 72;
 const gapY = 24;
 const top = 76;
@@ -65,48 +58,184 @@ const minScale = 0.3;
 const maxScale = 1.6;
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const pageTitle = (space: SpaceId) => `AgentStack · ${spaceTitle(space)}`;
 
-function initialLayout(): Layout {
+function initialLayout(defs: WindowDef[]): Layout {
   let x = 0;
   const positions: Record<string, Point> = {};
-  for (let column = 0; column <= 3; column += 1) {
-    const members = windows.filter((item) => item.column === column);
+  const maxColumn = Math.max(0, ...defs.map((item) => item.column));
+  for (let column = 0; column <= maxColumn; column += 1) {
+    const members = defs.filter((item) => item.column === column);
+    if (!members.length) continue;
     members.forEach((item, index) => { positions[item.id] = { x, y: index * 520 }; });
     x += Math.max(...members.map((item) => item.width)) + gapX;
   }
-  return { positions, collapsed: {}, order: windows.map((item) => item.id) };
+  return { positions, collapsed: {}, order: defs.map((item) => item.id) };
 }
 
-export function Workbench({ snapshot }: { snapshot: Snapshot }) {
+export function Workbench({ snapshot, initialSpace, initialFocus }: { snapshot: Snapshot; initialSpace: SpaceId; initialFocus: NodeRef | null }) {
   return (
     <StackProvider snapshot={snapshot}>
-      <Shell />
+      <Shell initialSpace={initialSpace} initialFocus={initialFocus} />
     </StackProvider>
   );
 }
 
-function Shell() {
+function Shell({ initialSpace, initialFocus }: { initialSpace: SpaceId; initialFocus: NodeRef | null }) {
+  const [space, setSpaceState] = useState<SpaceId>(initialSpace);
+  const [selected, setSelected] = useState<NodeRef | null>(initialFocus);
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [controls, setControls] = useState<SpaceControls | null>(null);
+  const spaceRef = useRef(space);
+  const controlsRef = useRef<SpaceControls | null>(null);
+  /** A node to select+pan to once the active space's canvas reports ready. */
+  const pendingFocus = useRef<NodeRef | null>(initialFocus);
+
+  const reportControls = useCallback((next: SpaceControls | null) => {
+    controlsRef.current = next;
+    setControls(next);
+  }, []);
+
+  const switchSpace = useCallback((next: SpaceId, focus?: NodeRef | null) => {
+    window.history.pushState(null, "", spaceHref(next, focus));
+    document.title = pageTitle(next);
+    spaceRef.current = next;
+    setSpaceState(next);
+  }, []);
+
+  const setSpace = useCallback((next: SpaceId) => {
+    if (next !== spaceRef.current) switchSpace(next);
+  }, [switchSpace]);
+
+  const consumePendingFocus = useCallback(() => {
+    const ref = pendingFocus.current;
+    pendingFocus.current = null;
+    return ref;
+  }, []);
+
+  const focus = useCallback((ref: NodeRef) => {
+    setSelected(ref);
+    const home = homeOf(ref);
+    if (home.space === spaceRef.current) {
+      window.history.replaceState(null, "", spaceHref(home.space, ref));
+      const canvas = controlsRef.current;
+      if (canvas) canvas.focusNode(ref);
+      else pendingFocus.current = ref;
+    } else {
+      pendingFocus.current = ref;
+      switchSpace(home.space, ref);
+    }
+  }, [switchSpace]);
+
+  // Back/forward: re-parse the location and sync without reloading the page.
+  useEffect(() => {
+    const onPop = () => {
+      const next = parseSpacePath(window.location.pathname);
+      if (!next) return;
+      const raw = new URLSearchParams(window.location.search).get("focus");
+      const ref = raw ? parseNodeKey(raw) : null;
+      document.title = pageTitle(next);
+      if (next !== spaceRef.current) {
+        if (ref) {
+          setSelected(ref);
+          pendingFocus.current = ref;
+        }
+        spaceRef.current = next;
+        setSpaceState(next);
+      } else if (ref) {
+        setSelected(ref);
+        const canvas = controlsRef.current;
+        if (canvas) canvas.focusNode(ref);
+        else pendingFocus.current = ref;
+      }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  const select = useCallback((ref: NodeRef | null) => setSelected(ref), []);
+
+  // Global keys: ⌘K palette, digits switch spaces. Canvas keys live in SpaceCanvas.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+        return;
+      }
+      const target = event.target as HTMLElement;
+      if (event.metaKey || event.ctrlKey || event.altKey || paletteOpen || target.closest("input,textarea,[contenteditable=true],[role=dialog],[role=alertdialog]")) return;
+      const targetSpace = spaces.find((item) => item.key === event.key);
+      if (targetSpace) setSpace(targetSpace.id);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [paletteOpen, setSpace]);
+
+  const actions: PaletteAction[] = useMemo(() => {
+    if (!controls) return [];
+    return [
+      { id: "fit", label: "Fit everything in view", shortcut: "F", icon: ScanIcon, run: controls.fit },
+      { id: "tidy", label: "Tidy windows", shortcut: "T", icon: LayoutDashboardIcon, run: controls.tidy },
+      { id: "mode", label: controls.mode === "canvas" ? "Switch to grid" : "Switch to canvas", shortcut: "G", icon: controls.mode === "canvas" ? LayoutGridIcon : SquareDashedMousePointerIcon, run: () => controls.setMode(controls.mode === "canvas" ? "grid" : "canvas") },
+    ];
+  }, [controls]);
+
+  const workbench: WorkbenchValue = useMemo(() => ({
+    mode: controls?.mode ?? "canvas",
+    space,
+    setSpace,
+    selected,
+    hovered,
+    select,
+    hover: setHovered,
+    focus,
+  }), [controls?.mode, space, setSpace, selected, hovered, select, focus]);
+
+  return (
+    <WorkbenchContext value={workbench}>
+      <AuthActionsProvider>
+        <VoiceProvider>
+          <SpaceCanvas key={space} space={space} paletteOpen={paletteOpen} consumePendingFocus={consumePendingFocus} onControls={reportControls} />
+          <TopBar space={space} setSpace={setSpace} controls={controls} openPalette={() => setPaletteOpen(true)} />
+          <Inspector />
+          <Palette open={paletteOpen} onOpenChange={setPaletteOpen} actions={actions} />
+        </VoiceProvider>
+      </AuthActionsProvider>
+    </WorkbenchContext>
+  );
+}
+
+function SpaceCanvas({ space, paletteOpen, consumePendingFocus, onControls }: {
+  space: SpaceId;
+  paletteOpen: boolean;
+  consumePendingFocus(): NodeRef | null;
+  onControls(controls: SpaceControls | null): void;
+}) {
+  const state = useStack();
+  const { select } = useWorkbench();
+  const defs = useMemo(() => spaceViews[space].windows(state), [space, state.catalog.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const viewport = useRef<HTMLElement>(null);
   const [world, setWorld] = useState<HTMLDivElement | null>(null);
   const elements = useRef(new Map<string, HTMLElement>());
   const registrars = useRef(new Map<string, (element: HTMLElement | null) => void>());
   const [mode, setMode] = useState<Mode>("canvas");
   const [view, setView] = useState<View>({ x: pad, y: top, k: 1 });
-  const [layout, setLayout] = useState<Layout>(initialLayout);
+  const [layout, setLayout] = useState<Layout>(() => initialLayout(defs));
   const [ready, setReady] = useState(false);
   const [animating, setAnimating] = useState(false);
   const [dragging, setDragging] = useState<string | null>(null);
   const [panning, setPanning] = useState(false);
-  const [selected, setSelected] = useState<NodeRef | null>(null);
-  const [hovered, setHovered] = useState<string | null>(null);
-  const [paletteOpen, setPaletteOpen] = useState(false);
   const viewRef = useRef(view);
   const layoutRef = useRef(layout);
+  const defsRef = useRef(defs);
   const animationTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useLayoutEffect(() => {
     viewRef.current = view;
     layoutRef.current = layout;
+    defsRef.current = defs;
   });
 
   const animate = useCallback((change: () => void) => {
@@ -116,17 +245,20 @@ function Shell() {
     animationTimer.current = setTimeout(() => setAnimating(false), 560);
   }, []);
 
-  const size = (id: string) => {
+  const size = useCallback((id: string) => {
     const element = elements.current.get(id);
-    return { width: element?.offsetWidth ?? windows.find((item) => item.id === id)!.width, height: element?.offsetHeight ?? 400 };
-  };
+    return { width: element?.offsetWidth ?? defsRef.current.find((item) => item.id === id)?.width ?? 400, height: element?.offsetHeight ?? 400 };
+  }, []);
 
   const tidied = useCallback((): Record<string, Point> => {
     const positions: Record<string, Point> = {};
     let x = 0;
-    for (let column = 0; column <= 3; column += 1) {
+    const defsNow = defsRef.current;
+    const maxColumn = Math.max(0, ...defsNow.map((item) => item.column));
+    for (let column = 0; column <= maxColumn; column += 1) {
+      const members = defsNow.filter((item) => item.column === column);
+      if (!members.length) continue;
       let y = 0;
-      const members = windows.filter((item) => item.column === column);
       for (const item of members) {
         positions[item.id] = { x, y };
         y += size(item.id).height + gapY;
@@ -134,7 +266,7 @@ function Shell() {
       x += Math.max(...members.map((item) => item.width)) + gapX;
     }
     return positions;
-  }, []);
+  }, [size]);
 
   const fitted = useCallback((positions: Record<string, Point>, minK = minScale): View => {
     const element = viewport.current;
@@ -151,19 +283,23 @@ function Shell() {
     const width = (maxX - minX) * k;
     const x = width <= availableWidth ? pad + (availableWidth - width) / 2 - minX * k : pad - minX * k;
     return { x, y: top - minY * k, k };
-  }, []);
+  }, [size]);
 
-  /** Opening view: the live columns fill the width at a readable scale; the API catalog peeks in from the right. */
+  /** Opening view: the first columns fill the width at a readable scale; the rest peek in from the right. */
   const primaryView = useCallback((positions: Record<string, Point>): View => {
     const element = viewport.current;
     if (!element) return viewRef.current;
-    const live = windows.filter((item) => item.column <= 2);
-    const minX = Math.min(...live.map((item) => positions[item.id].x));
-    const maxX = Math.max(...live.map((item) => positions[item.id].x + size(item.id).width));
+    const defsNow = defsRef.current;
+    const maxColumn = Math.max(0, ...defsNow.map((item) => item.column));
+    const primary = defsNow.filter((item) => item.column <= Math.min(maxColumn, 2));
+    if (!primary.length) return viewRef.current;
+    const minX = Math.min(...primary.map((item) => positions[item.id]?.x ?? 0));
+    const maxX = Math.max(...primary.map((item) => (positions[item.id]?.x ?? 0) + size(item.id).width));
+    const minY = Math.min(...primary.map((item) => positions[item.id]?.y ?? 0));
     const availableWidth = element.clientWidth - pad * 2;
     const k = clamp(availableWidth / (maxX - minX), 0.8, 1);
-    return { k, x: pad + Math.max(0, (availableWidth - (maxX - minX) * k) / 2) - minX * k, y: top - Math.min(...live.map((item) => positions[item.id].y)) * k };
-  }, []);
+    return { k, x: pad + Math.max(0, (availableWidth - (maxX - minX) * k) / 2) - minX * k, y: top - minY * k };
+  }, [size]);
 
   const tidy = useCallback(() => animate(() => {
     const positions = tidied();
@@ -171,7 +307,6 @@ function Shell() {
     setView(primaryView(positions));
   }), [animate, primaryView, tidied]);
   const fit = useCallback(() => animate(() => setView(fitted(layoutRef.current.positions))), [animate, fitted]);
-
 
   const zoomAt = useCallback((factor: number, clientX?: number, clientY?: number) => {
     const element = viewport.current;
@@ -185,61 +320,61 @@ function Shell() {
     });
   }, []);
 
-  // Restore saved arrangement before first paint; otherwise tidy and fit.
+  // Restore this space's saved arrangement before first paint; otherwise tidy and fit.
   useLayoutEffect(() => {
-    let saved: { mode?: Mode; layout?: Partial<Layout>; view?: View } = {};
+    let saved: Persisted = {};
     try {
       saved = JSON.parse(localStorage.getItem(storageKey) ?? "{}");
     } catch {
       saved = {};
     }
+    localStorage.removeItem(legacyStorageKey);
+    const slice = saved.spaces?.[space] ?? {};
+    const present = new Set(defsRef.current.map((item) => item.id));
     const fresh = tidied();
-    const positions = { ...fresh, ...saved.layout?.positions };
-    const next: Layout = {
-      positions,
-      collapsed: saved.layout?.collapsed ?? {},
-      order: [...new Set([...(saved.layout?.order ?? []), ...windows.map((item) => item.id)])].filter((id) => windows.some((item) => item.id === id)),
-    };
-    setLayout(next);
-    setView(saved.view ?? primaryView(positions));
-    setMode(saved.mode ?? (window.innerWidth < 900 ? "grid" : "canvas"));
+    const positions = { ...fresh };
+    for (const [id, point] of Object.entries(slice.layout?.positions ?? {})) if (present.has(id)) positions[id] = point;
+    const collapsed = Object.fromEntries(Object.entries(slice.layout?.collapsed ?? {}).filter(([id]) => present.has(id)));
+    const order = [...new Set([...(slice.layout?.order ?? []), ...defsRef.current.map((item) => item.id)])].filter((id) => present.has(id));
+    setLayout({ positions, collapsed, order });
+    setView(slice.view ?? primaryView(positions));
+    setMode(slice.mode ?? (window.innerWidth < 900 ? "grid" : "canvas"));
     setReady(true);
-  }, [primaryView, tidied]);
+  }, [space, primaryView, tidied]);
 
   useEffect(() => {
     if (!ready) return;
-    const timer = setTimeout(() => localStorage.setItem(storageKey, JSON.stringify({ mode, layout, view })), 250);
-    return () => clearTimeout(timer);
-  }, [ready, mode, layout, view]);
-
-  // Grid mode: masonry columns, each window placed in reading order into the shortest column.
-  const [gridColumns, setGridColumns] = useState<string[][]>([gridOrder]);
-  useLayoutEffect(() => {
-    if (mode !== "grid" || !world) return;
-    let frame = 0;
-    const arrange = () => {
-      const count = clamp(Math.floor((world.clientWidth + gridGap) / (gridMinColumn + gridGap)), 1, 4);
-      const heights = new Array<number>(count).fill(0);
-      const columns = Array.from({ length: count }, () => [] as string[]);
-      for (const id of gridOrder) {
-        const index = heights.indexOf(Math.min(...heights));
-        columns[index].push(id);
-        heights[index] += (elements.current.get(id)?.offsetHeight ?? 400) + gridGap;
+    const timer = setTimeout(() => {
+      let all: Persisted = {};
+      try {
+        all = JSON.parse(localStorage.getItem(storageKey) ?? "{}");
+      } catch {
+        all = {};
       }
-      setGridColumns((current) => JSON.stringify(current) === JSON.stringify(columns) ? current : columns);
-    };
-    arrange();
-    const observer = new ResizeObserver(() => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(arrange);
+      all.spaces = { ...all.spaces, [space]: { mode, layout, view } };
+      localStorage.setItem(storageKey, JSON.stringify(all));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [ready, space, mode, layout, view]);
+
+  // Windows come and go with the data (e.g. the API catalog): keep positions for
+  // the ids still present, fill missing ones from the tidied layout, drop stale order entries.
+  useEffect(() => {
+    setLayout((current) => {
+      const present = new Set(defs.map((item) => item.id));
+      const missing = defs.some((item) => !current.positions[item.id]);
+      const stale = current.order.some((id) => !present.has(id))
+        || Object.keys(current.positions).some((id) => !present.has(id))
+        || Object.keys(current.collapsed).some((id) => !present.has(id));
+      if (!missing && !stale) return current;
+      const fresh = tidied();
+      const positions: Record<string, Point> = {};
+      for (const id of present) positions[id] = current.positions[id] ?? fresh[id];
+      const collapsed = Object.fromEntries(Object.entries(current.collapsed).filter(([id]) => present.has(id)));
+      const order = [...current.order.filter((id) => present.has(id)), ...defs.map((item) => item.id).filter((id) => !current.order.includes(id))];
+      return { positions, collapsed, order };
     });
-    observer.observe(world);
-    for (const element of elements.current.values()) observer.observe(element);
-    return () => {
-      observer.disconnect();
-      cancelAnimationFrame(frame);
-    };
-  }, [mode, world, gridColumns]);
+  }, [defs, tidied]);
 
   const focusWindow = useCallback((id: string) => {
     const element = viewport.current;
@@ -247,7 +382,7 @@ function Shell() {
     if (!element || !position) return;
     const k = Math.max(viewRef.current.k, 0.8);
     animate(() => setView({ k, x: element.clientWidth / 2 - (position.x + size(id).width / 2) * k, y: top + 12 - position.y * k }));
-  }, [animate]);
+  }, [animate, size]);
 
   // Wheel pans, pinch or modifier-wheel zooms; scrollable lists keep their own scrolling.
   useEffect(() => {
@@ -265,15 +400,13 @@ function Shell() {
     return () => element.removeEventListener("wheel", onWheel);
   }, [mode, zoomAt]);
 
-  const select = useCallback((ref: NodeRef | null) => setSelected(ref), []);
-
-  const focus = useCallback((ref: NodeRef) => {
-    setSelected(ref);
-    const home = homeWindow[ref.kind];
+  /** Expand the node's home window if collapsed, then center the node (or scroll to it in grid mode). */
+  const focusNode = useCallback((ref: NodeRef) => {
+    const home = homeOf(ref).window;
     const wasCollapsed = layoutRef.current.collapsed[home];
     if (wasCollapsed) setLayout((current) => ({ ...current, collapsed: { ...current.collapsed, [home]: false } }));
     setTimeout(() => {
-      const node = document.querySelector(`[data-node="${CSS.escape(nodeKey(ref))}"]`) ?? document.querySelector(`[data-window="${home}"]`);
+      const node = document.querySelector(`[data-node="${CSS.escape(nodeKey(ref))}"]`) ?? document.querySelector(`[data-window="${CSS.escape(home)}"]`);
       if (!node) return;
       if (mode === "grid" || !world) {
         node.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -291,25 +424,32 @@ function Shell() {
     }, wasCollapsed ? 60 : 0);
   }, [animate, mode, world]);
 
+  // A cross-space focus (or the URL's ?focus= on load) lands here once mounted.
+  useEffect(() => {
+    if (!ready) return;
+    const ref = consumePendingFocus();
+    if (ref) focusNode(ref);
+  }, [ready, consumePendingFocus, focusNode]);
+
   const toggleMode = useCallback(() => setMode((current) => current === "canvas" ? "grid" : "canvas"), []);
 
-  const actions: PaletteAction[] = useMemo(() => [
-    { id: "fit", label: "Fit everything in view", shortcut: "F", icon: ScanIcon, run: fit },
-    { id: "tidy", label: "Tidy windows", shortcut: "T", icon: LayoutDashboardIcon, run: tidy },
-    { id: "mode", label: mode === "canvas" ? "Switch to grid" : "Switch to canvas", shortcut: "G", icon: mode === "canvas" ? LayoutGridIcon : SquareDashedMousePointerIcon, run: toggleMode },
-  ], [fit, tidy, toggleMode, mode]);
+  // Report this space's controls upward so the shared TopBar and Palette operate it.
+  useEffect(() => {
+    const next: SpaceControls = { mode, setMode, fit, tidy, focusNode };
+    onControls(next);
+    return () => onControls(null);
+  }, [mode, fit, tidy, focusNode, onControls]);
 
+  // Canvas keys: G toggles mode; F/T/+/-/0 only apply in canvas mode.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setPaletteOpen((open) => !open);
-        return;
-      }
       const target = event.target as HTMLElement;
       if (event.metaKey || event.ctrlKey || event.altKey || paletteOpen || target.closest("input,textarea,[contenteditable=true],[role=dialog],[role=alertdialog]")) return;
       const key = event.key.toLowerCase();
-      if (key === "g") toggleMode();
+      if (key === "g") {
+        toggleMode();
+        return;
+      }
       if (mode !== "canvas") return;
       if (key === "f") fit();
       else if (key === "t") tidy();
@@ -333,7 +473,7 @@ function Shell() {
     };
     const up = () => {
       setPanning(false);
-      if (!moved) setSelected(null);
+      if (!moved) select(null);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
     };
@@ -342,7 +482,7 @@ function Shell() {
   };
 
   const placement = useCallback((id: string): WindowPlacement => {
-    const item = windows.find((entry) => entry.id === id)!;
+    const item = defsRef.current.find((entry) => entry.id === id)!;
     const position = layout.positions[id] ?? { x: 0, y: 0 };
     if (!registrars.current.has(id)) {
       registrars.current.set(id, (element) => {
@@ -386,78 +526,129 @@ function Shell() {
     };
   }, [animating, dragging, layout, mode]);
 
-  const workbench: WorkbenchValue = useMemo(() => ({ mode, selected, hovered, select, hover: setHovered, focus }), [mode, selected, hovered, select, focus]);
+  // Grid mode: masonry columns, each window placed in reading order into the shortest column.
+  const [gridColumns, setGridColumns] = useState<string[][]>(() => [defs.map((item) => item.id)]);
+  useLayoutEffect(() => {
+    if (mode !== "grid" || !world) return;
+    let frame = 0;
+    const arrange = () => {
+      const count = clamp(Math.floor((world.clientWidth + gridGap) / (gridMinColumn + gridGap)), 1, 4);
+      const heights = new Array<number>(count).fill(0);
+      const columns = Array.from({ length: count }, () => [] as string[]);
+      for (const id of defsRef.current.map((item) => item.id)) {
+        const index = heights.indexOf(Math.min(...heights));
+        columns[index].push(id);
+        heights[index] += (elements.current.get(id)?.offsetHeight ?? 400) + gridGap;
+      }
+      setGridColumns((current) => JSON.stringify(current) === JSON.stringify(columns) ? current : columns);
+    };
+    arrange();
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(arrange);
+    });
+    observer.observe(world);
+    for (const element of elements.current.values()) observer.observe(element);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [mode, world, gridColumns, defs]);
+
   const canvas = mode === "canvas";
 
   return (
-    <WorkbenchContext value={workbench}>
-      <AuthActionsProvider>
-        <VoiceProvider>
-          <PlacementContext value={placement}>
-            <main
-              ref={viewport}
-              data-canvas="workbench"
-              onPointerDown={onBackgroundPointerDown}
-              className={cn("canvas-dots", canvas ? "fixed inset-0 touch-none overflow-hidden overscroll-none" : "min-h-dvh", canvas && (panning ? "cursor-grabbing" : "cursor-grab"))}
-              style={canvas ? { backgroundSize: `${22 * view.k}px ${22 * view.k}px`, backgroundPosition: `${view.x}px ${view.y}px` } : { backgroundSize: "22px 22px" }}
-            >
-              <div aria-hidden className="pointer-events-none fixed inset-0 bg-[radial-gradient(90%_60%_at_50%_-10%,color-mix(in_oklch,var(--pkg-bots)_9%,transparent),transparent_70%)]" />
-              <h1 className="sr-only">AgentStack canvas</h1>
-              {canvas ? (
-                <div
-                  ref={setWorld}
-                  className={cn("absolute top-0 left-0 origin-top-left transition-opacity duration-500", ready ? "opacity-100" : "opacity-0", animating && "transition-[transform,opacity] duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]", dragging && "select-none")}
-                  style={{ transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.k})` }}
-                >
-                  <Lines world={world} scale={view.k} version={[layout, mode]} animating={animating || dragging !== null} subtle={false} />
-                  {windows.map(({ id, render: Render }) => <Render key={id} />)}
-                </div>
-              ) : (
-                <div className={cn("relative mx-auto max-w-[1760px] px-4 pt-20 pb-16 transition-opacity duration-500 sm:px-6", ready ? "opacity-100" : "opacity-0")}>
-                  <div ref={setWorld} className="relative">
-                    <Lines world={world} scale={1} version={[layout, mode, gridColumns]} animating={false} subtle />
-                    <div className="flex items-start gap-5">
-                      {gridColumns.map((column, index) => (
-                        <div key={index} className="flex min-w-0 flex-1 flex-col gap-5">
-                          {column.map((id) => {
-                            const Render = renderers.get(id)!;
-                            return <Render key={id} />;
-                          })}
-                        </div>
-                      ))}
-                    </div>
+    <PlacementContext value={placement}>
+      <main
+        ref={viewport}
+        data-canvas="workbench"
+        onPointerDown={onBackgroundPointerDown}
+        className={cn("canvas-dots", canvas ? "fixed inset-0 touch-none overflow-hidden overscroll-none" : "min-h-dvh", canvas && (panning ? "cursor-grabbing" : "cursor-grab"))}
+        style={canvas ? { backgroundSize: `${22 * view.k}px ${22 * view.k}px`, backgroundPosition: `${view.x}px ${view.y}px` } : { backgroundSize: "22px 22px" }}
+      >
+        <div aria-hidden className="pointer-events-none fixed inset-0 bg-[radial-gradient(90%_60%_at_50%_-10%,color-mix(in_oklch,var(--pkg-bots)_9%,transparent),transparent_70%)]" />
+        <h1 className="sr-only">AgentStack {spaceTitle(space)} canvas</h1>
+        {canvas ? (
+          <div
+            ref={setWorld}
+            className={cn("absolute top-0 left-0 origin-top-left transition-opacity duration-500", ready ? "opacity-100" : "opacity-0", animating && "transition-[transform,opacity] duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]", dragging && "select-none")}
+            style={{ transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.k})` }}
+          >
+            <Lines world={world} scale={view.k} version={[layout, mode]} animating={animating || dragging !== null} subtle={false} />
+            {defs.map(({ id, element }) => <Fragment key={id}>{element}</Fragment>)}
+          </div>
+        ) : (
+          <div className={cn("relative mx-auto max-w-[1760px] px-4 pt-20 pb-16 transition-opacity duration-500 sm:px-6", ready ? "opacity-100" : "opacity-0")}>
+            <div ref={setWorld} className="relative">
+              <Lines world={world} scale={1} version={[layout, mode, gridColumns]} animating={false} subtle />
+              <div className="flex items-start gap-5">
+                {gridColumns.map((column, index) => (
+                  <div key={index} className="flex min-w-0 flex-1 flex-col gap-5">
+                    {column.map((id) => {
+                      const def = defs.find((item) => item.id === id);
+                      return def ? <Fragment key={id}>{def.element}</Fragment> : null;
+                    })}
                   </div>
-                </div>
-              )}
-            </main>
-            {canvas && ready ? <OffscreenHints view={view} positions={layout.positions} collapsed={layout.collapsed} size={size} viewport={viewport.current} onFocus={focusWindow} /> : null}
-            <TopBar mode={mode} setMode={setMode} openPalette={() => setPaletteOpen(true)} />
-            {canvas ? <CanvasToolbar scale={view.k} zoom={(factor) => animate(() => zoomAt(factor))} fit={fit} tidy={tidy} /> : null}
-            <Inspector />
-            <Palette open={paletteOpen} onOpenChange={setPaletteOpen} actions={actions} />
-          </PlacementContext>
-        </VoiceProvider>
-      </AuthActionsProvider>
-    </WorkbenchContext>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+      {canvas && ready ? <OffscreenHints view={view} positions={layout.positions} collapsed={layout.collapsed} defs={defs} size={size} viewport={viewport.current} onFocus={focusWindow} /> : null}
+      {canvas ? <CanvasToolbar scale={view.k} zoom={(factor) => animate(() => zoomAt(factor))} fit={fit} tidy={tidy} /> : null}
+    </PlacementContext>
   );
 }
 
 const packageOrder = ["owner", "auth", "bots", "roles", "api"];
 
-function TopBar({ mode, setMode, openPalette }: { mode: Mode; setMode(mode: Mode): void; openPalette(): void }) {
+function TopBar({ space, setSpace, controls, openPalette }: { space: SpaceId; setSpace(space: SpaceId): void; controls: SpaceControls | null; openPalette(): void }) {
   const { status, endpoints, scoped } = useStack();
   const live = packageOrder.filter((name) => status[name] === "open").length;
   const scopedLive = Object.values(scoped).filter((value) => value.status === "open").length;
+  const mode = controls?.mode ?? "canvas";
   return (
     <div data-chrome className="pointer-events-none fixed inset-x-3 top-3 z-30 flex items-start justify-between gap-3">
       <div className="pointer-events-auto flex items-center gap-2 rounded-xl border bg-card/80 py-1.5 pr-3 pl-1.5 shadow-sm backdrop-blur-xl sm:gap-3">
         <span className="flex size-8 items-center justify-center rounded-lg bg-foreground text-background shadow-inner">
           <LayersIcon className="size-4" />
         </span>
-        <div className="hidden flex-col leading-tight sm:flex">
+        <div className="hidden flex-col leading-tight lg:flex">
           <span className="text-sm font-semibold tracking-tight">AgentStack</span>
-          <span className="text-[0.68rem] text-muted-foreground">Live canvas</span>
         </div>
+        <nav aria-label="Spaces" className="flex items-center gap-0.5">
+          {spaces.map((item) => {
+            const Icon = spaceViews[item.id].icon;
+            const active = item.id === space;
+            return (
+              <Tooltip key={item.id}>
+                <TooltipTrigger
+                  render={
+                    <a
+                      href={spaceHref(item.id)}
+                      aria-current={active ? "page" : undefined}
+                      onClick={(event) => {
+                        if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+                          event.preventDefault();
+                          setSpace(item.id);
+                        }
+                      }}
+                      className={cn(
+                        "flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring",
+                        active ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                      )}
+                    >
+                      <Icon className="size-3.5" />
+                      <span className="hidden md:inline">{item.title}</span>
+                    </a>
+                  }
+                />
+                <TooltipContent side="bottom">{item.title} <Kbd>{item.key}</Kbd></TooltipContent>
+              </Tooltip>
+            );
+          })}
+        </nav>
         <Separator orientation="vertical" className="mx-0.5 hidden h-6! self-center sm:block" />
         <Tooltip>
           <TooltipTrigger render={<span tabIndex={0} className="flex items-center gap-2 rounded-md focus-visible:outline-2 focus-visible:outline-ring" />}>
@@ -488,7 +679,7 @@ function TopBar({ mode, setMode, openPalette }: { mode: Mode; setMode(mode: Mode
         </Button>
         <ToggleGroup
           value={[mode]}
-          onValueChange={(value) => { if (value[0]) setMode(value[0] as Mode); }}
+          onValueChange={(value) => { if (value[0]) controls?.setMode(value[0] as Mode); }}
           className="h-10 rounded-xl border bg-card/80 p-1 shadow-sm backdrop-blur-xl"
           aria-label="Layout"
         >
@@ -511,10 +702,11 @@ function TopBar({ mode, setMode, openPalette }: { mode: Mode; setMode(mode: Mode
 }
 
 /** Edge chips for windows panned out of view; clicking one brings it back. */
-function OffscreenHints({ view, positions, collapsed, size, viewport, onFocus }: {
+function OffscreenHints({ view, positions, collapsed, defs, size, viewport, onFocus }: {
   view: View;
   positions: Record<string, Point>;
   collapsed: Record<string, boolean>;
+  defs: WindowDef[];
   size(id: string): { width: number; height: number };
   viewport: HTMLElement | null;
   onFocus(id: string): void;
@@ -529,7 +721,7 @@ function OffscreenHints({ view, positions, collapsed, size, viewport, onFocus }:
   const width = viewport.clientWidth;
   const height = viewport.clientHeight;
   const margin = 48;
-  const hints = windows.flatMap((item) => {
+  const hints = defs.flatMap((item) => {
     const position = positions[item.id];
     if (!position) return [];
     const box = size(item.id);

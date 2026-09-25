@@ -35,8 +35,8 @@ URL).
 The owner also starts the standalone UI app at `http://127.0.0.1:8745/` and
 prints this index URL.
 Its root lists current local links, Package API URLs, owner processes, and
-running bots; the live canvas is at `/x`. Both pages
-serve markdown twins at `/index.md` and `/x.md`. The owner
+running bots; the live canvas is at `/x`, organized into spaces
+(`/x/fleet`, `/x/system`, `/x/api`). The owner
 also prints the canvas URL. Set `AGENTSTACK_UIX_PORT` before starting to choose
 another port. `pnpm build` prepares `packages/uix` for `agentstack serve`.
 Both pages follow the system light/dark preference. The owner stops the app
