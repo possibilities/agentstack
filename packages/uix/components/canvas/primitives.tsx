@@ -4,7 +4,7 @@ import { useState } from "react";
 import { BotIcon, CheckIcon, CopyIcon } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { hueOf, relativeTime } from "@/lib/stack/derive";
-import { nodeKey, type Bot, type NodeRef, type StackEvent } from "@/lib/stack/types";
+import { nodeKey, type Bot, type ChannelStatus, type NodeRef, type StackEvent } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useNow, useWorkbench } from "./provider";
 
@@ -17,6 +17,16 @@ const toneClass: Record<Tone, string> = {
   muted: "bg-muted-foreground/40",
   info: "bg-pkg-codex",
 };
+
+/**
+ * Honest WebSocket channel text: `status` only has entries for the channels
+ * this page opened, so an endpoint with no entry was never connected here.
+ */
+export function channelLabel(endpoint: string | undefined, channel: ChannelStatus | undefined): { label: string; tone: Tone } {
+  if (!endpoint) return { label: "no WebSocket", tone: "warning" };
+  if (channel === undefined) return { label: "not opened by this page", tone: "muted" };
+  return { label: channel, tone: channel === "open" ? "success" : channel === "closed" ? "destructive" : "muted" };
+}
 
 export function StatusDot({ tone, pulse, className, label }: { tone: Tone; pulse?: boolean; className?: string; label?: string }) {
   return (
@@ -161,12 +171,13 @@ export function NodeCard({ node, label, children, className, lastEvent, accent, 
   lastEvent?: StackEvent;
   accent?: string;
   variant?: "card" | "row";
-  /** Overrides the default click (select toggle), e.g. to focus the node across spaces. */
+  /** Overrides the default click (select toggle), e.g. to navigate to the node across spaces. */
   activate?: () => void;
 }) {
-  const { selected, hovered, select, hover } = useWorkbench();
+  const { selected, hovered, select, hover, flash } = useWorkbench();
   const key = nodeKey(node);
   const isSelected = selected !== null && nodeKey(selected) === key;
+  const flashing = flash?.key === key;
   return (
     <article
       data-node={key}
@@ -184,6 +195,7 @@ export function NodeCard({ node, label, children, className, lastEvent, accent, 
       )}
     >
       {lastEvent ? <span key={lastEvent.seq} aria-hidden className="pointer-events-none absolute inset-0 rounded-[inherit] animate-uix-ping" /> : null}
+      {flashing ? <span key={flash!.seq} aria-hidden className="pointer-events-none absolute -inset-1 rounded-[inherit] animate-uix-flash" /> : null}
       <button
         type="button"
         aria-label={`Inspect ${label}`}

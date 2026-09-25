@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { ArrowRightIcon, CircleCheckIcon, LockIcon, PhoneIcon, PhoneOffIcon, RadioIcon, RefreshCwIcon, SquareArrowOutUpRightIcon, Trash2Icon, XIcon } from "lucide-react";
+import { Fragment, useEffect, useRef, useState } from "react";
+import { ArrowRightIcon, CircleCheckIcon, LocateFixedIcon, LockIcon, PhoneIcon, PhoneOffIcon, RefreshCwIcon, SquareArrowOutUpRightIcon, Trash2Icon, XIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -13,7 +13,7 @@ import type { StackState } from "@/lib/stack/store";
 import { nodeKey, type Account, type Bot, type Login, type NodeRef, type OperationDoc, type PackageDoc, type StackEvent } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
-import { CopyButton, Orb } from "./primitives";
+import { channelLabel, CopyButton, Orb, StatusDot, Time } from "./primitives";
 import { useOperation, useStack, useWorkbench } from "./provider";
 import { useVoice } from "./voice";
 import { accentBg, accentOf, accentText, type Accent } from "./window";
@@ -252,31 +252,57 @@ function FieldList({ fields, depth = 0 }: { fields: Field[]; depth?: number }) {
 }
 
 function PackageBody({ doc }: { doc: PackageDoc }) {
-  const { select } = useWorkbench();
+  const { status, endpoints, owner, catalog, events } = useStack();
+  const channel = channelLabel(endpoints[doc.name], status[doc.name]);
+  const websocket = endpoints[doc.name];
+  const socket = doc.transports.find((transport) => transport.type === "socket")?.endpoint ?? null;
+  const mcp = owner.data?.mcpUrls[doc.name];
+  const counts = new Map<string, number>();
+  for (const event of events) if (event.pkg === doc.name) counts.set(event.topic, (counts.get(event.topic) ?? 0) + 1);
   return (
     <>
       <p className="text-sm text-pretty text-muted-foreground">{doc.description}</p>
-      <Block title="Transports">
+      <Block title="Connection">
         <ul className="flex flex-col gap-2">
-          {doc.transports.map((transport) => (
-            <li key={transport.type} className="group/row flex flex-col gap-0.5 rounded-lg border bg-background/50 p-2.5">
+          <li className="group/row flex flex-col gap-0.5 rounded-lg border bg-background/50 p-2.5">
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-xs font-medium">WebSocket</span>
+              <StatusDot tone={channel.tone} label={websocket ? `WebSocket ${channel.label}` : channel.label} />
+              <span className="text-[0.68rem] text-muted-foreground">{channel.label}</span>
+              {websocket ? <CopyButton value={websocket} label="WebSocket endpoint" className="ml-auto" /> : null}
+            </div>
+            {websocket ? <p className="font-mono text-[0.7rem] break-all">{websocket}</p> : null}
+          </li>
+          {socket ? (
+            <li className="group/row flex flex-col gap-0.5 rounded-lg border bg-background/50 p-2.5">
               <div className="flex items-center gap-2">
-                <span className="font-mono text-xs font-medium">{transport.type}</span>
-                {transport.subscriptions ? <Badge variant="secondary" className="h-4 gap-1 text-[0.62rem]"><RadioIcon />events</Badge> : null}
-                {transport.endpoint ? <CopyButton value={transport.endpoint} label={`${transport.type} endpoint`} className="ml-auto" /> : null}
+                <span className="font-mono text-xs font-medium">Socket</span>
+                <CopyButton value={socket} label="socket endpoint" className="ml-auto" />
               </div>
-              <p className="text-xs text-muted-foreground">{transport.description}</p>
-              {transport.endpoint ? <p className="font-mono text-[0.7rem] break-all">{transport.endpoint}</p> : null}
+              <p className="font-mono text-[0.7rem] break-all">{socket}</p>
             </li>
-          ))}
+          ) : null}
+          {mcp ? (
+            <li className="group/row flex flex-col gap-0.5 rounded-lg border bg-background/50 p-2.5">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-xs font-medium">MCP</span>
+                <CopyButton value={mcp} label="MCP URL" className="ml-auto" />
+              </div>
+              <p className="font-mono text-[0.7rem] break-all">{mcp}</p>
+            </li>
+          ) : null}
         </ul>
+        <p className="text-[0.7rem] text-muted-foreground">Catalog read <Time at={catalog.at} /></p>
       </Block>
       {Object.keys(doc.events).length ? (
         <Block title="Events">
           <ul className="flex flex-col gap-2">
             {Object.entries(doc.events).map(([topic, description]) => (
               <li key={topic} className="flex flex-col gap-0.5">
-                <span className="font-mono text-[0.78rem] font-medium">{topic}</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[0.78rem] font-medium">{topic}</span>
+                  <span className="ml-auto font-mono text-[0.7rem] text-muted-foreground tabular-nums" title="notices seen this session">{counts.get(topic) ?? 0}</span>
+                </div>
                 <p className="text-xs text-pretty text-muted-foreground">{description}</p>
               </li>
             ))}
@@ -288,20 +314,6 @@ function PackageBody({ doc }: { doc: PackageDoc }) {
           ) : null}
         </Block>
       ) : null}
-      <Block title={`Operations · ${doc.operations.length}`}>
-        <ul className="-mx-1.5 flex flex-col">
-          {doc.operations.map((operation) => (
-            <li key={operation.name}>
-              <button type="button" onClick={() => select({ kind: "operation", id: operation.name, pkg: doc.name })}
-                className="flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-sm hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring">
-                <span className="font-medium">{operationTitle(operation)}</span>
-                <span className="truncate font-mono text-[0.7rem] text-muted-foreground">{operation.name}</span>
-                <span className="ml-auto flex gap-1"><OperationBadges operation={operation} /></span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      </Block>
     </>
   );
 }
@@ -329,8 +341,12 @@ function OperationBody({ doc, operation, endpoint, mcp }: { doc: PackageDoc; ope
 }
 
 export function Inspector() {
-  const { selected, select, focus } = useWorkbench();
+  const { selected, select, goTo } = useWorkbench();
   const state = useStack();
+  // Keep the last selection mounted through the slide-out so the sheet never blanks.
+  const last = useRef<NodeRef | null>(null);
+  if (selected) last.current = selected;
+  const shown = selected ?? last.current;
 
   useEffect(() => {
     if (!selected) return;
@@ -341,26 +357,37 @@ export function Inspector() {
     return () => window.removeEventListener("keydown", onKey);
   }, [selected, select]);
 
-  if (!selected) return null;
-  const view = resolve(selected, state);
+  const view = shown ? resolve(shown, state) : null;
 
   return (
     <aside
-      key={nodeKey(selected)}
       aria-label="Inspector"
-      className="fixed top-18 right-3 bottom-3 z-40 flex w-[min(420px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border bg-popover/90 text-popover-foreground shadow-[0_32px_64px_-24px_rgb(0_0_0/0.45)] backdrop-blur-2xl duration-200 animate-in fade-in-0 slide-in-from-right-4"
+      aria-hidden={!selected || undefined}
+      inert={!selected}
+      className={cn(
+        "fixed inset-y-0 right-0 z-40 flex w-full flex-col overflow-hidden border-l bg-popover text-popover-foreground shadow-[-12px_0_32px_-20px_rgb(0_0_0/0.3)] transition-transform duration-200 ease-out min-[900px]:w-[420px] motion-reduce:transition-none",
+        selected ? "translate-x-0" : "translate-x-full",
+      )}
     >
-      <header className="flex items-start gap-3 border-b px-4 py-3.5">
-        {view?.orb ? <Orb id={view.orb} size="lg" /> : (
-          <span className={cn("mt-0.5 size-2.5 shrink-0 rounded-full", view ? accentBg[view.accent] : "bg-muted")} />
-        )}
-        <div className="flex min-w-0 flex-col">
-          <span className={cn("text-[0.68rem] font-medium tracking-[0.08em] uppercase", view ? accentText[view.accent] : "text-muted-foreground")}>{view?.eyebrow ?? selected.kind}</span>
-          <h2 className="truncate text-lg font-semibold tracking-tight">{view?.title ?? ("id" in selected ? selected.id : selected.kind)}</h2>
-        </div>
-        <Button variant="ghost" size="icon-sm" className="ml-auto" aria-label="Close inspector" onClick={() => select(null)}><XIcon /></Button>
-      </header>
-      <div data-scroll className="flex flex-1 flex-col gap-6 overflow-y-auto overscroll-contain px-4 py-4">
+      {shown ? (
+        <Fragment key={nodeKey(shown)}>
+          <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
+            {view?.orb ? <Orb id={view.orb} size="sm" /> : (
+              <span className={cn("size-2.5 shrink-0 rounded-full", view ? accentBg[view.accent] : "bg-muted")} />
+            )}
+            <div className="flex min-w-0 flex-col">
+              <span className={cn("text-[0.68rem] font-medium tracking-[0.08em] uppercase", view ? accentText[view.accent] : "text-muted-foreground")}>{view?.eyebrow ?? shown.kind}</span>
+              <h2 className="truncate text-lg leading-tight font-semibold tracking-tight">{view?.title ?? ("id" in shown ? shown.id : shown.kind)}</h2>
+            </div>
+            <Tooltip>
+              <TooltipTrigger render={<Button variant="ghost" size="icon-sm" className="ml-auto" aria-label="Show on canvas" onClick={() => goTo(shown)} />}>
+                <LocateFixedIcon />
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Show on canvas</TooltipContent>
+            </Tooltip>
+            <Button variant="ghost" size="icon-sm" aria-label="Close inspector" onClick={() => select(null)}><XIcon /></Button>
+          </header>
+          <div data-scroll className="flex flex-1 flex-col gap-6 overflow-y-auto overscroll-contain px-4 py-4">
         {!view ? (
           <p className="text-sm text-muted-foreground">This item is no longer present in the current state.</p>
         ) : (
@@ -390,7 +417,7 @@ export function Inspector() {
               <Block title="Related">
                 <div className="flex flex-wrap gap-1.5">
                   {view.related.map(({ ref, label }) => (
-                    <Button key={nodeKey(ref)} variant="outline" size="sm" onClick={() => focus(ref)}>
+                    <Button key={nodeKey(ref)} variant="outline" size="sm" onClick={() => goTo(ref)}>
                       {label}<ArrowRightIcon data-icon="inline-end" />
                     </Button>
                   ))}
@@ -410,7 +437,7 @@ export function Inspector() {
                         </div>
                         <span className="ml-auto flex shrink-0 gap-1"><OperationBadges operation={operation} /></span>
                         <Tooltip>
-                          <TooltipTrigger render={<Button variant="ghost" size="icon-xs" aria-label={`Details for ${operation.name}`} onClick={() => select({ kind: "operation", id: operation.name, pkg: view.operations!.pkg })} />}>
+                          <TooltipTrigger render={<Button variant="ghost" size="icon-xs" aria-label={`Go to ${operation.name}`} onClick={() => goTo({ kind: "operation", id: operation.name, pkg: view.operations!.pkg })} />}>
                             <ArrowRightIcon />
                           </TooltipTrigger>
                           <TooltipContent side="left" className="max-w-64">{operation.description}</TooltipContent>
@@ -438,12 +465,14 @@ export function Inspector() {
             ) : null}
           </>
         )}
-      </div>
-      <Separator />
-      <footer className="flex items-center gap-2 px-4 py-2.5 text-[0.68rem] text-muted-foreground">
-        Field notes come from the live discovery schema.
-        <span className="ml-auto flex items-center gap-1"><kbd className="rounded border px-1 font-sans">Esc</kbd> close</span>
-      </footer>
+          </div>
+          <Separator />
+          <footer className="flex shrink-0 items-center gap-2 px-4 py-2.5 text-[0.68rem] text-muted-foreground">
+            Field notes come from the live discovery schema.
+            <span className="ml-auto flex items-center gap-1"><kbd className="rounded border px-1 font-sans">Esc</kbd> close</span>
+          </footer>
+        </Fragment>
+      ) : null}
     </aside>
   );
 }

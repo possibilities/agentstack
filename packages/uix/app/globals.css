@@ -173,10 +173,23 @@
   from { background-color: color-mix(in oklch, var(--ping, var(--success)) 14%, transparent); }
 }
 
+@keyframes uix-flash {
+  0%, 35% { box-shadow: 0 0 0 4px var(--ring); opacity: 1; }
+  100% { box-shadow: 0 0 0 10px transparent; opacity: 0; }
+}
+
+/* Windows clip their children, so their flash ring is drawn inside the frame. */
+@keyframes uix-flash-in {
+  0%, 35% { box-shadow: inset 0 0 0 4px var(--ring); opacity: 1; }
+  100% { box-shadow: inset 0 0 0 12px transparent; opacity: 0; }
+}
+
 @layer utilities {
   .animate-uix-ping { animation: uix-ping 1.1s cubic-bezier(0, 0, 0.2, 1); }
   .animate-uix-flow { animation: uix-flow 0.9s linear infinite; }
   .animate-uix-arrive { animation: uix-arrive 1.6s ease-out; }
+  .animate-uix-flash { animation: uix-flash 1.2s ease-out; }
+  .animate-uix-flash-in { animation: uix-flash-in 1.2s ease-out; }
   .canvas-dots {
     background-color: var(--canvas);
     background-image: radial-gradient(circle at 1px 1px, var(--canvas-dot) 1px, transparent 0);
@@ -185,4 +198,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .animate-uix-ping, .animate-uix-flow, .animate-uix-arrive { animation: none; }
+  .animate-uix-flash { animation: none; box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 60%, transparent); }
+  .animate-uix-flash-in { animation: none; box-shadow: inset 0 0 0 3px color-mix(in oklch, var(--ring) 60%, transparent); }
 }

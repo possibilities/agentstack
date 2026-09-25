@@ -3,10 +3,10 @@
 import { createContext, use } from "react";
 import { ChevronDownIcon, GripHorizontalIcon } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { ChannelStatus } from "@/lib/stack/types";
+import { nodeKey, type ChannelStatus, type NodeRef } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { StatusDot, Time } from "./primitives";
-import type { Mode } from "./provider";
+import { useWorkbench, type Mode } from "./provider";
 
 export type Accent = "owner" | "auth" | "bots" | "api" | "events";
 
@@ -47,7 +47,7 @@ export type WindowPlacement = {
   collapsed: boolean;
   animating: boolean;
   dragging: boolean;
-  onHeaderPointerDown(event: React.PointerEvent): void;
+  onHeaderPointerDown(event: React.PointerEvent, onTap?: () => void): void;
   onFocusWithin(): void;
   onToggleCollapse(): void;
   register(element: HTMLElement | null): void;
@@ -62,7 +62,7 @@ const statusCopy: Record<ChannelStatus, string> = {
   closed: "Reconnecting…",
 };
 
-export function Window({ id, title, subtitle, icon: Icon, accent, count, status, endpoint, updatedAt, error, actions, children }: {
+export function Window({ id, title, subtitle, icon: Icon, accent, count, status, endpoint, updatedAt, error, actions, node, children }: {
   id: string;
   title: string;
   subtitle: string;
@@ -74,16 +74,26 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
   updatedAt?: number | null;
   error?: string | null;
   actions?: React.ReactNode;
+  /** When the window represents a node, a header tap or the title button inspects it. */
+  node?: NodeRef;
   children: React.ReactNode;
 }) {
   const placement = use(PlacementContext)?.(id);
   if (!placement) throw new Error("Window requires PlacementContext");
+  const { selected, select, flash } = useWorkbench();
   const canvas = placement.mode === "canvas";
+  const key = node ? nodeKey(node) : null;
+  const isSelected = key !== null && selected !== null && nodeKey(selected) === key;
+  const flashing = key !== null && flash?.key === key;
+  const toggle = () => {
+    if (node) select(isSelected ? null : node);
+  };
   const tone = status === "open" ? (error ? "warning" : "success") : status === "closed" ? "destructive" : "muted";
   return (
     <section
       ref={placement.register}
       data-window={id}
+      data-node={key ?? undefined}
       aria-labelledby={`window-${id}-title`}
       onPointerDownCapture={placement.onFocusWithin}
       className={cn(
@@ -92,14 +102,20 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
         canvas ? "absolute" : "relative",
         canvas && placement.animating && "transition-[left,top] duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]",
         placement.dragging && "shadow-[0_1px_0_0_rgb(255_255_255/0.06)_inset,0_40px_80px_-24px_rgb(0_0_0/0.45)] ring-1 ring-foreground/10",
+        isSelected && "border-foreground/30 ring-3 ring-ring/25",
       )}
       style={canvas ? { left: placement.x, top: placement.y, width: placement.width, zIndex: placement.z } : undefined}
     >
+      {flashing ? <span key={flash!.seq} aria-hidden className="pointer-events-none absolute inset-0 rounded-[inherit] animate-uix-flash-in" /> : null}
       <header
-        onPointerDown={canvas ? placement.onHeaderPointerDown : undefined}
+        onPointerDown={canvas ? (event) => placement.onHeaderPointerDown(event, toggle) : undefined}
+        onClick={!canvas && node ? (event) => {
+          if ((event.target as Element).closest("button,a,[data-interactive],[tabindex]")) return;
+          toggle();
+        } : undefined}
         className={cn(
           "group/header flex items-center gap-3 px-3.5 py-3 select-none",
-          canvas && "cursor-grab active:cursor-grabbing",
+          canvas ? "cursor-grab active:cursor-grabbing" : node && "cursor-pointer",
           !placement.collapsed && "border-b border-border/60",
         )}
       >
@@ -108,7 +124,12 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
         </span>
         <div className="flex min-w-0 flex-col">
           <h2 id={`window-${id}-title`} className="flex items-center gap-2 text-sm leading-tight font-semibold tracking-tight">
-            {title}
+            {node ? (
+              <button type="button" aria-pressed={isSelected} aria-label={`Inspect ${title}`} onClick={toggle}
+                className="rounded-sm text-left focus-visible:outline-2 focus-visible:outline-ring">
+                {title}
+              </button>
+            ) : title}
             {count !== undefined && count !== null ? (
               <span className="rounded-full bg-muted px-1.5 py-px text-[0.68rem] font-medium text-muted-foreground tabular-nums">{count}</span>
             ) : null}

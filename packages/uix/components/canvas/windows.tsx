@@ -39,7 +39,7 @@ import { accountLabels, botsFor, clockTime, histogram, pathParts, shortId } from
 import type { Account, Bot, Login, OperationDoc, PackageDoc } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
-import { BotTile, CopyButton, Empty, NodeCard, Orb, Row, Sparkline, StatusDot, Time } from "./primitives";
+import { BotTile, channelLabel, CopyButton, Empty, NodeCard, Orb, Row, Sparkline, StatusDot, Time } from "./primitives";
 import { useActivity, useNow, useStack, useWorkbench } from "./provider";
 import { useVoice } from "./voice";
 import { accentBg, accentOf, accentText, Section, Window } from "./window";
@@ -491,7 +491,7 @@ export function BotsWindow() {
 
 export function ActivityWindow() {
   const { events, status, scoped } = useStack();
-  const { focus } = useWorkbench();
+  const { goTo } = useWorkbench();
   const now = useNow();
   const live = Object.values(status).filter((value) => value === "open").length + Object.values(scoped).filter((value) => value.status === "open").length;
   const bins = histogram(events.map((event) => event.at), now, 40, 10 * 60_000);
@@ -509,7 +509,7 @@ export function ActivityWindow() {
               <button
                 type="button"
                 disabled={!event.scope}
-                onClick={() => event.scope && focus({ kind: "bot", id: event.scope })}
+                onClick={() => event.scope && goTo({ kind: "bot", id: event.scope })}
                 className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-[0.75rem] animate-uix-arrive enabled:hover:bg-muted/70 focus-visible:outline-2 focus-visible:outline-ring"
                 style={{ "--ping": `var(--pkg-${accentOf(event.pkg)})` } as React.CSSProperties}
               >
@@ -533,7 +533,7 @@ export function ActivityWindow() {
 
 export function PackagesWindow() {
   const { catalog, status, endpoints } = useStack();
-  const { focus } = useWorkbench();
+  const { goTo } = useWorkbench();
   const packages = catalog.data ?? [];
   const operations = packages.reduce((sum, doc) => sum + doc.operations.length, 0);
   const topics = packages.reduce((sum, doc) => sum + Object.keys(doc.events).length, 0);
@@ -546,10 +546,10 @@ export function PackagesWindow() {
           {packages.map((doc) => {
             const accent = accentOf(doc.name);
             const endpoint = endpoints[doc.name];
-            const channel = status[doc.name];
+            const channel = channelLabel(endpoint, status[doc.name]);
             return (
               <NodeCard key={doc.name} node={{ kind: "package", id: doc.name }} label={`package ${doc.name}`} variant="row"
-                activate={() => focus({ kind: "package", id: doc.name })}>
+                activate={() => goTo({ kind: "package", id: doc.name })}>
                 <div className="flex items-center gap-2 text-[0.8rem]">
                   <span className={cn("size-2 shrink-0 rounded-full", accentBg[accent])} aria-hidden />
                   <span className="font-medium">{doc.name}</span>
@@ -565,8 +565,8 @@ export function PackagesWindow() {
                     </Badge>
                   ))}
                   <span className="ml-auto flex items-center gap-1.5 text-[0.68rem] text-muted-foreground">
-                    <StatusDot tone={channel === "open" ? "success" : channel === "closed" ? "destructive" : endpoint ? "muted" : "warning"} label={endpoint ? `WebSocket ${channel ?? "idle"}` : "no WebSocket"} />
-                    {endpoint ? channel ?? "idle" : "no WebSocket"}
+                    <StatusDot tone={channel.tone} label={endpoint ? `WebSocket ${channel.label}` : channel.label} />
+                    {channel.label}
                   </span>
                 </div>
               </NodeCard>
@@ -582,7 +582,6 @@ export function PackagesWindow() {
 
 export function PackageWindow({ name }: { name: string }) {
   const { catalog, events, status, endpoints } = useStack();
-  const { select } = useWorkbench();
   const doc = catalog.data?.find((item) => item.name === name);
   const accent = accentOf(name);
   const counts = useMemo(() => {
@@ -596,14 +595,7 @@ export function PackageWindow({ name }: { name: string }) {
   return (
     <Window id={`package:${name}`} title={name} subtitle={doc?.packageName ?? "package"} icon={BookOpenIcon} accent={accent}
       status={status[name]} endpoint={endpoints[name]} updatedAt={catalog.at} error={doc ? null : catalog.error}
-      actions={
-        <Tooltip>
-          <TooltipTrigger render={<Button variant="ghost" size="xs" aria-label={`Inspect ${name} package`} onClick={() => select({ kind: "package", id: name })} />}>
-            Inspect
-          </TooltipTrigger>
-          <TooltipContent side="bottom">Open in inspector</TooltipContent>
-        </Tooltip>
-      }>
+      node={{ kind: "package", id: name }}>
       {doc ? (
         <>
           <p className="text-sm text-pretty text-muted-foreground">{doc.description}</p>

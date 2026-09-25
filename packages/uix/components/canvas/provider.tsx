@@ -79,7 +79,10 @@ export type WorkbenchValue = {
   hovered: string | null;
   select(ref: NodeRef | null): void;
   hover(key: string | null): void;
-  focus(ref: NodeRef): void;
+  /** Navigate to a node's card — switches space and pans, never selects. */
+  goTo(ref: NodeRef): void;
+  /** The most recent goTo target; matches nodeKey values so cards can flash. */
+  flash: { key: string; seq: number } | null;
 };
 
 export const WorkbenchContext = createContext<WorkbenchValue | null>(null);

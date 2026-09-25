@@ -18,7 +18,7 @@ import { Kbd } from "@/components/ui/kbd";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { homeOf, parseNodeKey, parseSpacePath, spaceHref, spaces, spaceTitle, type SpaceId } from "@/lib/stack/spaces";
+import { homeOf, parseNodeKey, parseSpacePath, spaceAttention, spaceHref, spaces, spaceTitle, type SpaceId } from "@/lib/stack/spaces";
 import { nodeKey, type NodeRef, type Snapshot } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { AuthActionsProvider } from "./auth-actions";
@@ -41,7 +41,7 @@ export type SpaceControls = {
   setMode(mode: Mode): void;
   fit(): void;
   tidy(): void;
-  focusNode(ref: NodeRef): void;
+  goToNode(ref: NodeRef, onLanded?: () => void): void;
 };
 
 type Persisted = { spaces?: Partial<Record<SpaceId, { mode?: Mode; layout?: Partial<Layout>; view?: View }>> };
@@ -83,24 +83,45 @@ export function Workbench({ snapshot, initialSpace, initialFocus }: { snapshot: 
 
 function Shell({ initialSpace, initialFocus }: { initialSpace: SpaceId; initialFocus: NodeRef | null }) {
   const [space, setSpaceState] = useState<SpaceId>(initialSpace);
-  const [selected, setSelected] = useState<NodeRef | null>(initialFocus);
+  const [selected, setSelected] = useState<NodeRef | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [controls, setControls] = useState<SpaceControls | null>(null);
+  const [flash, setFlash] = useState<{ key: string; seq: number } | null>(null);
+  const [wide, setWide] = useState(false);
   const spaceRef = useRef(space);
   const controlsRef = useRef<SpaceControls | null>(null);
-  /** A node to select+pan to once the active space's canvas reports ready. */
-  const pendingFocus = useRef<NodeRef | null>(initialFocus);
+  const flashSeq = useRef(0);
+  const flashTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  /** A node to pan to and flash once the active space's canvas reports ready. */
+  const pendingGoTo = useRef<NodeRef | null>(initialFocus);
 
   const reportControls = useCallback((next: SpaceControls | null) => {
     controlsRef.current = next;
     setControls(next);
   }, []);
 
-  const switchSpace = useCallback((next: SpaceId, focus?: NodeRef | null) => {
-    window.history.pushState(null, "", spaceHref(next, focus));
+  // The inspector is an edge sheet: the canvas area shrinks by its width on wide screens.
+  useEffect(() => {
+    const query = window.matchMedia("(min-width: 900px)");
+    const update = () => setWide(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  const flashNow = useCallback((ref: NodeRef) => {
+    setFlash({ key: nodeKey(ref), seq: ++flashSeq.current });
+    clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlash(null), 1400);
+  }, []);
+
+  // Every space switch — tabs, keys, palette, cross-space goTo — closes the sheet.
+  const switchSpace = useCallback((next: SpaceId, ref?: NodeRef | null) => {
+    window.history.pushState(null, "", spaceHref(next, ref));
     document.title = pageTitle(next);
     spaceRef.current = next;
+    setSelected(null);
     setSpaceState(next);
   }, []);
 
@@ -108,25 +129,24 @@ function Shell({ initialSpace, initialFocus }: { initialSpace: SpaceId; initialF
     if (next !== spaceRef.current) switchSpace(next);
   }, [switchSpace]);
 
-  const consumePendingFocus = useCallback(() => {
-    const ref = pendingFocus.current;
-    pendingFocus.current = null;
+  const consumePendingGoTo = useCallback(() => {
+    const ref = pendingGoTo.current;
+    pendingGoTo.current = null;
     return ref;
   }, []);
 
-  const focus = useCallback((ref: NodeRef) => {
-    setSelected(ref);
+  const goTo = useCallback((ref: NodeRef) => {
     const home = homeOf(ref);
     if (home.space === spaceRef.current) {
       window.history.replaceState(null, "", spaceHref(home.space, ref));
       const canvas = controlsRef.current;
-      if (canvas) canvas.focusNode(ref);
-      else pendingFocus.current = ref;
+      if (canvas) canvas.goToNode(ref, () => flashNow(ref));
+      else pendingGoTo.current = ref;
     } else {
-      pendingFocus.current = ref;
+      pendingGoTo.current = ref;
       switchSpace(home.space, ref);
     }
-  }, [switchSpace]);
+  }, [switchSpace, flashNow]);
 
   // Back/forward: re-parse the location and sync without reloading the page.
   useEffect(() => {
@@ -137,22 +157,19 @@ function Shell({ initialSpace, initialFocus }: { initialSpace: SpaceId; initialF
       const ref = raw ? parseNodeKey(raw) : null;
       document.title = pageTitle(next);
       if (next !== spaceRef.current) {
-        if (ref) {
-          setSelected(ref);
-          pendingFocus.current = ref;
-        }
+        if (ref) pendingGoTo.current = ref;
         spaceRef.current = next;
+        setSelected(null);
         setSpaceState(next);
       } else if (ref) {
-        setSelected(ref);
         const canvas = controlsRef.current;
-        if (canvas) canvas.focusNode(ref);
-        else pendingFocus.current = ref;
+        if (canvas) canvas.goToNode(ref, () => flashNow(ref));
+        else pendingGoTo.current = ref;
       }
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, []);
+  }, [flashNow]);
 
   const select = useCallback((ref: NodeRef | null) => setSelected(ref), []);
 
@@ -190,27 +207,31 @@ function Shell({ initialSpace, initialFocus }: { initialSpace: SpaceId; initialF
     hovered,
     select,
     hover: setHovered,
-    focus,
-  }), [controls?.mode, space, setSpace, selected, hovered, select, focus]);
+    goTo,
+    flash,
+  }), [controls?.mode, space, setSpace, selected, hovered, select, goTo, flash]);
 
   return (
-    <WorkbenchContext value={workbench}>
-      <AuthActionsProvider>
-        <VoiceProvider>
-          <SpaceCanvas key={space} space={space} paletteOpen={paletteOpen} consumePendingFocus={consumePendingFocus} onControls={reportControls} />
-          <TopBar space={space} setSpace={setSpace} controls={controls} openPalette={() => setPaletteOpen(true)} />
-          <Inspector />
-          <Palette open={paletteOpen} onOpenChange={setPaletteOpen} actions={actions} />
-        </VoiceProvider>
-      </AuthActionsProvider>
-    </WorkbenchContext>
+    <div className="contents" style={{ "--sheet": selected && wide ? "420px" : "0px" } as React.CSSProperties}>
+      <WorkbenchContext value={workbench}>
+        <AuthActionsProvider>
+          <VoiceProvider>
+            <SpaceCanvas key={space} space={space} paletteOpen={paletteOpen} consumePendingGoTo={consumePendingGoTo} onArrive={flashNow} onControls={reportControls} />
+            <TopBar space={space} setSpace={setSpace} controls={controls} openPalette={() => setPaletteOpen(true)} />
+            <Inspector />
+            <Palette open={paletteOpen} onOpenChange={setPaletteOpen} actions={actions} />
+          </VoiceProvider>
+        </AuthActionsProvider>
+      </WorkbenchContext>
+    </div>
   );
 }
 
-function SpaceCanvas({ space, paletteOpen, consumePendingFocus, onControls }: {
+function SpaceCanvas({ space, paletteOpen, consumePendingGoTo, onArrive, onControls }: {
   space: SpaceId;
   paletteOpen: boolean;
-  consumePendingFocus(): NodeRef | null;
+  consumePendingGoTo(): NodeRef | null;
+  onArrive(ref: NodeRef): void;
   onControls(controls: SpaceControls | null): void;
 }) {
   const state = useStack();
@@ -401,15 +422,18 @@ function SpaceCanvas({ space, paletteOpen, consumePendingFocus, onControls }: {
   }, [mode, zoomAt]);
 
   /** Expand the node's home window if collapsed, then center the node (or scroll to it in grid mode). */
-  const focusNode = useCallback((ref: NodeRef) => {
+  const goToNode = useCallback((ref: NodeRef, onLanded?: () => void) => {
     const home = homeOf(ref).window;
     const wasCollapsed = layoutRef.current.collapsed[home];
     if (wasCollapsed) setLayout((current) => ({ ...current, collapsed: { ...current.collapsed, [home]: false } }));
     setTimeout(() => {
-      const node = document.querySelector(`[data-node="${CSS.escape(nodeKey(ref))}"]`) ?? document.querySelector(`[data-window="${CSS.escape(home)}"]`);
+      const key = CSS.escape(nodeKey(ref));
+      // A window that is itself the node (package:<name>) wins over a row carrying the same key.
+      const node = document.querySelector(`[data-node="${key}"][data-window]`) ?? document.querySelector(`[data-node="${key}"]`) ?? document.querySelector(`[data-window="${CSS.escape(home)}"]`);
       if (!node) return;
       if (mode === "grid" || !world) {
         node.scrollIntoView({ behavior: "smooth", block: "center" });
+        setTimeout(() => onLanded?.(), 450);
         return;
       }
       const current = viewRef.current;
@@ -419,26 +443,27 @@ function SpaceCanvas({ space, paletteOpen, consumePendingFocus, onControls }: {
       const cy = (rect.top + rect.height / 2 - origin.top) / current.k;
       const element = viewport.current!;
       const k = current.k < 0.7 ? 1 : current.k;
-      const visibleWidth = element.clientWidth - (element.clientWidth > 900 ? 440 : 0);
-      animate(() => setView({ k, x: visibleWidth / 2 - cx * k, y: (element.clientHeight + top) / 2 - cy * k }));
+      // The viewport already ends where the sheet begins, so its width is the visible width.
+      animate(() => setView({ k, x: element.clientWidth / 2 - cx * k, y: (element.clientHeight + top) / 2 - cy * k }));
+      setTimeout(() => onLanded?.(), 520);
     }, wasCollapsed ? 60 : 0);
   }, [animate, mode, world]);
 
-  // A cross-space focus (or the URL's ?focus= on load) lands here once mounted.
+  // A cross-space goTo (or the URL's ?focus= on load) lands here once mounted.
   useEffect(() => {
     if (!ready) return;
-    const ref = consumePendingFocus();
-    if (ref) focusNode(ref);
-  }, [ready, consumePendingFocus, focusNode]);
+    const ref = consumePendingGoTo();
+    if (ref) goToNode(ref, () => onArrive(ref));
+  }, [ready, consumePendingGoTo, goToNode, onArrive]);
 
   const toggleMode = useCallback(() => setMode((current) => current === "canvas" ? "grid" : "canvas"), []);
 
   // Report this space's controls upward so the shared TopBar and Palette operate it.
   useEffect(() => {
-    const next: SpaceControls = { mode, setMode, fit, tidy, focusNode };
+    const next: SpaceControls = { mode, setMode, fit, tidy, goToNode };
     onControls(next);
     return () => onControls(null);
-  }, [mode, fit, tidy, focusNode, onControls]);
+  }, [mode, fit, tidy, goToNode, onControls]);
 
   // Canvas keys: G toggles mode; F/T/+/-/0 only apply in canvas mode.
   useEffect(() => {
@@ -503,12 +528,15 @@ function SpaceCanvas({ space, paletteOpen, consumePendingFocus, onControls }: {
         if (layoutRef.current.order.at(-1) !== id) setLayout((current) => ({ ...current, order: [...current.order.filter((entry) => entry !== id), id] }));
       },
       onToggleCollapse: () => setLayout((current) => ({ ...current, collapsed: { ...current.collapsed, [id]: !current.collapsed[id] } })),
-      onHeaderPointerDown: (event) => {
+      onHeaderPointerDown: (event, onTap) => {
         if (event.button !== 0 || (event.target as Element).closest("button,a,[data-interactive],[tabindex]")) return;
         event.preventDefault();
         const start = { px: event.clientX, py: event.clientY, ...position };
+        let moved = false;
         setDragging(id);
         const move = (next: PointerEvent) => {
+          if (Math.abs(next.clientX - start.px) + Math.abs(next.clientY - start.py) <= 3) return;
+          moved = true;
           const k = viewRef.current.k;
           setLayout((current) => ({
             ...current,
@@ -517,6 +545,7 @@ function SpaceCanvas({ space, paletteOpen, consumePendingFocus, onControls }: {
         };
         const up = () => {
           setDragging(null);
+          if (!moved) onTap?.();
           window.removeEventListener("pointermove", move);
           window.removeEventListener("pointerup", up);
         };
@@ -563,7 +592,13 @@ function SpaceCanvas({ space, paletteOpen, consumePendingFocus, onControls }: {
         ref={viewport}
         data-canvas="workbench"
         onPointerDown={onBackgroundPointerDown}
-        className={cn("canvas-dots", canvas ? "fixed inset-0 touch-none overflow-hidden overscroll-none" : "min-h-dvh", canvas && (panning ? "cursor-grabbing" : "cursor-grab"))}
+        className={cn(
+          "canvas-dots",
+          canvas
+            ? "fixed inset-y-0 left-0 right-[var(--sheet)] touch-none overflow-hidden overscroll-none transition-[right] duration-200 ease-out motion-reduce:transition-none"
+            : "min-h-dvh mr-[var(--sheet)] transition-[margin-right] duration-200 ease-out motion-reduce:transition-none",
+          canvas && (panning ? "cursor-grabbing" : "cursor-grab"),
+        )}
         style={canvas ? { backgroundSize: `${22 * view.k}px ${22 * view.k}px`, backgroundPosition: `${view.x}px ${view.y}px` } : { backgroundSize: "22px 22px" }}
       >
         <div aria-hidden className="pointer-events-none fixed inset-0 bg-[radial-gradient(90%_60%_at_50%_-10%,color-mix(in_oklch,var(--pkg-bots)_9%,transparent),transparent_70%)]" />
@@ -601,15 +636,25 @@ function SpaceCanvas({ space, paletteOpen, consumePendingFocus, onControls }: {
   );
 }
 
-const packageOrder = ["owner", "auth", "bots", "roles", "api"];
-
 function TopBar({ space, setSpace, controls, openPalette }: { space: SpaceId; setSpace(space: SpaceId): void; controls: SpaceControls | null; openPalette(): void }) {
-  const { status, endpoints, scoped } = useStack();
-  const live = packageOrder.filter((name) => status[name] === "open").length;
+  const state = useStack();
+  const { status, endpoints, scoped, catalog } = state;
+  // Every Package API with a WebSocket endpoint, in catalog order (unknowns last, alphabetical).
+  const packageOrder = useMemo(() => {
+    const order = new Map((catalog.data ?? []).map((doc, index) => [doc.name, index]));
+    return Object.keys(endpoints).sort((a, b) => (order.get(a) ?? Number.MAX_SAFE_INTEGER) - (order.get(b) ?? Number.MAX_SAFE_INTEGER) || a.localeCompare(b));
+  }, [catalog.data, endpoints]);
+  const attention = useMemo(() => spaceAttention(state), [state]);
+  // Only channels this page opened have a status entry; endpoints without one were never connected here.
+  const opened = packageOrder.filter((name) => status[name] !== undefined);
+  const unopened = packageOrder.filter((name) => status[name] === undefined);
+  const live = opened.filter((name) => status[name] === "open").length;
   const scopedLive = Object.values(scoped).filter((value) => value.status === "open").length;
   const mode = controls?.mode ?? "canvas";
   return (
-    <div data-chrome className="pointer-events-none fixed inset-x-3 top-3 z-30 flex items-start justify-between gap-3">
+    <div data-chrome
+      className="pointer-events-none fixed top-3 left-3 z-30 flex items-start justify-between gap-3 transition-[right] duration-200 ease-out motion-reduce:transition-none"
+      style={{ right: "calc(var(--sheet) + 0.75rem)" }}>
       <div className="pointer-events-auto flex items-center gap-2 rounded-xl border bg-card/80 py-1.5 pr-3 pl-1.5 shadow-sm backdrop-blur-xl sm:gap-3">
         <span className="flex size-8 items-center justify-center rounded-lg bg-foreground text-background shadow-inner">
           <LayersIcon className="size-4" />
@@ -621,6 +666,7 @@ function TopBar({ space, setSpace, controls, openPalette }: { space: SpaceId; se
           {spaces.map((item) => {
             const Icon = spaceViews[item.id].icon;
             const active = item.id === space;
+            const reasons = attention[item.id];
             return (
               <Tooltip key={item.id}>
                 <TooltipTrigger
@@ -641,10 +687,19 @@ function TopBar({ space, setSpace, controls, openPalette }: { space: SpaceId; se
                     >
                       <Icon className="size-3.5" />
                       <span className="hidden md:inline">{item.title}</span>
+                      {reasons.length ? (
+                        <>
+                          <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-warning" />
+                          <span className="sr-only">needs attention</span>
+                        </>
+                      ) : null}
                     </a>
                   }
                 />
-                <TooltipContent side="bottom">{item.title} <Kbd>{item.key}</Kbd></TooltipContent>
+                <TooltipContent side="bottom" className="flex-col items-start gap-1">
+                  <span>{item.title} <Kbd>{item.key}</Kbd></span>
+                  {reasons.map((reason) => <span key={reason} className="text-warning">{reason}</span>)}
+                </TooltipContent>
               </Tooltip>
             );
           })}
@@ -653,19 +708,20 @@ function TopBar({ space, setSpace, controls, openPalette }: { space: SpaceId; se
         <Tooltip>
           <TooltipTrigger render={<span tabIndex={0} className="flex items-center gap-2 rounded-md focus-visible:outline-2 focus-visible:outline-ring" />}>
             <span className="flex items-center gap-1">
-              {packageOrder.map((name) => (
-                <StatusDot key={name} tone={status[name] === "open" ? "success" : status[name] === "closed" ? "destructive" : endpoints[name] ? "muted" : "warning"} />
+              {opened.map((name) => (
+                <StatusDot key={name} tone={status[name] === "open" ? "success" : status[name] === "closed" ? "destructive" : "muted"} />
               ))}
             </span>
-            <span className="hidden text-xs text-muted-foreground tabular-nums sm:inline">{live}/{packageOrder.length} live</span>
+            <span className="hidden text-xs text-muted-foreground tabular-nums sm:inline">{live}/{opened.length} live</span>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="flex-col items-stretch gap-1 py-2">
-            {packageOrder.map((name) => (
+            {opened.map((name) => (
               <span key={name} className="flex items-center justify-between gap-6">
                 <span className="font-medium">{name}</span>
-                <span className="opacity-70">{endpoints[name] ? status[name] ?? "idle" : "no WebSocket endpoint"}</span>
+                <span className="opacity-70">{status[name]}</span>
               </span>
             ))}
+            {unopened.length ? <span className="opacity-60">Not opened by this page: {unopened.join(", ")}</span> : null}
             <span className="mt-1 border-t border-background/20 pt-1 opacity-70">{scopedLive} scoped bot subscription{scopedLive === 1 ? "" : "s"}</span>
           </TooltipContent>
         </Tooltip>
@@ -768,7 +824,7 @@ function ToolbarButton({ label, shortcut, onClick, children }: { label: string; 
 function CanvasToolbar({ scale, zoom, fit, tidy }: { scale: number; zoom(factor: number): void; fit(): void; tidy(): void }) {
   return (
     <>
-      <div data-chrome className="fixed bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-0.5 rounded-xl border bg-card/80 p-1 shadow-sm backdrop-blur-xl">
+      <div data-chrome className="fixed bottom-4 left-[calc((100%-var(--sheet))/2)] z-30 flex -translate-x-1/2 items-center gap-0.5 rounded-xl border bg-card/80 p-1 shadow-sm backdrop-blur-xl transition-[left] duration-200 ease-out motion-reduce:transition-none">
         <ToolbarButton label="Zoom out" shortcut="−" onClick={() => zoom(1 / 1.2)}><MinusIcon /></ToolbarButton>
         <Tooltip>
           <TooltipTrigger render={<Button variant="ghost" size="sm" className="w-14 font-mono text-xs tabular-nums" onClick={() => zoom(1 / scale)} />}>

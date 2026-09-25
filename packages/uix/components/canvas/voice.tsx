@@ -304,7 +304,7 @@ function Meter({ stream, label, className }: { stream: MediaStream | null; label
 function CallDock() {
   const voice = useVoice();
   const { voice: remote, bots } = useStack();
-  const { focus } = useWorkbench();
+  const { goTo } = useWorkbench();
   const now = useNow();
   if (!voice.busy) return null;
   // While our own call is ending, voice.data may still report it — a call only
@@ -319,7 +319,7 @@ function CallDock() {
     : "Connecting…";
 
   return (
-    <aside data-chrome aria-label="Voice call" className="fixed top-16 left-1/2 z-30 -translate-x-1/2 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-3 sm:top-3">
+    <aside data-chrome aria-label="Voice call" className="fixed top-16 left-[calc((100%-var(--sheet))/2)] z-30 -translate-x-1/2 transition-[left] duration-200 ease-out motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-3 motion-reduce:transition-none sm:top-3">
       <div className="flex items-center gap-3 rounded-2xl border bg-card/80 py-1.5 pr-1.5 pl-2 whitespace-nowrap shadow-sm backdrop-blur-xl">
         {elsewhere ? (
           <>
@@ -331,8 +331,8 @@ function CallDock() {
           <>
             <button
               type="button"
-              aria-label={voice.botId ? `Inspect ${voice.botId}` : "Inspect bot"}
-              onClick={() => voice.botId && focus({ kind: "bot", id: voice.botId })}
+              aria-label={voice.botId ? `Go to ${voice.botId}` : "Go to bot"}
+              onClick={() => voice.botId && goTo({ kind: "bot", id: voice.botId })}
               className="rounded-xl focus-visible:outline-2 focus-visible:outline-ring"
             >
               <BotTile bot={bot} className="size-9 rounded-lg text-sm [&_svg]:size-4" />

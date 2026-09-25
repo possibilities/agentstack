@@ -18,11 +18,11 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
   const { bots, accounts, owner, catalog, attempt } = useStack();
   const auth = useAuthActions();
   const voice = useVoice();
-  const { focus, setSpace } = useWorkbench();
+  const { goTo, setSpace } = useWorkbench();
   const labels = accountLabels(accounts.data);
   const go = (ref: NodeRef) => {
     onOpenChange(false);
-    focus(ref);
+    goTo(ref);
   };
   const act = (run: () => void) => {
     onOpenChange(false);
