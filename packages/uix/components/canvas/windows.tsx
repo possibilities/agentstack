@@ -14,7 +14,6 @@ import {
   IdCardIcon,
   KeyRoundIcon,
   PhoneIcon,
-  PlusIcon,
   RadioIcon,
   RefreshCwIcon,
   ShieldAlertIcon,
@@ -72,16 +71,12 @@ export function AccountChip({ id, labels }: { id: string | null; labels: Map<str
 
 const workerProviders: WorkerAccount["provider"][] = ["codex", "grok", "devin"];
 
-/** One menu for all four sign-ins: the Codex Bot device flow plus each Worker provider's terminal flow. */
-export function AddAccountMenu({ trigger, tooltip, align = "end" }: { trigger: React.ReactElement; tooltip?: string; align?: "start" | "end" }) {
+/** The Worker account window's menu: one terminal sign-in per provider. */
+export function AddWorkerAccountMenu({ trigger, tooltip, align = "end" }: { trigger: React.ReactElement; tooltip?: string; align?: "start" | "end" }) {
   const actions = useAuthActions();
   const { goTo } = useWorkbench();
   const addWorker = (provider: WorkerAccount["provider"]) => {
     void actions.worker.prepare(provider).then((account) => { if (account) goTo({ kind: "worker-account", id: account.id }); });
-  };
-  const addBot = () => {
-    actions.startSignIn();
-    goTo({ kind: "login" });
   };
   const button = <DropdownMenuTrigger render={trigger} />;
   return (
@@ -93,12 +88,6 @@ export function AddAccountMenu({ trigger, tooltip, align = "end" }: { trigger: R
         </Tooltip>
       ) : button}
       <DropdownMenuContent align={align} className="min-w-52">
-        <DropdownMenuGroup>
-          <DropdownMenuItem className="whitespace-nowrap" disabled={actions.pendingSignIn} onClick={addBot}>
-            <UserRoundPlusIcon />Codex Bot account
-          </DropdownMenuItem>
-        </DropdownMenuGroup>
-        <DropdownMenuSeparator />
         <DropdownMenuGroup>
           {workerProviders.map((provider) => (
             <DropdownMenuItem key={provider} className="whitespace-nowrap" disabled={actions.worker.preparing === `new:${provider}`} onClick={() => addWorker(provider)}>
@@ -112,17 +101,17 @@ export function AddAccountMenu({ trigger, tooltip, align = "end" }: { trigger: R
   );
 }
 
-/** The dashed full-width "Add account" button shared by both account windows. */
-export function AddAccountButton() {
+/** The dashed full-width "Add Worker account" button. */
+export function AddWorkerAccountButton() {
   const actions = useAuthActions();
   return (
-    <AddAccountMenu align="start" trigger={
+    <AddWorkerAccountMenu align="start" trigger={
       <button
         type="button"
         className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed px-3 py-2.5 text-[0.8rem] font-medium text-muted-foreground transition-colors hover:border-foreground/20 hover:bg-background/80 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50"
       >
-        {actions.pendingSignIn || actions.worker.preparing?.startsWith("new:") ? <Spinner className="size-3.5" /> : <UserRoundPlusIcon className="size-3.5" />}
-        Add account
+        {actions.worker.preparing?.startsWith("new:") ? <Spinner className="size-3.5" /> : <UserRoundPlusIcon className="size-3.5" />}
+        Add Worker account
       </button>
     } />
   );
@@ -229,35 +218,49 @@ export function SystemWindow() {
 export function AccountsWindow() {
   const { accounts, login, bots, catalog, status, endpoints, attempt } = useStack();
   const actions = useAuthActions();
+  const { goTo } = useWorkbench();
   const labels = accountLabels(accounts.data);
+  const addBot = () => {
+    actions.startSignIn();
+    goTo({ kind: "login" });
+  };
 
   return (
     <Window id="accounts" title="Bot accounts" subtitle="auth · codex bot sign-ins" icon={KeyRoundIcon} accent="auth"
       count={accounts.data?.length} status={status.auth} endpoint={endpoints.auth} updatedAt={accounts.at} error={accounts.error ?? login.error}
       actions={
-        <AddAccountMenu tooltip="Add account" trigger={
-          <Button variant="ghost" size="icon-xs" aria-label="Add account">
+        <Tooltip>
+          <TooltipTrigger
+            render={<Button variant="ghost" size="icon-xs" aria-label="Add Codex Bot account" disabled={actions.pendingSignIn} onClick={addBot} />}
+          >
             {actions.pendingSignIn ? <Spinner /> : <UserRoundPlusIcon />}
-          </Button>
-        } />
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Add Codex Bot account</TooltipContent>
+        </Tooltip>
       }>
       {attempt ? <SignInCard key={attempt.id} attempt={attempt} labels={labels} accounts={accounts.data} catalog={catalog.data} /> : null}
 
       {accounts.data?.length ? (
         <div className="flex flex-col gap-2">
           {accounts.data.map((account) => <AccountCard key={account.id} account={account} label={labels.get(account.id)!} bots={bots.data} />)}
-          <AddAccountButton />
+          <button
+            type="button"
+            disabled={actions.pendingSignIn}
+            onClick={addBot}
+            className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed px-3 py-2.5 text-[0.8rem] font-medium text-muted-foreground transition-colors hover:border-foreground/20 hover:bg-background/80 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50"
+          >
+            {actions.pendingSignIn ? <Spinner className="size-3.5" /> : <UserRoundPlusIcon className="size-3.5" />}
+            Add Codex Bot account
+          </button>
         </div>
       ) : accounts.data ? (
         <div className="flex flex-col gap-2.5">
           <Empty icon={KeyRoundIcon} title="No Bot accounts">Device sign-in creates an enabled Bot account. Choose its ID when starting a bot.</Empty>
           <div className="flex justify-center">
-            <AddAccountMenu trigger={
-              <Button size="sm" variant="outline">
-                <UserRoundPlusIcon data-icon="inline-start" />
-                Add account
-              </Button>
-            } />
+            <Button size="sm" variant="outline" disabled={actions.pendingSignIn} onClick={addBot}>
+              {actions.pendingSignIn ? <Spinner data-icon="inline-start" /> : <UserRoundPlusIcon data-icon="inline-start" />}
+              Add Codex Bot account
+            </Button>
           </div>
         </div>
       ) : (
@@ -430,43 +433,28 @@ function AccountCard({ account, label, bots }: { account: Account; label: string
           </span>
         )) : <span className="text-[0.7rem] text-muted-foreground">No bots bound</span>}
       </div>
-      <div className="flex flex-wrap items-center gap-1">
-        {linkedWorkers.map((link) => {
-          const workerLabel = workerLabels.get(link.id)!;
-          return (
-            <Tooltip key={link.id}>
-              <TooltipTrigger render={
-                <button
-                  type="button"
-                  onClick={() => goTo({ kind: "worker-account", id: link.id })}
-                  className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem] transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
-                >
-                  <Orb id={link.id} size="sm" className="size-2.5" />
-                  {workerLabel}
-                </button>
-              } />
-              <TooltipContent>Same ChatGPT account as Worker {workerLabel}</TooltipContent>
-            </Tooltip>
-          );
-        })}
-        {!linkedWorkers.length && !account.removing ? (
-          <Tooltip>
-            <TooltipTrigger render={
-              <Button
-                variant="ghost"
-                size="xs"
-                className="h-6 px-1.5 text-[0.7rem] text-muted-foreground"
-                disabled={actions.worker.preparing === "new:codex"}
-                onClick={() => void actions.worker.prepare("codex").then((worker) => { if (worker) goTo({ kind: "worker-account", id: worker.id }); })}
-              />
-            }>
-              <PlusIcon data-icon="inline-start" />
-              Worker sign-in
-            </TooltipTrigger>
-            <TooltipContent className="max-w-64">Creates a separate Codex Worker account. Sign in with the same ChatGPT account to link them.</TooltipContent>
-          </Tooltip>
-        ) : null}
-      </div>
+      {linkedWorkers.length ? (
+        <div className="flex flex-wrap items-center gap-1">
+          {linkedWorkers.map((link) => {
+            const workerLabel = workerLabels.get(link.id)!;
+            return (
+              <Tooltip key={link.id}>
+                <TooltipTrigger render={
+                  <button
+                    type="button"
+                    onClick={() => goTo({ kind: "worker-account", id: link.id })}
+                    className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem] transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
+                  >
+                    <Orb id={link.id} size="sm" className="size-2.5" />
+                    {workerLabel}
+                  </button>
+                } />
+                <TooltipContent>Same ChatGPT account as Worker {workerLabel}</TooltipContent>
+              </Tooltip>
+            );
+          })}
+        </div>
+      ) : null}
       {busy ? (
         <p className="flex items-center gap-1.5 text-[0.72rem] text-muted-foreground"><Spinner className="size-3.5" /> Removing…</p>
       ) : account.removing ? (
@@ -497,8 +485,8 @@ export function WorkerAccountsWindow() {
     <Window id="worker-accounts" title="Worker accounts" subtitle="auth · terminal sign-ins" icon={IdCardIcon} accent="auth"
       count={workerAccounts.data?.length} status={status.auth} endpoint={endpoints.auth} updatedAt={workerAccounts.at} error={workerAccounts.error}
       actions={
-        <AddAccountMenu tooltip="Add account" trigger={
-          <Button variant="ghost" size="icon-xs" aria-label="Add account"><UserRoundPlusIcon /></Button>
+        <AddWorkerAccountMenu tooltip="Add Worker account" trigger={
+          <Button variant="ghost" size="icon-xs" aria-label="Add Worker account"><UserRoundPlusIcon /></Button>
         } />
       }>
       {workerAccounts.data?.length ? (
@@ -513,16 +501,16 @@ export function WorkerAccountsWindow() {
               </Section>
             ) : null;
           })}
-          <AddAccountButton />
+          <AddWorkerAccountButton />
         </div>
       ) : workerAccounts.data ? (
         <div className="flex flex-col gap-2.5">
           <Empty icon={IdCardIcon} title="No Worker accounts">Terminal sign-in creates an independent Codex, Grok, or Devin Worker account.</Empty>
           <div className="flex justify-center">
-            <AddAccountMenu trigger={
+            <AddWorkerAccountMenu trigger={
               <Button size="sm" variant="outline">
                 <UserRoundPlusIcon data-icon="inline-start" />
-                Add account
+                Add Worker account
               </Button>
             } />
           </div>
