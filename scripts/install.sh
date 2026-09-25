@@ -6,8 +6,8 @@ code_root="${AGENTSTACK_CODE_ROOT:-$HOME/code}"
 bin_dir="${AGENTSTACK_INSTALL_BIN_DIR:-$HOME/.local/bin}"
 runtime_installer="$code_root/codexnk/scripts/install.sh"
 # Exact reviewed runtime dependency; keep AgentStart's shared consumer pin aligned.
-release_tag=codexnk-v0.1.3
-integration_sha=7d341030af1c243eeb334294be31aeb3c58d233c
+release_tag=codexnk-v0.1.4
+integration_sha=f2905ff011ff8fda607e91dfdd8f13b6083b1642
 mode="${1:---check}"
 if [ "$#" -gt 1 ]; then mode=invalid; fi
 case "$mode" in
