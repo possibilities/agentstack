@@ -567,7 +567,7 @@ function SpaceCanvas({ space, paletteOpen, consumePendingFocus, onControls }: {
         style={canvas ? { backgroundSize: `${22 * view.k}px ${22 * view.k}px`, backgroundPosition: `${view.x}px ${view.y}px` } : { backgroundSize: "22px 22px" }}
       >
         <div aria-hidden className="pointer-events-none fixed inset-0 bg-[radial-gradient(90%_60%_at_50%_-10%,color-mix(in_oklch,var(--pkg-bots)_9%,transparent),transparent_70%)]" />
-        <h1 className="sr-only">AgentStack {spaceTitle(space)} canvas</h1>
+        <h1 className="sr-only">{`AgentStack ${spaceTitle(space)} canvas`}</h1>
         {canvas ? (
           <div
             ref={setWorld}
