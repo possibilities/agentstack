@@ -1,4 +1,4 @@
-import type { Account, Bot } from "./types";
+import type { Account, Bot, WorkerAccount } from "./types";
 
 export function shortId(id: string | null | undefined, length = 8): string {
   if (!id) return "—";
@@ -15,6 +15,32 @@ export function hueOf(id: string): number {
 /** Dense `codex-N` labels derived from the current account list order. */
 export function accountLabels(accounts: Account[] | null): Map<string, string> {
   return new Map((accounts ?? []).map((account, index) => [account.id, `codex-${index + 1}`]));
+}
+
+/** Dense per-provider labels in list order: `codex-wN`, `grok-N`, `devin-N`. */
+export function workerAccountLabels(workers: WorkerAccount[] | null): Map<string, string> {
+  const labels = new Map<string, string>();
+  const counts = new Map<WorkerAccount["provider"], number>();
+  for (const worker of workers ?? []) {
+    const next = (counts.get(worker.provider) ?? 0) + 1;
+    counts.set(worker.provider, next);
+    labels.set(worker.id, worker.provider === "codex" ? `codex-w${next}` : `${worker.provider}-${next}`);
+  }
+  return labels;
+}
+
+/** Bot↔Worker identity links, derived from the Bot side's `linkedAccounts` for Workers that still exist. */
+export function accountLinks(accounts: Account[] | null, workers: WorkerAccount[] | null): Array<{ bot: string; worker: string }> {
+  const known = new Set((workers ?? []).map((worker) => worker.id));
+  const links: Array<{ bot: string; worker: string }> = [];
+  for (const account of accounts ?? [])
+    for (const link of account.linkedAccounts ?? [])
+      if (link.scope === "worker" && known.has(link.id)) links.push({ bot: account.id, worker: link.id });
+  return links;
+}
+
+export function providerTitle(provider: WorkerAccount["provider"]): string {
+  return provider === "codex" ? "Codex" : provider === "grok" ? "Grok" : "Devin";
 }
 
 export function pathParts(path: string): { head: string; tail: string } {

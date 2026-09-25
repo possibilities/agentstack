@@ -1,11 +1,11 @@
-import { accountLabels } from "./derive";
+import { accountLabels, workerAccountLabels } from "./derive";
 import type { StackState } from "./store";
 import { nodeKey, type NodeRef } from "./types";
 
 export type SpaceId = "fleet" | "system" | "api";
 
 export const spaces: { id: SpaceId; title: string; description: string; key: string }[] = [
-  { id: "fleet", title: "Fleet", description: "Accounts and bots", key: "1" },
+  { id: "fleet", title: "Fleet", description: "Bot accounts, Worker accounts, and bots", key: "1" },
   { id: "system", title: "System", description: "Owner processes, surfaces, and activity", key: "2" },
   { id: "api", title: "API", description: "Package API reference", key: "3" },
 ];
@@ -29,6 +29,8 @@ export function homeOf(ref: NodeRef): { space: SpaceId; window: string } {
     case "account":
     case "login":
       return { space: "fleet", window: "accounts" };
+    case "worker-account":
+      return { space: "fleet", window: "worker-accounts" };
     case "bot":
       return { space: "fleet", window: "bots" };
     case "package":
@@ -52,11 +54,17 @@ export function parseSpacePath(pathname: string): SpaceId | null {
 }
 
 /** Human-readable reasons each space needs attention; an empty list means all quiet. Only "closed" channels count — idle and connecting are normal. */
-export function spaceAttention(state: Pick<StackState, "status" | "owner" | "accounts" | "bots" | "attempt" | "catalog" | "endpoints">): Record<SpaceId, string[]> {
+export function spaceAttention(state: Pick<StackState, "status" | "owner" | "accounts" | "workerAccounts" | "bots" | "attempt" | "catalog" | "endpoints">): Record<SpaceId, string[]> {
   const attention: Record<SpaceId, string[]> = { fleet: [], system: [], api: [] };
   for (const bot of state.bots.data ?? []) if (bot.recoveryIssue) attention.fleet.push(`${bot.id} needs inspection`);
   const labels = accountLabels(state.accounts.data);
   for (const account of state.accounts.data ?? []) if (account.removing) attention.fleet.push(`${labels.get(account.id) ?? account.id} removal unfinished`);
+  const workerLabels = workerAccountLabels(state.workerAccounts.data);
+  for (const worker of state.workerAccounts.data ?? []) {
+    const label = workerLabels.get(worker.id) ?? worker.id;
+    if (worker.removing) attention.fleet.push(`${label} removal unfinished`);
+    else if (!worker.ready) attention.fleet.push(`${label} needs sign-in`);
+  }
   if (state.attempt?.status === "failed") attention.fleet.push("Sign-in failed");
   for (const name of ["auth", "bots"] as const) if (state.status[name] === "closed") attention.fleet.push(`${name} reconnecting`);
   for (const child of state.owner.data?.children ?? []) if (!child.running) attention.system.push(`${child.name} stopped`);
@@ -81,7 +89,7 @@ export function parseNodeKey(key: string): NodeRef | null {
     if (dot <= 0 || dot === rest.length - 1) return null;
     return { kind: "operation", pkg: rest.slice(0, dot), id: rest.slice(dot + 1) };
   }
-  if (kind === "account" || kind === "child" || kind === "bot" || kind === "package") {
+  if (kind === "account" || kind === "worker-account" || kind === "child" || kind === "bot" || kind === "package") {
     return { kind, id: rest };
   }
   return null;

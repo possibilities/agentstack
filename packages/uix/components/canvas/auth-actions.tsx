@@ -17,8 +17,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Toaster } from "@/components/ui/sonner";
 import { Spinner } from "@/components/ui/spinner";
-import { accountLabels, botsFor, shortId } from "@/lib/stack/derive";
-import type { Account, Bot, Login } from "@/lib/stack/types";
+import { accountLabels, botsFor, shortId, workerAccountLabels } from "@/lib/stack/derive";
+import type { Account, Bot, Login, WorkerAccount } from "@/lib/stack/types";
 import { Orb, StatusDot } from "./primitives";
 import { useOperation, useStack, useStore } from "./provider";
 
@@ -27,6 +27,7 @@ export function errorMessage(error: unknown): string {
 }
 
 export type ActionError = { op: "availability" | "cancel" | "remove" | "signin"; target: string | null; message: string };
+export type WorkerActionError = { op: "prepare" | "confirm" | "availability" | "remove"; target: string | null; message: string };
 
 export type AuthActions = {
   /** Start a device sign-in (or replace an account's credentials); confirms first when one is pending. */
@@ -45,6 +46,23 @@ export type AuthActions = {
   dismissAttempt(): void;
   /** Last failed action, so the originating control can show it inline too. */
   error: ActionError | null;
+  /** Worker account actions; pending and error state never mix with the Bot fields above. */
+  worker: {
+    /** Prepare a terminal sign-in, or re-sign-in an existing Worker. A ready Worker confirms first; resolves to the account or null. */
+    prepare(provider: WorkerAccount["provider"], id?: string): Promise<WorkerAccount | null>;
+    /** `new:<provider>` or the Worker id currently preparing. */
+    preparing: string | null;
+    /** Worker id → last prepared shell command, held in memory only. */
+    commands: Record<string, string>;
+    confirm(account: WorkerAccount): void;
+    confirming: string | null;
+    setEnabled(account: WorkerAccount, enabled: boolean): void;
+    changingAvailability: string | null;
+    confirmRemove(account: WorkerAccount): void;
+    finishRemoval(account: WorkerAccount): void;
+    removing: string | null;
+    error: WorkerActionError | null;
+  };
 };
 
 const AuthActionsContext = createContext<AuthActions | null>(null);
@@ -57,20 +75,34 @@ export function useAuthActions(): AuthActions {
 
 export function AuthActionsProvider({ children }: { children: React.ReactNode }) {
   const store = useStore();
-  const { accounts, bots, attempt } = useStack();
+  const { accounts, workerAccounts, bots, attempt } = useStack();
   const start = useOperation<Login>("auth", "account_login_start");
   const replace = useOperation<Login>("auth", "account_login_replace");
   const enableOp = useOperation<Account>("auth", "account_set_enabled");
   const removeOp = useOperation<{ accounts: Account[] }>("auth", "account_remove");
   const cancelOp = useOperation<Login>("auth", "account_login_cancel");
+  const prepareOp = useOperation<{ account: WorkerAccount; command: string }>("auth", "worker_account_prepare");
+  const confirmOp = useOperation<WorkerAccount>("auth", "worker_account_confirm");
+  const workerEnableOp = useOperation<WorkerAccount>("auth", "worker_account_set_enabled");
+  const workerRemoveOp = useOperation<{ id: string }>("auth", "worker_account_remove");
   const [removeTarget, setRemoveTarget] = useState<Account | null>(null);
   const [restart, setRestart] = useState<{ target: string | null } | null>(null);
   const [changingAvailability, setChangingAvailability] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [error, setError] = useState<ActionError | null>(null);
+  const [workerRemoveTarget, setWorkerRemoveTarget] = useState<WorkerAccount | null>(null);
+  const [reprepare, setReprepare] = useState<{ provider: WorkerAccount["provider"]; id: string; resolve(account: WorkerAccount | null): void } | null>(null);
+  const [workerPreparing, setWorkerPreparing] = useState<string | null>(null);
+  const [workerCommands, setWorkerCommands] = useState<Record<string, string>>({});
+  const [workerConfirming, setWorkerConfirming] = useState<string | null>(null);
+  const [workerChangingAvailability, setWorkerChangingAvailability] = useState<string | null>(null);
+  const [workerRemoving, setWorkerRemoving] = useState<string | null>(null);
+  const [workerError, setWorkerError] = useState<WorkerActionError | null>(null);
 
   const labels = accountLabels(accounts.data);
   const label = (id: string) => labels.get(id) ?? shortId(id);
+  const workerLabels = workerAccountLabels(workerAccounts.data);
+  const workerLabel = (id: string) => workerLabels.get(id) ?? shortId(id);
 
   const launch = async (target: string | null) => {
     setError(null);
@@ -81,6 +113,40 @@ export function AuthActionsProvider({ children }: { children: React.ReactNode })
       const message = errorMessage(cause);
       setError({ op: "signin", target, message });
       toast.error(message);
+    }
+  };
+
+  const runPrepare = async (provider: WorkerAccount["provider"], id?: string): Promise<WorkerAccount | null> => {
+    setWorkerError(null);
+    setWorkerPreparing(id ?? `new:${provider}`);
+    try {
+      const result = await prepareOp.run(id ? { provider, id } : { provider });
+      setWorkerCommands((current) => ({ ...current, [result.account.id]: result.command }));
+      return result.account;
+    } catch (cause) {
+      const message = errorMessage(cause);
+      setWorkerError({ op: "prepare", target: id ?? `new:${provider}`, message });
+      toast.error(message);
+      return null;
+    } finally {
+      setWorkerPreparing(null);
+    }
+  };
+
+  const runWorkerRemove = async (account: WorkerAccount) => {
+    setWorkerRemoving(account.id);
+    try {
+      await workerRemoveOp.run({ id: account.id });
+      toast.success(`Removed ${workerLabel(account.id)}`);
+      setWorkerRemoveTarget(null);
+    } catch (cause) {
+      if (workerRemoveTarget?.id !== account.id) {
+        const message = errorMessage(cause);
+        setWorkerError({ op: "remove", target: account.id, message });
+        toast.error(message);
+      }
+    } finally {
+      setWorkerRemoving(null);
     }
   };
 
@@ -135,6 +201,52 @@ export function AuthActionsProvider({ children }: { children: React.ReactNode })
     cancelPending: cancelOp.pending,
     dismissAttempt: store.dismissAttempt,
     error,
+    worker: {
+      prepare: (provider, id) => {
+        const existing = id ? workerAccounts.data?.find((account) => account.id === id) : undefined;
+        if (existing?.ready) return new Promise<WorkerAccount | null>((resolve) => setReprepare({ provider, id: existing.id, resolve }));
+        return runPrepare(provider, id);
+      },
+      preparing: workerPreparing,
+      commands: workerCommands,
+      confirm: (account) => {
+        setWorkerError(null);
+        setWorkerConfirming(account.id);
+        void confirmOp.run({ id: account.id }).then(
+          () => {
+            setWorkerCommands((current) => {
+              const next = { ...current };
+              delete next[account.id];
+              return next;
+            });
+            toast.success(`${workerLabel(account.id)} sign-in confirmed`);
+          },
+          (cause) => {
+            const message = errorMessage(cause);
+            setWorkerError({ op: "confirm", target: account.id, message });
+            toast.error(message);
+          },
+        ).finally(() => setWorkerConfirming(null));
+      },
+      confirming: workerConfirming,
+      setEnabled: (account, enabled) => {
+        setWorkerError(null);
+        setWorkerChangingAvailability(account.id);
+        void workerEnableOp.run({ id: account.id, enabled }).then(
+          () => toast.success(`${workerLabel(account.id)} ${enabled ? "enabled" : "disabled"}`),
+          (cause) => {
+            const message = errorMessage(cause);
+            setWorkerError({ op: "availability", target: account.id, message });
+            toast.error(message);
+          },
+        ).finally(() => setWorkerChangingAvailability(null));
+      },
+      changingAvailability: workerChangingAvailability,
+      confirmRemove: setWorkerRemoveTarget,
+      finishRemoval: (account) => void runWorkerRemove(account),
+      removing: workerRemoving,
+      error: workerError,
+    },
   };
 
   return (
@@ -161,16 +273,49 @@ export function AuthActionsProvider({ children }: { children: React.ReactNode })
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <AlertDialog open={reprepare !== null} onOpenChange={(open) => { if (!open) { reprepare?.resolve(null); setReprepare(null); } }}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogMedia>{reprepare ? <Orb id={reprepare.id} /> : null}</AlertDialogMedia>
+            <AlertDialogTitle>Sign in again to {reprepare ? workerLabel(reprepare.id) : ""}?</AlertDialogTitle>
+            <AlertDialogDescription>Its ACP process stops until you confirm the new sign-in.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <Button
+              onClick={() => {
+                const pending = reprepare;
+                setReprepare(null);
+                if (pending) void runPrepare(pending.provider, pending.id).then(pending.resolve);
+              }}
+            >
+              Sign in again
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {removeTarget ? (
         <RemoveAccountDialog
           key={removeTarget.id}
           account={removeTarget}
           label={label(removeTarget.id)}
           used={botsFor(removeTarget.id, bots.data)}
+          linkedWorkers={(removeTarget.linkedAccounts ?? []).filter((link) => link.scope === "worker" && workerLabels.has(link.id)).map((link) => workerLabels.get(link.id)!)}
           pending={removeOp.pending}
           error={removeOp.error}
           onConfirm={() => void runRemove(removeTarget)}
           onClose={() => setRemoveTarget(null)}
+        />
+      ) : null}
+      {workerRemoveTarget ? (
+        <RemoveWorkerDialog
+          key={workerRemoveTarget.id}
+          account={workerRemoveTarget}
+          label={workerLabel(workerRemoveTarget.id)}
+          pending={workerRemoveOp.pending}
+          error={workerRemoveOp.error}
+          onConfirm={() => void runWorkerRemove(workerRemoveTarget)}
+          onClose={() => setWorkerRemoveTarget(null)}
         />
       ) : null}
       <Toaster position="bottom-left" />
@@ -178,10 +323,11 @@ export function AuthActionsProvider({ children }: { children: React.ReactNode })
   );
 }
 
-function RemoveAccountDialog({ account, label, used, pending, error, onConfirm, onClose }: {
+function RemoveAccountDialog({ account, label, used, linkedWorkers, pending, error, onConfirm, onClose }: {
   account: Account;
   label: string;
   used: Bot[];
+  linkedWorkers: string[];
   pending: boolean;
   error: string | null;
   onConfirm(): void;
@@ -214,6 +360,9 @@ function RemoveAccountDialog({ account, label, used, pending, error, onConfirm, 
               </ul>
             </div>
           ) : null}
+          {linkedWorkers.length ? (
+            <p className="text-[0.78rem] text-muted-foreground">Linked Worker accounts ({linkedWorkers.join(", ")}) stay signed in.</p>
+          ) : null}
           <p className="flex items-start gap-1.5 text-[0.78rem] text-muted-foreground">
             <TriangleAlertIcon className="mt-px size-3.5 shrink-0 text-destructive" />
             <span>Credentials are deleted. This can&rsquo;t be undone.</span>
@@ -231,6 +380,41 @@ function RemoveAccountDialog({ account, label, used, pending, error, onConfirm, 
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
           <Button variant="destructive" disabled={!confirmed || pending} onClick={onConfirm}>
+            {pending ? <Spinner data-icon="inline-start" /> : null}
+            {pending ? "Removing…" : "Remove account"}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function RemoveWorkerDialog({ account, label, pending, error, onConfirm, onClose }: {
+  account: WorkerAccount;
+  label: string;
+  pending: boolean;
+  error: string | null;
+  onConfirm(): void;
+  onClose(): void;
+}) {
+  return (
+    <AlertDialog open onOpenChange={(open) => { if (!open && !pending) onClose(); }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogMedia><Orb id={account.id} /></AlertDialogMedia>
+          <AlertDialogTitle>Remove {label}?</AlertDialogTitle>
+          <AlertDialogDescription className="font-mono text-[0.72rem] break-all">{account.id}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="flex flex-col gap-3 text-[0.8rem]">
+          <p className="flex items-start gap-1.5 text-[0.78rem] text-muted-foreground">
+            <TriangleAlertIcon className="mt-px size-3.5 shrink-0 text-destructive" />
+            <span>Its ACP process is stopped and its private credentials are deleted. Bot accounts are not affected.</span>
+          </p>
+          {error ? <p className="text-[0.75rem] text-pretty text-destructive">{error}</p> : null}
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+          <Button variant="destructive" disabled={pending} onClick={onConfirm}>
             {pending ? <Spinner data-icon="inline-start" /> : null}
             {pending ? "Removing…" : "Remove account"}
           </Button>

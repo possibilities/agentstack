@@ -21,6 +21,7 @@ test("homeOf maps every node kind to its space and window", () => {
   assert.deepEqual(homeOf({ kind: "owner" }), { space: "system", window: "system" });
   assert.deepEqual(homeOf({ kind: "child", id: "uix" }), { space: "system", window: "system" });
   assert.deepEqual(homeOf({ kind: "account", id: "acc-1" }), { space: "fleet", window: "accounts" });
+  assert.deepEqual(homeOf({ kind: "worker-account", id: "w-1" }), { space: "fleet", window: "worker-accounts" });
   assert.deepEqual(homeOf({ kind: "login" }), { space: "fleet", window: "accounts" });
   assert.deepEqual(homeOf({ kind: "bot", id: "bot-1" }), { space: "fleet", window: "bots" });
   assert.deepEqual(homeOf({ kind: "package", id: "bots" }), { space: "api", window: "package:bots" });
@@ -51,6 +52,7 @@ test("parseNodeKey inverts nodeKey for every kind and rejects malformed keys", (
     { kind: "owner" },
     { kind: "child", id: "uix" },
     { kind: "account", id: "acc-1" },
+    { kind: "worker-account", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" },
     { kind: "login" },
     { kind: "bot", id: "bot-1" },
     { kind: "package", id: "bots" },
@@ -64,6 +66,7 @@ const quiet = {
   status: {},
   owner: { data: null, error: null, at: null },
   accounts: { data: [], error: null, at: null },
+  workerAccounts: { data: [], error: null, at: null },
   bots: { data: [], error: null, at: null },
   attempt: null,
   catalog: { data: [], error: null, at: null },
@@ -83,6 +86,18 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
   });
   assert.deepEqual(fleet.fleet, ["bot-1 needs inspection", "codex-2 removal unfinished", "Sign-in failed", "auth reconnecting", "bots reconnecting"]);
   assert.deepEqual(fleet.system, []);
+
+  // Worker accounts flag unfinished removals and unconfirmed sign-ins, labelled per provider.
+  const workers = spaceAttention({
+    ...quiet,
+    workerAccounts: { data: [
+      { id: "w1", provider: "codex", enabled: true, ready: true, removing: true, linkedAccounts: [] },
+      { id: "w2", provider: "codex", enabled: true, ready: false, removing: false, linkedAccounts: [] },
+      { id: "w3", provider: "grok", enabled: true, ready: false, removing: false, linkedAccounts: [] },
+      { id: "w4", provider: "grok", enabled: true, ready: true, removing: false, linkedAccounts: [] },
+    ], error: null, at: null },
+  });
+  assert.deepEqual(workers.fleet, ["codex-w1 removal unfinished", "codex-w2 needs sign-in", "grok-1 needs sign-in"]);
 
   // System: a stopped child, a closed owner channel, a status read error.
   const system = spaceAttention({

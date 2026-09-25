@@ -1,10 +1,10 @@
 "use client";
 
-import { BookOpenIcon, BotIcon, CpuIcon, KeyRoundIcon, ActivityIcon } from "lucide-react";
+import { BookOpenIcon, BotIcon, CpuIcon, IdCardIcon, KeyRoundIcon, ActivityIcon } from "lucide-react";
 import type { SpaceId } from "@/lib/stack/spaces";
 import type { StackState } from "@/lib/stack/store";
 import { accentOf, type Accent } from "./window";
-import { AccountsWindow, ActivityWindow, BotsWindow, PackagesWindow, PackageWindow, SystemWindow } from "./windows";
+import { AccountsWindow, ActivityWindow, BotsWindow, PackagesWindow, PackageWindow, SystemWindow, WorkerAccountsWindow } from "./windows";
 
 export type WindowDef = {
   id: string;
@@ -25,8 +25,9 @@ export const spaceViews: Record<SpaceId, {
     icon: BotIcon,
     accent: "bots",
     windows: () => [
-      { id: "accounts", title: "Accounts", icon: KeyRoundIcon, accent: "auth", width: 320, column: 0, element: <AccountsWindow /> },
-      { id: "bots", title: "Bots", icon: BotIcon, accent: "bots", width: 380, column: 1, element: <BotsWindow /> },
+      { id: "worker-accounts", title: "Worker accounts", icon: IdCardIcon, accent: "auth", width: 340, column: 0, element: <WorkerAccountsWindow /> },
+      { id: "accounts", title: "Bot accounts", icon: KeyRoundIcon, accent: "auth", width: 320, column: 1, element: <AccountsWindow /> },
+      { id: "bots", title: "Bots", icon: BotIcon, accent: "bots", width: 380, column: 2, element: <BotsWindow /> },
     ],
   },
   system: {

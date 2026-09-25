@@ -140,6 +140,7 @@ export type NodeRef =
   | { kind: "owner" }
   | { kind: "child"; id: string }
   | { kind: "account"; id: string }
+  | { kind: "worker-account"; id: string }
   | { kind: "login" }
   | { kind: "bot"; id: string }
   | { kind: "package"; id: string }

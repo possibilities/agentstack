@@ -3,9 +3,9 @@
 import { BookOpenIcon, BotIcon, CircleCheckIcon, CpuIcon, MicIcon, MicOffIcon, PhoneIcon, PhoneOffIcon, RefreshCwIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
 import { operationTitle } from "@/lib/stack/catalog";
-import { accountLabels, shortId } from "@/lib/stack/derive";
+import { accountLabels, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
 import { spaces } from "@/lib/stack/spaces";
-import type { Account, NodeRef } from "@/lib/stack/types";
+import type { Account, NodeRef, WorkerAccount } from "@/lib/stack/types";
 import { useAuthActions } from "./auth-actions";
 import { Orb, StatusDot } from "./primitives";
 import { useStack, useWorkbench } from "./provider";
@@ -15,11 +15,12 @@ import { useVoice } from "./voice";
 export type PaletteAction = { id: string; label: string; shortcut?: string; icon: React.ComponentType; run(): void };
 
 export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpenChange(open: boolean): void; actions: PaletteAction[] }) {
-  const { bots, accounts, owner, catalog, attempt } = useStack();
+  const { bots, accounts, workerAccounts, owner, catalog, attempt } = useStack();
   const auth = useAuthActions();
   const voice = useVoice();
   const { goTo, setSpace } = useWorkbench();
   const labels = accountLabels(accounts.data);
+  const workerLabels = workerAccountLabels(workerAccounts.data);
   const go = (ref: NodeRef) => {
     onOpenChange(false);
     goTo(ref);
@@ -29,6 +30,10 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
     run();
   };
   const removable = (account: Account) => !account.removing;
+  const workerRemovable = (account: WorkerAccount) => !account.removing;
+  const addWorker = (provider: WorkerAccount["provider"]) => {
+    void auth.worker.prepare(provider).then((account) => { if (account) goTo({ kind: "worker-account", id: account.id }); });
+  };
 
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange} title="Jump to" description="Find a bot, account, process, or operation." className="sm:max-w-lg">
@@ -61,14 +66,22 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
               ))}
             </CommandGroup>
           ) : null}
-          {accounts.data?.length ? (
+          {accounts.data?.length || workerAccounts.data?.length ? (
             <CommandGroup heading="Accounts">
-              {accounts.data.map((account) => (
-                <CommandItem key={account.id} value={`account ${labels.get(account.id)} ${account.id}`} onSelect={() => go({ kind: "account", id: account.id })}>
+              {(accounts.data ?? []).map((account) => (
+                <CommandItem key={account.id} value={`bot account ${labels.get(account.id)} ${account.id}`} onSelect={() => go({ kind: "account", id: account.id })}>
                   <Orb id={account.id} size="sm" />
                   <span>{labels.get(account.id)}</span>
                   <span className="font-mono text-xs text-muted-foreground">{shortId(account.id)}</span>
                   <CommandShortcut className="tracking-normal">{account.enabled ? "enabled" : "disabled"}</CommandShortcut>
+                </CommandItem>
+              ))}
+              {(workerAccounts.data ?? []).map((account) => (
+                <CommandItem key={`worker-${account.id}`} value={`worker account ${workerLabels.get(account.id)} ${account.provider} ${account.id}`} onSelect={() => go({ kind: "worker-account", id: account.id })}>
+                  <Orb id={account.id} size="sm" />
+                  <span>{workerLabels.get(account.id)}</span>
+                  <span className="font-mono text-xs text-muted-foreground">{providerTitle(account.provider)} · {shortId(account.id)}</span>
+                  <CommandShortcut className="tracking-normal">{!account.ready ? "needs sign-in" : account.enabled ? "enabled" : "disabled"}</CommandShortcut>
                 </CommandItem>
               ))}
             </CommandGroup>
@@ -97,10 +110,16 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
             </CommandGroup>
           ) : null}
           <CommandGroup heading="Account actions">
-            <CommandItem value="action add codex account sign in" onSelect={() => act(() => auth.startSignIn())}>
+            <CommandItem value="action add codex bot account sign in" onSelect={() => act(() => { auth.startSignIn(); goTo({ kind: "login" }); })}>
               <UserRoundPlusIcon />
-              Add Codex account
+              Add Codex Bot account
             </CommandItem>
+            {(["codex", "grok", "devin"] as const).map((provider) => (
+              <CommandItem key={`add-${provider}`} value={`action add ${provider} worker account sign in`} onSelect={() => act(() => addWorker(provider))}>
+                <TerminalIcon />
+                Add {providerTitle(provider)} Worker account
+              </CommandItem>
+            ))}
             {accounts.data?.filter(removable).flatMap((account) => {
               const label = labels.get(account.id) ?? shortId(account.id);
               return [
@@ -115,6 +134,31 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
                   Sign in again to {label}
                 </CommandItem>,
                 <CommandItem key={`${account.id}-remove`} value={`action remove ${label} delete ${account.id}`} onSelect={() => act(() => auth.confirmRemove(account))}>
+                  <Trash2Icon />
+                  Remove {label}…
+                </CommandItem>,
+              ];
+            })}
+            {workerAccounts.data?.filter(workerRemovable).flatMap((account) => {
+              const label = workerLabels.get(account.id) ?? shortId(account.id);
+              return [
+                ...(!account.enabled ? [
+                  <CommandItem key={`worker-${account.id}-enable`} value={`action enable ${label} ${account.id}`} onSelect={() => act(() => auth.worker.setEnabled(account, true))}>
+                    <CircleCheckIcon />
+                    Enable {label}
+                  </CommandItem>,
+                ] : []),
+                ...(!account.ready ? [
+                  <CommandItem key={`worker-${account.id}-confirm`} value={`action confirm sign in ${label} ${account.id}`} onSelect={() => act(() => auth.worker.confirm(account))}>
+                    <CircleCheckIcon />
+                    Confirm sign-in {label}
+                  </CommandItem>,
+                ] : []),
+                <CommandItem key={`worker-${account.id}-reprepare`} value={`action sign in again ${label} ${account.provider} ${account.id}`} onSelect={() => act(() => { void auth.worker.prepare(account.provider, account.id); })}>
+                  <RefreshCwIcon />
+                  Sign in again to {label}
+                </CommandItem>,
+                <CommandItem key={`worker-${account.id}-remove`} value={`action remove ${label} delete ${account.id}`} onSelect={() => act(() => auth.worker.confirmRemove(account))}>
                   <Trash2Icon />
                   Remove {label}…
                 </CommandItem>,

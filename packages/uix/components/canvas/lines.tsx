@@ -1,16 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { accountLinks } from "@/lib/stack/derive";
 import { nodeKey } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { accountColor } from "./primitives";
 import { useStack, useWorkbench } from "./provider";
 
-type Edge = { id: string; from: string; to: string; color: string; dashed?: boolean };
+type Edge = { id: string; from: string; to: string; color: string; dashed?: boolean; dotted?: boolean };
 type Geometry = Edge & { d: string; start: [number, number]; end: [number, number] };
 
 function useEdges(): Edge[] {
-  const { bots } = useStack();
+  const { bots, accounts, workerAccounts } = useStack();
   return useMemo(() => {
     const edges: Edge[] = [];
     for (const bot of bots.data ?? []) {
@@ -19,8 +20,11 @@ function useEdges(): Edge[] {
         edges.push({ id: `${bot.id}>>${bot.runningAccount}`, from: `bot:${bot.id}`, to: `account:${bot.runningAccount}`, color: "var(--warning)", dashed: true });
       }
     }
+    for (const link of accountLinks(accounts.data, workerAccounts.data)) {
+      edges.push({ id: `${link.bot}~${link.worker}`, from: `account:${link.bot}`, to: `worker-account:${link.worker}`, color: "var(--muted-foreground)", dotted: true });
+    }
     return edges;
-  }, [bots.data]);
+  }, [bots.data, accounts.data, workerAccounts.data]);
 }
 
 /**
@@ -115,7 +119,7 @@ export function Lines({ world, scale, version, animating, subtle }: {
             <g key={path.id} style={{ color: path.color }} className={className}>
               <path d={path.d} fill="none" stroke="currentColor" strokeOpacity={0.2} strokeWidth={lit ? 8 : 0} strokeLinecap="round" />
               <path d={path.d} fill="none" stroke="currentColor" strokeWidth={lit ? 2 : 1.5} strokeLinecap="round"
-                strokeDasharray={path.dashed || lit ? "6 6" : undefined} className={lit ? "animate-uix-flow" : undefined} />
+                strokeDasharray={path.dotted ? "2 4" : path.dashed || lit ? "6 6" : undefined} className={lit && !path.dotted ? "animate-uix-flow" : undefined} />
             </g>
           );
         })}

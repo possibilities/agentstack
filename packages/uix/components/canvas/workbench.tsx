@@ -46,8 +46,8 @@ export type SpaceControls = {
 
 type Persisted = { spaces?: Partial<Record<SpaceId, { mode?: Mode; layout?: Partial<Layout>; view?: View }>> };
 
-const storageKey = "agentstack.uix.canvas.v2";
-const legacyStorageKey = "agentstack.uix.canvas.v1";
+const storageKey = "agentstack.uix.canvas.v3";
+const legacyStorageKeys = ["agentstack.uix.canvas.v1", "agentstack.uix.canvas.v2"];
 const gapX = 72;
 const gapY = 24;
 const top = 76;
@@ -349,7 +349,7 @@ function SpaceCanvas({ space, paletteOpen, consumePendingGoTo, onArrive, onContr
     } catch {
       saved = {};
     }
-    localStorage.removeItem(legacyStorageKey);
+    for (const key of legacyStorageKeys) localStorage.removeItem(key);
     const slice = saved.spaces?.[space] ?? {};
     const present = new Set(defsRef.current.map((item) => item.id));
     const fresh = tidied();

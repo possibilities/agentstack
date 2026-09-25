@@ -1,16 +1,16 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState } from "react";
-import { ArrowRightIcon, CircleCheckIcon, LocateFixedIcon, LockIcon, PhoneIcon, PhoneOffIcon, RefreshCwIcon, SquareArrowOutUpRightIcon, Trash2Icon, XIcon } from "lucide-react";
+import { ArrowRightIcon, CircleCheckIcon, LocateFixedIcon, LockIcon, PhoneIcon, PhoneOffIcon, RefreshCwIcon, SquareArrowOutUpRightIcon, TerminalIcon, Trash2Icon, XIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { fieldsOf, findOperation, operationTitle, recordFields, recordOperations, type Field } from "@/lib/stack/catalog";
-import { accountLabels, clockTime, shortId } from "@/lib/stack/derive";
+import { accountLabels, clockTime, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
 import type { StackState } from "@/lib/stack/store";
-import { nodeKey, type Account, type Bot, type Login, type NodeRef, type OperationDoc, type PackageDoc, type StackEvent } from "@/lib/stack/types";
+import { nodeKey, type Account, type Bot, type Login, type NodeRef, type OperationDoc, type PackageDoc, type StackEvent, type WorkerAccount } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
 import { channelLabel, CopyButton, Orb, StatusDot, Time } from "./primitives";
@@ -38,6 +38,7 @@ type View = {
 function resolve(ref: NodeRef, state: StackState): View | null {
   const catalog = state.catalog.data;
   const labels = accountLabels(state.accounts.data);
+  const workerLabels = workerAccountLabels(state.workerAccounts.data);
   const ownerFields = () => new Map(fieldsOf(findOperation(catalog, "owner", "owner_status")?.outputSchema).map((field) => [field.name, field]));
   switch (ref.kind) {
     case "owner": {
@@ -62,12 +63,29 @@ function resolve(ref: NodeRef, state: StackState): View | null {
       const account = state.accounts.data?.find((item) => item.id === ref.id);
       if (!account) return null;
       const bound = (state.bots.data ?? []).filter((bot) => bot.account === account.id || bot.runningAccount === account.id);
+      const linkedWorkers = (account.linkedAccounts ?? []).filter((link) => link.scope === "worker" && workerLabels.has(link.id));
       return {
-        eyebrow: "Codex account", accent: "auth", title: labels.get(account.id) ?? shortId(account.id), orb: account.id, record: account,
+        eyebrow: "Codex Bot account", accent: "auth", title: labels.get(account.id) ?? shortId(account.id), orb: account.id, record: account,
         fields: recordFields(catalog, "auth", "account_list"),
-        related: bound.map((bot) => ({ ref: { kind: "bot", id: bot.id } as NodeRef, label: bot.id })),
+        related: [
+          ...bound.map((bot) => ({ ref: { kind: "bot", id: bot.id } as NodeRef, label: bot.id })),
+          ...linkedWorkers.map((link) => ({ ref: { kind: "worker-account", id: link.id } as NodeRef, label: `${workerLabels.get(link.id)} · same ChatGPT account` })),
+        ],
         operations: { pkg: "auth", list: recordOperations(catalog, "auth").filter((operation) => !accountControls.has(operation.name) && !operation.name.startsWith("account_login") && !operation.name.startsWith("worker_account")) },
         controls: <AccountControls account={account} />,
+        events: state.events.filter((event) => event.pkg === "auth"),
+      };
+    }
+    case "worker-account": {
+      const account = state.workerAccounts.data?.find((item) => item.id === ref.id);
+      if (!account) return null;
+      const linkedBots = (account.linkedAccounts ?? []).filter((link) => link.scope === "bot" && labels.has(link.id));
+      return {
+        eyebrow: `${providerTitle(account.provider)} Worker account`, accent: "auth", title: workerLabels.get(account.id) ?? shortId(account.id), orb: account.id, record: account,
+        fields: recordFields(catalog, "auth", "worker_account_list"),
+        related: linkedBots.map((link) => ({ ref: { kind: "account", id: link.id } as NodeRef, label: `${labels.get(link.id)} · same ChatGPT account` })),
+        operations: { pkg: "auth", list: recordOperations(catalog, "auth").filter((operation) => operation.name.startsWith("worker_account") && !workerControls.has(operation.name)) },
+        controls: <WorkerAccountControls account={account} />,
         events: state.events.filter((event) => event.pkg === "auth"),
       };
     }
@@ -119,6 +137,7 @@ function resolve(ref: NodeRef, state: StackState): View | null {
 
 const accountControls = new Set(["account_set_enabled", "account_remove", "account_login_replace"]);
 const loginControls = new Set(["account_login_cancel", "account_login_status"]);
+const workerControls = new Set(["worker_account_set_enabled", "worker_account_remove", "worker_account_prepare", "worker_account_confirm"]);
 
 function BotControls({ bot }: { bot: Bot }) {
   const voice = useVoice();
@@ -168,6 +187,50 @@ function AccountControls({ account }: { account: Account }) {
       ) : null}
       {account.removing ? (
         <p className="text-[0.72rem] text-muted-foreground">Removal started. {actions.removing === account.id ? "Removing…" : "Remove again to finish it."}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function WorkerAccountControls({ account }: { account: WorkerAccount }) {
+  const worker = useAuthActions().worker;
+  const pending = worker.changingAvailability === account.id;
+  const command = worker.commands[account.id];
+  const error = worker.error?.target === account.id ? worker.error.message : null;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex flex-wrap gap-1.5">
+        <Button size="sm" variant="outline" disabled={account.removing || pending} onClick={() => worker.setEnabled(account, !account.enabled)}>
+          {pending ? <Spinner data-icon="inline-start" /> : <CircleCheckIcon data-icon="inline-start" />}
+          {account.enabled ? "Disable" : "Enable"}
+        </Button>
+        <Button size="sm" variant="outline" disabled={account.removing || worker.preparing === account.id} onClick={() => void worker.prepare(account.provider, account.id)}>
+          {worker.preparing === account.id ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}
+          {account.ready ? "Sign in again" : "Show command"}
+        </Button>
+        {!account.ready ? (
+          <Button size="sm" variant="outline" disabled={account.removing || worker.confirming === account.id} onClick={() => worker.confirm(account)}>
+            {worker.confirming === account.id ? <Spinner data-icon="inline-start" /> : <CircleCheckIcon data-icon="inline-start" />}
+            Confirm sign-in
+          </Button>
+        ) : null}
+        <Button size="sm" variant="destructive" disabled={account.removing || worker.removing === account.id} onClick={() => worker.confirmRemove(account)}>
+          <Trash2Icon data-icon="inline-start" />
+          Remove…
+        </Button>
+      </div>
+      {!account.ready && command ? (
+        <div className="group/row flex flex-col gap-1 rounded-lg border bg-background/50 p-2.5">
+          <div className="flex items-start gap-1">
+            <code className="max-h-28 min-w-0 flex-1 overflow-auto break-all font-mono text-[0.72rem] leading-relaxed">{command}</code>
+            <CopyButton value={command} label="sign-in command" className="opacity-100" />
+          </div>
+          <p className="flex items-center gap-1 text-[0.72rem] text-muted-foreground"><TerminalIcon className="size-3" /> Run this in a terminal, then confirm.</p>
+        </div>
+      ) : null}
+      {error ? <p className="text-[0.72rem] text-pretty text-destructive">{error}</p> : null}
+      {account.removing ? (
+        <p className="text-[0.72rem] text-muted-foreground">Removal started. {worker.removing === account.id ? "Removing…" : "Remove again to finish it."}</p>
       ) : null}
     </div>
   );
