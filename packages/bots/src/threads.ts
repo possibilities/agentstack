@@ -210,9 +210,14 @@ const threadChangeMethods = new Set([
   "thread/closed",
   "thread/name/updated",
   "thread/archived",
+  "thread/unarchived",
   "thread/deleted",
+  "thread/reverted",
+  "thread/attachment/updated",
+  "thread/queue/changed",
   "turn/started",
   "turn/completed",
+  "item/completed",
 ]);
 
 export function watchThreadEvents(url: string, onChange: () => void): () => void {

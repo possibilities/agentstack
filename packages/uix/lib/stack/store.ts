@@ -180,7 +180,7 @@ export class StackStore {
     const { bots, endpoints } = this.state;
     if (!bots.data) return;
     const wanted = new Map<string, { pkg: string; topics: string[] }>();
-    for (const bot of bots.data) if (endpoints.bots) wanted.set(bot.id, { pkg: "bots", topics: ["bots_changed", "threads_changed"] });
+    for (const bot of bots.data) if (endpoints.bots) wanted.set(bot.id, { pkg: "bots", topics: ["bots_changed", "threads_changed", "chats_changed", "chat_queue_changed"] });
     const scoped = { ...this.state.scoped };
     for (const [id, channel] of this.scopedChannels) {
       if (wanted.get(id)?.pkg === scoped[id]?.pkg) continue;

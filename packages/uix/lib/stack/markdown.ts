@@ -47,7 +47,7 @@ export function renderCanvasMarkdown(snapshot: Snapshot): string {
       `- **${bot.id}** — ${bot.recoveryIssue ? "needs inspection (reported running state unverified)" : bot.state}${bot.pid ? ` · pid ${bot.pid}` : ""} · account ${label(bot.account)}`,
       ...(bot.recoveryIssue ? [`  - Recovery: ${bot.recoveryIssue}`] : []),
       ...(bot.state === "running" && !bot.recoveryIssue && bot.account !== bot.runningAccount ? [`  - Running as ${label(bot.runningAccount)}; stop and start to apply ${label(bot.account)}`] : []),
-      `  - Main thread ${code(bot.mainThreadId ?? "awaiting first turn")}`,
+      `  - Main thread ${code(bot.mainThreadId ?? "awaiting first turn")} · chat search and transcript records available through bots Package API${bot.state === "running" ? "; live turn controls require a sanctioned thread" : "; native turn controls unavailable while stopped"}`,
       `  - Last launched role revision ${code(bot.roleRevision ?? "never launched")}`,
       bot.settings ? `  - Saved settings ${code(bot.settings.model)} · ${code(bot.settings.reasoningEffort)} effort · ${code(bot.settings.sandboxMode)} · approval ${code(bot.settings.approvalPolicy)} (caller args may override)`
         : "  - Saved settings Legacy Bot: Codex selects model and effort; full access and no approval prompts remain the baseline.",

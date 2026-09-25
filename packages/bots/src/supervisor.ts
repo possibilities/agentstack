@@ -8,6 +8,7 @@ import { codexRuntimePath } from "./paths.js";
 import { DEFAULT_BOT_SETTINGS, StateStore, type BotSettings, type StoredServer } from "./store.js";
 import { RuntimeAuth, type SyncStatus } from "./runtime-auth.js";
 import { bindMainThread, findEligibleMainThread } from "./threads.js";
+import { chatRpc } from "./chats.js";
 import { RoleStore, materializeRole, removeRole } from "@agentstack/roles";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -189,6 +190,37 @@ export class Supervisor {
       catch (error) { record.mainThreadId = null; throw error; }
       this.notify(id);
       return this.view(record);
+    });
+  }
+
+  /** Create the first durable UI chat under the per-Bot lifecycle fence. */
+  openMainChat(id: string, input: Record<string, unknown>[]): Promise<{ threadId: string; turn: Record<string, unknown> }> {
+    return this.enqueue(id, async () => {
+      const record = this.records.get(id);
+      if (!record || record.state !== "running" || !record.url || !record.launchedAccount || this.recoveryIssues.has(id)) throw new Error("Bot is not a verified, account-bound running process");
+      if (record.mainThreadId) throw new Error("Bot already has a main thread; use chat_send on it");
+      const previous = await this.findMainThread(record.url);
+      if (previous) {
+        record.mainThreadId = previous;
+        try { await this.persist(record); }
+        catch (error) { record.mainThreadId = null; throw error; }
+        this.notify(id);
+        throw new Error("an existing durable root was adopted; read bot_list and use chat_send on it");
+      }
+      const started = await chatRpc(record.url, "thread/start", { cwd: record.cwd });
+      const threadId = (started.thread as { id?: unknown } | undefined)?.id;
+      if (typeof threadId !== "string") throw new Error("thread/start returned no thread ID; inspect Codex before retrying");
+      // The first real turn, not thread/start, is the durable binding boundary.
+      const sent = await chatRpc(record.url, "turn/start", { threadId, input });
+      const turn = sent.turn;
+      if (!turn || typeof turn !== "object" || typeof (turn as { id?: unknown }).id !== "string") throw new Error("turn/start returned no turn ID; inspect Codex before retrying");
+      const oldest = await this.findMainThread(record.url);
+      if (oldest !== threadId) throw new Error("first durable root selection changed; inspect bot_list and Codex history before sending again");
+      record.mainThreadId = threadId;
+      try { await this.persist(record); }
+      catch (error) { record.mainThreadId = null; throw error; }
+      this.notify(id);
+      return { threadId, turn: turn as Record<string, unknown> };
     });
   }
 

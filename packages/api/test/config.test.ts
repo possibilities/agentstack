@@ -14,10 +14,10 @@ test("bots declares socket, MCP, and WebSocket transports", async () => {
   const root = workspaceRoot(dirname(fileURLToPath(import.meta.url)));
   const bots = await findPackage(root, "bots");
   assert.equal(bots.config.name, "bots");
-  assert.match(bots.config.description, /Codex bots/);
+  assert.match(bots.config.description, /Codex Bots.*sanctioned chats/);
   assert.ok(bots.config.socket && bots.config.mcp && bots.config.websocket);
   const botsApi = await loadPackageApi(bots.dir);
-  assert.deepEqual(Object.keys(botsApi.events?.topics ?? {}).sort(), ["bots_changed", "defaults_changed", "threads_changed", "voice_changed"]);
+  assert.deepEqual(Object.keys(botsApi.events?.topics ?? {}).sort(), ["bots_changed", "chat_queue_changed", "chats_changed", "defaults_changed", "threads_changed", "voice_changed"]);
 });
 
 test("a package API loads from the built sibling api.ts without an index", async () => {

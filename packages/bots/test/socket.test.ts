@@ -33,7 +33,7 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
   let defaultsSubscription: SocketSubscription | undefined;
   try {
     const tools = await socketCall(socket, "tools/list") as { tools: Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }>; events: { scope: { required: boolean } } };
-    assert.deepEqual(tools.tools.map((tool) => tool.name), ["bot_start", "bot_stop", "bot_assign", "bot_remove", "bot_list", "bot_defaults_get", "bot_defaults_set", "voice_status", "voice_dial", "voice_hangup"]);
+    assert.deepEqual(tools.tools.map((tool) => tool.name), ["bot_start", "bot_stop", "bot_assign", "bot_remove", "bot_list", "bot_defaults_get", "bot_defaults_set", "voice_status", "voice_dial", "voice_hangup", "chat_list", "chat_search", "chat_records", "chat_record_chunk", "chat_thread_read", "chat_turns", "chat_items", "chat_occurrences", "chat_open", "chat_send", "chat_steer", "chat_interrupt", "chat_enqueue", "chat_queue_list", "chat_queue_resolve", "chat_codex_queue_add", "chat_codex_queue_list", "chat_codex_queue_update", "chat_codex_queue_delete", "chat_codex_queue_reorder", "chat_codex_queue_start", "chat_upload_start", "chat_upload_status", "chat_upload_chunk", "chat_upload_finish", "chat_attachment_add", "chat_attachment_list", "chat_attachment_remove"]);
     assert.deepEqual(Object.keys(tools.tools[0].inputSchema.properties).sort(), ["args", "cwd", "id", "settings"]);
     assert.equal(tools.events.scope.required, false);
     const initial = await call(socket, "bot_defaults_get") as View["settings"];
@@ -45,6 +45,46 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
     assert.equal(first.account, account);
     assert.equal(first.state, "running");
     assert.equal(first.mainThreadId, null);
+    const opened = await call(socket, "chat_open", { botId: first.id, input: [{ type: "text", text: "first chat" }] }) as { threadId: string; turn: { id: string } };
+    assert.equal((await call(socket, "bot_list") as { bots: View[] }).bots[0]?.mainThreadId, opened.threadId);
+    await assert.rejects(call(socket, "chat_open", { botId: first.id, input: [{ type: "text", text: "duplicate root" }] }), /already has a main thread/);
+    const history = join(stateDir, "history", first.id, "2026", "09", "25");
+    await mkdir(history, { recursive: true });
+    await writeFile(join(history, `rollout-test-${opened.threadId}.jsonl`), [
+      JSON.stringify({ type: "session_meta", timestamp: "2026-09-25T00:00:00Z", payload: { id: opened.threadId, session_id: opened.threadId, cwd: first.cwd } }),
+      JSON.stringify({ type: "response_item", timestamp: "2026-09-25T00:00:01Z", payload: { type: "message", role: "user", content: [{ text: "first chat with keyword" }] } }),
+      "",
+    ].join("\n"));
+    assert.equal((await call(socket, "chat_search", { botId: first.id, query: "keyword" }) as { hits: { threadId: string }[] }).hits[0]?.threadId, opened.threadId);
+    assert.equal((await call(socket, "chat_list", { botId: first.id }) as { chats: { threadId: string }[] }).chats[0]?.threadId, opened.threadId);
+    assert.equal((await call(socket, "chat_records", { botId: first.id, threadId: opened.threadId }) as { records: unknown[] }).records.length, 1);
+    await assert.rejects(call(socket, "chat_records", { botId: first.id, threadId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" }), /lineage/);
+    const descendant = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    await writeFile(join(history, `rollout-test-${descendant}.jsonl`), [
+      JSON.stringify({ type: "session_meta", timestamp: "2026-09-25T00:00:00Z", payload: { id: descendant, session_id: opened.threadId, parent_thread_id: opened.threadId, cwd: first.cwd } }),
+      JSON.stringify({ type: "response_item", timestamp: "2026-09-25T00:00:01Z", payload: { type: "message", role: "user", content: [{ text: "descendant searchable" }] } }), "",
+    ].join("\n"));
+    assert.equal((await call(socket, "chat_search", { botId: first.id, query: "descendant" }) as { hits: { threadId: string }[] }).hits[0]?.threadId, descendant);
+    await assert.rejects(call(socket, "chat_send", { botId: first.id, threadId: descendant, input: [{ type: "text", text: "do not send" }] }), /descendants are read-only/);
+    assert.equal(((await call(socket, "chat_thread_read", { botId: first.id, threadId: opened.threadId }) as { thread: { id: string } }).thread.id), opened.threadId);
+    const sent = await call(socket, "chat_send", { botId: first.id, threadId: opened.threadId, input: [{ type: "text", text: "follow-up" }] }) as { turn: { id: string } };
+    assert.equal((await call(socket, "chat_turns", { botId: first.id, threadId: opened.threadId }) as { data: unknown[] }).data.length, 2);
+    assert.equal((await call(socket, "chat_items", { botId: first.id, threadId: opened.threadId }) as { data: unknown[] }).data.length, 2);
+    assert.deepEqual((await call(socket, "chat_occurrences", { botId: first.id, threadId: opened.threadId, query: "follow" }) as { data: unknown[] }).data, []);
+    assert.equal((await call(socket, "chat_steer", { botId: first.id, threadId: opened.threadId, expectedTurnId: sent.turn.id, input: [{ type: "text", text: "steer" }] }) as { turnId: string }).turnId, sent.turn.id);
+    await call(socket, "chat_interrupt", { botId: first.id, threadId: opened.threadId, turnId: sent.turn.id });
+    const native = await call(socket, "chat_codex_queue_add", { botId: first.id, threadId: opened.threadId, clientUserMessageId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", input: [{ type: "text", text: "native" }] }) as { queuedSubmission: { id: string } };
+    assert.ok(native.queuedSubmission.id);
+    assert.deepEqual((await call(socket, "chat_codex_queue_list", { botId: first.id, threadId: opened.threadId }) as { data: unknown[] }).data, []);
+    await call(socket, "chat_codex_queue_update", { botId: first.id, threadId: opened.threadId, queuedSubmissionId: native.queuedSubmission.id, input: [{ type: "text", text: "edited" }] });
+    await call(socket, "chat_codex_queue_reorder", { botId: first.id, threadId: opened.threadId, queuedSubmissionIds: [native.queuedSubmission.id] });
+    assert.equal((await call(socket, "chat_codex_queue_delete", { botId: first.id, threadId: opened.threadId, queuedSubmissionId: native.queuedSubmission.id }) as { deleted: boolean }).deleted, true);
+    assert.ok((await call(socket, "chat_codex_queue_start", { botId: first.id, threadId: opened.threadId }) as { turn: { id: string } }).turn.id);
+    assert.equal((await call(socket, "chat_attachment_add", { botId: first.id, threadId: opened.threadId, attachmentType: "note", identityKey: "one", payload: { x: 1 } }) as { attachment: { identityKey: string } }).attachment.identityKey, "one");
+    assert.deepEqual((await call(socket, "chat_attachment_list", { botId: first.id, threadId: opened.threadId }) as { data: unknown[] }).data, []);
+    await call(socket, "chat_attachment_remove", { botId: first.id, threadId: opened.threadId, attachmentType: "note", identityKey: "one" });
+    const queued = await call(socket, "chat_enqueue", { botId: first.id, threadId: opened.threadId, id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", input: [{ type: "text", text: "queued" }] }) as { id: string };
+    assert.equal((await call(socket, "chat_queue_list", { botId: first.id, threadId: opened.threadId }) as { entries: { id: string }[] }).entries[0]?.id, queued.id);
     assert.deepEqual(first.settings, initial);
     assert.equal((await lstat(first.cwd)).mode & 0o777, 0o700);
     assert.equal((await lstat(join(stateDir, "bots", "ledger.sqlite"))).mode & 0o777, 0o600);

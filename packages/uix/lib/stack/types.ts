@@ -58,6 +58,13 @@ export type Bot = {
   settings: BotSettings | null;
 };
 
+/** Bot chat APIs expose sanctioned Codex threads; the canvas does not yet browse them. */
+export type Chat = { botId: string; threadId: string; parentThreadId: string | null; title: string; cwd: string;
+  createdAt: string; updatedAt: string; messageCount: number };
+export type ChatHit = Chat & { line: number; role: string; snippet: string; score: number };
+export type ChatQueueEntry = { id: string; botId: string; threadId: string; input: unknown[];
+  state: "pending" | "dispatching" | "sent" | "unknown" | "cancelled"; turnId: string | null; issue: string | null };
+
 export type Account = { id: string; active: boolean; removing: boolean };
 export type WorkerAccount = { id: string; provider: "codex" | "grok" | "devin"; enabled: boolean; ready: boolean; removing: boolean };
 export type WorkerRuntime = { id: string; provider: WorkerAccount["provider"]; state: "running" | "stopped" | "error"; pid: number | null; instance: string | null; error: string | null };
