@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, use } from "react";
-import { ChevronDownIcon, GripHorizontalIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, GripHorizontalIcon } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { nodeKey, type ChannelStatus, type NodeRef } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
@@ -49,6 +49,14 @@ export type WindowPlacement = {
   collapsed: boolean;
   animating: boolean;
   dragging: boolean;
+  /** This window is the one being moved or resized; it follows the pointer untransitioned. */
+  active: boolean;
+  /** Just released: gliding into its stored spot. */
+  settling: boolean;
+  /** Where a live gesture will land on the grid. */
+  target: { x: number; y: number; width: number; height: number } | null;
+  /** While resizing height: the content-fit line, active when the edge sits in its groove. */
+  fit: { y: number; active: boolean } | null;
   onHeaderPointerDown(event: React.PointerEvent): void;
   onResizePointerDown(event: React.PointerEvent, edge: ResizeEdge): void;
   onResetSize(edge: ResizeEdge): void;
@@ -99,6 +107,11 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
   };
   const tone = status === "open" ? (error ? "warning" : "success") : status === "closed" ? "destructive" : "muted";
   return (
+    <>
+    {placement.target ? (
+      <div aria-hidden data-drop-target={id} className="pointer-events-none absolute rounded-2xl border-2 border-dashed border-foreground/15 bg-foreground/[0.03]"
+        style={{ left: placement.target.x, top: placement.target.y, width: placement.target.width, height: placement.target.height, zIndex: placement.z }} />
+    ) : null}
     <section
       ref={placement.register}
       data-window={id}
@@ -111,6 +124,9 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
         "shadow-[0_1px_0_0_rgb(255_255_255/0.06)_inset,0_1px_2px_rgb(0_0_0/0.06),0_24px_48px_-24px_rgb(0_0_0/0.28)]",
         "absolute",
         placement.animating && "transition-[left,top] duration-300 ease-out motion-reduce:transition-none",
+        // Released windows glide into place; windows pushed aside by a gesture move smoothly too.
+        placement.settling && "transition-[left,top,width,height] duration-200 ease-out motion-reduce:transition-none",
+        placement.dragging && !placement.active && !placement.animating && "transition-[top] duration-200 ease-out motion-reduce:transition-none",
         placement.dragging && "shadow-[0_1px_0_0_rgb(255_255_255/0.06)_inset,0_40px_80px_-24px_rgb(0_0_0/0.45)] ring-1 ring-foreground/10",
         isSelected && "border-foreground/30 ring-3 ring-ring/25",
       )}
@@ -173,6 +189,18 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
       {placement.collapsed || !footer ? null : <footer className="shrink-0 border-t border-border/60 p-1.5">{footer}</footer>}
       {placement.collapsed ? null : <ResizeHandles title={title} placement={placement} />}
     </section>
+    {placement.fit ? (
+      <div aria-hidden data-fit-guide={id} className="pointer-events-none absolute"
+        style={{ left: placement.x, top: placement.fit.y, width: placement.width, zIndex: placement.z + 1 }}>
+        <div className={cn("-translate-y-px", placement.fit.active ? "h-0.5 rounded-full bg-primary" : "h-0 border-t border-dashed border-foreground/35")} />
+        {placement.fit.active ? (
+          <span className="absolute top-0 left-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[0.65rem] font-medium whitespace-nowrap text-primary-foreground shadow-sm">
+            <CheckIcon className="size-3" />Fits content
+          </span>
+        ) : null}
+      </div>
+    ) : null}
+    </>
   );
 }
 

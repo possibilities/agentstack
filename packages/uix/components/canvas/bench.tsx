@@ -10,6 +10,25 @@ import { useStack } from "./provider";
 import { spaceViews } from "./spaces";
 import { PlacementContext, type WindowPlacement } from "./window";
 
+/** Screen pixels within which a resized height sticks to the content's natural height. */
+const fitDetent = 14;
+
+/** The height a window would take to show all of its content, measured from layout offsets so a stretched or scrolled body does not skew it. */
+function naturalHeight(frame: HTMLElement): number | null {
+  const body = frame.querySelector<HTMLElement>(":scope > [data-scroll]");
+  if (!body) return null;
+  const style = getComputedStyle(body);
+  const last = body.lastElementChild as HTMLElement | null;
+  const content = (last ? last.offsetTop + last.offsetHeight - body.offsetTop : parseFloat(style.paddingTop)) + parseFloat(style.paddingBottom);
+  const height = Math.round(frame.offsetHeight - body.offsetHeight + content);
+  return height >= windowLimits.minHeight && height <= windowLimits.maxHeight ? height : null;
+}
+
+/** A live move or resize: the window follows the pointer while its stored layout holds where it will land. */
+type Gesture =
+  | { id: string; kind: "move"; x: number; y: number; free: boolean }
+  | { id: string; kind: "resize"; width?: number; height?: number; fit: number | null; grooved: boolean; free: boolean };
+
 export type BenchControls = { fit(): void; tidy(): void; goToSpace(space: SpaceId): void; goToNode(ref: NodeRef): void; zoom(factor: number): void };
 const storageKey = "agentstack.uix.bench.v1";
 
@@ -44,6 +63,10 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
   const [ready, setReady] = useState(false);
   const [animating, setAnimating] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [gesture, setGesture] = useState<Gesture | null>(null);
+  // The window gliding from where the pointer left it into its stored spot.
+  const [settling, setSettling] = useState<string | null>(null);
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [world, setWorld] = useState<HTMLDivElement | null>(null);
   const viewport = useRef<HTMLElement>(null);
   const elements = useRef(new Map<string, HTMLElement>());
@@ -138,7 +161,7 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
     return () => clearTimeout(timer);
   }, [ready, space, layout, camera, left, packed, viewportSize]);
   useEffect(() => { onScale(camera.k); }, [camera.k, onScale]);
-  useEffect(() => () => { clearTimeout(animationTimer.current); clearTimeout(landingTimer.current); dragCleanup.current?.(); }, []);
+  useEffect(() => () => { clearTimeout(animationTimer.current); clearTimeout(landingTimer.current); clearTimeout(settleTimer.current); dragCleanup.current?.(); }, []);
 
   const zoomAt = useCallback((factor: number, clientX?: number, clientY?: number) => {
     const rect = viewport.current?.getBoundingClientRect();
@@ -212,14 +235,24 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
     return () => window.removeEventListener("keydown", key);
   }, [blocked, fit, tidy, zoomAt]);
 
-  const drag = (event: React.PointerEvent, move: (x: number, y: number, free: boolean) => void) => {
+  const drag = (event: React.PointerEvent, move: (x: number, y: number, free: boolean) => void, end?: () => void) => {
     event.preventDefault(); setAnimating(false); setDragging(true); dragCleanup.current?.();
     const x = event.clientX, y = event.clientY;
     // Holding Alt/Option places windows freely instead of on the grid.
     const onMove = (next: PointerEvent) => move(next.clientX - x, next.clientY - y, next.altKey);
-    const stop = () => { setDragging(false); window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", stop); window.removeEventListener("pointercancel", stop); dragCleanup.current = null; };
+    const stop = () => { setDragging(false); end?.(); window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", stop); window.removeEventListener("pointercancel", stop); dragCleanup.current = null; };
     dragCleanup.current = stop;
     window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", stop); window.addEventListener("pointercancel", stop);
+  };
+  /** Release a gesture: the window glides from the pointer into its stored, grid-aligned layout. */
+  const release = (id: string) => {
+    setGesture((value) => {
+      if (value?.id !== id) return value;
+      setSettling(id);
+      clearTimeout(settleTimer.current);
+      settleTimer.current = setTimeout(() => setSettling(null), 220);
+      return null;
+    });
   };
   const placement = (id: string): WindowPlacement => {
     const def = geometry.windows.find((d) => d.id === id)!;
@@ -234,7 +267,16 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
     const size = layout.sizes[id];
     const push = pushes[id] ?? 0;
     // Unsized windows grow with their content up to the height limit; a human-set height is exact.
-    return { x: point.x + origin.x, y: point.y + origin.y + push, width: size?.width ?? def.width, height: size?.height ?? windowLimits.maxHeight, sized: size?.height !== undefined,
+    const stored = { x: point.x + origin.x, y: point.y + origin.y + push, width: size?.width ?? def.width, height: size?.height ?? windowLimits.maxHeight, sized: size?.height !== undefined };
+    const live = gesture?.id === id ? gesture : null;
+    // While a gesture runs, the window follows the pointer and an outline marks where it will land.
+    const shown = live?.kind === "move" ? { ...stored, x: origin.x + live.x, y: origin.y + live.y }
+      : live?.kind === "resize" ? { ...stored, width: live.width ?? stored.width, ...(live.height !== undefined ? { height: live.height, sized: true } : null) }
+      : stored;
+    const target = live && !live.free && !(live.kind === "resize" && live.grooved)
+      ? { x: stored.x, y: stored.y, width: stored.width, height: stored.sized ? stored.height : heights[id] ?? def.height ?? windowHeight } : null;
+    const fit = live?.kind === "resize" && live.fit !== null && live.height !== undefined ? { y: shown.y + live.fit, active: live.grooved } : null;
+    return { ...shown, target, fit, settling: settling === id, active: Boolean(live),
       z: layout.order.indexOf(id) + 1, collapsed: Boolean(layout.collapsed[id]), animating, dragging, register: registrars.current.get(id)!,
       onResizePointerDown: (event, edge) => {
         if (event.button !== 0) return;
@@ -243,15 +285,28 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
         const start = { width: frame?.offsetWidth ?? def.width, height: frame?.offsetHeight ?? def.height ?? windowHeight };
         const k = camera.k;
         const world = { x: point.x + origin.x, y: point.y + origin.y + push };
-        drag(event, (x, y, free) => setLayout((value) => {
-          const previous = value.sizes[id] ?? {};
-          const width = start.width + x / k, height = start.height + y / k;
-          const next = {
-            width: edge === "y" ? previous.width : Math.round(clamp(free ? width : snapExtent(world.x, width), windowLimits.minWidth, windowLimits.maxWidth)),
-            height: edge === "x" ? previous.height : Math.round(clamp(free ? height : snapExtent(world.y, height), windowLimits.minHeight, windowLimits.maxHeight)),
-          };
-          return { ...value, sizes: { ...value.sizes, [id]: next } };
-        }));
+        let moved = false;
+        drag(event, (x, y, free) => {
+          moved = true;
+          const width = edge === "y" ? undefined : clamp(start.width + x / k, windowLimits.minWidth, windowLimits.maxWidth);
+          let height = edge === "x" ? undefined : clamp(start.height + y / k, windowLimits.minHeight, windowLimits.maxHeight);
+          // Content can rewrap as the width changes, so the fit is re-measured on every move.
+          const fit = height !== undefined && frame ? naturalHeight(frame) : null;
+          const grooved = height !== undefined && fit !== null && Math.abs(height - fit) * k <= fitDetent;
+          if (grooved) height = fit!;
+          setGesture({ id, kind: "resize", width, height, fit, grooved, free });
+          setLayout((value) => {
+            const next = { ...value.sizes[id] };
+            if (width !== undefined) next.width = Math.round(clamp(free ? width : snapExtent(world.x, width), windowLimits.minWidth, windowLimits.maxWidth));
+            // Released in the groove, the window keeps no height and goes on fitting its content.
+            if (grooved) delete next.height;
+            else if (height !== undefined) next.height = Math.round(clamp(free ? height : snapExtent(world.y, height), windowLimits.minHeight, windowLimits.maxHeight));
+            const sizes = { ...value.sizes };
+            if (next.width === undefined && next.height === undefined) delete sizes[id];
+            else sizes[id] = next;
+            return { ...value, sizes };
+          });
+        }, () => { if (moved) release(id); });
       },
       onResetSize: (edge) => setLayout((value) => {
         const next = { ...value.sizes[id] };
@@ -268,12 +323,16 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
         const interactive = (event.target as Element).closest("button,a,[data-interactive],[tabindex]");
         if (event.button !== 0 || (interactive && event.currentTarget.contains(interactive))) return;
         const k = camera.k;
+        let moved = false;
         drag(event, (x, y, free) => {
-          if (Math.abs(x) + Math.abs(y) < 3) return;
-          const local = { x: point.x + x / k, y: point.y + y / k };
+          if (!moved && Math.abs(x) + Math.abs(y) < 3) return;
+          moved = true;
+          // Start from where the window is drawn, including any push, so it stays under the pointer.
+          const local = { x: point.x + x / k, y: point.y + push + y / k };
           const next = free ? { x: Math.round(local.x), y: Math.round(local.y) } : { x: snapLocal(local.x, origin.x), y: snapLocal(local.y, origin.y) };
+          setGesture({ id, kind: "move", x: local.x, y: local.y, free });
           setLayout((value) => ({ ...value, manual: { ...value.manual, [id]: true }, positions: { ...value.positions, [id]: next } }));
-        });
+        }, () => { if (moved) release(id); });
       },
     };
   };
@@ -291,7 +350,7 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
         <p id="bench-gestures" className="sr-only">Drag empty space, scroll, or use arrow keys to pan. Pinch or use plus and minus to zoom. Drag a window edge to resize it; windows snap to the dot grid unless Option is held. F fits the bench; T resets window positions. Select a card name to inspect it. Command K opens navigation.</p>
         <div ref={setWorld} className={cn("absolute top-0 left-0 origin-top-left", !ready && "invisible", animating && "transition-transform duration-300 ease-out motion-reduce:transition-none", dragging && "select-none")}
           style={{ transform: `translate3d(${camera.x}px,${camera.y}px,0) scale(${camera.k})` }}>
-          <Lines world={world} scale={camera.k} version={settled} animating={animating || dragging} subtle={false} />
+          <Lines world={world} scale={camera.k} version={settled} animating={animating || dragging || settling !== null} subtle={false} />
           {regions.map((region) => {
             const origin = geometry.origins[region.id];
             const bounds = geometry.regions.find((entry) => entry.id === region.id)!.bounds;

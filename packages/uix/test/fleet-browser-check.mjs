@@ -287,7 +287,14 @@ try {
   await page.mouse.move(header.x + 40, header.y + header.height / 2);
   await page.mouse.down();
   await page.mouse.move(header.x + 77, header.y + header.height / 2 + 29, { steps: 4 });
+  // Mid-drag the window follows the pointer freely while an outline marks its grid landing spot.
+  const midDrag = await frame();
+  const landing = await page.locator('[data-drop-target="model-catalogs"]').evaluate((el) => ({ left: parseFloat(el.style.left), top: parseFloat(el.style.top) }));
+  assert.ok(!(onGrid(midDrag.left) && onGrid(midDrag.top)), "a dragged window follows the pointer between grid dots");
+  assert.ok(onGrid(landing.left) && onGrid(landing.top), "the landing outline sits on the grid");
+  await page.screenshot({ path: join(evidence, "drag-landing.png"), animations: "disabled" });
   await page.mouse.up();
+  assert.equal(await page.locator("[data-drop-target]").count(), 0, "the landing outline leaves on release");
   const moved = await frame();
   assert.ok(onGrid(moved.left) && onGrid(moved.top), "a dragged window snaps to the grid");
   await page.keyboard.down("Alt");
@@ -332,6 +339,22 @@ try {
   assert.ok(tall.footer < 60 && tall.button < 40 && tall.gap < 4, `footer keeps its natural height at the bottom (${JSON.stringify(tall)})`);
   await page.screenshot({ path: join(evidence, "tall-window.png"), animations: "disabled" });
   await bottomGrip.dblclick();
+  // Resizing toward the content's height falls into a groove; released there, the window stores no height and keeps fitting its content.
+  const natural = await accountsWindow.evaluate((el) => el.offsetHeight);
+  const fitGrip = await bottomGrip.boundingBox();
+  const gripX = fitGrip.x + fitGrip.width / 2, gripY = fitGrip.y + fitGrip.height / 2;
+  await page.mouse.move(gripX, gripY);
+  await page.mouse.down();
+  await page.mouse.move(gripX, gripY + 200 * scale, { steps: 4 });
+  await page.locator('[data-fit-guide="accounts"]').waitFor();
+  assert.equal(await page.getByText("Fits content", { exact: true }).count(), 0, "the fit line is a quiet guide until the edge reaches it");
+  await page.mouse.move(gripX, gripY + 8 * scale, { steps: 4 });
+  await page.getByText("Fits content", { exact: true }).waitFor();
+  await page.screenshot({ path: join(evidence, "fit-groove.png"), animations: "disabled" });
+  assert.equal(await accountsWindow.evaluate((el) => el.offsetHeight), natural, "the edge sticks at the content's height");
+  await page.mouse.up();
+  const fitted = await accountsWindow.evaluate((el) => ({ height: el.offsetHeight, style: el.style.height }));
+  assert.deepEqual(fitted, { height: natural, style: "" }, "released in the groove, the window keeps fitting its content");
   await page.emulateMedia({ colorScheme: "dark" });
   await page.screenshot({ path: join(evidence, "fleet-dark.png"), fullPage: true, animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });
