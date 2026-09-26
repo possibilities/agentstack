@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { AuthStore } from "../src/store.js";
 import { WorkerLoginManager, type WorkerLoginState } from "../src/worker-login.js";
-import { prepareAccountProfile } from "../src/worker-accounts.js";
+import { accountRoot, prepareAccountProfile } from "../src/worker-accounts.js";
 
 const fixtures = {
   codex: fileURLToPath(new URL("../../test/fixtures/fake-worker-login-codex.mjs", import.meta.url)),
@@ -237,4 +238,18 @@ test("cancelAccount terminates a pending sign-in so removal never leaves a live 
     assert.equal(result.error, "Sign-in cancelled");
     assert.deepEqual(login.current(), []);
   } finally { await login.close(); store.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("only the devin child is marked remote so its browser launch stays suppressed", async () => {
+  for (const provider of ["devin", "codex", "grok"] as const) {
+    const { root, store, login, account } = await harness(provider, { FAKE_WORKER_LOGIN_HANG: provider === "devin" ? "" : "1" });
+    try {
+      const started = await login.start(account);
+      await prompted(login, started.id);
+      const marker = readFileSync(join(accountRoot(store.stateDir, account.id), "data", "env-marker"), "utf8");
+      assert.equal(marker, provider === "devin" ? "ssh:set" : "ssh:unset");
+      login.cancel(started.id);
+      await settle(login, started.id);
+    } finally { await login.close(); store.close(); await rm(root, { recursive: true, force: true }); }
+  }
 });

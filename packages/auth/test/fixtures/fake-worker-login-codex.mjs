@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-import { chmodSync, mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 const secret = process.env.FAKE_WORKER_LOGIN_SECRET ?? "fake-codex-secret";
 const prompt = "⠋\x1b[?25l Working…\x1b[?25h\nEnter code: FAKE-C0DEX\nhttps://auth.openai.com/codex/device\n";
+
+writeFileSync(join(process.env.XDG_DATA_HOME, "env-marker"), `ssh:${process.env.SSH_CONNECTION ? "set" : "unset"}`);
 
 const writeEvidence = () => {
   const dir = join(process.env.XDG_DATA_HOME, "opencode");

@@ -91,6 +91,8 @@ export class WorkerLoginManager {
     // whole cat → script → devin chain.
     const dir = join(accountRoot(this.store.stateDir, account.id), "probe");
     const devin = account.provider === "devin";
+    // devin's browser opener ignores BROWSER; marking the session remote keeps it link-only.
+    if (devin) { env.SSH_CONNECTION = "127.0.0.1 0 127.0.0.1 0"; env.SSH_CLIENT = "127.0.0.1 0 0"; }
     const child = spawn(devin ? "/bin/bash" : "/bin/sh",
       devin ? ["-c", 'umask 077 && exec "$@" < <(cat)', "sh", command.bin, ...command.args]
             : ["-c", 'umask 077 && exec "$@"', "sh", command.bin, ...command.args], {

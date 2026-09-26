@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-import { chmodSync, mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 const secret = process.env.FAKE_WORKER_LOGIN_SECRET ?? "fake-grok-secret";
 const prompt = "\x1b[36m▲\x1b[0m Open https://accounts.x.ai/oauth2/device on any device and enter code: FAKE-XAIC\nhttps://accounts.x.ai/oauth2/device?user_code=FAKE-XAIC\n";
+
+writeFileSync(join(process.env.XDG_DATA_HOME, "env-marker"), `ssh:${process.env.SSH_CONNECTION ? "set" : "unset"}`);
 
 const writeEvidence = () => {
   const dir = join(process.env.XDG_DATA_HOME, "opencode");

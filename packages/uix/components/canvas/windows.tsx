@@ -310,7 +310,7 @@ function SignInCard({ attempt, labels, accounts, catalog }: { attempt: Login; la
         ) : null}
         {phase === "code" ? (
           <>
-            <div className="flex items-center justify-between gap-2 rounded-lg bg-background/70 px-3 py-2.5">
+            <div data-interactive="" className="flex items-center justify-between gap-2 rounded-lg bg-background/70 px-3 py-2.5">
               <span className="font-mono text-2xl font-semibold tracking-[0.22em]" title={loginFields.find((field) => field.name === "userCode")?.description ?? undefined}>{attempt.userCode}</span>
               <CopyButton value={attempt.userCode ?? ""} label="one-time code" className="opacity-100" />
             </div>
@@ -614,7 +614,7 @@ function WorkerAccountCard({ account, label, accounts }: { account: WorkerAccoun
 /** The link an API-run sign-in hands to the human, shown as copyable text only — never opened by the canvas. */
 function SignInLink({ url }: { url: string }) {
   return (
-    <div className="group/row flex items-center gap-1.5 rounded-lg bg-background/70 px-3 py-2">
+    <div data-interactive="" className="group/row flex items-center gap-1.5 rounded-lg bg-background/70 px-3 py-2">
       <code className="min-w-0 flex-1 truncate font-mono text-[0.72rem] text-muted-foreground" title={url}>{url}</code>
       <Button size="xs" variant="secondary" className="shrink-0" onClick={() => void navigator.clipboard.writeText(url).then(() => toast.success("Link copied")).catch(() => undefined)}>
         <CopyIcon data-icon="inline-start" />
@@ -661,7 +661,7 @@ function WorkerSignInPanel({ account, attempt, error }: { account: WorkerAccount
             </div>
           )}
           {attempt.userCode ? (
-            <div className="flex items-center justify-between gap-2 rounded-lg bg-background/70 px-3 py-2.5">
+            <div data-interactive="" className="flex items-center justify-between gap-2 rounded-lg bg-background/70 px-3 py-2.5">
               <span className="font-mono text-2xl font-semibold tracking-[0.22em]">{attempt.userCode}</span>
               <CopyButton value={attempt.userCode} label="one-time code" className="opacity-100" />
             </div>
@@ -669,6 +669,7 @@ function WorkerSignInPanel({ account, attempt, error }: { account: WorkerAccount
           {attempt.authUrl ? <SignInLink url={attempt.authUrl} /> : null}
           {attempt.needsCode ? (
             <form
+              data-interactive=""
               className="flex items-center gap-1.5"
               onSubmit={(event) => {
                 event.preventDefault();
