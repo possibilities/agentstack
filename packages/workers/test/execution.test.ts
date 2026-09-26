@@ -94,8 +94,14 @@ process.stdin.on('data', (chunk) => {
     else if (frame.method === 'session/new') { cwd = frame.params.cwd;
       void writeFile(join(cwd, 'mcp-names.json'), JSON.stringify(frame.params.mcpServers.map((entry) => entry.name)));
       void writeFile(join(cwd, 'mcp-urls.json'), JSON.stringify(frame.params.mcpServers.filter((entry) => entry.type === 'http').map((entry) => ({ name: entry.name, url: entry.url }))));
-      send({ id: frame.id, result: { sessionId: 'session-' + Date.now(), configOptions: options() } }); }
-    else if (frame.method === 'session/load') { cwd = frame.params.cwd; send({ id: frame.id, result: { configOptions: options() } }); }
+      const sessionId = 'session-' + Date.now();
+      send({ method: 'session/update', params: { sessionId, update: { sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'review', description: 'Review the work' }] } } });
+      send({ id: frame.id, result: { sessionId, configOptions: options() } }); }
+    else if (frame.method === 'session/load') { cwd = frame.params.cwd;
+      send({ method: 'session/update', params: { sessionId: frame.params.sessionId, update: { sessionUpdate: 'user_message_chunk', messageId: 'replayed-user', content: { type: 'text', text: 'Old task replay' } } } });
+      send({ method: 'session/update', params: { sessionId: frame.params.sessionId, update: { sessionUpdate: 'agent_message_chunk', messageId: 'replayed-agent', content: { type: 'text', text: 'Old answer replay' } } } });
+      send({ method: 'session/update', params: { sessionId: frame.params.sessionId, update: { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'PRIVATE REASONING' } } } });
+      send({ id: frame.id, result: { configOptions: options() } }); }
     else if (frame.method === 'session/set_config_option') {
       if (frame.params.configId === 'effort') currentEffort = frame.params.value;
       const reply = () => send({ id: frame.id, result: { configOptions: options() } });
@@ -113,8 +119,12 @@ process.stdin.on('data', (chunk) => {
       } else {
         void writeFile(join(cwd, 'output.txt'), text).then(() => {
           send({ method: 'session/update', params: { sessionId: frame.params.sessionId,
+            update: { sessionUpdate: 'tool_call', toolCallId: 'tool-' + frame.id, title: 'Write', kind: 'edit', status: 'pending', rawInput: { filePath: 'output.txt' } } } });
+          send({ method: 'session/update', params: { sessionId: frame.params.sessionId,
+            update: { sessionUpdate: 'tool_call_update', toolCallId: 'tool-' + frame.id, status: 'completed', rawOutput: { output: 'written' }, content: [{ type: 'diff', path: 'output.txt', newText: text }] } } });
+          send({ method: 'session/update', params: { sessionId: frame.params.sessionId,
             update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Done.' } } } });
-          send({ id: frame.id, result: { stopReason: 'end_turn' } });
+          send({ id: frame.id, result: { stopReason: 'end_turn', usage: { inputTokens: 23, outputTokens: 7 } } });
         });
       }
     } else if (frame.id === 99001) {
@@ -170,6 +180,10 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     await assert.rejects(manager.start(start, { transport: "mcp", botId: null, instance: null, threadId: null, sessionId: null }), /Bot-bound MCP/);
     await assert.rejects(manager.start(start, { transport: "mcp", botId: "foreign-bot", instance: "old", threadId: "other", sessionId: null }), /verified Bot thread|Bot launch/);
     assert.deepEqual(manager.ledger.workers(), []);
+    const failed = await manager.start({ ...start, requestId: randomUUID(), repo: join(root, 'missing-repo'), task: 'Retain failed preparation prompt' });
+    assert.equal(failed.turn.phase, "failed"); assert.equal(failed.turn.promptChars, "Retain failed preparation prompt".length);
+    assert.equal((await manager.turns(failed.worker.id, undefined, 1)).turns[0]?.prompt, "Retain failed preparation prompt");
+    assert.equal(failed.turn.dispatchedAt, null); assert.equal(failed.turn.requestedModel, start.model);
     const started = await socketCall(socketPath("workers", env), "tools/call", { name: "worker_start", arguments: start }) as Awaited<ReturnType<WorkerManager["start"]>>;
     assert.equal(started.duplicate, false);
     await assert.rejects(manager.start({ ...start, task: "Different task" }), /requestId was reused/);
@@ -179,6 +193,23 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     const id = started.worker.id;
     for (let i = 0; i < 100 && (await manager.status(id)).worker.phase !== "idle"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal((await manager.status(id)).turn?.stopReason, "end_turn");
+    const detail = await socketCall(socketPath("workers", env), "tools/call", { name: "worker_detail", arguments: { id } }) as Awaited<ReturnType<WorkerManager["detail"]>>;
+    assert.equal(detail.observedSettings?.model, "xai/grok-build");
+    assert.equal(detail.observedSettings?.effort, "low");
+    assert.ok(detail.metadata.some((entry) => entry.kind === "available_commands_update"));
+    assert.ok(detail.metadata.some((entry) => entry.kind === "runtime"));
+    assert.equal(detail.subagents.hierarchyAvailable, false);
+    const toolPage = await socketCall(socketPath("workers", env), "tools/call", { name: "worker_tool_list", arguments: { id } }) as Awaited<ReturnType<WorkerManager["tools"]>>;
+    assert.equal(toolPage.tools[0]?.title, "Write"); assert.equal(toolPage.tools[0]?.status, "completed");
+    const history = await socketCall(socketPath("workers", env), "tools/call", { name: "worker_record_list", arguments: { id } }) as Awaited<ReturnType<WorkerManager["records"]>>;
+    assert.ok(history.entries.some((entry) => entry.kind === "tool_call_update"));
+    assert.equal(JSON.stringify(history).includes("fixture-secret"), false);
+    assert.equal(JSON.stringify(history).includes("proof="), false);
+    const turnHistory = await socketCall(socketPath("workers", env), "tools/call", { name: "worker_turn_list", arguments: { id } }) as Awaited<ReturnType<WorkerManager["turns"]>>;
+    assert.equal(turnHistory.turns[0]?.prompt, start.task);
+    assert.ok(turnHistory.turns[0]?.dispatchedPromptSeq);
+    const chunk = await socketCall(socketPath("workers", env), "tools/call", { name: "worker_record_read", arguments: { id, seq: turnHistory.turns[0]!.dispatchedPromptSeq! } }) as { data: string };
+    assert.match(chunk.data, /Check your work/);
     assert.ok(scopedChanges.includes(id));
     assert.deepEqual(JSON.parse(await readFile(join(started.worker.cwd!, "mcp-names.json"), "utf8")), ["roles", "fixture-mcp"]);
     const wiring = JSON.parse(await readFile(join(started.worker.cwd!, "mcp-urls.json"), "utf8")) as Array<{ name: string; url: string }>;
@@ -226,6 +257,10 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     await assert.rejects(manager.resume(id, false), /acknowledge the unknown turn/);
     assert.equal((await manager.resume(id, true)).phase, "idle");
     assert.equal(manager.ledger.turn(interrupted.turn.id)?.phase, "unknown");
+    const replay = (await manager.records(id, 0, 50, undefined)).entries.filter((entry) => entry.source === "replay");
+    assert.equal(replay.length, 2); assert.ok(replay.every((entry) => entry.turnId === null));
+    assert.equal(JSON.stringify(replay).includes("PRIVATE REASONING"), false);
+    assert.equal((await manager.turns(id, undefined, 50)).turns.find((turn) => turn.id === interrupted.turn.id)?.prompt, "ASK while account stops");
     await manager.send({ id, message: "Fix the interrupted work", requestId: randomUUID() });
     for (let i = 0; i < 100 && (await manager.status(id)).worker.phase !== "idle"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
     await workerSocket.close(); workerSocket = undefined;

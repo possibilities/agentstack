@@ -61,6 +61,28 @@ export type Bot = {
 /** Bot chat APIs expose sanctioned Codex threads; the canvas does not yet browse them. */
 export type Chat = { botId: string; threadId: string; parentThreadId: string | null; title: string; cwd: string;
   createdAt: string; updatedAt: string; messageCount: number };
+/** API-only tree reads; the canvas currently exposes their schemas in the API catalog. */
+export type ChatTreeRow = {
+  botId: string; threadId: string; parentThreadId: string | null; depth: number;
+  name: string | null; preview: string; agentNickname: string | null; agentRole: string | null; agentPath: string | null;
+  model: string | null; reasoningEffort: string | null; modelProvider: string | null;
+  configurationSource: "nativeLoaded" | "nativePersisted" | "rollout" | "unknown"; configurationAt: string | null;
+  status: { type: "active" | "idle" | "notLoaded" | "systemError" | "unknown"; activeFlags: string[]; freshness: "live" | "unknown" };
+  loaded: boolean | null; cwd: string | null; createdAt: string | null; updatedAt: string | null;
+  sessionId: string | null; forkedFromId: string | null; source: string | null; threadSource: string | null;
+  originator: string | null; cliVersion: string | null; historyMode: string | null; ephemeral: boolean | null;
+  archived: boolean | null; projectId: string | null; sources: Array<"rollout" | "native">; metadataTruncated: boolean;
+};
+export type ChatTreeCoverage = { history: "scanned" | "unavailable"; native: "scanned" | "partial" | "unavailable" | "stopped"; issues: string[] };
+export type ChatTree = { rootThreadId: string | null; rows: ChatTreeRow[]; total: number; nextOffset: number | null;
+  snapshot: string; observedAt: string; coverage: ChatTreeCoverage };
+export type ChatTreeDetailChunk = { text: string; totalChars: number; nextOffset: number | null; revision: string; observedAt: string };
+export type ChatTreeEvidence = { source: "rollout" | "nativeItems"; threadId: string; line?: number; itemId?: string; value: unknown };
+/** JSON document reconstructed from chat_tree_detail chunks with one matching revision. */
+export type ChatTreeDetail = { thread: ChatTreeRow; nativeThread: Record<string, unknown> | null;
+  sessionMeta: ChatTreeEvidence | null; initialContext: ChatTreeEvidence | null; startingInput: ChatTreeEvidence | null;
+  spawn: ChatTreeEvidence | null; spawnArguments: ChatTreeEvidence | null;
+  coverage: ChatTreeCoverage & { detail: "bestEffort" } };
 /** Available for a future transcript reader; the canvas does not yet consume these Bot reads. */
 export type MainChatLive = { threadId: string | null; instance: string | null; revision: number; activeTurnId: string | null;
   coverage: "partial"; items: Array<{ turnId: string; item: Record<string, unknown>; complete: boolean; completed: boolean; omitted: boolean }> };
@@ -77,6 +99,35 @@ export type WorkerSession = { id: string; botId: string; threadId: string; accou
   sourceDirty: boolean; roleRevision: number | null; acpSessionId: string | null; runtimeInstance: string | null;
   phase: "preparing" | "idle" | "running" | "awaiting_input" | "cancelling" | "closed" | "failed" | "needs_recovery";
   currentTurnId: string | null; issue: string | null; createdAt: number; updatedAt: number };
+
+/** API-only conversation details; existing Worker account cards still read worker_list. */
+export type WorkerObservedSettings = { model: string | null; effort: string | null; mode: string | null; at: number; recordSeq: number };
+export type WorkerTurn = { id: string; workerId: string;
+  phase: "queued" | "running" | "awaiting_input" | "cancelling" | "completed" | "cancelled" | "failed" | "unknown";
+  stopReason: string | null; issue: string | null; requestId: string; prompt: string | null;
+  requestedModel: string | null; requestedEffort: string | null; observedSettings: WorkerObservedSettings | null;
+  dispatchedAt: number | null; dispatchedPromptSeq: number | null; createdAt: number; updatedAt: number };
+export type WorkerTurnSummary = Omit<WorkerTurn, "prompt"> & { promptChars: number | null };
+export type WorkerTurnPage = { turns: WorkerTurn[]; nextId: string | null; hasMore: boolean };
+export type WorkerRecord = { seq: number; workerId: string; turnId: string | null; kind: string;
+  source: "live" | "replay" | "response" | "submitted"; at: number; data: Record<string, unknown> | null; dataChars: number; oversized: boolean };
+export type WorkerCapture = { records: number; retainedChars: number; droppedRecords: number; lastObservedAt: number | null;
+  maxRecords: number; maxChars: number; truncated: boolean };
+export type WorkerDetail = { worker: WorkerSession; observedSettings: WorkerObservedSettings | null; metadata: WorkerRecord[]; capture: WorkerCapture;
+  freshness: { connected: boolean; stale: boolean; readAt: number; reason: string | null };
+  subagents: { coverage: "partial" | "unavailable"; hierarchyAvailable: false; childTranscriptsAvailable: false; reason: string } };
+export type WorkerPermission = { id: string; workerId: string; turnId: string; acpRequestId: number; kind: "permission"; title: string;
+  runtimeInstance: string | null; toolCallId: string | null; recordSeq: number | null;
+  options: Array<{ optionId: string; name: string; kind: string }>; state: "pending" | "responded" | "unknown" };
+export type WorkerStatus = { worker: WorkerSession; turn: WorkerTurnSummary | null; pending: WorkerPermission[] };
+export type WorkerRecordPage = { entries: WorkerRecord[]; nextSeq: number; hasMore: boolean; capture: WorkerCapture };
+export type WorkerRecordChunk = { seq: number; offset: number; data: string; nextOffset: number; totalChars: number; hasMore: boolean; encoding: "json-utf16" };
+export type WorkerTool = { toolCallId: string; turnId: string | null; firstSeq: number; lastSeq: number;
+  title: string | null; kind: string | null; status: string | null; record: WorkerRecord };
+export type WorkerTask = { toolCallId: string; sessionId: string; callingSessionId: string; toolStatus: string | null; background: boolean;
+  model: { providerID: string | null; modelID: string | null } | null; recordSeq: number;
+  visibility: "task_reference"; hierarchyVerified: false; childStatus: "unknown" };
+export type WorkerToolPage = { tools: WorkerTool[]; tasks: WorkerTask[]; nextSeq: number; hasMore: boolean };
 
 export type Login = {
   id: string;

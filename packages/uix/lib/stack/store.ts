@@ -85,6 +85,9 @@ export class StackStore {
       if (topic === "defaults_changed") this.refresh("botDefaults");
       if (topic === "voice_changed") this.refresh("voice");
     }, ["bots_changed", "defaults_changed", "voice_changed"]);
+    // Existing cards use the global inventory invalidation. Conversation consumers
+    // subscribe to worker_progress + worker_changed scoped by Worker ID and resnapshot
+    // worker_detail/worker_tool_list or continue immutable worker_record_list pages.
     open("workers", () => { this.refresh("workerRuntimes"); this.refresh("workerSessions"); }, () => {
       this.refresh("workerRuntimes"); this.refresh("workerSessions");
     }, ["workers_changed"]);
@@ -220,7 +223,10 @@ export class StackStore {
     }
   }
 
-  /** Keep one scoped subscription per bot; notices are not proof of sanctioned thread activity. */
+  /** Keep one scoped subscription per bot; notices are not proof of sanctioned thread activity.
+   * chat_tree/chat_tree_detail are API-only reads until a tree view is requested.
+   * Its consumer must snapshot after chats_changed (and reconnect), then fence pages with snapshot.
+   */
   private reconcileScoped(): void {
     if (!this.scopedBots) return;
     const { bots, endpoints } = this.state;

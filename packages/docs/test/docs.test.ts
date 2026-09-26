@@ -25,6 +25,9 @@ test("the reference renders all current Package APIs from the discovery socket",
     assert.match(html, /owner_resources/);
     assert.match(html, /owner_resource_history/);
     assert.match(html, /resources_changed/);
+    assert.match(html, /chat_tree_detail/);
+    assert.match(html, /worker_record_list/);
+    assert.match(html, /worker_progress/);
     assert.match(html, /accounts_changed/);
     assert.match(html, /events\/subscribe/);
     assert.match(html, /&quot;topics&quot;: \[/);
@@ -47,6 +50,8 @@ test("the reference renders all current Package APIs from the discovery socket",
     assert.match(markdownText, /`bot_defaults_get`/);
     assert.match(markdownText, /`owner_resources`/);
     assert.match(markdownText, /`owner_resource_history`/);
+    assert.match(markdownText, /`chat_tree`/);
+    assert.match(markdownText, /`worker_tool_list`/);
     assert.match(markdownText, /`accounts_changed`/);
     assert.match(markdownText, /```json\n[\s\S]*"method": "events\/subscribe"/);
     assert.equal((await fetch(new URL(".md", docs.url))).status, 200);

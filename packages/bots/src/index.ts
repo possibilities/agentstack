@@ -1,4 +1,5 @@
-export { api, botList, botStart, botStop, botAssign, botRemove, botDefaultsGet, botDefaultsSet, topics, type BotsContext, type BotsTopic } from "../api.js";
+export { api, botList, botStart, botStop, botAssign, botRemove, botDefaultsGet, botDefaultsSet, chatTree, chatTreeDetail, topics, type BotsContext, type BotsTopic } from "../api.js";
+export { type ChatTreeRow } from "./chat-tree.js";
 export { appServerSocket, listActiveThreads, type ActiveThread } from "./threads.js";
 export { StateStore, DEFAULT_BOT_SETTINGS, type StoredServer, type BotSettings } from "./store.js";
 export { runningTree } from "./tree.js";

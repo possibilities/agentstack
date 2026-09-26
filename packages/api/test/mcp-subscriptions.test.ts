@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { lstat, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { z } from "zod";
 import { operation, type InvocationContext } from "../src/operation.js";
@@ -77,6 +80,47 @@ test("MCP subscriptions return an initial value, coalesce notices, reconnect wit
   } finally {
     releaseFirst?.();
     await service.close();
+    await socket.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("optional Bot scopes cannot bypass chat and thread wakeup feedback fencing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "as-tree-events-"));
+  const env = { AGENTSTACK_STATE_DIR: root };
+  const socket = await serveSocket({
+    info: { name: "bots", description: "Bots.", transportDescription: "Socket.", path: socketPath("bots", env) },
+    context: {}, operations: [operation({ name: "chat_tree", description: "Read tree.", input: z.strictObject({}), output: z.object({ nodes: z.array(z.string()) }),
+      annotations: { readOnlyHint: true }, async call() { return { nodes: [] }; } })],
+    events: { topics: { chats_changed: "Refresh chats.", threads_changed: "Refresh threads." },
+      scope: { description: "Bot ID.", example: "bot-1", valid: (_ctx, scope) => ["bot-1", "bot-2"].includes(scope) } },
+  });
+  const service = new McpEventSubscriptions(env, async () => undefined, async () => undefined);
+  let restored: McpEventSubscriptions | undefined;
+  try {
+    for (const topic of ["chats_changed", "threads_changed"]) {
+      for (const scope of [undefined, "bot-1"]) {
+        await assert.rejects(service.subscribe("bots", { topic, scope, readOperation: "chat_tree" }, caller), /turn feedback loop/);
+      }
+      const other = await service.subscribe("bots", { topic, scope: "bot-2", readOperation: "chat_tree" }, caller);
+      assert.equal(other.subscription.scope, "bot-2");
+    }
+    await service.close();
+    // Simulate subscriptions admitted by an older owner, before the chat and
+    // optional-scope guard. Restart must fence them before any delivery too.
+    const db = new DatabaseSync(join(root, "event-subscriptions.sqlite"));
+    try {
+      db.exec("UPDATE subscriptions SET scope = CASE WHEN topic = 'chats_changed' THEN NULL ELSE 'bot-1' END");
+    } finally { db.close(); }
+    let delivered = 0;
+    restored = new McpEventSubscriptions(env, async () => undefined, async () => { delivered++; });
+    restored.resume();
+    await until(() => restored!.status(caller).subscriptions.every((item) => item.state === "error"));
+    assert.equal(delivered, 0);
+    assert.ok(restored.status(caller).subscriptions.every((item) => item.lastError?.includes("turn feedback loop")));
+  } finally {
+    await service.close();
+    await restored?.close();
     await socket.close();
     await rm(root, { recursive: true, force: true });
   }

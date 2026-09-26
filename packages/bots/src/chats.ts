@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { appServerSocket } from "./threads.js";
 import type { ServerView } from "./supervisor.js";
 import WebSocket from "ws";
+import { historicalMetadata, parent } from "./chat-metadata.js";
 
 type RecordValue = Record<string, unknown>;
 const object = (value: unknown): RecordValue => value && typeof value === "object" && !Array.isArray(value) ? value as RecordValue : {};
@@ -47,6 +48,8 @@ export class ChatIndex {
       id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, thread_id TEXT NOT NULL, input TEXT NOT NULL,
       state TEXT NOT NULL, turn_id TEXT, issue TEXT, created_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS chat_queue_next ON chat_queue(bot_id,thread_id,state,created_at);`);
+    if (!(this.db.prepare("PRAGMA table_info(chats)").all() as { name: string }[]).some((column) => column.name === "metadata"))
+      this.db.exec("ALTER TABLE chats ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'");
     this.db.prepare("UPDATE chat_queue SET state='unknown',issue='Owner restarted during dispatch; inspect the thread before retrying' WHERE state='dispatching'").run();
   }
 
@@ -79,22 +82,26 @@ export class ChatIndex {
         if (!entry.isFile() || !/^rollout-.*-[0-9a-f-]{36}\.jsonl$/i.test(entry.name)) continue;
         const stat = await lstat(path);
         if (!stat.isFile()) continue;
-        const existing = this.db.prepare("SELECT thread_id AS id,parent_id AS parent,size,mtime FROM chats WHERE bot_id=? AND path=?").get(botId, path) as
-          { id: string; parent: string | null; size: number; mtime: number } | undefined;
-        if (existing?.size === stat.size && existing.mtime === stat.mtimeMs) {
+        const existing = this.db.prepare("SELECT thread_id AS id,parent_id AS parent,size,mtime,metadata FROM chats WHERE bot_id=? AND path=?").get(botId, path) as
+          { id: string; parent: string | null; size: number; mtime: number; metadata: string } | undefined;
+        if (existing?.size === stat.size && existing.mtime === stat.mtimeMs && existing.metadata !== "{}") {
           candidates.push({ path, id: existing.id, parent: existing.parent, size: stat.size, mtime: stat.mtimeMs });
           continue;
         }
         const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-        let prefix: string;
-        try { const buffer = Buffer.alloc(65536); const { bytesRead } = await file.read(buffer, 0, buffer.length, 0); prefix = buffer.subarray(0, bytesRead).toString("utf8"); }
+        let prefix = "";
+        try { for await (const line of file.readLines()) { prefix = line; break; } }
         finally { await file.close(); }
         let first: RecordValue;
         try { first = object(JSON.parse(prefix.split("\n", 1)[0])); } catch { continue; }
         const meta = object(first.payload);
         const id = text(meta.id);
-        if (first.type !== "session_meta" || !uuid.test(id) || entry.name.match(/([0-9a-f-]{36})\.jsonl$/i)?.[1] !== id) continue;
-        candidates.push({ path, id, parent: text(meta.parent_thread_id) || null, size: stat.size, mtime: stat.mtimeMs });
+        // Reverts retain SessionMeta.id but use a fresh rollout ID in the filename
+        // (codexnk protocol.rs HistoryPosition). The owned metadata is identity.
+        if (first.type !== "session_meta" || !uuid.test(id)) continue;
+        const parentId = parent(meta);
+        if (parentId === undefined) continue;
+        candidates.push({ path, id, parent: parentId, size: stat.size, mtime: stat.mtimeMs });
       }
     };
     const scanRoot = async (dir: string, sharedTop = false): Promise<void> => {
@@ -113,7 +120,18 @@ export class ChatIndex {
     if (mainThreadId) {
       await scanRoot(history, true);
     }
-    const parents = new Map(candidates.map((candidate) => [candidate.id, candidate.parent]));
+    // Several physical rollouts may retain the same stable thread identity. While
+    // stopped, latest mtime is best-effort evidence, not Codex's current pointer.
+    // Conflicting immutable parents are never resolved by file order or recency.
+    const selected = new Map<string, typeof candidates[number]>();
+    const conflicts = new Set<string>();
+    for (const candidate of candidates) {
+      const old = selected.get(candidate.id);
+      if (old && old.parent !== candidate.parent) conflicts.add(candidate.id);
+      if (!old || candidate.mtime > old.mtime || candidate.mtime === old.mtime && candidate.path > old.path) selected.set(candidate.id, candidate);
+    }
+    for (const id of conflicts) selected.delete(id);
+    const parents = new Map([...selected.values()].map((candidate) => [candidate.id, candidate.parent]));
     const sanctioned = (threadId: string): boolean => {
       const visited = new Set<string>();
       let id: string | null = threadId;
@@ -123,15 +141,17 @@ export class ChatIndex {
       }
       return false;
     };
-    for (const candidate of candidates) {
+    for (const candidate of selected.values()) {
       if (!sanctioned(candidate.id)) continue;
       const { path, id, parent } = candidate;
       found.add(path);
-      const existing = this.db.prepare("SELECT size,mtime FROM chats WHERE bot_id=? AND path=?").get(botId, path) as { size: number; mtime: number } | undefined;
-      if (existing?.size === candidate.size && existing.mtime === candidate.mtime) continue;
+      const existing = this.db.prepare("SELECT size,mtime,metadata FROM chats WHERE bot_id=? AND path=?").get(botId, path) as { size: number; mtime: number; metadata: string } | undefined;
+      if (existing?.size === candidate.size && existing.mtime === candidate.mtime && existing.metadata !== "{}") continue;
       const content = await fileText(path);
       const lines = content.split("\n");
       const meta = object(object(JSON.parse(lines[0] ?? "null")).payload);
+      const metadata = historicalMetadata(meta);
+      metadata.version = 1;
       const messages: { line: number; role: string; body: string }[] = [];
       let title = "";
       let updated = text(meta.timestamp);
@@ -141,8 +161,22 @@ export class ChatIndex {
       for (let i = 1; i < lines.length; i++) {
         let record: RecordValue;
         try { record = object(JSON.parse(lines[i]!)); } catch { continue; }
-        if (record.type !== "response_item") continue;
         const payload = object(record.payload);
+        const ownContext = typeof meta.subagent_history_start_ordinal !== "number" || meta.subagent_history_start_ordinal === 0 ||
+          typeof record.ordinal === "number" && record.ordinal >= meta.subagent_history_start_ordinal;
+        if (record.type === "turn_context" && ownContext) {
+          metadata.model = typeof payload.model === "string" ? payload.model.slice(0, 1024) : null;
+          metadata.reasoningEffort = typeof payload.effort === "string" ? payload.effort.slice(0, 128) : null;
+          metadata.configurationAt = text(record.timestamp) || null;
+        }
+        if (record.type === "event_msg" && payload.type === "thread_settings_applied" && (payload.thread_id === id || !payload.thread_id && !meta.parent_thread_id)) {
+          const settings = object(payload.thread_settings);
+          metadata.model = typeof settings.model === "string" ? settings.model.slice(0, 1024) : null;
+          metadata.reasoningEffort = typeof settings.reasoning_effort === "string" ? settings.reasoning_effort.slice(0, 128) : null;
+          metadata.modelProvider = typeof settings.model_provider_id === "string" ? settings.model_provider_id.slice(0, 1024) : metadata.modelProvider;
+          metadata.configurationAt = text(record.timestamp) || null;
+        }
+        if (record.type !== "response_item") continue;
         const role = payload.type === "message" ? text(payload.role) : text(payload.type);
         const body = [contentText(payload.content), contentText(payload.summary), text(payload.name), text(payload.arguments), text(payload.input), outputText(payload.output)]
           .filter(Boolean).join("\n");
@@ -154,11 +188,11 @@ export class ChatIndex {
       this.db.exec("BEGIN");
       try {
         this.db.prepare("DELETE FROM messages WHERE bot_id=? AND thread_id=?").run(botId, id);
-        this.db.prepare(`INSERT INTO chats(bot_id,thread_id,parent_id,path,size,mtime,title,cwd,created_at,updated_at,message_count)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(bot_id,thread_id) DO UPDATE SET
+        this.db.prepare(`INSERT INTO chats(bot_id,thread_id,parent_id,path,size,mtime,title,cwd,created_at,updated_at,message_count,metadata)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(bot_id,thread_id) DO UPDATE SET
           parent_id=excluded.parent_id,path=excluded.path,size=excluded.size,mtime=excluded.mtime,
-          title=excluded.title,cwd=excluded.cwd,created_at=excluded.created_at,updated_at=excluded.updated_at,message_count=excluded.message_count`)
-          .run(botId, id, parent, path, candidate.size, candidate.mtime, title || "(untitled)", text(meta.cwd), text(meta.timestamp), updated, messages.length);
+          title=excluded.title,cwd=excluded.cwd,created_at=excluded.created_at,updated_at=excluded.updated_at,message_count=excluded.message_count,metadata=excluded.metadata`)
+          .run(botId, id, parent, path, candidate.size, candidate.mtime, title || "(untitled)", text(meta.cwd), text(meta.timestamp), updated, messages.length, JSON.stringify(metadata));
         const insert = this.db.prepare("INSERT INTO messages(bot_id,thread_id,line,role,body) VALUES(?,?,?,?,?)");
         for (const message of messages) insert.run(botId, id, message.line, message.role, message.body);
         this.db.exec("COMMIT");
@@ -176,6 +210,27 @@ export class ChatIndex {
     return this.db.prepare(`SELECT bot_id AS botId,thread_id AS threadId,parent_id AS parentThreadId,path,title,cwd,
       created_at AS createdAt,updated_at AS updatedAt,message_count AS messageCount FROM chats WHERE bot_id=? AND thread_id=?`)
       .get(botId, threadId) as (ChatRow & { path: string }) | undefined;
+  }
+  /** Already lineage-filtered during refresh; tree callers also verify the merged parent graph. */
+  treeRows(botId: string): (ChatRow & { metadata: RecordValue })[] {
+    return (this.db.prepare(`SELECT bot_id AS botId,thread_id AS threadId,parent_id AS parentThreadId,title,cwd,
+      created_at AS createdAt,updated_at AS updatedAt,message_count AS messageCount,metadata FROM chats WHERE bot_id=? ORDER BY thread_id`)
+      .all(botId) as (ChatRow & { metadata: string })[]).map((row) => ({ ...row, metadata: object(JSON.parse(row.metadata)) }));
+  }
+  /** Caller must have verified the merged native/historical lineage before reading this private record. */
+  async *treeRecords(botId: string, threadId: string): AsyncGenerator<{ line: number; record: RecordValue }> {
+    const row = this.row(botId, threadId);
+    if (!row) return;
+    const file = await open(row.path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      let line = 0;
+      for await (const source of file.readLines()) {
+        line++;
+        let record: RecordValue;
+        try { record = object(JSON.parse(source)); } catch { continue; }
+        yield { line, record };
+      }
+    } finally { await file.close(); }
   }
   allowed(botId: string, threadId: string, mainThreadId: string | null): boolean {
     if (!mainThreadId) return false;
@@ -239,7 +294,7 @@ export class ChatIndex {
     const source = (await fileText(row.path)).split("\n")[line - 1];
     if (!source) throw new Error("rollout line not found; refresh chat history");
     const parsed = object(JSON.parse(source));
-    if (parsed.type !== "response_item" && parsed.type !== "event_msg") throw new Error("line is not a chat record");
+    if (!["response_item", "event_msg", "session_meta", "turn_context"].includes(text(parsed.type))) throw new Error("line is not a chat record");
     if (offset > source.length) throw new Error("offset exceeds record length");
     const end = Math.min(source.length, offset + length);
     return { text: source.slice(offset, end), totalChars: source.length, nextOffset: end < source.length ? end : null };

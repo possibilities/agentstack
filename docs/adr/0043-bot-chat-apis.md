@@ -2,6 +2,8 @@
 
 Status: accepted, 2026-09-25. Extends [ADR 0029](0029-bots-own-codex-lifecycle.md) and [ADR 0026](0026-lazy-server-main-thread.md).
 
+Extended by [ADR 0055](0055-agent-tree-observability.md) for rich nested Bot subagent observations and their relationship to ACP Workers.
+
 Chats are Codex threads owned by a Bot: its adopted main thread and descendants, never other top-level threads on the same socket. The `bots` Package API owns the chat operations because it already owns the process, history directory, account binding, and root identity. ACP Worker sessions do not enter this API. A `chat_open` first turn binds the first durable root under the Bot's supervisor queue; later `chat_send` requires a sanctioned thread. If another UI has materialized a root, it is adopted instead of allocating a replacement.
 
 Historical search and raw reading use an AgentStack-private, rebuildable SQLite FTS index over each Bot's Codex rollouts, including legacy shared history only when the metadata proves the adopted lineage. The index stores bounded message bodies for search and reads the source record on demand; a separate bounded chunk operation recovers large records. It never indexes arbitrary Codex homes, external paths, ACP transcripts, or unrelated top-level threads. Codex remains authoritative for live thread status, paged turns/items, occurrence cursors, and attachment records. An invalidation event is not a transcript or a proof of root activity; UIs wanting lossless deltas, approvals, and server-initiated requests connect to the running Bot's existing app-server endpoint after resolving its sanctioned thread.
