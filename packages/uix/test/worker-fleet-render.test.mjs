@@ -122,6 +122,34 @@ test("Claude usage shows per-account windows, resets, provider-unit extra usage 
   assert.match(text(status), /provider_unavailable · showing last good read/);
 });
 
+test("Exhausted Devin quota reads Limit and Grok Bot folds into the sole Grok Worker card", () => {
+  const accounts = [account("devin-a", { provider: "devin" }), account("grok-a", { provider: "grok" })];
+  const at = Date.now();
+  const observation = { observedAtMs: at, lastAttemptAtMs: at, fresh: true, error: null };
+  const devin = { planLabel: "Pro", billing: "quota", dailyRemainingPercent: 100, weeklyRemainingPercent: 0, dailyResetsAt: null, weeklyResetsAt: null,
+    periodStart: null, periodEnd: null, promptCreditsMonthly: -1, promptCreditsAvailable: -1, weeklyQuotaHidden: null, displayName: null };
+  const grok = { subscriptionTier: null, included: { usedPercent: 49, remainingPercent: 51, periodType: "weekly", periodStart: null, resetsAt: null, allocatedUsd: null },
+    prepaidBalanceUsd: 0, paygEnabled: false, paygUsedUsd: 0, paygCapUsd: 0, paygRemainingUsd: 0 };
+  const bot = { usedPercent: 22.5, periodStart: "2026-09-20T00:00:00Z", resetsAt: "2026-09-27T00:00:00Z", hasAvailableUsage: true,
+    planLabel: "SuperGrok Plus", fundingPlan: null, onDemandEligible: true, onDemandEnabled: false, trial: false, teamSeat: false };
+  const snapshot = (grokAccounts) => ({ atMs: at, inventoryAtMs: at, inventoryError: null, grokBot: { ...observation, usage: bot },
+    accounts: [{ ...accounts[0], scope: "worker", ...observation, usage: devin }, ...grokAccounts.map((item) => ({ ...item, scope: "worker", ...observation, usage: grok }))] });
+  const html = render(UsageWindow, { accounts, usage: snapshot([accounts[1]]) });
+  const devinCard = card(html, "usage-account:worker:devin-a");
+  assert.match(devinCard, />Limit</);
+  const grokCard = card(html, "usage-account:worker:grok-a");
+  assert.match(grokCard, /aria-label="grok-worker-account-1 weekly remaining"[^>]*aria-valuenow="51"/);
+  assert.match(grokCard, /aria-label="grok-worker-account-1 bot remaining"[^>]*aria-valuenow="77.5"/);
+  assert.match(grokCard, /aria-label="Inspect Grok Bot usage"/);
+  assert.match(text(grokCard), /SuperGrok Plus/);
+  assert.equal(html.match(/<article\b[^>]*data-node="grok-bot-usage"/), null);
+  assert.doesNotMatch(html, /grok-bot-account/);
+  const twoGroks = [accounts[1], account("grok-b", { provider: "grok" })];
+  const separate = render(UsageWindow, { accounts: [accounts[0], ...twoGroks], usage: snapshot(twoGroks) });
+  assert.match(text(card(separate, "grok-bot-usage")), /Grok Bot/);
+  assert.doesNotMatch(card(separate, "usage-account:worker:grok-a"), /bot remaining/);
+});
+
 test("Claude catalog renders SDK evidence and stale/unavailable states without ACP claims", () => {
   const accounts = [account("claude-a"), account("claude-b", { enabled: false }), account("claude-c", { ready: false })];
   const catalog = (accountId) => ({ accountId, provider: "claude", observedAt: new Date().toISOString(), source: "claude-sdk-supported-models",

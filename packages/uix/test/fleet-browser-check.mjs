@@ -233,7 +233,7 @@ try {
   await jump("usage", "Usage");
   await usageWindow.getByRole("meter", { name: "codex-bot-account-1 5 hours remaining", exact: true }).waitFor();
   assert.match(await usageWindow.innerText(), /\$300\.00 included/);
-  await usageWindow.getByRole("button", { name: "Inspect grok-bot-account-1 usage", exact: true }).waitFor();
+  await usageWindow.getByRole("button", { name: "Inspect Grok Bot usage", exact: true }).waitFor();
   await usageWindow.getByRole("button", { name: "Inspect grok-worker-account-1 usage", exact: true }).click();
   await page.getByRole("complementary", { name: "Inspector" }).getByText("allocatedUsd", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Package API reference", exact: true }).click();

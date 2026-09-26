@@ -5,19 +5,22 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { accountLabels, grokBotLabel, shortId, untilTime, usageRows, workerAccountLabels } from "@/lib/stack/derive";
+import { accountLabels, shortId, untilTime, usageRows, workerAccountLabels } from "@/lib/stack/derive";
 import { nodeKey, type NodeRef, type UsageAccount, type UsageObservation, type UsageSnapshot } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { Empty, headroomTone, Meter, NodeCard, NodeTitle, Orb, StatusDot, Time } from "./primitives";
 import { useNow, useStack, useStore } from "./provider";
 import { Window } from "./window";
 
-type Gauge = { label: string; remaining: number | null; resetsAt: string | null };
+type Gauge = { label: string; remaining: number | null; resetsAt: string | null; inspect?: { node: NodeRef; label: string } };
 type Summary = { plan: string | null; limited: boolean; gauges: Gauge[]; notes: string[] };
 
 const money = (value: number) => value.toLocaleString(undefined, { style: "currency", currency: "USD" });
 const pct = (value: number) => `${Math.round(value)}%`;
 const freshWindow = 5 * 60_000;
+const grokBotNode: NodeRef = { kind: "grok-bot-usage" };
+/** An exhausted window is a limit, like Codex's own limit flag. */
+const exhausted = (gauges: Gauge[]) => gauges.some((gauge) => gauge.remaining === 0);
 
 function freshness(observation: UsageObservation, now: number): "fresh" | "stale" | "never" {
   if (observation.observedAtMs === null) return "never";
@@ -46,12 +49,9 @@ function summarize(account: UsageAccount): Summary | null {
     if (usage.included.allocatedUsd !== null) notes.push(`${money(usage.included.allocatedUsd)} included`);
     if (usage.prepaidBalanceUsd) notes.push(`${money(usage.prepaidBalanceUsd)} prepaid`);
     if (usage.paygEnabled || usage.paygUsedUsd) notes.push(`PAYG ${money(usage.paygUsedUsd ?? 0)}${usage.paygCapUsd ? ` / ${money(usage.paygCapUsd)}` : ""}`);
-    return {
-      plan: usage.subscriptionTier,
-      limited: false,
-      gauges: [{ label: usage.included.periodType ?? "included", remaining: usage.included.remainingPercent, resetsAt: usage.included.resetsAt }],
-      notes,
-    };
+    const gauges = [{ label: usage.included.periodType ?? "included", remaining: usage.included.remainingPercent, resetsAt: usage.included.resetsAt }];
+    // Pay-as-you-go continues past the included allocation.
+    return { plan: usage.subscriptionTier, limited: !usage.paygEnabled && exhausted(gauges), gauges, notes };
   }
   if (account.provider === "claude") {
     const usage = account.usage;
@@ -60,12 +60,8 @@ function summarize(account: UsageAccount): Summary | null {
     // Extra-usage credits and limits are provider units, not dollars.
     if (extra?.enabled) notes.push(`extra usage ${extra.usedCredits?.toLocaleString() ?? "?"}${extra.monthlyLimit !== null ? ` / ${extra.monthlyLimit.toLocaleString()}` : ""} credits`);
     else if (extra?.enabled === false) notes.push("extra usage off");
-    return {
-      plan: null,
-      limited: false,
-      gauges: usage.windows.map((window) => ({ label: window.label, remaining: window.remainingPercent, resetsAt: window.resetsAt })),
-      notes,
-    };
+    const gauges = usage.windows.map((window) => ({ label: window.label, remaining: window.remainingPercent, resetsAt: window.resetsAt }));
+    return { plan: null, limited: exhausted(gauges), gauges, notes };
   }
   const usage = account.usage;
   const gauges: Gauge[] = [];
@@ -78,16 +74,31 @@ function summarize(account: UsageAccount): Summary | null {
   const available = credits(usage.promptCreditsAvailable);
   const monthly = credits(usage.promptCreditsMonthly);
   if (available !== null) notes.push(`${available}${monthly !== null ? ` / ${monthly}` : ""} credits`);
-  return { plan: usage.planLabel, limited: false, gauges, notes };
+  return { plan: usage.planLabel, limited: exhausted(gauges), gauges, notes };
 }
 
-function grokBotSummary(usage: NonNullable<UsageSnapshot["grokBot"]["usage"]>): Summary {
+type GrokBot = UsageSnapshot["grokBot"];
+
+function grokBotSummary(usage: NonNullable<GrokBot["usage"]>, label: string): Summary {
   return {
     plan: usage.planLabel,
     limited: !usage.hasAvailableUsage,
-    gauges: [{ label: "period", remaining: Math.max(0, 100 - usage.usedPercent), resetsAt: usage.resetsAt }],
-    notes: usage.onDemandEnabled ? ["on-demand on"] : [],
+    gauges: [{ label, remaining: Math.max(0, 100 - usage.usedPercent), resetsAt: usage.resetsAt, inspect: { node: grokBotNode, label: "Grok Bot usage" } }],
+    notes: usage.onDemandEnabled ? [`${label} on-demand on`] : [],
   };
+}
+
+/** The Grok Worker login's card also carries the machine's Grok Bot usage. */
+function withGrokBot(summary: Summary, usage: NonNullable<GrokBot["usage"]>): Summary {
+  const bot = grokBotSummary(usage, "bot");
+  return { plan: summary.plan ?? bot.plan, limited: summary.limited || bot.limited,
+    gauges: [...summary.gauges, ...bot.gauges], notes: [...summary.notes, ...bot.notes] };
+}
+
+/** One freshness signal for a merged card: a failed read, then a stale one, wins. */
+function worstObservation(a: UsageObservation, b: UsageObservation): UsageObservation {
+  const rank = (observation: UsageObservation) => observation.error ? 2 : observation.fresh && observation.observedAtMs !== null ? 0 : 1;
+  return rank(b) > rank(a) ? b : a;
 }
 
 /** Observation age and last error, shown in the inspector. */
@@ -160,7 +171,9 @@ function UsageCard({ node, names, observation, summary, orbs }: {
         <div className="flex flex-col gap-1.5">
           {summary.gauges.map((gauge) => (
             <div key={gauge.label} className="grid grid-cols-[3.75rem_1fr_auto] items-center gap-2 text-[0.68rem] text-muted-foreground">
-              <span className="truncate">{gauge.label}</span>
+              {gauge.inspect ? (
+                <span data-node={nodeKey(gauge.inspect.node)} className="truncate"><NodeTitle node={gauge.inspect.node} label={gauge.inspect.label}>{gauge.label}</NodeTitle></span>
+              ) : <span className="truncate">{gauge.label}</span>}
               <Meter value={gauge.remaining} label={`${names[0].label} ${gauge.label} remaining`} />
               <span className="w-12 text-right tabular-nums" title={gauge.resetsAt ?? undefined}>
                 {gauge.resetsAt ? untilTime(Date.parse(gauge.resetsAt), now) : gauge.remaining === null ? "—" : pct(gauge.remaining)}
@@ -184,6 +197,10 @@ export function UsageWindow() {
   const observed = usage.data?.accounts.filter((account) => account.usage) ?? [];
   const waiting = usage.data?.accounts.filter((account) => !account.usage) ?? [];
   const grokBot = usage.data?.grokBot;
+  const rows = usageRows(observed);
+  // Grok Bot folds into the card of the only Grok Worker login; otherwise it stands alone.
+  const grokAccounts = usage.data?.accounts.filter((account) => account.provider === "grok") ?? [];
+  const grokHost = grokBot?.usage && grokAccounts.length === 1 ? rows.find((row) => row[0] === grokAccounts[0]) ?? null : null;
   return (
     <Window id="usage" title="Usage" subtitle="usage" icon={GaugeIcon} accent="owner" node={{ kind: "usage" }}
       count={usage.data ? usage.data.accounts.length + 1 : undefined} status={status.usage} endpoint={endpoints.usage} updatedAt={usage.at} error={usage.error}
@@ -199,13 +216,17 @@ export function UsageWindow() {
       {usage.data?.inventoryError ? <Alert variant="destructive"><AlertDescription>Inventory {usage.data.inventoryError.replace("_", " ")} · <Time at={usage.data.inventoryAtMs} /></AlertDescription></Alert> : null}
       {usage.data ? (
         <div className="flex flex-col gap-2">
-          {usageRows(observed).map((row) => (
-            <UsageCard key={`${row[0].scope}:${row[0].id}`} node={nodeOf(row[0])} observation={row[0]} summary={summarize(row[0])!}
-              orbs={row.map((account) => account.id)} names={row.map((account) => ({ node: nodeOf(account), label: label(account) }))} />
-          ))}
-          {grokBot?.usage ? (
-            <UsageCard node={{ kind: "grok-bot-usage" }} observation={grokBot} summary={grokBotSummary(grokBot.usage)} orbs={[]}
-              names={[{ node: { kind: "grok-bot-usage" }, label: grokBotLabel }]} />
+          {rows.map((row) => {
+            const bot = row === grokHost ? grokBot : null;
+            return (
+              <UsageCard key={`${row[0].scope}:${row[0].id}`} node={nodeOf(row[0])} observation={bot ? worstObservation(row[0], bot) : row[0]}
+                summary={bot?.usage ? withGrokBot(summarize(row[0])!, bot.usage) : summarize(row[0])!}
+                orbs={row.map((account) => account.id)} names={row.map((account) => ({ node: nodeOf(account), label: label(account) }))} />
+            );
+          })}
+          {grokBot?.usage && !grokHost ? (
+            <UsageCard node={grokBotNode} observation={grokBot} summary={grokBotSummary(grokBot.usage, "period")} orbs={[]}
+              names={[{ node: grokBotNode, label: "Grok Bot" }]} />
           ) : null}
           {waiting.length || (grokBot && !grokBot.usage) ? (
             <div className="flex flex-wrap items-center gap-1 px-0.5 pt-1">
@@ -218,8 +239,8 @@ export function UsageWindow() {
                 </span>
               ))}
               {grokBot && !grokBot.usage ? (
-                <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem]">
-                  <NodeTitle node={{ kind: "grok-bot-usage" }} label={`${grokBotLabel} usage`}>{grokBotLabel}</NodeTitle>
+                <span data-node={nodeKey(grokBotNode)} title={grokBot.error ?? "Waiting"} className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem]">
+                  <NodeTitle node={grokBotNode} label="Grok Bot usage">Grok Bot</NodeTitle>
                 </span>
               ) : null}
             </div>
