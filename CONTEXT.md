@@ -36,7 +36,7 @@ An owner-supervised stdio ACP process for one ready Worker account: OpenCode for
 
 ## Worker catalog
 
-A no-turn observation of model and dependent effort choices actually offered by one account's ACP session, with native Devin model IDs as separately labelled evidence. Cached values retain source, observation time and stale/error state; they do not by themselves prove successful inference or spendable quota.
+A no-turn observation of model and dependent effort choices actually offered by one account's ACP session, with native Devin model IDs as separately labelled evidence. A Codex catalog omits OpenAI registry entries that offer no effort choice or belong to the o3, realtime and image families, since the ChatGPT sign-in cannot dispatch them; a Grok catalog likewise omits Imagine media-generation models. Cached values retain source, observation time and stale/error state; they do not by themselves prove successful inference or spendable quota.
 
 ## Usage observation
 

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { serveApi, socketCall, socketPath } from "@agentstack/api";
 import { WorkerSupervisor } from "../src/supervisor.js";
-import { nativeDevinModels, optionsOf } from "../src/catalog.js";
+import { catalogModels, nativeDevinModels, optionsOf } from "../src/catalog.js";
 import { writeV2Credential } from "./v2-credential-fixture.js";
 
 const fake = `#!/usr/bin/env node
@@ -26,11 +26,11 @@ process.stdin.on('data', (chunk) => {
     if (message.method === 'initialize') result = { protocolVersion: 1, agentInfo: { name: 'fake', version: 'test' }, agentCapabilities: { loadSession: true } };
     else if (message.method === 'session/new' || message.method === 'session/load') result = { sessionId: id, configOptions: [
       { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: id + '-small', options: [
-        { value: id + '-small', name: 'Small' }, { value: id + '-large', name: 'Large' }] },
+        { value: id + '-small', name: 'Small' }, { value: id + '-large', name: 'Large' }, { value: id + '-plain', name: 'Plain' }, { value: id + '-imagine', name: 'Imagine' }] },
       { id: 'thinking', name: 'Effort', category: 'thought_level', type: 'select', currentValue: 'low', options: [{ value: 'low', name: 'Low' }] }] };
     else if (message.method === 'session/set_config_option') {
       selected = message.params.value;
-      result = { configOptions: [{ id: 'thinking', name: 'Effort', category: 'thought_level', type: 'select', currentValue: 'low',
+      result = { configOptions: selected.endsWith('plain') ? [] : [{ id: 'thinking', name: 'Effort', category: 'thought_level', type: 'select', currentValue: 'low',
         options: selected.endsWith('large') ? [{ value: 'high', name: 'High' }, { value: 'max', name: 'Max' }] : [{ value: 'low', name: 'Low' }] }] };
     } else throw new Error('unexpected method: ' + message.method);
     process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }) + '\\n');
@@ -46,27 +46,31 @@ test("ACP catalog reflects the exact account process and dependent effort choice
   const auth = await serveApi({ name: "auth", transport: "socket", env });
   const supervisor = new WorkerSupervisor(dir, env);
   try {
-    const prepare = async () => {
-      const response = await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_prepare", arguments: { provider: "grok" } }) as { account: { id: string } };
+    const prepare = async (provider: "grok" | "codex" = "grok") => {
+      const response = await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_prepare", arguments: { provider } }) as { account: { id: string } };
       const id = response.account.id;
       const accountDir = join(dir, "worker-accounts", id, "data", "opencode");
       await (await import("node:fs/promises")).mkdir(accountDir, { recursive: true });
-      await writeV2Credential(join(accountDir, "opencode.db"), "xai", JSON.stringify({ type: "oauth", access: id, refresh: id }));
+      await writeV2Credential(join(accountDir, "opencode.db"), provider === "grok" ? "xai" : "openai",
+        JSON.stringify({ type: "oauth", access: id, refresh: id, metadata: { accountID: "acct-" + id } }));
       await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_confirm", arguments: { id } });
       return id;
     };
     const first = await prepare();
     const second = await prepare();
+    const codex = await prepare("codex");
     await supervisor.reconcile();
     const a = await supervisor.catalog(first, true);
     const b = await supervisor.catalog(second, true);
-    assert.equal(a.models.length, 2);
-    assert.deepEqual(a.models.map((model) => model.efforts), [["low"], ["high", "max"]]);
-    assert.ok(a.models.every((model) => model.id.startsWith(first)));
+    const c = await supervisor.catalog(codex, true);
+    assert.equal(a.models.length, 3);
+    assert.deepEqual(a.models.map((model) => model.efforts), [["low"], ["high", "max"], []]);
+    assert.ok(a.models.every((model) => model.id.startsWith(first) && !model.id.endsWith("imagine")), "Grok omits Imagine media models");
     assert.ok(b.models.every((model) => model.id.startsWith(second)));
     assert.notEqual(a.models[0]!.id, b.models[0]!.id);
+    assert.deepEqual(c.models.map((model) => model.id), [codex + "-small", codex + "-large", codex + "-imagine"], "Codex catalogs omit entries without effort choices");
     assert.equal((await supervisor.catalog(first, false)).observedAt, a.observedAt);
-    assert.equal(supervisor.runtimeList().length, 2);
+    assert.equal(supervisor.runtimeList().length, 3);
     await supervisor.drain(second);
     const stale = await supervisor.catalog(second, true);
     assert.equal(stale.stale, true);
@@ -74,7 +78,7 @@ test("ACP catalog reflects the exact account process and dependent effort choice
     assert.equal((await supervisor.catalog(second, false)).stale, true);
     await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_set_enabled", arguments: { id: first, enabled: false } }).catch(() => undefined);
     await supervisor.reconcile();
-    assert.equal(supervisor.runtimeList().length, 1);
+    assert.equal(supervisor.runtimeList().length, 2);
   } finally {
     await supervisor.close();
     await auth.close();
@@ -87,6 +91,16 @@ test("catalog parsing preserves native IDs and grouped ACP options", () => {
   assert.deepEqual(optionsOf({ configOptions: [{ id: "model", name: "Model", category: "model", type: "select", options: [
     { group: "recommended", name: "Recommended", options: [{ value: "exact-acp-id", name: "Model" }] },
   ] }] })[0]?.values, [{ value: "exact-acp-id", name: "Model" }]);
+  const choice = (id: string, efforts: string[] = ["low"]) => ({ id, name: id, efforts, effortConfigId: efforts.length ? "thinking" : null });
+  assert.deepEqual(catalogModels("codex", [
+    choice("openai/gpt-4o", []), choice("openai/o3"), choice("openai/o3-pro"), choice("openai/gpt-realtime-2.1"),
+    choice("openai/gpt-image-2"), choice("openai/chatgpt-image-latest"), choice("openai/gpt-5.6-sol"), choice("openai/o4-mini"),
+  ]).map((model) => model.id), ["openai/gpt-5.6-sol", "openai/o4-mini"], "Codex reports only current reasoning models");
+  assert.deepEqual(catalogModels("grok", [
+    choice("xai/grok-4.20-0309-non-reasoning", []), choice("xai/grok-imagine-video"), choice("xai/grok-4.7"),
+  ]).map((model) => model.id), ["xai/grok-4.20-0309-non-reasoning", "xai/grok-4.7"], "Grok keeps no-effort chat models");
+  assert.deepEqual(catalogModels("devin", [choice("adaptive", []), choice("MODEL_PRIVATE_11", [])]).map((model) => model.id),
+    ["adaptive", "MODEL_PRIVATE_11"], "Devin reports every advertised choice");
 });
 
 test("operator disable and removal drain the exact account process before deleting credentials", async () => {
@@ -116,7 +130,7 @@ test("operator disable and removal drain the exact account process before deleti
     const catalog = await socketCall(socketPath("workers", env), "tools/call", {
       name: "worker_catalog", arguments: { accountId: account.id },
     }) as { models: unknown[]; runtimeVersion: string; stale: boolean };
-    assert.equal(catalog.models.length, 2);
+    assert.equal(catalog.models.length, 3);
      assert.equal(catalog.runtimeVersion, "fake-acp 2.0");
     assert.equal(catalog.stale, false);
     await call("worker_account_set_enabled", { id: account.id, enabled: false });
@@ -140,6 +154,10 @@ test("operator disable and removal drain the exact account process before deleti
     for (let attempt = 0; attempt < 40 && !(await runtimes()).some((item) => item.id === codex.id); attempt++)
       await new Promise((resolve) => setTimeout(resolve, 50));
     assert.deepEqual((await runtimes()).map((item) => item.id), [codex.id]);
+    const codexCatalog = await socketCall(socketPath("workers", env), "tools/call", {
+      name: "worker_catalog", arguments: { accountId: codex.id },
+    }) as { models: Array<{ id: string; efforts: string[] }> };
+    assert.equal(codexCatalog.models.length, 3, "Codex catalogs omit entries without effort choices");
     await call("worker_account_remove", { id: codex.id });
     assert.equal((await runtimes()).length, 0);
   } finally {

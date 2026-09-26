@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { accountEnvironment, accountRoot, type WorkerAccount } from "@agentstack/auth";
 import { socketCall, socketPath, socketSubscribe, type SocketSubscription } from "@agentstack/api";
 import { AcpProcess, record } from "./acp.js";
-import { effortOption, modelOption, nativeDevinModels, optionsOf, type Catalog, type ModelChoice } from "./catalog.js";
+import { catalogModels, effortOption, modelOption, nativeDevinModels, optionsOf, type Catalog, type ModelChoice } from "./catalog.js";
 
 export type Runtime = { account: WorkerAccount; process: AcpProcess; version: string; probeSession: string | null;
   canClose: boolean; canLoad: boolean; supportsHttp: boolean; instance: string;
@@ -199,7 +199,8 @@ export class WorkerSupervisor {
     }
     const nativeModelIds = account.provider === "devin" ? await this.devinModelIds(account) : [];
     const catalog: Catalog = { accountId: account.id, provider: account.provider, observedAt: new Date().toISOString(),
-      source: account.provider === "devin" ? "acp-session" : "acp-v2-session", runtimeVersion: runtime.version, modelConfigId: model.id, models, nativeModelIds, stale: false, error: null };
+      source: account.provider === "devin" ? "acp-session" : "acp-v2-session", runtimeVersion: runtime.version, modelConfigId: model.id,
+      models: catalogModels(account.provider, models), nativeModelIds, stale: false, error: null };
     await this.saveCatalog(catalog);
     return catalog;
   }
@@ -223,7 +224,8 @@ export class WorkerSupervisor {
     try {
       const value = JSON.parse(await readFile(this.catalogPath(id), "utf8")) as Catalog;
       if (value.accountId !== id || !Array.isArray(value.models)) return null;
-      return { ...value, modelConfigId: typeof value.modelConfigId === "string" ? value.modelConfigId : null, stale: true };
+      return { ...value, modelConfigId: typeof value.modelConfigId === "string" ? value.modelConfigId : null,
+        models: catalogModels(value.provider, value.models), stale: true };
     } catch { return null; }
   }
   private async saveCatalog(value: Catalog): Promise<void> {

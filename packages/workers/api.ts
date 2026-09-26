@@ -41,7 +41,7 @@ const requestId = z.uuid().describe("Client-generated idempotency key. Retry wit
 
 export type WorkersContext = { supervisor: WorkerSupervisor; manager: WorkerManager };
 export const workerCatalog = operation({
-  name: "worker_catalog", description: "Read model and effort choices observed through this account's native ACP session. Refresh on demand; stale results are labelled and never authorize dispatch.",
+  name: "worker_catalog", description: "Read model and effort choices observed through this account's native ACP session. Codex catalogs omit OpenAI registry entries that offer no effort choice or belong to the o3, realtime and image families, which the ChatGPT sign-in cannot dispatch; Grok catalogs omit Imagine media-generation models. Refresh on demand; stale results are labelled and never authorize dispatch.",
   input: z.strictObject({ accountId: id, refresh: z.boolean().optional() }), output: catalogSchema,
   annotations: { title: "Account-bound worker catalog", readOnlyHint: true },
   async call(ctx: WorkersContext, { accountId, refresh }) { return ctx.supervisor.catalog(accountId, refresh ?? false); },
