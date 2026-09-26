@@ -32,7 +32,7 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
   const removable = (account: Account) => !account.removing;
   const workerRemovable = (account: WorkerAccount) => !account.removing;
   const addWorker = (provider: WorkerAccount["provider"]) => {
-    void auth.worker.prepare(provider).then((account) => { if (account) goTo({ kind: "worker-account", id: account.id }); });
+    void auth.worker.signIn(provider).then((attempt) => { if (attempt) goTo({ kind: "worker-account", id: attempt.account }); });
   };
 
   return (
@@ -148,15 +148,9 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
                     Enable {label}
                   </CommandItem>,
                 ] : []),
-                ...(!account.ready ? [
-                  <CommandItem key={`worker-${account.id}-confirm`} value={`action confirm sign in ${label} ${account.id}`} onSelect={() => act(() => auth.worker.confirm(account))}>
-                    <CircleCheckIcon />
-                    Confirm sign-in {label}
-                  </CommandItem>,
-                ] : []),
-                <CommandItem key={`worker-${account.id}-reprepare`} value={`action sign in again ${label} ${account.provider} ${account.id}`} onSelect={() => act(() => { void auth.worker.prepare(account.provider, account.id); })}>
+                <CommandItem key={`worker-${account.id}-signin`} value={`action sign in again ${label} ${account.provider} ${account.id}`} onSelect={() => act(() => { void auth.worker.signIn(account.provider, account.id); })}>
                   <RefreshCwIcon />
-                  Sign in again to {label}
+                  {account.ready ? "Sign in again to" : "Sign in"} {label}
                 </CommandItem>,
                 <CommandItem key={`worker-${account.id}-remove`} value={`action remove ${label} delete ${account.id}`} onSelect={() => act(() => auth.worker.confirmRemove(account))}>
                   <Trash2Icon />

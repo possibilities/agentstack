@@ -59,8 +59,13 @@ test("package notices keep bot membership and worker accounts live", async () =>
     send(raw) {
       const { id, method, params } = JSON.parse(raw);
       if (method === "events/subscribe") this.subscription = params;
-      const result = method === "events/subscribe" ? params : results[params.name]?.();
-      queueMicrotask(() => this.onmessage?.({ data: JSON.stringify({ id, result }) }));
+      let result, error;
+      try {
+        result = method === "events/subscribe" ? params : results[params.name]?.(params.arguments);
+      } catch (cause) {
+        error = { message: cause instanceof Error ? cause.message : String(cause) };
+      }
+      queueMicrotask(() => this.onmessage?.({ data: JSON.stringify({ id, ...(error ? { error } : { result }) }) }));
     }
 
     close() {
@@ -81,7 +86,7 @@ test("package notices keep bot membership and worker accounts live", async () =>
   globalThis.WebSocket = FakeWebSocket;
   const snapshot = {
     owner: resource(null), accounts: resource([]), workerAccounts: resource([]), workerRuntimes: resource([]),
-    login: resource(null), bots: resource([]), voice: resource(null), catalog: resource(null),
+    login: resource(null), workerLogins: resource([]), bots: resource([]), voice: resource(null), catalog: resource(null),
     endpoints: { bots: "ws://localhost/bots", auth: "ws://localhost/auth" },
   };
   const store = new StackStore(snapshot);
@@ -125,6 +130,97 @@ test("package notices keep bot membership and worker accounts live", async () =>
   } finally {
     store.stop();
     indexStore?.stop();
+    globalThis.WebSocket = original;
+  }
+});
+
+test("worker sign-in attempts merge, resolve, and dismiss", async () => {
+  const original = globalThis.WebSocket;
+  const sockets = new Set();
+  const attempt = { id: "wlog-1", account: "worker-1", provider: "codex", status: "pending", authUrl: "https://auth.openai.com/codex/device", userCode: "ABCD-12345", needsCode: false, error: null };
+  let logins = [];
+  let statusResult = null;
+  const results = {
+    account_list: () => ({ accounts: [] }), worker_account_list: () => ({ accounts: [] }),
+    account_login_current: () => ({ login: null }),
+    worker_account_login_current: () => ({ logins }),
+    worker_account_login_start: () => attempt,
+    worker_account_login_status: ({ id }) => {
+      if (id === attempt.id && statusResult) return statusResult;
+      throw new Error("unknown Worker sign-in");
+    },
+  };
+
+  class FakeWebSocket {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    readyState = FakeWebSocket.CONNECTING;
+    subscription = null;
+    constructor(url) {
+      this.url = url;
+      sockets.add(this);
+      queueMicrotask(() => { this.readyState = FakeWebSocket.OPEN; this.onopen?.(); });
+    }
+    send(raw) {
+      const { id, method, params } = JSON.parse(raw);
+      if (method === "events/subscribe") this.subscription = params;
+      let result, error;
+      try {
+        result = method === "events/subscribe" ? params : results[params.name]?.(params.arguments);
+      } catch (cause) {
+        error = { message: cause instanceof Error ? cause.message : String(cause) };
+      }
+      queueMicrotask(() => this.onmessage?.({ data: JSON.stringify({ id, ...(error ? { error } : { result }) }) }));
+    }
+    close() { this.readyState = 3; sockets.delete(this); this.onclose?.(); }
+  }
+
+  function publish(pkg, topic) {
+    for (const socket of sockets) {
+      if (socket.url.endsWith(`/${pkg}`) && socket.subscription?.topics.includes(topic))
+        socket.onmessage?.({ data: JSON.stringify({ method: "events/changed", params: { topic } }) });
+    }
+  }
+
+  globalThis.WebSocket = FakeWebSocket;
+  const snapshot = {
+    owner: resource(null), accounts: resource([]), workerAccounts: resource([]), workerRuntimes: resource([]),
+    login: resource(null), workerLogins: resource([]), bots: resource([]), voice: resource(null), catalog: resource(null),
+    endpoints: { auth: "ws://localhost/auth" },
+  };
+  const store = new StackStore(snapshot);
+  try {
+    store.start();
+    await until(store, () => [...sockets].some((socket) => socket.url.endsWith("/auth") && socket.subscription?.topics.includes("worker_login_changed")));
+
+    const started = await store.call("auth", "worker_account_login_start", { provider: "codex" });
+    assert.equal(started.id, "wlog-1");
+    assert.equal(store.getState().workerAttempts["worker-1"]?.status, "pending");
+
+    logins = [attempt];
+    publish("auth", "worker_login_changed");
+    await until(store, () => store.getState().workerLogins.data?.length === 1);
+    assert.equal(store.getState().workerAttempts["worker-1"]?.id, "wlog-1");
+
+    // The attempt left the pending list; status resolves it to a terminal state.
+    logins = [];
+    statusResult = { ...attempt, status: "complete", authUrl: null, userCode: null };
+    publish("auth", "worker_login_changed");
+    await until(store, () => store.getState().workerAttempts["worker-1"]?.status === "complete");
+
+    store.dismissWorkerAttempt("worker-1");
+    assert.equal(store.getState().workerAttempts["worker-1"], undefined);
+
+    // A pending attempt unknown to the server is dropped.
+    logins = [attempt];
+    publish("auth", "worker_login_changed");
+    await until(store, () => store.getState().workerAttempts["worker-1"]?.id === "wlog-1");
+    logins = [];
+    statusResult = null;
+    publish("auth", "worker_login_changed");
+    await until(store, () => store.getState().workerAttempts["worker-1"] === undefined && store.getState().workerLogins.at > 1);
+  } finally {
+    store.stop();
     globalThis.WebSocket = original;
   }
 });

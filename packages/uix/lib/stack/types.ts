@@ -88,6 +88,17 @@ export type Login = {
   targetAccount: string | null;
 };
 
+export type WorkerLogin = {
+  id: string;
+  account: string;
+  provider: WorkerAccount["provider"];
+  status: "pending" | "complete" | "failed";
+  authUrl: string | null;
+  userCode: string | null;
+  needsCode: boolean;
+  error: string | null;
+};
+
 export type OwnerChild = {
   name: string;
   pid: number | null;
@@ -123,6 +134,7 @@ export type Snapshot = {
   workerRuntimes: Resource<WorkerRuntime[]>;
   workerSessions: Resource<WorkerSession[]>;
   login: Resource<Login | null>;
+  workerLogins: Resource<WorkerLogin[]>;
   bots: Resource<Bot[]>;
   botDefaults: Resource<BotSettings>;
   voice: Resource<VoiceCall | null>;

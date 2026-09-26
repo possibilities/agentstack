@@ -9,6 +9,7 @@ import {
   BracesIcon,
   ChevronRightIcon,
   CircleCheckIcon,
+  CopyIcon,
   CpuIcon,
   EllipsisVerticalIcon,
   IdCardIcon,
@@ -17,11 +18,11 @@ import {
   RadioIcon,
   RefreshCwIcon,
   ShieldAlertIcon,
-  SquareArrowOutUpRightIcon,
   TerminalIcon,
   Trash2Icon,
   TriangleAlertIcon,
   UserRoundPlusIcon,
+  XIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -34,11 +35,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { annotationBadges, fieldsOf, findOperation, operationTitle } from "@/lib/stack/catalog";
 import { accountLabels, botsFor, clockTime, histogram, pathParts, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
-import type { Account, Bot, Login, OperationDoc, PackageDoc, WorkerAccount } from "@/lib/stack/types";
+import type { Account, Bot, Login, OperationDoc, PackageDoc, WorkerAccount, WorkerLogin } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
 import { BotTile, channelLabel, CopyButton, Empty, NodeCard, Orb, Row, Sparkline, StatusDot, Time } from "./primitives";
@@ -76,7 +78,7 @@ export function AddWorkerAccountMenu({ trigger, tooltip, align = "end" }: { trig
   const actions = useAuthActions();
   const { goTo } = useWorkbench();
   const addWorker = (provider: WorkerAccount["provider"]) => {
-    void actions.worker.prepare(provider).then((account) => { if (account) goTo({ kind: "worker-account", id: account.id }); });
+    void actions.worker.signIn(provider).then((attempt) => { if (attempt) goTo({ kind: "worker-account", id: attempt.account }); });
   };
   const button = <DropdownMenuTrigger render={trigger} />;
   return (
@@ -90,8 +92,8 @@ export function AddWorkerAccountMenu({ trigger, tooltip, align = "end" }: { trig
       <DropdownMenuContent align={align} className="min-w-52">
         <DropdownMenuGroup>
           {workerProviders.map((provider) => (
-            <DropdownMenuItem key={provider} className="whitespace-nowrap" disabled={actions.worker.preparing === `new:${provider}`} onClick={() => addWorker(provider)}>
-              {actions.worker.preparing === `new:${provider}` ? <Spinner /> : <TerminalIcon />}
+            <DropdownMenuItem key={provider} className="whitespace-nowrap" disabled={actions.worker.signingIn === `new:${provider}`} onClick={() => addWorker(provider)}>
+              {actions.worker.signingIn === `new:${provider}` ? <Spinner /> : <TerminalIcon />}
               {providerTitle(provider)} Worker account
             </DropdownMenuItem>
           ))}
@@ -110,7 +112,7 @@ export function AddWorkerAccountButton() {
         type="button"
         className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed px-3 py-2.5 text-[0.8rem] font-medium text-muted-foreground transition-colors hover:border-foreground/20 hover:bg-background/80 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50"
       >
-        {actions.worker.preparing?.startsWith("new:") ? <Spinner className="size-3.5" /> : <UserRoundPlusIcon className="size-3.5" />}
+        {actions.worker.signingIn?.startsWith("new:") ? <Spinner className="size-3.5" /> : <UserRoundPlusIcon className="size-3.5" />}
         Add Worker account
       </button>
     } />
@@ -286,13 +288,6 @@ function SignInCard({ attempt, labels, accounts, catalog }: { attempt: Login; la
   const resultLabel = attempt.account ? labels.get(attempt.account) ?? shortId(attempt.account) : null;
   const phase = attempt.status === "pending" ? (attempt.userCode ? "code" : "starting") : attempt.status;
 
-  const copyAndOpen = async () => {
-    if (attempt.userCode) {
-      await navigator.clipboard.writeText(attempt.userCode).then(() => toast.success("Code copied")).catch(() => undefined);
-    }
-    if (attempt.authUrl) window.open(attempt.authUrl, "_blank", "noopener,noreferrer");
-  };
-
   return (
     <NodeCard node={{ kind: "login" }} label="device sign-in"
       className={cn(attempt.status === "failed" ? "border-destructive/40 bg-destructive/5" : attempt.status === "complete" ? "border-success/40 bg-success/5" : "border-pkg-auth/40 bg-pkg-auth/5")}>
@@ -319,15 +314,12 @@ function SignInCard({ attempt, labels, accounts, catalog }: { attempt: Login; la
               <span className="font-mono text-2xl font-semibold tracking-[0.22em]" title={loginFields.find((field) => field.name === "userCode")?.description ?? undefined}>{attempt.userCode}</span>
               <CopyButton value={attempt.userCode ?? ""} label="one-time code" className="opacity-100" />
             </div>
+            {attempt.authUrl ? <SignInLink url={attempt.authUrl} /> : null}
             <p className="flex items-center gap-1.5 text-[0.72rem] text-muted-foreground">
               <Spinner className="size-3 text-pkg-auth" />
               Waiting for approval · {elapsedClock(seenAt, now)}
             </p>
             <div className="flex items-center gap-1.5">
-              <Button size="sm" className="flex-1" disabled={!attempt.authUrl} onClick={() => void copyAndOpen()}>
-                <SquareArrowOutUpRightIcon data-icon="inline-start" />
-                Copy code & open page
-              </Button>
               <Button size="sm" variant="ghost" disabled={actions.cancelPending} onClick={() => actions.cancelLogin(attempt.id)}>
                 {actions.cancelPending ? <Spinner data-icon="inline-start" /> : null}
                 Cancel
@@ -524,6 +516,7 @@ export function WorkerAccountsWindow() {
 
 function WorkerAccountCard({ account, label, accounts }: { account: WorkerAccount; label: string; accounts: Account[] | null }) {
   const actions = useAuthActions();
+  const { workerAttempts } = useStack();
   const { goTo } = useWorkbench();
   const worker = actions.worker;
   const botLabels = accountLabels(accounts);
@@ -533,10 +526,8 @@ function WorkerAccountCard({ account, label, accounts }: { account: WorkerAccoun
   const removing = account.removing || worker.removing === account.id;
   const busy = worker.removing === account.id;
   const changingAvailability = worker.changingAvailability === account.id;
-  const preparing = worker.preparing === account.id;
-  const confirming = worker.confirming === account.id;
-  const command = worker.commands[account.id];
-  const errorFor = (op: "prepare" | "confirm" | "availability" | "remove") =>
+  const attempt = workerAttempts[account.id];
+  const errorFor = (op: "signin" | "submit" | "cancel" | "availability" | "remove") =>
     worker.error?.op === op && worker.error.target === account.id ? worker.error.message : null;
   return (
     <NodeCard node={{ kind: "worker-account", id: account.id }} label={`worker account ${label}`} className={cn(removing && "opacity-60")}>
@@ -563,7 +554,7 @@ function WorkerAccountCard({ account, label, accounts }: { account: WorkerAccoun
               <DropdownMenuItem disabled={removing || changingAvailability} onClick={() => worker.setEnabled(account, !account.enabled)}>
                 <CircleCheckIcon />{account.enabled ? "Disable" : "Enable"}
               </DropdownMenuItem>
-              <DropdownMenuItem disabled={removing || preparing} onClick={() => void worker.prepare(account.provider, account.id)}>
+              <DropdownMenuItem disabled={removing || worker.signingIn === account.id || attempt?.status === "pending"} onClick={() => void worker.signIn(account.provider, account.id)}>
                 <RefreshCwIcon />Sign in again
               </DropdownMenuItem>
             </DropdownMenuGroup>
@@ -605,39 +596,8 @@ function WorkerAccountCard({ account, label, accounts }: { account: WorkerAccoun
           <Button size="xs" variant="outline" className="w-fit" onClick={() => worker.finishRemoval(account)}>Finish removal</Button>
           {errorFor("remove") ? <p className="text-[0.72rem] text-pretty text-destructive">{errorFor("remove")}</p> : null}
         </div>
-      ) : !account.ready ? (
-        <div className="flex flex-col gap-2 rounded-lg border border-warning/30 bg-warning/5 p-2.5">
-          {command ? (
-            <>
-              <div className="group/row flex items-start gap-1">
-                <code data-scroll className="max-h-28 min-w-0 flex-1 overflow-auto break-all font-mono text-[0.72rem] leading-relaxed">{command}</code>
-                <CopyButton value={command} label="sign-in command" className="opacity-100" />
-              </div>
-              <p className="text-[0.72rem] text-muted-foreground">Run this in a terminal, then confirm.</p>
-              <Button size="xs" variant="secondary" className="w-fit" disabled={confirming} onClick={() => worker.confirm(account)}>
-                {confirming ? <Spinner data-icon="inline-start" /> : <CircleCheckIcon data-icon="inline-start" />}
-                Confirm sign-in
-              </Button>
-            </>
-          ) : (
-            <>
-              <p className="text-[0.72rem] text-muted-foreground">Needs a terminal sign-in before it can run Worker turns.</p>
-              <div className="flex flex-wrap gap-1.5">
-                <Button size="xs" variant="outline" className="w-fit" disabled={preparing} onClick={() => void worker.prepare(account.provider, account.id)}>
-                  {preparing ? <Spinner data-icon="inline-start" /> : <TerminalIcon data-icon="inline-start" />}
-                  Show sign-in command
-                </Button>
-                <Button size="xs" variant="ghost" className="w-fit" disabled={confirming} onClick={() => worker.confirm(account)}>
-                  {confirming ? <Spinner data-icon="inline-start" /> : null}
-                  Confirm sign-in
-                </Button>
-              </div>
-            </>
-          )}
-          {errorFor("prepare") ?? errorFor("confirm") ? (
-            <p className="text-[0.72rem] text-pretty text-destructive">{errorFor("prepare") ?? errorFor("confirm")}</p>
-          ) : null}
-        </div>
+      ) : !account.ready || attempt ? (
+        <WorkerSignInPanel account={account} attempt={attempt} error={errorFor("signin") ?? errorFor("submit") ?? errorFor("cancel")} />
       ) : !account.enabled ? (
         <div className="flex flex-col gap-1">
           <Button size="xs" variant="secondary" className="w-fit" disabled={changingAvailability} onClick={() => worker.setEnabled(account, true)}>
@@ -648,6 +608,113 @@ function WorkerAccountCard({ account, label, accounts }: { account: WorkerAccoun
         </div>
       ) : null}
     </NodeCard>
+  );
+}
+
+/** The link an API-run sign-in hands to the human, shown as copyable text only — never opened by the canvas. */
+function SignInLink({ url }: { url: string }) {
+  return (
+    <div className="group/row flex items-center gap-1.5 rounded-lg bg-background/70 px-3 py-2">
+      <code className="min-w-0 flex-1 truncate font-mono text-[0.72rem] text-muted-foreground" title={url}>{url}</code>
+      <Button size="xs" variant="secondary" className="shrink-0" onClick={() => void navigator.clipboard.writeText(url).then(() => toast.success("Link copied")).catch(() => undefined)}>
+        <CopyIcon data-icon="inline-start" />
+        Copy link
+      </Button>
+    </div>
+  );
+}
+
+function WorkerSignInPanel({ account, attempt, error }: { account: WorkerAccount; attempt: WorkerLogin | undefined; error: string | null }) {
+  const worker = useAuthActions().worker;
+  const now = useNow();
+  const since = useMemo(() => Date.now(), [attempt?.id]);
+  const [code, setCode] = useState("");
+  const signingIn = worker.signingIn === account.id;
+  const submitting = attempt ? worker.submitting === attempt.id : false;
+  const cancelling = attempt ? worker.cancelling === attempt.id : false;
+  const pending = attempt?.status === "pending";
+  const cancelButton = pending ? (
+    <Button size="xs" variant="ghost" className="w-fit" disabled={cancelling} onClick={() => worker.cancel(attempt)}>
+      {cancelling ? <Spinner data-icon="inline-start" /> : <XIcon data-icon="inline-start" />}
+      Cancel
+    </Button>
+  ) : null;
+  return (
+    <div className={cn("flex flex-col gap-2 rounded-lg border p-2.5",
+      attempt?.status === "complete" ? "border-success/40 bg-success/5"
+        : attempt?.status === "failed" ? "border-destructive/40 bg-destructive/5"
+        : "border-warning/30 bg-warning/5")}>
+      {!attempt ? (
+        <>
+          <p className="text-[0.72rem] text-muted-foreground">Needs a sign-in before it can run Worker turns.</p>
+          <Button size="xs" variant="secondary" className="w-fit" disabled={signingIn} onClick={() => void worker.signIn(account.provider, account.id)}>
+            {signingIn ? <Spinner data-icon="inline-start" /> : <UserRoundPlusIcon data-icon="inline-start" />}
+            Sign in
+          </Button>
+        </>
+      ) : pending ? (
+        <>
+          {attempt.authUrl ? null : (
+            <div className="flex items-center gap-2 text-[0.72rem] text-muted-foreground">
+              <Spinner className="size-3.5 text-pkg-auth" />
+              Starting sign-in…
+            </div>
+          )}
+          {attempt.userCode ? (
+            <div className="flex items-center justify-between gap-2 rounded-lg bg-background/70 px-3 py-2.5">
+              <span className="font-mono text-2xl font-semibold tracking-[0.22em]">{attempt.userCode}</span>
+              <CopyButton value={attempt.userCode} label="one-time code" className="opacity-100" />
+            </div>
+          ) : null}
+          {attempt.authUrl ? <SignInLink url={attempt.authUrl} /> : null}
+          {attempt.needsCode ? (
+            <form
+              className="flex items-center gap-1.5"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (code.trim()) void worker.submitCode(attempt, code.trim()).then(() => setCode(""), () => undefined);
+              }}
+            >
+              <Input value={code} onChange={(event) => setCode(event.target.value)} placeholder="Paste the code from Devin" className="h-7 flex-1 font-mono text-xs" disabled={submitting} autoFocus />
+              <Button type="submit" size="xs" variant="secondary" disabled={submitting || !code.trim()}>
+                {submitting ? <Spinner data-icon="inline-start" /> : null}
+                Submit
+              </Button>
+            </form>
+          ) : attempt.authUrl ? (
+            <p className="flex items-center gap-1.5 text-[0.72rem] text-muted-foreground">
+              <Spinner className="size-3 text-pkg-auth" />
+              {attempt.userCode ? "Waiting for approval" : "Waiting for sign-in"} · {elapsedClock(since, now)}
+            </p>
+          ) : null}
+          {attempt.error ? <p className="text-[0.72rem] text-pretty text-destructive">{attempt.error}</p> : null}
+          {cancelButton}
+        </>
+      ) : attempt.status === "complete" ? (
+        <>
+          <p className="flex items-center gap-2 rounded-lg bg-background/70 px-3 py-2 text-sm">
+            <CircleCheckIcon className="size-4 shrink-0 text-success" />
+            Signed in
+          </p>
+          <Button size="xs" variant="ghost" className="w-fit" onClick={() => worker.dismiss(account.id)}>Dismiss</Button>
+        </>
+      ) : (
+        <>
+          <p className="flex items-start gap-1.5 rounded-lg bg-background/70 px-3 py-2 text-[0.78rem] text-pretty text-destructive">
+            <TriangleAlertIcon className="mt-px size-3.5 shrink-0" />
+            {attempt.error ?? "Sign-in failed."}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            <Button size="xs" variant="secondary" disabled={signingIn} onClick={() => void worker.signIn(account.provider, account.id)}>
+              {signingIn ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}
+              Try again
+            </Button>
+            <Button size="xs" variant="ghost" onClick={() => worker.dismiss(account.id)}>Dismiss</Button>
+          </div>
+        </>
+      )}
+      {error ? <p className="text-[0.72rem] text-pretty text-destructive">{error}</p> : null}
+    </div>
   );
 }
 

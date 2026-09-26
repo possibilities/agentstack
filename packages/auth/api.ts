@@ -4,6 +4,7 @@ import { operation, socketCall, socketPath, type PackageApi } from "@agentstack/
 import { stateDir } from "./src/paths.js";
 import { AuthStore, type Account } from "./src/store.js";
 import { LoginManager, type LoginState } from "./src/login.js";
+import { WorkerLoginManager, type WorkerLoginState } from "./src/worker-login.js";
 import { accountRoot, credentialEvidence, loginCommand, prepareAccountProfile, type WorkerAccount, type WorkerProvider } from "./src/worker-accounts.js";
 
 const accountId = z.uuid().describe("Stable account ID from the corresponding Bot or Worker account list.");
@@ -17,10 +18,16 @@ const loginStateSchema = z.object({
   authUrl: z.string().nullable(), userCode: z.string().nullable(),
   account: accountId.nullable(), error: z.string().nullable(), targetAccount: accountId.nullable(),
 });
+const workerLoginStateSchema = z.object({
+  id: z.string(), account: accountId, provider: providerSchema,
+  status: z.enum(["pending", "complete", "failed"]),
+  authUrl: z.string().nullable(), userCode: z.string().nullable(), needsCode: z.boolean(), error: z.string().nullable(),
+});
 
 export type AuthContext = {
   store: AuthStore;
   login: LoginManager;
+  workerLogin: WorkerLoginManager;
   botsSocket: string;
   workersSocket?: string;
   onAccountsChanged: (() => void) | undefined;
@@ -92,7 +99,7 @@ function operatorOnly(invocation?: { botId: string | null; workerId?: string | n
 }
 
 export const workerAccountPrepare = operation({
-  name: "worker_account_prepare", description: "Create a private native Codex, Grok or Devin Worker sign-in independent of Bot accounts. Run the returned command, then call worker_account_confirm. Pass an existing Worker ID to reauthenticate it.",
+  name: "worker_account_prepare", description: "Terminal fallback: create a private native Codex, Grok or Devin Worker sign-in independent of Bot accounts. Run the returned command, then call worker_account_confirm. Pass an existing Worker ID to reauthenticate it. Prefer worker_account_login_start, which runs the sign-in itself.",
   input: z.strictObject({ provider: providerSchema, id: accountId.optional() }),
   output: z.strictObject({ account: workerAccountSchema, command: z.string() }),
   annotations: { title: "Prepare worker sign-in" },
@@ -110,7 +117,7 @@ export const workerAccountPrepare = operation({
 });
 
 export const workerAccountConfirm = operation({
-  name: "worker_account_confirm", description: "Verify an isolated native Worker sign-in and mark it ready without changing availability or Bot accounts.",
+  name: "worker_account_confirm", description: "Terminal fallback: verify an isolated native Worker sign-in and mark it ready without changing availability or Bot accounts. The API-driven flow confirms by itself; see worker_account_login_start.",
   input: z.strictObject({ id: accountId }), output: workerAccountSchema,
   annotations: { title: "Confirm worker sign-in" },
   async call(ctx: AuthContext, { id }, invocation) {
@@ -154,6 +161,7 @@ export const workerAccountRemove = operation({
     operatorOnly(invocation);
     const account = ctx.store.workerAccounts().find((item) => item.id === id);
     if (!account) throw new Error("unknown worker account");
+    await ctx.workerLogin.cancelAccount(id);
     ctx.store.beginWorkerRemoval(id);
     ctx.onWorkerAccountsChanged?.();
     if (account.ready && ctx.workersSocket)
@@ -162,6 +170,58 @@ export const workerAccountRemove = operation({
     ctx.store.finishWorkerRemoval(id);
     ctx.onWorkerAccountsChanged?.();
     return { id };
+  },
+});
+
+export const workerAccountLoginStart = operation({
+  name: "worker_account_login_start", description: "Create or re-sign-in a Codex, Grok or Devin Worker account. The API runs the native sign-in itself and returns a link to open manually, with a one-time code for Codex and Grok; Devin asks for its pasted code through worker_account_login_submit. Finishing marks the Worker ready. Poll worker_account_login_status or subscribe to worker_login_changed.",
+  input: z.strictObject({ provider: providerSchema, id: accountId.optional() }), output: workerLoginStateSchema,
+  annotations: { title: "Start worker sign-in" },
+  async call(ctx: AuthContext, { provider, id }, invocation) {
+    operatorOnly(invocation);
+    const existing = id ? ctx.store.workerAccounts().find((account) => account.id === id) : undefined;
+    if (id && (!existing || existing.provider !== provider || existing.removing)) throw new Error("worker account is unavailable");
+    if (existing?.ready && ctx.workersSocket)
+      await socketCall(ctx.workersSocket, "tools/call", { name: "worker_account_drain", arguments: { id } }, { timeoutMs: 30_000 });
+    const account = ctx.store.prepareWorker(provider as WorkerProvider, id);
+    await prepareAccountProfile(ctx.store.stateDir, account);
+    ctx.onWorkerAccountsChanged?.();
+    return ctx.workerLogin.start(account);
+  },
+});
+
+export const workerAccountLoginStatus = operation({
+  name: "worker_account_login_status", description: "Read an in-progress or completed Worker sign-in, without credentials or prompt output.",
+  input: z.object({ id: z.string() }), output: workerLoginStateSchema,
+  annotations: { title: "Check worker sign-in", readOnlyHint: true },
+  async call(ctx: AuthContext, { id }) { return ctx.workerLogin.status(id); },
+});
+
+export const workerAccountLoginCurrent = operation({
+  name: "worker_account_login_current", description: "List the Worker sign-ins currently in progress, without credentials or prompt output.",
+  input: z.object({}), output: z.object({ logins: z.array(workerLoginStateSchema) }),
+  annotations: { title: "Current worker sign-ins", readOnlyHint: true },
+  async call(ctx: AuthContext) { return { logins: ctx.workerLogin.current() }; },
+});
+
+export const workerAccountLoginSubmit = operation({
+  name: "worker_account_login_submit", description: "Paste the code a Devin Worker sign-in asks for once its link has been opened. Only valid while the attempt reports needsCode.",
+  input: z.strictObject({ id: z.string(), code: z.string() }), output: workerLoginStateSchema,
+  annotations: { title: "Submit worker sign-in code" },
+  async call(ctx: AuthContext, { id, code }, invocation) {
+    operatorOnly(invocation);
+    return ctx.workerLogin.submit(id, code);
+  },
+});
+
+export const workerAccountLoginCancel = operation({
+  name: "worker_account_login_cancel", description: "Cancel an in-progress Worker sign-in.",
+  input: z.object({ id: z.string() }), output: workerLoginStateSchema,
+  annotations: { title: "Cancel worker sign-in" },
+  async call(ctx: AuthContext, { id }, invocation) {
+    operatorOnly(invocation);
+    ctx.workerLogin.cancel(id);
+    return ctx.workerLogin.status(id);
   },
 });
 
@@ -204,13 +264,15 @@ export const topics = {
   accounts_changed: "Published when Bot account state or cross-inventory identity links change. Refresh account_list.",
   login_changed: "Published when a Codex device sign-in starts, shows its prompt, is superseded or cancelled, or finishes. Never carries the prompt or credentials.",
   worker_accounts_changed: "Published when Worker account state or cross-inventory identity links change. Refresh worker_account_list.",
+  worker_login_changed: "Published when a Worker sign-in starts, shows its link or code, needs a pasted code, is superseded or cancelled, or finishes. Never carries the prompt or credentials.",
 } as const;
 
 export type AuthTopic = keyof typeof topics;
 
 export const api: PackageApi<AuthContext, AuthTopic> = {
   operations: [accountList, accountSetEnabled, accountRemove, accountLoginStart, accountLoginReplace, accountLoginStatus, accountLoginCurrent, accountLoginCancel,
-    workerAccountList, workerAccountPrepare, workerAccountConfirm, workerAccountSetEnabled, workerAccountRemove],
+    workerAccountList, workerAccountPrepare, workerAccountConfirm, workerAccountSetEnabled, workerAccountRemove,
+    workerAccountLoginStart, workerAccountLoginStatus, workerAccountLoginCurrent, workerAccountLoginSubmit, workerAccountLoginCancel],
   events: {
     topics,
     start(ctx: AuthContext, publish: (topic: AuthTopic) => void) {
@@ -218,11 +280,15 @@ export const api: PackageApi<AuthContext, AuthTopic> = {
       ctx.onWorkerAccountsChanged = () => { publish("worker_accounts_changed"); publish("accounts_changed"); };
       ctx.login.onAccountsChange = () => { publish("accounts_changed"); publish("worker_accounts_changed"); };
       ctx.login.onChange = () => publish("login_changed");
+      ctx.workerLogin.onAccountsChange = () => { publish("worker_accounts_changed"); publish("accounts_changed"); };
+      ctx.workerLogin.onChange = () => publish("worker_login_changed");
       return () => {
         ctx.onAccountsChanged = undefined;
         ctx.onWorkerAccountsChanged = undefined;
         ctx.login.onAccountsChange = undefined;
         ctx.login.onChange = undefined;
+        ctx.workerLogin.onAccountsChange = undefined;
+        ctx.workerLogin.onChange = undefined;
       };
     },
   },
@@ -231,13 +297,14 @@ export const api: PackageApi<AuthContext, AuthTopic> = {
     await mkdir(dir, { recursive: true, mode: 0o700 });
     await chmod(dir, 0o700);
     const store = new AuthStore(dir);
-    return { store, login: new LoginManager(store), botsSocket: socketPath("bots", env), workersSocket: socketPath("workers", env), onAccountsChanged: undefined, onWorkerAccountsChanged: undefined };
+    return { store, login: new LoginManager(store), workerLogin: new WorkerLoginManager(store), botsSocket: socketPath("bots", env), workersSocket: socketPath("workers", env), onAccountsChanged: undefined, onWorkerAccountsChanged: undefined };
   },
   async closeContext(ctx) {
     await ctx.login.close();
+    await ctx.workerLogin.close();
     ctx.store.close();
   },
 };
 
 export type { Account, LoginState };
-export type { WorkerAccount };
+export type { WorkerAccount, WorkerLoginState };

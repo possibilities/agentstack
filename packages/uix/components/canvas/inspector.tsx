@@ -1,7 +1,8 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState } from "react";
-import { ArrowRightIcon, CircleCheckIcon, LocateFixedIcon, LockIcon, PhoneIcon, PhoneOffIcon, RefreshCwIcon, SquareArrowOutUpRightIcon, TerminalIcon, Trash2Icon, XIcon } from "lucide-react";
+import { ArrowRightIcon, CircleCheckIcon, CopyIcon, LocateFixedIcon, LockIcon, PhoneIcon, PhoneOffIcon, RefreshCwIcon, Trash2Icon, XIcon } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -137,7 +138,8 @@ function resolve(ref: NodeRef, state: StackState): View | null {
 
 const accountControls = new Set(["account_set_enabled", "account_remove", "account_login_replace"]);
 const loginControls = new Set(["account_login_cancel", "account_login_status"]);
-const workerControls = new Set(["worker_account_set_enabled", "worker_account_remove", "worker_account_prepare", "worker_account_confirm"]);
+const workerControls = new Set(["worker_account_set_enabled", "worker_account_remove",
+  "worker_account_login_start", "worker_account_login_status", "worker_account_login_current", "worker_account_login_submit", "worker_account_login_cancel"]);
 
 function BotControls({ bot }: { bot: Bot }) {
   const voice = useVoice();
@@ -194,8 +196,10 @@ function AccountControls({ account }: { account: Account }) {
 
 function WorkerAccountControls({ account }: { account: WorkerAccount }) {
   const worker = useAuthActions().worker;
+  const { workerAttempts } = useStack();
   const pending = worker.changingAvailability === account.id;
-  const command = worker.commands[account.id];
+  const attempt = workerAttempts[account.id];
+  const signingIn = worker.signingIn === account.id || attempt?.status === "pending";
   const error = worker.error?.target === account.id ? worker.error.message : null;
   return (
     <div className="flex flex-col gap-1.5">
@@ -204,30 +208,22 @@ function WorkerAccountControls({ account }: { account: WorkerAccount }) {
           {pending ? <Spinner data-icon="inline-start" /> : <CircleCheckIcon data-icon="inline-start" />}
           {account.enabled ? "Disable" : "Enable"}
         </Button>
-        <Button size="sm" variant="outline" disabled={account.removing || worker.preparing === account.id} onClick={() => void worker.prepare(account.provider, account.id)}>
-          {worker.preparing === account.id ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}
-          {account.ready ? "Sign in again" : "Show command"}
-        </Button>
-        {!account.ready ? (
-          <Button size="sm" variant="outline" disabled={account.removing || worker.confirming === account.id} onClick={() => worker.confirm(account)}>
-            {worker.confirming === account.id ? <Spinner data-icon="inline-start" /> : <CircleCheckIcon data-icon="inline-start" />}
-            Confirm sign-in
+        {attempt?.status === "pending" ? (
+          <Button size="sm" variant="outline" disabled={worker.cancelling === attempt.id} onClick={() => worker.cancel(attempt)}>
+            {worker.cancelling === attempt.id ? <Spinner data-icon="inline-start" /> : <XIcon data-icon="inline-start" />}
+            Cancel sign-in
           </Button>
-        ) : null}
+        ) : (
+          <Button size="sm" variant="outline" disabled={account.removing || signingIn} onClick={() => void worker.signIn(account.provider, account.id)}>
+            {worker.signingIn === account.id ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}
+            {account.ready ? "Sign in again" : "Sign in"}
+          </Button>
+        )}
         <Button size="sm" variant="destructive" disabled={account.removing || worker.removing === account.id} onClick={() => worker.confirmRemove(account)}>
           <Trash2Icon data-icon="inline-start" />
           Remove…
         </Button>
       </div>
-      {!account.ready && command ? (
-        <div className="group/row flex flex-col gap-1 rounded-lg border bg-background/50 p-2.5">
-          <div className="flex items-start gap-1">
-            <code className="max-h-28 min-w-0 flex-1 overflow-auto break-all font-mono text-[0.72rem] leading-relaxed">{command}</code>
-            <CopyButton value={command} label="sign-in command" className="opacity-100" />
-          </div>
-          <p className="flex items-center gap-1 text-[0.72rem] text-muted-foreground"><TerminalIcon className="size-3" /> Run this in a terminal, then confirm.</p>
-        </div>
-      ) : null}
       {error ? <p className="text-[0.72rem] text-pretty text-destructive">{error}</p> : null}
       {account.removing ? (
         <p className="text-[0.72rem] text-muted-foreground">Removal started. {worker.removing === account.id ? "Removing…" : "Remove again to finish it."}</p>
@@ -256,9 +252,9 @@ function LoginControls({ login }: { login: Login }) {
           Check status
         </Button>
         {login.authUrl ? (
-          <Button size="sm" variant="outline" render={<a href={login.authUrl} target="_blank" rel="noreferrer" />}>
-            Open page
-            <SquareArrowOutUpRightIcon data-icon="inline-end" />
+          <Button size="sm" variant="outline" onClick={() => void navigator.clipboard.writeText(login.authUrl ?? "").then(() => toast.success("Link copied")).catch(() => undefined)}>
+            Copy link
+            <CopyIcon data-icon="inline-end" />
           </Button>
         ) : null}
       </div>

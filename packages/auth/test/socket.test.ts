@@ -47,13 +47,15 @@ test("auth serves accounts and device sign-in on its namespaced socket", { timeo
         accounts_changed: "Published when Bot account state or cross-inventory identity links change. Refresh account_list.",
         login_changed: "Published when a Codex device sign-in starts, shows its prompt, is superseded or cancelled, or finishes. Never carries the prompt or credentials.",
         worker_accounts_changed: "Published when Worker account state or cross-inventory identity links change. Refresh worker_account_list.",
+        worker_login_changed: "Published when a Worker sign-in starts, shows its link or code, needs a pasted code, is superseded or cancelled, or finishes. Never carries the prompt or credentials.",
       },
       subscribe: "events/subscribe",
     });
     assert.deepEqual(
       listed.tools.map((tool) => tool.name),
       ["account_list", "account_set_enabled", "account_remove", "account_login_start", "account_login_replace", "account_login_status", "account_login_current", "account_login_cancel",
-        "worker_account_list", "worker_account_prepare", "worker_account_confirm", "worker_account_set_enabled", "worker_account_remove"],
+        "worker_account_list", "worker_account_prepare", "worker_account_confirm", "worker_account_set_enabled", "worker_account_remove",
+        "worker_account_login_start", "worker_account_login_status", "worker_account_login_current", "worker_account_login_submit", "worker_account_login_cancel"],
     );
 
     await assert.rejects(socketCall(served.socketPath, "events/subscribe", { topics: [] }), /non-empty/);
@@ -61,8 +63,8 @@ test("auth serves accounts and device sign-in on its namespaced socket", { timeo
     await assert.rejects(socketCall(served.socketPath, "events/subscribe", { topics: ["accounts_changed", "accounts_changed"] }), /duplicate topic/);
     await assert.rejects(socketCall(served.socketPath, "events/subscribe", {}), /non-empty/);
 
-    const subscription = await socketSubscribe(served.socketPath ?? "", ["accounts_changed", "login_changed", "worker_accounts_changed"], (topic) => events.push(topic));
-    assert.deepEqual([...subscription.topics].sort(), ["accounts_changed", "login_changed", "worker_accounts_changed"]);
+    const subscription = await socketSubscribe(served.socketPath ?? "", ["accounts_changed", "login_changed", "worker_accounts_changed", "worker_login_changed"], (topic) => events.push(topic));
+    assert.deepEqual([...subscription.topics].sort(), ["accounts_changed", "login_changed", "worker_accounts_changed", "worker_login_changed"]);
 
     await assert.rejects(call(served.socketPath, "account_login_start", { name: "codex-1" }), /Unrecognized key: "name"/);
     await assert.rejects(call(served.socketPath, "account_login_replace", { id: "codex-1" }), /id:/);

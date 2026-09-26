@@ -18,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Toaster } from "@/components/ui/sonner";
 import { Spinner } from "@/components/ui/spinner";
 import { accountLabels, botsFor, shortId, workerAccountLabels } from "@/lib/stack/derive";
-import type { Account, Bot, Login, WorkerAccount } from "@/lib/stack/types";
+import type { Account, Bot, Login, WorkerAccount, WorkerLogin } from "@/lib/stack/types";
 import { Orb, StatusDot } from "./primitives";
 import { useOperation, useStack, useStore } from "./provider";
 
@@ -27,7 +27,7 @@ export function errorMessage(error: unknown): string {
 }
 
 export type ActionError = { op: "availability" | "cancel" | "remove" | "signin"; target: string | null; message: string };
-export type WorkerActionError = { op: "prepare" | "confirm" | "availability" | "remove"; target: string | null; message: string };
+export type WorkerActionError = { op: "signin" | "submit" | "cancel" | "availability" | "remove"; target: string | null; message: string };
 
 export type AuthActions = {
   /** Start a device sign-in (or replace an account's credentials); confirms first when one is pending. */
@@ -48,14 +48,17 @@ export type AuthActions = {
   error: ActionError | null;
   /** Worker account actions; pending and error state never mix with the Bot fields above. */
   worker: {
-    /** Prepare a terminal sign-in, or re-sign-in an existing Worker. A ready Worker confirms first; resolves to the account or null. */
-    prepare(provider: WorkerAccount["provider"], id?: string): Promise<WorkerAccount | null>;
-    /** `new:<provider>` or the Worker id currently preparing. */
-    preparing: string | null;
-    /** Worker id → last prepared shell command, held in memory only. */
-    commands: Record<string, string>;
-    confirm(account: WorkerAccount): void;
-    confirming: string | null;
+    /** Start an API-run sign-in for a new or existing Worker. A ready Worker confirms first; resolves to the attempt or null. */
+    signIn(provider: WorkerAccount["provider"], id?: string): Promise<WorkerLogin | null>;
+    /** `new:<provider>` or the Worker id whose sign-in call is in flight. */
+    signingIn: string | null;
+    /** Paste the code a pending Devin sign-in is waiting for. Resolves after the call. */
+    submitCode(attempt: WorkerLogin, code: string): Promise<void>;
+    submitting: string | null;
+    cancel(attempt: WorkerLogin): void;
+    cancelling: string | null;
+    /** Drop a finished attempt card for the account. */
+    dismiss(accountId: string): void;
     setEnabled(account: WorkerAccount, enabled: boolean): void;
     changingAvailability: string | null;
     confirmRemove(account: WorkerAccount): void;
@@ -81,8 +84,9 @@ export function AuthActionsProvider({ children }: { children: React.ReactNode })
   const enableOp = useOperation<Account>("auth", "account_set_enabled");
   const removeOp = useOperation<{ accounts: Account[] }>("auth", "account_remove");
   const cancelOp = useOperation<Login>("auth", "account_login_cancel");
-  const prepareOp = useOperation<{ account: WorkerAccount; command: string }>("auth", "worker_account_prepare");
-  const confirmOp = useOperation<WorkerAccount>("auth", "worker_account_confirm");
+  const workerLoginStartOp = useOperation<WorkerLogin>("auth", "worker_account_login_start");
+  const workerLoginSubmitOp = useOperation<WorkerLogin>("auth", "worker_account_login_submit");
+  const workerLoginCancelOp = useOperation<WorkerLogin>("auth", "worker_account_login_cancel");
   const workerEnableOp = useOperation<WorkerAccount>("auth", "worker_account_set_enabled");
   const workerRemoveOp = useOperation<{ id: string }>("auth", "worker_account_remove");
   const [removeTarget, setRemoveTarget] = useState<Account | null>(null);
@@ -91,10 +95,10 @@ export function AuthActionsProvider({ children }: { children: React.ReactNode })
   const [removing, setRemoving] = useState<string | null>(null);
   const [error, setError] = useState<ActionError | null>(null);
   const [workerRemoveTarget, setWorkerRemoveTarget] = useState<WorkerAccount | null>(null);
-  const [reprepare, setReprepare] = useState<{ provider: WorkerAccount["provider"]; id: string; resolve(account: WorkerAccount | null): void } | null>(null);
-  const [workerPreparing, setWorkerPreparing] = useState<string | null>(null);
-  const [workerCommands, setWorkerCommands] = useState<Record<string, string>>({});
-  const [workerConfirming, setWorkerConfirming] = useState<string | null>(null);
+  const [reprepare, setReprepare] = useState<{ provider: WorkerAccount["provider"]; id: string; resolve(attempt: WorkerLogin | null): void } | null>(null);
+  const [workerSigningIn, setWorkerSigningIn] = useState<string | null>(null);
+  const [workerSubmitting, setWorkerSubmitting] = useState<string | null>(null);
+  const [workerCancelling, setWorkerCancelling] = useState<string | null>(null);
   const [workerChangingAvailability, setWorkerChangingAvailability] = useState<string | null>(null);
   const [workerRemoving, setWorkerRemoving] = useState<string | null>(null);
   const [workerError, setWorkerError] = useState<WorkerActionError | null>(null);
@@ -116,20 +120,18 @@ export function AuthActionsProvider({ children }: { children: React.ReactNode })
     }
   };
 
-  const runPrepare = async (provider: WorkerAccount["provider"], id?: string): Promise<WorkerAccount | null> => {
+  const runWorkerSignIn = async (provider: WorkerAccount["provider"], id?: string): Promise<WorkerLogin | null> => {
     setWorkerError(null);
-    setWorkerPreparing(id ?? `new:${provider}`);
+    setWorkerSigningIn(id ?? `new:${provider}`);
     try {
-      const result = await prepareOp.run(id ? { provider, id } : { provider });
-      setWorkerCommands((current) => ({ ...current, [result.account.id]: result.command }));
-      return result.account;
+      return await workerLoginStartOp.run(id ? { provider, id } : { provider });
     } catch (cause) {
       const message = errorMessage(cause);
-      setWorkerError({ op: "prepare", target: id ?? `new:${provider}`, message });
+      setWorkerError({ op: "signin", target: id ?? `new:${provider}`, message });
       toast.error(message);
       return null;
     } finally {
-      setWorkerPreparing(null);
+      setWorkerSigningIn(null);
     }
   };
 
@@ -202,33 +204,34 @@ export function AuthActionsProvider({ children }: { children: React.ReactNode })
     dismissAttempt: store.dismissAttempt,
     error,
     worker: {
-      prepare: (provider, id) => {
+      signIn: (provider, id) => {
         const existing = id ? workerAccounts.data?.find((account) => account.id === id) : undefined;
-        if (existing?.ready) return new Promise<WorkerAccount | null>((resolve) => setReprepare({ provider, id: existing.id, resolve }));
-        return runPrepare(provider, id);
+        if (existing?.ready) return new Promise<WorkerLogin | null>((resolve) => setReprepare({ provider, id: existing.id, resolve }));
+        return runWorkerSignIn(provider, id);
       },
-      preparing: workerPreparing,
-      commands: workerCommands,
-      confirm: (account) => {
+      signingIn: workerSigningIn,
+      submitCode: (attempt, code) => {
         setWorkerError(null);
-        setWorkerConfirming(account.id);
-        void confirmOp.run({ id: account.id }).then(
-          () => {
-            setWorkerCommands((current) => {
-              const next = { ...current };
-              delete next[account.id];
-              return next;
-            });
-            toast.success(`${workerLabel(account.id)} sign-in confirmed`);
-          },
-          (cause) => {
-            const message = errorMessage(cause);
-            setWorkerError({ op: "confirm", target: account.id, message });
-            toast.error(message);
-          },
-        ).finally(() => setWorkerConfirming(null));
+        setWorkerSubmitting(attempt.id);
+        return workerLoginSubmitOp.run({ id: attempt.id, code }).then(undefined, (cause) => {
+          const message = errorMessage(cause);
+          setWorkerError({ op: "submit", target: attempt.account, message });
+          toast.error(message);
+          throw cause;
+        }).finally(() => setWorkerSubmitting(null));
       },
-      confirming: workerConfirming,
+      submitting: workerSubmitting,
+      cancel: (attempt) => {
+        setWorkerError(null);
+        setWorkerCancelling(attempt.id);
+        void workerLoginCancelOp.run({ id: attempt.id }).then(undefined, (cause) => {
+          const message = errorMessage(cause);
+          setWorkerError({ op: "cancel", target: attempt.account, message });
+          toast.error(message);
+        }).finally(() => setWorkerCancelling(null));
+      },
+      cancelling: workerCancelling,
+      dismiss: store.dismissWorkerAttempt,
       setEnabled: (account, enabled) => {
         setWorkerError(null);
         setWorkerChangingAvailability(account.id);
@@ -286,7 +289,7 @@ export function AuthActionsProvider({ children }: { children: React.ReactNode })
               onClick={() => {
                 const pending = reprepare;
                 setReprepare(null);
-                if (pending) void runPrepare(pending.provider, pending.id).then(pending.resolve);
+                if (pending) void runWorkerSignIn(pending.provider, pending.id).then(pending.resolve);
               }}
             >
               Sign in again
