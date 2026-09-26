@@ -7,7 +7,7 @@ import test from "node:test";
 registerHooks({ resolve(specifier, context, next) {
   return next(context.parentURL?.includes("/lib/stack/") && specifier.startsWith("./") && !extname(specifier) ? `${specifier}.ts` : specifier, context);
 } });
-const { validSize, packSpaces, localLayout, boundsOf, preserveAnchor, compensateLeft, fitBounds, reconcileBench, windowPoint, benchBounds, viewedWindow, preserveViewedWindow, restoreBenchCamera, raiseWindow, activeSurface, dockGeometry, dockMinimum } = await import("../lib/stack/geometry.ts");
+const { snap, snapLocal, snapExtent, gridSize, validSize, packSpaces, localLayout, boundsOf, preserveAnchor, compensateLeft, fitBounds, reconcileBench, windowPoint, benchBounds, viewedWindow, preserveViewedWindow, restoreBenchCamera, raiseWindow, activeSurface, dockGeometry, dockMinimum } = await import("../lib/stack/geometry.ts");
 const { emptyLocation, navigateTo, parseLocation, locationHref } = await import("../lib/stack/navigation.ts");
 const { inputTemplate, requestExample, subscriptionExample } = await import("../lib/stack/reference.ts");
 
@@ -249,4 +249,15 @@ test("human-set window sizes are clamped manual extents that packing reserves", 
   assert.equal(packed.geometry.windows.find((def) => def.id === "a").width, 600);
   assert.equal(packed.layout.positions.b.x, 600 + 72, "tidy columns start after the resized width");
   assert.deepEqual(reconcileBench(spaces, { ...packed.layout, manual: {}, positions: {} }).layout.sizes, packed.layout.sizes, "tidy keeps sizes");
+});
+
+test("snapping lands world positions and far edges on the dot grid", () => {
+  assert.equal(gridSize, 22);
+  assert.equal(snap(32), 22);
+  assert.equal(snap(34), 44);
+  assert.equal(snap(-12), -22);
+  const origin = -305.5;
+  const local = snapLocal(417, origin);
+  assert.equal((origin + local) % gridSize, 0);
+  assert.equal(snapExtent(110, 301), 308, "right edge at 418 = 19 × 22");
 });

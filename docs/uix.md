@@ -26,7 +26,8 @@ Keep window implementation separate from bench layout:
    Window IDs are globally unique across spaces. Optional `height` reserves a
    stable footprint (760 by default); overflowing window content scrolls inside
    it, so live data growth does not rearrange neighboring spaces. People can
-   resize any window; sizes persist as manual extents
+   resize any window, and moves and resizes snap to the dot grid unless
+   Alt/Option is held; sizes persist as manual extents
    ([ADR 0060](adr/0060-resizable-windows-and-compact-fleet.md)).
 3. If it introduces a node kind, add that record reference in
    `packages/uix/lib/stack/types.ts` and give it a canvas destination in

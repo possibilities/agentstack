@@ -134,7 +134,10 @@ try {
   const windowHeader = await page.locator('[data-window="bots"] header').boundingBox();
   const beforeDrag = await point();
   await page.mouse.move(windowHeader.x + 30, windowHeader.y + 25);
+  // Alt places freely, so the window tracks the pointer exactly instead of snapping to the grid.
+  await page.keyboard.down("Alt");
   await page.mouse.down(); await page.mouse.move(windowHeader.x + 80, windowHeader.y + 65); await page.mouse.up();
+  await page.keyboard.up("Alt");
   const afterDrag = await point();
   assert.ok(Math.abs(afterDrag.x - beforeDrag.x - 50) < 1 && Math.abs(afterDrag.y - beforeDrag.y - 40) < 1, `drag ${JSON.stringify(beforeDrag)} -> ${JSON.stringify(afterDrag)}`);
   await page.waitForFunction(() => JSON.parse(localStorage.getItem("agentstack.uix.bench.v1") ?? "{}").layout?.manual?.bots === true);

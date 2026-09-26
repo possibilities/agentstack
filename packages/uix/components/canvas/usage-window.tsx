@@ -5,7 +5,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { accountLabels, shortId, untilTime, usageRows, workerAccountLabels } from "@/lib/stack/derive";
+import { accountLabels, grokBotLabel, shortId, untilTime, usageRows, workerAccountLabels } from "@/lib/stack/derive";
 import { nodeKey, type NodeRef, type UsageAccount, type UsageObservation, type UsageSnapshot } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { Empty, headroomTone, Meter, NodeCard, NodeTitle, Orb, StatusDot, Time } from "./primitives";
@@ -67,7 +67,7 @@ function summarize(account: UsageAccount): Summary | null {
   return { plan: usage.planLabel, limited: false, gauges, notes };
 }
 
-function grokCliSummary(usage: NonNullable<UsageSnapshot["grokBot"]["usage"]>): Summary {
+function grokBotSummary(usage: NonNullable<UsageSnapshot["grokBot"]["usage"]>): Summary {
   return {
     plan: usage.planLabel,
     limited: !usage.hasAvailableUsage,
@@ -190,8 +190,8 @@ export function UsageWindow() {
               orbs={row.map((account) => account.id)} names={row.map((account) => ({ node: nodeOf(account), label: label(account) }))} />
           ))}
           {grokBot?.usage ? (
-            <UsageCard node={{ kind: "grok-bot-usage" }} observation={grokBot} summary={grokCliSummary(grokBot.usage)} orbs={[]}
-              names={[{ node: { kind: "grok-bot-usage" }, label: "Grok CLI" }]} />
+            <UsageCard node={{ kind: "grok-bot-usage" }} observation={grokBot} summary={grokBotSummary(grokBot.usage)} orbs={[]}
+              names={[{ node: { kind: "grok-bot-usage" }, label: grokBotLabel }]} />
           ) : null}
           {waiting.length || (grokBot && !grokBot.usage) ? (
             <div className="flex flex-wrap items-center gap-1 px-0.5 pt-1">
@@ -205,7 +205,7 @@ export function UsageWindow() {
               ))}
               {grokBot && !grokBot.usage ? (
                 <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem]">
-                  <NodeTitle node={{ kind: "grok-bot-usage" }} label="Grok CLI usage">Grok CLI</NodeTitle>
+                  <NodeTitle node={{ kind: "grok-bot-usage" }} label={`${grokBotLabel} usage`}>{grokBotLabel}</NodeTitle>
                 </span>
               ) : null}
             </div>

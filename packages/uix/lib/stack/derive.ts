@@ -117,3 +117,6 @@ export function usageRows<T extends { id: string; scope: string; linkedAccounts:
   }
   return rows;
 }
+
+/** The usage API observes one machine-level Grok Bot login; label it like other accounts. */
+export const grokBotLabel = "grok-bot-1";

@@ -9,7 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { fieldsOf, findOperation, operationTitle, recordFields, recordOperations, type Field } from "@/lib/stack/catalog";
-import { accountLabels, clockTime, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
+import { accountLabels, clockTime, providerTitle, shortId, workerAccountLabels, grokBotLabel } from "@/lib/stack/derive";
 import type { StackState } from "@/lib/stack/store";
 import { nodeKey, type Account, type Bot, type Login, type NodeRef, type OperationDoc, type StackEvent, type WorkerAccount } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
@@ -124,7 +124,7 @@ function resolve(ref: NodeRef, state: StackState): View | null {
     case "grok-bot-usage": {
       const observation = state.usage.data?.grokBot;
       if (!observation) return null;
-      return { eyebrow: "Machine login", accent: "owner", title: "Grok CLI", record: observation, body: <ObservationStatus observation={observation} /> };
+      return { eyebrow: "Grok Bot usage", accent: "owner", title: grokBotLabel, record: observation, body: <ObservationStatus observation={observation} /> };
     }
     case "worker-catalog": {
       const account = state.workerAccounts.data?.find((item) => item.id === ref.id);

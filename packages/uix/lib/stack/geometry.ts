@@ -17,6 +17,13 @@ export type WindowAnchor = { id: string; point: Point };
 export type SavedBench = { layout?: Partial<BenchLayout>; space?: string; camera?: Camera; anchor?: WindowAnchor };
 export type ViewportSize = { width: number; height: number };
 export const windowHeight = 760;
+/** The canvas dot pitch; windows snap to it in world coordinates. */
+export const gridSize = 22;
+export const snap = (value: number, grid = gridSize) => Math.round(value / grid) * grid;
+/** A local coordinate whose world position (origin + local) lands on the grid. */
+export const snapLocal = (local: number, origin: number, grid = gridSize) => snap(origin + local, grid) - origin;
+/** An extent whose far edge (start + extent) lands on the grid. */
+export const snapExtent = (start: number, extent: number, grid = gridSize) => snap(start + extent, grid) - start;
 export const windowLimits = { minWidth: 280, maxWidth: 960, minHeight: 160, maxHeight: 2000 };
 export const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const validExtent = (value: unknown, min: number, max: number) => typeof value === "number" && Number.isFinite(value) ? clamp(Math.round(value), min, max) : undefined;

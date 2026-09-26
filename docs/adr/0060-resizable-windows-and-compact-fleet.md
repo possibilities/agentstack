@@ -12,6 +12,9 @@ tidy pack with the resized footprint, and tidy keeps sizes. Sizes are clamped
 (280–960 wide, 160–2000 tall). A set height is exact; otherwise the registered
 height stays a maximum footprint. Double-clicking a grip returns that dimension
 to its registered default. Windows no longer share one width or footprint.
+Moving and resizing snap to the 22px canvas dot grid in world coordinates: a
+moved window's corner and a resized window's far edge land on dots. Holding
+Alt/Option places or sizes a window freely (amended 2026-09-25).
 
 Fleet windows favor glanceable shapes over prose:
 

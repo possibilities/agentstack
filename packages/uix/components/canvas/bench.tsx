@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { benchBounds, clamp, windowLimits, compensateLeft, fitBounds, preserveViewedWindow, raiseWindow, reconcileBench, restoreBenchCamera, viewedWindow, windowHeight, type BenchLayout, type Camera, type SavedBench } from "@/lib/stack/geometry";
+import { benchBounds, clamp, snapExtent, snapLocal, windowLimits, compensateLeft, fitBounds, preserveViewedWindow, raiseWindow, reconcileBench, restoreBenchCamera, viewedWindow, windowHeight, type BenchLayout, type Camera, type SavedBench } from "@/lib/stack/geometry";
 import { homeOf, spaces, type SpaceId } from "@/lib/stack/spaces";
 import { nodeKey, type NodeRef } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
@@ -191,10 +191,11 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
     return () => window.removeEventListener("keydown", key);
   }, [blocked, fit, tidy, zoomAt]);
 
-  const drag = (event: React.PointerEvent, move: (x: number, y: number) => void) => {
+  const drag = (event: React.PointerEvent, move: (x: number, y: number, free: boolean) => void) => {
     event.preventDefault(); setAnimating(false); setDragging(true); dragCleanup.current?.();
     const x = event.clientX, y = event.clientY;
-    const onMove = (next: PointerEvent) => move(next.clientX - x, next.clientY - y);
+    // Holding Alt/Option places windows freely instead of on the grid.
+    const onMove = (next: PointerEvent) => move(next.clientX - x, next.clientY - y, next.altKey);
     const stop = () => { setDragging(false); window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", stop); window.removeEventListener("pointercancel", stop); dragCleanup.current = null; };
     dragCleanup.current = stop;
     window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", stop); window.addEventListener("pointercancel", stop);
@@ -214,11 +215,13 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
         const frame = elements.current.get(id);
         const start = { width: frame?.offsetWidth ?? def.width, height: frame?.offsetHeight ?? def.height ?? windowHeight };
         const k = camera.k;
-        drag(event, (x, y) => setLayout((value) => {
+        const world = { x: point.x + origin.x, y: point.y + origin.y };
+        drag(event, (x, y, free) => setLayout((value) => {
           const previous = value.sizes[id] ?? {};
+          const width = start.width + x / k, height = start.height + y / k;
           const next = {
-            width: edge === "y" ? previous.width : Math.round(clamp(start.width + x / k, windowLimits.minWidth, windowLimits.maxWidth)),
-            height: edge === "x" ? previous.height : Math.round(clamp(start.height + y / k, windowLimits.minHeight, windowLimits.maxHeight)),
+            width: edge === "y" ? previous.width : Math.round(clamp(free ? width : snapExtent(world.x, width), windowLimits.minWidth, windowLimits.maxWidth)),
+            height: edge === "x" ? previous.height : Math.round(clamp(free ? height : snapExtent(world.y, height), windowLimits.minHeight, windowLimits.maxHeight)),
           };
           return { ...value, sizes: { ...value.sizes, [id]: next } };
         }));
@@ -238,9 +241,11 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
         const interactive = (event.target as Element).closest("button,a,[data-interactive],[tabindex]");
         if (event.button !== 0 || (interactive && event.currentTarget.contains(interactive))) return;
         const k = camera.k;
-        drag(event, (x, y) => {
+        drag(event, (x, y, free) => {
           if (Math.abs(x) + Math.abs(y) < 3) return;
-          setLayout((value) => ({ ...value, manual: { ...value.manual, [id]: true }, positions: { ...value.positions, [id]: { x: Math.round(point.x + x / k), y: Math.round(point.y + y / k) } } }));
+          const local = { x: point.x + x / k, y: point.y + y / k };
+          const next = free ? { x: Math.round(local.x), y: Math.round(local.y) } : { x: snapLocal(local.x, origin.x), y: snapLocal(local.y, origin.y) };
+          setLayout((value) => ({ ...value, manual: { ...value.manual, [id]: true }, positions: { ...value.positions, [id]: next } }));
         });
       },
     };
@@ -256,7 +261,7 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
           drag(event, (x, y) => setCamera({ ...start, x: start.x + x, y: start.y + y }));
         }}>
         <h1 className="sr-only">AgentStack open bench</h1>
-        <p id="bench-gestures" className="sr-only">Drag empty space, scroll, or use arrow keys to pan. Pinch or use plus and minus to zoom. Drag a window edge to resize it. F fits the bench; T resets window positions. Select a card name to inspect it. Command K opens navigation.</p>
+        <p id="bench-gestures" className="sr-only">Drag empty space, scroll, or use arrow keys to pan. Pinch or use plus and minus to zoom. Drag a window edge to resize it; windows snap to the dot grid unless Option is held. F fits the bench; T resets window positions. Select a card name to inspect it. Command K opens navigation.</p>
         <div ref={setWorld} className={cn("absolute top-0 left-0 origin-top-left", !ready && "invisible", animating && "transition-transform duration-300 ease-out motion-reduce:transition-none", dragging && "select-none")}
           style={{ transform: `translate3d(${camera.x}px,${camera.y}px,0) scale(${camera.k})` }}>
           <Lines world={world} scale={camera.k} version={layout} animating={animating || dragging} subtle={false} />
