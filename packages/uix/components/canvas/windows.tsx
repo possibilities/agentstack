@@ -199,6 +199,7 @@ function SignInCard({ attempt, labels, accounts, catalog }: { attempt: Login; la
         {phase === "code" ? (
           <>
             <p className="text-[0.72rem] text-pretty text-muted-foreground">Open the link and enter this code.</p>
+            {!target ? <p className="text-[0.72rem] text-pretty text-muted-foreground">Already added this ChatGPT login? Cancel and use Sign in again on its account. A duplicate sign-in won’t create another account.</p> : null}
             {attempt.authUrl ? <SignInLink url={attempt.authUrl} /> : null}
             <SignInCodeRow>
               <span className="min-w-0 font-mono text-2xl font-semibold tracking-[0.22em] break-all" title={loginFields.find((field) => field.name === "userCode")?.description ?? undefined}>{attempt.userCode}</span>

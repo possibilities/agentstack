@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { codexRuntimePath } from "./paths.js";
-import { AuthStore } from "./store.js";
+import { AuthStore, DuplicateCodexAccountError } from "./store.js";
 
 export type LoginState = { id: string; status: "pending" | "complete" | "failed"; authUrl: string | null; userCode: string | null; account: string | null; error: string | null; targetAccount: string | null };
 type Pending = { state: LoginState; child: ChildProcess; directory: string; timer: ReturnType<typeof setTimeout> | undefined; replace: string | null; done: Promise<void> };
@@ -145,8 +145,8 @@ export class LoginManager {
       } else if (state.status === "pending") {
         failure = "Codex sign-in did not finish. Try again.";
       }
-    } catch {
-      failure = "Codex did not save usable credentials. Try signing in again.";
+    } catch (error) {
+      failure = error instanceof DuplicateCodexAccountError ? error.message : "Codex did not save usable credentials. Try signing in again.";
     } finally {
       state.authUrl = null;
       state.userCode = null;

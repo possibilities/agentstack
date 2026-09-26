@@ -6,7 +6,8 @@ const prompt = `\nWelcome to Codex [v[90m0.0.0-test[0m]\n[90mOpenAI's command
 
 const writeAuth = () => writeFileSync(
   join(process.env.CODEX_HOME, "auth.json"),
-  JSON.stringify({ tokens: { refresh_token: "fixture-secret", access_token: "access", id_token: "fixture.jwt.signature" } }),
+  JSON.stringify({ tokens: { refresh_token: "fixture-secret", access_token: "access", id_token: "fixture.jwt.signature",
+    ...(process.env.FAKE_LOGIN_NATIVE_ID ? { account_id: process.env.FAKE_LOGIN_NATIVE_ID } : {}) } }),
 );
 
 if (process.env.FAKE_LOGIN_DELAYED) {

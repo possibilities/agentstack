@@ -112,6 +112,7 @@ test("the api package serves structured documents for every workspace package", 
         "worker_account_login_start", "worker_account_login_status", "worker_account_login_current", "worker_account_login_submit", "worker_account_login_cancel"].sort(),
     );
     assert.deepEqual((auth.operations.find((operation) => operation.name === "account_login_start")?.inputSchema.properties ?? {}), {});
+    assert.match(auth.operations.find((operation) => operation.name === "account_login_start")?.description ?? "", /already registered.*rejected/);
     const botAccount = auth.operations.find((operation) => operation.name === "account_list") as OperationDoc;
     const workerAccount = auth.operations.find((operation) => operation.name === "worker_account_list") as OperationDoc;
     assert.ok(JSON.stringify(botAccount.outputSchema).includes("linkedAccounts"));

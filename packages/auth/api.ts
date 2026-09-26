@@ -241,14 +241,14 @@ export const workerAccountLoginCancel = operation({
 });
 
 export const accountLoginStart = operation({
-  name: "account_login_start", description: "Create a Codex Bot account, and its paired Codex Worker account awaiting its own sign-in, by device sign-in in an isolated temporary home. Supersedes any attempt already in progress. Poll account_login_status for its verification URL, one-time code, and result.",
+  name: "account_login_start", description: "Create a Codex Bot account, and its paired Codex Worker account awaiting its own sign-in, by device sign-in in an isolated temporary home. A ChatGPT login already registered as a Bot account is rejected without creating another account. Supersedes any attempt already in progress. Poll account_login_status for its verification URL, one-time code, and result.",
   input: z.strictObject({}), output: loginStateSchema,
   annotations: { title: "Sign in to Codex" },
   async call(ctx: AuthContext) { return ctx.login.start(); },
 });
 
 export const accountLoginReplace = operation({
-  name: "account_login_replace", description: "Sign in again to an existing Codex Bot account, replacing its credentials without changing its identity or a Worker account.",
+  name: "account_login_replace", description: "Sign in again to an existing Codex Bot account, replacing its credentials without changing its account ID or a Worker account. A switch to another registered ChatGPT login is rejected.",
   input: z.strictObject({ id: accountId }), output: loginStateSchema,
   annotations: { title: "Sign in again" },
   async call(ctx: AuthContext, { id }) { return ctx.login.start(id); },

@@ -6,6 +6,12 @@ import type { WorkerAccount, WorkerProvider } from "./worker-accounts.js";
 
 export type Account = { id: string; enabled: boolean; removing: boolean };
 
+export class DuplicateCodexAccountError extends Error {
+  constructor() {
+    super("This ChatGPT login is already registered as a Codex Bot account. Choose a different login, or use Sign in again on the existing account.");
+  }
+}
+
 function privateDatabase(path: string): void {
   try {
     closeSync(openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600));
@@ -216,20 +222,26 @@ export class AuthStore {
   botAccountIdentity(id: string): string | null {
     try {
       const auth = JSON.parse(this.accountCredentials(id).auth) as { tokens?: { account_id?: unknown; access_token?: unknown } };
-      if (typeof auth.tokens?.account_id === "string" && auth.tokens.account_id) return auth.tokens.account_id;
-      const access = auth.tokens?.access_token;
-      if (typeof access !== "string") return null;
-      const claims = JSON.parse(Buffer.from(access.split(".")[1] ?? "", "base64url").toString("utf8")) as Record<string, unknown>;
-      const identity = (claims["https://api.openai.com/auth"] as Record<string, unknown> | undefined)?.chatgpt_account_id;
-      return typeof identity === "string" && identity ? identity : null;
+      return auth.tokens ? nativeIdentity(auth.tokens) : null;
     } catch { return null; }
   }
 
+  /** Compare private native identities inside the same write transaction as an addition or replacement. */
+  private assertUniqueIdentity(identity: string | null, exceptId?: string): void {
+    if (!identity) return;
+    const existing = this.db.prepare("SELECT accounts.name, auth_json FROM accounts JOIN secrets.credentials ON accounts.name = secrets.credentials.name").all() as Array<{ name: string; auth_json: string }>;
+    for (const account of existing) {
+      if (account.name !== exceptId && credentialInfo(account.auth_json)?.accountId === identity) throw new DuplicateCodexAccountError();
+    }
+  }
+
   addAccount(auth: string): Account {
-    if (!credentialInfo(auth)) throw new Error("Codex login did not provide ChatGPT credentials");
+    const info = credentialInfo(auth);
+    if (!info) throw new Error("Codex login did not provide ChatGPT credentials");
     const id = randomUUID();
     this.db.exec("BEGIN IMMEDIATE");
     try {
+      this.assertUniqueIdentity(info.accountId);
       this.db.prepare("INSERT INTO accounts (name) VALUES (?)").run(id);
       this.db.prepare("INSERT INTO secrets.credentials (name, auth_json) VALUES (?, ?)").run(id, auth);
       this.db.prepare("INSERT INTO worker_accounts (id, provider, bot_account) VALUES (?, 'codex', ?)").run(randomUUID(), id);
@@ -248,9 +260,18 @@ export class AuthStore {
   }
 
   replaceCredentials(id: string, auth: string): void {
-    if (!credentialInfo(auth)) throw new Error("Codex login did not provide ChatGPT credentials");
-    if (!this.db.prepare("SELECT 1 FROM accounts WHERE name = ? AND removing = 0").get(id)) throw new Error(`unknown Codex account: ${id}`);
-    this.db.prepare("UPDATE secrets.credentials SET auth_json = ?, version = version + 1 WHERE name = ?").run(auth, id);
+    const info = credentialInfo(auth);
+    if (!info) throw new Error("Codex login did not provide ChatGPT credentials");
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const current = this.db.prepare("SELECT auth_json FROM accounts JOIN secrets.credentials ON accounts.name = secrets.credentials.name WHERE accounts.name = ? AND removing = 0").get(id) as { auth_json: string } | undefined;
+      if (!current) throw new Error(`unknown Codex account: ${id}`);
+      // Existing duplicate records stay usable; only a switch to another
+      // registered identity is refused. Re-sign-in to this identity is safe.
+      if (info.accountId !== credentialInfo(current.auth_json)?.accountId) this.assertUniqueIdentity(info.accountId, id);
+      this.db.prepare("UPDATE secrets.credentials SET auth_json = ?, version = version + 1 WHERE name = ?").run(auth, id);
+      this.db.exec("COMMIT");
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
 
   syncCredential(id: string, expectedVersion: number, candidate: string): { status: "updated" | "unchanged" | "stale" | "invalid" | "missing"; version: number | null } {
@@ -317,6 +338,15 @@ function credentialInfo(raw: string): { timestamp: number | null; accountId: str
         typeof value.tokens.id_token !== "string" || !value.tokens.id_token) return null;
     const stamp = value.last_refresh;
     const timestamp = typeof stamp === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z$/.test(stamp) ? Date.parse(stamp) : NaN;
-    return { timestamp: Number.isFinite(timestamp) ? timestamp : null, accountId: typeof value.tokens.account_id === "string" ? value.tokens.account_id : null };
+    return { timestamp: Number.isFinite(timestamp) ? timestamp : null, accountId: nativeIdentity(value.tokens) };
+  } catch { return null; }
+}
+
+function nativeIdentity(tokens: { account_id?: unknown; access_token?: unknown }): string | null {
+  if (typeof tokens.account_id === "string" && tokens.account_id) return tokens.account_id;
+  try {
+    const claims = JSON.parse(Buffer.from((tokens.access_token as string).split(".")[1] ?? "", "base64url").toString("utf8")) as Record<string, unknown>;
+    const identity = (claims["https://api.openai.com/auth"] as Record<string, unknown> | undefined)?.chatgpt_account_id;
+    return typeof identity === "string" && identity ? identity : null;
   } catch { return null; }
 }

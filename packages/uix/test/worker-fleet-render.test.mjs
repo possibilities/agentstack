@@ -109,6 +109,19 @@ test("one Accounts window joins each Codex Bot account to its Worker and keeps p
   assert.doesNotMatch(text(empty), /Sign in with|to add one/);
 });
 
+test("a duplicate Codex sign-in explains the rejection without showing a new account", () => {
+  const duplicate = { id: "attempt-duplicate", account: null, targetAccount: null, status: "failed", authUrl: null, userCode: null,
+    error: "This ChatGPT login is already registered as a Codex Bot account. Choose a different login, or use Sign in again on the existing account." };
+  const failed = render(AccountsWindow, { accounts: [], state: { attempt: duplicate } });
+  assert.match(text(failed), /New Codex Bot account/);
+  assert.match(text(failed), /already registered as a Codex Bot account/);
+  assert.match(text(failed), /Sign in again on the existing account/);
+  assert.doesNotMatch(failed, /data-node="account:/);
+  const pending = render(AccountsWindow, { accounts: [], state: { attempt: { ...duplicate, status: "pending", error: null,
+    authUrl: "https://auth.openai.com/codex/device", userCode: "ABCD-EFGH" } } });
+  assert.match(text(pending), /A duplicate sign-in won’t create another account/);
+});
+
 test("Claude usage shows per-account windows, resets, provider-unit extra usage and unobserved accounts", () => {
   const accounts = [account("claude-a"), account("claude-b", { enabled: false, ready: false })];
   const observedAtMs = Date.now() - 600_000;
