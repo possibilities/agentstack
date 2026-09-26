@@ -4,6 +4,7 @@ The `bots` Package API serves chat operations on the same socket, MCP and WebSoc
 
 ## Find and read
 
+- `chat_tree` pages the full proven nested lineage with model/effort, status, metadata and coverage. `chat_tree_detail` reads chunked starting-input and spawn-argument evidence. See [Agent trees and conversation observations](agent-trees.md) for pagination, provenance, events, and joins to ACP Workers.
 - `chat_list` pages owned threads, including stopped history. `chat_search` finds keyword matches in indexed user/assistant prose, tool input/output and available reasoning text, returning a thread, snippet, role and rollout line. Scores rank only one query; use a page limit and offset. Search indexes up to 16 KiB per response item. An empty query is not a listing: use `chat_list`.
 - `chat_records` pages raw `response_item` and `event_msg` records in rollout order, including harness-specific payloads. Records too large for one response carry `truncated: true` and `payload: null`; `chat_record_chunk` reads their complete original JSONL line in bounded segments. These work for stopped Bots. Offsets returned by `nextLine` are continuation positions, not chat message IDs.
 - While running, `chat_thread_read` exposes native status, lineage and model; `chat_turns` and `chat_items` page native typed turns/items with opaque Codex cursors. `chat_occurrences` gives turn/item IDs and a native turn cursor for precise within-thread navigation. The native operations need a running, verified, account-bound Bot.

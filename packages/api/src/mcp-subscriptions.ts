@@ -29,6 +29,12 @@ const maxValueChars = 16_000;
 const maxSubscriptions = 128;
 const valueHash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
+function preventThreadFeedback(pkg: string, topic: string, scope: string | null | undefined, botId: string): void {
+  if (pkg === "bots" && (topic === "threads_changed" || topic === "chats_changed") && (!scope || scope === botId)) {
+    throw new Error(`subscribing a Bot thread to its own ${topic} would create a turn feedback loop; choose another Bot scope or bots_changed`);
+  }
+}
+
 function targetOf(invocation: InvocationContext | undefined): EventTarget {
   if (!invocation?.botId || !invocation.instance || !invocation.threadId) throw new Error("event subscriptions require a bot-bound MCP tool call with Codex thread metadata");
   return { botId: invocation.botId, instance: invocation.instance, threadId: invocation.threadId };
@@ -103,9 +109,7 @@ export class McpEventSubscriptions {
     const doc = await this.definition(pkg);
     if (!doc.events || !Object.hasOwn(doc.events.topics, input.topic)) throw new Error(`unknown ${pkg} event topic: ${input.topic}`);
     const scope = input.scope ?? (doc.events.scope?.required && pkg === "bots" ? target.botId : undefined);
-    if (pkg === "bots" && input.topic === "threads_changed" && scope === target.botId) {
-      throw new Error("subscribing a Bot thread to its own threads_changed would create a turn feedback loop; choose another Bot scope or bots_changed");
-    }
+    preventThreadFeedback(pkg, input.topic, scope, target.botId);
     if (doc.events.scope?.required && !scope) throw new Error(`${pkg} event ${input.topic} requires a scope`);
     if (scope !== undefined && !doc.events.scope) throw new Error(`${pkg} events do not accept a scope`);
     if (!doc.tools.some((tool) => tool.name === input.readOperation && tool.annotations?.readOnlyHint)) throw new Error(`${input.readOperation} is not a read-only ${pkg} operation`);
@@ -188,6 +192,7 @@ export class McpEventSubscriptions {
 
   private read(state: RecordState): Promise<unknown> {
     return (async () => {
+      preventThreadFeedback(state.pkg, state.topic, state.scope, state.botId);
       await this.authorizeRead?.(state);
       return socketCall(socketPath(state.pkg, this.env), "tools/call", { name: state.readOperation, arguments: state.readArguments }, { timeoutMs: 10_000 });
     })();
@@ -218,6 +223,7 @@ export class McpEventSubscriptions {
       await this.validate(target);
       state.instance = target.instance;
       this.db.prepare("UPDATE subscriptions SET instance = ? WHERE id = ?").run(state.instance, state.id);
+      preventThreadFeedback(state.pkg, state.topic, state.scope, state.botId);
       await this.authorizeRead?.(state);
       state.socket = await socketSubscribe(socketPath(state.pkg, this.env), [state.topic], () => { state.pending = true; void this.flush(state); },
         { scope: state.scope ?? undefined, signal: state.abort.signal });

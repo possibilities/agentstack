@@ -7,6 +7,12 @@ spaces in [ADR 0042](0042-canvas-spaces.md), the space-change inspection rule in
 [ADR 0009](0009-serve-docs-with-owner.md). Completes retirement of the Markdown
 twins from [ADR 0019](0019-markdown-twins.md). Preserves explicit inspection from
 [ADR 0051](0051-explicit-inspect-controls.md).
+Preserves Fleet's windows and Bot controls from
+[ADR 0056](0056-fleet-usage-catalogs-and-bot-controls.md) and the UI-entry redirect
+from [ADR 0057](0057-canvas-as-ui-home.md), relocating its System parity surface
+to the global dock. Owner resource and agent-tree contracts in
+[ADR 0054](0054-owner-resource-observations.md) and
+[ADR 0055](0055-agent-tree-observability.md) remain discoverable in the integrated reader.
 
 ## Decision
 
@@ -14,7 +20,7 @@ UIX is an open bench: one camera over a shared world containing named Canvas
 spaces. Fleet is the initial space. A space's local window arrangement is
 independent of its placement on the bench. Space navigation pans the camera;
 ordinary panning creates no browser-history entries and does not clear record
-inspection. One live store, auth flow and voice call remain mounted throughout.
+inspection. One live store, auth flow, Bot actions provider and voice call remain mounted throughout.
 The bench is canvas-only.
 
 Spaces pack deterministically into centered, balanced rows with clearance
@@ -58,8 +64,9 @@ source or replacement Markdown rendering.
 Remove `@agentstack/docs`, its owner-managed listener, `agentstack docs`,
 `agentstack-docs`, `AGENTSTACK_DOCS_PORT`, `owner_status.docsUrl`, and the reference
 startup URL output. Old docs-origin HTML, Markdown, revision and asset URLs are
-retired without aliases. The runtime index links to
-`/x/fleet?reference=overview` on the UI origin. Old `/x/system` and `/x/api`
+retired without aliases. The UI entry `/` redirects to `/x` (Fleet), with no
+separate index page; System links to `/x/fleet?reference=overview` on the UI origin.
+Old `/x/system` and `/x/api`
 space links are replaced by dock destinations under `/x/fleet`.
 
 This intentionally changes callers of the removed command, URL and owner field.

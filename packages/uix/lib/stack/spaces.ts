@@ -5,7 +5,7 @@ import { nodeKey, type NodeRef } from "./types";
 export type SpaceId = "fleet";
 
 export const spaces: { id: SpaceId; title: string; description: string; key: string }[] = [
-  { id: "fleet", title: "Fleet", description: "Bot accounts, Worker accounts, and bots", key: "1" },
+  { id: "fleet", title: "Fleet", description: "Accounts, bots, usage, and model catalogs", key: "1" },
 ];
 
 export const defaultSpace: SpaceId = "fleet";
@@ -31,6 +31,12 @@ export function homeOf(ref: NodeRef): NodeHome {
       return { kind: "space", space: "fleet", window: "accounts" };
     case "worker-account":
       return { kind: "space", space: "fleet", window: "worker-accounts" };
+    case "worker-catalog":
+      return { kind: "space", space: "fleet", window: "model-catalogs" };
+    case "usage":
+    case "usage-account":
+    case "grok-bot-usage":
+      return { kind: "space", space: "fleet", window: "usage" };
     case "bot":
       return { kind: "space", space: "fleet", window: "bots" };
     case "package":
@@ -65,7 +71,7 @@ export function spaceAttention(state: Pick<StackState, "status" | "owner" | "acc
     else if (!worker.ready) attention.fleet.push(`${label} needs sign-in`);
   }
   if (state.attempt?.status === "failed") attention.fleet.push("Sign-in failed");
-  for (const name of ["auth", "bots"] as const) if (state.status[name] === "closed") attention.fleet.push(`${name} reconnecting`);
+  for (const name of ["auth", "bots", "usage", "workers"] as const) if (state.status[name] === "closed") attention.fleet.push(`${name} reconnecting`);
   for (const child of state.owner.data?.children ?? []) if (!child.running) attention.system.push(`${child.name} stopped`);
   if (state.status.owner === "closed") attention.system.push("owner reconnecting");
   if (state.owner.error) attention.system.push(`Owner status: ${state.owner.error}`);
@@ -78,6 +84,8 @@ export function spaceAttention(state: Pick<StackState, "status" | "owner" | "acc
 export function parseNodeKey(key: string): NodeRef | null {
   if (key === "owner") return { kind: "owner" };
   if (key === "login") return { kind: "login" };
+  if (key === "usage") return { kind: "usage" };
+  if (key === "grok-bot-usage") return { kind: "grok-bot-usage" };
   const colon = key.indexOf(":");
   if (colon <= 0) return null;
   const kind = key.slice(0, colon);
@@ -88,7 +96,7 @@ export function parseNodeKey(key: string): NodeRef | null {
     if (dot <= 0 || dot === rest.length - 1) return null;
     return { kind: "operation", pkg: rest.slice(0, dot), id: rest.slice(dot + 1) };
   }
-  if (kind === "account" || kind === "worker-account" || kind === "child" || kind === "bot" || kind === "package") {
+  if (kind === "account" || kind === "worker-account" || kind === "worker-catalog" || kind === "usage-account" || kind === "child" || kind === "bot" || kind === "package") {
     return { kind, id: rest };
   }
   return null;

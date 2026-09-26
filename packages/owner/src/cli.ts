@@ -31,7 +31,7 @@ const existing = await socketCall(socketPath("owner"), "tools/call", {
   name: "owner_status", arguments: {},
 }, { timeoutMs: 1_000 }).catch(() => null) as { pid?: unknown; indexUrl?: unknown; uixUrl?: unknown } | null;
 if (existing && typeof existing.pid === "number") {
-  console.error(`AgentStack is already running (pid ${existing.pid}).${typeof existing.indexUrl === "string" ? ` Index: ${existing.indexUrl}` : ""}${typeof existing.uixUrl === "string" ? ` UI canvas: ${existing.uixUrl}` : ""}`);
+  console.error(`AgentStack is already running (pid ${existing.pid}).${typeof existing.indexUrl === "string" ? ` UI entry: ${existing.indexUrl}` : ""}${typeof existing.uixUrl === "string" ? ` UI canvas: ${existing.uixUrl}` : ""}`);
   process.exit(0);
 }
 
@@ -129,7 +129,7 @@ statusSource.setUixUrl(uixUrl);
 statusSource.setInspectorUrl(`http://127.0.0.1:${inspectorListenPort}/`);
 
 if (events.socketPath) console.error(events.socketPath);
-console.error(`AgentStack index: ${indexUrl}`);
+console.error(`AgentStack UI entry: ${indexUrl}`);
 console.error(`AgentStack UI canvas: ${uixUrl}`);
 for (const [name, url] of Object.entries(mcp.urls)) console.error(`${name} MCP: ${url}`);
 console.error(`AgentStack Inspector: http://127.0.0.1:${inspectorListenPort}/`);

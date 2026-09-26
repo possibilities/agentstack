@@ -26,6 +26,10 @@ test("homeOf distinguishes spatial records from global dock destinations", () =>
   assert.deepEqual(homeOf({ kind: "bot", id: "bot-1" }), { kind: "space", space: "fleet", window: "bots" });
   assert.deepEqual(homeOf({ kind: "package", id: "bots" }), { kind: "reference" });
   assert.deepEqual(homeOf({ kind: "operation", id: "bot_start", pkg: "bots" }), { kind: "reference" });
+  assert.deepEqual(homeOf({ kind: "usage" }), { kind: "space", space: "fleet", window: "usage" });
+  assert.deepEqual(homeOf({ kind: "usage-account", id: "bot:a1" }), { kind: "space", space: "fleet", window: "usage" });
+  assert.deepEqual(homeOf({ kind: "grok-bot-usage" }), { kind: "space", space: "fleet", window: "usage" });
+  assert.deepEqual(homeOf({ kind: "worker-catalog", id: "w1" }), { kind: "space", space: "fleet", window: "model-catalogs" });
 });
 
 test("spaceHref builds space links with an optional encoded focus", () => {
@@ -54,6 +58,10 @@ test("parseNodeKey inverts nodeKey for every kind and rejects malformed keys", (
     { kind: "worker-account", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" },
     { kind: "login" },
     { kind: "bot", id: "bot-1" },
+    { kind: "usage" },
+    { kind: "usage-account", id: "worker:account-with-colons:ok" },
+    { kind: "grok-bot-usage" },
+    { kind: "worker-catalog", id: "w1" },
     { kind: "package", id: "bots" },
     { kind: "operation", id: "bot_start", pkg: "bots" },
   ];

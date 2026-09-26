@@ -10,6 +10,7 @@ import { emptyLocation, locationHref, navigateTo, parseLocation, type BenchLocat
 import { homeOf, spaceAttention, spaceHref, spaces, spaceTitle, type SpaceId } from "@/lib/stack/spaces";
 import { nodeKey, type NodeRef, type Snapshot } from "@/lib/stack/types";
 import { AuthActionsProvider } from "./auth-actions";
+import { BotActionsProvider } from "./bot-actions";
 import { Dock, useDockSizes } from "./dock";
 import { Inspector } from "./inspector";
 import { Palette, type PaletteAction } from "./palette";
@@ -191,7 +192,7 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
   ], [controls, location.inspect, openSystem, openReference, openInspector]);
   const workbench: WorkbenchValue = useMemo(() => ({ space: location.space, setSpace, selected: location.inspect, hovered, select, hover, goTo, flash }), [location.space, location.inspect, setSpace, hovered, select, goTo, flash]);
   return <div className="contents" style={{ "--system": `${left}px`, "--sheet": `${right}px` } as React.CSSProperties}>
-    <WorkbenchContext value={workbench}><AuthActionsProvider><VoiceProvider>
+    <WorkbenchContext value={workbench}><AuthActionsProvider><VoiceProvider><BotActionsProvider>
       <Bench space={location.space} left={left} blocked={paletteOpen} onControls={reportControls} onScale={setScale} onArrive={flashNow} />
       <TopBar space={location.space} setSpace={setSpace} compact={screenWidth - left - right < 440} system={systemVisible} reference={Boolean(location.reference) && rightVisible} inspectorAvailable={overlay && Boolean(location.inspect) && !rightVisible} openInspector={openInspector} openSystem={openSystem} openReference={openReference} openPalette={() => setPaletteOpen(true)} />
       <div data-chrome className="fixed bottom-4 z-30 flex -translate-x-1/2 items-center gap-1 rounded-xl border bg-card/95 p-1 shadow-sm" style={{ left: "calc(var(--system) + (100% - var(--system) - var(--sheet))/2)" }}>
@@ -211,7 +212,7 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
         {location.reference ? <Reference target={location.reference} onOverview={referenceOverview} onClose={closeRight} hasInspection={Boolean(location.inspect)} expanded={expanded} onExpand={() => setExpanded((value) => !value)} /> : null}
       </Dock>
       <Palette open={paletteOpen} onOpenChange={setPaletteOpen} actions={actions} />
-    </VoiceProvider></AuthActionsProvider></WorkbenchContext>
+    </BotActionsProvider></VoiceProvider></AuthActionsProvider></WorkbenchContext>
   </div>;
 }
 

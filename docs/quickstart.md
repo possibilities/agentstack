@@ -30,16 +30,18 @@ transports and scoped event subscriptions. The direct entry is
 There is no separate docs listener, `agentstack docs` command or Markdown twin.
 
 The owner also starts the standalone UI app at `http://127.0.0.1:8745/` and
-prints this index URL.
-Its root lists current local links, Package API URLs, owner processes, and
-running bots; the live open bench is at `/x` (also `/x/fleet`). Spaces are
+prints this UI entry URL. The root redirects to the live open bench at `/x`
+(also `/x/fleet`); there is no separate index page. System holds current local
+links, full Package API MCP URLs and owner processes. Fleet holds Bot accounts,
+Worker accounts, Bots, Usage and Model catalogs, with explicit Bot lifecycle
+controls and a discovery-driven Bot tools dialog. Spaces are
 physical regions of one shared canvas, initially Fleet. System is a global
 left dock; API reference and record inspection share the right dock. Space
 navigation moves the camera, and window headers let you arrange the composition.
 The owner
 also prints the canvas URL. Set `AGENTSTACK_UIX_PORT` before starting to choose
 another port. `pnpm build` prepares `packages/uix` for `agentstack serve`.
-Both pages follow the system light/dark preference. The owner stops the app
+The UI follows the system light/dark preference. The owner stops the app
 on shutdown.
 
 The owner starts the official MCP Inspector as a headless child and prints

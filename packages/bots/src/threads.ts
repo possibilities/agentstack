@@ -105,7 +105,7 @@ export async function findEligibleMainThread(url: string): Promise<string | null
   });
 }
 
-async function withAppServer<T>(url: string, run: (call: (method: string, params: unknown) => Promise<unknown>) => Promise<T>): Promise<T> {
+export async function withAppServer<T>(url: string, run: (call: (method: string, params: unknown) => Promise<unknown>) => Promise<T>): Promise<T> {
   const ws = appServerSocket(url);
   ws.on("error", () => undefined);
   let nextId = 1;
@@ -132,7 +132,7 @@ async function withAppServer<T>(url: string, run: (call: (method: string, params
   });
   try {
     await once(ws, "open", 5_000);
-    await call("initialize", { clientInfo: { name: "agentstack", version: "0.0.0" } });
+    await call("initialize", { clientInfo: { name: "agentstack", version: "0.0.0" }, capabilities: { experimentalApi: true } });
     ws.send(JSON.stringify({ method: "initialized" }));
     return await run(call);
   } finally {
@@ -209,6 +209,10 @@ const threadChangeMethods = new Set([
   "thread/status/changed",
   "thread/closed",
   "thread/name/updated",
+  "thread/settings/updated",
+  "thread/project/updated",
+  "thread/goal/updated",
+  "thread/goal/cleared",
   "thread/archived",
   "thread/unarchived",
   "thread/deleted",
@@ -218,17 +222,24 @@ const threadChangeMethods = new Set([
   "turn/started",
   "turn/completed",
   "item/completed",
+  "item/started",
 ]);
 
 export function watchThreadEvents(url: string, onChange: () => void, onNotification?: (method: string, params: unknown) => void, onConnect?: () => void): () => void {
   let stopped = false;
   let ws: WebSocket | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
+  let change: ReturnType<typeof setTimeout> | undefined;
+  const invalidate = () => {
+    if (change || stopped) return;
+    change = setTimeout(() => { change = undefined; if (!stopped) onChange(); }, 25);
+    change.unref();
+  };
   const open = () => {
     if (stopped) return;
     const current = appServerSocket(url);
     ws = current;
-    current.on("open", () => current.send(JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "agentstack", version: "0.0.0" } } })));
+    current.on("open", () => current.send(JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "agentstack", version: "0.0.0" }, capabilities: { experimentalApi: true } } })));
     current.on("message", (raw) => {
       let message: { id?: unknown; result?: unknown; method?: unknown; params?: unknown };
       try {
@@ -242,12 +253,13 @@ export function watchThreadEvents(url: string, onChange: () => void, onNotificat
         if (!stopped) onChange();
       } else if (typeof message.method === "string" && !stopped) {
         onNotification?.(message.method, message.params);
-        if (threadChangeMethods.has(message.method)) onChange();
+        if (threadChangeMethods.has(message.method)) invalidate();
       }
     });
     current.on("error", () => current.terminate());
     current.on("close", () => {
       if (stopped || ws !== current) return;
+      invalidate();
       retry = setTimeout(open, 1_000);
       retry.unref();
     });
@@ -256,6 +268,7 @@ export function watchThreadEvents(url: string, onChange: () => void, onNotificat
   return () => {
     stopped = true;
     if (retry) clearTimeout(retry);
+    if (change) clearTimeout(change);
     ws?.terminate();
   };
 }

@@ -15,6 +15,10 @@ import { nodeKey, type Account, type Bot, type Login, type NodeRef, type Operati
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
 import { CopyButton, Orb } from "./primitives";
+import { BotLifecycleControls } from "./bot-actions";
+import { CatalogRefresh, CatalogStatus } from "./catalog-window";
+import { RecordTree } from "./record-tree";
+import { ObservationStatus } from "./usage-window";
 import { useOperation, useStack, useWorkbench } from "./provider";
 import { useVoice } from "./voice";
 import { accentBg, accentText, type Accent } from "./window";
@@ -84,7 +88,7 @@ function resolve(ref: NodeRef, state: StackState): View | null {
       return {
         eyebrow: `${providerTitle(account.provider)} Worker account`, accent: "auth", title: workerLabels.get(account.id) ?? shortId(account.id), orb: account.id, record: account,
         fields: recordFields(catalog, "auth", "worker_account_list"),
-        related: linkedBots.map((link) => ({ ref: { kind: "account", id: link.id } as NodeRef, label: `${labels.get(link.id)} · same ChatGPT account` })),
+        related: [{ ref: { kind: "worker-catalog", id: account.id }, label: "Model catalog" }, ...linkedBots.map((link) => ({ ref: { kind: "account", id: link.id } as NodeRef, label: `${labels.get(link.id)} · same ChatGPT account` }))],
         operations: { pkg: "auth", list: recordOperations(catalog, "auth").filter((operation) => operation.name.startsWith("worker_account") && !workerControls.has(operation.name)) },
         controls: <WorkerAccountControls account={account} />,
         events: state.events.filter((event) => event.pkg === "auth"),
@@ -102,18 +106,45 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         events: state.events.filter((event) => event.topic === "login_changed"),
       };
     }
+    case "usage": {
+      const snapshot = state.usage.data;
+      if (!snapshot) return null;
+      return { eyebrow: "Usage snapshot", accent: "owner", title: "Usage", record: snapshot,
+        fields: new Map(fieldsOf(findOperation(catalog, "usage", "usage_snapshot")?.outputSchema).map((field) => [field.name, field])),
+        events: state.events.filter((event) => event.pkg === "usage") };
+    }
+    case "usage-account": {
+      const account = state.usage.data?.accounts.find((item) => `${item.scope}:${item.id}` === ref.id);
+      if (!account) return null;
+      return { eyebrow: `${providerTitle(account.provider)} ${account.scope} usage`, accent: "owner", title: (account.scope === "bot" ? labels : workerLabels).get(account.id) ?? shortId(account.id), record: account,
+        body: <ObservationStatus observation={account} />,
+        related: [{ ref: { kind: account.scope === "bot" ? "account" : "worker-account", id: account.id }, label: "Account" }],
+        events: state.events.filter((event) => event.pkg === "usage") };
+    }
+    case "grok-bot-usage": {
+      const observation = state.usage.data?.grokBot;
+      if (!observation) return null;
+      return { eyebrow: "Machine CLI observation", accent: "owner", title: "Grok Bot usage", record: observation, body: <ObservationStatus observation={observation} /> };
+    }
+    case "worker-catalog": {
+      const account = state.workerAccounts.data?.find((item) => item.id === ref.id);
+      if (!account) return null;
+      const resource = state.workerCatalogs[ref.id];
+      return { eyebrow: `${providerTitle(account.provider)} Worker catalog`, accent: "bots", title: workerLabels.get(ref.id) ?? shortId(ref.id), record: resource?.data ?? { accountId: ref.id, error: resource?.error ?? "No observed catalog" },
+        body: <CatalogStatus id={ref.id} />,
+        controls: <CatalogRefresh id={ref.id} />, related: [{ ref: { kind: "worker-account", id: ref.id }, label: "Worker account" }], events: state.events.filter((event) => event.pkg === "workers") };
+    }
     case "bot": {
       const bot = state.bots.data?.find((item) => item.id === ref.id);
       if (!bot) return null;
       const related: View["related"] = [];
       if (bot.account) related.push({ ref: { kind: "account", id: bot.account }, label: `${labels.get(bot.account) ?? shortId(bot.account)} · assigned` });
       if (bot.runningAccount && bot.runningAccount !== bot.account) related.push({ ref: { kind: "account", id: bot.runningAccount }, label: `${labels.get(bot.runningAccount) ?? shortId(bot.runningAccount)} · ${bot.recoveryIssue ? "last launched" : "running"}` });
-      const voiceStatus = findOperation(catalog, "bots", "voice_status");
       return {
         eyebrow: "Bot", accent: "bots", title: bot.id, record: bot,
         recoveryIssue: bot.recoveryIssue,
         fields: recordFields(catalog, "bots", "bot_list"),
-        related, operations: { pkg: "bots", list: [...recordOperations(catalog, "bots"), ...(voiceStatus ? [voiceStatus] : [])] },
+        related,
         controls: <BotControls bot={bot} />,
         events: state.events.filter((event) => event.scope === bot.id),
       };
@@ -129,12 +160,21 @@ const loginControls = new Set(["account_login_cancel", "account_login_status"]);
 const workerControls = new Set(["worker_account_set_enabled", "worker_account_remove",
   "worker_account_login_start", "worker_account_login_status", "worker_account_login_current", "worker_account_login_submit", "worker_account_login_cancel"]);
 
+function referencePackage(ref: NodeRef): string {
+  if (ref.kind === "bot") return "bots";
+  if (ref.kind === "owner" || ref.kind === "child") return "owner";
+  if (ref.kind === "worker-catalog") return "workers";
+  if (ref.kind === "usage" || ref.kind === "usage-account" || ref.kind === "grok-bot-usage") return "usage";
+  return "auth";
+}
+
 function BotControls({ bot }: { bot: Bot }) {
   const voice = useVoice();
   const reason = voice.callable(bot);
   const onCall = voice.botId === bot.id;
   return (
     <div className="flex flex-col gap-1.5">
+      <BotLifecycleControls bot={bot} />
       <div className="flex flex-wrap gap-1.5">
         {onCall ? (
           <Button size="sm" variant="destructive" disabled={voice.phase === "ending"} onClick={voice.hangup}>
@@ -264,7 +304,7 @@ function Value({ value }: { value: unknown }) {
   if (typeof value === "boolean") return <Badge variant={value ? "secondary" : "outline"} className="font-mono">{String(value)}</Badge>;
   if (typeof value === "number") return <span className="font-mono tabular-nums">{value}</span>;
   if (typeof value === "string") return <span className="font-mono break-all">{value}</span>;
-  return <span className="font-mono break-all">{JSON.stringify(value)}</span>;
+  return <RecordTree value={value} />;
 }
 
 function Block({ title, aside, children }: { title: string; aside?: React.ReactNode; children: React.ReactNode }) {
@@ -319,7 +359,7 @@ export function Inspector({ hidden = false }: { hidden?: boolean }) {
             <Button variant="ghost" size="icon-sm" aria-label="Close inspector" onClick={() => select(null)}><XIcon /></Button>
           </header>
           <div data-scroll className="flex flex-1 flex-col gap-6 overflow-y-auto overscroll-contain px-4 py-4">
-            <Button variant="outline" size="sm" className="self-start" onClick={() => goTo({ kind: "package", id: shown.kind === "bot" ? "bots" : shown.kind === "owner" || shown.kind === "child" ? "owner" : "auth" })}><BookOpenIcon data-icon="inline-start" />Package API reference</Button>
+            <Button variant="outline" size="sm" className="self-start" onClick={() => goTo({ kind: "package", id: referencePackage(shown) })}><BookOpenIcon data-icon="inline-start" />Package API reference</Button>
         {!view ? (
           <p className="text-sm text-muted-foreground">This item is no longer present in the current state.</p>
         ) : (

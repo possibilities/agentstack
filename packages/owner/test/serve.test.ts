@@ -7,9 +7,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { socketCall, socketSubscribe } from "@agentstack/api";
+import { socketCall, socketSubscribe, type SocketSubscription } from "@agentstack/api";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { ownerResourcesOutput, ownerResourceHistoryOutput } from "../src/resources/schema.js";
 
 const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
 const socketNames = ["api", "auth", "roles", "bots", "workers", "usage", "infer", "wiki", "owner"];
@@ -30,6 +31,8 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     stderr += chunk;
   });
   const ownerSock = join(stateDir, "sockets", "owner.sock");
+  let websocket: WebSocket | undefined;
+  let subscription: SocketSubscription | undefined;
   try {
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline && !socketNames.every((name) => existsSync(join(stateDir, "sockets", `${name}.sock`)))) {
@@ -49,6 +52,19 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       status = (await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} })) as typeof status;
     }
     assert.ok(status.children.every((entry) => entry.running));
+    let resourceSubscription: Awaited<ReturnType<typeof socketSubscribe>> | undefined;
+    const nextResourceSample = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("resource sampler did not publish")), 10_000);
+      void socketSubscribe(ownerSock, ["resources_changed"], () => {
+        clearTimeout(timeout); resolve(); void resourceSubscription?.close();
+      }).then((subscription) => { resourceSubscription = subscription; }, (error) => { clearTimeout(timeout); reject(error); });
+    });
+    try { await nextResourceSample; } finally { await resourceSubscription?.close(); }
+    const resourceSnapshot = ownerResourcesOutput.parse(await socketCall(ownerSock, "tools/call", { name: "owner_resources", arguments: { view: "processes", limit: 100 } }));
+    assert.equal(resourceSnapshot.observation.coverage?.mode, "owner_tree");
+    assert.equal(resourceSnapshot.observation.freshness, "fresh");
+    assert.ok(resourceSnapshot.processes.some((entry) => entry.pid === child.pid));
+    for (const entry of status.children) assert.ok(resourceSnapshot.processes.some((process) => process.pid === entry.pid && process.component === entry.name), `${entry.name} absent from resource snapshot`);
     const usage = await socketCall(join(stateDir, "sockets", "usage.sock"), "tools/call", { name: "usage_snapshot", arguments: {} }) as { accounts: unknown[]; grokBot: { fresh: boolean } };
     assert.deepEqual(usage.accounts, []);
     assert.equal(typeof usage.grokBot.fresh, "boolean");
@@ -61,9 +77,11 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     const client = new Client({ name: "owner-test", version: "1.0.0" });
     await client.connect(new StreamableHTTPClientTransport(new URL(url)));
     try {
-      assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), ["owner_status", "events_catalog", "events_subscribe", "events_status", "events_unsubscribe"]);
+      assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), ["owner_status", "owner_resources", "owner_resource_history", "events_catalog", "events_subscribe", "events_status", "events_unsubscribe"]);
       const result = await client.callTool({ name: "owner_status", arguments: {} });
       assert.equal((result.structuredContent as { pid?: number } | undefined)?.pid, child.pid);
+      const resources = await client.callTool({ name: "owner_resources", arguments: {} });
+      assert.ok(ownerResourcesOutput.parse(resources.structuredContent).scope!.metrics.rssBytes! > 0);
     } finally {
       await client.close();
     }
@@ -74,7 +92,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     const wsUrl = /owner WebSocket: (ws:\/\/\S+)/.exec(stderr)?.[1];
     assert.ok(wsUrl, stderr);
     for (const name of socketNames.filter((name) => name !== "infer")) assert.match(stderr, new RegExp(`${name} WebSocket: ws://127\\.0\\.0\\.1:\\d+/websocket/${name}`));
-    const ws = new WebSocket(wsUrl);
+    const ws = websocket = new WebSocket(wsUrl);
     await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = () => reject(new Error("WebSocket did not open")); });
     const frame = () => new Promise<any>((resolve) => { ws.onmessage = (event) => resolve(JSON.parse(String(event.data))); });
     const call = frame();
@@ -83,6 +101,9 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     const subscribed = frame();
     ws.send(JSON.stringify({ id: 2, method: "events/subscribe", params: { topics: ["pids_changed"] } }));
     assert.deepEqual(await subscribed, { id: 2, result: { topics: ["pids_changed"] } });
+    const historyCall = frame();
+    ws.send(JSON.stringify({ id: 3, method: "tools/call", params: { name: "owner_resource_history", arguments: {} } }));
+    assert.ok(ownerResourceHistoryOutput.parse((await historyCall).result).points.length > 0);
 
     let servers: Response | undefined;
     for (let i = 0; i < 200; i += 1) {
@@ -115,14 +136,14 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     }
     assert.equal(refreshed, true, "Inspector did not reload its server list");
 
-    const subscription = await socketSubscribe(ownerSock, ["pids_changed"], () => undefined);
+    subscription = await socketSubscribe(ownerSock, ["pids_changed"], () => undefined);
 
     assert.doesNotMatch(stderr, /AgentStack reference:/);
     await assert.rejects(fetch(`http://127.0.0.1:${retiredDocsPort}/docs`));
     const indexUrl = `http://127.0.0.1:${uixPort}/`;
     const uixUrl = `http://127.0.0.1:${uixPort}/x`;
     const referenceUrl = `http://127.0.0.1:${uixPort}/x/fleet?reference=overview`;
-    assert.ok(stderr.includes(`AgentStack index: ${indexUrl}`), stderr);
+    assert.ok(stderr.includes(`AgentStack UI entry: ${indexUrl}`), stderr);
     assert.ok(stderr.includes(`AgentStack UI canvas: ${uixUrl}`), stderr);
     const ownerStatus = await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} }) as {
       indexUrl: string; uixUrl: string; inspectorUrl: string; mcpUrls: Record<string, string>;
@@ -145,38 +166,56 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     assert.ok(duplicateError.includes(uixUrl), duplicateError);
     assert.doesNotMatch(duplicateError, /a required child stopped|EADDRINUSE/);
     assert.equal((await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} }) as { pid: number }).pid, child.pid);
-    let index: Response | undefined;
+    let entry: Response | undefined;
     for (let i = 0; i < 200; i += 1) {
       try {
-        index = await fetch(new URL("/", uixUrl));
-        if (index.ok) break;
+        entry = await fetch(indexUrl, { redirect: "manual" });
+        if (entry.status === 308) break;
       } catch {
         // Next.js may still be starting.
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    assert.equal(index?.status, 200, stderr);
-    const indexHtml = await index.text();
-    assert.match(indexHtml, /<h1[^>]*>AgentStack<\/h1>/);
-    assert.match(indexHtml, /Local links and bot processes/);
-    assert.match(indexHtml, /Package API reference/);
-    assert.match(indexHtml, /MCP Inspector/);
-    assert.match(indexHtml, /No running bots/);
-    assert.match(indexHtml, /Package API URLs/);
-    assert.ok(indexHtml.includes(uixUrl));
-    assert.ok(indexHtml.includes(referenceUrl));
-    assert.ok(indexHtml.includes(ownerStatus.mcpUrls.owner));
+    assert.equal(entry?.status, 308, stderr);
+    assert.equal(new URL(entry.headers.get("location")!, indexUrl).href, uixUrl);
+    const system = await fetch(new URL("/x/fleet?system=open", uixUrl));
+    assert.equal(system.status, 200);
+    const systemHtml = await system.text();
+    assert.match(systemHtml, /API reference/);
+    assert.match(systemHtml, /MCP Inspector/);
+    assert.match(systemHtml, /MCP endpoints/);
+    assert.ok(systemHtml.includes(referenceUrl));
+    assert.ok(systemHtml.includes(ownerStatus.inspectorUrl));
+    assert.ok(systemHtml.includes(ownerStatus.mcpUrls.owner));
     const canvas = await fetch(uixUrl);
     assert.equal(canvas.status, 200);
     const canvasHtml = await canvas.text();
     assert.match(canvasHtml, /<main[^>]*data-canvas="workbench"/);
     assert.match(canvasHtml, /<h1[^>]*>AgentStack open bench<\/h1>/);
+    assert.match(canvasHtml, /No bots yet/);
+    // The integrated discovery reader retains the retired reference's coverage of concurrent APIs.
+    for (const [pkg, names] of [
+      ["owner", ["owner_resources", "owner_resource_history", "resources_changed"]],
+      ["bots", ["chat_tree", "chat_tree_detail"]],
+      ["workers", ["worker_record_list", "worker_tool_list", "worker_progress"]],
+    ] as const) {
+      const response = await fetch(new URL(`/x/fleet?reference=package%3A${pkg}`, uixUrl));
+      assert.equal(response.status, 200);
+      const html = await response.text();
+      const reference = html.match(/<aside\b[^>]*data-dock="right"[^>]*>[\s\S]*?<\/aside>/)?.[0];
+      assert.ok(reference, `Missing integrated ${pkg} reference`);
+      assert.match(reference, /data-reference/);
+      for (const name of names) assert.ok(reference.includes(name), `Reference is missing ${name}`);
+    }
     assert.doesNotMatch(canvasHtml, /Local links and Server processes/);
-    const stylesheet = /href="(\/_next\/static\/[^"]+\.css)"/.exec(canvasHtml)?.[1];
-    assert.ok(stylesheet);
-    const css = await fetch(new URL(stylesheet, uixUrl));
-    assert.equal(css.status, 200);
-    assert.match(await css.text(), /prefers-color-scheme:\s*dark/);
+    const stylesheets = [...new Set([...canvasHtml.matchAll(/href="(\/_next\/static\/[^"]+\.css)"/g)].map((match) => match[1]))];
+    assert.ok(stylesheets.length > 0);
+    const css = await Promise.all(stylesheets.map(async (stylesheet) => {
+      const response = await fetch(new URL(stylesheet, uixUrl));
+      assert.equal(response.status, 200);
+      return response.text();
+    }));
+    assert.match(css.join("\n"), /prefers-color-scheme:\s*dark/);
 
     assert.ok(!stderr.includes("https://"), stderr);
     assert.ok(!stderr.includes("token="), stderr);
@@ -200,6 +239,8 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       assert.equal(existsSync(sock), false, `${name}.sock left behind`);
     }
   } finally {
+    websocket?.close();
+    await subscription?.close();
     if (child.exitCode === null && child.signalCode === null) {
       // Let the owner reap its detached children even when an assertion fails.
       const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));

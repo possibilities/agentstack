@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, closeSync, constants, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { WorkerHistory, type ObservedSettings } from "./history.js";
 
 export type WorkerPhase = "preparing" | "idle" | "running" | "awaiting_input" | "cancelling" | "closed" | "failed" | "needs_recovery";
 export type TurnPhase = "queued" | "running" | "awaiting_input" | "cancelling" | "completed" | "cancelled" | "failed" | "unknown";
@@ -13,15 +14,23 @@ export type WorkerRecord = {
   currentTurnId: string | null; issue: string | null; createdAt: number; updatedAt: number;
 };
 export type TurnRecord = { id: string; workerId: string; phase: TurnPhase; stopReason: string | null; issue: string | null;
+  requestId: string; prompt: string | null; requestedModel: string | null; requestedEffort: string | null;
+  observedSettings: ObservedSettings | null; dispatchedAt: number | null; dispatchedPromptSeq: number | null;
   createdAt: number; updatedAt: number };
+export type TurnSummary = Omit<TurnRecord, "prompt"> & { promptChars: number | null };
+export function summarizeTurn({ prompt, ...turn }: TurnRecord): TurnSummary {
+  return { ...turn, promptChars: prompt?.length ?? null };
+}
 export type TranscriptEntry = { seq: number; workerId: string; turnId: string; kind: string; text: string; at: number };
 export type PendingRequest = { id: string; workerId: string; turnId: string; acpRequestId: number; kind: "permission";
+  runtimeInstance: string | null; toolCallId: string | null; recordSeq: number | null;
   title: string; options: Array<{ optionId: string; name: string; kind: string }>; state: "pending" | "responded" | "unknown" };
 
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 export class WorkerLedger {
   private readonly db: DatabaseSync;
+  readonly history: WorkerHistory;
 
   constructor(private readonly stateDir: string) {
     mkdirSync(stateDir, { recursive: true, mode: 0o700 });
@@ -50,6 +59,7 @@ export class WorkerLedger {
         seq INTEGER PRIMARY KEY AUTOINCREMENT, worker_id TEXT NOT NULL REFERENCES workers(id),
         turn_id TEXT NOT NULL REFERENCES turns(id), kind TEXT NOT NULL, text TEXT NOT NULL, at INTEGER NOT NULL
       );
+      CREATE INDEX IF NOT EXISTS turns_worker ON turns(worker_id);
       CREATE INDEX IF NOT EXISTS transcript_worker_seq ON transcript(worker_id, seq);
       CREATE TABLE IF NOT EXISTS pending_requests (
         id TEXT PRIMARY KEY, worker_id TEXT NOT NULL REFERENCES workers(id), turn_id TEXT NOT NULL REFERENCES turns(id),
@@ -59,6 +69,14 @@ export class WorkerLedger {
     `);
     const columns = this.db.prepare("PRAGMA table_info(workers)").all() as Array<{ name: string }>;
     if (!columns.some((column) => column.name === "runtime_instance")) this.db.exec("ALTER TABLE workers ADD COLUMN runtime_instance TEXT");
+    for (const [table, additions] of Object.entries({ turns: { prompt: "TEXT", requested_model: "TEXT", requested_effort: "TEXT",
+      observed_settings_json: "TEXT", dispatched_at: "INTEGER", dispatched_prompt_seq: "INTEGER" },
+    pending_requests: { runtime_instance: "TEXT", tool_call_id: "TEXT", record_seq: "INTEGER" } })) {
+      const existing = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+      for (const [name, type] of Object.entries(additions)) if (!existing.some((column) => column.name === name))
+        this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+    }
+    this.history = new WorkerHistory(this.db);
     this.db.prepare("UPDATE workers SET phase = 'needs_recovery', issue = 'Owner restarted during a worker operation; inspect before resuming', updated_at = ? WHERE phase IN ('preparing','running','awaiting_input','cancelling')").run(Date.now());
     this.db.prepare("UPDATE turns SET phase = 'unknown', issue = 'Turn outcome is unknown after owner restart', updated_at = ? WHERE phase IN ('queued','running','awaiting_input','cancelling')").run(Date.now());
     this.db.prepare("UPDATE pending_requests SET state = 'unknown' WHERE state = 'pending'").run();
@@ -122,8 +140,10 @@ export class WorkerLedger {
         cwd, branch, phase, current_turn_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'preparing',?,?,?)`)
         .run(id, input.requestId, inputDigest, input.botId, input.threadId, input.accountId, input.provider, input.model, input.effort, input.repo,
           join(this.stateDir, "workers", "worktrees", id), `agentstack-worker-${id}`, turnId, now, now);
-      this.db.prepare("INSERT INTO turns (id, worker_id, request_id, input_digest, phase, created_at, updated_at) VALUES (?,?,?,?, 'queued',?,?)")
-        .run(turnId, id, input.requestId, inputDigest, now, now);
+      this.db.prepare("INSERT INTO turns (id, worker_id, request_id, input_digest, phase, created_at, updated_at, prompt, requested_model, requested_effort) VALUES (?,?,?,?, 'queued',?,?,?,?,?)")
+        .run(turnId, id, input.requestId, inputDigest, now, now, input.task, input.model, input.effort);
+      this.append(id, turnId, "user", input.task);
+      this.history.append(id, null, "launch", "submitted", { repo: input.repo, baseRef: input.baseRef, model: input.model, effort: input.effort });
       this.db.exec("COMMIT");
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
     return { worker: this.worker(id)!, turn: this.turn(turnId)!, duplicate: false };
@@ -167,7 +187,35 @@ export class WorkerLedger {
     const row = this.db.prepare("SELECT * FROM turns WHERE id = ?").get(id) as Record<string, unknown> | undefined;
     return row ? { id: row.id as string, workerId: row.worker_id as string, phase: row.phase as TurnPhase,
       stopReason: row.stop_reason as string | null, issue: row.issue as string | null,
+      requestId: row.request_id as string, prompt: row.prompt as string | null,
+      requestedModel: row.requested_model as string | null, requestedEffort: row.requested_effort as string | null,
+      observedSettings: row.observed_settings_json ? JSON.parse(row.observed_settings_json as string) as ObservedSettings : null,
+      dispatchedAt: row.dispatched_at as number | null, dispatchedPromptSeq: row.dispatched_prompt_seq as number | null,
       createdAt: row.created_at as number, updatedAt: row.updated_at as number } : null;
+  }
+  turnPage(workerId: string, afterId: string | undefined, limit: number) {
+    const cursor = afterId ? this.db.prepare("SELECT rowid FROM turns WHERE worker_id = ? AND id = ?").get(workerId, afterId) as { rowid: number } | undefined : undefined;
+    if (afterId && !cursor) throw new Error("turn cursor does not belong to this worker");
+    const rows = this.db.prepare("SELECT id FROM turns WHERE worker_id = ? AND rowid > ? ORDER BY rowid LIMIT ?")
+      .all(workerId, cursor?.rowid ?? 0, Math.min(limit, 50) + 1) as Array<{ id: string }>;
+    const turns: TurnRecord[] = [];
+    let bytes = 0;
+    for (const { id } of rows.slice(0, limit)) {
+      const turn = this.turn(id)!;
+      const size = Buffer.byteLength(JSON.stringify(turn));
+      if (turns.length && bytes + size > 200_000) break;
+      bytes += size; turns.push(turn);
+    }
+    return { turns, nextId: turns.at(-1)?.id ?? afterId ?? null, hasMore: rows.length > turns.length };
+  }
+  observeTurn(id: string, settings: ObservedSettings | null): void {
+    if (settings) this.db.prepare("UPDATE turns SET observed_settings_json = ? WHERE id = ?").run(JSON.stringify(settings), id);
+  }
+  dispatchTurn(id: string, prompt: string): void {
+    const turn = this.turn(id)!;
+    const seq = this.history.append(turn.workerId, id, "session/prompt", "submitted", { prompt: [{ type: "text", text: prompt }] });
+    this.db.prepare("UPDATE turns SET dispatched_at = ?, dispatched_prompt_seq = ? WHERE id = ?").run(Date.now(), seq, id);
+    this.observeTurn(id, this.history.settings(turn.workerId));
   }
   turns(workerId: string): TurnRecord[] {
     const rows = this.db.prepare("SELECT id FROM turns WHERE worker_id = ? ORDER BY created_at, rowid").all(workerId) as Array<{ id: string }>;
@@ -195,9 +243,10 @@ export class WorkerLedger {
     const now = Date.now();
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      this.db.prepare("INSERT INTO turns (id, worker_id, request_id, input_digest, phase, created_at, updated_at) VALUES (?,?,?,?, 'queued',?,?)")
-        .run(id, workerId, requestId, hash, now, now);
+      this.db.prepare("INSERT INTO turns (id, worker_id, request_id, input_digest, phase, created_at, updated_at, prompt, requested_model, requested_effort) VALUES (?,?,?,?, 'queued',?,?,?,?,?)")
+        .run(id, workerId, requestId, hash, now, now, message, model, effort);
       this.db.prepare("UPDATE workers SET current_turn_id = ?, phase = 'running', updated_at = ? WHERE id = ?").run(id, now, workerId);
+      this.append(workerId, id, "user", message);
       this.db.exec("COMMIT");
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
     return { turn: this.turn(id)!, duplicate: false };
@@ -232,15 +281,22 @@ export class WorkerLedger {
   read(workerId: string, afterSeq: number, limit: number): { entries: TranscriptEntry[]; nextSeq: number; hasMore: boolean } {
     const entries = this.db.prepare("SELECT seq, worker_id, turn_id, kind, text, at FROM transcript WHERE worker_id = ? AND seq > ? ORDER BY seq LIMIT ?")
       .all(workerId, afterSeq, limit + 1) as Array<{ seq: number; worker_id: string; turn_id: string; kind: string; text: string; at: number }>;
-    const hasMore = entries.length > limit;
-    const page = entries.slice(0, limit).map(({ worker_id, turn_id, ...entry }) => ({ ...entry, workerId: worker_id, turnId: turn_id }));
-    return { entries: page, nextSeq: page.at(-1)?.seq ?? afterSeq, hasMore };
+    const page: TranscriptEntry[] = [];
+    let bytes = 0;
+    for (const { worker_id, turn_id, ...entry } of entries.slice(0, limit)) {
+      const value = { ...entry, workerId: worker_id, turnId: turn_id };
+      const size = Buffer.byteLength(JSON.stringify(value));
+      if (page.length && bytes + size > 200_000) break;
+      bytes += size; page.push(value);
+    }
+    return { entries: page, nextSeq: page.at(-1)?.seq ?? afterSeq, hasMore: entries.length > page.length };
   }
 
-  addPermission(workerId: string, turnId: string, acpRequestId: number, title: string, options: PendingRequest["options"]): PendingRequest {
+  addPermission(workerId: string, turnId: string, acpRequestId: number, title: string, options: PendingRequest["options"],
+    runtimeInstance: string | null = null, toolCallId: string | null = null, recordSeq: number | null = null): PendingRequest {
     const id = randomUUID();
-    this.db.prepare("INSERT INTO pending_requests (id, worker_id, turn_id, acp_request_id, kind, title, options_json, state) VALUES (?,?,?,?,'permission',?,?,'pending')")
-      .run(id, workerId, turnId, acpRequestId, title.slice(0, 2_000), JSON.stringify(options));
+    this.db.prepare("INSERT INTO pending_requests (id, worker_id, turn_id, acp_request_id, kind, title, options_json, state, runtime_instance, tool_call_id, record_seq) VALUES (?,?,?,?,'permission',?,?,'pending',?,?,?)")
+      .run(id, workerId, turnId, acpRequestId, title.slice(0, 2_000), JSON.stringify(options), runtimeInstance, toolCallId, recordSeq);
     this.setTurnPhase(turnId, "awaiting_input");
     this.setWorkerPhase(workerId, "awaiting_input");
     return this.permission(id)!;
@@ -249,6 +305,7 @@ export class WorkerLedger {
     const row = this.db.prepare("SELECT * FROM pending_requests WHERE id = ?").get(id) as Record<string, unknown> | undefined;
     return row ? { id: row.id as string, workerId: row.worker_id as string, turnId: row.turn_id as string,
       acpRequestId: row.acp_request_id as number, kind: "permission", title: row.title as string,
+      runtimeInstance: row.runtime_instance as string | null, toolCallId: row.tool_call_id as string | null, recordSeq: row.record_seq as number | null,
       options: JSON.parse(row.options_json as string) as PendingRequest["options"], state: row.state as PendingRequest["state"] } : null;
   }
   pending(workerId: string): PendingRequest[] {
@@ -270,6 +327,7 @@ export class WorkerLedger {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       this.db.prepare("DELETE FROM pending_requests WHERE worker_id = ?").run(id);
+      this.history.remove(id);
       this.db.prepare("DELETE FROM transcript WHERE worker_id = ?").run(id);
       this.db.prepare("DELETE FROM turns WHERE worker_id = ?").run(id);
       this.db.prepare("DELETE FROM workers WHERE id = ?").run(id);

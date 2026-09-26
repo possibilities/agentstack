@@ -12,6 +12,7 @@ import { watchThreadEvents } from "./src/threads.js";
 import { VoiceCalls } from "./src/voice.js";
 import { ChatIndex, ChatQueue, ChatUploads, chatRpc, live } from "./src/chats.js";
 import { LiveChats, boundedMainItems } from "./src/chat-live.js";
+import { chatTreePage, readChatTree, pageChatTree, chatTreeDetail as treeDetail, detailChunk } from "./src/chat-tree.js";
 
 const botId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/).describe("Bot id. Omit for the next bot-N; supply a name to override it.");
 const botSettings = z.strictObject({
@@ -37,10 +38,10 @@ const botView = z.object({
 export type BotsContext = { root: string; ledger: BotLedger; store: StateStore; supervisor: Supervisor; voice: VoiceCalls; chats: ChatIndex; liveChats: LiveChats; queue: ChatQueue; uploads: ChatUploads };
 export const topics = {
   bots_changed: "Published when a bot starts, stops, exits, changes assignment, or is fenced for recovery. Refresh bot_list.",
-  threads_changed: "Published when loaded thread state for this bot changes or its Codex connection resumes. Read its app-server thread state.",
+  threads_changed: "Published when thread lifecycle, configuration, metadata or status for this Bot may have changed, or its Codex connection resumes. Refresh chat_tree. An invalidation is not proof that a sanctioned thread changed.",
   voice_changed: "Published when the single voice call starts, connects, or ends. Refresh voice_status; the notice carries no SDP or audio.",
   defaults_changed: "Published when the defaults for newly created Bots change. Refresh bot_defaults_get.",
-  chats_changed: "A Bot's Codex thread state changed or its chat history may have grown. Re-read chat_list, chat_thread_read or chat_turns; poll chat_main_live for in-progress text. Notices carry no transcript content.",
+  chats_changed: "A Bot's Codex thread state changed or its chat history may have grown. Re-read chat_tree, chat_list, chat_thread_read or chat_turns; poll chat_main_live for in-progress text. Notices carry no transcript content.",
   chat_queue_changed: "A queued message changed admission or dispatch state. Refresh chat_queue_list for the Bot; notices carry no message content.",
 } as const;
 export type BotsTopic = keyof typeof topics;
@@ -208,8 +209,17 @@ function botFor(ctx: BotsContext, id: string): ServerView {
 async function allowed(ctx: BotsContext, id: string, target: string): Promise<ServerView> {
   const bot = botFor(ctx, id);
   await ctx.chats.refresh(id, bot.mainThreadId);
-  if (!ctx.chats.allowed(id, target, bot.mainThreadId)) throw new Error("thread is not in this Bot's main-thread lineage");
+  if (!ctx.chats.allowed(id, target, bot.mainThreadId)) {
+    const tree = await readChatTree(ctx.chats, bot);
+    if (!tree.rows.some((row) => row.threadId === target)) throw new Error("thread is not in this Bot's main-thread lineage");
+    unchanged(ctx, bot);
+  }
   return bot;
+}
+function unchanged(ctx: BotsContext, bot: ServerView): void {
+  const current = botFor(ctx, bot.id);
+  if (current.url !== bot.url || current.pid !== bot.pid || current.mainThreadId !== bot.mainThreadId || current.state !== bot.state || current.recoveryIssue !== bot.recoveryIssue)
+    throw new Error("Bot changed while reading chat tree; refresh bot_list");
 }
 async function interactive(ctx: BotsContext, id: string, target: string): Promise<ServerView> {
   const bot = await allowed(ctx, id, target);
@@ -234,6 +244,31 @@ export const chatList = operation({
   input: z.strictObject({ botId, ...page }), output: z.strictObject({ chats: z.array(chatRow) }), annotations: { title: "List chats", readOnlyHint: true },
   async call(ctx: BotsContext, { botId: id, limit, offset }) { const bot = botFor(ctx, id); await ctx.chats.refresh(id, bot.mainThreadId); return { chats: ctx.chats.list(id, bot.mainThreadId, limit, offset) }; },
 });
+const treeScan = z.number().int().min(100).max(10_000).default(2000).describe("Maximum threads per native history/loaded sweep. Coverage reports a limit; raise this to include more native records. Rollout-backed history is scanned independently.");
+export const chatTree = operation({
+  name: "chat_tree", description: "Page this Bot's sanctioned root and nested descendants, including historical, archived, unloaded and live-before-rollout threads. Combines rollouts with native discovery; excludes unproven lineage. Status is native or unknown while stopped. Model/effort are configuration, not execution telemetry. Coverage reports gaps. Ordered by depth then ID; pass snapshot to fence later pages.",
+  input: z.strictObject({ botId, ...page, maxThreads: treeScan, snapshot: z.string().regex(/^[a-f0-9]{64}$/).optional().describe("Snapshot from the first page; rejects changed rows or coverage. Restart at offset 0 after an invalidation.") }), output: chatTreePage,
+  annotations: { title: "Read Bot chat tree", readOnlyHint: true },
+  async call(ctx: BotsContext, { botId: id, limit, offset, maxThreads, snapshot }) {
+    const bot = botFor(ctx, id);
+    const tree = await readChatTree(ctx.chats, bot, maxThreads);
+    unchanged(ctx, bot);
+    return pageChatTree(tree, offset, limit, snapshot);
+  },
+});
+export const chatTreeDetail = operation({
+  name: "chat_tree_detail", description: "Read chunked JSON evidence for a sanctioned thread: raw metadata, first own input and correlated spawn arguments with provenance. Missing evidence is null with coverage issues, never inferred. Native discovery scans at most 1000 items per thread. Concatenate UTF-16 chunks; pass revision after the first chunk to reject changes. Use raw chat reads for transcripts.",
+  input: z.strictObject({ botId, threadId, maxThreads: treeScan, offset: z.number().int().nonnegative().default(0), length: z.number().int().min(1).max(65_536).default(32_768), revision: z.string().regex(/^[a-f0-9]{64}$/).optional() }),
+  output: z.strictObject({ text: z.string().describe("JSON document chunk. Fields: thread (normalized row), nativeThread (raw), sessionMeta, initialContext, startingInput, spawn, spawnArguments, coverage. Evidence values include source (rollout/nativeItems), threadId, line or itemId and raw value. Exact spawn arguments require a correlated parent rollout function call."), totalChars: z.number().int().nonnegative(), nextOffset: z.number().int().nullable(), revision: z.string(), observedAt: z.string() }),
+  annotations: { title: "Read chat tree detail", readOnlyHint: true },
+  async call(ctx: BotsContext, { botId: id, threadId: target, maxThreads, offset, length, revision }) {
+    const bot = botFor(ctx, id);
+    const tree = await readChatTree(ctx.chats, bot, maxThreads);
+    const detail = await treeDetail(ctx.chats, bot, tree, target);
+    unchanged(ctx, bot);
+    return detailChunk(detail, offset, length, revision);
+  },
+});
 export const chatSearch = operation({
   name: "chat_search", description: "Full-text search over agentstack-owned Bot rollouts: user and assistant text, tool calls and outputs, and available reasoning summaries. Results rank chats by matching message, with a citeable rollout line and snippet. Only the sanctioned root and descendants are returned; scores are comparable only within one query.",
   input: z.strictObject({ botId, query: z.string().min(1).max(512), ...page }), output: z.strictObject({ hits: z.array(chatRow.extend({ line: z.number().int(), role: z.string(), snippet: z.string(), score: z.number() })) }), annotations: { title: "Search chats", readOnlyHint: true },
@@ -246,7 +281,7 @@ export const chatRecords = operation({
   async call(ctx: BotsContext, { botId: id, threadId: target, afterLine, limit }) { const bot = await allowed(ctx, id, target); return ctx.chats.records(id, target, bot.mainThreadId, afterLine, limit); },
 });
 export const chatRecordChunk = operation({
-  name: "chat_record_chunk", description: "Read a complete rollout record by line in bounded text chunks, including long tool outputs and image-bearing payloads. Offsets and lengths count UTF-16 code units; concatenate chunks for the original JSONL record.",
+  name: "chat_record_chunk", description: "Read a complete rollout record by line in bounded text chunks, including session metadata, turn context, long tool outputs and image-bearing payloads. Offsets and lengths count UTF-16 code units; concatenate chunks for the original JSONL record.",
   input: z.strictObject({ botId, threadId, line: z.number().int().min(1), offset: z.number().int().nonnegative().default(0), length: z.number().int().min(1).max(65_536).default(32_768) }),
   output: z.strictObject({ text: z.string(), totalChars: z.number().int(), nextOffset: z.number().int().nullable() }), annotations: { title: "Read full chat record", readOnlyHint: true },
   async call(ctx: BotsContext, { botId: id, threadId: target, line, offset, length }) { const bot = await allowed(ctx, id, target); return ctx.chats.recordChunk(id, target, bot.mainThreadId, line, offset, length); },
@@ -433,7 +468,7 @@ export const chatAttachmentRemove = operation({
 });
 
 export const api: PackageApi<BotsContext, BotsTopic> = {
-  operations: [botStart, botStop, botAssign, botRemove, botList, botDefaultsGet, botDefaultsSet, voiceStatus, voiceDial, voiceSpeak, voiceHangup, chatList, chatSearch, chatRecords, chatRecordChunk, chatThreadRead, chatTurns, chatItems, chatMainLive, chatMainItems, chatOccurrences, chatOpen, chatSend, chatSteer, chatInterrupt, chatEnqueue, chatQueueList, chatQueueResolve, chatCodexQueueAdd, chatCodexQueueList, chatCodexQueueUpdate, chatCodexQueueDelete, chatCodexQueueReorder, chatCodexQueueStart, chatUploadStart, chatUploadStatus, chatUploadChunk, chatUploadFinish, chatAttachmentAdd, chatAttachmentList, chatAttachmentRemove],
+  operations: [botStart, botStop, botAssign, botRemove, botList, botDefaultsGet, botDefaultsSet, voiceStatus, voiceDial, voiceSpeak, voiceHangup, chatList, chatTree, chatTreeDetail, chatSearch, chatRecords, chatRecordChunk, chatThreadRead, chatTurns, chatItems, chatMainLive, chatMainItems, chatOccurrences, chatOpen, chatSend, chatSteer, chatInterrupt, chatEnqueue, chatQueueList, chatQueueResolve, chatCodexQueueAdd, chatCodexQueueList, chatCodexQueueUpdate, chatCodexQueueDelete, chatCodexQueueReorder, chatCodexQueueStart, chatUploadStart, chatUploadStatus, chatUploadChunk, chatUploadFinish, chatAttachmentAdd, chatAttachmentList, chatAttachmentRemove],
   events: {
     topics,
     scope: {
@@ -456,7 +491,7 @@ export const api: PackageApi<BotsContext, BotsTopic> = {
           if (bot) ctx.liveChats.observe(id, url, bot.mainThreadId, method, params);
         }, () => ctx.liveChats.connected(id, url)) });
       };
-      ctx.supervisor.onChange = (id) => { sync(); publish("bots_changed", id); };
+      ctx.supervisor.onChange = (id) => { sync(); publish("bots_changed", id); publish("threads_changed", id); publish("chats_changed", id); };
       ctx.store.onDefaultsChange = () => publish("defaults_changed");
       ctx.voice.onChange = () => publish("voice_changed");
       ctx.queue.onChange = (id) => publish("chat_queue_changed", id);

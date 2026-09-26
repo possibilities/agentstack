@@ -34,27 +34,17 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { annotationBadges, fieldsOf, findOperation } from "@/lib/stack/catalog";
-import { accountLabels, botsFor, histogram, pathParts, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
+import { accountLabels, botsFor, histogram, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
 import type { Account, Bot, Login, OperationDoc, PackageDoc, WorkerAccount, WorkerLogin } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
 import { BotTile, CopyButton, Empty, NodeCard, NodeTitle, Orb, Row, Sparkline, StatusDot, Time } from "./primitives";
+import { BotLifecycleControls, BotWindowActions } from "./bot-actions";
 import { useActivity, useNow, useStack, useWorkbench } from "./provider";
 import { useVoice } from "./voice";
 import { Section, Window } from "./window";
 
 const activitySpan = 5 * 60_000;
-
-export function Path({ path }: { path: string }) {
-  const { head, tail } = pathParts(path);
-  const parent = head.split("/").filter(Boolean).at(-1);
-  return (
-    <span className="font-mono text-[0.75rem]" title={path}>
-      <span className="text-muted-foreground">{parent ? `…/${parent}/` : head}</span>
-      {tail}
-    </span>
-  );
-}
 
 export function AccountChip({ id, labels }: { id: string | null; labels: Map<string, string> }) {
   if (!id) return <span className="text-muted-foreground">Unbound</span>;
@@ -643,7 +633,7 @@ export function BotsWindow() {
 
   return (
     <Window id="bots" title="Bots" subtitle="bots · private workspaces" icon={BotIcon} accent="bots"
-      count={bots.data?.length} status={status.bots} endpoint={endpoints.bots} updatedAt={bots.at} error={bots.error}>
+      count={bots.data?.length} status={status.bots} endpoint={endpoints.bots} updatedAt={bots.at} error={bots.error} actions={<BotWindowActions />}>
       {bots.data?.length ? (
         <div className="flex flex-col gap-2">
           {sortBots(bots.data).map((bot) => {
@@ -675,7 +665,10 @@ export function BotsWindow() {
                   <Row label="Bot account"><AccountChip id={bot.account} labels={labels} /></Row>
                   <Row label="Main thread" mono copy={bot.mainThreadId}>{bot.mainThreadId ? shortId(bot.mainThreadId) : "Awaiting first turn"}</Row>
                   <Row label="Role revision" mono>{bot.roleRevision ?? "Never launched"}</Row>
-                  <Row label="Workspace" copy={bot.cwd}><Path path={bot.cwd} /></Row>
+                  <Row label="Saved model">{bot.settings?.model ?? "Codex implicit default"}</Row>
+                  <Row label="Saved effort">{bot.settings?.reasoningEffort ?? "Codex implicit default"}</Row>
+                  <Row label="Workspace" copy={bot.cwd} mono className="[&>dd]:break-all [&>dd]:whitespace-normal">{bot.cwd}</Row>
+                  {bot.url ? <Row label="Endpoint" copy={bot.url} mono className="[&>dd]:break-all [&>dd]:whitespace-normal">{bot.url}</Row> : null}
                 </dl>
                 {bot.recoveryIssue ? <RecoveryWarning message={bot.recoveryIssue} /> : null}
                 {bot.state === "running" && !bot.recoveryIssue && bot.account !== bot.runningAccount ? (
@@ -699,12 +692,13 @@ export function BotsWindow() {
                     Call
                   </Button>
                 ) : null}
+                <BotLifecycleControls bot={bot} />
               </NodeCard>
             );
           })}
         </div>
       ) : bots.data ? (
-        <Empty icon={BotIcon} title="No bots yet">bot_start needs an enabled Codex Bot account ID; add one in the Bot accounts window.</Empty>
+        <Empty icon={BotIcon} title="No bots yet">Choose Create Bot to start with an enabled Codex Bot account. Add an account in Bot accounts if needed.</Empty>
       ) : (
         <Empty icon={ShieldAlertIcon} title="Bots unavailable">{bots.error ?? "Waiting for the bots socket."}</Empty>
       )}

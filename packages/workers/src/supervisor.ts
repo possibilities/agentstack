@@ -9,7 +9,8 @@ import { AcpProcess, record } from "./acp.js";
 import { effortOption, modelOption, nativeDevinModels, optionsOf, type Catalog, type ModelChoice } from "./catalog.js";
 
 export type Runtime = { account: WorkerAccount; process: AcpProcess; version: string; probeSession: string | null;
-  canClose: boolean; canLoad: boolean; supportsHttp: boolean; instance: string };
+  canClose: boolean; canLoad: boolean; supportsHttp: boolean; instance: string;
+  capabilities: Record<string, unknown>; agentInfo: Record<string, unknown> | null };
 export type RuntimeView = { id: string; provider: WorkerAccount["provider"]; state: "running" | "stopped" | "error";
   pid: number | null; instance: string | null; error: string | null };
 
@@ -94,7 +95,9 @@ export class WorkerSupervisor {
       const supportsHttp = record(initialized.agentCapabilities) && record(initialized.agentCapabilities.mcpCapabilities)
         && initialized.agentCapabilities.mcpCapabilities.http === true;
       const runtime: Runtime = { account, process: child, version, probeSession: null, canClose: Boolean(canClose),
-        canLoad: Boolean(canLoad), supportsHttp: Boolean(supportsHttp), instance: randomUUID() };
+        canLoad: Boolean(canLoad), supportsHttp: Boolean(supportsHttp), instance: randomUUID(),
+        capabilities: record(initialized.agentCapabilities) ? initialized.agentCapabilities : {},
+        agentInfo: record(initialized.agentInfo) ? initialized.agentInfo : null };
       this.live.set(account.id, runtime);
       this.onRuntimeReady?.(runtime);
       this.errors.delete(account.id);

@@ -35,17 +35,27 @@ async function availablePort() {
   return port;
 }
 
-test("the index and canvas render a fenced bot honestly", { timeout: 30_000 }, async () => {
+test("the UI entry redirects to the canvas without losing local links, processes, or Bot recovery details", { timeout: 30_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-uix-recovery-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, NEXT_TELEMETRY_DISABLED: "1" };
+  const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_WEBSOCKET_PORT: "0", NEXT_TELEMETRY_DISABLED: "1" };
   const served = [];
   let next;
   let output = "";
   try {
+    const owner = {
+      pid: process.pid, indexUrl: "http://127.0.0.1:43102/", uixUrl: "http://127.0.0.1:43102/x",
+      inspectorUrl: "http://127.0.0.1:43103/", mcpUrls: { owner: "http://127.0.0.1:43104/mcp/owner" },
+      children: [
+        { name: "inspector", pid: 9876, running: true, exitCode: null, signal: null, error: null },
+        { name: "workers", pid: null, running: false, exitCode: 1, signal: null, error: "Fixture spawn failure" },
+      ],
+    };
     const definitions = {
-      owner: [operation("owner_status", { pid: process.pid, indexUrl: null, uixUrl: null, inspectorUrl: null, mcpUrls: {}, children: [] })],
-      auth: [operation("account_list", { accounts: [] }), operation("account_login_current", { login: null })],
+      owner: [operation("owner_status", owner)],
+      auth: [operation("account_list", { accounts: [] }), operation("account_login_current", { login: null }), operation("worker_account_list", { accounts: [] }), operation("worker_account_login_current", { logins: [] })],
       bots: [operation("bot_list", { bots: [bot] }), operation("bot_defaults_get", bot.settings), operation("voice_status", { call: null })],
+      workers: [operation("worker_runtime_list", { runtimes: [] }), operation("worker_list", { workers: [] })],
+      usage: [operation("usage_snapshot", { atMs: Date.now(), inventoryAtMs: null, inventoryError: null, accounts: [], grokBot: { observedAtMs: null, lastAttemptAtMs: null, fresh: false, error: "not_observed", usage: null } })],
       api: [operation("docs_snapshot", { packages: [packageDoc("bots", "bot_list", "bots")] })],
     };
     for (const [name, operations] of Object.entries(definitions)) {
@@ -66,26 +76,59 @@ test("the index and canvas render a fenced bot honestly", { timeout: 30_000 }, a
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     assert.ok(ready, `Next did not become ready: ${output}`);
-    const [index, canvas] = await Promise.all(["/", "/x"].map(async (path) => {
+    const entry = await fetch(`${origin}/`, { redirect: "manual" });
+    assert.equal(entry.status, 308);
+    assert.equal(new URL(entry.headers.get("location"), origin).href, `${origin}/x`);
+    // Inspect rendered content, not the serialized snapshot embedded by Next.
+    const readCanvas = async (path) => {
       const response = await fetch(`${origin}${path}`);
       assert.equal(response.status, 200, `${path}: ${output}`);
-      return response.text();
-    }));
-    for (const page of [index, canvas]) {
-      assert.match(page, /Needs inspection|needs inspection/);
-      assert.match(page, /Recorded process ownership could not be verified/);
-    }
+      const html = await response.text();
+      const main = html.match(/<main\b[\s\S]*?<\/main>/)?.[0];
+      assert.ok(main, `Missing canvas: ${path}`);
+      return main;
+    };
+    const readDock = async (path, side) => {
+      const response = await fetch(`${origin}${path}`);
+      assert.equal(response.status, 200, `${path}: ${output}`);
+      const html = await response.text();
+      const dock = html.match(new RegExp(`<aside\\b[^>]*data-dock="${side}"[^>]*>[\\s\\S]*?<\\/aside>`))?.[0];
+      assert.ok(dock, `Missing ${side} dock: ${path}`);
+      return dock;
+    };
+    const canvas = await readCanvas("/");
+    assert.match(canvas, /AgentStack open bench/);
+    assert.match(canvas, /Needs inspection|needs inspection/);
+    assert.match(canvas, /Recorded process ownership could not be verified/);
     assert.match(canvas, /bot-1/);
-    assert.match(canvas, /Call a bot/);
-    assert.doesNotMatch(index, /bot-1[^<]*Running · PID/);
+    assert.ok(canvas.includes(String(bot.pid)));
+    assert.ok(canvas.includes(bot.cwd));
+    assert.ok(canvas.includes(bot.url));
+    assert.doesNotMatch(canvas, /Local links and bot processes/);
 
-    const [system, api] = await Promise.all(["/x/fleet?system=open", "/x/fleet?reference=package%3Abots"].map(async (path) => {
-      const response = await fetch(`${origin}${path}`);
-      assert.equal(response.status, 200, `${path}: ${output}`);
-      return response.text();
-    }));
+    const [system, api] = await Promise.all([
+      readDock("/x/fleet?system=open", "left"),
+      readDock("/x/fleet?reference=package%3Abots", "right"),
+    ]);
     assert.match(system, /Filter System/);
+    const referenceUrl = new URL("/x/fleet?reference=overview", owner.uixUrl).href;
+    for (const value of ["API reference", "MCP Inspector", "MCP endpoints", "inspector", "9876", "workers", "Fixture spawn failure", referenceUrl, owner.inspectorUrl, owner.mcpUrls.owner]) {
+      assert.ok(system.includes(value), `System is missing ${value}`);
+    }
+    assert.doesNotMatch(system, /Runtime index/);
     assert.match(api, /bot_list/);
+
+    owner.children[0].running = false;
+    owner.children[0].pid = null;
+    const stopped = await readDock("/x/fleet?system=open", "left");
+    assert.doesNotMatch(stopped, /MCP Inspector/);
+    assert.match(stopped, /API reference/);
+
+    await served.shift().close();
+    const unavailable = await readDock("/x/fleet?system=open", "left");
+    assert.match(unavailable, /Owner status unavailable/);
+    assert.doesNotMatch(unavailable, /MCP Inspector/);
+    assert.match(await readCanvas("/x"), /bot-1/);
     assert.equal((await fetch(`${origin}/x/nope`)).status, 404);
     assert.equal((await fetch(`${origin}/x/system`)).status, 404);
     assert.equal((await fetch(`${origin}/x/api`)).status, 404);

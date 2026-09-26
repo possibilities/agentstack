@@ -43,12 +43,6 @@ export function providerTitle(provider: WorkerAccount["provider"]): string {
   return provider === "codex" ? "Codex" : provider === "grok" ? "Grok" : "Devin";
 }
 
-export function pathParts(path: string): { head: string; tail: string } {
-  const home = path.replace(/^\/Users\/[^/]+/, "~");
-  const index = home.lastIndexOf("/");
-  return index <= 0 ? { head: "", tail: home } : { head: home.slice(0, index + 1), tail: home.slice(index + 1) };
-}
-
 export function relativeTime(at: number | null, now: number): string {
   if (at === null) return "never";
   const seconds = Math.max(0, Math.round((now - at) / 1000));

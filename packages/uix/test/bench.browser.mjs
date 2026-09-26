@@ -16,7 +16,7 @@ const uixDir = dirname(dirname(fileURLToPath(import.meta.url)));
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed playwright module.");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const stateDir = await mkdtemp(join(tmpdir(), "opencode/agentstack-bench-"));
-const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, NEXT_TELEMETRY_DISABLED: "1" };
+const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_WEBSOCKET_PORT: "0", NEXT_TELEMETRY_DISABLED: "1" };
 const pass = { parse: (value) => value };
 const op = (name, result) => ({ name, description: name, input: pass, output: pass, async call() { return result; } });
 const bots = Array.from({ length: 8 }, (_, i) => ({ id: `bot-${i + 1}`, pid: 100 + i, cwd: "/fixture/project", state: "running", account: "account-1", runningAccount: "account-1", mainThreadId: `thread-${i}`, url: null, recoveryIssue: null, roleRevision: 1, settings: { model: "fixture", reasoningEffort: "medium", sandboxMode: "read-only", approvalPolicy: "never" } }));
@@ -27,6 +27,7 @@ const definitions = {
   auth: [op("account_list", { accounts: [{ id: "account-1", enabled: true, removing: false, linkedAccounts: [] }] }), op("account_login_current", { login: null }), op("worker_account_list", { accounts: [] }), op("worker_account_login_current", { logins: [] })],
   bots: [op("bot_list", { bots }), op("bot_defaults_get", bots[0].settings), op("voice_status", { call: null })],
   workers: [op("worker_runtime_list", { runtimes: [] }), op("worker_list", { workers: [] })],
+  usage: [op("usage_snapshot", { atMs: Date.now(), inventoryAtMs: null, inventoryError: null, accounts: [], grokBot: { observedAtMs: null, lastAttemptAtMs: null, fresh: false, error: "not_observed", usage: null } })],
   api: [op("docs_snapshot", { packages: catalog })],
 };
 let next, browser;
@@ -58,6 +59,7 @@ try {
   await page.goto(`${origin}/x`);
   await page.getByRole("main", { name: "Open bench" }).waitFor();
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
+  assert.deepEqual(await page.locator("[data-window]").evaluateAll((nodes) => nodes.map((node) => node.dataset.window).sort()), ["accounts", "bots", "model-catalogs", "usage", "worker-accounts"]);
   assert.equal(await page.getByRole("button", { name: "Grid", exact: true }).count(), 0);
   const point = () => page.locator('[data-window="bots"]').evaluate((el) => ({ x: el.getBoundingClientRect().x, y: el.getBoundingClientRect().y }));
   const samePoint = (a, b) => { assert.ok(Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) < 1, `${JSON.stringify(a)} != ${JSON.stringify(b)}`); };
@@ -212,7 +214,7 @@ try {
     saved.layout.positions.bots = { x: 0, y: 0 };
     saved.layout.manual.accounts = true;
     saved.layout.manual.bots = true;
-    saved.layout.order = ["worker-accounts", "accounts", "bots"];
+    saved.layout.order = [...saved.layout.order.filter((id) => id !== "accounts" && id !== "bots"), "accounts", "bots"];
     localStorage.setItem("agentstack.uix.bench.v1", JSON.stringify(saved));
   });
   await page.goto(`${origin}/x/fleet`);

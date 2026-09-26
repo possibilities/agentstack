@@ -1,6 +1,6 @@
 import { loadCatalog } from "./catalog";
 import { Channel } from "./channel";
-import type { Account, Bot, BotSettings, ChannelStatus, Login, OwnerStatus, PackageDoc, Resource, Snapshot, StackEvent, VoiceCall, WorkerAccount, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
+import type { Account, Bot, BotSettings, ChannelStatus, Login, OwnerStatus, PackageDoc, Resource, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
 
 export type StackState = Snapshot & {
   /** Main channel status by Package API name. */
@@ -12,6 +12,10 @@ export type StackState = Snapshot & {
   attempt: Login | null;
   /** Latest Worker sign-in attempt per account, kept visible after it finishes until dismissed. */
   workerAttempts: Record<string, WorkerLogin>;
+  workerCatalogs: Record<string, Resource<WorkerCatalog>>;
+  catalogPending: Record<string, boolean>;
+  /** Monotonic invalidation generations, independent of the bounded activity log. */
+  botInvalidations: Record<string, number>;
 };
 
 export type StackConnections = { packages?: readonly string[]; scopedBots?: boolean };
@@ -26,7 +30,7 @@ function isWorkerLoginState(value: unknown): value is WorkerLogin {
   return typeof value === "object" && value !== null && "status" in value && "account" in value && "provider" in value && "needsCode" in value;
 }
 
-type ResourceKey = "owner" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "catalog";
+type ResourceKey = "owner" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "catalog" | "usage";
 
 const maxEvents = 250;
 
@@ -39,12 +43,18 @@ export class StackStore {
   private dirty = new Set<ResourceKey>();
   private seq = 0;
   private scopedBots = true;
+  private catalogInflight = new Map<string, { promise: Promise<void>; refresh: boolean }>();
+  private catalogDirty = new Map<string, boolean>();
+  private catalogAvailable = new Set<string>();
+  private catalogGeneration = new Map<string, number>();
 
   constructor(snapshot: Snapshot) {
     this.state = {
       ...snapshot, status: {}, scoped: {}, events: [], attempt: snapshot.login.data,
       workerAttempts: Object.fromEntries((snapshot.workerLogins.data ?? []).map((login) => [login.account, login])),
+      workerCatalogs: {}, catalogPending: {}, botInvalidations: {},
     };
+    for (const account of snapshot.workerAccounts.data ?? []) if (this.catalogAccountAvailable(account.id)) this.catalogAvailable.add(account.id);
   }
 
   getState = (): StackState => this.state;
@@ -85,14 +95,20 @@ export class StackStore {
       if (topic === "defaults_changed") this.refresh("botDefaults");
       if (topic === "voice_changed") this.refresh("voice");
     }, ["bots_changed", "defaults_changed", "voice_changed"]);
-    open("workers", () => { this.refresh("workerRuntimes"); this.refresh("workerSessions"); }, () => {
-      this.refresh("workerRuntimes"); this.refresh("workerSessions");
+    // Existing cards use the global inventory invalidation. Conversation consumers
+    // subscribe to worker_progress + worker_changed scoped by Worker ID and resnapshot
+    // worker_detail/worker_tool_list or continue immutable worker_record_list pages.
+    open("workers", () => { this.refresh("workerRuntimes"); this.refresh("workerSessions"); this.reconcileCatalogs(true); }, () => {
+      this.refresh("workerRuntimes"); this.refresh("workerSessions"); this.reconcileCatalogs(true);
     }, ["workers_changed"]);
+    open("usage", () => this.refresh("usage"), () => this.refresh("usage"), ["usage_changed"]);
     open("api", () => this.refresh("catalog"));
     this.reconcileScoped();
   }
 
   stop(): void {
+    this.catalogDirty.clear();
+    for (const id of this.catalogAvailable) this.catalogGeneration.set(id, (this.catalogGeneration.get(id) ?? 0) + 1);
     for (const channel of [...this.main.values(), ...this.scopedChannels.values()]) channel.dispose();
     this.main.clear();
     this.scopedChannels.clear();
@@ -102,7 +118,13 @@ export class StackStore {
   call = async <T>(pkg: string, name: string, args: Record<string, unknown> = {}): Promise<T> => {
     const channel = this.main.get(pkg);
     if (!channel || channel.status !== "open") throw new Error(`${pkg} WebSocket is not connected`);
-    const result = await channel.call<T>(name, args);
+    const request = channel.call<T>(name, args);
+    const result = await (pkg === "bots" ? request.finally(() => {
+      // A lost mutation acknowledgement may still have changed the Bot. Re-read,
+      // never replay the operation automatically.
+      if (pkg === "bots" && ["bot_start", "bot_stop", "bot_assign", "bot_remove", "chat_open"].includes(name)) this.refresh("bots");
+      if (pkg === "bots" && name === "bot_defaults_set") this.refresh("botDefaults");
+    }) : request);
     if (pkg === "auth") {
       if (isWorkerLoginState(result)) this.set({ workerAttempts: { ...this.state.workerAttempts, [result.account]: result } });
       else if (isLoginState(result)) this.set({ attempt: result });
@@ -119,6 +141,59 @@ export class StackStore {
 
   dismissAttempt = (): void => this.set({ attempt: null });
 
+  reloadUsage = (): void => this.refresh("usage");
+
+  /** One no-turn catalog read per account, shared by cards and inspectors. */
+  refreshWorkerCatalog = (id: string, refresh = true): Promise<void> => {
+    const pending = this.catalogInflight.get(id);
+    if (pending) {
+      // An explicit rediscovery must not be swallowed by a cache-only read.
+      if (refresh && !pending.refresh) this.catalogDirty.set(id, true);
+      return pending.promise;
+    }
+    if (!this.catalogAccountAvailable(id) || this.main.get("workers")?.status !== "open") return Promise.resolve();
+    const generation = this.catalogGeneration.get(id) ?? 0;
+    this.set({ catalogPending: { ...this.state.catalogPending, [id]: true } });
+    const run = this.call<WorkerCatalog>("workers", "worker_catalog", { accountId: id, refresh })
+      .then((data) => ({ data, error: null, at: Date.now() }), (error: Error) => ({ data: this.state.workerCatalogs[id]?.data ?? null, error: error.message, at: Date.now() }))
+      .then((resource) => {
+        // Availability now is insufficient: disable/re-enable may have replaced
+        // the account's runtime while this observation was in flight.
+        if (this.catalogAccountAvailable(id) && generation === (this.catalogGeneration.get(id) ?? 0)) this.set({ workerCatalogs: { ...this.state.workerCatalogs, [id]: resource } });
+      }).finally(() => {
+        this.catalogInflight.delete(id);
+        const followup = this.catalogDirty.get(id);
+        this.catalogDirty.delete(id);
+        if (followup !== undefined && this.catalogAccountAvailable(id) && this.main.get("workers")?.status === "open") return this.refreshWorkerCatalog(id, followup);
+        const catalogPending = { ...this.state.catalogPending };
+        delete catalogPending[id];
+        this.set({ catalogPending });
+      });
+    this.catalogInflight.set(id, { promise: run, refresh });
+    return run;
+  };
+
+  private catalogAccountAvailable(id: string): boolean {
+    return Boolean(this.state.workerAccounts.data?.some((account) => account.id === id && account.enabled && account.ready && !account.removing));
+  }
+
+  private reconcileCatalogs(invalidated = false): void {
+    const available = new Set((this.state.workerAccounts.data ?? []).filter((account) => this.catalogAccountAvailable(account.id)).map((account) => account.id));
+    for (const id of new Set([...available, ...this.catalogAvailable])) {
+      if (available.has(id) !== this.catalogAvailable.has(id)) this.catalogGeneration.set(id, (this.catalogGeneration.get(id) ?? 0) + 1);
+      if (!available.has(id)) this.catalogDirty.delete(id);
+    }
+    this.catalogAvailable = available;
+    const workerCatalogs = Object.fromEntries(Object.entries(this.state.workerCatalogs).filter(([id]) => this.catalogAccountAvailable(id)));
+    if (Object.keys(workerCatalogs).length !== Object.keys(this.state.workerCatalogs).length) this.set({ workerCatalogs });
+    for (const id of available) {
+      // Discovery itself emits workers_changed. Its coalesced follow-up MUST be
+      // cache-only: the API's cached success/failure reads emit no new notice.
+      if (invalidated && this.catalogInflight.has(id) && !this.catalogDirty.has(id)) this.catalogDirty.set(id, false);
+      void this.refreshWorkerCatalog(id, false);
+    }
+  }
+
   dismissWorkerAttempt = (accountId: string): void => {
     if (!this.state.workerAttempts[accountId]) return;
     const workerAttempts = { ...this.state.workerAttempts };
@@ -133,7 +208,12 @@ export class StackStore {
 
   private log(pkg: string, topic: string, scope: string | null): void {
     const event: StackEvent = { seq: ++this.seq, at: Date.now(), pkg, topic, scope };
-    this.set({ events: [event, ...this.state.events].slice(0, maxEvents) });
+    this.set({ events: [event, ...this.state.events].slice(0, maxEvents),
+      ...(pkg === "bots" && scope ? { botInvalidations: { ...this.state.botInvalidations, [scope]: (this.state.botInvalidations[scope] ?? 0) + 1 } } : {}) });
+  }
+
+  private invalidateBot(id: string): void {
+    this.set({ botInvalidations: { ...this.state.botInvalidations, [id]: (this.state.botInvalidations[id] ?? 0) + 1 } });
   }
 
   private refresh(key: ResourceKey): void {
@@ -148,6 +228,7 @@ export class StackStore {
         if (key === "login") this.reconcileAttempt();
         if (key === "workerLogins") this.reconcileWorkerAttempts();
         if (key === "bots") this.reconcileScoped();
+        if (key === "workerAccounts") this.reconcileCatalogs(true);
       })
       .finally(() => {
         this.inflight.delete(key);
@@ -172,6 +253,7 @@ export class StackStore {
       case "bots": return call<{ bots: Bot[] }>("bots", "bot_list").then((result) => result.bots);
       case "botDefaults": return call<BotSettings>("bots", "bot_defaults_get");
       case "voice": return call<{ call: VoiceCall | null }>("bots", "voice_status").then((result) => result.call);
+      case "usage": return call<UsageSnapshot>("usage", "usage_snapshot");
       case "catalog": return loadCatalog((name, args) => call<never>("api", name, args)) as Promise<PackageDoc[]>;
     }
   }
@@ -220,7 +302,10 @@ export class StackStore {
     }
   }
 
-  /** Keep one scoped subscription per bot; notices are not proof of sanctioned thread activity. */
+  /** Keep one scoped subscription per bot; notices are not proof of sanctioned thread activity.
+   * Bot tools expose chat_tree/chat_tree_detail snapshots and mark them stale on
+   * notices/reconnects; subsequent pages are explicitly fenced with snapshot.
+   */
   private reconcileScoped(): void {
     if (!this.scopedBots) return;
     const { bots, endpoints } = this.state;
@@ -234,14 +319,19 @@ export class StackStore {
       this.scopedChannels.delete(id);
       delete scoped[id];
     }
+    this.set({ scoped });
     for (const [id, { pkg, topics }] of wanted) {
       if (this.scopedChannels.has(id)) continue;
-      scoped[id] = { pkg, status: "idle" };
+      this.set({ scoped: { ...this.state.scoped, [id]: { pkg, status: "idle" } } });
       const channel = new Channel(endpoints[pkg], {
         onStatus: (status) => {
           if (this.scopedChannels.get(id) !== channel) return;
           this.set({ scoped: { ...this.state.scoped, [id]: { pkg, status } } });
+          if (status === "closed") this.invalidateBot(id);
         },
+        // onOpen also runs when the underlying socket subscription reconnects
+        // without closing the browser WebSocket. Missed notices are not replayed.
+        onOpen: () => { if (this.scopedChannels.get(id) === channel) this.invalidateBot(id); },
         onNotice: (topic) => {
           this.log(pkg, topic, id);
           if (topic === "bots_changed") {
@@ -252,6 +342,5 @@ export class StackStore {
       this.scopedChannels.set(id, channel);
       channel.subscribe(topics, id).connect();
     }
-    this.set({ scoped });
   }
 }

@@ -10,16 +10,33 @@ const catalogSchema = z.strictObject({ accountId: id, provider: z.enum(["codex",
   source: z.string(), runtimeVersion: z.string(), modelConfigId: z.string().nullable(), models: z.array(model), nativeModelIds: z.array(z.string()), stale: z.boolean(), error: z.string().nullable() });
 const phase = z.enum(["preparing", "idle", "running", "awaiting_input", "cancelling", "closed", "failed", "needs_recovery"]);
 const turnPhase = z.enum(["queued", "running", "awaiting_input", "cancelling", "completed", "cancelled", "failed", "unknown"]);
+const observedSettingsSchema = z.strictObject({ model: z.string().nullable(), effort: z.string().nullable(), mode: z.string().nullable(),
+  at: z.number().int(), recordSeq: z.number().int() });
 const workerSchema = z.strictObject({ id, botId: z.string(), threadId: z.string(), accountId: id, provider: z.enum(["codex", "grok", "devin"]),
   model: z.string(), effort: z.string().nullable(), repo: z.string(), cwd: z.string().nullable(), branch: z.string().nullable(),
   baseCommit: z.string().nullable(), sourceDirty: z.boolean(), roleRevision: z.number().int().nullable(), acpSessionId: z.string().nullable(),
   runtimeInstance: id.nullable(),
   phase, currentTurnId: id.nullable(), issue: z.string().nullable(), createdAt: z.number().int(), updatedAt: z.number().int() });
 const turnSchema = z.strictObject({ id, workerId: id, phase: turnPhase, stopReason: z.string().nullable(), issue: z.string().nullable(),
+  requestId: id, prompt: z.string().nullable().describe("Submitted user prompt retained at admission; null for legacy turns whose prompt was not recorded."),
+  requestedModel: z.string().nullable(), requestedEffort: z.string().nullable(), observedSettings: observedSettingsSchema.nullable(),
+  dispatchedAt: z.number().int().nullable(), dispatchedPromptSeq: z.number().int().nullable(),
   createdAt: z.number().int(), updatedAt: z.number().int() });
+const turnSummarySchema = turnSchema.omit({ prompt: true }).extend({
+  promptChars: z.number().int().nonnegative().nullable().describe("Submitted prompt length in UTF-16 code units; null for legacy unrecorded prompts. Read worker_turn_list for the full prompt."),
+});
 const permissionSchema = z.strictObject({ id, workerId: id, turnId: id, acpRequestId: z.number().int(), kind: z.literal("permission"), title: z.string(),
+  runtimeInstance: id.nullable(), toolCallId: z.string().nullable(), recordSeq: z.number().int().nullable(),
   options: z.array(z.strictObject({ optionId: z.string(), name: z.string(), kind: z.string() })), state: z.enum(["pending", "responded", "unknown"]) });
-const resultSchema = z.strictObject({ worker: workerSchema, turn: turnSchema, duplicate: z.boolean() });
+const recordSchema = z.strictObject({ seq: z.number().int(), workerId: id,
+  turnId: id.nullable().describe("Active admission window, or the tool's original observed turn. ACP has no native turn IDs; replay and unattributed session observations remain null."), kind: z.string(),
+  source: z.enum(["live", "replay", "response", "submitted"]), at: z.number().int(),
+  data: z.record(z.string(), z.unknown()).nullable().describe("Safe structured ACP JSON; oversized values are recovered through worker_record_read."),
+  dataChars: z.number().int(), oversized: z.boolean() });
+const captureSchema = z.strictObject({ records: z.number().int(), retainedChars: z.number().int(), droppedRecords: z.number().int(),
+  lastObservedAt: z.number().int().nullable(), maxRecords: z.number().int(), maxChars: z.number().int(), truncated: z.boolean() });
+const pageInput = { id, afterSeq: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(50).optional() };
+const resultSchema = z.strictObject({ worker: workerSchema, turn: turnSummarySchema, duplicate: z.boolean() });
 const requestId = z.uuid().describe("Client-generated idempotency key. Retry with identical input after an uncertain response.");
 
 export type WorkersContext = { supervisor: WorkerSupervisor; manager: WorkerManager };
@@ -59,8 +76,8 @@ export const workerList = operation({
   async call(ctx: WorkersContext, _input, invocation) { return { workers: await ctx.manager.list(invocation) }; },
 });
 export const workerStatus = operation({
-  name: "worker_status", description: "Read one worker, its most recent turn and exact pending permission requests. No turn is started by this read.",
-  input: z.strictObject({ id }), output: z.strictObject({ worker: workerSchema, turn: turnSchema.nullable(), pending: z.array(permissionSchema) }),
+  name: "worker_status", description: "Read one worker, its compact most recent turn summary and exact pending permissions. Full prompts are in worker_turn_list, so long prompts do not obscure lifecycle outcomes in Bot wakeups. No turn is started by this read.",
+  input: z.strictObject({ id }), output: z.strictObject({ worker: workerSchema, turn: turnSummarySchema.nullable(), pending: z.array(permissionSchema) }),
   annotations: { title: "Read worker status", readOnlyHint: true },
   async call(ctx: WorkersContext, { id }, invocation) { return ctx.manager.status(id, invocation); },
 });
@@ -70,6 +87,47 @@ export const workerRead = operation({
   output: z.strictObject({ entries: z.array(z.strictObject({ seq: z.number().int(), workerId: id, turnId: id, kind: z.string(), text: z.string(), at: z.number().int() })),
     nextSeq: z.number().int(), hasMore: z.boolean() }), annotations: { title: "Read worker transcript", readOnlyHint: true },
   async call(ctx: WorkersContext, { id, afterSeq, limit }, invocation) { return ctx.manager.read(id, afterSeq ?? 0, limit ?? 20, invocation); },
+});
+export const workerDetail = operation({
+  name: "worker_detail", description: "Read retained Worker session metadata, safe runtime arguments/capabilities, observed settings, capture limits and freshness. Submitted model/effort remains distinct from ACP observations. Subagent coverage is explicitly partial: no portable ACP hierarchy or child transcript is claimed.",
+  input: z.strictObject({ id }), output: z.strictObject({ worker: workerSchema, observedSettings: observedSettingsSchema.nullable(),
+    metadata: z.array(recordSchema), capture: captureSchema,
+    freshness: z.strictObject({ connected: z.boolean(), stale: z.boolean(), readAt: z.number().int(), reason: z.string().nullable() }),
+    subagents: z.strictObject({ coverage: z.enum(["partial", "unavailable"]), hierarchyAvailable: z.literal(false), childTranscriptsAvailable: z.literal(false), reason: z.string() }) }),
+  annotations: { title: "Inspect Worker session", readOnlyHint: true },
+  async call(ctx: WorkersContext, { id }, invocation) { return ctx.manager.detail(id, invocation); },
+});
+export const workerTurnList = operation({
+  name: "worker_turn_list", description: "Page durable Worker turns in admission order, including submitted prompt, requested model/effort, separately observed settings and dispatch evidence. Failed preparation and owner restarts retain admitted prompts. Legacy missing fields are null. Pages are byte-bounded.",
+  input: z.strictObject({ id, afterId: id.optional(), limit: z.number().int().min(1).max(50).optional() }),
+  output: z.strictObject({ turns: z.array(turnSchema), nextId: id.nullable(), hasMore: z.boolean() }),
+  annotations: { title: "Read Worker turn history", readOnlyHint: true },
+  async call(ctx: WorkersContext, { id, afterId, limit }, invocation) { return ctx.manager.turns(id, afterId, limit ?? 20, invocation); },
+});
+export const workerRecordList = operation({
+  name: "worker_record_list", description: "Page structured safe ACP observations: content parts, tool calls and merged partial updates, plans, configuration, session info, commands, usage and vendor _meta. Excludes raw reasoning. Replay/out-of-turn observations have no fabricated turn ID. Oversized immutable JSON is recoverable through worker_record_read; capture reports retention loss.",
+  input: z.strictObject({ ...pageInput, turnId: id.optional() }),
+  output: z.strictObject({ entries: z.array(recordSchema), nextSeq: z.number().int(), hasMore: z.boolean(), capture: captureSchema }),
+  annotations: { title: "Read structured Worker records", readOnlyHint: true },
+  async call(ctx: WorkersContext, { id, afterSeq, limit, turnId }, invocation) { return ctx.manager.records(id, afterSeq ?? 0, limit ?? 20, turnId, invocation); },
+});
+export const workerRecordRead = operation({
+  name: "worker_record_read", description: "Recover one immutable structured Worker record as bounded JSON text chunks. Offsets and totalChars count UTF-16 code units; concatenate chunks before JSON parsing. The exact Worker ownership check also applies to the record sequence.",
+  input: z.strictObject({ id, seq: z.number().int().positive(), offset: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(16_000).optional() }),
+  output: z.strictObject({ seq: z.number().int(), offset: z.number().int(), data: z.string(), nextOffset: z.number().int(), totalChars: z.number().int(), hasMore: z.boolean(), encoding: z.literal("json-utf16") }),
+  annotations: { title: "Read Worker record chunk", readOnlyHint: true },
+  async call(ctx: WorkersContext, { id, seq, offset, limit }, invocation) { return ctx.manager.recordChunk(id, seq, offset ?? 0, limit ?? 16_000, invocation); },
+});
+export const workerToolList = operation({
+  name: "worker_tool_list", description: "Page merged ACP tool calls in first-observed order, retaining no-title status/output updates. Records include rawInput/rawOutput/content/locations and _meta. OpenCode task references are projected only from matching task input and explicit output metadata; they are not verified parent IDs or live child status. Refresh from the first page after progress invalidation.",
+  input: z.strictObject(pageInput), output: z.strictObject({ tools: z.array(z.strictObject({ toolCallId: z.string(), turnId: id.nullable(),
+    firstSeq: z.number().int(), lastSeq: z.number().int(), title: z.string().nullable(), kind: z.string().nullable(), status: z.string().nullable(), record: recordSchema })),
+    tasks: z.array(z.strictObject({ toolCallId: z.string(), sessionId: z.string(), callingSessionId: z.string(), toolStatus: z.string().nullable(),
+      background: z.boolean(), model: z.strictObject({ providerID: z.string().nullable(), modelID: z.string().nullable() }).nullable(),
+      recordSeq: z.number().int(), visibility: z.literal("task_reference"), hierarchyVerified: z.literal(false), childStatus: z.literal("unknown") })),
+    nextSeq: z.number().int(), hasMore: z.boolean() }),
+  annotations: { title: "Read Worker tools and task evidence", readOnlyHint: true },
+  async call(ctx: WorkersContext, { id, afterSeq, limit }, invocation) { return ctx.manager.tools(id, afterSeq ?? 0, limit ?? 20, invocation); },
 });
 export const workerSend = operation({
   name: "worker_send", description: "Give the same idle ACP session follow-up work, including a request to fix or revise. Optional model/effort changes must match this account's current catalog.",
@@ -86,7 +144,7 @@ export const workerRespond = operation({
 });
 export const workerCancel = operation({
   name: "worker_cancel", description: "Request cancellation of the active turn and pending permissions. Inspect status for the final stop reason; this acknowledgement is not completion.",
-  input: z.strictObject({ id }), output: z.strictObject({ worker: workerSchema, turn: turnSchema.nullable() }),
+  input: z.strictObject({ id }), output: z.strictObject({ worker: workerSchema, turn: turnSummarySchema.nullable() }),
   annotations: { title: "Cancel worker turn", idempotentHint: true },
   async call(ctx: WorkersContext, { id }, invocation) { return ctx.manager.cancel(id, invocation); },
 });
@@ -111,20 +169,23 @@ export const workerRemove = operation({
 export const topics = {
   workers_changed: "ACP account, catalog or Worker state changed. Refresh the relevant read operation.",
   worker_changed: "One Worker's turn, permission or recovery state changed. Subscribe with its Worker ID and re-read worker_status for the latest value.",
+  worker_progress: "Scoped UI invalidation for structured transcript, tool and session metadata progress. Subscribe with a Worker ID and refresh Worker detail/history reads. This is separate from Bot wakeups on worker_changed.",
 } as const;
 export const api: PackageApi<WorkersContext, keyof typeof topics> = {
   operations: [workerCatalog, workerRuntimeList, workerAccountDrain, workerStart, workerList, workerStatus, workerRead,
+    workerDetail, workerTurnList, workerRecordList, workerRecordRead, workerToolList,
     workerSend, workerRespond, workerCancel, workerResume, workerClose, workerRemove],
   events: {
     topics,
-    scope: { description: "Optional Worker ID. A Bot subscription to worker_changed requires this exact ID and a matching worker_status read.",
+    scope: { description: "Optional Worker ID for scoped worker_changed and worker_progress notices. A Bot subscription to worker_changed requires this exact ID and a matching worker_status read; worker_progress is for UI reads, not Bot wakeups.",
       example: "00000000-0000-4000-8000-000000000001", valid: (ctx, scope) => Boolean(ctx.manager.ledger.worker(scope)) },
     start(ctx, publish) {
       ctx.manager.onChange = (workerId) => {
         publish("workers_changed");
         if (workerId && ctx.manager.ledger.worker(workerId)) publish("worker_changed", workerId);
       };
-      return () => { ctx.manager.onChange = undefined; };
+      ctx.manager.onProgress = (workerId) => { if (ctx.manager.ledger.worker(workerId)) publish("worker_progress", workerId); };
+      return () => { ctx.manager.onChange = undefined; ctx.manager.onProgress = undefined; };
     },
   },
   async createContext(env) {

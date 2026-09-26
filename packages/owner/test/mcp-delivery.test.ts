@@ -5,13 +5,27 @@ import test from "node:test";
 import { WebSocketServer } from "ws";
 import { z } from "zod";
 import { botInstance, operation, serveSocket, socketPath, type EventTarget, type InvocationContext } from "@agentstack/api";
-import { createMcpEventSubscriptions, verifiedTarget } from "../src/mcp-delivery.js";
+import { authorizeWorkerRead, createMcpEventSubscriptions, verifiedTarget } from "../src/mcp-delivery.js";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function until(check: () => boolean): Promise<void> {
   for (let i = 0; i < 200 && !check(); i++) await pause(10);
   assert.ok(check(), "expected Codex turn was not started");
 }
+
+test("Worker UI progress and rich reads cannot become originating-Bot wakeups", async () => {
+  const subscription = {
+    id: "subscription", botId: "bot-1", threadId: "child", instance: "instance", pkg: "workers",
+    topic: "worker_changed", scope: "worker", readOperation: "worker_status", readArguments: { id: "worker" },
+    state: "active" as const, lastDeliveredAt: null, lastError: null,
+  };
+  // These are rejected before a socket read, even when paired with the sanctioned
+  // scope. Progress must not feed back into a new inference turn on every update.
+  for (const topic of ["workers_changed", "worker_progress"]) {
+    await assert.rejects(authorizeWorkerRead({ ...subscription, topic }, {}), /exact worker_changed scope/);
+  }
+  await assert.rejects(authorizeWorkerRead({ ...subscription, readOperation: "worker_read" }, {}), /exact worker_changed scope/);
+});
 
 test("event values start a turn only on a loaded descendant of the Bot's sanctioned main thread", { timeout: 15_000 }, async () => {
   const root = await mkdtemp("/tmp/as-turn-events-");

@@ -1,9 +1,16 @@
 # UIX open bench
 
-UIX's `/x` is one continuous bench. Fleet is its initial Canvas space. System
+The UI entry `/` redirects to `/x`, one continuous bench. Fleet is its initial Canvas space. System
 and API reference are global tools attached to the viewport, so opening them
 does not navigate away from the current composition. See the rationale in
 [ADR 0058](adr/0058-open-bench-and-global-tools.md).
+
+Fleet retains the Usage and Model catalogs windows, Bot lifecycle controls and
+full Bot tools dialog from [ADR 0056](adr/0056-fleet-usage-catalogs-and-bot-controls.md).
+One mounted Bot actions provider retains forms and upload state alongside the
+store, auth and voice providers. The former index's process and local URL details
+live in the System dock; MCP Inspector is linked only while its child is running
+([ADR 0057](adr/0057-canvas-as-ui-home.md)).
 
 ## Adding a Fleet window
 
@@ -68,7 +75,7 @@ Use disposable state for lifecycle or rendered checks.
 Check actual browser behavior for layout changes: camera position before and
 after dock open/resize/close, record inspection/reference return, deep links,
 Back/Forward, keyboard access, narrow widths, light/dark appearance and live
-invalidation. Navigation must leave the store, auth flow and voice provider
+invalidation. Navigation must leave the store, auth flow, Bot actions and voice providers
 mounted. Loading changes into an active owner requires separate restart
 authorization.
 
