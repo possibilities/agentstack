@@ -121,6 +121,11 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
     if (ref && !locationRef.current.inspect && !locationRef.current.reference) inspectorReturn.current = document.activeElement as HTMLElement;
     write({ ...locationRef.current, inspect: ref, reference: null }, "right");
   }, [goTo, write]);
+  // A removed record closes its inspection without disturbing an open reference.
+  const dropInspect = useCallback((ref: NodeRef) => {
+    const current = locationRef.current;
+    if (current.inspect && nodeKey(current.inspect) === nodeKey(ref)) write({ ...current, inspect: null });
+  }, [write]);
   const openSystem = useCallback(() => {
     if (!locationRef.current.system) systemReturn.current = document.activeElement as HTMLElement;
     write({ ...locationRef.current, system: locationRef.current.system ?? "open" }, "left");
@@ -209,7 +214,7 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
       </Dock>
       <Dock side="right" label={location.reference ? "API reference" : "Inspector"} open={rightVisible} overlay={overlay} width={rightWidth} min={dockMinimum.right} max={rightMax}
         onResize={(width) => { setExpanded(false); setSizes((s) => ({ ...s, [location.reference ? "reference" : "inspector"]: width })); }} onClose={closeRight} returnFocus={inspectorReturn} restoreFocusOnHide={!rightOpen && (!overlay || surface === "bench")}>
-        <Inspector hidden={Boolean(location.reference)} />
+        <Inspector hidden={Boolean(location.reference)} onGone={dropInspect} />
         {location.reference ? <Reference target={location.reference} onOverview={referenceOverview} onClose={closeRight} hasInspection={Boolean(location.inspect)} expanded={expanded} onExpand={() => setExpanded((value) => !value)} /> : null}
       </Dock>
       <Palette open={paletteOpen} onOpenChange={setPaletteOpen} actions={actions} />

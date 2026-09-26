@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { chmod, mkdir, open, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { socketCall, socketPath } from "@agentstack/api";
+import { socketCall, socketPath, socketSubscribe, type SocketSubscription } from "@agentstack/api";
 import { accountIdentity, collectAccount, collectGrokBot, ObservationFailure } from "./collect.js";
 import { observationError, snapshotSchema, type AccountScope, type Provider, type Snapshot, type StoredMeasurement } from "./schema.js";
 
@@ -9,6 +9,7 @@ export type Registered = { id: string; scope: AccountScope; provider: Provider; 
 type FetchAccount = (id: string, provider: Provider, scope: AccountScope) => Promise<StoredMeasurement["usage"]>;
 type FetchBot = () => Promise<Snapshot["grokBot"]["usage"]>;
 type LoadAccounts = () => Promise<Registered[]>;
+type WatchAccounts = (onChange: () => void) => Promise<SocketSubscription>;
 type Row = { id: string; scope: AccountScope; provider: Provider; enabled: boolean; ready: boolean; measurement: StoredMeasurement; nextAttemptAtMs: number };
 type Persisted = { schemaVersion: number; accounts: Array<Omit<Row, "scope"> & { scope?: AccountScope }>; bot: StoredMeasurement };
 const keyOf = ({ scope, id }: { scope: AccountScope; id: string }) => `${scope}:${id}`;
@@ -30,6 +31,9 @@ export class UsageObserver {
   private controller = new AbortController();
   private loop: Promise<void> | null = null;
   private lastPublished = "";
+  private stale = false;
+  private wake: (() => void) | null = null;
+  private watch: SocketSubscription | undefined;
   onChange?: () => void;
 
   constructor(readonly stateDir: string, private readonly env: NodeJS.ProcessEnv = process.env,
@@ -45,6 +49,8 @@ export class UsageObserver {
     private readonly fetchBot: FetchBot = () => collectGrokBot(env.AGENTSTACK_AGENTGROK_BIN, this.controller.signal),
     private readonly identify: (id: string, provider: Provider, scope: AccountScope) => Promise<string | null> =
       (id, provider, scope) => accountIdentity(stateDir, id, provider, scope),
+    private readonly watchAccounts: WatchAccounts = (onChange) =>
+      socketSubscribe(socketPath("auth", env), ["accounts_changed", "worker_accounts_changed"], onChange),
   ) {}
 
   private get path() { return join(this.stateDir, "usage", "observations.json"); }
@@ -121,7 +127,10 @@ export class UsageObserver {
       return;
     }
     const wanted = new Set(inventory.filter((row) => !row.removing).map(keyOf));
+    const before = this.rows.size;
     for (const id of this.rows.keys()) if (!wanted.has(id)) this.rows.delete(id);
+    // Publish a removal before this cycle's slower observations.
+    if (this.rows.size < before) this.changed();
     this.identities.clear();
     for (const account of inventory) {
       if (this.controller.signal.aborted) break;
@@ -171,17 +180,42 @@ export class UsageObserver {
     this.onChange?.();
   }
 
+  /** Re-read the account inventory now; an account change arriving mid-cycle runs one more cycle. Due observations still wait for their schedule. */
+  invalidate(): void {
+    this.stale = true;
+    this.wake?.();
+  }
+
+  private async connect(): Promise<void> {
+    if (this.controller.signal.aborted) return;
+    try {
+      this.watch = await this.watchAccounts(() => this.invalidate());
+      if (this.controller.signal.aborted) { await this.watch.close(); return; }
+      // Changes made while disconnected are unseen; re-read once subscribed.
+      this.invalidate();
+      void this.watch.closed.then(() => { this.watch = undefined; this.reconnect(); });
+    } catch { this.reconnect(); }
+  }
+
+  private reconnect(): void {
+    if (!this.controller.signal.aborted) setTimeout(() => void this.connect(), 2_000).unref();
+  }
+
   start(): void {
     if (this.loop) return;
+    void this.connect();
     this.loop = (async () => {
       while (!this.controller.signal.aborted) {
+        this.stale = false;
         await this.cycle().catch(() => undefined);
         if (this.controller.signal.aborted) break;
+        if (this.stale) continue;
         const delay = this.inventoryError ? 2_000 : intervalMs + Math.random() * 30_000;
         await new Promise<void>((resolve) => {
           const signal = this.controller.signal;
+          const finish = () => { clearTimeout(timer); signal.removeEventListener("abort", finish); this.wake = null; resolve(); };
           const timer = setTimeout(finish, delay);
-          function finish() { clearTimeout(timer); signal.removeEventListener("abort", finish); resolve(); }
+          this.wake = finish;
           signal.addEventListener("abort", finish, { once: true });
         });
       }
@@ -190,6 +224,7 @@ export class UsageObserver {
 
   async close(): Promise<void> {
     this.controller.abort();
+    await this.watch?.close();
     await this.loop;
   }
 }

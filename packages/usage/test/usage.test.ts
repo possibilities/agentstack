@@ -177,6 +177,31 @@ test("usage links independent Bot and Worker Codex accounts by native identity w
   } finally { await observer.close(); await rm(root, { recursive: true, force: true }); }
 });
 
+test("an auth account change re-reads the inventory without waiting for the next observation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-usage-invalidate-"));
+  let removed = false;
+  let notify: () => void = () => undefined;
+  let closeWatch: () => void = () => undefined;
+  const closed = new Promise<void>((resolve) => { closeWatch = resolve; });
+  const observer = new UsageObserver(root, {}, async () => [
+    { id: codexId, scope: "bot", provider: "codex", enabled: true, ready: true, removing: false },
+    { id: grokId, scope: "worker", provider: "grok", enabled: true, ready: true, removing: removed },
+  ], async () => null, async () => null, async () => null,
+  async (onChange) => { notify = onChange; return { topics: ["accounts_changed", "worker_accounts_changed"], closed, close: async () => closeWatch() }; });
+  const changed = () => new Promise<void>((resolve) => { observer.onChange = resolve; });
+  try {
+    const first = changed();
+    observer.start();
+    await first;
+    assert.equal(observer.snapshot().accounts.length, 2);
+    removed = true;
+    const pruned = changed();
+    notify();
+    await pruned;
+    assert.deepEqual(observer.snapshot().accounts.map((row) => row.id), [codexId]);
+  } finally { await observer.close(); await rm(root, { recursive: true, force: true }); }
+});
+
 test("a legacy shared UUID remains two scoped usage records and two independent links", async () => {
   const root = await mkdtemp(join(tmpdir(), "agentstack-usage-overlap-"));
   const observer = new UsageObserver(root, {}, async () => [

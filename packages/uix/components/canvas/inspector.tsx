@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowRightIcon, BookOpenIcon, CircleCheckIcon, CopyIcon, LocateFixedIcon, LockIcon, PhoneIcon, PhoneOffIcon, RefreshCwIcon, Trash2Icon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -310,7 +310,7 @@ function Block({ title, aside, children }: { title: string; aside?: React.ReactN
   );
 }
 
-export function Inspector({ hidden = false }: { hidden?: boolean }) {
+export function Inspector({ hidden = false, onGone }: { hidden?: boolean; onGone: (ref: NodeRef) => void }) {
   const { selected, select, goTo } = useWorkbench();
   const state = useStack();
   // Keep the last selection mounted through the slide-out so the sheet never blanks.
@@ -322,6 +322,14 @@ export function Inspector({ hidden = false }: { hidden?: boolean }) {
   useLayoutEffect(() => { if (!hidden && selectedKey) heading.current?.focus({ preventScroll: true }); }, [hidden, selectedKey]);
 
   const view = shown ? resolve(shown, state) : null;
+  // Close an inspection whose record was present and has since been removed; a record that has not loaded yet stays open.
+  const resolved = useRef<string | null>(null);
+  const present = Boolean(selected && view);
+  useEffect(() => {
+    if (!selected || !selectedKey) { resolved.current = null; return; }
+    if (present) resolved.current = selectedKey;
+    else if (resolved.current === selectedKey) { resolved.current = null; onGone(selected); }
+  }, [selected, selectedKey, present, onGone]);
 
   return (
     <section
