@@ -132,7 +132,7 @@ The second loopback HTTP origin owned by the `wiki` Package API. It serves only 
 
 ## Canvas space
 
-A named physical region of related windows on UIX's shared open bench, addressed as `/x/<space>`. Fleet is the initial space; spaces have independent local window arrangements and deterministic centered bench positions. Navigating to a space moves the shared camera. System and API reference are global docks rather than spaces.
+A named physical region of related windows on UIX's shared open bench, addressed as `/x/<space>`. Fleet (Bots) is the default space and Accounts (accounts, usage limits and model catalogs) sits beside it; a relationship between cards in different spaces is a link, not a wire. Spaces have independent local window arrangements and deterministic centered bench positions. Navigating to a space moves the shared camera. System and API reference are global docks rather than spaces.
 
 _Avoid_: page, tab, workspace (a Bot's working directory)
 

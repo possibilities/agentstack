@@ -117,6 +117,13 @@ try {
   };
   await page.getByText("Native model one", { exact: true }).first().waitFor();
   await page.screenshot({ path: join(evidence, "fleet-light.png"), fullPage: true, animations: "disabled" });
+  // Bot and account cards link across the Fleet and Accounts spaces; the Spaces menu follows.
+  await page.locator('[data-node="bot:bot-1"]').getByRole("link", { name: /codex-bot-account-1/ }).click();
+  await page.waitForURL((url) => url.pathname === "/x/accounts" && url.searchParams.get("focus") === `account:${id(1)}`);
+  await page.getByRole("button", { name: "Spaces · Accounts" }).waitFor();
+  await page.locator(`[data-node="account:${id(1)}"]`).getByRole("link", { name: /bot-1$/ }).click();
+  await page.waitForURL((url) => url.pathname === "/x/fleet" && url.searchParams.get("focus") === "bot:bot-1");
+  await page.getByRole("button", { name: "Spaces · Fleet" }).waitFor();
   await jump("bot bot-1", /bot-1/);
   await page.getByRole("button", { name: "Create Bot", exact: true }).click();
   const dialog = page.getByRole("dialog");

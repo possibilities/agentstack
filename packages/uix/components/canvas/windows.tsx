@@ -42,7 +42,7 @@ import { accountLabels, addableWorkerProviders, botsFor, histogram, pairedWorker
 import type { Account, Bot, Login, OperationDoc, PackageDoc, WorkerAccount, WorkerLogin } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
-import { BotTile, CopyButton, Empty, NodeCard, NodeTitle, Orb, Row, Sparkline, StatusDot, Time } from "./primitives";
+import { BotTile, CopyButton, Empty, NodeCard, NodeLink, NodeTitle, Orb, Row, Sparkline, StatusDot, Time } from "./primitives";
 import { BotLifecycleControls, BotWindowActions, CreateBotButton } from "./bot-actions";
 import { useActivity, useNow, useStack } from "./provider";
 import { useVoice } from "./voice";
@@ -52,11 +52,12 @@ const activitySpan = 5 * 60_000;
 
 export function AccountChip({ id, labels }: { id: string | null; labels: Map<string, string> }) {
   if (!id) return <span className="text-muted-foreground">Unbound</span>;
+  const label = labels.get(id) ?? shortId(id);
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <NodeLink node={{ kind: "account", id }} label={`account ${label}`} className="inline-flex min-w-0 items-center gap-1.5">
       <Orb id={id} size="sm" />
-      <span>{labels.get(id) ?? shortId(id)}</span>
-    </span>
+      <span className="truncate">{label}</span>
+    </NodeLink>
   );
 }
 
@@ -300,10 +301,10 @@ function AccountCard({ account, label, bots, className }: { account: Account; la
       </div>
       <div className="flex flex-wrap items-center gap-1">
         {used.length ? used.map((bot) => (
-          <span key={bot.id} className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem]">
+          <NodeLink key={bot.id} node={{ kind: "bot", id: bot.id }} label={`bot ${bot.id}`} className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem] hover:bg-muted-foreground/15">
             <StatusDot tone={bot.recoveryIssue ? "warning" : bot.state === "running" ? "success" : "muted"} label={bot.recoveryIssue ? "Needs inspection" : bot.state} className="size-1.5 [&>span]:size-1.5" />
             {bot.id}
-          </span>
+          </NodeLink>
         )) : <span className="text-[0.7rem] text-muted-foreground">No bots</span>}
       </div>
       {busy ? (

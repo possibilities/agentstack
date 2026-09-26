@@ -20,21 +20,22 @@ const { nodeKey } = await import("../lib/stack/types.ts");
 test("homeOf distinguishes spatial records from global dock destinations", () => {
   assert.deepEqual(homeOf({ kind: "owner" }), { kind: "system" });
   assert.deepEqual(homeOf({ kind: "child", id: "uix" }), { kind: "system" });
-  assert.deepEqual(homeOf({ kind: "account", id: "acc-1" }), { kind: "space", space: "fleet", window: "accounts" });
-  assert.deepEqual(homeOf({ kind: "worker-account", id: "w-1" }), { kind: "space", space: "fleet", window: "accounts" });
-  assert.deepEqual(homeOf({ kind: "login" }), { kind: "space", space: "fleet", window: "accounts" });
+  assert.deepEqual(homeOf({ kind: "account", id: "acc-1" }), { kind: "space", space: "accounts", window: "accounts" });
+  assert.deepEqual(homeOf({ kind: "worker-account", id: "w-1" }), { kind: "space", space: "accounts", window: "accounts" });
+  assert.deepEqual(homeOf({ kind: "login" }), { kind: "space", space: "accounts", window: "accounts" });
   assert.deepEqual(homeOf({ kind: "bot", id: "bot-1" }), { kind: "space", space: "fleet", window: "bots" });
   assert.deepEqual(homeOf({ kind: "package", id: "bots" }), { kind: "reference" });
   assert.deepEqual(homeOf({ kind: "operation", id: "bot_start", pkg: "bots" }), { kind: "reference" });
-  assert.deepEqual(homeOf({ kind: "usage" }), { kind: "space", space: "fleet", window: "usage" });
-  assert.deepEqual(homeOf({ kind: "usage-account", id: "bot:a1" }), { kind: "space", space: "fleet", window: "usage" });
-  assert.deepEqual(homeOf({ kind: "grok-bot-usage" }), { kind: "space", space: "fleet", window: "usage" });
-  assert.deepEqual(homeOf({ kind: "worker-catalog", id: "w1" }), { kind: "space", space: "fleet", window: "model-catalogs" });
+  assert.deepEqual(homeOf({ kind: "usage" }), { kind: "space", space: "accounts", window: "usage" });
+  assert.deepEqual(homeOf({ kind: "usage-account", id: "bot:a1" }), { kind: "space", space: "accounts", window: "usage" });
+  assert.deepEqual(homeOf({ kind: "grok-bot-usage" }), { kind: "space", space: "accounts", window: "usage" });
+  assert.deepEqual(homeOf({ kind: "worker-catalog", id: "w1" }), { kind: "space", space: "accounts", window: "model-catalogs" });
 });
 
 test("spaceHref builds space links with an optional encoded focus", () => {
   assert.equal(spaceHref("fleet"), "/x/fleet");
   assert.equal(spaceHref("fleet", { kind: "bot", id: "bot-1" }), "/x/fleet?focus=bot%3Abot-1");
+  assert.equal(spaceHref("accounts", { kind: "account", id: "a1" }), "/x/accounts?focus=account%3Aa1");
 });
 
 test("parseSpacePath resolves /x and single space segments only", () => {
@@ -44,6 +45,7 @@ test("parseSpacePath resolves /x and single space segments only", () => {
   assert.equal(parseSpacePath("/x/api/"), null);
   assert.equal(parseSpacePath("/x/system"), null);
   assert.equal(parseSpacePath("/x/fleet"), "fleet");
+  assert.equal(parseSpacePath("/x/accounts"), "accounts");
   assert.equal(parseSpacePath("/x/nope"), null);
   assert.equal(parseSpacePath("/x/api/extra"), null);
   assert.equal(parseSpacePath("/y"), null);
@@ -81,17 +83,18 @@ const quiet = {
 };
 
 test("spaceAttention reports human reasons per space and ignores healthy state", () => {
-  assert.deepEqual(spaceAttention(quiet), { fleet: [], system: [], api: [] });
+  assert.deepEqual(spaceAttention(quiet), { fleet: [], accounts: [], system: [], api: [] });
 
-  // Fleet: a bot recovery issue, an unfinished removal, a failed sign-in, closed channels.
+  // Fleet: a bot recovery issue and its channel. Accounts: an unfinished removal, a failed sign-in, its channels.
   const fleet = spaceAttention({
     ...quiet,
     bots: { data: [{ id: "bot-1", pid: null, cwd: "/tmp", url: null, state: "stopped", account: null, runningAccount: null, mainThreadId: null, recoveryIssue: "orphaned app-server", roleRevision: null, settings: null }], error: null, at: null },
     accounts: { data: [{ id: "a1", enabled: true, removing: false, linkedAccounts: [] }, { id: "a2", enabled: false, removing: true, linkedAccounts: [] }], error: null, at: null },
     attempt: { id: "l1", status: "failed", authUrl: null, userCode: null, account: null, error: "denied", targetAccount: null },
-    status: { auth: "closed", bots: "closed" },
+    status: { auth: "closed", bots: "closed", usage: "closed" },
   });
-  assert.deepEqual(fleet.fleet, ["bot-1 needs inspection", "codex-bot-account-2 removal unfinished", "Sign-in failed", "auth reconnecting", "bots reconnecting"]);
+  assert.deepEqual(fleet.fleet, ["bot-1 needs inspection", "bots reconnecting"]);
+  assert.deepEqual(fleet.accounts, ["codex-bot-account-2 removal unfinished", "Sign-in failed", "auth reconnecting", "usage reconnecting"]);
   assert.deepEqual(fleet.system, []);
 
   // Worker accounts flag unfinished removals and unconfirmed sign-ins, labelled per provider.
@@ -104,7 +107,8 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
       { id: "w4", provider: "grok", enabled: true, ready: true, removing: false, linkedAccounts: [] },
     ], error: null, at: null },
   });
-  assert.deepEqual(workers.fleet, ["codex-worker-account-1 removal unfinished", "codex-worker-account-2 needs sign-in", "grok-worker-account-1 needs sign-in"]);
+  assert.deepEqual(workers.fleet, []);
+  assert.deepEqual(workers.accounts, ["codex-worker-account-1 removal unfinished", "codex-worker-account-2 needs sign-in", "grok-worker-account-1 needs sign-in"]);
 
   // System: a stopped child, a closed owner channel, a status read error.
   const system = spaceAttention({
@@ -114,6 +118,7 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
   });
   assert.deepEqual(system.system, ["wiki stopped", "owner reconnecting", "Owner status: socket read failed"]);
   assert.deepEqual(system.fleet, []);
+  assert.deepEqual(system.accounts, []);
 
   // API: a discovery error and a closed api channel.
   const api = spaceAttention({ ...quiet, catalog: { data: null, error: "api.sock refused", at: null }, status: { api: "closed" } });
@@ -121,5 +126,5 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
 
   // Idle and connecting channels are normal, not attention.
   const waiting = spaceAttention({ ...quiet, status: { auth: "connecting", bots: "idle", owner: "connecting", api: "idle" } });
-  assert.deepEqual(waiting, { fleet: [], system: [], api: [] });
+  assert.deepEqual(waiting, { fleet: [], accounts: [], system: [], api: [] });
 });

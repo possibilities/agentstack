@@ -4,6 +4,8 @@ import { useState } from "react";
 import { BotIcon, CheckIcon, CopyIcon } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { hueOf, relativeTime } from "@/lib/stack/derive";
+import { emptyLocation, locationHref, navigateTo } from "@/lib/stack/navigation";
+import { homeOf, spaceTitle } from "@/lib/stack/spaces";
 import { nodeKey, type Bot, type ChannelStatus, type NodeRef, type StackEvent } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useNow, useWorkbench } from "./provider";
@@ -219,6 +221,35 @@ export function NodeTitle({ node, label, children, className, onActivate }: {
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * A link to a related record's home, which may be a card in another space.
+ * A plain click pans there; a modified click keeps the browser's own behavior.
+ */
+export function NodeLink({ node, label, children, className }: {
+  node: NodeRef;
+  label: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const { goTo, space } = useWorkbench();
+  const home = homeOf(node);
+  const elsewhere = home.kind === "space" && home.space !== space ? ` in ${spaceTitle(home.space)}` : "";
+  return (
+    <a
+      href={locationHref(navigateTo(emptyLocation(space), node))}
+      title={`Go to ${label}${elsewhere}`}
+      onClick={(event) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        goTo(node);
+      }}
+      className={cn("rounded-sm decoration-muted-foreground/50 underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring", className)}
+    >
+      {children}
+    </a>
   );
 }
 

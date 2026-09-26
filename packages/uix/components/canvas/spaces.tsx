@@ -30,9 +30,15 @@ export const spaceViews: Record<SpaceId, {
     icon: BotIcon,
     accent: "bots",
     windows: () => [
+      { id: "bots", title: "Bots", icon: BotIcon, accent: "bots", width: 420, height: 620, column: 0, element: <BotsWindow /> },
+    ],
+  },
+  accounts: {
+    icon: KeyRoundIcon,
+    accent: "auth",
+    windows: () => [
       { id: "accounts", title: "Accounts", icon: KeyRoundIcon, accent: "auth", width: 380, column: 0, element: <AccountsWindow /> },
       { id: "usage", title: "Usage", icon: GaugeIcon, accent: "owner", width: 360, height: 520, column: 1, element: <UsageWindow /> },
-      { id: "bots", title: "Bots", icon: BotIcon, accent: "bots", width: 420, height: 620, column: 2, element: <BotsWindow /> },
       { id: "model-catalogs", title: "Models", icon: ListTreeIcon, accent: "bots", width: 460, height: 620, column: 2, element: <CatalogWindow /> },
     ],
   },

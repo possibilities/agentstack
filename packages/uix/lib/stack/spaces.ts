@@ -2,10 +2,11 @@ import { accountLabels, workerAccountLabels } from "./derive";
 import type { StackState } from "./store";
 import { nodeKey, type NodeRef } from "./types";
 
-export type SpaceId = "fleet";
+export type SpaceId = "fleet" | "accounts";
 
 export const spaces: { id: SpaceId; title: string; description: string; key: string }[] = [
-  { id: "fleet", title: "Fleet", description: "Accounts, bots, usage, and model catalogs", key: "1" },
+  { id: "fleet", title: "Fleet", description: "Bots and their controls", key: "1" },
+  { id: "accounts", title: "Accounts", description: "Accounts, usage limits, and model catalogs", key: "2" },
 ];
 
 export const defaultSpace: SpaceId = "fleet";
@@ -29,13 +30,13 @@ export function homeOf(ref: NodeRef): NodeHome {
     case "account":
     case "login":
     case "worker-account":
-      return { kind: "space", space: "fleet", window: "accounts" };
+      return { kind: "space", space: "accounts", window: "accounts" };
     case "worker-catalog":
-      return { kind: "space", space: "fleet", window: "model-catalogs" };
+      return { kind: "space", space: "accounts", window: "model-catalogs" };
     case "usage":
     case "usage-account":
     case "grok-bot-usage":
-      return { kind: "space", space: "fleet", window: "usage" };
+      return { kind: "space", space: "accounts", window: "usage" };
     case "bot":
       return { kind: "space", space: "fleet", window: "bots" };
     case "package":
@@ -59,18 +60,19 @@ export function parseSpacePath(pathname: string): SpaceId | null {
 
 /** Human-readable reasons each space needs attention; an empty list means all quiet. Only "closed" channels count — idle and connecting are normal. */
 export function spaceAttention(state: Pick<StackState, "status" | "owner" | "accounts" | "workerAccounts" | "bots" | "attempt" | "catalog" | "endpoints">): Record<SpaceId | "system" | "api", string[]> {
-  const attention: Record<SpaceId | "system" | "api", string[]> = { fleet: [], system: [], api: [] };
+  const attention: Record<SpaceId | "system" | "api", string[]> = { fleet: [], accounts: [], system: [], api: [] };
   for (const bot of state.bots.data ?? []) if (bot.recoveryIssue) attention.fleet.push(`${bot.id} needs inspection`);
   const labels = accountLabels(state.accounts.data);
-  for (const account of state.accounts.data ?? []) if (account.removing) attention.fleet.push(`${labels.get(account.id) ?? account.id} removal unfinished`);
+  for (const account of state.accounts.data ?? []) if (account.removing) attention.accounts.push(`${labels.get(account.id) ?? account.id} removal unfinished`);
   const workerLabels = workerAccountLabels(state.workerAccounts.data);
   for (const worker of state.workerAccounts.data ?? []) {
     const label = workerLabels.get(worker.id) ?? worker.id;
-    if (worker.removing) attention.fleet.push(`${label} removal unfinished`);
-    else if (!worker.ready) attention.fleet.push(`${label} needs sign-in`);
+    if (worker.removing) attention.accounts.push(`${label} removal unfinished`);
+    else if (!worker.ready) attention.accounts.push(`${label} needs sign-in`);
   }
-  if (state.attempt?.status === "failed") attention.fleet.push("Sign-in failed");
-  for (const name of ["auth", "bots", "usage", "workers"] as const) if (state.status[name] === "closed") attention.fleet.push(`${name} reconnecting`);
+  if (state.attempt?.status === "failed") attention.accounts.push("Sign-in failed");
+  if (state.status.bots === "closed") attention.fleet.push("bots reconnecting");
+  for (const name of ["auth", "usage", "workers"] as const) if (state.status[name] === "closed") attention.accounts.push(`${name} reconnecting`);
   for (const child of state.owner.data?.children ?? []) if (!child.running) attention.system.push(`${child.name} stopped`);
   if (state.status.owner === "closed") attention.system.push("owner reconnecting");
   if (state.owner.error) attention.system.push(`Owner status: ${state.owner.error}`);

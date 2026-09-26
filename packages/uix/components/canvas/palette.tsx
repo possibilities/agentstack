@@ -59,6 +59,8 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
           <CommandGroup heading="Fleet controls">
             <CommandItem value="create bot start new instance" onSelect={() => act(() => botActions("create"))}><BotIcon />Create Bot</CommandItem>
             <CommandItem value="bot defaults launch model effort sandbox approval" onSelect={() => act(() => botActions("defaults"))}><BotIcon />Bot defaults</CommandItem>
+          </CommandGroup>
+          <CommandGroup heading="Usage and models">
             <CommandItem value="usage quota billing observations" onSelect={() => go({ kind: "usage" })}><BookOpenIcon />Usage</CommandItem>
             {(workerAccounts.data ?? []).map((account) => <CommandItem key={`catalog:${account.id}`} value={`model catalog ${workerLabels.get(account.id)} ${account.provider} ${account.id}`} onSelect={() => go({ kind: "worker-catalog", id: account.id })}><BookOpenIcon />{workerLabels.get(account.id)} models</CommandItem>)}
           </CommandGroup>

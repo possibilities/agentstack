@@ -218,6 +218,18 @@ test("dock and card destinations retain inspection; complete URLs restore both d
   assert.deepEqual(parseLocation("/x", new URLSearchParams("reference=bot:bad&inspect=package:bots&system=account:bad")), emptyLocation());
 });
 
+test("a card link crosses spaces: Bot to account lands in Accounts and back, keeping inspection", () => {
+  const inspect = { kind: "bot", id: "bot-1" };
+  const onAccount = navigateTo({ ...emptyLocation("fleet"), inspect }, { kind: "account", id: "a1" });
+  assert.equal(onAccount.space, "accounts");
+  assert.deepEqual(onAccount.focus, { kind: "account", id: "a1" });
+  assert.deepEqual(onAccount.inspect, inspect);
+  assert.equal(locationHref(onAccount), "/x/accounts?focus=account%3Aa1&inspect=bot%3Abot-1");
+  const back = navigateTo(onAccount, inspect);
+  assert.equal(back.space, "fleet");
+  assert.deepEqual(parseLocation("/x/fleet", new URLSearchParams("focus=usage-account%3Abot%3Aa1")).space, "accounts");
+});
+
 test("transport templates never invent input values or unsupported call/subscription transports", () => {
   const operation = { name: "write", inputSchema: { type: "object", required: ["count", "id", "nested"], properties: { count: { type: "number" }, id: { type: "string", format: "uuid" }, nested: { type: "object", required: ["enabled"], properties: { enabled: { type: "boolean" } } }, optional: { type: "string" } } } };
   assert.deepEqual(inputTemplate(operation.inputSchema), { count: "<replace: number>", id: "<replace: string>", nested: { enabled: "<replace: boolean>" } });

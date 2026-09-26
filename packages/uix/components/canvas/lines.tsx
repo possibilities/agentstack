@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { nodeKey } from "@/lib/stack/types";
+import { homeOf } from "@/lib/stack/spaces";
+import { nodeKey, type NodeRef } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { accountColor } from "./primitives";
 import { useStack, useWorkbench } from "./provider";
@@ -9,14 +10,24 @@ import { useStack, useWorkbench } from "./provider";
 type Edge = { id: string; from: string; to: string; color: string; dashed?: boolean };
 type Geometry = Edge & { d: string; start: [number, number]; end: [number, number] };
 
+/** Wires join cards within one space; a relationship across spaces is a NodeLink on the card instead. */
+function sameSpace(a: NodeRef, b: NodeRef): boolean {
+  const from = homeOf(a), to = homeOf(b);
+  return from.kind === "space" && to.kind === "space" && from.space === to.space;
+}
+
 function useEdges(): Edge[] {
   const { bots } = useStack();
   return useMemo(() => {
     const edges: Edge[] = [];
+    const add = (id: string, from: NodeRef, to: NodeRef, color: string, dashed?: boolean) => {
+      if (sameSpace(from, to)) edges.push({ id, from: nodeKey(from), to: nodeKey(to), color, dashed });
+    };
     for (const bot of bots.data ?? []) {
-      if (bot.account) edges.push({ id: `${bot.id}>${bot.account}`, from: `bot:${bot.id}`, to: `account:${bot.account}`, color: accountColor(bot.account) });
+      const node: NodeRef = { kind: "bot", id: bot.id };
+      if (bot.account) add(`${bot.id}>${bot.account}`, node, { kind: "account", id: bot.account }, accountColor(bot.account));
       if (bot.state === "running" && bot.runningAccount && bot.runningAccount !== bot.account) {
-        edges.push({ id: `${bot.id}>>${bot.runningAccount}`, from: `bot:${bot.id}`, to: `account:${bot.runningAccount}`, color: "var(--warning)", dashed: true });
+        add(`${bot.id}>>${bot.runningAccount}`, node, { kind: "account", id: bot.runningAccount }, "var(--warning)", true);
       }
     }
     return edges;
