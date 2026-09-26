@@ -43,10 +43,10 @@ import type { Account, Bot, Login, OperationDoc, PackageDoc, WorkerAccount, Work
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
 import { BotTile, CopyButton, Empty, NodeCard, NodeTitle, Orb, Row, Sparkline, StatusDot, Time } from "./primitives";
-import { BotLifecycleControls, BotWindowActions } from "./bot-actions";
+import { BotLifecycleControls, BotWindowActions, CreateBotButton } from "./bot-actions";
 import { useActivity, useNow, useStack } from "./provider";
 import { useVoice } from "./voice";
-import { Section, Window } from "./window";
+import { footerButton, Section, Window } from "./window";
 
 const activitySpan = 5 * 60_000;
 
@@ -60,17 +60,17 @@ export function AccountChip({ id, labels }: { id: string | null; labels: Map<str
   );
 }
 
-/** The Accounts window's one creation menu. Codex creates a Bot account and its paired Codex Worker account. */
+/** The Accounts window's footer creation menu. Codex creates a Bot account and its paired Codex Worker account. */
 function AddAccountMenu() {
   const actions = useAuthActions();
   const { status } = useStack();
   const worker = actions.worker;
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button size="xs" variant="outline" disabled={status.auth !== "open"} />}>
+      <DropdownMenuTrigger render={<Button size="sm" variant="ghost" className={footerButton} disabled={status.auth !== "open"} />}>
         <PlusIcon data-icon="inline-start" />Add account
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-44">
+      <DropdownMenuContent side="top">
         <DropdownMenuGroup>
           <DropdownMenuItem className="whitespace-nowrap" disabled={actions.pendingSignIn} onClick={() => actions.startSignIn()}>
             {actions.pendingSignIn ? <Spinner /> : <TerminalIcon />}
@@ -122,7 +122,7 @@ export function AccountsWindow() {
   return (
     <Window id="accounts" title="Accounts" subtitle="auth" icon={KeyRoundIcon} accent="auth" empty={empty}
       count={loaded ? loaded.bots.length + loaded.workers.length : undefined} status={status.auth} endpoint={endpoints.auth}
-      updatedAt={accounts.at} error={accounts.error ?? workerAccounts.error ?? login.error} actions={<AddAccountMenu />}>
+      updatedAt={accounts.at} error={accounts.error ?? workerAccounts.error ?? login.error} footer={<AddAccountMenu />}>
       {attempt ? <SignInCard key={attempt.id} attempt={attempt} labels={labels} accounts={accounts.data} catalog={catalog.data} /> : null}
       {loaded && (loaded.bots.length || loaded.workers.length) ? (
         <div className="flex flex-col gap-3">
@@ -583,7 +583,7 @@ export function BotsWindow() {
 
   return (
     <Window id="bots" title="Bots" subtitle="bots" icon={BotIcon} accent="bots" empty={!bots.data?.length}
-      count={bots.data?.length} status={status.bots} endpoint={endpoints.bots} updatedAt={bots.at} error={bots.error} actions={<BotWindowActions />}>
+      count={bots.data?.length} status={status.bots} endpoint={endpoints.bots} updatedAt={bots.at} error={bots.error} actions={<BotWindowActions />} footer={<CreateBotButton />}>
       {bots.data?.length ? (
         <div className="flex flex-col gap-2">
           {sortBots(bots.data).map((bot) => {

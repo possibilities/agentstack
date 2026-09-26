@@ -68,7 +68,7 @@ const statusCopy: Record<ChannelStatus, string> = {
   closed: "Reconnecting…",
 };
 
-export function Window({ id, title, subtitle, icon: Icon, accent, count, status, endpoint, updatedAt, error, actions, node, empty = false, children }: {
+export function Window({ id, title, subtitle, icon: Icon, accent, count, status, endpoint, updatedAt, error, actions, footer, node, empty = false, children }: {
   id: string;
   title: string;
   subtitle?: string;
@@ -80,6 +80,8 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
   updatedAt?: number | null;
   error?: string | null;
   /** Showing only a placeholder: fit it, treating a human-set height as a ceiling. */
+  /** Creation controls, pinned below the body so the header stays for identity and status. */
+  footer?: React.ReactNode;
   empty?: boolean;
   actions?: React.ReactNode;
   /** When the window represents a node, a header tap or the title button inspects it. */
@@ -118,10 +120,12 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
       <header
         onPointerDown={placement.onHeaderPointerDown}
         className={cn(
-          "group/header flex shrink-0 cursor-grab items-center gap-3 px-3.5 py-3 select-none active:cursor-grabbing",
+          "group/header relative flex shrink-0 cursor-grab items-center gap-3 px-3.5 py-3 select-none active:cursor-grabbing",
           !placement.collapsed && "border-b border-border/60",
         )}
       >
+        {/* The drag hint overlays the header's top edge so it never holds a slot among the controls. */}
+        <GripHorizontalIcon aria-hidden className="pointer-events-none absolute top-0 left-1/2 size-3.5 -translate-x-1/2 text-muted-foreground/0 transition-colors group-hover/header:text-muted-foreground/50" />
         <span className={cn("flex size-8 shrink-0 items-center justify-center rounded-lg", accentTile[accent])}>
           <Icon className="size-4" />
         </span>
@@ -141,7 +145,6 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
         </div>
         <div className="ml-auto flex items-center gap-1">
           {actions}
-          <GripHorizontalIcon aria-hidden className="size-4 text-muted-foreground/0 transition-colors group-hover/header:text-muted-foreground/50" />
           {status ? (
             <Tooltip>
               <TooltipTrigger render={<span tabIndex={0} className="flex size-7 items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-ring" />}>
@@ -167,10 +170,14 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
         </div>
       </header>
       {placement.collapsed ? null : <div data-scroll className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain p-3.5">{children}</div>}
+      {placement.collapsed || !footer ? null : <footer className="shrink-0 border-t border-border/60 p-1.5">{footer}</footer>}
       {placement.collapsed ? null : <ResizeHandles title={title} placement={placement} />}
     </section>
   );
 }
+
+/** The full-width create button in a window footer. */
+export const footerButton = "w-full justify-center text-muted-foreground hover:text-foreground";
 
 /** Edge and corner grips inside the rounded clip; double-click one to return that dimension to its default. */
 function ResizeHandles({ title, placement }: { title: string; placement: WindowPlacement }) {

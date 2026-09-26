@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { Orb } from "./primitives";
 import { useStack, useStore } from "./provider";
 import { BotOperations } from "./bot-operations";
+import { footerButton } from "./window";
 import { useVoice } from "./voice";
 
 type Mode = "create" | "start" | "assign" | "stop" | "remove" | "defaults" | "tools";
@@ -52,8 +53,14 @@ export function BotWindowActions() {
       </TooltipTrigger>
       <TooltipContent side="bottom">Defaults</TooltipContent>
     </Tooltip>
-    <Button size="xs" variant="outline" disabled={status.bots !== "open"} onClick={() => open("create")}><PlusIcon data-icon="inline-start" />Create Bot</Button>
   </>;
+}
+
+/** The Bots window's footer creation button. */
+export function CreateBotButton() {
+  const open = useBotActions();
+  const { status } = useStack();
+  return <Button size="sm" variant="ghost" className={footerButton} disabled={status.bots !== "open"} onClick={() => open("create")}><PlusIcon data-icon="inline-start" />Create Bot</Button>;
 }
 
 /** A Bot's actions: the lifecycle step it needs next, a call, its tools, and the rest in a menu. */

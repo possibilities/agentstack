@@ -1,6 +1,6 @@
 # 67. One Accounts window and bare, fitted empty states
 
-Status: accepted, 2026-09-26. Supersedes the separate Bot accounts and Worker
+Status: accepted, 2026-09-26; header creation buttons moved to window footers by [ADR 0068](0068-window-footers-and-overlaid-drag-grip.md). Supersedes the separate Bot accounts and Worker
 accounts windows, their creation menus and the Bot–Worker connector of
 [ADR 0049](0049-canvas-worker-account-controls.md), and the "Paired with"
 chips of [ADR 0065](0065-codex-workers-paired-with-bot-accounts.md).
