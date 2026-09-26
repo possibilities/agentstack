@@ -191,7 +191,7 @@ try {
   await page.goForward();
   await page.locator('[data-dock="right"]').waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "Return to inspector", exact: true }).click();
-  await page.getByRole("button", { name: "codex-1 · assigned", exact: true }).click();
+  await page.getByRole("button", { name: "codex-bot-auth-1 · assigned", exact: true }).click();
   await page.locator('[data-dock="right"]').waitFor({ state: "hidden" });
   assert.equal(new URL(page.url()).searchParams.get("focus"), "account:account-1");
   assert.equal(new URL(page.url()).searchParams.get("inspect"), "bot:bot-1");
@@ -236,7 +236,7 @@ try {
     return front && windows.every((el) => el === front || Number(el.style.zIndex) < Number(front.style.zIndex));
   }, id);
   await expectFront("bots");
-  await page.getByRole("button", { name: "Inspect account codex-1", exact: true }).focus();
+  await page.getByRole("button", { name: "Inspect account codex-bot-auth-1", exact: true }).focus();
   await expectFront("accounts");
   await page.keyboard.press("Meta+k");
   await page.getByRole("combobox").fill("bot-1");

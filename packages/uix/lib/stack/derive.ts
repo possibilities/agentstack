@@ -12,19 +12,19 @@ export function hueOf(id: string): number {
   return Math.abs(hash) % 360;
 }
 
-/** Dense `codex-N` labels derived from the current account list order. */
+/** Dense `codex-bot-auth-N` labels derived from the current account list order. */
 export function accountLabels(accounts: Account[] | null): Map<string, string> {
-  return new Map((accounts ?? []).map((account, index) => [account.id, `codex-${index + 1}`]));
+  return new Map((accounts ?? []).map((account, index) => [account.id, `codex-bot-auth-${index + 1}`]));
 }
 
-/** Dense per-provider labels in list order: `codex-worker-N`, `grok-worker-N`, `devin-worker-N`. */
+/** Dense per-provider labels in list order: `codex-worker-auth-N`, `grok-worker-auth-N`, `devin-worker-auth-N`. */
 export function workerAccountLabels(workers: WorkerAccount[] | null): Map<string, string> {
   const labels = new Map<string, string>();
   const counts = new Map<WorkerAccount["provider"], number>();
   for (const worker of workers ?? []) {
     const next = (counts.get(worker.provider) ?? 0) + 1;
     counts.set(worker.provider, next);
-    labels.set(worker.id, `${worker.provider}-worker-${next}`);
+    labels.set(worker.id, `${worker.provider}-worker-auth-${next}`);
   }
   return labels;
 }
@@ -119,4 +119,4 @@ export function usageRows<T extends { id: string; scope: string; linkedAccounts:
 }
 
 /** The usage API observes one machine-level Grok Bot login; label it like other accounts. */
-export const grokBotLabel = "grok-bot-1";
+export const grokBotLabel = "grok-bot-auth-1";

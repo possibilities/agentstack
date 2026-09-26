@@ -128,9 +128,9 @@ function UsageCard({ node, names, observation, summary, orbs }: {
             {orbs.map((id) => <Orb key={id} id={id} size="sm" className="ring-2 ring-card" />)}
           </span>
         ) : <GaugeIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
-        <span className="flex min-w-0 items-baseline gap-1.5 text-[0.8rem] font-medium">
+        <span className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 text-[0.8rem] leading-snug font-medium">
           {names.map((name, index) => (
-            <span key={name.label} data-node={index ? nodeKey(name.node) : undefined} className={cn("truncate", index && "text-muted-foreground")}>
+            <span key={name.label} data-node={index ? nodeKey(name.node) : undefined} className={cn("min-w-0 break-all", index && "text-muted-foreground")}>
               <NodeTitle node={name.node} label={`${name.label} usage`}>{name.label}</NodeTitle>
             </span>
           ))}

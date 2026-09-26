@@ -91,7 +91,7 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
     attempt: { id: "l1", status: "failed", authUrl: null, userCode: null, account: null, error: "denied", targetAccount: null },
     status: { auth: "closed", bots: "closed" },
   });
-  assert.deepEqual(fleet.fleet, ["bot-1 needs inspection", "codex-2 removal unfinished", "Sign-in failed", "auth reconnecting", "bots reconnecting"]);
+  assert.deepEqual(fleet.fleet, ["bot-1 needs inspection", "codex-bot-auth-2 removal unfinished", "Sign-in failed", "auth reconnecting", "bots reconnecting"]);
   assert.deepEqual(fleet.system, []);
 
   // Worker accounts flag unfinished removals and unconfirmed sign-ins, labelled per provider.
@@ -104,7 +104,7 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
       { id: "w4", provider: "grok", enabled: true, ready: true, removing: false, linkedAccounts: [] },
     ], error: null, at: null },
   });
-  assert.deepEqual(workers.fleet, ["codex-worker-1 removal unfinished", "codex-worker-2 needs sign-in", "grok-worker-1 needs sign-in"]);
+  assert.deepEqual(workers.fleet, ["codex-worker-auth-1 removal unfinished", "codex-worker-auth-2 needs sign-in", "grok-worker-auth-1 needs sign-in"]);
 
   // System: a stopped child, a closed owner channel, a status read error.
   const system = spaceAttention({
