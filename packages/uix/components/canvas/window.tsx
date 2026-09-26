@@ -43,7 +43,7 @@ export type WindowPlacement = {
   y: number;
   z: number;
   width: number;
-  /** The footprint: a maximum height, or the exact height once a human sizes the window. */
+  /** The exact height once a human sizes the window; otherwise the ceiling content can grow to. */
   height: number;
   sized: boolean;
   collapsed: boolean;

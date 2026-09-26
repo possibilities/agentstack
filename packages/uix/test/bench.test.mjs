@@ -7,7 +7,7 @@ import test from "node:test";
 registerHooks({ resolve(specifier, context, next) {
   return next(context.parentURL?.includes("/lib/stack/") && specifier.startsWith("./") && !extname(specifier) ? `${specifier}.ts` : specifier, context);
 } });
-const { snap, snapLocal, snapExtent, gridSize, validSize, packSpaces, localLayout, boundsOf, preserveAnchor, compensateLeft, fitBounds, reconcileBench, windowPoint, benchBounds, viewedWindow, preserveViewedWindow, restoreBenchCamera, raiseWindow, activeSurface, dockGeometry, dockMinimum } = await import("../lib/stack/geometry.ts");
+const { snap, snapLocal, snapExtent, gridSize, validSize, packSpaces, localLayout, boundsOf, preserveAnchor, compensateLeft, fitBounds, reconcileBench, settleWindows, windowPoint, benchBounds, viewedWindow, preserveViewedWindow, restoreBenchCamera, raiseWindow, activeSurface, dockGeometry, dockMinimum } = await import("../lib/stack/geometry.ts");
 const { emptyLocation, navigateTo, parseLocation, locationHref } = await import("../lib/stack/navigation.ts");
 const { inputTemplate, requestExample, subscriptionExample } = await import("../lib/stack/reference.ts");
 
@@ -272,4 +272,30 @@ test("snapping lands world positions and far edges on the dot grid", () => {
   const local = snapLocal(417, origin);
   assert.equal((origin + local) % gridSize, 0);
   assert.equal(snapExtent(110, 301), 308, "right edge at 418 = 19 × 22");
+});
+
+test("content growth pushes the windows below it out of the way and releases them when it shrinks", () => {
+  const spaces = [{ id: "fleet", windows: [
+    { id: "a", width: 300, height: 300, column: 0 }, { id: "b", width: 300, height: 200, column: 0 }, { id: "c", width: 300, height: 200, column: 0 },
+    { id: "side", width: 300, height: 200, column: 1 },
+  ] }];
+  const packed = reconcileBench(spaces);
+  const origin = packed.geometry.origins.fleet;
+  const onGrid = (local) => (origin.y + local) % gridSize === 0;
+  // Within its footprint, or unmeasured, nothing moves.
+  assert.deepEqual(settleWindows(packed, {}), { a: 0, b: 0, c: 0, side: 0 });
+  assert.deepEqual(settleWindows(packed, { a: 120, b: 200, c: 200, side: 900 }), { a: 0, b: 0, c: 0, side: 0 });
+  // A grows 200px past its footprint: B clears it on the grid and C cascades; the other column stays.
+  const grown = settleWindows(packed, { a: 500, b: 200, c: 200, side: 200 });
+  const b = packed.layout.positions.b.y + grown.b;
+  assert.ok(b >= packed.layout.positions.a.y + 500 + 24 && b < packed.layout.positions.a.y + 500 + 24 + gridSize && onGrid(b));
+  assert.ok(packed.layout.positions.c.y + grown.c >= b + 200 + 24);
+  assert.equal(grown.a, 0);
+  assert.equal(grown.side, 0);
+  // A window that already overlapped in the stored layout is not below it, so it is not pushed.
+  const overlapping = reconcileBench(spaces, { positions: { side: { x: 100, y: 100 } }, manual: { side: true } });
+  assert.equal(settleWindows(overlapping, { a: 900, b: 200, c: 200, side: 200 }).side, 0);
+  // Rendered bounds include the push and the grown height; footprint bounds do not.
+  const rendered = benchBounds(packed, "fleet", { pushes: grown, heights: { a: 500 } });
+  assert.ok(rendered.height > benchBounds(packed, "fleet").height);
 });

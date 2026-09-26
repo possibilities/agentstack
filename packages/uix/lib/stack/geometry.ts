@@ -1,4 +1,4 @@
-/** Structural geometry only: never use live records or measured content to pack the bench. */
+/** Structural geometry only: never use live records or measured content to pack the bench. Measured content only settles rendered positions (settleWindows). */
 export type Point = { x: number; y: number };
 export type Bounds = Point & { width: number; height: number };
 export type Camera = Point & { k: number };
@@ -129,10 +129,48 @@ export function windowPoint(bench: PackedBench, id: string): Point | null {
   return { x: origin.x + local.x, y: origin.y + local.y };
 }
 
-export function benchBounds(bench: PackedBench, space?: string): Bounds {
-  return boundsOf(bench.geometry.windows.filter((def) => !space || def.space === space).map((def) => ({
-    ...windowPoint(bench, def.id)!, width: def.width, height: bench.layout.collapsed[def.id] ? 64 : def.height ?? windowHeight,
-  })));
+/** Footprint bounds, or the rendered bounds when settled pushes and measured heights are supplied. */
+export function benchBounds(bench: PackedBench, space?: string, rendered: { pushes?: Record<string, number>; heights?: Record<string, number> } = {}): Bounds {
+  return boundsOf(bench.geometry.windows.filter((def) => !space || def.space === space).map((def) => {
+    const point = windowPoint(bench, def.id)!;
+    return {
+      x: point.x, y: point.y + (rendered.pushes?.[def.id] ?? 0), width: def.width,
+      height: bench.layout.collapsed[def.id] ? 64 : Math.max(def.height ?? windowHeight, rendered.heights?.[def.id] ?? 0),
+    };
+  }));
+}
+
+/**
+ * Content grows a window past its footprint. Each window wholly below it in
+ * the stored layout and overlapping it horizontally moves down to clear it by
+ * `gap`, landing on the dot grid, and cascades to the windows below that. It
+ * returns when the content shrinks. Render-time only: stored positions and
+ * space packing never change. Returns each window's downward push.
+ */
+export function settleWindows(bench: PackedBench, heights: Record<string, number>, gap = 24): Record<string, number> {
+  const pushes: Record<string, number> = {};
+  for (const region of bench.geometry.regions) {
+    const origin = bench.geometry.origins[region.id];
+    const rects = bench.geometry.windows.filter((def) => def.space === region.id).map((def) => {
+      const point = bench.layout.positions[def.id];
+      const size = bench.layout.sizes[def.id];
+      return { id: def.id, x: point.x, y: point.y, width: size?.width ?? def.width, footprint: size?.height ?? def.height ?? windowHeight };
+    }).sort((a, b) => a.y - b.y || a.x - b.x);
+    const settled: { rect: typeof rects[number]; y: number }[] = [];
+    for (const rect of rects) {
+      let y = rect.y;
+      for (const above of settled) {
+        const height = heights[above.rect.id];
+        if (height === undefined || above.rect.y + above.rect.footprint > rect.y) continue;
+        if (above.rect.x >= rect.x + rect.width || rect.x >= above.rect.x + above.rect.width) continue;
+        y = Math.max(y, above.y + height + gap);
+      }
+      if (y > rect.y) y = Math.ceil((origin.y + y) / gridSize) * gridSize - origin.y;
+      pushes[rect.id] = y - rect.y;
+      settled.push({ rect, y });
+    }
+  }
+  return pushes;
 }
 
 /** Nearest actual window, including unsaved manual movement; optionally require it to survive repacking. */

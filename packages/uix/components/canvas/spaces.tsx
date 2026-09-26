@@ -15,7 +15,7 @@ export type WindowDef = {
   icon: React.ComponentType<{ className?: string }>;
   accent: Accent;
   width: number;
-  /** Stable footprint, independent of live record count. Defaults to 760. */
+  /** Packing footprint, independent of live record count; content grows the window past it and pushes windows below. Defaults to 760. */
   height?: number;
   column: number;
   element: React.ReactNode;

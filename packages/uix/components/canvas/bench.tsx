@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { benchBounds, clamp, snapExtent, snapLocal, windowLimits, compensateLeft, fitBounds, preserveViewedWindow, raiseWindow, reconcileBench, restoreBenchCamera, viewedWindow, windowHeight, type BenchLayout, type Camera, type SavedBench } from "@/lib/stack/geometry";
+import { benchBounds, clamp, settleWindows, snapExtent, snapLocal, windowLimits, compensateLeft, fitBounds, preserveViewedWindow, raiseWindow, reconcileBench, restoreBenchCamera, viewedWindow, windowHeight, type BenchLayout, type Camera, type SavedBench } from "@/lib/stack/geometry";
 import { homeOf, spaces, type SpaceId } from "@/lib/stack/spaces";
 import { nodeKey, type NodeRef } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
@@ -30,6 +30,10 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
     signature, ...reconcileBench(structure, arrangement.layout),
   }, [arrangement, signature, structure]);
   const { layout, geometry } = packed;
+  // Rendered window heights; content growth pushes the windows below at render time.
+  const [heights, setHeights] = useState<Record<string, number>>({});
+  const pushes = useMemo(() => settleWindows(packed, heights), [packed, heights]);
+  const settled = useMemo(() => ({ layout, pushes }), [layout, pushes]);
   const setLayout = useCallback((update: (layout: BenchLayout) => BenchLayout) => {
     setArrangement((value) => {
       const next = update(value.layout);
@@ -44,14 +48,31 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
   const viewport = useRef<HTMLElement>(null);
   const elements = useRef(new Map<string, HTMLElement>());
   const registrars = useRef(new Map<string, (el: HTMLElement | null) => void>());
-  const current = useRef({ camera, packed, structure, space });
+  const observer = useRef<ResizeObserver | null>(null);
+  const current = useRef({ camera, packed, structure, space, pushes, heights });
   const animationTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const landingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const dragCleanup = useRef<(() => void) | null>(null);
-  useLayoutEffect(() => { current.current = { camera, packed, structure, space }; });
+  useLayoutEffect(() => { current.current = { camera, packed, structure, space, pushes, heights }; });
+  useEffect(() => {
+    const resize = new ResizeObserver((entries) => setHeights((previous) => {
+      let next = previous;
+      for (const entry of entries) {
+        const el = entry.target as HTMLElement;
+        const id = el.dataset.window;
+        if (!id || next[id] === el.offsetHeight) continue;
+        if (next === previous) next = { ...previous };
+        next[id] = el.offsetHeight;
+      }
+      return next;
+    }));
+    observer.current = resize;
+    for (const el of elements.current.values()) resize.observe(el);
+    return () => { resize.disconnect(); observer.current = null; };
+  }, []);
 
   const viewportSize = useCallback(() => ({ width: viewport.current?.clientWidth ?? 0, height: viewport.current?.clientHeight ?? 0 }), []);
-  const worldBounds = useCallback((only?: SpaceId) => benchBounds(current.current.packed, only), []);
+  const worldBounds = useCallback((only?: SpaceId) => benchBounds(current.current.packed, only, current.current), []);
   const animate = useCallback((next: Camera) => {
     setAnimating(!window.matchMedia("(prefers-reduced-motion: reduce)").matches);
     setCamera(next);
@@ -204,10 +225,16 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
     const def = geometry.windows.find((d) => d.id === id)!;
     const point = layout.positions[id];
     const origin = geometry.origins[def.space];
-    if (!registrars.current.has(id)) registrars.current.set(id, (el) => { if (el) elements.current.set(id, el); else elements.current.delete(id); });
+    if (!registrars.current.has(id)) registrars.current.set(id, (el) => {
+      const previous = elements.current.get(id);
+      if (previous && previous !== el) observer.current?.unobserve(previous);
+      if (el) { elements.current.set(id, el); observer.current?.observe(el); } else elements.current.delete(id);
+    });
     // Resizing, like dragging, changes only the local layout; origins repack on restore or tidy.
     const size = layout.sizes[id];
-    return { x: point.x + origin.x, y: point.y + origin.y, width: size?.width ?? def.width, height: size?.height ?? def.height ?? windowHeight, sized: size?.height !== undefined,
+    const push = pushes[id] ?? 0;
+    // Unsized windows grow with their content up to the height limit; a human-set height is exact.
+    return { x: point.x + origin.x, y: point.y + origin.y + push, width: size?.width ?? def.width, height: size?.height ?? windowLimits.maxHeight, sized: size?.height !== undefined,
       z: layout.order.indexOf(id) + 1, collapsed: Boolean(layout.collapsed[id]), animating, dragging, register: registrars.current.get(id)!,
       onResizePointerDown: (event, edge) => {
         if (event.button !== 0) return;
@@ -215,7 +242,7 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
         const frame = elements.current.get(id);
         const start = { width: frame?.offsetWidth ?? def.width, height: frame?.offsetHeight ?? def.height ?? windowHeight };
         const k = camera.k;
-        const world = { x: point.x + origin.x, y: point.y + origin.y };
+        const world = { x: point.x + origin.x, y: point.y + origin.y + push };
         drag(event, (x, y, free) => setLayout((value) => {
           const previous = value.sizes[id] ?? {};
           const width = start.width + x / k, height = start.height + y / k;
@@ -264,7 +291,7 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
         <p id="bench-gestures" className="sr-only">Drag empty space, scroll, or use arrow keys to pan. Pinch or use plus and minus to zoom. Drag a window edge to resize it; windows snap to the dot grid unless Option is held. F fits the bench; T resets window positions. Select a card name to inspect it. Command K opens navigation.</p>
         <div ref={setWorld} className={cn("absolute top-0 left-0 origin-top-left", !ready && "invisible", animating && "transition-transform duration-300 ease-out motion-reduce:transition-none", dragging && "select-none")}
           style={{ transform: `translate3d(${camera.x}px,${camera.y}px,0) scale(${camera.k})` }}>
-          <Lines world={world} scale={camera.k} version={layout} animating={animating || dragging} subtle={false} />
+          <Lines world={world} scale={camera.k} version={settled} animating={animating || dragging} subtle={false} />
           {regions.map((region) => {
             const origin = geometry.origins[region.id];
             const bounds = geometry.regions.find((entry) => entry.id === region.id)!.bounds;

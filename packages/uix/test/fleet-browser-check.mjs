@@ -289,6 +289,25 @@ try {
   assert.ok(!onGrid((await frame()).left), "Alt places a window freely");
   await grip.dblclick();
   assert.ok(Math.abs((await models.boundingBox()).width - before.width) < 2, "double-click restores the default width");
+  // Content grows a window past its footprint, and a window placed below it is pushed clear.
+  const accountsWindow = page.locator('[data-window="accounts"]');
+  const grownAccounts = await accountsWindow.evaluate((el) => { const body = el.querySelector("[data-scroll]"); return { height: el.offsetHeight, overflow: body.scrollHeight - body.clientHeight }; });
+  assert.ok(grownAccounts.height > 760 && grownAccounts.overflow <= 1, `Accounts grows to fit its content (${JSON.stringify(grownAccounts)})`);
+  await page.getByRole("button", { name: "Spaces · Accounts" }).click();
+  await page.getByRole("menuitem", { name: /Accounts/ }).click();
+  await page.waitForTimeout(400);
+  const scale = (await accountsWindow.boundingBox()).height / grownAccounts.height;
+  const accountsBox = await accountsWindow.boundingBox();
+  const modelsHeader = await models.locator("header").boundingBox();
+  await page.mouse.move(modelsHeader.x + 20, modelsHeader.y + modelsHeader.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(accountsBox.x + 20, accountsBox.y + (760 + 60) * scale + modelsHeader.height / 2, { steps: 6 });
+  await page.mouse.up();
+  const below = await models.boundingBox();
+  const accountsBottom = (await accountsWindow.boundingBox()).y + (await accountsWindow.boundingBox()).height;
+  assert.ok(below.y >= accountsBottom + 20 * scale, `a window dropped inside a grown window's reach is pushed below it (${below.y} vs ${accountsBottom})`);
+  await page.screenshot({ path: join(evidence, "pushed.png"), animations: "disabled" });
+  await page.keyboard.press("t");
   await page.emulateMedia({ colorScheme: "dark" });
   await page.screenshot({ path: join(evidence, "fleet-dark.png"), fullPage: true, animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });
