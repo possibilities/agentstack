@@ -15,7 +15,8 @@ import { WorkerSupervisor } from "../src/supervisor.js";
 
 const models = [{ value: "fixture-sonnet", displayName: "Fixture Sonnet", description: "Fixture", supportsEffort: true,
   supportedEffortLevels: ["low", "high"] as ("low" | "high")[] },
-{ value: "fixture-haiku", displayName: "Fixture Haiku", description: "Fixture", supportsEffort: false }];
+{ value: "fixture-haiku", displayName: "Fixture Haiku", description: "Fixture", supportsEffort: false },
+{ value: "fixture-credits", displayName: "Fixture Credits", description: "Fixture", supportsEffort: true, supportedEffortLevels: ["high"] as "high"[] }];
 
 class Output implements AsyncIterable<SDKMessage> {
   private queue: SDKMessage[] = [];
@@ -54,7 +55,10 @@ function sdkFixture() {
         return { commands: [], agents: [], output_style: "default", available_output_styles: [], models, account: {}, plugins_applied: true };
       },
       async supportedModels() { return models; },
-      async setModel(value) { model = value!; },
+      async setModel(value) {
+        if (value === "fixture-credits") throw new Error("API error: 429 Usage credits are required for this model · model not changed");
+        model = value!;
+      },
       async applyFlagSettings(settings) { effort = settings.effortLevel as string | null; },
       async interrupt() { result(); return { still_queued: [] }; },
       close() { call.closed = true; output.close(); },
@@ -132,6 +136,16 @@ test("Claude SDK workers preserve account/session continuity, exact permission a
   let manager = new WorkerManager(root, supervisor, env);
   try {
     await supervisor.reconcile();
+    // Newly ready accounts are observed without waiting for a catalog read.
+    for (const account of accounts) {
+      let saved: { models: Array<{ id: string }> } | null = null;
+      for (let i = 0; i < 200 && !saved; i++) {
+        saved = await readFile(join(root, "worker-accounts", account.id, "catalog.json"), "utf8").then(JSON.parse, () => null);
+        if (!saved) await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      // A model the account needs purchased usage credits for is omitted instead of failing the observation.
+      assert.deepEqual(saved?.models.map(({ id }) => id), ["fixture-sonnet", "fixture-haiku"]);
+    }
     const catalog = await supervisor.catalog(accounts[0]!.id, true);
     assert.equal(catalog.source, "claude-sdk-supported-models");
     assert.deepEqual(catalog.models.map(({ id, efforts }) => ({ id, efforts })), [{ id: "fixture-sonnet", efforts: ["low", "high"] }, { id: "fixture-haiku", efforts: [] }]);

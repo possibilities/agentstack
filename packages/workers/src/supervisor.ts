@@ -74,6 +74,9 @@ export class WorkerSupervisor {
         if (this.live.has(account.id)) continue;
         if (Date.now() < (this.launchRetry.get(account.id)?.after ?? 0)) continue;
         await this.launch(account);
+        // A newly ready account has never been observed; observe it now rather than on its first catalog read.
+        if (this.live.has(account.id) && !this.catalogs.has(account.id) && !await this.readCatalog(account.id))
+          void this.catalog(account.id, false).catch(() => undefined);
       }
     });
     return this.syncQueue;
@@ -216,7 +219,13 @@ export class WorkerSupervisor {
     for (const entry of model.values.slice(0, 256)) {
       let selected = choices;
       if (model.id !== "model" || choices.some((item) => item.category === "model")) {
-        const changed = await runtime.process.request("session/set_config_option", { sessionId: runtime.probeSession, configId: model.id, value: entry.value });
+        let changed: unknown;
+        try { changed = await runtime.process.request("session/set_config_option", { sessionId: runtime.probeSession, configId: model.id, value: entry.value }); }
+        catch (error) {
+          // Claude refuses to select a model this account cannot use without purchased usage credits; it cannot be dispatched.
+          if (runtime.backend === "claude-sdk" && error instanceof Error && /Usage credits are required for this model/i.test(error.message)) continue;
+          throw error;
+        }
         selected = optionsOf(changed);
       }
       const effort = effortOption(selected);
@@ -276,5 +285,6 @@ export class WorkerSupervisor {
     this.live.clear();
     for (const runtime of running) this.onRuntimeExit?.(runtime.account.id);
     await Promise.all(running.map((runtime) => runtime.process.close()));
+    await Promise.all([...this.inflight.values()].map((run) => run.catch(() => undefined)));
   }
 }

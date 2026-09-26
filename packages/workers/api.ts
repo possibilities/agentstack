@@ -41,7 +41,7 @@ const requestId = z.uuid().describe("Client-generated idempotency key. Retry wit
 
 export type WorkersContext = { supervisor: WorkerSupervisor; manager: WorkerManager };
 export const workerCatalog = operation({
-  name: "worker_catalog", description: "Read model and effort choices observed through this account's ACP session or Claude SDK supportedModels. Codex omits no-effort, o3, realtime and image OpenAI entries its ChatGPT sign-in cannot dispatch; Grok omits Imagine media models; Devin omits no-effort entries. Refresh on demand; stale results are labelled and never authorize dispatch.",
+  name: "worker_catalog", description: "Read model and effort choices observed through this account's ACP session or Claude SDK supportedModels, first when its runtime starts. Codex omits no-effort, o3, realtime and image OpenAI entries; Grok omits Imagine media models; Devin omits no-effort entries; Claude omits models needing purchased usage credits. Refresh on demand; stale results are labelled and never authorize dispatch.",
   input: z.strictObject({ accountId: id, refresh: z.boolean().optional() }), output: catalogSchema,
   annotations: { title: "Account-bound worker catalog", readOnlyHint: true },
   async call(ctx: WorkersContext, { accountId, refresh }) { return ctx.supervisor.catalog(accountId, refresh ?? false); },

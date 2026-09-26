@@ -232,8 +232,10 @@ export class ClaudeBackend implements WorkerBackend {
   async request(method: string, input: object, timeoutMs = 30_000): Promise<unknown> {
     if (this.closed) throw new Error("Claude runtime is closed");
     const run = this.operation(method, input as Record<string, unknown>).catch((error: unknown) => {
-      // A rejected native selection can already have taken effect. Rotate the runtime fence before recovery.
-      if (method === "session/set_config_option") void this.close();
+      // A rejected native selection can already have taken effect. Rotate the runtime fence before recovery,
+      // unless Claude states that the model was not changed.
+      const unchanged = error instanceof Error && /· model not changed$/.test(error.message);
+      if (method === "session/set_config_option" && !unchanged) void this.close();
       throw error;
     });
     if (!timeoutMs) return run;

@@ -42,7 +42,7 @@ _Avoid_: Claude ACP process, Bot, ambient Claude session
 
 ## Worker catalog
 
-A no-turn observation of model and dependent effort choices actually offered by one account's native runtime: an ACP session or the Claude Agent SDK. Native Devin model IDs remain separately labelled evidence. A Codex catalog omits OpenAI registry entries that offer no effort choice or belong to the o3, realtime and image families, since the ChatGPT sign-in cannot dispatch them; a Grok catalog likewise omits Imagine media-generation models; a Devin catalog omits entries that offer no effort choice. Cached values retain source, observation time and stale/error state; they do not by themselves prove successful inference or spendable quota.
+A no-turn observation of model and dependent effort choices actually offered by one account's native runtime: an ACP session or the Claude Agent SDK. Native Devin model IDs remain separately labelled evidence. A Codex catalog omits OpenAI registry entries that offer no effort choice or belong to the o3, realtime and image families, since the ChatGPT sign-in cannot dispatch them; a Grok catalog likewise omits Imagine media-generation models; a Devin catalog omits entries that offer no effort choice; a Claude catalog omits models that Claude refuses to select for the account without purchased usage credits. A newly ready account is observed when its runtime starts, without waiting for a catalog read. Cached values retain source, observation time and stale/error state; they do not by themselves prove successful inference or spendable quota.
 
 ## Usage observation
 
