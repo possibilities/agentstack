@@ -55,7 +55,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.deepEqual(
       bots.operations.map((operation) => operation.name).sort(),
       ["bot_assign", "bot_defaults_get", "bot_defaults_set", "bot_list", "bot_remove", "bot_start", "bot_stop", "voice_dial", "voice_hangup", "voice_speak", "voice_status",
-        "chat_list", "chat_search", "chat_records", "chat_record_chunk", "chat_thread_read", "chat_turns", "chat_items", "chat_main_live", "chat_main_items", "chat_occurrences", "chat_open", "chat_send", "chat_steer", "chat_interrupt", "chat_enqueue", "chat_queue_list", "chat_queue_resolve",
+        "chat_list", "chat_tree", "chat_tree_detail", "chat_search", "chat_records", "chat_record_chunk", "chat_thread_read", "chat_turns", "chat_items", "chat_main_live", "chat_main_items", "chat_occurrences", "chat_open", "chat_send", "chat_steer", "chat_interrupt", "chat_enqueue", "chat_queue_list", "chat_queue_resolve",
         "chat_codex_queue_add", "chat_codex_queue_list", "chat_codex_queue_update", "chat_codex_queue_delete", "chat_codex_queue_reorder", "chat_codex_queue_start", "chat_upload_start", "chat_upload_status", "chat_upload_chunk", "chat_upload_finish", "chat_attachment_add", "chat_attachment_list", "chat_attachment_remove"].sort(),
     );
     const start = bots.operations.find((operation) => operation.name === "bot_start") as OperationDoc;
@@ -72,6 +72,13 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(speech.annotations.idempotentHint, undefined);
     assert.deepEqual(Object.keys(bots.operations.find((operation) => operation.name === "chat_search")?.inputSchema.properties ?? {}).sort(), ["botId", "limit", "offset", "query"]);
     assert.deepEqual(Object.keys(bots.operations.find((operation) => operation.name === "chat_records")?.outputSchema.properties ?? {}).sort(), ["nextLine", "records"]);
+    const tree = bots.operations.find((operation) => operation.name === "chat_tree") as OperationDoc;
+    assert.equal(tree.annotations.readOnlyHint, true);
+    assert.deepEqual(Object.keys(tree.outputSchema.properties ?? {}).sort(), ["coverage", "nextOffset", "observedAt", "rootThreadId", "rows", "snapshot", "total"]);
+    for (const field of ["parentThreadId", "depth", "reasoningEffort", "configurationSource", "metadataTruncated"]) assert.ok(JSON.stringify(tree.outputSchema).includes(`"${field}"`));
+    const treeDetail = bots.operations.find((operation) => operation.name === "chat_tree_detail") as OperationDoc;
+    assert.equal(treeDetail.annotations.readOnlyHint, true);
+    assert.ok((treeDetail.inputSchema.properties as Record<string, unknown>).revision);
     const botsSocket = bots.transports.find((transport) => transport.type === "socket") as TransportDoc;
     assert.equal(botsSocket.supported, true);
     assert.equal(botsSocket.subscriptions, true);
@@ -123,10 +130,19 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(brain.transports.find((transport) => transport.type === "mcp")?.endpoint, "http://127.0.0.1:8743/mcp/brain");
     assert.equal(brain.transports.find((transport) => transport.type === "websocket")?.endpoint, "ws://127.0.0.1:8744/websocket/brain");
     assert.equal(existsSync(join(stateDir, "brain")), false, "read-only discovery must not initialize Brain storage");
-    assert.deepEqual(Object.keys(workers.events).sort(), ["worker_changed", "workers_changed"]);
+    assert.deepEqual(Object.keys(workers.events).sort(), ["worker_changed", "worker_progress", "workers_changed"]);
     assert.equal(workers.eventScope?.required, false);
     assert.deepEqual(workers.operations.map((operation) => operation.name), ["worker_catalog", "worker_runtime_list", "worker_account_drain",
-      "worker_start", "worker_list", "worker_status", "worker_read", "worker_send", "worker_respond", "worker_cancel", "worker_resume", "worker_close", "worker_remove"]);
+      "worker_start", "worker_list", "worker_status", "worker_read", "worker_detail", "worker_turn_list", "worker_record_list", "worker_record_read", "worker_tool_list",
+      "worker_send", "worker_respond", "worker_cancel", "worker_resume", "worker_close", "worker_remove"]);
+    for (const name of ["worker_detail", "worker_turn_list", "worker_record_list", "worker_record_read", "worker_tool_list"]) {
+      assert.equal(workers.operations.find((operation) => operation.name === name)?.annotations.readOnlyHint, true);
+    }
+    const workerDetail = workers.operations.find((operation) => operation.name === "worker_detail") as OperationDoc;
+    assert.deepEqual(Object.keys(workerDetail.outputSchema.properties ?? {}).sort(), ["capture", "freshness", "metadata", "observedSettings", "subagents", "worker"]);
+    const workerTurns = workers.operations.find((operation) => operation.name === "worker_turn_list") as OperationDoc;
+    for (const field of ["prompt", "requestedModel", "observedSettings", "dispatchedPromptSeq"]) assert.ok(JSON.stringify(workerTurns.outputSchema).includes(`"${field}"`));
+    assert.ok(JSON.stringify(workers.operations.find((operation) => operation.name === "worker_tool_list")?.outputSchema).includes('"hierarchyVerified"'));
 
     const usage = found.get("usage") as PackageDoc;
     assert.deepEqual(Object.keys(usage.events), ["usage_changed"]);
@@ -152,8 +168,12 @@ test("the api package serves structured documents for every workspace package", 
     });
 
     const owner = found.get("owner") as PackageDoc;
-    assert.deepEqual(Object.keys(owner.events), ["pids_changed"]);
-    assert.deepEqual(owner.operations.map((operation) => operation.name), ["owner_status"]);
+    assert.deepEqual(Object.keys(owner.events), ["pids_changed", "resources_changed"]);
+    assert.deepEqual(owner.operations.map((operation) => operation.name), ["owner_status", "owner_resources", "owner_resource_history"]);
+    assert.equal(owner.operations[1].annotations.readOnlyHint, true);
+    assert.equal(owner.operations[2].annotations.readOnlyHint, true);
+    assert.ok(JSON.stringify(owner.operations[1].outputSchema).includes("cpuMeasuredProcessCount"));
+    assert.ok(JSON.stringify(owner.operations[2].outputSchema).includes("retention"));
     const ownerSocket = owner.transports.find((transport) => transport.type === "socket") as TransportDoc;
     assert.equal(ownerSocket.subscriptions, true);
     assert.equal(ownerSocket.endpoint, join(stateDir, "sockets", "owner.sock"));

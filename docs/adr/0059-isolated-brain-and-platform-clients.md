@@ -1,4 +1,4 @@
-# 55. Isolate Brain and make device clients AgentStack applications
+# 59. Isolate Brain and make device clients AgentStack applications
 
 Status: accepted, 2026-09-25. Extends [ADR 0001](0001-package-apis.md)'s typed Package APIs and follows [ADR 0041](0041-isolated-wiki-package-api.md)'s isolated state and Node runtime port.
 

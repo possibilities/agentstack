@@ -1,6 +1,6 @@
 # Brain maintenance invariants
 
-The [port decision](adr/0055-isolated-brain-and-platform-clients.md) establishes package and platform ownership. These constraints preserve the research engine's behavior through runtime adaptation and later changes.
+The [port decision](adr/0059-isolated-brain-and-platform-clients.md) establishes package and platform ownership. These constraints preserve the research engine's behavior through runtime adaptation and later changes.
 
 ## Database and artifacts
 

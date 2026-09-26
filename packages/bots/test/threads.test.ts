@@ -78,9 +78,13 @@ test("thread reads retain successes and notifications invalidate the watcher", a
   const path = join(dir, "app.sock");
   const http = createServer();
   const wss = new WebSocketServer({ server: http });
+  const experimental = new WeakSet();
   wss.on("connection", (peer) => peer.on("message", (raw) => {
-    const frame = JSON.parse(String(raw)) as { id?: number; method?: string; params?: { threadId?: string } };
-    if (frame.method === "initialize") peer.send(JSON.stringify({ id: frame.id, result: {} }));
+    const frame = JSON.parse(String(raw)) as { id?: number; method?: string; params?: { threadId?: string; capabilities?: { experimentalApi?: boolean } } };
+    if (frame.method === "initialize") {
+      if (frame.params?.capabilities?.experimentalApi) experimental.add(peer);
+      peer.send(JSON.stringify({ id: frame.id, result: {} }));
+    }
     if (frame.method === "thread/loaded/list") peer.send(JSON.stringify({ id: frame.id, result: { data: ["good", "child", "bad", "other", "other-child"] } }));
     if (frame.method === "thread/read") {
       if (frame.params?.threadId === "good") {
@@ -104,6 +108,14 @@ test("thread reads retain successes and notifications invalidate the watcher", a
     await until(() => changes === 1);
     for (const peer of wss.clients) peer.send(JSON.stringify({ method: "thread/status/changed" }));
     await until(() => changes === 2);
+    // Native transport drops thread/settings/updated unless experimentalApi is enabled.
+    for (const peer of wss.clients) if (experimental.has(peer)) peer.send(JSON.stringify({ method: "thread/settings/updated", params: { threadId: "child" } }));
+    await until(() => changes === 3);
+    for (const method of ["thread/project/updated", "item/started", "thread/name/updated", "thread/closed"])
+      for (const peer of wss.clients) peer.send(JSON.stringify({ method, params: { threadId: "child", privateText: "must remain a payload-free invalidation" } }));
+    await until(() => changes === 4);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(changes, 4, "a lifecycle/configuration burst is coalesced");
   } finally {
     stop?.();
     for (const peer of wss.clients) peer.terminate();

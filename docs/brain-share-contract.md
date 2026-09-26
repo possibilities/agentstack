@@ -2,7 +2,7 @@
 
 The share ingress is one endpoint shared by every device client. It is served by
 the owner-managed `brain` Package API under
-[ADR 0055](adr/0055-isolated-brain-and-platform-clients.md).
+[ADR 0059](adr/0059-isolated-brain-and-platform-clients.md).
 
 ```text
 POST http://<agentstack-host>:8877/v1/share

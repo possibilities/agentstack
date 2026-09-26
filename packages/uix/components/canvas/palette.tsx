@@ -7,6 +7,7 @@ import { accountLabels, providerTitle, shortId, workerAccountLabels } from "@/li
 import { spaces } from "@/lib/stack/spaces";
 import type { Account, NodeRef, WorkerAccount } from "@/lib/stack/types";
 import { useAuthActions } from "./auth-actions";
+import { useBotActions } from "./bot-actions";
 import { Orb, StatusDot } from "./primitives";
 import { useStack, useWorkbench } from "./provider";
 import { spaceViews } from "./spaces";
@@ -17,6 +18,7 @@ export type PaletteAction = { id: string; label: string; shortcut?: string; icon
 export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpenChange(open: boolean): void; actions: PaletteAction[] }) {
   const { bots, accounts, workerAccounts, owner, catalog, attempt } = useStack();
   const auth = useAuthActions();
+  const botActions = useBotActions();
   const voice = useVoice();
   const { goTo, setSpace } = useWorkbench();
   const labels = accountLabels(accounts.data);
@@ -53,6 +55,12 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
                 </CommandItem>
               );
             })}
+          </CommandGroup>
+          <CommandGroup heading="Fleet controls">
+            <CommandItem value="create bot start new instance" onSelect={() => act(() => botActions("create"))}><BotIcon />Create Bot</CommandItem>
+            <CommandItem value="bot defaults launch model effort sandbox approval" onSelect={() => act(() => botActions("defaults"))}><BotIcon />Bot defaults</CommandItem>
+            <CommandItem value="usage quota billing observations" onSelect={() => go({ kind: "usage" })}><BookOpenIcon />Usage</CommandItem>
+            {(workerAccounts.data ?? []).map((account) => <CommandItem key={`catalog:${account.id}`} value={`model catalog ${workerLabels.get(account.id)} ${account.provider} ${account.id}`} onSelect={() => go({ kind: "worker-catalog", id: account.id })}><BookOpenIcon />{workerLabels.get(account.id)} model catalog</CommandItem>)}
           </CommandGroup>
           {bots.data?.length ? (
             <CommandGroup heading="Bots">

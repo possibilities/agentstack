@@ -362,7 +362,7 @@ For internal operator command help, run
         boundary:
           "Every public ingestion intent is durable before materialization. Admission performs no network work, and URL workers delegate extraction to Agentscrape without direct HTTP fallback.",
         decision_record:
-           "docs/adr/0055-isolated-brain-and-platform-clients.md, docs/brain-maintenance.md",
+           "docs/adr/0059-isolated-brain-and-platform-clients.md, docs/brain-maintenance.md",
         glossary: "CONTEXT.md",
       },
       default_db: "~/.local/state/agentstack/brain/research.db",

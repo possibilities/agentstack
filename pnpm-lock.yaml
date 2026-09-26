@@ -170,6 +170,8 @@ importers:
         specifier: ^2.10.4
         version: 2.11.2
 
+  packages/android: {}
+
   packages/api:
     dependencies:
       '@modelcontextprotocol/sdk':

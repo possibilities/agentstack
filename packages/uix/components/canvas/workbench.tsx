@@ -21,6 +21,7 @@ import { homeOf, parseNodeKey, parseSpacePath, spaceAttention, spaceHref, spaces
 import { nodeKey, type NodeRef, type Snapshot } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { AuthActionsProvider } from "./auth-actions";
+import { BotActionsProvider } from "./bot-actions";
 import { Inspector } from "./inspector";
 import { Lines } from "./lines";
 import { Palette, type PaletteAction } from "./palette";
@@ -181,7 +182,7 @@ function Shell({ initialSpace, initialFocus }: { initialSpace: SpaceId; initialF
         return;
       }
       const target = event.target as HTMLElement;
-      if (event.metaKey || event.ctrlKey || event.altKey || paletteOpen || target.closest("input,textarea,[contenteditable=true],[role=dialog],[role=alertdialog]")) return;
+      if (event.metaKey || event.ctrlKey || event.altKey || paletteOpen || target.closest("input,textarea,select,[contenteditable=true],[role=dialog],[role=alertdialog]")) return;
       const targetSpace = spaces.find((item) => item.key === event.key);
       if (targetSpace) setSpace(targetSpace.id);
     };
@@ -215,10 +216,12 @@ function Shell({ initialSpace, initialFocus }: { initialSpace: SpaceId; initialF
       <WorkbenchContext value={workbench}>
         <AuthActionsProvider>
           <VoiceProvider>
-            <SpaceCanvas key={space} space={space} paletteOpen={paletteOpen} consumePendingGoTo={consumePendingGoTo} onArrive={flashNow} onControls={reportControls} />
-            <TopBar space={space} setSpace={setSpace} controls={controls} openPalette={() => setPaletteOpen(true)} />
-            <Inspector />
-            <Palette open={paletteOpen} onOpenChange={setPaletteOpen} actions={actions} />
+            <BotActionsProvider>
+              <SpaceCanvas key={space} space={space} paletteOpen={paletteOpen} consumePendingGoTo={consumePendingGoTo} onArrive={flashNow} onControls={reportControls} />
+              <TopBar space={space} setSpace={setSpace} controls={controls} openPalette={() => setPaletteOpen(true)} />
+              <Inspector />
+              <Palette open={paletteOpen} onOpenChange={setPaletteOpen} actions={actions} />
+            </BotActionsProvider>
           </VoiceProvider>
         </AuthActionsProvider>
       </WorkbenchContext>
@@ -468,7 +471,7 @@ function SpaceCanvas({ space, paletteOpen, consumePendingGoTo, onArrive, onContr
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
-      if (event.metaKey || event.ctrlKey || event.altKey || paletteOpen || target.closest("input,textarea,[contenteditable=true],[role=dialog],[role=alertdialog]")) return;
+      if (event.metaKey || event.ctrlKey || event.altKey || paletteOpen || target.closest("input,textarea,select,[contenteditable=true],[role=dialog],[role=alertdialog]")) return;
       const key = event.key.toLowerCase();
       if (key === "g") {
         toggleMode();
@@ -551,21 +554,26 @@ function SpaceCanvas({ space, paletteOpen, consumePendingGoTo, onArrive, onContr
     };
   }, [animating, dragging, layout, mode]);
 
-  // Grid mode: masonry columns, each window placed in reading order into the shortest column.
-  const [gridColumns, setGridColumns] = useState<string[][]>(() => [defs.map((item) => item.id)]);
+  // Flat keyed children preserve forms and filters when masonry reflows. Moving
+  // a window between column parent elements would unmount its component state.
+  const [gridLayout, setGridLayout] = useState<{ columns: number; items: Record<string, { column: number; row: number; span: number }> }>(() => ({
+    columns: 1, items: Object.fromEntries(defs.map((item, index) => [item.id, { column: 1, row: index * 420 + 1, span: 400 }])),
+  }));
   useLayoutEffect(() => {
     if (mode !== "grid" || !world) return;
     let frame = 0;
     const arrange = () => {
       const count = clamp(Math.floor((world.clientWidth + gridGap) / (gridMinColumn + gridGap)), 1, 4);
       const heights = new Array<number>(count).fill(0);
-      const columns = Array.from({ length: count }, () => [] as string[]);
+      const items: typeof gridLayout.items = {};
       for (const id of defsRef.current.map((item) => item.id)) {
         const index = heights.indexOf(Math.min(...heights));
-        columns[index].push(id);
-        heights[index] += (elements.current.get(id)?.offsetHeight ?? 400) + gridGap;
+        const height = Math.ceil(elements.current.get(id)?.offsetHeight ?? 400);
+        items[id] = { column: index + 1, row: heights[index] + 1, span: height };
+        heights[index] += height + gridGap;
       }
-      setGridColumns((current) => JSON.stringify(current) === JSON.stringify(columns) ? current : columns);
+      const next = { columns: count, items };
+      setGridLayout((current) => JSON.stringify(current) === JSON.stringify(next) ? current : next);
     };
     arrange();
     const observer = new ResizeObserver(() => {
@@ -578,7 +586,7 @@ function SpaceCanvas({ space, paletteOpen, consumePendingGoTo, onArrive, onContr
       observer.disconnect();
       cancelAnimationFrame(frame);
     };
-  }, [mode, world, gridColumns, defs]);
+  }, [mode, world, defs]);
 
   const canvas = mode === "canvas";
 
@@ -611,16 +619,12 @@ function SpaceCanvas({ space, paletteOpen, consumePendingGoTo, onArrive, onContr
         ) : (
           <div className={cn("relative mx-auto max-w-[1760px] px-4 pt-20 pb-16 transition-opacity duration-500 sm:px-6", ready ? "opacity-100" : "opacity-0")}>
             <div ref={setWorld} className="relative">
-              <Lines world={world} scale={1} version={[layout, mode, gridColumns]} animating={false} subtle />
-              <div className="flex items-start gap-5">
-                {gridColumns.map((column, index) => (
-                  <div key={index} className="flex min-w-0 flex-1 flex-col gap-5">
-                    {column.map((id) => {
-                      const def = defs.find((item) => item.id === id);
-                      return def ? <Fragment key={id}>{def.element}</Fragment> : null;
-                    })}
-                  </div>
-                ))}
+              <Lines world={world} scale={1} version={[layout, mode, gridLayout]} animating={false} subtle />
+              <div className="grid items-start gap-x-5" style={{ gridTemplateColumns: `repeat(${gridLayout.columns}, minmax(0, 1fr))`, gridAutoRows: "1px" }}>
+                {defs.map(({ id, element }) => {
+                  const item = gridLayout.items[id];
+                  return <div key={id} className="min-w-0" style={item ? { gridColumn: item.column, gridRow: `${item.row} / span ${item.span}` } : undefined}>{element}</div>;
+                })}
               </div>
             </div>
           </div>

@@ -44,6 +44,12 @@ A read-only, scope-and-account-ID-bound measurement of provider quota or billing
 
 _Avoid_: account score, capacity decision, balance action
 
+## Resource observation
+
+A cached, timestamped census of the owner's observed process ancestry with OS CPU and memory measurements, domain attribution, availability and sampling limits. The owner Package API exposes process self/subtree and overlapping component, Bot, account and ACP-runtime rollups plus bounded recent history. Shared process costs are not allocated to Worker sessions, chats or turns; these observations are independent of provider quota and billing Usage observations.
+
+_Avoid_: per-chat cost, unique RAM, complete accounting
+
 ## Worker
 
 An AgentStack-owned ACP session started by a Bot (or the local operator) under one enabled Worker account in an owned Git worktree. It retains its account, model/effort, Role revision, transcript and origin across turns. Closing a Worker retains the worktree and branch for review. _Avoid_: Bot, active account, disposable prompt
@@ -63,6 +69,10 @@ The single Codex thread ID retained by a Bot. A fresh Bot has no main thread unt
 ## Chat
 
 A Codex app-server thread in an AgentStack-owned Bot's sanctioned main-thread lineage. Historical search and raw records belong to the Bot's history, while live turns, items and interactions come from its owned app-server. Other top-level threads and ACP Worker sessions are not chats. _Avoid_: session, Worker thread
+
+## Bot subagent
+
+A Codex child thread whose parent chain reaches a Bot's sanctioned main thread. Subagents can themselves have children; a thread's identity and parentage do not establish that it is currently loaded or working. ACP task or child-session evidence belongs to its Worker and is not a Bot subagent. _Avoid_: Worker, arbitrary thread on the Bot socket
 
 ## Bot
 

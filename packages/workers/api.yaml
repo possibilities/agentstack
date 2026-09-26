@@ -1,7 +1,7 @@
 name: workers
-description: Run durable account-bound ACP Workers in owned Git worktrees, read their turns, and inspect account catalog and runtime health.
+description: Run durable account-bound ACP Workers in owned Git worktrees; inspect structured conversations, turns, tool/task evidence, session metadata and account runtime health.
 socket:
-  description: Private socket for Worker lifecycle, transcripts, account catalog and runtime operations.
+  description: Private socket for Worker lifecycle, bounded structured history, account catalog and runtime operations.
 mcp:
   description: Bot-facing Worker operations and account-bound catalog, forwarded to the workers socket.
 websocket:

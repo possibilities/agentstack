@@ -35,7 +35,7 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
   let defaultsSubscription: SocketSubscription | undefined;
   try {
     const tools = await socketCall(socket, "tools/list") as { tools: Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }>; events: { scope: { required: boolean } } };
-    assert.deepEqual(tools.tools.map((tool) => tool.name), ["bot_start", "bot_stop", "bot_assign", "bot_remove", "bot_list", "bot_defaults_get", "bot_defaults_set", "voice_status", "voice_dial", "voice_speak", "voice_hangup", "chat_list", "chat_search", "chat_records", "chat_record_chunk", "chat_thread_read", "chat_turns", "chat_items", "chat_main_live", "chat_main_items", "chat_occurrences", "chat_open", "chat_send", "chat_steer", "chat_interrupt", "chat_enqueue", "chat_queue_list", "chat_queue_resolve", "chat_codex_queue_add", "chat_codex_queue_list", "chat_codex_queue_update", "chat_codex_queue_delete", "chat_codex_queue_reorder", "chat_codex_queue_start", "chat_upload_start", "chat_upload_status", "chat_upload_chunk", "chat_upload_finish", "chat_attachment_add", "chat_attachment_list", "chat_attachment_remove"]);
+    assert.deepEqual(tools.tools.map((tool) => tool.name), ["bot_start", "bot_stop", "bot_assign", "bot_remove", "bot_list", "bot_defaults_get", "bot_defaults_set", "voice_status", "voice_dial", "voice_speak", "voice_hangup", "chat_list", "chat_tree", "chat_tree_detail", "chat_search", "chat_records", "chat_record_chunk", "chat_thread_read", "chat_turns", "chat_items", "chat_main_live", "chat_main_items", "chat_occurrences", "chat_open", "chat_send", "chat_steer", "chat_interrupt", "chat_enqueue", "chat_queue_list", "chat_queue_resolve", "chat_codex_queue_add", "chat_codex_queue_list", "chat_codex_queue_update", "chat_codex_queue_delete", "chat_codex_queue_reorder", "chat_codex_queue_start", "chat_upload_start", "chat_upload_status", "chat_upload_chunk", "chat_upload_finish", "chat_attachment_add", "chat_attachment_list", "chat_attachment_remove"]);
     assert.deepEqual(Object.keys(tools.tools[0].inputSchema.properties).sort(), ["account", "args", "cwd", "id", "settings"]);
     assert.equal(tools.events.scope.required, false);
     const initial = await call(socket, "bot_defaults_get") as View["settings"];
@@ -134,8 +134,6 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
 
     const notices: string[] = [];
     subscription = await socketSubscribe(socket, ["bots_changed", "threads_changed"], (topic) => notices.push(topic), { scope: first.id });
-    await new Promise((resolve) => setTimeout(resolve, 30)); // Initial thread-watch invalidation may arrive after subscribing.
-    notices.length = 0;
     const custom = await call(socket, "bot_start", { id: "custom", cwd: external, account }) as View;
     assert.equal(custom.cwd, external);
     assert.deepEqual(custom.settings, changed);
@@ -143,7 +141,12 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
     assert.equal(named.cwd, join(stateDir, "bots", "named"));
     assert.deepEqual(named.settings, { ...changed, model: "gpt-6-sol", reasoningEffort: "medium" });
     assert.equal((await call(socket, "bot_list") as { bots: View[] }).bots.length, 3);
-    assert.equal(notices.length, 0);
+    // Thread invalidations may arrive independently of Bot lifecycle changes.
+    // Exercise that case without discarding any incorrectly scoped bots_changed.
+    await notify(opened.threadId, "thread/settings/updated", {});
+    for (let i = 0; i < 100 && !notices.includes("threads_changed"); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(notices.includes("threads_changed"));
+    assert.equal(notices.includes("bots_changed"), false, `unrelated Bot creation published scoped lifecycle notices: ${JSON.stringify(notices)}`);
     await call(socket, "bot_stop", { id: first.id });
     assert.equal((await call(socket, "chat_main_live", { botId: first.id }) as { instance: string | null }).instance, null);
     for (let i = 0; i < 100 && !notices.includes("bots_changed"); i++) await new Promise((resolve) => setTimeout(resolve, 10));

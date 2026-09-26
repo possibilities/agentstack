@@ -35,15 +35,23 @@ async function availablePort() {
   return port;
 }
 
-test("the index and canvas render a fenced bot honestly", { timeout: 30_000 }, async () => {
+test("the UI entry redirects to the canvas without losing local links, processes, or Bot recovery details", { timeout: 30_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-uix-recovery-"));
   const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, NEXT_TELEMETRY_DISABLED: "1" };
   const served = [];
   let next;
   let output = "";
   try {
+    const owner = {
+      pid: process.pid, docsUrl: "http://127.0.0.1:43101/docs", indexUrl: "http://127.0.0.1:43102/", uixUrl: "http://127.0.0.1:43102/x",
+      inspectorUrl: "http://127.0.0.1:43103/", mcpUrls: { owner: "http://127.0.0.1:43104/mcp/owner" },
+      children: [
+        { name: "inspector", pid: 9876, running: true, exitCode: null, signal: null, error: null },
+        { name: "workers", pid: null, running: false, exitCode: 1, signal: null, error: "Fixture spawn failure" },
+      ],
+    };
     const definitions = {
-      owner: [operation("owner_status", { pid: process.pid, docsUrl: null, indexUrl: null, uixUrl: null, inspectorUrl: null, mcpUrls: {}, children: [] })],
+      owner: [operation("owner_status", owner)],
       auth: [operation("account_list", { accounts: [] }), operation("account_login_current", { login: null })],
       bots: [operation("bot_list", { bots: [bot] }), operation("bot_defaults_get", bot.settings), operation("voice_status", { call: null })],
       api: [operation("docs_snapshot", { packages: [packageDoc("bots", "bot_list", "bots"), packageDoc("brain", "brain_catalog_probe", "documents")] })],
@@ -66,27 +74,48 @@ test("the index and canvas render a fenced bot honestly", { timeout: 30_000 }, a
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     assert.ok(ready, `Next did not become ready: ${output}`);
-    const [index, canvas] = await Promise.all(["/", "/x"].map(async (path) => {
+    const entry = await fetch(`${origin}/`, { redirect: "manual" });
+    assert.equal(entry.status, 308);
+    assert.equal(new URL(entry.headers.get("location"), origin).href, `${origin}/x`);
+    // Inspect rendered content, not the serialized snapshot embedded by Next.
+    const readCanvas = async (path) => {
       const response = await fetch(`${origin}${path}`);
       assert.equal(response.status, 200, `${path}: ${output}`);
-      return response.text();
-    }));
-    for (const page of [index, canvas]) {
-      assert.match(page, /Needs inspection|needs inspection/);
-      assert.match(page, /Recorded process ownership could not be verified/);
-    }
+      const html = await response.text();
+      const main = html.match(/<main\b[\s\S]*?<\/main>/)?.[0];
+      assert.ok(main, `Missing canvas: ${path}`);
+      return main;
+    };
+    const canvas = await readCanvas("/");
+    assert.match(canvas, /AgentStack Fleet canvas/);
+    assert.match(canvas, /Needs inspection|needs inspection/);
+    assert.match(canvas, /Recorded process ownership could not be verified/);
     assert.match(canvas, /bot-1/);
-    assert.match(canvas, /Call a bot/);
-    assert.doesNotMatch(index, /bot-1[^<]*Running · PID/);
+    assert.ok(canvas.includes(String(bot.pid)));
+    assert.ok(canvas.includes(bot.cwd));
+    assert.ok(canvas.includes(bot.url));
+    assert.doesNotMatch(canvas, /Local links and bot processes/);
 
-    const [system, api] = await Promise.all(["/x/system", "/x/api"].map(async (path) => {
-      const response = await fetch(`${origin}${path}`);
-      assert.equal(response.status, 200, `${path}: ${output}`);
-      return response.text();
-    }));
+    const [system, api] = await Promise.all(["/x/system", "/x/api"].map(readCanvas));
+    for (const value of ["API reference", "MCP Inspector", "MCP endpoints", "inspector", "9876", "workers", "Fixture spawn failure", owner.docsUrl, owner.inspectorUrl, owner.mcpUrls.owner]) {
+      assert.ok(system.includes(value), `System is missing ${value}`);
+    }
+    assert.doesNotMatch(system, /Runtime index/);
     assert.match(api, /bot_list/);
     assert.match(api, /brain_catalog_probe/);
     assert.match(api, /@agentstack\/brain/);
+
+    owner.children[0].running = false;
+    owner.children[0].pid = null;
+    const stopped = await readCanvas("/x/system");
+    assert.doesNotMatch(stopped, /MCP Inspector/);
+    assert.match(stopped, /API reference/);
+
+    await served.shift().close();
+    const unavailable = await readCanvas("/x/system");
+    assert.match(unavailable, /Owner status unavailable/);
+    assert.doesNotMatch(unavailable, /MCP Inspector/);
+    assert.match(await readCanvas("/x"), /bot-1/);
     assert.equal((await fetch(`${origin}/x/nope`)).status, 404);
     assert.equal((await fetch(`${origin}/x.md`)).status, 404);
     assert.equal((await fetch(`${origin}/index.md`)).status, 404);

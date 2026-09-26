@@ -1,6 +1,6 @@
 import { socketCall, socketPath, websocketPort } from "@agentstack/api";
 import { loadCatalog } from "./catalog";
-import type { Account, Bot, BotSettings, Login, OwnerStatus, PackageDoc, Resource, Snapshot, VoiceCall, WorkerAccount, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
+import type { Account, Bot, BotSettings, Login, OwnerStatus, PackageDoc, Resource, Snapshot, UsageSnapshot, VoiceCall, WorkerAccount, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
 
 const knownPackages = ["api", "auth", "bots", "brain", "roles", "owner", "usage", "workers", "wiki"];
 
@@ -33,7 +33,7 @@ export function websocketEndpoints(catalog: PackageDoc[] | null): Record<string,
 }
 
 export async function loadSnapshot(): Promise<Snapshot> {
-  const [owner, accounts, workerAccounts, workerRuntimes, workerSessions, login, workerLogins, bots, botDefaults, voice, catalog] = await Promise.all([
+  const [owner, accounts, workerAccounts, workerRuntimes, workerSessions, login, workerLogins, bots, botDefaults, voice, catalog, usage] = await Promise.all([
     resource(() => call<OwnerStatus>("owner", "owner_status")),
     resource(async () => (await call<{ accounts: Account[] }>("auth", "account_list")).accounts),
     resource(async () => (await call<{ accounts: WorkerAccount[] }>("auth", "worker_account_list")).accounts),
@@ -45,6 +45,7 @@ export async function loadSnapshot(): Promise<Snapshot> {
     resource(() => call<BotSettings>("bots", "bot_defaults_get")),
     resource(async () => (await call<{ call: VoiceCall | null }>("bots", "voice_status")).call),
     resource(() => loadCatalog((name, args) => call("api", name, args))),
+    resource(() => call<UsageSnapshot>("usage", "usage_snapshot")),
   ]);
-  return { owner, accounts, workerAccounts, workerRuntimes, workerSessions, login, workerLogins, bots, botDefaults, voice, catalog, endpoints: websocketEndpoints(catalog.data) };
+  return { owner, accounts, workerAccounts, workerRuntimes, workerSessions, login, workerLogins, bots, botDefaults, voice, catalog, usage, endpoints: websocketEndpoints(catalog.data) };
 }
