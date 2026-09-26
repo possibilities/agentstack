@@ -35,6 +35,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -297,15 +298,13 @@ function SignInCard({ attempt, labels, accounts, catalog }: { attempt: Login; la
         ) : null}
         {phase === "code" ? (
           <>
-            <div className="flex items-center justify-between gap-2 rounded-lg bg-background/70 px-3 py-2.5">
-              <span className="font-mono text-2xl font-semibold tracking-[0.22em]" title={loginFields.find((field) => field.name === "userCode")?.description ?? undefined}>{attempt.userCode}</span>
-              <CopyButton value={attempt.userCode ?? ""} label="one-time code" className="opacity-100" />
-            </div>
+            <p className="text-[0.72rem] text-pretty text-muted-foreground">Copy the link into your browser and enter this code.</p>
             {attempt.authUrl ? <SignInLink url={attempt.authUrl} /> : null}
-            <p className="flex items-center gap-1.5 text-[0.72rem] text-muted-foreground">
-              <Spinner className="size-3 text-pkg-auth" />
-              Waiting for approval · {elapsedClock(seenAt, now)}
-            </p>
+            <SignInCodeRow>
+              <span className="min-w-0 font-mono text-2xl font-semibold tracking-[0.22em] break-all" title={loginFields.find((field) => field.name === "userCode")?.description ?? undefined}>{attempt.userCode}</span>
+              <CopyButton value={attempt.userCode ?? ""} label="one-time code" className="opacity-100" />
+            </SignInCodeRow>
+            <SignInStatus label="Waiting for approval" since={seenAt} now={now} />
             <div className="flex items-center gap-1.5">
               <Button size="sm" variant="ghost" disabled={actions.cancelPending} onClick={() => actions.cancelLogin(attempt.id)}>
                 {actions.cancelPending ? <Spinner data-icon="inline-start" /> : null}
@@ -584,7 +583,7 @@ function WorkerAccountCard({ account, label, accounts }: { account: WorkerAccoun
           {errorFor("remove") ? <p className="text-[0.72rem] text-pretty text-destructive">{errorFor("remove")}</p> : null}
         </div>
       ) : !account.ready || attempt ? (
-        <WorkerSignInPanel account={account} attempt={attempt} error={errorFor("signin") ?? errorFor("submit") ?? errorFor("cancel")} />
+        <WorkerSignInPanel key={attempt?.id ?? account.id} account={account} attempt={attempt} error={errorFor("signin") ?? errorFor("submit") ?? errorFor("cancel")} />
       ) : !account.enabled ? (
         <div className="flex flex-col gap-1">
           <Button size="xs" variant="secondary" className="w-fit" disabled={changingAvailability} onClick={() => worker.setEnabled(account, true)}>
@@ -611,10 +610,26 @@ function SignInLink({ url }: { url: string }) {
   );
 }
 
+function SignInCodeRow({ children }: { children: React.ReactNode }) {
+  return <div className="flex min-h-13 items-center justify-between gap-2 rounded-lg bg-background/70 px-3 py-2.5">{children}</div>;
+}
+
+function SignInStatus({ label, since, now }: { label: string; since: number; now: number }) {
+  return (
+    <p className="flex items-center gap-1.5 text-[0.72rem] text-muted-foreground">
+      <Spinner aria-hidden className="size-3 shrink-0 text-pkg-auth" />
+      <span role="status">{label}</span>
+      <span aria-hidden>·</span>
+      <span role="timer" aria-label="Elapsed sign-in time" className="tabular-nums">{elapsedClock(since, now)}</span>
+    </p>
+  );
+}
+
 function WorkerSignInPanel({ account, attempt, error }: { account: WorkerAccount; attempt: WorkerLogin | undefined; error: string | null }) {
   const worker = useAuthActions().worker;
   const now = useNow();
-  const since = useMemo(() => Date.now(), [attempt?.id]);
+  // The parent keys this panel by attempt, so its timer and draft reset together.
+  const [since] = useState(() => Date.now());
   const [code, setCode] = useState("");
   const signingIn = worker.signingIn === account.id;
   const submitting = attempt ? worker.submitting === attempt.id : false;
@@ -641,40 +656,62 @@ function WorkerSignInPanel({ account, attempt, error }: { account: WorkerAccount
         </>
       ) : pending ? (
         <>
-          {attempt.authUrl ? null : (
-            <div className="flex items-center gap-2 text-[0.72rem] text-muted-foreground">
-              <Spinner className="size-3.5 text-pkg-auth" />
-              Starting sign-in…
-            </div>
-          )}
-          {attempt.userCode ? (
-            <div className="flex items-center justify-between gap-2 rounded-lg bg-background/70 px-3 py-2.5">
-              <span className="font-mono text-2xl font-semibold tracking-[0.22em]">{attempt.userCode}</span>
-              <CopyButton value={attempt.userCode} label="one-time code" className="opacity-100" />
-            </div>
+          {attempt.authUrl ? (
+            <>
+              <p id={`worker-signin-help-${attempt.id}`} className="text-[0.72rem] text-pretty text-muted-foreground">
+                {attempt.provider === "devin"
+                  ? "Copy the link into your browser, then paste the code from Devin here."
+                  : "Copy the link into your browser and enter this code."}
+              </p>
+              <SignInLink url={attempt.authUrl} />
+            </>
           ) : null}
-          {attempt.authUrl ? <SignInLink url={attempt.authUrl} /> : null}
+          {attempt.userCode ? (
+            <SignInCodeRow>
+              <span className="min-w-0 font-mono text-2xl font-semibold tracking-[0.22em] break-all">{attempt.userCode}</span>
+              <CopyButton value={attempt.userCode} label="one-time code" className="opacity-100" />
+            </SignInCodeRow>
+          ) : null}
           {attempt.needsCode ? (
             <form
-              className="flex items-center gap-1.5"
+              aria-label="Submit Devin sign-in code"
               onSubmit={(event) => {
                 event.preventDefault();
-                if (code.trim()) void worker.submitCode(attempt, code.trim()).then(() => setCode(""), () => undefined);
+                if (code.trim() && !submitting && !cancelling) void worker.submitCode(attempt, code.trim()).then(() => setCode(""), () => undefined);
               }}
             >
-              <Input value={code} onChange={(event) => setCode(event.target.value)} placeholder="Paste the code from Devin" className="h-7 flex-1 font-mono text-xs" disabled={submitting} />
-              <Button type="submit" size="xs" variant="secondary" disabled={submitting || !code.trim()}>
-                {submitting ? <Spinner data-icon="inline-start" /> : null}
-                Submit
-              </Button>
+              <SignInCodeRow>
+                <FieldGroup>
+                  <Field orientation="horizontal" data-disabled={submitting || cancelling} data-invalid={Boolean(attempt.error)}>
+                    <FieldLabel htmlFor={`worker-signin-code-${attempt.id}`} className="sr-only">Code from Devin</FieldLabel>
+                    <Input
+                      id={`worker-signin-code-${attempt.id}`}
+                      value={code}
+                      onChange={(event) => setCode(event.target.value)}
+                      placeholder="Paste code"
+                      autoComplete="off"
+                      autoCapitalize="none"
+                      spellCheck={false}
+                      className="min-w-0 flex-1"
+                      aria-describedby={[attempt.authUrl ? `worker-signin-help-${attempt.id}` : null, attempt.error ? `worker-signin-error-${attempt.id}` : null].filter(Boolean).join(" ") || undefined}
+                      aria-invalid={Boolean(attempt.error)}
+                      disabled={submitting || cancelling}
+                    />
+                    <Button type="submit" size="xs" variant="secondary" disabled={submitting || cancelling || !code.trim()}>
+                      {submitting ? <Spinner aria-hidden data-icon="inline-start" /> : null}
+                      Submit code
+                    </Button>
+                  </Field>
+                </FieldGroup>
+              </SignInCodeRow>
             </form>
-          ) : attempt.authUrl ? (
-            <p className="flex items-center gap-1.5 text-[0.72rem] text-muted-foreground">
-              <Spinner className="size-3 text-pkg-auth" />
-              {attempt.userCode ? "Waiting for approval" : "Waiting for sign-in"} · {elapsedClock(since, now)}
-            </p>
           ) : null}
-          {attempt.error ? <p className="text-[0.72rem] text-pretty text-destructive">{attempt.error}</p> : null}
+          <SignInStatus
+            label={submitting ? "Submitting code…" : attempt.needsCode ? "Waiting for code" : !attempt.authUrl ? "Starting sign-in…" : attempt.userCode ? "Waiting for approval" : "Waiting for sign-in"}
+            since={since}
+            now={now}
+          />
+          {attempt.error ? <p id={`worker-signin-error-${attempt.id}`} role="alert" className="text-[0.72rem] text-pretty text-destructive">{attempt.error}</p> : null}
           {cancelButton}
         </>
       ) : attempt.status === "complete" ? (
@@ -700,7 +737,7 @@ function WorkerSignInPanel({ account, attempt, error }: { account: WorkerAccount
           </div>
         </>
       )}
-      {error ? <p className="text-[0.72rem] text-pretty text-destructive">{error}</p> : null}
+      {error ? <p role="alert" className="text-[0.72rem] text-pretty text-destructive">{error}</p> : null}
     </div>
   );
 }

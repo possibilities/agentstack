@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -100,7 +100,7 @@ test("devin sign-in shows its link, rejects then accepts pasted codes, then conf
   try {
     const started = await login.start(account);
     const shown = await prompted(login, started.id);
-    assert.match(shown.authUrl ?? "", /^https:\/\/app\.devin\.ai\/auth\/cli\/continue\?/);
+    assert.equal(shown.authUrl, "https://windsurf.com/devin/account/login?state=fake-state&code_challenge=fake-challenge&cli_pkce_marker=1");
     assert.equal(shown.needsCode, true);
     assert.equal(shown.userCode, null);
     const rejected = login.submit(started.id, "bad-code");
@@ -122,6 +122,72 @@ test("devin sign-in shows its link, rejects then accepts pasted codes, then conf
     assert.equal(store.workerAccounts().find((item) => item.id === account.id)?.ready, true);
   } finally { await login.close(); store.close(); await rm(root, { recursive: true, force: true }); }
 });
+
+test("devin still accepts its original app.devin.ai sign-in URL", async () => {
+  const url = "https://app.devin.ai/auth/cli/continue?state=fake-state&code_challenge=fake-challenge";
+  const { root, store, login, account } = await harness("devin", { FAKE_WORKER_LOGIN_URL: url });
+  try {
+    const started = await login.start(account);
+    const shown = await prompted(login, started.id);
+    assert.equal(shown.authUrl, url);
+    assert.equal(shown.needsCode, true);
+    assert.equal(shown.userCode, null);
+    await login.cancelAccount(account.id);
+  } finally { await login.close(); store.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+for (const outcome of ["submit", "cancel", "failure"] as const) {
+  test(`macOS default devin launcher blocks open and preserves ${outcome}`, { skip: platform() !== "darwin", timeout: 15_000 }, async () => {
+    const root = await mkdtemp(join(tmpdir(), "agentstack-devin native-"));
+    const store = new AuthStore(root);
+    const bin = join(root, "fake devin's cli");
+    const fixture = fileURLToPath(new URL("../../test/fixtures/fake-worker-login-devin-native.mjs", import.meta.url));
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    const login = new WorkerLoginManager(store, { env: env({
+      AGENTSTACK_DEVIN_BIN: bin,
+      FAKE_WORKER_LOGIN_ACCEPT_FIRST: "1",
+      FAKE_WORKER_LOGIN_NATIVE_FAIL: outcome === "failure" ? "1" : "",
+    }) });
+    try {
+      // Use the real default command path with an executable, PATH-independent CLI.
+      await writeFile(bin, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(fixture)} "$@"\n`, { mode: 0o700 });
+      const account = await readyAccount(store, "devin");
+      const started = await login.start(account);
+      const shown = await prompted(login, started.id);
+      assert.equal(shown.status, "pending");
+      assert.equal(shown.needsCode, true);
+      assert.equal(shown.authUrl, "https://windsurf.com/devin/account/login?state=fake-state&code_challenge=fake-challenge&cli_pkce_marker=1");
+      const evidence = JSON.parse(readFileSync(join(accountRoot(root, account.id), "data", "native-marker.json"), "utf8"));
+      assert.deepEqual(evidence.args, ["auth", "login", "--force-manual-token-flow"]);
+      assert.equal(evidence.browser, "/usr/bin/true");
+      assert.ok(evidence.sshConnection);
+      assert.ok(evidence.sshClient);
+      assert.equal(evidence.open.error, "EPERM");
+      assert.equal(evidence.open.status, null);
+      assert.equal(evidence.tty, true);
+      if (outcome === "cancel") {
+        await login.cancelAccount(account.id);
+      } else {
+        assert.equal(login.submit(started.id, "good-code").needsCode, false);
+      }
+      const result = await settle(login, started.id);
+      assert.equal(result.status, outcome === "submit" ? "complete" : "failed");
+      assert.equal(result.error, outcome === "submit" ? null : outcome === "cancel" ? "Sign-in cancelled" : "Devin sign-in did not finish. Try again.");
+      assert.equal(result.authUrl, null);
+      assert.equal(result.needsCode, false);
+      assert.equal(store.workerAccounts().find((item) => item.id === account.id)?.ready, outcome === "submit");
+      assert.deepEqual(login.current(), []);
+      await login.close();
+      // The PTY command and its CLI descendant must be reaped on every exit path.
+      for (let i = 0; i < 100; i += 1) {
+        try { process.kill(evidence.pid, 0); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") break; throw error; }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      assert.throws(() => process.kill(evidence.pid, 0), { code: "ESRCH" });
+    } finally { await login.close(); store.close(); await rm(root, { recursive: true, force: true }); }
+  });
+}
 
 test("a non-zero exit fails the attempt and never confirms the account", async () => {
   const { root, store, login, account } = await harness("codex", { FAKE_WORKER_LOGIN_FAIL: "1" });
@@ -240,7 +306,7 @@ test("cancelAccount terminates a pending sign-in so removal never leaves a live 
   } finally { await login.close(); store.close(); await rm(root, { recursive: true, force: true }); }
 });
 
-test("only the devin child is marked remote so its browser launch stays suppressed", async () => {
+test("only the devin child receives remote-session hints", async () => {
   for (const provider of ["devin", "codex", "grok"] as const) {
     const { root, store, login, account } = await harness(provider, { FAKE_WORKER_LOGIN_HANG: provider === "devin" ? "" : "1" });
     try {
