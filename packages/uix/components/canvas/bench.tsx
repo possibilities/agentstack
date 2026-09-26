@@ -275,8 +275,7 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
       : stored;
     const target = live && !live.free && !(live.kind === "resize" && live.grooved)
       ? { x: stored.x, y: stored.y, width: stored.width, height: stored.sized ? stored.height : heights[id] ?? def.height ?? windowHeight } : null;
-    const fit = live?.kind === "resize" && live.fit !== null && live.height !== undefined ? { y: shown.y + live.fit, active: live.grooved } : null;
-    return { ...shown, target, fit, settling: settling === id, active: Boolean(live),
+    return { ...shown, target, settling: settling === id, active: Boolean(live),
       z: layout.order.indexOf(id) + 1, collapsed: Boolean(layout.collapsed[id]), animating, dragging, register: registrars.current.get(id)!,
       onResizePointerDown: (event, edge) => {
         if (event.button !== 0) return;

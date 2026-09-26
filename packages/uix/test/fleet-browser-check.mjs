@@ -366,12 +366,10 @@ try {
   await page.mouse.move(gripX, gripY);
   await page.mouse.down();
   await page.mouse.move(gripX, gripY + 200 * scale, { steps: 4 });
-  await page.locator('[data-fit-guide="accounts"]').waitFor();
-  assert.equal(await page.getByText("Fits content", { exact: true }).count(), 0, "the fit line is a quiet guide until the edge reaches it");
   await page.mouse.move(gripX, gripY + 8 * scale, { steps: 4 });
-  await page.getByText("Fits content", { exact: true }).waitFor();
+  await page.waitForFunction((height) => document.querySelector('[data-window="accounts"]')?.offsetHeight === height, natural);
   await page.screenshot({ path: join(evidence, "fit-groove.png"), animations: "disabled" });
-  assert.equal(await accountsWindow.evaluate((el) => el.offsetHeight), natural, "the edge sticks at the content's height");
+  assert.equal(await page.getByText("Fits content", { exact: true }).count(), 0, "the groove is felt, not drawn");
   await page.mouse.up();
   const fitted = await accountsWindow.evaluate((el) => ({ height: el.offsetHeight, style: el.style.height }));
   assert.deepEqual(fitted, { height: natural, style: "" }, "released in the groove, the window keeps fitting its content");

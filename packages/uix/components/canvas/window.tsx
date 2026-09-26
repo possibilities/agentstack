@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, use } from "react";
-import { CheckIcon, ChevronDownIcon, GripHorizontalIcon } from "lucide-react";
+import { ChevronDownIcon, GripHorizontalIcon } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { nodeKey, type ChannelStatus, type NodeRef } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
@@ -55,8 +55,6 @@ export type WindowPlacement = {
   settling: boolean;
   /** Where a live gesture will land on the grid. */
   target: { x: number; y: number; width: number; height: number } | null;
-  /** While resizing height: the content-fit line, active when the edge sits in its groove. */
-  fit: { y: number; active: boolean } | null;
   onHeaderPointerDown(event: React.PointerEvent): void;
   onResizePointerDown(event: React.PointerEvent, edge: ResizeEdge): void;
   onResetSize(edge: ResizeEdge): void;
@@ -189,17 +187,6 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
       {placement.collapsed || !footer ? null : <footer className="shrink-0 border-t border-border/60 p-1.5">{footer}</footer>}
       {placement.collapsed ? null : <ResizeHandles title={title} placement={placement} />}
     </section>
-    {placement.fit ? (
-      <div aria-hidden data-fit-guide={id} className="pointer-events-none absolute"
-        style={{ left: placement.x, top: placement.fit.y, width: placement.width, zIndex: placement.z + 1 }}>
-        <div className={cn("-translate-y-px", placement.fit.active ? "h-0.5 rounded-full bg-primary" : "h-0 border-t border-dashed border-foreground/35")} />
-        {placement.fit.active ? (
-          <span className="absolute top-0 left-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[0.65rem] font-medium whitespace-nowrap text-primary-foreground shadow-sm">
-            <CheckIcon className="size-3" />Fits content
-          </span>
-        ) : null}
-      </div>
-    ) : null}
     </>
   );
 }
