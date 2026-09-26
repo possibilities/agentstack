@@ -108,7 +108,8 @@ test("Claude usage shows per-account windows, resets, provider-unit extra usage 
   // The exhausted weekly window blocks the 5h headroom: it keeps its tone but dims.
   assert.match(first, /aria-label="claude-worker-account-1 5h remaining, unavailable until Weekly resets"[^>]*aria-valuenow="77"[^>]*opacity-35/);
   assert.match(first, /aria-label="claude-worker-account-1 Weekly remaining"[^>]*aria-valuenow="0"/);
-  assert.match(text(first), /0% left/);
+  assert.match(text(first), /5h77% left/);
+  assert.match(text(first), /Weekly0% left—/);
   assert.match(first, /title="2026-09-26T18:00:00Z"/);
   assert.match(text(first), /extra usage 120 \/ 5,000 credits/);
   assert.doesNotMatch(text(first), /\$/);

@@ -185,14 +185,17 @@ function UsageCard({ node, names, observation, summary, orbs }: {
             const blocker = blockedBy(gauge, summary.gauges);
             return (
             <div key={gauge.label} title={blocker ? `Unavailable until ${blocker.label} resets` : undefined}
-              className="grid grid-cols-[3.75rem_1fr_auto] items-center gap-2 text-[0.68rem] text-muted-foreground">
+              className="grid grid-cols-[3.75rem_1fr_auto_auto] items-center gap-2 text-[0.68rem] text-muted-foreground">
               {gauge.inspect ? (
                 <span data-node={nodeKey(gauge.inspect.node)} className="truncate"><NodeTitle node={gauge.inspect.node} label={gauge.inspect.label}>{gauge.label}</NodeTitle></span>
               ) : <span className="truncate">{gauge.label}</span>}
               <Meter value={gauge.remaining} className={cn(blocker && "opacity-35")}
                 label={`${names[0].label} ${gauge.label} remaining${blocker ? `, unavailable until ${blocker.label} resets` : ""}`} />
-              <span className="min-w-12 text-right tabular-nums" title={gauge.resetsAt ?? undefined}>
-                {gauge.resetsAt ? untilTime(Date.parse(gauge.resetsAt), now) : gauge.remaining === null ? "—" : `${pct(gauge.remaining)} left`}
+              <span className={cn("min-w-14 text-right whitespace-nowrap tabular-nums", blocker && "opacity-35")}>
+                {gauge.remaining === null ? "—" : <><span className="text-foreground/80">{pct(gauge.remaining)}</span> left</>}
+              </span>
+              <span className="w-12 text-right tabular-nums" title={gauge.resetsAt ?? undefined}>
+                {gauge.resetsAt ? untilTime(Date.parse(gauge.resetsAt), now) : "—"}
               </span>
             </div>
             );
