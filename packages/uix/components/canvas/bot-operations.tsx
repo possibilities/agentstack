@@ -30,8 +30,8 @@ export function BotOperations({ bot, uploads, onPendingChange }: { bot: Bot; upl
     <Field data-disabled={pending}><FieldLabel htmlFor={id}>Operation</FieldLabel><NativeSelect id={id} value={name} disabled={pending} onChange={(event) => { if (!pendingRef.current) setName(event.target.value); }}>
       {[true, false].map((read) => <NativeSelectOptGroup key={String(read)} label={read ? "Reads" : "Actions"}>{operations.filter((item) => (item.annotations.readOnlyHint === true) === read).map((item) => <NativeSelectOption key={item.name} value={item.name}>{operationTitle(item)} · {item.name}</NativeSelectOption>)}</NativeSelectOptGroup>)}
     </NativeSelect></Field>
-    {operation ? <OperationForm key={`${bot.id}:${operation.name}`} bot={bot} operation={operation} onPendingChange={pendingChanged} /> : <p className="text-sm text-muted-foreground">{catalog.error ?? "Waiting for the Bots API discovery schema."}</p>}
-    <details><summary className="cursor-pointer text-sm font-medium">Upload a file to this Bot</summary><div className="mt-3"><BotUpload botId={bot.id} uploads={uploads} /></div></details>
+    {operation ? <OperationForm key={`${bot.id}:${operation.name}`} bot={bot} operation={operation} onPendingChange={pendingChanged} /> : <p className="text-sm text-muted-foreground">{catalog.error ?? "Waiting for discovery."}</p>}
+    <details><summary className="cursor-pointer text-sm font-medium">Upload a file</summary><div className="mt-3"><BotUpload botId={bot.id} uploads={uploads} /></div></details>
   </div>;
 }
 
@@ -75,7 +75,7 @@ function OperationForm({ bot, operation, onPendingChange }: { bot: Bot; operatio
       const value = await store.call("bots", operation.name, input);
       setResult({ value, input, generation: current.botInvalidations[bot.id] ?? 0, at: new Date().toISOString() });
     } catch (cause) {
-      setError(`${cause instanceof Error ? cause.message : String(cause)}${read ? "" : ". An interrupted action may have taken effect. Inspect state before retrying."}`);
+      setError(`${cause instanceof Error ? cause.message : String(cause)}${read ? "" : ". It may have taken effect; check before retrying."}`);
     } finally { pendingRef.current = false; setPending(false); onPendingChange(false); }
   }
 
@@ -100,14 +100,14 @@ function OperationForm({ bot, operation, onPendingChange }: { bot: Bot; operatio
         </Field>;
       })}
     </FieldGroup>
-    {wrongThread ? <Alert><AlertDescription>Actions are limited to this Bot’s current main thread. Descendants are read-only.<Button type="button" size="xs" variant="outline" disabled={pending} onClick={() => change("threadId", bot.mainThreadId ?? "")}>Use current main thread</Button></AlertDescription></Alert> : null}
-    {wrongCall ? <Alert><AlertDescription>{voiceSession ? "The connected call changed. Bind this request to the current call before speaking." : "This Bot needs a connected voice call before speaking."}{voiceSession ? <Button type="button" size="xs" variant="outline" disabled={pending} onClick={() => change("sessionId", voiceSession)}>Use current connected call</Button> : null}</AlertDescription></Alert> : null}
-    {unavailable && !wrongThread && !wrongCall ? <p className="text-xs text-muted-foreground">{status.bots !== "open" ? "Waiting for the Bots connection." : scopeError}</p> : null}
+    {wrongThread ? <Alert><AlertDescription>Actions only reach the main thread.<Button type="button" size="xs" variant="outline" disabled={pending} onClick={() => change("threadId", bot.mainThreadId ?? "")}>Use current main thread</Button></AlertDescription></Alert> : null}
+    {wrongCall ? <Alert><AlertDescription>{voiceSession ? "The call changed." : "Needs a connected call."}{voiceSession ? <Button type="button" size="xs" variant="outline" disabled={pending} onClick={() => change("sessionId", voiceSession)}>Use current connected call</Button> : null}</AlertDescription></Alert> : null}
+    {unavailable && !wrongThread && !wrongCall ? <p className="text-xs text-muted-foreground">{status.bots !== "open" ? "Bots offline." : scopeError}</p> : null}
     {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
     <Button type="submit" className="w-fit" variant={operation.annotations.destructiveHint === true ? "destructive" : "default"} disabled={pending || unavailable || wrongThread}>{pending ? <Spinner data-icon="inline-start" /> : null}{read ? "Read" : operationTitle(operation)}</Button>
     {result ? <section className="flex min-w-0 flex-col gap-3 border-t pt-4">
       <div className="flex items-center gap-2"><h3 className="text-sm font-medium">Result</h3><time className="text-xs text-muted-foreground" dateTime={result.at}>{result.at}</time><CopyButton value={JSON.stringify(result.value, null, 2)} label="operation result" className="ml-auto opacity-100" /></div>
-      {stale ? <p className="text-xs text-muted-foreground">This snapshot may be out of date after a Bot notice or reconnection. Re-read the relevant operation.</p> : null}
+      {stale ? <p className="text-xs text-muted-foreground">May be stale · read again</p> : null}
       <div data-scroll className="max-h-96 overflow-y-auto overscroll-contain"><RecordTree value={result.value} /></div>
       <details><summary className="cursor-pointer text-xs">Raw JSON</summary><pre className="overflow-auto text-xs">{JSON.stringify(result.value, null, 2)}</pre></details>
       <details><summary className="cursor-pointer text-xs">Submitted input</summary><pre className="overflow-auto text-xs">{JSON.stringify(result.input, null, 2)}</pre></details>
@@ -122,7 +122,7 @@ function BotUpload({ botId, uploads }: { botId: string; uploads: BotUploads }) {
   const { file, id: uploadId, receipt: result, error, pending = false } = upload ?? {};
   const id = useId();
   return <div className="flex flex-col gap-3">
-    <Field data-disabled={pending}><FieldLabel htmlFor={id}>File (up to 20 MB)</FieldLabel><Input id={id} type="file" disabled={pending} onChange={(event) => { const file = event.target.files?.[0]; if (file) uploads.select(botId, file); }} /><FieldDescription>Use the verified path in a localImage, localAudio, or mention input. Uploading does not send a message. Upload state is retained while this page is open.</FieldDescription></Field>
+    <Field data-disabled={pending}><FieldLabel htmlFor={id}>File (up to 20 MB)</FieldLabel><Input id={id} type="file" disabled={pending} onChange={(event) => { const file = event.target.files?.[0]; if (file) uploads.select(botId, file); }} /><FieldDescription>Use the returned path in a localImage, localAudio, or mention input. Nothing is sent.</FieldDescription></Field>
     {file && uploadId ? <div className="flex flex-col gap-1 text-xs"><span>Selected: {file.name}</span><div className="flex items-center gap-2"><span>Upload ID</span><code className="break-all">{uploadId}</code><CopyButton value={uploadId} label="upload ID" className="opacity-100" /></div></div> : null}
     <Button type="button" size="sm" className="w-fit" variant="outline" disabled={!file || pending || Boolean(result?.path) || status.bots !== "open"} onClick={() => void uploads.run(botId)}>{pending ? <Spinner data-icon="inline-start" /> : null}{error ? "Resume upload" : "Upload file"}</Button>
     {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}

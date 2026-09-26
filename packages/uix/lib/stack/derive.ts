@@ -73,3 +73,47 @@ export function histogram(times: number[], now: number, count: number, span: num
   }
   return bins;
 }
+
+/** Countdown text for a future instant: "in 3h", "in 5d". Past instants read "now". */
+export function untilTime(at: number | null, now: number): string {
+  if (at === null || Number.isNaN(at)) return "unknown";
+  const minutes = Math.round((at - now) / 60_000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `in ${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `in ${hours}h` : `in ${Math.round(hours / 24)}d`;
+}
+
+/** A catalog model's display name without its routing prefix ("openai/GPT-5" → "GPT-5"). */
+export function modelName(name: string): string {
+  const slash = name.lastIndexOf("/");
+  return slash >= 0 ? name.slice(slash + 1) : name;
+}
+
+/** Every reasoning effort a catalog may advertise, weakest first; "default" is not a level. */
+export const effortLevels = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+/**
+ * Usage accounts grouped for display: a Bot account and its linked Worker
+ * account share one provider login, so identical observations collapse into
+ * one row. Different observations stay separate so neither is hidden.
+ */
+export function usageRows<T extends { id: string; scope: string; linkedAccounts: Array<{ scope: string; id: string }> | null | undefined; usage: unknown; error: string | null; fresh: boolean }>(accounts: T[]): T[][] {
+  const rows: T[][] = [];
+  const placed = new Set<string>();
+  const key = (account: T) => `${account.scope}:${account.id}`;
+  for (const account of accounts) {
+    if (placed.has(key(account))) continue;
+    placed.add(key(account));
+    const row = [account];
+    for (const link of account.linkedAccounts ?? []) {
+      const twin = accounts.find((item) => item.scope === link.scope && item.id === link.id);
+      if (!twin || placed.has(key(twin))) continue;
+      if (twin.error !== account.error || twin.fresh !== account.fresh || JSON.stringify(twin.usage) !== JSON.stringify(account.usage)) continue;
+      placed.add(key(twin));
+      row.push(twin);
+    }
+    rows.push(row);
+  }
+  return rows;
+}

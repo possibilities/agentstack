@@ -281,7 +281,7 @@ export function AuthActionsProvider({ children }: { children: React.ReactNode })
           <AlertDialogHeader>
             <AlertDialogMedia>{reprepare ? <Orb id={reprepare.id} /> : null}</AlertDialogMedia>
             <AlertDialogTitle>Sign in again to {reprepare ? workerLabel(reprepare.id) : ""}?</AlertDialogTitle>
-            <AlertDialogDescription>Its ACP process stops until you confirm the new sign-in.</AlertDialogDescription>
+            <AlertDialogDescription>Its process stops until you finish.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -364,11 +364,11 @@ function RemoveAccountDialog({ account, label, used, linkedWorkers, pending, err
             </div>
           ) : null}
           {linkedWorkers.length ? (
-            <p className="text-[0.78rem] text-muted-foreground">Linked Worker accounts ({linkedWorkers.join(", ")}) stay signed in.</p>
+            <p className="text-[0.78rem] text-muted-foreground">{linkedWorkers.join(", ")} stay signed in.</p>
           ) : null}
           <p className="flex items-start gap-1.5 text-[0.78rem] text-muted-foreground">
             <TriangleAlertIcon className="mt-px size-3.5 shrink-0 text-destructive" />
-            <span>Credentials are deleted. This can&rsquo;t be undone.</span>
+            <span>Deletes its credentials. Can&rsquo;t be undone.</span>
           </p>
           {needsTyping ? (
             <label className="flex flex-col gap-1.5">
@@ -411,7 +411,7 @@ function RemoveWorkerDialog({ account, label, pending, error, onConfirm, onClose
         <div className="flex flex-col gap-3 text-[0.8rem]">
           <p className="flex items-start gap-1.5 text-[0.78rem] text-muted-foreground">
             <TriangleAlertIcon className="mt-px size-3.5 shrink-0 text-destructive" />
-            <span>Its ACP process is stopped and its private credentials are deleted. Bot accounts are not affected.</span>
+            <span>Stops its process and deletes its credentials.</span>
           </p>
           {error ? <p className="text-[0.75rem] text-pretty text-destructive">{error}</p> : null}
         </div>

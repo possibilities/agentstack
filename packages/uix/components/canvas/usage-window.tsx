@@ -1,122 +1,220 @@
 "use client";
 
-import { useId, useState } from "react";
-import { GaugeIcon, RefreshCwIcon } from "lucide-react";
+import { GaugeIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Field, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { accountLabels, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
-import type { UsageAccount, UsageObservation } from "@/lib/stack/types";
-import { Empty, NodeCard, NodeTitle, Row, Time } from "./primitives";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { accountLabels, shortId, untilTime, usageRows, workerAccountLabels } from "@/lib/stack/derive";
+import { nodeKey, type NodeRef, type UsageAccount, type UsageObservation, type UsageSnapshot } from "@/lib/stack/types";
+import { cn } from "@/lib/utils";
+import { Empty, headroomTone, Meter, NodeCard, NodeTitle, Orb, StatusDot, Time } from "./primitives";
 import { useNow, useStack, useStore } from "./provider";
 import { Window } from "./window";
 
-const percent = (value: number | null) => value === null ? "Not reported" : `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
-const dollars = (value: number | null) => value === null ? "Not reported" : value.toLocaleString(undefined, { style: "currency", currency: "USD" });
-const observationStatus = (observation: UsageObservation, now: number) => observation.observedAtMs === null ? "Not observed"
-  : observation.fresh && now - observation.observedAtMs <= 5 * 60_000 ? "Fresh" : "Stale";
+type Gauge = { label: string; remaining: number | null; resetsAt: string | null };
+type Summary = { plan: string | null; limited: boolean; gauges: Gauge[]; notes: string[] };
 
+const money = (value: number) => value.toLocaleString(undefined, { style: "currency", currency: "USD" });
+const pct = (value: number) => `${Math.round(value)}%`;
+const freshWindow = 5 * 60_000;
+
+function freshness(observation: UsageObservation, now: number): "fresh" | "stale" | "never" {
+  if (observation.observedAtMs === null) return "never";
+  return observation.fresh && now - observation.observedAtMs <= freshWindow ? "fresh" : "stale";
+}
+
+function summarize(account: UsageAccount): Summary | null {
+  if (!account.usage) return null;
+  if (account.provider === "codex") {
+    const usage = account.usage;
+    const lanes = usage.lanes;
+    return {
+      plan: usage.planType,
+      limited: usage.limitReached === true,
+      gauges: lanes.flatMap((lane) => lane.windows.map((window) => ({
+        label: lanes.length > 1 ? `${lane.title} · ${window.label}` : window.label,
+        remaining: window.remainingPercent,
+        resetsAt: window.resetsAt,
+      }))),
+      notes: usage.resetCreditsAvailable ? [`${usage.resetCreditsAvailable} reset credit${usage.resetCreditsAvailable === 1 ? "" : "s"}`] : [],
+    };
+  }
+  if (account.provider === "grok") {
+    const usage = account.usage;
+    const notes: string[] = [];
+    if (usage.included.allocatedUsd !== null) notes.push(`${money(usage.included.allocatedUsd)} included`);
+    if (usage.prepaidBalanceUsd) notes.push(`${money(usage.prepaidBalanceUsd)} prepaid`);
+    if (usage.paygEnabled || usage.paygUsedUsd) notes.push(`PAYG ${money(usage.paygUsedUsd ?? 0)}${usage.paygCapUsd ? ` / ${money(usage.paygCapUsd)}` : ""}`);
+    return {
+      plan: usage.subscriptionTier,
+      limited: false,
+      gauges: [{ label: usage.included.periodType ?? "included", remaining: usage.included.remainingPercent, resetsAt: usage.included.resetsAt }],
+      notes,
+    };
+  }
+  const usage = account.usage;
+  const gauges: Gauge[] = [];
+  if (usage.dailyRemainingPercent !== null) gauges.push({ label: "daily", remaining: usage.dailyRemainingPercent, resetsAt: usage.dailyResetsAt });
+  if (usage.weeklyRemainingPercent !== null) gauges.push({ label: "weekly", remaining: usage.weeklyRemainingPercent, resetsAt: usage.weeklyResetsAt });
+  const notes: string[] = [];
+  if (usage.weeklyQuotaHidden) notes.push("weekly quota hidden");
+  // Devin reports -1 when an account has no prompt-credit budget.
+  const credits = (value: number | null) => value !== null && value >= 0 ? value : null;
+  const available = credits(usage.promptCreditsAvailable);
+  const monthly = credits(usage.promptCreditsMonthly);
+  if (available !== null) notes.push(`${available}${monthly !== null ? ` / ${monthly}` : ""} credits`);
+  return { plan: usage.planLabel, limited: false, gauges, notes };
+}
+
+function grokCliSummary(usage: NonNullable<UsageSnapshot["grokBot"]["usage"]>): Summary {
+  return {
+    plan: usage.planLabel,
+    limited: !usage.hasAvailableUsage,
+    gauges: [{ label: "period", remaining: Math.max(0, 100 - usage.usedPercent), resetsAt: usage.resetsAt }],
+    notes: usage.onDemandEnabled ? ["on-demand on"] : [],
+  };
+}
+
+/** Observation age and last error, shown in the inspector. */
 export function ObservationStatus({ observation }: { observation: UsageObservation }) {
   const now = useNow(30_000);
-  const status = observationStatus(observation, now);
+  const state = freshness(observation, now);
   return (
-    <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+    <div className="flex flex-col gap-1.5 text-xs text-muted-foreground">
       <div className="flex flex-wrap items-center gap-2">
-        <Badge variant={status === "Fresh" ? "secondary" : "outline"}>{status}</Badge>
-        <span>Observed <Time at={observation.observedAtMs} /></span>
+        <Badge variant={state === "fresh" ? "secondary" : "outline"} className="capitalize">{state === "never" ? "Not observed" : state}</Badge>
+        {observation.observedAtMs !== null ? <Time at={observation.observedAtMs} /> : null}
+        {observation.lastAttemptAtMs !== observation.observedAtMs ? <span>· tried <Time at={observation.lastAttemptAtMs} /></span> : null}
       </div>
-      {observation.error ? <Alert variant="destructive"><AlertDescription>{observation.error}. {observation.observedAtMs !== null ? "Showing the last good measurement." : "No measurement available."}</AlertDescription></Alert> : null}
-      {observation.lastAttemptAtMs !== observation.observedAtMs ? <span>Last attempt <Time at={observation.lastAttemptAtMs} /></span> : null}
+      {observation.error ? (
+        <Alert variant="destructive"><AlertDescription>{observation.error}{observation.observedAtMs !== null ? " · showing last good read" : ""}</AlertDescription></Alert>
+      ) : null}
     </div>
   );
 }
 
-function Remaining({ label, value, reset }: { label: string; value: number | null; reset?: string | null }) {
+function FreshnessDot({ observation }: { observation: UsageObservation }) {
+  const now = useNow(30_000);
+  const state = freshness(observation, now);
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex justify-between gap-2 text-xs"><span>{label}</span><span className="tabular-nums">{percent(value)} remaining</span></div>
-      {value !== null ? <meter className="h-2 w-full" min={0} max={100} value={Math.max(0, Math.min(100, value))} aria-label={`${label} remaining`} /> : null}
-      {reset ? <p className="text-xs text-muted-foreground">Resets <time dateTime={reset}>{reset}</time></p> : null}
-    </div>
+    <Tooltip>
+      <TooltipTrigger render={<span tabIndex={0} data-interactive="" className="relative z-10 inline-flex size-4 items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-ring" />}>
+        {observation.error ? <TriangleAlertIcon aria-label="Read failed" className="size-3.5 text-warning" /> : <StatusDot tone={state === "fresh" ? "success" : "muted"} label={state === "fresh" ? "Fresh" : "Stale"} className="size-1.5 [&>span]:size-1.5" />}
+      </TooltipTrigger>
+      <TooltipContent side="top" className="flex-col items-start gap-0.5">
+        <span>{state === "fresh" ? "Fresh" : "Stale"} · <Time at={observation.observedAtMs} /></span>
+        {observation.error ? <span className="opacity-70">{observation.error}</span> : null}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
-function UsageSummary({ account }: { account: UsageAccount }) {
-  if (!account.usage) return <p className="text-xs text-muted-foreground">No measurement yet.</p>;
-  if (account.provider === "codex") return (
-    <div className="flex flex-col gap-3">
-      <p className="text-xs text-muted-foreground">{account.usage.planType ?? "Plan not reported"}{account.usage.limitReached ? " · limit reached" : ""}</p>
-      {account.usage.lanes.map((lane) => <div key={lane.id} className="flex flex-col gap-2">
-        <h4 className="text-sm font-medium">{lane.title}</h4>
-        {lane.windows.map((window, index) => <Remaining key={`${window.role}:${index}`} label={window.label} value={window.remainingPercent} reset={window.resetsAt} />)}
-      </div>)}
-      <dl><Row label="Reset credits">{account.usage.resetCreditsAvailable ?? "Not reported"}</Row></dl>
-    </div>
-  );
-  if (account.provider === "grok") return (
-    <div className="flex flex-col gap-2">
-      <p className="text-xs text-muted-foreground">{account.usage.subscriptionTier ?? "Plan not reported"}</p>
-      <Remaining label="Included usage" value={account.usage.included.remainingPercent} reset={account.usage.included.resetsAt} />
-      <dl>
-        <Row label="Monthly allocation">{dollars(account.usage.included.allocatedUsd)}</Row>
-        <Row label="Prepaid balance">{dollars(account.usage.prepaidBalanceUsd)}</Row>
-        <Row label="PAYG used / cap">{dollars(account.usage.paygUsedUsd)} / {dollars(account.usage.paygCapUsd)}</Row>
-        <Row label="PAYG remaining">{dollars(account.usage.paygRemainingUsd)}</Row>
-      </dl>
-    </div>
-  );
+function UsageCard({ node, names, observation, summary, orbs }: {
+  node: NodeRef;
+  names: Array<{ node: NodeRef; label: string }>;
+  observation: UsageObservation;
+  summary: Summary;
+  orbs: string[];
+}) {
+  const now = useNow(60_000);
+  const headline = summary.gauges.reduce<number | null>((low, gauge) => gauge.remaining === null ? low : low === null ? gauge.remaining : Math.min(low, gauge.remaining), null);
+  const tone = summary.limited ? "destructive" : headroomTone(headline);
   return (
-    <div className="flex flex-col gap-2">
-      <p className="text-xs text-muted-foreground">{account.usage.planLabel ?? "Plan not reported"}</p>
-      <Remaining label="Daily" value={account.usage.dailyRemainingPercent} reset={account.usage.dailyResetsAt} />
-      <Remaining label="Weekly" value={account.usage.weeklyRemainingPercent} reset={account.usage.weeklyResetsAt} />
-      {account.usage.weeklyQuotaHidden ? <p className="text-xs text-muted-foreground">Provider hides the weekly quota.</p> : null}
-      <dl><Row label="Prompt credits available">{account.usage.promptCreditsAvailable ?? "Not reported"}</Row><Row label="Monthly prompt credits">{account.usage.promptCreditsMonthly ?? "Not reported"}</Row></dl>
-    </div>
+    <NodeCard node={node} label={`${names[0].label} usage`} className="p-2.5">
+      <div className="flex items-center gap-2">
+        {orbs.length ? (
+          <span className="flex shrink-0 -space-x-1.5">
+            {orbs.map((id) => <Orb key={id} id={id} size="sm" className="ring-2 ring-card" />)}
+          </span>
+        ) : <GaugeIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
+        <span className="flex min-w-0 items-baseline gap-1.5 text-[0.8rem] font-medium">
+          {names.map((name, index) => (
+            <span key={name.label} data-node={index ? nodeKey(name.node) : undefined} className={cn("truncate", index && "text-muted-foreground")}>
+              <NodeTitle node={name.node} label={`${name.label} usage`}>{name.label}</NodeTitle>
+            </span>
+          ))}
+        </span>
+        <FreshnessDot observation={observation} />
+        {summary.plan ? <span className="shrink-0 rounded-md bg-muted px-1.5 py-px text-[0.65rem] font-medium text-muted-foreground capitalize">{summary.plan}</span> : null}
+        <span className={cn("ml-auto shrink-0 text-base leading-none font-semibold tracking-tight tabular-nums",
+          tone === "destructive" ? "text-destructive" : tone === "warning" ? "text-warning" : "text-foreground")}>
+          {summary.limited ? "Limit" : headline === null ? "—" : pct(headline)}
+        </span>
+      </div>
+      {summary.gauges.length ? (
+        <div className="flex flex-col gap-1.5">
+          {summary.gauges.map((gauge) => (
+            <div key={gauge.label} className="grid grid-cols-[3.75rem_1fr_auto] items-center gap-2 text-[0.68rem] text-muted-foreground">
+              <span className="truncate">{gauge.label}</span>
+              <Meter value={gauge.remaining} label={`${names[0].label} ${gauge.label} remaining`} />
+              <span className="w-12 text-right tabular-nums" title={gauge.resetsAt ?? undefined}>
+                {gauge.resetsAt ? untilTime(Date.parse(gauge.resetsAt), now) : gauge.remaining === null ? "—" : pct(gauge.remaining)}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {summary.notes.length ? <p className="text-[0.68rem] text-muted-foreground">{summary.notes.join(" · ")}</p> : null}
+    </NodeCard>
   );
 }
 
 export function UsageWindow() {
   const { usage, accounts, workerAccounts, status, endpoints } = useStack();
   const store = useStore();
-  const [query, setQuery] = useState("");
-  const id = useId();
-  const now = useNow(30_000);
   const botLabels = accountLabels(accounts.data);
   const workerLabels = workerAccountLabels(workerAccounts.data);
   const label = (account: UsageAccount) => (account.scope === "bot" ? botLabels : workerLabels).get(account.id) ?? shortId(account.id);
-  const match = (text: string) => text.toLowerCase().includes(query.trim().toLowerCase());
-  const shown = usage.data?.accounts.filter((account) => match(`${label(account)} ${account.id} ${account.provider} ${account.scope} ${observationStatus(account, now)} ${account.enabled ? "enabled" : "disabled"} ${account.ready ? "ready" : "needs sign-in"} ${account.error ?? ""}`)) ?? [];
+  const nodeOf = (account: UsageAccount): NodeRef => ({ kind: "usage-account", id: `${account.scope}:${account.id}` });
+  const observed = usage.data?.accounts.filter((account) => account.usage) ?? [];
+  const waiting = usage.data?.accounts.filter((account) => !account.usage) ?? [];
   const grokBot = usage.data?.grokBot;
-  const showGrokBot = grokBot && match(`grok bot machine CLI ${observationStatus(grokBot, now)} ${grokBot.error ?? ""}`);
   return (
-    <Window id="usage" title="Usage" subtitle="usage · provider observations" icon={GaugeIcon} accent="owner" node={{ kind: "usage" }}
+    <Window id="usage" title="Usage" subtitle="usage" icon={GaugeIcon} accent="owner" node={{ kind: "usage" }}
       count={usage.data ? usage.data.accounts.length + 1 : undefined} status={status.usage} endpoint={endpoints.usage} updatedAt={usage.at} error={usage.error}
-      actions={<Button variant="ghost" size="icon-xs" aria-label="Re-read usage snapshot" disabled={status.usage !== "open"} onClick={store.reloadUsage}><RefreshCwIcon /></Button>}>
-      <p className="text-xs text-muted-foreground">Provider observations, not dispatch eligibility. Re-read fetches the owner’s latest snapshot; collection runs on its own schedule.</p>
+      actions={
+        <Tooltip>
+          <TooltipTrigger render={<Button variant="ghost" size="icon-xs" aria-label="Re-read usage" disabled={status.usage !== "open"} onClick={store.reloadUsage} />}>
+            <RefreshCwIcon />
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Re-read</TooltipContent>
+        </Tooltip>
+      }>
       {usage.error ? <Alert variant="destructive"><AlertDescription>{usage.error}</AlertDescription></Alert> : null}
-      {usage.data?.inventoryError ? <Alert variant="destructive"><AlertDescription>Account inventory: {usage.data.inventoryError}. Last inventory <Time at={usage.data.inventoryAtMs} />.</AlertDescription></Alert> : null}
-      <Field><FieldLabel htmlFor={id}>Filter usage</FieldLabel><Input id={id} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Account, provider, scope, or status…" /></Field>
-      <div data-scroll className="flex max-h-[42rem] flex-col gap-3 overflow-y-auto overscroll-contain">
-        {shown.map((account) => {
-          const node = { kind: "usage-account" as const, id: `${account.scope}:${account.id}` };
-          return <NodeCard key={node.id} node={node} label={`${label(account)} usage`}>
-            <div className="flex flex-wrap items-center justify-between gap-2"><NodeTitle node={node} label={`${label(account)} usage`} className="text-sm font-medium">{label(account)}</NodeTitle><span className="text-xs text-muted-foreground">{providerTitle(account.provider)} · {account.scope}</span></div>
-            <div className="flex gap-2"><Badge variant="outline">{account.enabled ? "Enabled" : "Disabled"}</Badge>{!account.ready ? <Badge variant="outline">Needs sign-in</Badge> : null}</div>
-            <ObservationStatus observation={account} />
-            <UsageSummary account={account} />
-          </NodeCard>;
-        })}
-        {grokBot && showGrokBot ? <NodeCard node={{ kind: "grok-bot-usage" }} label="Grok Bot usage">
-          <NodeTitle node={{ kind: "grok-bot-usage" }} label="Grok Bot usage" className="text-sm font-medium">Grok Bot · machine login</NodeTitle>
-          <p className="text-xs text-muted-foreground">Separate Grok CLI login; not a Worker account.</p>
-          <ObservationStatus observation={grokBot} />
-          {grokBot.usage ? <dl><Row label="Used">{percent(grokBot.usage.usedPercent)}</Row><Row label="Plan">{grokBot.usage.planLabel ?? "Not reported"}</Row><Row label="Resets">{grokBot.usage.resetsAt}</Row></dl> : null}
-        </NodeCard> : null}
-        {!shown.length && !showGrokBot ? <Empty icon={GaugeIcon} title={usage.data ? "No matching observations" : "Usage unavailable"}>{usage.data ? "Try another filter." : "Waiting for a usage snapshot."}</Empty> : null}
-      </div>
+      {usage.data?.inventoryError ? <Alert variant="destructive"><AlertDescription>Inventory {usage.data.inventoryError.replace("_", " ")} · <Time at={usage.data.inventoryAtMs} /></AlertDescription></Alert> : null}
+      {usage.data ? (
+        <div className="flex flex-col gap-2">
+          {usageRows(observed).map((row) => (
+            <UsageCard key={`${row[0].scope}:${row[0].id}`} node={nodeOf(row[0])} observation={row[0]} summary={summarize(row[0])!}
+              orbs={row.map((account) => account.id)} names={row.map((account) => ({ node: nodeOf(account), label: label(account) }))} />
+          ))}
+          {grokBot?.usage ? (
+            <UsageCard node={{ kind: "grok-bot-usage" }} observation={grokBot} summary={grokCliSummary(grokBot.usage)} orbs={[]}
+              names={[{ node: { kind: "grok-bot-usage" }, label: "Grok CLI" }]} />
+          ) : null}
+          {waiting.length || (grokBot && !grokBot.usage) ? (
+            <div className="flex flex-wrap items-center gap-1 px-0.5 pt-1">
+              <span className="mr-1 text-[0.68rem] text-muted-foreground">Not observed</span>
+              {waiting.map((account) => (
+                <span key={`${account.scope}:${account.id}`} data-node={nodeKey(nodeOf(account))} title={account.error ?? (!account.ready ? "Needs sign-in" : !account.enabled ? "Disabled" : "Waiting")}
+                  className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem]">
+                  <Orb id={account.id} size="sm" className="size-2.5" />
+                  <NodeTitle node={nodeOf(account)} label={`${label(account)} usage`}>{label(account)}</NodeTitle>
+                </span>
+              ))}
+              {grokBot && !grokBot.usage ? (
+                <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem]">
+                  <NodeTitle node={{ kind: "grok-bot-usage" }} label="Grok CLI usage">Grok CLI</NodeTitle>
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+          {!observed.length && !waiting.length && !grokBot?.usage ? <Empty icon={GaugeIcon} title="No accounts" /> : null}
+        </div>
+      ) : (
+        <Empty icon={GaugeIcon} title="Usage unavailable">{usage.error ?? "Waiting for a snapshot."}</Empty>
+      )}
     </Window>
   );
 }

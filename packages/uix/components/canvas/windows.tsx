@@ -7,12 +7,16 @@ import {
   CircleCheckIcon,
   CopyIcon,
   EllipsisVerticalIcon,
+  FolderIcon,
   IdCardIcon,
   KeyRoundIcon,
+  LinkIcon,
+  MessageSquareIcon,
   PhoneIcon,
   RadioIcon,
   RefreshCwIcon,
   ShieldAlertIcon,
+  SparklesIcon,
   TerminalIcon,
   Trash2Icon,
   TriangleAlertIcon,
@@ -79,7 +83,7 @@ export function AddWorkerAccountMenu({ trigger, tooltip, align = "end" }: { trig
           {workerProviders.map((provider) => (
             <DropdownMenuItem key={provider} className="whitespace-nowrap" disabled={actions.worker.signingIn === `new:${provider}`} onClick={() => addWorker(provider)}>
               {actions.worker.signingIn === `new:${provider}` ? <Spinner /> : <TerminalIcon />}
-              {providerTitle(provider)} Worker account
+              {providerTitle(provider)}
             </DropdownMenuItem>
           ))}
         </DropdownMenuGroup>
@@ -98,7 +102,7 @@ export function AddWorkerAccountButton() {
         className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed px-3 py-2.5 text-[0.8rem] font-medium text-muted-foreground transition-colors hover:border-foreground/20 hover:bg-background/80 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50"
       >
         {actions.worker.signingIn?.startsWith("new:") ? <Spinner className="size-3.5" /> : <UserRoundPlusIcon className="size-3.5" />}
-        Add Worker account
+        Add account
       </button>
     } />
   );
@@ -120,16 +124,16 @@ export function AccountsWindow() {
   const addBot = () => actions.startSignIn();
 
   return (
-    <Window id="accounts" title="Bot accounts" subtitle="auth · codex bot sign-ins" icon={KeyRoundIcon} accent="auth"
+    <Window id="accounts" title="Bot accounts" subtitle="auth" icon={KeyRoundIcon} accent="auth"
       count={accounts.data?.length} status={status.auth} endpoint={endpoints.auth} updatedAt={accounts.at} error={accounts.error ?? login.error}
       actions={
         <Tooltip>
           <TooltipTrigger
-            render={<Button variant="ghost" size="icon-xs" aria-label="Add Codex Bot account" disabled={actions.pendingSignIn} onClick={addBot} />}
+            render={<Button variant="ghost" size="icon-xs" aria-label="Add Bot account" disabled={actions.pendingSignIn} onClick={addBot} />}
           >
             {actions.pendingSignIn ? <Spinner /> : <UserRoundPlusIcon />}
           </TooltipTrigger>
-          <TooltipContent side="bottom">Add Codex Bot account</TooltipContent>
+          <TooltipContent side="bottom">Add account</TooltipContent>
         </Tooltip>
       }>
       {attempt ? <SignInCard key={attempt.id} attempt={attempt} labels={labels} accounts={accounts.data} catalog={catalog.data} /> : null}
@@ -144,23 +148,22 @@ export function AccountsWindow() {
             className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed px-3 py-2.5 text-[0.8rem] font-medium text-muted-foreground transition-colors hover:border-foreground/20 hover:bg-background/80 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50"
           >
             {actions.pendingSignIn ? <Spinner className="size-3.5" /> : <UserRoundPlusIcon className="size-3.5" />}
-            Add Codex Bot account
+            Add account
           </button>
         </div>
       ) : accounts.data ? (
         <div className="flex flex-col gap-2.5">
-          <Empty icon={KeyRoundIcon} title="No Bot accounts">Device sign-in creates an enabled Bot account. Choose its ID when starting a bot.</Empty>
+          <Empty icon={KeyRoundIcon} title="No Bot accounts">Sign in with Codex to add one.</Empty>
           <div className="flex justify-center">
             <Button size="sm" variant="outline" disabled={actions.pendingSignIn} onClick={addBot}>
               {actions.pendingSignIn ? <Spinner data-icon="inline-start" /> : <UserRoundPlusIcon data-icon="inline-start" />}
-              Add Codex Bot account
+              Add account
             </Button>
           </div>
         </div>
       ) : (
-        <Empty icon={ShieldAlertIcon} title="Accounts unavailable">{accounts.error ?? "Waiting for the auth socket."}</Empty>
+        <Empty icon={ShieldAlertIcon} title="Accounts unavailable">{accounts.error ?? "Waiting for auth."}</Empty>
       )}
-      {accounts.data?.length ? <p className="px-0.5 text-[0.7rem] text-pretty text-muted-foreground">Choose an enabled Bot account ID when starting a bot. Labels are numbered from this list; IDs never change.</p> : null}
     </Window>
   );
 }
@@ -202,7 +205,7 @@ function SignInCard({ attempt, labels, accounts, catalog }: { attempt: Login; la
         ) : null}
         {phase === "code" ? (
           <>
-            <p className="text-[0.72rem] text-pretty text-muted-foreground">Copy the link into your browser and enter this code.</p>
+            <p className="text-[0.72rem] text-pretty text-muted-foreground">Open the link and enter this code.</p>
             {attempt.authUrl ? <SignInLink url={attempt.authUrl} /> : null}
             <SignInCodeRow>
               <span className="min-w-0 font-mono text-2xl font-semibold tracking-[0.22em] break-all" title={loginFields.find((field) => field.name === "userCode")?.description ?? undefined}>{attempt.userCode}</span>
@@ -301,7 +304,7 @@ function AccountCard({ account, label, bots }: { account: Account; label: string
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuItem variant="destructive" disabled={removing} onClick={() => actions.confirmRemove(account)}>
-                <Trash2Icon />Remove account…
+                <Trash2Icon />Remove…
               </DropdownMenuItem>
             </DropdownMenuGroup>
           </DropdownMenuContent>
@@ -313,7 +316,7 @@ function AccountCard({ account, label, bots }: { account: Account; label: string
             <StatusDot tone={bot.recoveryIssue ? "warning" : bot.state === "running" ? "success" : "muted"} label={bot.recoveryIssue ? "Needs inspection" : bot.state} className="size-1.5 [&>span]:size-1.5" />
             {bot.id}
           </span>
-        )) : <span className="text-[0.7rem] text-muted-foreground">No bots bound</span>}
+        )) : <span className="text-[0.7rem] text-muted-foreground">No bots</span>}
       </div>
       {linkedWorkers.length ? (
         <div className="flex flex-wrap items-center gap-1">
@@ -331,7 +334,7 @@ function AccountCard({ account, label, bots }: { account: Account; label: string
                     {workerLabel}
                   </button>
                 } />
-                <TooltipContent>Same ChatGPT account as Worker {workerLabel}</TooltipContent>
+                <TooltipContent>Same login as {workerLabel}</TooltipContent>
               </Tooltip>
             );
           })}
@@ -364,7 +367,7 @@ export function WorkerAccountsWindow() {
   const labels = workerAccountLabels(workerAccounts.data);
 
   return (
-    <Window id="worker-accounts" title="Worker accounts" subtitle="auth · terminal sign-ins" icon={IdCardIcon} accent="auth"
+    <Window id="worker-accounts" title="Worker accounts" subtitle="auth" icon={IdCardIcon} accent="auth"
       count={workerAccounts.data?.length} status={status.auth} endpoint={endpoints.auth} updatedAt={workerAccounts.at} error={workerAccounts.error}
       actions={
         <AddWorkerAccountMenu tooltip="Add Worker account" trigger={
@@ -387,18 +390,18 @@ export function WorkerAccountsWindow() {
         </div>
       ) : workerAccounts.data ? (
         <div className="flex flex-col gap-2.5">
-          <Empty icon={IdCardIcon} title="No Worker accounts">Terminal sign-in creates an independent Codex, Grok, or Devin Worker account.</Empty>
+          <Empty icon={IdCardIcon} title="No Worker accounts">Sign in with Codex, Grok, or Devin.</Empty>
           <div className="flex justify-center">
             <AddWorkerAccountMenu trigger={
               <Button size="sm" variant="outline">
                 <UserRoundPlusIcon data-icon="inline-start" />
-                Add Worker account
+                Add account
               </Button>
             } />
           </div>
         </div>
       ) : (
-        <Empty icon={ShieldAlertIcon} title="Worker accounts unavailable">{workerAccounts.error ?? "Waiting for the auth socket."}</Empty>
+        <Empty icon={ShieldAlertIcon} title="Accounts unavailable">{workerAccounts.error ?? "Waiting for auth."}</Empty>
       )}
     </Window>
   );
@@ -451,7 +454,7 @@ function WorkerAccountCard({ account, label, accounts }: { account: WorkerAccoun
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuItem variant="destructive" disabled={removing} onClick={() => worker.confirmRemove(account)}>
-                <Trash2Icon />Remove account…
+                <Trash2Icon />Remove…
               </DropdownMenuItem>
             </DropdownMenuGroup>
           </DropdownMenuContent>
@@ -473,7 +476,7 @@ function WorkerAccountCard({ account, label, accounts }: { account: WorkerAccoun
                     {botLabel}
                   </button>
                 } />
-                <TooltipContent>Same ChatGPT account as Bot {botLabel}</TooltipContent>
+                <TooltipContent>Same login as {botLabel}</TooltipContent>
               </Tooltip>
             );
           })}
@@ -552,7 +555,7 @@ function WorkerSignInPanel({ account, attempt, error }: { account: WorkerAccount
         : "border-warning/30 bg-warning/5")}>
       {!attempt ? (
         <>
-          <p className="text-[0.72rem] text-muted-foreground">Needs a sign-in before it can run Worker turns.</p>
+          <p className="text-[0.72rem] text-muted-foreground">Sign in to run turns.</p>
           <Button size="xs" variant="secondary" className="w-fit" disabled={signingIn} onClick={() => void worker.signIn(account.provider, account.id)}>
             {signingIn ? <Spinner data-icon="inline-start" /> : <UserRoundPlusIcon data-icon="inline-start" />}
             Sign in
@@ -564,8 +567,8 @@ function WorkerSignInPanel({ account, attempt, error }: { account: WorkerAccount
             <>
               <p id={`worker-signin-help-${attempt.id}`} className="text-[0.72rem] text-pretty text-muted-foreground">
                 {attempt.provider === "devin"
-                  ? "Copy the link into your browser, then paste the code from Devin here."
-                  : "Copy the link into your browser and enter this code."}
+                  ? "Open the link, then paste Devin’s code here."
+                  : "Open the link and enter this code."}
               </p>
               <SignInLink url={attempt.authUrl} />
             </>
@@ -661,6 +664,20 @@ export function RecoveryWarning({ message }: { message: string }) {
   );
 }
 
+function BotChip({ icon: Icon, children, title, copy, label }: { icon: React.ComponentType<{ className?: string }>; children: React.ReactNode; title?: string; copy?: string | null; label?: string }) {
+  return (
+    <span title={title} className="group/row inline-flex h-6 max-w-full min-w-0 items-center gap-1 rounded-md bg-muted/70 px-1.5 text-[0.7rem] text-muted-foreground">
+      <Icon aria-hidden className="size-3 shrink-0" />
+      <span className="min-w-0 truncate text-foreground/90">{children}</span>
+      {copy ? <CopyButton value={copy} label={label ?? "value"} className="-my-1 size-5 w-0 transition-[width,opacity] group-hover/row:w-5 focus-visible:w-5" /> : null}
+    </span>
+  );
+}
+
+function workspaceName(cwd: string): string {
+  return cwd.split("/").filter(Boolean).at(-1) ?? cwd;
+}
+
 export function BotsWindow() {
   const { bots, accounts, scoped, status, endpoints } = useStack();
   const voice = useVoice();
@@ -669,7 +686,7 @@ export function BotsWindow() {
   const now = useNow();
 
   return (
-    <Window id="bots" title="Bots" subtitle="bots · private workspaces" icon={BotIcon} accent="bots"
+    <Window id="bots" title="Bots" subtitle="bots" icon={BotIcon} accent="bots"
       count={bots.data?.length} status={status.bots} endpoint={endpoints.bots} updatedAt={bots.at} error={bots.error} actions={<BotWindowActions />}>
       {bots.data?.length ? (
         <div className="flex flex-col gap-2">
@@ -679,55 +696,53 @@ export function BotsWindow() {
             const threads = events.filter((event) => event.topic === "threads_changed").length;
             const lifecycle = events.length - threads;
             const onCall = voice.botId === bot.id;
-            const callReason = voice.callable(bot);
+            const model = bot.settings ? [bot.settings.model, bot.settings.reasoningEffort].filter(Boolean).join(" · ") : null;
+            const mismatch = bot.state === "running" && !bot.recoveryIssue && bot.account !== bot.runningAccount;
             return (
               <NodeCard key={bot.id} node={{ kind: "bot", id: bot.id }} label={`bot ${bot.id}`} lastEvent={events[0]} accent="var(--pkg-bots)"
                 className={cn(onCall && "border-pkg-bots/40 ring-2 ring-pkg-bots/35 shadow-[0_0_18px_-4px_color-mix(in_oklch,var(--pkg-bots)_45%,transparent)]")}>
                 <div className="flex items-center gap-3">
                   <BotTile bot={bot} pulse={!bot.recoveryIssue && Boolean(events[0] && now - events[0].at < 4_000)} />
-                  <div className="flex min-w-0 flex-col">
+                  <div className="flex min-w-0 flex-col gap-0.5">
                     <NodeTitle node={{ kind: "bot", id: bot.id }} label={`bot ${bot.id}`} className="font-mono text-sm font-semibold">{bot.id}</NodeTitle>
-                    <span className="text-[0.72rem] text-muted-foreground">{bot.recoveryIssue ? "Needs inspection" : bot.state}{bot.pid ? ` · pid ${bot.pid}` : ""}</span>
+                    <span className="flex min-w-0 items-center gap-1.5 text-[0.72rem] text-muted-foreground">
+                      <span title={bot.pid ? `pid ${bot.pid}` : undefined} className={cn(bot.recoveryIssue ? "text-warning" : bot.state === "running" && "text-success")}>{bot.recoveryIssue ? "Needs inspection" : bot.state}</span>
+                      <span aria-hidden>·</span>
+                      <AccountChip id={bot.account} labels={labels} />
+                    </span>
                   </div>
-                  {onCall ? (
-                    <Badge variant="secondary" className="ml-auto gap-1 bg-pkg-bots/10 text-pkg-bots">
-                      <PhoneIcon className="size-3" />
-                      On call{voice.startedAt ? ` · ${elapsedClock(voice.startedAt, now)}` : voice.phase !== "idle" ? ` · ${voice.phase}` : ""}
-                    </Badge>
-                  ) : (
-                    <span className="ml-auto text-pkg-bots"><Sparkline values={histogram(events.map((event) => event.at), now, 12, activitySpan)} /></span>
-                  )}
+                  <div className="ml-auto flex shrink-0 items-center gap-2 self-start">
+                    {onCall ? (
+                      <Badge variant="secondary" className="gap-1 bg-pkg-bots/10 text-pkg-bots">
+                        <PhoneIcon className="size-3" />
+                        {voice.startedAt ? elapsedClock(voice.startedAt, now) : voice.phase !== "idle" ? voice.phase : "On call"}
+                      </Badge>
+                    ) : (
+                      <span className="text-pkg-bots"><Sparkline values={histogram(events.map((event) => event.at), now, 12, activitySpan)} /></span>
+                    )}
+                    <Tooltip>
+                      <TooltipTrigger render={<span tabIndex={0} data-interactive="" className="relative z-10 inline-flex size-5 items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-ring" />}>
+                        <RadioIcon aria-label={subscription?.status === "open" ? "Subscribed" : "Not subscribed"} className={cn("size-3.5", subscription?.status === "open" ? "text-pkg-bots" : "text-muted-foreground/50")} />
+                      </TooltipTrigger>
+                      <TooltipContent side="left" className="flex-col items-start gap-0.5">
+                        <span>{subscription?.status === "open" ? "Subscribed" : subscription ? "Connecting…" : "Not subscribed"}</span>
+                        <span className="font-mono opacity-70">{threads} thread · {lifecycle} lifecycle</span>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
                 </div>
-                <dl className="flex flex-col">
-                  <Row label="Bot account"><AccountChip id={bot.account} labels={labels} /></Row>
-                  <Row label="Main thread" mono copy={bot.mainThreadId}>{bot.mainThreadId ? shortId(bot.mainThreadId) : "Awaiting first turn"}</Row>
-                  <Row label="Role revision" mono>{bot.roleRevision ?? "Never launched"}</Row>
-                  <Row label="Saved model">{bot.settings?.model ?? "Codex implicit default"}</Row>
-                  <Row label="Saved effort">{bot.settings?.reasoningEffort ?? "Codex implicit default"}</Row>
-                  <Row label="Workspace" copy={bot.cwd} mono className="[&>dd]:break-all [&>dd]:whitespace-normal">{bot.cwd}</Row>
-                  {bot.url ? <Row label="Endpoint" copy={bot.url} mono className="[&>dd]:break-all [&>dd]:whitespace-normal">{bot.url}</Row> : null}
-                </dl>
+                <div className="flex flex-wrap items-center gap-1">
+                  <BotChip icon={SparklesIcon} title="Saved model · effort">{model ?? "Codex default"}</BotChip>
+                  <BotChip icon={FolderIcon} title={bot.cwd} copy={bot.cwd} label="workspace">{workspaceName(bot.cwd)}</BotChip>
+                  <BotChip icon={MessageSquareIcon} title={bot.mainThreadId ?? "No main thread yet"} copy={bot.mainThreadId} label="main thread">{bot.mainThreadId ? shortId(bot.mainThreadId) : "No thread"}</BotChip>
+                  {bot.url ? <BotChip icon={LinkIcon} title={bot.url} copy={bot.url} label="endpoint">{bot.url.replace(/^\w+:\/\//, "")}</BotChip> : null}
+                </div>
                 {bot.recoveryIssue ? <RecoveryWarning message={bot.recoveryIssue} /> : null}
-                {bot.state === "running" && !bot.recoveryIssue && bot.account !== bot.runningAccount ? (
+                {mismatch ? (
                   <p className="flex items-start gap-1.5 rounded-lg bg-warning/10 px-2 py-1.5 text-[0.72rem] text-pretty text-warning">
                     <TriangleAlertIcon aria-hidden className="mt-px size-3.5 shrink-0" />
-                    <span>Running as {bot.runningAccount ? labels.get(bot.runningAccount) ?? shortId(bot.runningAccount) : "unbound"}. Stop and start to apply {bot.account ? labels.get(bot.account) ?? shortId(bot.account) : "unbound"}.</span>
+                    <span>Running as {bot.runningAccount ? labels.get(bot.runningAccount) ?? shortId(bot.runningAccount) : "unbound"} · restart to apply</span>
                   </p>
-                ) : null}
-                <div className="flex items-center gap-2 rounded-lg bg-muted/60 px-2 py-1.5 text-[0.7rem]">
-                  <RadioIcon className={cn("size-3.5", subscription?.status === "open" ? "text-pkg-bots" : "text-muted-foreground")} />
-                  <span className="text-muted-foreground">{subscription?.status === "open" ? "Subscribed" : subscription ? "Connecting…" : "Not subscribed"}</span>
-                  <span className="ml-auto flex items-center gap-2 font-mono tabular-nums">
-                    <span title="Codex thread invalidations; may include other top-level threads">{threads} notices</span>
-                    <span className="text-muted-foreground/50">·</span>
-                    <span title="bots_changed notices">{lifecycle} lifecycle</span>
-                  </span>
-                </div>
-                {!onCall && callReason === null && !voice.busy ? (
-                  <Button size="xs" variant="outline" className="w-fit" onClick={() => voice.dial(bot.id)}>
-                    <PhoneIcon data-icon="inline-start" />
-                    Call
-                  </Button>
                 ) : null}
                 <BotLifecycleControls bot={bot} />
               </NodeCard>
@@ -735,9 +750,9 @@ export function BotsWindow() {
           })}
         </div>
       ) : bots.data ? (
-        <Empty icon={BotIcon} title="No bots yet">Choose Create Bot to start with an enabled Codex Bot account. Add an account in Bot accounts if needed.</Empty>
+        <Empty icon={BotIcon} title="No bots yet">Create one to get started.</Empty>
       ) : (
-        <Empty icon={ShieldAlertIcon} title="Bots unavailable">{bots.error ?? "Waiting for the bots socket."}</Empty>
+        <Empty icon={ShieldAlertIcon} title="Bots unavailable">{bots.error ?? "Waiting for bots."}</Empty>
       )}
     </Window>
   );

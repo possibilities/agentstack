@@ -4,7 +4,9 @@ export type Bounds = Point & { width: number; height: number };
 export type Camera = Point & { k: number };
 export type WindowGeometry = { id: string; width: number; column: number; height?: number };
 export type SpaceGeometry = { id: string; windows: WindowGeometry[] };
-export type BenchLayout = { positions: Record<string, Point>; manual: Record<string, boolean>; collapsed: Record<string, boolean>; order: string[] };
+/** A human-set window extent; either dimension may be absent. */
+export type WindowSize = { width?: number; height?: number };
+export type BenchLayout = { positions: Record<string, Point>; manual: Record<string, boolean>; collapsed: Record<string, boolean>; order: string[]; sizes: Record<string, WindowSize> };
 export type BenchGeometry = {
   regions: { id: string; bounds: Bounds }[];
   windows: (WindowGeometry & { space: string })[];
@@ -15,7 +17,18 @@ export type WindowAnchor = { id: string; point: Point };
 export type SavedBench = { layout?: Partial<BenchLayout>; space?: string; camera?: Camera; anchor?: WindowAnchor };
 export type ViewportSize = { width: number; height: number };
 export const windowHeight = 760;
+export const windowLimits = { minWidth: 280, maxWidth: 960, minHeight: 160, maxHeight: 2000 };
 export const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const validExtent = (value: unknown, min: number, max: number) => typeof value === "number" && Number.isFinite(value) ? clamp(Math.round(value), min, max) : undefined;
+
+/** Keep only finite sizes, clamped to the window limits. */
+export function validSize(value: unknown): WindowSize | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const width = validExtent((value as WindowSize).width, windowLimits.minWidth, windowLimits.maxWidth);
+  const height = validExtent((value as WindowSize).height, windowLimits.minHeight, windowLimits.maxHeight);
+  return width === undefined && height === undefined ? undefined : { ...(width !== undefined ? { width } : null), ...(height !== undefined ? { height } : null) };
+}
+
 const validPoint = (p: unknown): p is Point => Boolean(p && typeof p === "object" && "x" in p && "y" in p && Number.isFinite(p.x) && Number.isFinite(p.y));
 
 export function boundsOf(rects: Bounds[]): Bounds {
@@ -74,7 +87,15 @@ export function reconcileBench(spaces: SpaceGeometry[], previous: Partial<BenchL
   const positions: Record<string, Point> = {};
   const manual: Record<string, boolean> = {};
   const collapsed: Record<string, boolean> = {};
-  const regions = spaces.map((space) => {
+  const sizes: Record<string, WindowSize> = {};
+  // Human-set sizes are manual extents: they take part in packing like manual positions.
+  const sized = spaces.map((space) => ({ ...space, windows: space.windows.map((def) => {
+    const size = validSize(previous?.sizes?.[def.id]);
+    if (!size) return def;
+    sizes[def.id] = size;
+    return { ...def, width: size.width ?? def.width, height: size.height ?? def.height };
+  }) }));
+  const regions = sized.map((space) => {
     const defaults = localLayout(space.windows).positions;
     for (const def of space.windows) {
       const point = previous?.positions?.[def.id];
@@ -86,11 +107,11 @@ export function reconcileBench(spaces: SpaceGeometry[], previous: Partial<BenchL
     }
     return { id: space.id, bounds: boundsOf(space.windows.map((def) => ({ ...positions[def.id], width: def.width, height: def.height ?? windowHeight }))) };
   });
-  const windows = spaces.flatMap((space) => space.windows.map((def) => ({ ...def, space: space.id })));
+  const windows = sized.flatMap((space) => space.windows.map((def) => ({ ...def, space: space.id })));
   const ids = new Set(windows.map((def) => def.id));
   const previousOrder = Array.isArray(previous?.order) ? previous.order : [];
   const order = [...new Set([...previousOrder.filter((id) => ids.has(id)), ...ids])];
-  return { layout: { positions, manual, collapsed, order }, geometry: { regions, windows, origins: packSpaces(regions) } };
+  return { layout: { positions, manual, collapsed, order, sizes }, geometry: { regions, windows, origins: packSpaces(regions) } };
 }
 
 export function windowPoint(bench: PackedBench, id: string): Point | null {

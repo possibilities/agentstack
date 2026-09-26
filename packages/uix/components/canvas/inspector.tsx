@@ -124,7 +124,7 @@ function resolve(ref: NodeRef, state: StackState): View | null {
     case "grok-bot-usage": {
       const observation = state.usage.data?.grokBot;
       if (!observation) return null;
-      return { eyebrow: "Machine CLI observation", accent: "owner", title: "Grok Bot usage", record: observation, body: <ObservationStatus observation={observation} /> };
+      return { eyebrow: "Machine login", accent: "owner", title: "Grok CLI", record: observation, body: <ObservationStatus observation={observation} /> };
     }
     case "worker-catalog": {
       const account = state.workerAccounts.data?.find((item) => item.id === ref.id);
@@ -170,25 +170,16 @@ function referencePackage(ref: NodeRef): string {
 
 function BotControls({ bot }: { bot: Bot }) {
   const voice = useVoice();
-  const reason = voice.callable(bot);
   const onCall = voice.botId === bot.id;
   return (
     <div className="flex flex-col gap-1.5">
       <BotLifecycleControls bot={bot} />
-      <div className="flex flex-wrap gap-1.5">
-        {onCall ? (
-          <Button size="sm" variant="destructive" disabled={voice.phase === "ending"} onClick={voice.hangup}>
-            <PhoneOffIcon data-icon="inline-start" />
-            Hang up
-          </Button>
-        ) : (
-          <Button size="sm" variant="outline" disabled={reason !== null || voice.busy} onClick={() => voice.dial(bot.id)}>
-            <PhoneIcon data-icon="inline-start" />
-            Call main thread
-          </Button>
-        )}
-      </div>
-      {!onCall && reason ? <p className="text-[0.72rem] text-muted-foreground">Cannot call: {reason}.</p> : null}
+      {onCall ? (
+        <Button size="sm" variant="destructive" className="w-fit" disabled={voice.phase === "ending"} onClick={voice.hangup}>
+          <PhoneOffIcon data-icon="inline-start" />
+          Hang up
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -361,7 +352,7 @@ export function Inspector({ hidden = false }: { hidden?: boolean }) {
           <div data-scroll className="flex flex-1 flex-col gap-6 overflow-y-auto overscroll-contain px-4 py-4">
             <Button variant="outline" size="sm" className="self-start" onClick={() => goTo({ kind: "package", id: referencePackage(shown) })}><BookOpenIcon data-icon="inline-start" />Package API reference</Button>
         {!view ? (
-          <p className="text-sm text-muted-foreground">This item is no longer present in the current state.</p>
+          <p className="text-sm text-muted-foreground">This item is gone.</p>
         ) : (
           <>
             {view.body}
@@ -432,7 +423,7 @@ export function Inspector({ hidden = false }: { hidden?: boolean }) {
                       </li>
                     ))}
                   </ol>
-                ) : <p className="text-xs text-muted-foreground">No notices since this page opened.</p>}
+                ) : <p className="text-xs text-muted-foreground">No notices yet.</p>}
               </Block>
             ) : null}
           </>

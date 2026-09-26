@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { benchBounds, clamp, compensateLeft, fitBounds, preserveViewedWindow, raiseWindow, reconcileBench, restoreBenchCamera, viewedWindow, windowHeight, type BenchLayout, type Camera, type SavedBench } from "@/lib/stack/geometry";
+import { benchBounds, clamp, windowLimits, compensateLeft, fitBounds, preserveViewedWindow, raiseWindow, reconcileBench, restoreBenchCamera, viewedWindow, windowHeight, type BenchLayout, type Camera, type SavedBench } from "@/lib/stack/geometry";
 import { homeOf, spaces, type SpaceId } from "@/lib/stack/spaces";
 import { nodeKey, type NodeRef } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
@@ -204,8 +204,34 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
     const point = layout.positions[id];
     const origin = geometry.origins[def.space];
     if (!registrars.current.has(id)) registrars.current.set(id, (el) => { if (el) elements.current.set(id, el); else elements.current.delete(id); });
-    return { x: point.x + origin.x, y: point.y + origin.y, width: def.width, height: def.height ?? windowHeight, z: layout.order.indexOf(id) + 1,
-      collapsed: Boolean(layout.collapsed[id]), animating, dragging, register: registrars.current.get(id)!,
+    // Resizing, like dragging, changes only the local layout; origins repack on restore or tidy.
+    const size = layout.sizes[id];
+    return { x: point.x + origin.x, y: point.y + origin.y, width: size?.width ?? def.width, height: size?.height ?? def.height ?? windowHeight, sized: size?.height !== undefined,
+      z: layout.order.indexOf(id) + 1, collapsed: Boolean(layout.collapsed[id]), animating, dragging, register: registrars.current.get(id)!,
+      onResizePointerDown: (event, edge) => {
+        if (event.button !== 0) return;
+        event.stopPropagation();
+        const frame = elements.current.get(id);
+        const start = { width: frame?.offsetWidth ?? def.width, height: frame?.offsetHeight ?? def.height ?? windowHeight };
+        const k = camera.k;
+        drag(event, (x, y) => setLayout((value) => {
+          const previous = value.sizes[id] ?? {};
+          const next = {
+            width: edge === "y" ? previous.width : Math.round(clamp(start.width + x / k, windowLimits.minWidth, windowLimits.maxWidth)),
+            height: edge === "x" ? previous.height : Math.round(clamp(start.height + y / k, windowLimits.minHeight, windowLimits.maxHeight)),
+          };
+          return { ...value, sizes: { ...value.sizes, [id]: next } };
+        }));
+      },
+      onResetSize: (edge) => setLayout((value) => {
+        const next = { ...value.sizes[id] };
+        if (edge !== "y") delete next.width;
+        if (edge !== "x") delete next.height;
+        const sizes = { ...value.sizes };
+        if (next.width === undefined && next.height === undefined) delete sizes[id];
+        else sizes[id] = next;
+        return { ...value, sizes };
+      }),
       onFocusWithin: () => bringToFront(id),
       onToggleCollapse: () => setLayout((value) => ({ ...value, collapsed: { ...value.collapsed, [id]: !value.collapsed[id] } })),
       onHeaderPointerDown: (event) => {
@@ -230,7 +256,7 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
           drag(event, (x, y) => setCamera({ ...start, x: start.x + x, y: start.y + y }));
         }}>
         <h1 className="sr-only">AgentStack open bench</h1>
-        <p id="bench-gestures" className="sr-only">Drag empty space, scroll, or use arrow keys to pan. Pinch or use plus and minus to zoom. F fits the bench; T resets window positions. Select a card name to inspect it. Command K opens navigation.</p>
+        <p id="bench-gestures" className="sr-only">Drag empty space, scroll, or use arrow keys to pan. Pinch or use plus and minus to zoom. Drag a window edge to resize it. F fits the bench; T resets window positions. Select a card name to inspect it. Command K opens navigation.</p>
         <div ref={setWorld} className={cn("absolute top-0 left-0 origin-top-left", !ready && "invisible", animating && "transition-transform duration-300 ease-out motion-reduce:transition-none", dragging && "select-none")}
           style={{ transform: `translate3d(${camera.x}px,${camera.y}px,0) scale(${camera.k})` }}>
           <Lines world={world} scale={camera.k} version={layout} animating={animating || dragging} subtle={false} />

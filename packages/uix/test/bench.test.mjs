@@ -7,7 +7,7 @@ import test from "node:test";
 registerHooks({ resolve(specifier, context, next) {
   return next(context.parentURL?.includes("/lib/stack/") && specifier.startsWith("./") && !extname(specifier) ? `${specifier}.ts` : specifier, context);
 } });
-const { packSpaces, localLayout, boundsOf, preserveAnchor, compensateLeft, fitBounds, reconcileBench, windowPoint, benchBounds, viewedWindow, preserveViewedWindow, restoreBenchCamera, raiseWindow, activeSurface, dockGeometry, dockMinimum } = await import("../lib/stack/geometry.ts");
+const { validSize, packSpaces, localLayout, boundsOf, preserveAnchor, compensateLeft, fitBounds, reconcileBench, windowPoint, benchBounds, viewedWindow, preserveViewedWindow, restoreBenchCamera, raiseWindow, activeSurface, dockGeometry, dockMinimum } = await import("../lib/stack/geometry.ts");
 const { emptyLocation, navigateTo, parseLocation, locationHref } = await import("../lib/stack/navigation.ts");
 const { inputTemplate, requestExample, subscriptionExample } = await import("../lib/stack/reference.ts");
 
@@ -237,4 +237,16 @@ test("transport templates never invent input values or unsupported call/subscrip
   assert.equal(sub.method, "events/subscribe");
   assert.equal(sub.params.scope, "<replace: subscription scope>");
   assert.deepEqual(sub.params.topics, ["changed"]);
+});
+
+test("human-set window sizes are clamped manual extents that packing reserves", () => {
+  assert.equal(validSize(null), undefined);
+  assert.equal(validSize({ width: "wide" }), undefined);
+  assert.deepEqual(validSize({ width: 10, height: 99_999 }), { width: 280, height: 2000 });
+  const spaces = [{ id: "fleet", windows: [{ id: "a", width: 300, column: 0 }, { id: "b", width: 300, column: 1 }] }];
+  const packed = reconcileBench(spaces, { sizes: { a: { width: 600.4 }, gone: { width: 500 } } });
+  assert.deepEqual(packed.layout.sizes, { a: { width: 600 } });
+  assert.equal(packed.geometry.windows.find((def) => def.id === "a").width, 600);
+  assert.equal(packed.layout.positions.b.x, 600 + 72, "tidy columns start after the resized width");
+  assert.deepEqual(reconcileBench(spaces, { ...packed.layout, manual: {}, positions: {} }).layout.sizes, packed.layout.sizes, "tidy keeps sizes");
 });

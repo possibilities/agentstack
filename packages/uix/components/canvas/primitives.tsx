@@ -231,3 +231,34 @@ export function Empty({ icon: Icon, title, children }: { icon: React.ComponentTy
     </div>
   );
 }
+
+/** Tone for a remaining-quota percentage: low headroom warns before it runs out. */
+export function headroomTone(remaining: number | null): Tone {
+  if (remaining === null) return "muted";
+  return remaining <= 10 ? "destructive" : remaining <= 30 ? "warning" : "success";
+}
+
+const meterFill: Record<Tone, string> = {
+  success: "bg-success/80",
+  warning: "bg-warning",
+  destructive: "bg-destructive",
+  muted: "bg-muted-foreground/40",
+  info: "bg-pkg-codex",
+};
+
+/** A thin remaining-quota bar. `value` is the percentage left. */
+export function Meter({ value, label, className }: { value: number | null; label: string; className?: string }) {
+  const width = value === null ? 0 : Math.max(0, Math.min(100, value));
+  return (
+    <span
+      role="meter"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={value ?? undefined}
+      className={cn("relative block h-1.5 w-full overflow-hidden rounded-full bg-muted", className)}
+    >
+      <span className={cn("absolute inset-y-0 left-0 rounded-full transition-[width] duration-500", meterFill[headroomTone(value)])} style={{ width: `${width}%` }} />
+    </span>
+  );
+}

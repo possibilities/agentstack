@@ -5,7 +5,7 @@ and API reference are global tools attached to the viewport, so opening them
 does not navigate away from the current composition. See the rationale in
 [ADR 0058](adr/0058-open-bench-and-global-tools.md).
 
-Fleet retains the Usage and Model catalogs windows, Bot lifecycle controls and
+Fleet retains the Usage and Models windows, Bot lifecycle controls and
 full Bot tools dialog from [ADR 0056](adr/0056-fleet-usage-catalogs-and-bot-controls.md).
 One mounted Bot actions provider retains forms and upload state alongside the
 store, auth and voice providers. The former index's process and local URL details
@@ -25,7 +25,9 @@ Keep window implementation separate from bench layout:
    and `column` describe the initial local arrangement, not bench coordinates.
    Window IDs are globally unique across spaces. Optional `height` reserves a
    stable footprint (760 by default); overflowing window content scrolls inside
-   it, so live data growth does not rearrange neighboring spaces.
+   it, so live data growth does not rearrange neighboring spaces. People can
+   resize any window; sizes persist as manual extents
+   ([ADR 0060](adr/0060-resizable-windows-and-compact-fleet.md)).
 3. If it introduces a node kind, add that record reference in
    `packages/uix/lib/stack/types.ts` and give it a canvas destination in
    `packages/uix/lib/stack/spaces.ts`. Keep node key parsing and routing tests

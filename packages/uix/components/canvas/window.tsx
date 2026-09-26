@@ -43,15 +43,21 @@ export type WindowPlacement = {
   y: number;
   z: number;
   width: number;
+  /** The footprint: a maximum height, or the exact height once a human sizes the window. */
   height: number;
+  sized: boolean;
   collapsed: boolean;
   animating: boolean;
   dragging: boolean;
   onHeaderPointerDown(event: React.PointerEvent): void;
+  onResizePointerDown(event: React.PointerEvent, edge: ResizeEdge): void;
+  onResetSize(edge: ResizeEdge): void;
   onFocusWithin(): void;
   onToggleCollapse(): void;
   register(element: HTMLElement | null): void;
 };
+
+export type ResizeEdge = "x" | "y" | "xy";
 
 export const PlacementContext = createContext<((id: string) => WindowPlacement) | null>(null);
 
@@ -65,7 +71,7 @@ const statusCopy: Record<ChannelStatus, string> = {
 export function Window({ id, title, subtitle, icon: Icon, accent, count, status, endpoint, updatedAt, error, actions, node, children }: {
   id: string;
   title: string;
-  subtitle: string;
+  subtitle?: string;
   icon: React.ComponentType<{ className?: string }>;
   accent: Accent;
   count?: number | null;
@@ -104,7 +110,7 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
         placement.dragging && "shadow-[0_1px_0_0_rgb(255_255_255/0.06)_inset,0_40px_80px_-24px_rgb(0_0_0/0.45)] ring-1 ring-foreground/10",
         isSelected && "border-foreground/30 ring-3 ring-ring/25",
       )}
-      style={{ left: placement.x, top: placement.y, width: placement.width, maxHeight: placement.height, zIndex: placement.z }}
+      style={{ left: placement.x, top: placement.y, width: placement.width, [placement.sized && !placement.collapsed ? "height" : "maxHeight"]: placement.height, zIndex: placement.z }}
     >
       {flashing ? <span key={flash!.seq} aria-hidden className="pointer-events-none absolute inset-0 rounded-[inherit] animate-uix-flash-in" /> : null}
       <header
@@ -129,7 +135,7 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
               <span className="rounded-full bg-muted px-1.5 py-px text-[0.68rem] font-medium text-muted-foreground tabular-nums">{count}</span>
             ) : null}
           </h2>
-          <p className="truncate font-mono text-[0.68rem] text-muted-foreground">{subtitle}</p>
+          {subtitle ? <p className="truncate font-mono text-[0.68rem] text-muted-foreground">{subtitle}</p> : null}
         </div>
         <div className="ml-auto flex items-center gap-1">
           {actions}
@@ -159,7 +165,30 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
         </div>
       </header>
       {placement.collapsed ? null : <div data-scroll className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain p-3.5">{children}</div>}
+      {placement.collapsed ? null : <ResizeHandles title={title} placement={placement} />}
     </section>
+  );
+}
+
+/** Edge and corner grips inside the rounded clip; double-click one to return that dimension to its default. */
+function ResizeHandles({ title, placement }: { title: string; placement: WindowPlacement }) {
+  const grip = (edge: ResizeEdge, className: string, children?: React.ReactNode) => (
+    <span aria-hidden data-interactive="" title={`Resize ${title}`}
+      onPointerDown={(event) => placement.onResizePointerDown(event, edge)}
+      onDoubleClick={() => placement.onResetSize(edge)}
+      className={cn("absolute z-20 touch-none", className)}>
+      {children}
+    </span>
+  );
+  return (
+    <>
+      {grip("x", "inset-y-5 right-0 w-1.5 cursor-ew-resize")}
+      {grip("y", "inset-x-5 bottom-0 h-1.5 cursor-ns-resize")}
+      {grip("xy", "group/grip right-1 bottom-1 flex size-4 cursor-nwse-resize items-end justify-end p-0.5",
+        <svg viewBox="0 0 8 8" className="size-2 text-muted-foreground/0 transition-colors group-hover/grip:text-muted-foreground/70 [section:hover_&]:text-muted-foreground/30">
+          <path d="M7 1 1 7M7 4 4 7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+        </svg>)}
+    </>
   );
 }
 

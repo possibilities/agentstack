@@ -58,7 +58,7 @@ export function callable(bot: Bot): string | null {
 
 function voiceError(error: unknown): string {
   if (error instanceof DOMException) {
-    if (error.name === "NotAllowedError") return "Microphone access is blocked. Allow it in this site's settings, then dial again.";
+    if (error.name === "NotAllowedError") return "Microphone blocked. Allow it, then dial again.";
     if (error.name === "NotFoundError") return "No microphone found.";
   }
   return errorMessage(error);
@@ -449,7 +449,7 @@ export function CallLauncher() {
           <p className="flex flex-col items-center gap-1.5 px-3 py-5 text-center">
             <PhoneIcon className="size-4 text-muted-foreground/70" />
             <span className="text-[0.8rem] font-medium">No bots to call</span>
-            <span className="text-[0.7rem] text-pretty text-muted-foreground">Start a bot, give it a first turn, then call its main thread.</span>
+            <span className="text-[0.7rem] text-pretty text-muted-foreground">Start a bot and give it a first turn.</span>
           </p>
         )}
       </PopoverContent>

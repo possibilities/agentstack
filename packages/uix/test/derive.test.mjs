@@ -14,7 +14,7 @@ registerHooks({
   },
 });
 
-const { workerAccountLabels, accountLinks, providerTitle } = await import("../lib/stack/derive.ts");
+const { workerAccountLabels, accountLinks, providerTitle, untilTime, modelName, usageRows } = await import("../lib/stack/derive.ts");
 
 const bot = (id, linkedAccounts = []) => ({ id, enabled: true, removing: false, linkedAccounts });
 const worker = (id, provider, extra = {}) => ({ id, provider, enabled: true, ready: true, removing: false, linkedAccounts: [], ...extra });
@@ -57,4 +57,29 @@ test("accountLinks survives a worker ID equal to a bot account ID", () => {
   const workers = [worker("same-id", "codex")];
   const accounts = [bot("same-id", [{ scope: "worker", id: "same-id" }]), bot("other")];
   assert.deepEqual(accountLinks(accounts, workers), [{ bot: "same-id", worker: "same-id" }]);
+});
+
+test("untilTime counts down to a future instant", () => {
+  const now = 1_000_000_000;
+  assert.equal(untilTime(null, now), "unknown");
+  assert.equal(untilTime(now - 5_000, now), "now");
+  assert.equal(untilTime(now + 12 * 60_000, now), "in 12m");
+  assert.equal(untilTime(now + 5 * 3_600_000, now), "in 5h");
+  assert.equal(untilTime(now + 5 * 86_400_000, now), "in 5d");
+});
+
+test("modelName drops a routing prefix", () => {
+  assert.equal(modelName("openai/GPT-5.5"), "GPT-5.5");
+  assert.equal(modelName("Claude Opus 5.5"), "Claude Opus 5.5");
+});
+
+test("usageRows merges linked accounts only when their observations match", () => {
+  const usage = { planType: "pro" };
+  const row = (scope, id, links, extra = {}) => ({ scope, id, linkedAccounts: links, usage, error: null, fresh: true, ...extra });
+  const bot1 = row("bot", "b1", [{ scope: "worker", id: "w1" }]);
+  const worker1 = row("worker", "w1", [{ scope: "bot", id: "b1" }]);
+  const bot2 = row("bot", "b2", [{ scope: "worker", id: "w2" }]);
+  const worker2 = row("worker", "w2", [{ scope: "bot", id: "b2" }], { usage: { planType: "plus" } });
+  const grok = row("worker", "g1", []);
+  assert.deepEqual(usageRows([bot1, worker1, bot2, worker2, grok]).map((items) => items.map((item) => item.id)), [["b1", "w1"], ["b2"], ["w2"], ["g1"]]);
 });
