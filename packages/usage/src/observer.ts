@@ -2,8 +2,8 @@ import { constants } from "node:fs";
 import { chmod, mkdir, open, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { socketCall, socketPath, socketSubscribe, type SocketSubscription } from "@agentstack/api";
-import { accountIdentity, collectAccount, collectGrokBot, ObservationFailure } from "./collect.js";
-import { observationError, snapshotSchema, type AccountScope, type Provider, type Snapshot, type StoredMeasurement } from "./schema.js";
+import { accountSignIn, collectAccount, collectGrokBot, ObservationFailure, type SignIn } from "./collect.js";
+import { observationError, snapshotSchema, type AccountScope, type Provider, type Snapshot, type StoredMeasurement, type Subscription } from "./schema.js";
 
 export type Registered = { id: string; scope: AccountScope; provider: Provider; enabled: boolean; ready: boolean; removing: boolean };
 type FetchAccount = (id: string, provider: Provider, scope: AccountScope) => Promise<StoredMeasurement["usage"]>;
@@ -24,6 +24,7 @@ const intervalMs = 180_000;
 export class UsageObserver {
   private rows = new Map<string, Row>();
   private identities = new Map<string, string>();
+  private subscriptions = new Map<string, NonNullable<Subscription>>();
   private bot: StoredMeasurement = empty();
   private botNextAttemptAtMs = 0;
   private inventoryAtMs: number | null = null;
@@ -47,8 +48,8 @@ export class UsageObserver {
     },
     private readonly fetchAccount: FetchAccount = (id, provider, scope) => collectAccount(stateDir, id, provider, fetch, this.controller.signal, scope),
     private readonly fetchBot: FetchBot = () => collectGrokBot(env.AGENTSTACK_AGENTGROK_BIN, this.controller.signal),
-    private readonly identify: (id: string, provider: Provider, scope: AccountScope) => Promise<string | null> =
-      (id, provider, scope) => accountIdentity(stateDir, id, provider, scope),
+    private readonly signIn: (id: string, provider: Provider, scope: AccountScope) => Promise<SignIn | null> =
+      (id, provider, scope) => accountSignIn(stateDir, id, provider, scope),
     private readonly watchAccounts: WatchAccounts = (onChange) =>
       socketSubscribe(socketPath("auth", env), ["accounts_changed", "worker_accounts_changed"], onChange),
   ) {}
@@ -71,7 +72,7 @@ export class UsageObserver {
           ? { ...row.measurement, usage: { ...row.measurement.usage,
             included: { ...("included" in row.measurement.usage ? row.measurement.usage.included : {}), allocatedUsd: null } } } : row.measurement;
         const candidate = snapshotSchema.shape.accounts.element.safeParse({ ...measurement,
-          id: row.id, scope, provider: row.provider, enabled: row.enabled, ready: row.ready, linkedAccounts: [], fresh: false });
+          id: row.id, scope, provider: row.provider, enabled: row.enabled, ready: row.ready, linkedAccounts: [], subscription: null, fresh: false });
         if (candidate.success && Number.isSafeInteger(row.nextAttemptAtMs)) this.rows.set(keyOf(candidate.data), {
           id: candidate.data.id, scope: candidate.data.scope, provider: candidate.data.provider,
           enabled: candidate.data.enabled, ready: candidate.data.ready,
@@ -93,11 +94,21 @@ export class UsageObserver {
         [...this.rows.values()].filter((other) => other.provider === "codex" && other.scope !== scope &&
           this.identities.get(keyOf(other)) === this.identities.get(keyOf({ id, scope })))
           .map((other) => ({ id: other.id, scope: other.scope })),
+      subscription: this.subscription({ id, scope, provider, measurement }),
       ...measurement, fresh: this.inventoryError === null &&
         ready && fresh(measurement, now),
     })) as Snapshot["accounts"];
     return { atMs: now, inventoryAtMs: this.inventoryAtMs, inventoryError: this.inventoryError,
       accounts, grokBot: { ...this.bot, fresh: fresh(this.bot, now), usage: this.bot.usage as Snapshot["grokBot"]["usage"] } };
+  }
+
+  /** A Devin plan period is part of its measurement; a Codex sign-in claim is re-read each cycle and never persisted. */
+  private subscription({ id, scope, provider, measurement }: Pick<Row, "id" | "scope" | "provider" | "measurement">): Subscription {
+    if (provider === "devin") {
+      const usage = measurement.usage as { periodEnd?: string | null } | null;
+      return usage?.periodEnd ? { endsAt: usage.periodEnd, source: "plan_period", checkedAtMs: measurement.observedAtMs } : null;
+    }
+    return this.subscriptions.get(keyOf({ id, scope })) ?? null;
   }
 
   private async save(): Promise<void> {
@@ -123,6 +134,7 @@ export class UsageObserver {
     } catch {
       this.inventoryError = "auth_unavailable";
       this.identities.clear();
+      this.subscriptions.clear();
       this.changed();
       return;
     }
@@ -132,6 +144,7 @@ export class UsageObserver {
     // Publish a removal before this cycle's slower observations.
     if (this.rows.size < before) this.changed();
     this.identities.clear();
+    this.subscriptions.clear();
     for (const account of inventory) {
       if (this.controller.signal.aborted) break;
       if (account.removing) continue;
@@ -144,8 +157,9 @@ export class UsageObserver {
       };
       this.rows.set(key, row);
       if (account.provider === "codex" && account.ready) {
-        const identity = await this.identify(row.id, row.provider, row.scope).catch(() => null);
-        if (identity) this.identities.set(key, identity);
+        const signIn = await this.signIn(row.id, row.provider, row.scope).catch(() => null);
+        if (signIn?.identity) this.identities.set(key, signIn.identity);
+        if (signIn?.subscription) this.subscriptions.set(key, signIn.subscription);
       }
       // Disabled accounts still have usage. Readiness only fences an unfinished native sign-in.
       if (!account.ready || now < row.nextAttemptAtMs) continue;

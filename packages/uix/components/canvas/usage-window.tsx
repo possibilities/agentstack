@@ -5,8 +5,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { accountLabels, shortId, untilTime, usageRows, workerAccountLabels } from "@/lib/stack/derive";
-import { nodeKey, type NodeRef, type UsageAccount, type UsageObservation, type UsageSnapshot } from "@/lib/stack/types";
+import { accountLabels, relativeTime, shortId, untilTime, usageRows, workerAccountLabels } from "@/lib/stack/derive";
+import { nodeKey, type NodeRef, type UsageAccount, type UsageObservation, type UsageSnapshot, type UsageSubscription } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { Empty, headroomTone, Meter, NodeCard, NodeTitle, Orb, StatusDot, Time } from "./primitives";
 import { useNow, useStack, useStore } from "./provider";
@@ -19,6 +19,8 @@ import { Window } from "./window";
 type Gauge = { label: string; remaining: number | null; resetsAt: string | null; group: string; local?: boolean;
   inspect?: { node: NodeRef; label: string } };
 type Summary = { plan: string | null; limited: boolean; gauges: Gauge[]; notes: string[] };
+/** When one observation behind a card was last measured; a merged gauge names its own. */
+type Sample = { label: string | null; at: number | null };
 
 const money = (value: number) => value.toLocaleString(undefined, { style: "currency", currency: "USD" });
 /** Every gauge is remaining headroom, whichever direction the provider reports. */
@@ -30,6 +32,11 @@ const exhausted = (gauges: Gauge[]) => gauges.some((gauge) => gauge.remaining ==
 /** The exhausted sibling that makes a gauge's remaining headroom unusable, if any. */
 const blockedBy = (gauge: Gauge, gauges: Gauge[]) => gauge.remaining === 0 ? undefined
   : gauges.find((other) => other !== gauge && other.group === gauge.group && !other.local && other.remaining === 0);
+
+/** A linked row is one card; its oldest measurement is the one to trust least. */
+const oldest = (row: UsageObservation[]) => row.reduce<number | null>((low, item) => item.observedAtMs === null ? low : low === null ? item.observedAtMs : Math.min(low, item.observedAtMs), null);
+const day = (at: number) => new Date(at).toLocaleDateString(undefined, { month: "short", day: "numeric",
+  year: new Date(at).getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
 
 function freshness(observation: UsageObservation, now: number): "fresh" | "stale" | "never" {
   if (observation.observedAtMs === null) return "never";
@@ -147,12 +154,24 @@ function FreshnessDot({ observation }: { observation: UsageObservation }) {
   );
 }
 
-function UsageCard({ node, names, observation, summary, orbs }: {
+function SubscriptionEnd({ subscription, now }: { subscription: UsageSubscription; now: number }) {
+  const at = Date.parse(subscription.endsAt);
+  const source = subscription.source === "plan_period" ? "Plan period end" : "Sign-in subscription claim";
+  return (
+    <span className="shrink-0 tabular-nums" title={`${new Date(at).toLocaleString()} · ${source}${subscription.checkedAtMs !== null ? `, checked ${relativeTime(subscription.checkedAtMs, now)}` : ""}`}>
+      sub {at < now ? "ended" : "ends"} <span className="text-foreground/80">{day(at)}</span>
+    </span>
+  );
+}
+
+function UsageCard({ node, names, observation, summary, orbs, samples, subscription }: {
   node: NodeRef;
   names: Array<{ node: NodeRef; label: string }>;
   observation: UsageObservation;
   summary: Summary;
   orbs: string[];
+  samples: Sample[];
+  subscription: UsageSubscription | null;
 }) {
   const now = useNow(60_000);
   const headline = summary.gauges.reduce<number | null>((low, gauge) => gauge.remaining === null ? low : low === null ? gauge.remaining : Math.min(low, gauge.remaining), null);
@@ -203,6 +222,14 @@ function UsageCard({ node, names, observation, summary, orbs }: {
         </div>
       ) : null}
       {summary.notes.length ? <p className="text-[0.68rem] text-muted-foreground">{summary.notes.join(" · ")}</p> : null}
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2 text-[0.68rem] text-muted-foreground">
+        <span>
+          sampled {samples.map((sample, index) => (
+            <span key={sample.label ?? ""}>{index ? " · " : ""}{sample.label ? `${sample.label} ` : ""}<Time at={sample.at} /></span>
+          ))}
+        </span>
+        {subscription ? <SubscriptionEnd subscription={subscription} now={now} /> : null}
+      </div>
     </NodeCard>
   );
 }
@@ -241,11 +268,14 @@ export function UsageWindow() {
             return (
               <UsageCard key={`${row[0].scope}:${row[0].id}`} node={nodeOf(row[0])} observation={bot ? worstObservation(row[0], bot) : row[0]}
                 summary={bot?.usage ? withGrokBot(summarize(row[0])!, bot.usage) : summarize(row[0])!}
+                samples={[{ label: null, at: oldest(row) }, ...bot ? [{ label: "bot", at: bot.observedAtMs }] : []]}
+                subscription={row.find((account) => account.subscription)?.subscription ?? null}
                 orbs={row.map((account) => account.id)} names={row.map((account) => ({ node: nodeOf(account), label: label(account) }))} />
             );
           })}
           {grokBot?.usage && !grokHost ? (
             <UsageCard node={grokBotNode} observation={grokBot} summary={grokBotSummary(grokBot.usage, "period")} orbs={[]}
+              samples={[{ label: null, at: grokBot.observedAtMs }]} subscription={null}
               names={[{ node: grokBotNode, label: "Grok Bot" }]} />
           ) : null}
           {waiting.length || (grokBot && !grokBot.usage) ? (

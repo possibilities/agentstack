@@ -2,7 +2,7 @@
 
 Status: accepted, 2026-09-25. Extends [ADR 0036](0036-account-bound-acp-foundation.md)'s isolated Worker accounts and [ADR 0012](0012-stable-codex-account-ids.md)'s immutable Codex identities.
 
-Extended by [ADR 0060](0060-claude-sdk-workers.md) for read-only usage of isolated Claude Worker accounts.
+Extended by [ADR 0060](0060-claude-sdk-workers.md) for read-only usage of isolated Claude Worker accounts. Extended by [ADR 0063](0063-usage-subscription-end-and-sample-age.md) with a subscription period end where a provider exposes one.
 
 The owner starts a required `usage` Package API child. It reads the `auth` Package API's Worker account inventory, including Codex accounts without an ACP binding, and observes each ready Grok/Devin account (including disabled accounts) and each non-removing Codex account under its stable AgentStack ID. It also observes the separately installed, machine-level Grok Bot login. Its only public operation is `usage_snapshot`; the `usage_changed` Event invalidates that snapshot. The operation reports account availability, measurements, last-good time, attempt time, freshness and a bounded error code. No operation chooses an account, changes a credential, claims usage, or tells a caller whether to dispatch a Worker.
 

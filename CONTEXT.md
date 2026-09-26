@@ -46,7 +46,7 @@ A no-turn observation of model and dependent effort choices actually offered by 
 
 ## Usage observation
 
-A read-only, scope-and-account-ID-bound measurement of provider quota or billing, collected by the owner-managed `usage` Package API. Bot Codex and Worker Codex observations read their own credentials. Optional links correlate accounts by native identity without exposing it or making their lifecycles interdependent. It retains the last good value with an explicit observation time, freshness and sanitized failure code. It is evidence for a human or agent, not an eligibility verdict or a balancing recommendation; Grok Bot is the machine's separate CLI login rather than a Worker account.
+A read-only, scope-and-account-ID-bound measurement of provider quota or billing, collected by the owner-managed `usage` Package API. Bot Codex and Worker Codex observations read their own credentials. Optional links correlate accounts by native identity without exposing it or making their lifecycles interdependent. It retains the last good value with an explicit observation time, freshness and sanitized failure code. A subscription end, where a provider exposes one, is account-level evidence with its own source and check time; it says nothing about renewal. It is evidence for a human or agent, not an eligibility verdict or a balancing recommendation; Grok Bot is the machine's separate CLI login rather than a Worker account.
 
 _Avoid_: account score, capacity decision, balance action
 

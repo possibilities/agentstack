@@ -5,7 +5,7 @@ import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { AccountScope, Provider, Measurement } from "./schema.js";
+import type { AccountScope, Provider, Measurement, Subscription } from "./schema.js";
 import { codexUsage, grokUsage, devinUsage, claudeUsage, grokBotUsage } from "./schema.js";
 import { ClaudeCredentialError, readClaudeCredentials, type ClaudeCredentialOptions } from "@agentstack/auth";
 import type { z } from "zod";
@@ -22,11 +22,16 @@ const integer = (value: unknown): number | null => typeof value === "number" && 
 const flag = (value: unknown): boolean | null => typeof value === "boolean" ? value : null;
 const iso = (value: unknown): string | null => typeof value === "string" && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
 const epoch = (value: unknown): string | null => { const seconds = integer(value); return seconds && seconds > 0 ? new Date(seconds * 1000).toISOString() : null; };
-const codexIdentity = (access: string): string | null => {
-  try {
-    const claims = record(JSON.parse(Buffer.from(access.split(".")[1] ?? "", "base64url").toString("utf8")));
-    return string(record(claims?.["https://api.openai.com/auth"])?.chatgpt_account_id);
-  } catch { return null; }
+const codexClaims = (token: string): RecordValue | null => {
+  try { return record(record(JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")))?.["https://api.openai.com/auth"]); }
+  catch { return null; }
+};
+const codexIdentity = (access: string): string | null => string(codexClaims(access)?.chatgpt_account_id);
+/** The stored ID token's subscription claim, as current as the credential owner's last token refresh. */
+const codexSubscription = (idToken: unknown): Subscription => {
+  const claims = typeof idToken === "string" ? codexClaims(idToken) : null;
+  const endsAt = iso(claims?.chatgpt_subscription_active_until), checked = iso(claims?.chatgpt_subscription_last_checked);
+  return endsAt ? { endsAt, source: "sign_in_claim", checkedAtMs: checked ? Date.parse(checked) : null } : null;
 };
 const clamp = (value: number | null) => value === null ? null : Math.min(100, Math.max(0, value));
 
@@ -58,7 +63,7 @@ async function privateDatabase(path: string): Promise<void> {
 }
 
 /** No file or token leaves this module. Sign-in and token rotation stay with auth and native runtimes. */
-async function credential(stateDir: string, id: string, provider: Provider, scope: AccountScope, claude: ClaudeCredentialOptions = {}): Promise<{ access: string; userId?: string; server?: string }> {
+async function credential(stateDir: string, id: string, provider: Provider, scope: AccountScope, claude: ClaudeCredentialOptions = {}): Promise<{ access: string; userId?: string; server?: string; subscription?: Subscription }> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw new ObservationFailure("account_invalid");
   if (provider === "claude") {
     if (scope !== "worker") throw new ObservationFailure("account_invalid");
@@ -91,7 +96,7 @@ async function credential(stateDir: string, id: string, provider: Provider, scop
       if (!access) throw new ObservationFailure("credentials_unavailable");
       const nativeId = string(tokens?.account_id) ?? codexIdentity(access);
       if (nativeId && /[\r\n]/.test(nativeId)) throw new ObservationFailure("credentials_unavailable");
-      return { access, userId: nativeId ?? undefined };
+      return { access, userId: nativeId ?? undefined, subscription: codexSubscription(tokens?.id_token) };
     } finally { db.close(); }
   }
   const root = join(stateDir, "worker-accounts", id, "data");
@@ -124,10 +129,12 @@ async function credential(stateDir: string, id: string, provider: Provider, scop
   return { access, server: url.origin };
 }
 
-/** Read a native identity for optional correlation; never publish the identity or an OAuth token. */
-export async function accountIdentity(stateDir: string, id: string, provider: Provider, scope: AccountScope): Promise<string | null> {
-  if (provider !== "codex") return null;
-  return (await credential(stateDir, id, provider, scope)).userId ?? null;
+export type SignIn = { identity: string | null; subscription: Subscription };
+/** Read a native identity for optional correlation and any subscription claim; never publish the identity or an OAuth token. */
+export async function accountSignIn(stateDir: string, id: string, provider: Provider, scope: AccountScope): Promise<SignIn> {
+  if (provider !== "codex") return { identity: null, subscription: null };
+  const value = await credential(stateDir, id, provider, scope);
+  return { identity: value.userId ?? null, subscription: value.subscription ?? null };
 }
 
 async function boundedJson(response: Response): Promise<RecordValue> {

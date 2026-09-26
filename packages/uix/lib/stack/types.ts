@@ -114,7 +114,9 @@ export type DevinUsage = { planLabel: string | null; billing: string | null; dai
   periodEnd: string | null; promptCreditsMonthly: number | null; promptCreditsAvailable: number | null; weeklyQuotaHidden: boolean | null; displayName: string | null };
 export type ClaudeUsage = { windows: Array<{ id: string; label: string; usedPercent: number; remainingPercent: number; resetsAt: string | null }>;
   extraUsage: { enabled: boolean | null; monthlyLimit: number | null; usedCredits: number | null; utilization: number | null } | null };
-export type UsageAccount = UsageObservation & { id: string; enabled: boolean; ready: boolean; linkedAccounts: Account["linkedAccounts"] } & (
+export type UsageSubscription = { endsAt: string; source: "plan_period" | "sign_in_claim"; checkedAtMs: number | null };
+export type UsageAccount = UsageObservation & { id: string; enabled: boolean; ready: boolean; linkedAccounts: Account["linkedAccounts"];
+  subscription: UsageSubscription | null } & (
   | { provider: "codex"; scope: "bot" | "worker"; usage: CodexUsage | null }
   | { provider: "grok"; scope: "worker"; usage: GrokUsage | null }
   | { provider: "devin"; scope: "worker"; usage: DevinUsage | null }

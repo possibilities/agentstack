@@ -49,16 +49,22 @@ const observation = {
   fresh: z.boolean().describe("Successful observation no older than five minutes; account freshness also requires a current inventory and completed sign-in."),
   error: observationError.nullable().describe("Sanitized code for the latest failed attempt; last-good usage may remain alongside it."),
 };
+export const subscription = z.strictObject({
+  endsAt: z.string().max(64).describe("ISO time the account's current paid subscription period ends. The provider does not say whether it renews."),
+  source: z.enum(["plan_period", "sign_in_claim"]).describe("plan_period: Devin's reported plan period end. sign_in_claim: the chatgpt_subscription_active_until claim of a Codex Bot sign-in's stored ID token."),
+  checkedAtMs: z.number().int().nullable().describe("Epoch milliseconds the provider last confirmed this date: the measurement time for plan_period, the claim's own last check for sign_in_claim."),
+}).nullable().describe("Where the provider exposes it: Devin accounts and Codex Bot accounts. Codex Worker logins store no ID token; Grok and Claude report no end date. Null when unavailable.");
+export type Subscription = z.infer<typeof subscription>;
 const linkedAccounts = z.array(z.strictObject({ scope: accountScope, id: z.uuid() }))
   .describe("Other AgentStack accounts with a matching native sign-in identity; no credential or provider account ID is exposed.");
 export const account = z.discriminatedUnion("provider", [
-  z.strictObject({ id: z.uuid(), scope: accountScope, provider: z.literal("codex"), enabled: z.boolean(), ready: z.boolean(), linkedAccounts,
+  z.strictObject({ id: z.uuid(), scope: accountScope, provider: z.literal("codex"), enabled: z.boolean(), ready: z.boolean(), linkedAccounts, subscription,
     ...observation, usage: codexUsage.nullable() }),
-  z.strictObject({ id: z.uuid(), scope: z.literal("worker"), provider: z.literal("grok"), enabled: z.boolean(), ready: z.boolean(), linkedAccounts,
+  z.strictObject({ id: z.uuid(), scope: z.literal("worker"), provider: z.literal("grok"), enabled: z.boolean(), ready: z.boolean(), linkedAccounts, subscription,
     ...observation, usage: grokUsage.nullable() }),
-  z.strictObject({ id: z.uuid(), scope: z.literal("worker"), provider: z.literal("devin"), enabled: z.boolean(), ready: z.boolean(), linkedAccounts,
+  z.strictObject({ id: z.uuid(), scope: z.literal("worker"), provider: z.literal("devin"), enabled: z.boolean(), ready: z.boolean(), linkedAccounts, subscription,
     ...observation, usage: devinUsage.nullable() }),
-  z.strictObject({ id: z.uuid(), scope: z.literal("worker"), provider: z.literal("claude"), enabled: z.boolean(), ready: z.boolean(), linkedAccounts,
+  z.strictObject({ id: z.uuid(), scope: z.literal("worker"), provider: z.literal("claude"), enabled: z.boolean(), ready: z.boolean(), linkedAccounts, subscription,
     ...observation, usage: claudeUsage.nullable() }),
 ]);
 export const snapshotSchema = z.strictObject({ atMs: z.number().int(), inventoryAtMs: z.number().int().nullable(),

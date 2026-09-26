@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { accountIdentity, collectAccount, collectGrokBot } from "../src/collect.js";
+import { accountSignIn, collectAccount, collectGrokBot } from "../src/collect.js";
 import { UsageObserver } from "../src/observer.js";
 import { grokUsage, snapshotSchema, type Provider } from "../src/schema.js";
 
@@ -21,6 +21,8 @@ test("observes each registered account with its own credentials and projects onl
     db.exec("CREATE TABLE credentials (name TEXT, auth_json TEXT)");
     db.prepare("INSERT INTO credentials VALUES (?, ?)").run(codexId, JSON.stringify({ tokens: {
       access_token: "codex-secret", account_id: "native-codex", refresh_token: "never-publish",
+      id_token: `e30.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "native-codex",
+        chatgpt_subscription_active_until: "2026-09-30T15:22:09+00:00", chatgpt_subscription_last_checked: "2026-09-26T01:27:38.866955+00:00" } })).toString("base64url")}.sig`,
     } }));
     db.close();
     await chmod(secrets, 0o600);
@@ -59,16 +61,19 @@ test("observes each registered account with its own credentials and projects onl
       assert.ok(url.endsWith("/GetUserStatus"));
       assert.equal(JSON.parse(String(init?.body)).metadata.apiKey, "devin-secret");
       return Response.json({ userStatus: { planStatus: { dailyQuotaRemainingPercent: 76, weeklyQuotaRemainingPercent: 54,
-        planInfo: { planName: "Pro", billingStrategy: "BILLING_STRATEGY_QUOTA", monthlyPromptCredits: 100 } } } });
+        planEnd: "2026-10-23T02:47:53Z", planInfo: { planName: "Pro", billingStrategy: "BILLING_STRATEGY_QUOTA", monthlyPromptCredits: 100 } } } });
     };
     const results = await Promise.all((["codex", "grok", "devin"] as const).map((provider) => collectAccount(root, ids[provider]!, provider, fetcher)));
     const workerUsage = await collectAccount(root, codexId, "codex", fetcher, undefined, "worker");
     assert.equal((results[0] as { lanes: Array<{ windows: Array<{ usedPercent: number }> }> }).lanes[0]?.windows[0]?.usedPercent, 12);
     assert.equal((workerUsage as { lanes: Array<{ windows: Array<{ usedPercent: number }> }> }).lanes[0]?.windows[0]?.usedPercent, 34);
-    assert.equal(await accountIdentity(root, codexId, "codex", "worker"), "native-worker");
+    assert.deepEqual(await accountSignIn(root, codexId, "codex", "worker"), { identity: "native-worker", subscription: null });
+    assert.deepEqual(await accountSignIn(root, codexId, "codex", "bot"), { identity: "native-codex",
+      subscription: { endsAt: "2026-09-30T15:22:09.000Z", source: "sign_in_claim", checkedAtMs: Date.parse("2026-09-26T01:27:38.866Z") } });
     assert.equal((results[1] as { prepaidBalanceUsd: number }).prepaidBalanceUsd, 2.5);
     assert.equal((results[1] as { included: { allocatedUsd: number | null } }).included.allocatedUsd, null);
     assert.equal((results[2] as { dailyRemainingPercent: number }).dailyRemainingPercent, 76);
+    assert.equal((results[2] as { periodEnd: string | null }).periodEnd, "2026-10-23T02:47:53.000Z");
     assert.equal(seen.length, 5);
     assert.ok(!JSON.stringify(results).includes("secret"));
     assert.ok(!JSON.stringify(results).includes("native-codex"));
@@ -159,7 +164,8 @@ test("usage links independent Bot and Worker Codex accounts by native identity w
   ];
   const observer = new UsageObserver(root, {}, accounts,
     async () => ({ planType: "pro", limitReached: false, resetCreditsAvailable: null, resetCreditExpirations: null, lanes: [] }),
-    async () => null, async () => "native-account-never-published");
+    async () => null, async (_id, _provider, scope) => ({ identity: "native-account-never-published",
+      subscription: scope === "bot" ? { endsAt: "2026-09-30T15:22:09.000Z", source: "sign_in_claim", checkedAtMs: 1 } : null }));
   try {
     await observer.cycle();
     const rows = observer.snapshot().accounts;
@@ -167,6 +173,9 @@ test("usage links independent Bot and Worker Codex accounts by native identity w
       { scope: "bot", linkedAccounts: [{ scope: "worker", id: codexWorkerId }] },
       { scope: "worker", linkedAccounts: [{ scope: "bot", id: codexId }] },
     ]);
+    // The claim is account-level evidence, so linked measurements stay equal.
+    assert.deepEqual(rows.map((row) => row.subscription?.endsAt ?? null), ["2026-09-30T15:22:09.000Z", null]);
+    assert.deepEqual(rows[0]?.usage, rows[1]?.usage);
     const snapshot = observer.snapshot();
     assert.deepEqual(snapshotSchema.parse(snapshot), snapshot);
     assert.equal(JSON.stringify(snapshot).includes("native-account-never-published"), false);
@@ -208,7 +217,7 @@ test("a legacy shared UUID remains two scoped usage records and two independent 
     { id: codexId, scope: "bot", provider: "codex", enabled: true, ready: true, removing: false },
     { id: codexId, scope: "worker", provider: "codex", enabled: true, ready: true, removing: false },
   ], async (_id, _provider, scope) => ({ planType: scope, limitReached: false, resetCreditsAvailable: null, resetCreditExpirations: null, lanes: [] }),
-  async () => null, async () => "same-private-identity");
+  async () => null, async () => ({ identity: "same-private-identity", subscription: null }));
   try {
     await observer.cycle();
     const rows = observer.snapshot().accounts;
@@ -285,4 +294,21 @@ console.log(JSON.stringify({schema_version:1,ok:true,data:{usage:{usagePercent:4
     assert.equal(usage.teamSeat, true);
     assert.equal(JSON.stringify(usage).includes("secret-id"), false);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a Devin plan period end is its subscription end, checked when measured", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-usage-devin-subscription-"));
+  const usage = { planLabel: "Pro", billing: "quota", dailyRemainingPercent: 76, weeklyRemainingPercent: 54, dailyResetsAt: null,
+    weeklyResetsAt: null, periodStart: "2026-09-23T02:47:53.000Z", periodEnd: "2026-10-23T02:47:53.000Z", promptCreditsMonthly: null,
+    promptCreditsAvailable: null, weeklyQuotaHidden: null, displayName: null };
+  const observer = new UsageObserver(root, {}, async () => [{ id: devinId, scope: "worker", provider: "devin", enabled: true, ready: true, removing: false }],
+    async () => usage, async () => null, async () => null);
+  try {
+    await observer.cycle();
+    const [row] = observer.snapshot().accounts;
+    assert.deepEqual(row?.subscription, { endsAt: "2026-10-23T02:47:53.000Z", source: "plan_period", checkedAtMs: row?.observedAtMs });
+    const restored = new UsageObserver(root, {}, async () => [], async () => null, async () => null);
+    await restored.load();
+    assert.deepEqual(restored.snapshot().accounts[0]?.subscription, row?.subscription);
+  } finally { await observer.close(); await rm(root, { recursive: true, force: true }); }
 });
