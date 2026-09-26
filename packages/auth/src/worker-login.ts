@@ -34,7 +34,7 @@ const prompts: Record<WorkerProvider, { url: RegExp; code: RegExp | null }> = {
     code: /enter code:\s*([A-Z0-9]+(?:-[A-Z0-9]+)+)/i,
   },
   devin: {
-    url: /https:\/\/app\.devin\.ai\/auth\/cli\/continue\?[^\s\x07\x1b]+/,
+    url: /https:\/\/(?:app\.devin\.ai\/auth\/cli\/continue|windsurf\.com\/devin\/account\/login)\?[^\s\x07\x1b]+/,
     code: null,
   },
 };
@@ -48,7 +48,14 @@ function nativeCommand(env: NodeJS.ProcessEnv): WorkerCommand {
   return (account) => {
     if (account.provider === "devin") {
       // devin auth login needs a terminal; script gives it a pty without opening one.
-      if (platform() === "darwin") return { bin: "/usr/bin/script", args: ["-q", "/dev/null", devin, "auth", "login", "--force-manual-token-flow"] };
+      // Current macOS Devin ignores BROWSER and remote markers and invokes open
+      // directly. Deny only that executable for this sign-in and its descendants;
+      // a missing or failed sandbox must fail the sign-in rather than fall back.
+      if (platform() === "darwin") return {
+        bin: "/usr/bin/sandbox-exec",
+        args: ["-p", '(version 1) (allow default) (deny process-exec (literal "/usr/bin/open"))',
+          "/usr/bin/script", "-q", "/dev/null", devin, "auth", "login", "--force-manual-token-flow"],
+      };
       return { bin: "script", args: ["-q", "-e", "-c", `${shellQuote(devin)} auth login --force-manual-token-flow`, "/dev/null"] };
     }
     return {
@@ -91,7 +98,8 @@ export class WorkerLoginManager {
     // whole cat → script → devin chain.
     const dir = join(accountRoot(this.store.stateDir, account.id), "probe");
     const devin = account.provider === "devin";
-    // devin's browser opener ignores BROWSER; marking the session remote keeps it link-only.
+    // Keep remote-session hints for CLIs that honor them; on macOS the native
+    // command's sandbox enforces browser suppression independently of these hints.
     if (devin) { env.SSH_CONNECTION = "127.0.0.1 0 127.0.0.1 0"; env.SSH_CLIENT = "127.0.0.1 0 0"; }
     const child = spawn(devin ? "/bin/bash" : "/bin/sh",
       devin ? ["-c", 'umask 077 && exec "$@" < <(cat)', "sh", command.bin, ...command.args]

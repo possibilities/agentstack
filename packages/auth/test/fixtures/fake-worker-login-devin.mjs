@@ -3,8 +3,8 @@ import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const secret = process.env.FAKE_WORKER_LOGIN_SECRET ?? "fake-devin-secret";
-const url = "https://app.devin.ai/auth/cli/continue?state=fake-state&code_challenge=fake-challenge&cli_pkce_marker=1";
-const prompt = `\x1b]8;;${url}\x07Visit ${url} to sign in\x1b]8;;\x07, then copy the code and paste it below.\n`;
+const url = process.env.FAKE_WORKER_LOGIN_URL ?? "https://windsurf.com/devin/account/login?state=fake-state&code_challenge=fake-challenge&cli_pkce_marker=1";
+const prompt = `Visit \x1b]8;;${url}\x1b\\${url}\x1b]8;;\x1b\\ to sign in, then copy the code and paste it below.\n`;
 
 writeFileSync(join(process.env.XDG_DATA_HOME, "env-marker"), `ssh:${process.env.SSH_CONNECTION ? "set" : "unset"}`);
 const reprompt = "Error: Failed to exchange code for host https://app.devin.ai\r\n\x1b[?2026h\x1b[?25l\x1b[?2026l";
