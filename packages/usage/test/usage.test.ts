@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { accountSignIn, collectAccount, collectGrokBot } from "../src/collect.js";
+import { accountSubscription, collectAccount, collectGrokBot } from "../src/collect.js";
 import { UsageObserver } from "../src/observer.js";
 import { grokUsage, snapshotSchema, type Provider } from "../src/schema.js";
 
@@ -67,9 +67,9 @@ test("observes each registered account with its own credentials and projects onl
     const workerUsage = await collectAccount(root, codexId, "codex", fetcher, undefined, "worker");
     assert.equal((results[0] as { lanes: Array<{ windows: Array<{ usedPercent: number }> }> }).lanes[0]?.windows[0]?.usedPercent, 12);
     assert.equal((workerUsage as { lanes: Array<{ windows: Array<{ usedPercent: number }> }> }).lanes[0]?.windows[0]?.usedPercent, 34);
-    assert.deepEqual(await accountSignIn(root, codexId, "codex", "worker"), { identity: "native-worker", subscription: null });
-    assert.deepEqual(await accountSignIn(root, codexId, "codex", "bot"), { identity: "native-codex",
-      subscription: { endsAt: "2026-09-30T15:22:09.000Z", source: "sign_in_claim", checkedAtMs: Date.parse("2026-09-26T01:27:38.866Z") } });
+    assert.equal(await accountSubscription(root, codexId, "codex", "worker"), null);
+    assert.deepEqual(await accountSubscription(root, codexId, "codex", "bot"),
+      { endsAt: "2026-09-30T15:22:09.000Z", source: "sign_in_claim", checkedAtMs: Date.parse("2026-09-26T01:27:38.866Z") });
     assert.equal((results[1] as { prepaidBalanceUsd: number }).prepaidBalanceUsd, 2.5);
     assert.equal((results[1] as { included: { allocatedUsd: number | null } }).included.allocatedUsd, null);
     assert.equal((results[2] as { dailyRemainingPercent: number }).dailyRemainingPercent, 76);
@@ -154,18 +154,20 @@ test("owner observer keeps last-good records, removes deleted accounts and paces
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("usage links independent Bot and Worker Codex accounts by native identity without publishing it", async () => {
+test("usage repeats auth's Bot–Worker pairing, including a Worker awaiting sign-in", async () => {
   const root = await mkdtemp(join(tmpdir(), "agentstack-usage-links-"));
   const codexWorkerId = "00000000-0000-4000-8000-000000000004";
   let workerReady = true;
+  let paired = true;
   const accounts = async () => [
-    { id: codexId, scope: "bot" as const, provider: "codex" as const, enabled: true, ready: true, removing: false },
-    { id: codexWorkerId, scope: "worker" as const, provider: "codex" as const, enabled: true, ready: workerReady, removing: false },
+    { id: codexId, scope: "bot" as const, provider: "codex" as const, enabled: true, ready: true, removing: false,
+      linkedAccounts: paired ? [{ scope: "worker" as const, id: codexWorkerId }] : [] },
+    { id: codexWorkerId, scope: "worker" as const, provider: "codex" as const, enabled: true, ready: workerReady, removing: false,
+      linkedAccounts: paired ? [{ scope: "bot" as const, id: codexId }] : [] },
   ];
   const observer = new UsageObserver(root, {}, accounts,
     async () => ({ planType: "pro", limitReached: false, resetCreditsAvailable: null, resetCreditExpirations: null, lanes: [] }),
-    async () => null, async (_id, _provider, scope) => ({ identity: "native-account-never-published",
-      subscription: scope === "bot" ? { endsAt: "2026-09-30T15:22:09.000Z", source: "sign_in_claim", checkedAtMs: 1 } : null }));
+    async () => null, async (_id, _provider, scope) => scope === "bot" ? { endsAt: "2026-09-30T15:22:09.000Z", source: "sign_in_claim", checkedAtMs: 1 } : null);
   try {
     await observer.cycle();
     const rows = observer.snapshot().accounts;
@@ -178,11 +180,13 @@ test("usage links independent Bot and Worker Codex accounts by native identity w
     assert.deepEqual(rows[0]?.usage, rows[1]?.usage);
     const snapshot = observer.snapshot();
     assert.deepEqual(snapshotSchema.parse(snapshot), snapshot);
-    assert.equal(JSON.stringify(snapshot).includes("native-account-never-published"), false);
-    assert.equal((await readFile(join(root, "usage/observations.json"), "utf8")).includes("native-account-never-published"), false);
     workerReady = false;
     await observer.cycle();
+    assert.deepEqual(observer.snapshot().accounts.map((row) => row.linkedAccounts.length), [1, 1]);
+    paired = false;
+    await observer.cycle();
     assert.deepEqual(observer.snapshot().accounts.map((row) => row.linkedAccounts), [[], []]);
+    assert.equal((await readFile(join(root, "usage/observations.json"), "utf8")).includes(codexWorkerId), true);
   } finally { await observer.close(); await rm(root, { recursive: true, force: true }); }
 });
 
@@ -214,10 +218,10 @@ test("an auth account change re-reads the inventory without waiting for the next
 test("a legacy shared UUID remains two scoped usage records and two independent links", async () => {
   const root = await mkdtemp(join(tmpdir(), "agentstack-usage-overlap-"));
   const observer = new UsageObserver(root, {}, async () => [
-    { id: codexId, scope: "bot", provider: "codex", enabled: true, ready: true, removing: false },
-    { id: codexId, scope: "worker", provider: "codex", enabled: true, ready: true, removing: false },
+    { id: codexId, scope: "bot", provider: "codex", enabled: true, ready: true, removing: false, linkedAccounts: [{ scope: "worker", id: codexId }] },
+    { id: codexId, scope: "worker", provider: "codex", enabled: true, ready: true, removing: false, linkedAccounts: [{ scope: "bot", id: codexId }] },
   ], async (_id, _provider, scope) => ({ planType: scope, limitReached: false, resetCreditsAvailable: null, resetCreditExpirations: null, lanes: [] }),
-  async () => null, async () => ({ identity: "same-private-identity", subscription: null }));
+  async () => null, async () => null);
   try {
     await observer.cycle();
     const rows = observer.snapshot().accounts;
@@ -231,7 +235,7 @@ test("a legacy shared UUID remains two scoped usage records and two independent 
     const restored = new UsageObserver(root, {}, async () => [], async () => null, async () => null);
     await restored.load();
     assert.equal(restored.snapshot().accounts.length, 2);
-    assert.deepEqual(restored.snapshot().accounts.map((row) => row.linkedAccounts), [[], []]); // No persisted identities.
+    assert.deepEqual(restored.snapshot().accounts.map((row) => row.linkedAccounts), [[], []]); // Links come only from a current inventory.
   } finally { await observer.close(); await rm(root, { recursive: true, force: true }); }
 });
 

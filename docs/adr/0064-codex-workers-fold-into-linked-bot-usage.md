@@ -6,8 +6,7 @@ Package API is unchanged.
 
 ## Decision
 
-A Codex Worker account linked by native identity to an observed Codex Bot
-account always shares that Bot's Usage card, even when their two
+A Codex Worker account linked to an observed Codex Bot account always shares that Bot's Usage card, even when their two
 measurements differ. The Bot leads the card: its measurement, freshness,
 sample time and subscription end are what the card shows, and the Worker
 appears only as the card's secondary name so links to its usage record still

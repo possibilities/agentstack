@@ -46,8 +46,9 @@ test("two native account profiles keep sign-ins and configuration separate", asy
     assert.throws(() => store.confirmWorker(b.id, duplicate), /another worker account/);
     const codex = store.addAccount(JSON.stringify({ tokens: { refresh_token: "refresh", access_token: "access",
       id_token: "fixture.jwt.signature", account_id: "matching-account" } }));
-    const bound = store.prepareWorker("codex");
-    assert.notEqual(bound.id, codex.id);
+    const bound = store.workerAccounts().find((account) => account.id === store.pairedWorker(codex.id))!;
+    assert.equal(bound.ready, false);
+    assert.throws(() => store.prepareWorker("codex"), /come with Codex Bot accounts/);
     assert.throws(() => store.prepareWorker("codex", codex.id), /unknown worker account/);
     await prepareAccountProfile(dir, bound);
     const codexPath = join(accountRoot(dir, bound.id), "data", "opencode", "opencode.db");

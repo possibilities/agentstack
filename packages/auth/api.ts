@@ -7,11 +7,12 @@ import { LoginManager, type LoginState } from "./src/login.js";
 import { WorkerLoginManager, type WorkerLoginState } from "./src/worker-login.js";
 import { accountRoot, credentialEvidence, loginCommand, prepareAccountProfile, type WorkerAccount, type WorkerProvider } from "./src/worker-accounts.js";
 import { removeClaudeCredentials, type ClaudeCredentialOptions } from "./src/claude-credentials.js";
+import { pairCodexWorkers } from "./src/pairing.js";
 
 const accountId = z.uuid().describe("Stable account ID from the corresponding Bot or Worker account list.");
 const providerSchema = z.enum(["codex", "grok", "devin", "claude"]);
 const linkedAccounts = z.array(z.strictObject({ scope: z.enum(["bot", "worker"]), id: accountId }))
-  .describe("Independent accounts with a matching native sign-in identity. IDs only; no provider identity or credentials.");
+  .describe("A Codex Bot account's paired Codex Worker account, or a paired Worker's Bot account. IDs only; no provider identity or credentials.");
 const accountSchema = z.strictObject({ id: accountId, enabled: z.boolean(), removing: z.boolean(), linkedAccounts });
 const workerAccountSchema = accountSchema.extend({ provider: providerSchema, ready: z.boolean() });
 const loginStateSchema = z.object({
@@ -39,29 +40,39 @@ export type AuthContext = {
 export type BotAccountView = Account & { linkedAccounts: Array<{ scope: "worker"; id: string }> };
 export type WorkerAccountView = WorkerAccount & { linkedAccounts: Array<{ scope: "bot"; id: string }> };
 
-/** Correlate native identities without exposing or persisting them or coupling account lifecycles. */
+/** Link each Codex Bot account and its paired Codex Worker account by ID only. */
 async function inventories(store: AuthStore): Promise<{
   bots: BotAccountView[];
   workers: WorkerAccountView[];
 }> {
-  const bots = store.listAccounts();
   const workers = store.workerAccounts();
-  const identities = await Promise.all(workers.map(async (account) => {
-    if (account.provider !== "codex" || !account.ready || account.removing) return null;
-    try { return (await credentialEvidence(store.stateDir, account)).identity; }
-    catch { return null; }
-  }));
-  const botIdentity = new Map(bots.map((account) => [account.id, store.botAccountIdentity(account.id)]));
+  const pairs = store.workerPairs();
+  const bots = store.listAccounts();
   return {
-    bots: bots.map((account) => ({ ...account, linkedAccounts: workers.flatMap((worker, index) =>
-      botIdentity.get(account.id) && identities[index] === botIdentity.get(account.id) ? [{ scope: "worker" as const, id: worker.id }] : []) })),
-    workers: workers.map((account, index) => ({ ...account, linkedAccounts: identities[index] ? bots.flatMap((bot) =>
-      botIdentity.get(bot.id) === identities[index] ? [{ scope: "bot" as const, id: bot.id }] : []) : [] })),
+    bots: bots.map((account) => ({ ...account, linkedAccounts: workers.flatMap((worker) =>
+      pairs.get(worker.id) === account.id ? [{ scope: "worker" as const, id: worker.id }] : []) })),
+    workers: workers.map((account) => {
+      const bot = pairs.get(account.id);
+      return { ...account, linkedAccounts: bot && bots.some((item) => item.id === bot) ? [{ scope: "bot" as const, id: bot }] : [] };
+    }),
   };
 }
 
+/** Fence, drain and delete one Worker account's runtime and private credentials. Retry-safe. */
+async function removeWorker(ctx: AuthContext, account: WorkerAccount): Promise<void> {
+  ctx.store.beginWorkerRemoval(account.id);
+  ctx.onWorkerAccountsChanged?.();
+  await ctx.workerLogin.cancelAccount(account.id);
+  if (account.ready && ctx.workersSocket)
+    await socketCall(ctx.workersSocket, "tools/call", { name: "worker_account_drain", arguments: { id: account.id } }, { timeoutMs: 30_000 });
+  if (account.provider === "claude") await removeClaudeCredentials(ctx.store.stateDir, account.id, ctx.claude);
+  await rm(accountRoot(ctx.store.stateDir, account.id), { recursive: true, force: true });
+  ctx.store.finishWorkerRemoval(account.id);
+  ctx.onWorkerAccountsChanged?.();
+}
+
 export const accountList = operation({
-  name: "account_list", description: "List Codex Bot accounts and optional native-identity links without exposing credentials. Worker sign-ins are independent.",
+  name: "account_list", description: "List Codex Bot accounts, each linked to its paired Codex Worker account, without exposing credentials. The Worker needs its own sign-in.",
   input: z.object({}), output: z.object({ accounts: z.array(accountSchema) }),
   annotations: { title: "List accounts", readOnlyHint: true },
   async call(ctx: AuthContext) { return { accounts: (await inventories(ctx.store)).bots }; },
@@ -80,16 +91,20 @@ export const accountSetEnabled = operation({
 });
 
 export const accountRemove = operation({
-  name: "account_remove", description: "Remove a Codex Bot account and its bound Bots and credentials. Worker accounts are independent, even when an older Worker has the same ID. Retry after interruption.",
+  name: "account_remove", description: "Remove a Codex Bot account with its bound Bots, its paired Codex Worker account and their runtimes and credentials. Other Worker accounts are untouched. Retry after interruption.",
   input: z.strictObject({ id: accountId }), output: z.object({ accounts: z.array(accountSchema) }),
   annotations: { title: "Remove account", destructiveHint: true },
   async call(ctx: AuthContext, { id }, invocation) {
     operatorOnly(invocation);
     if (!ctx.store.listAccounts().some((item) => item.id === id)) throw new Error("unknown Codex Bot account");
     ctx.store.beginRemoval(id);
+    const paired = ctx.store.workerAccounts().find((account) => account.id === ctx.store.pairedWorker(id));
+    if (paired) ctx.store.beginWorkerRemoval(paired.id);
     ctx.onAccountsChanged?.();
     for (const serverId of ctx.store.boundServerIds(id))
       await socketCall(ctx.botsSocket, "tools/call", { name: "bot_remove", arguments: { id: serverId } }, { timeoutMs: 30_000 });
+    // Remove the Worker while its Bot row still marks it paired, so an interruption retries here.
+    if (paired) await removeWorker(ctx, paired);
     ctx.store.removeAccount(id);
     ctx.onAccountsChanged?.();
     return { accounts: (await inventories(ctx.store)).bots };
@@ -101,7 +116,7 @@ function operatorOnly(invocation?: { botId: string | null; workerId?: string | n
 }
 
 export const workerAccountPrepare = operation({
-  name: "worker_account_prepare", description: "Terminal fallback: create a private native Codex, Grok, Devin or Claude Worker sign-in independent of Bot accounts. Run the returned command, then call worker_account_confirm. Pass an existing Worker ID to reauthenticate it. Prefer worker_account_login_start, which runs the sign-in itself.",
+  name: "worker_account_prepare", description: "Terminal fallback: create a private native Grok, Devin or Claude Worker sign-in, or pass an existing Worker ID (including a paired Codex Worker) to sign it in. Run the returned command, then call worker_account_confirm. Prefer worker_account_login_start, which runs the sign-in itself.",
   input: z.strictObject({ provider: providerSchema, id: accountId.optional() }),
   output: z.strictObject({ account: workerAccountSchema, command: z.string() }),
   annotations: { title: "Prepare worker sign-in" },
@@ -136,7 +151,7 @@ export const workerAccountConfirm = operation({
 });
 
 export const workerAccountList = operation({
-  name: "worker_account_list", description: "List independent Codex, Grok, Devin and Claude Worker accounts and optional native-identity links without credentials. Ready means the native Worker sign-in is confirmed.",
+  name: "worker_account_list", description: "List Codex, Grok, Devin and Claude Worker accounts without credentials. Each Codex Worker is paired with the Codex Bot account it came with. Ready means the native Worker sign-in is confirmed.",
   input: z.strictObject({}), output: z.strictObject({ accounts: z.array(workerAccountSchema) }),
   annotations: { title: "List worker accounts", readOnlyHint: true },
   async call(ctx: AuthContext) { return { accounts: (await inventories(ctx.store)).workers }; },
@@ -157,28 +172,23 @@ export const workerAccountSetEnabled = operation({
 });
 
 export const workerAccountRemove = operation({
-  name: "worker_account_remove", description: "Fence and remove one Codex, Grok, Devin or Claude Worker account, its runtime and private credentials, including Claude's exact profile-bound keychain item. Bot accounts remain untouched, even for an older Worker with the same ID. Retry after interruption.",
+  name: "worker_account_remove", description: "Fence and remove one Grok, Devin or Claude Worker account, its runtime and private credentials, including Claude's exact profile-bound keychain item. A paired Codex Worker is removed only with its Codex Bot account (account_remove). Retry after interruption.",
   input: z.strictObject({ id: accountId }), output: z.strictObject({ id: accountId }),
   annotations: { title: "Remove worker account", destructiveHint: true },
   async call(ctx: AuthContext, { id }, invocation) {
     operatorOnly(invocation);
     const account = ctx.store.workerAccounts().find((item) => item.id === id);
     if (!account) throw new Error("unknown worker account");
-    ctx.store.beginWorkerRemoval(id);
-    ctx.onWorkerAccountsChanged?.();
-    await ctx.workerLogin.cancelAccount(id);
-    if (account.ready && ctx.workersSocket)
-      await socketCall(ctx.workersSocket, "tools/call", { name: "worker_account_drain", arguments: { id } }, { timeoutMs: 30_000 });
-    if (account.provider === "claude") await removeClaudeCredentials(ctx.store.stateDir, id, ctx.claude);
-    await rm(accountRoot(ctx.store.stateDir, id), { recursive: true, force: true });
-    ctx.store.finishWorkerRemoval(id);
-    ctx.onWorkerAccountsChanged?.();
+    const bot = ctx.store.workerPairs().get(id);
+    if (bot && ctx.store.listAccounts().some((item) => item.id === bot))
+      throw new Error("a paired Codex Worker account is removed with its Codex Bot account; remove that account instead");
+    await removeWorker(ctx, account);
     return { id };
   },
 });
 
 export const workerAccountLoginStart = operation({
-  name: "worker_account_login_start", description: "Create or re-sign-in a Codex, Grok, Devin or Claude Worker account. The API runs the native sign-in itself and returns a link to copy into your browser, with a one-time code for Codex and Grok; Devin and Claude support pasted codes through worker_account_login_submit when needsCode is true. Finishing marks the Worker ready. Poll worker_account_login_status or subscribe to worker_login_changed.",
+  name: "worker_account_login_start", description: "Create a Grok, Devin or Claude Worker account, or sign in one by ID, including a Codex Bot account's paired Codex Worker (same login as its Bot). Runs the native sign-in and returns a link to copy into your browser, with a one-time code for Codex and Grok; Devin and Claude take a pasted code via worker_account_login_submit when needsCode. Finishing marks it ready; watch worker_login_changed.",
   input: z.strictObject({ provider: providerSchema, id: accountId.optional() }), output: workerLoginStateSchema,
   annotations: { title: "Start worker sign-in" },
   async call(ctx: AuthContext, { provider, id }, invocation) {
@@ -231,7 +241,7 @@ export const workerAccountLoginCancel = operation({
 });
 
 export const accountLoginStart = operation({
-  name: "account_login_start", description: "Create a Codex Bot account by device sign-in in an isolated temporary home. Supersedes any attempt already in progress. Poll account_login_status for its verification URL, one-time code, and result.",
+  name: "account_login_start", description: "Create a Codex Bot account, and its paired Codex Worker account awaiting its own sign-in, by device sign-in in an isolated temporary home. Supersedes any attempt already in progress. Poll account_login_status for its verification URL, one-time code, and result.",
   input: z.strictObject({}), output: loginStateSchema,
   annotations: { title: "Sign in to Codex" },
   async call(ctx: AuthContext) { return ctx.login.start(); },
@@ -266,9 +276,9 @@ export const accountLoginCancel = operation({
 });
 
 export const topics = {
-  accounts_changed: "Published when Bot account state or cross-inventory identity links change. Refresh account_list.",
+  accounts_changed: "Published when Bot account state or its paired Worker link changes. Refresh account_list.",
   login_changed: "Published when a Codex device sign-in starts, shows its prompt, is superseded or cancelled, or finishes. Never carries the prompt or credentials.",
-  worker_accounts_changed: "Published when Worker account state or cross-inventory identity links change. Refresh worker_account_list.",
+  worker_accounts_changed: "Published when Worker account state or its paired Bot link changes. Refresh worker_account_list.",
   worker_login_changed: "Published when a Worker sign-in starts, shows its link or code, needs a pasted code, is superseded or cancelled, or finishes. Never carries the prompt or credentials.",
 } as const;
 
@@ -302,6 +312,7 @@ export const api: PackageApi<AuthContext, AuthTopic> = {
     await mkdir(dir, { recursive: true, mode: 0o700 });
     await chmod(dir, 0o700);
     const store = new AuthStore(dir);
+    await pairCodexWorkers(store);
     return { store, login: new LoginManager(store), workerLogin: new WorkerLoginManager(store, { env }), botsSocket: socketPath("bots", env), workersSocket: socketPath("workers", env), onAccountsChanged: undefined, onWorkerAccountsChanged: undefined };
   },
   async closeContext(ctx) {

@@ -39,7 +39,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { annotationBadges, fieldsOf, findOperation } from "@/lib/stack/catalog";
-import { accountLabels, botsFor, histogram, providerTitle, shortId, workerAccountLabels, workerProviders } from "@/lib/stack/derive";
+import { accountLabels, addableWorkerProviders, botsFor, histogram, pairedWorker, providerTitle, shortId, workerAccountLabels, workerProviders } from "@/lib/stack/derive";
 import type { Account, Bot, Login, OperationDoc, PackageDoc, WorkerAccount, WorkerLogin } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
@@ -61,7 +61,7 @@ export function AccountChip({ id, labels }: { id: string | null; labels: Map<str
   );
 }
 
-/** The Worker account window's menu: create a separate native sign-in per account. */
+/** The Worker account window's menu: create a separate native sign-in per account. Codex Workers come with Codex Bot accounts. */
 export function AddWorkerAccountMenu({ trigger, tooltip, align = "end" }: { trigger: React.ReactElement; tooltip?: string; align?: "start" | "end" }) {
   const actions = useAuthActions();
   const addWorker = (provider: WorkerAccount["provider"]) => {
@@ -78,7 +78,7 @@ export function AddWorkerAccountMenu({ trigger, tooltip, align = "end" }: { trig
       ) : button}
       <DropdownMenuContent align={align} className="min-w-52">
         <DropdownMenuGroup>
-          {workerProviders.map((provider) => (
+          {addableWorkerProviders.map((provider) => (
             <DropdownMenuItem key={provider} className="whitespace-nowrap" disabled={actions.worker.signingIn === `new:${provider}`} onClick={() => addWorker(provider)}>
               {actions.worker.signingIn === `new:${provider}` ? <Spinner /> : <TerminalIcon />}
               {providerTitle(provider)}
@@ -332,7 +332,7 @@ function AccountCard({ account, label, bots }: { account: Account; label: string
                     {workerLabel}
                   </button>
                 } />
-                <TooltipContent>Same login as {workerLabel}</TooltipContent>
+                <TooltipContent>Paired with {workerLabel}</TooltipContent>
               </Tooltip>
             );
           })}
@@ -388,7 +388,7 @@ export function WorkerAccountsWindow() {
         </div>
       ) : workerAccounts.data ? (
         <div className="flex flex-col gap-2.5">
-          <Empty icon={IdCardIcon} title="No Worker accounts">Sign in with Codex, Grok, Devin, or Claude.</Empty>
+          <Empty icon={IdCardIcon} title="No Worker accounts">Sign in with Grok, Devin, or Claude. Each Codex Bot account brings a Codex Worker account.</Empty>
           <div className="flex justify-center">
             <AddWorkerAccountMenu trigger={
               <Button size="sm" variant="outline">
@@ -415,6 +415,7 @@ function WorkerAccountCard({ account, label, accounts }: { account: WorkerAccoun
     ? (account.linkedAccounts ?? []).filter((link) => link.scope === "bot" && botLabels.has(link.id))
     : [];
   const removing = account.removing || worker.removing === account.id;
+  const paired = pairedWorker(account);
   const busy = worker.removing === account.id;
   const changingAvailability = worker.changingAvailability === account.id;
   const attempt = workerAttempts[account.id];
@@ -446,15 +447,18 @@ function WorkerAccountCard({ account, label, accounts }: { account: WorkerAccoun
                 <CircleCheckIcon />{account.enabled ? "Disable" : "Enable"}
               </DropdownMenuItem>
               <DropdownMenuItem disabled={removing || worker.signingIn === account.id || attempt?.status === "pending"} onClick={() => void worker.signIn(account.provider, account.id)}>
-                <RefreshCwIcon />Sign in again
+                <RefreshCwIcon />{account.ready ? "Sign in again" : "Sign in"}
               </DropdownMenuItem>
             </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuItem variant="destructive" disabled={removing} onClick={() => worker.confirmRemove(account)}>
-                <Trash2Icon />Remove…
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
+            {/* A paired Codex Worker leaves with its Codex Bot account. */}
+            {paired ? null : <>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuItem variant="destructive" disabled={removing} onClick={() => worker.confirmRemove(account)}>
+                  <Trash2Icon />Remove…
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </>}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -474,7 +478,7 @@ function WorkerAccountCard({ account, label, accounts }: { account: WorkerAccoun
                     {botLabel}
                   </button>
                 } />
-                <TooltipContent>Same login as {botLabel}</TooltipContent>
+                <TooltipContent>Paired with {botLabel}</TooltipContent>
               </Tooltip>
             );
           })}

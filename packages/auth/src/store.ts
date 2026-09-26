@@ -41,12 +41,14 @@ export class AuthStore {
       CREATE TABLE IF NOT EXISTS worker_accounts (
         id TEXT PRIMARY KEY, provider TEXT NOT NULL CHECK(provider IN ('codex','grok','devin','claude')),
         enabled INTEGER NOT NULL DEFAULT 1, ready INTEGER NOT NULL DEFAULT 0, removing INTEGER NOT NULL DEFAULT 0,
-        credential_digest TEXT, identity_digest TEXT
+        credential_digest TEXT, identity_digest TEXT, bot_account TEXT
       );
     `);
     const secretColumns = this.db.prepare("PRAGMA secrets.table_info(credentials)").all() as Array<{ name: string }>;
     if (!secretColumns.some(({ name }) => name === "version")) this.db.exec("ALTER TABLE secrets.credentials ADD COLUMN version INTEGER NOT NULL DEFAULT 1");
     this.migrateWorkerProviders();
+    if (!(this.db.prepare("PRAGMA table_info(worker_accounts)").all() as Array<{ name: string }>).some(({ name }) => name === "bot_account"))
+      this.db.exec("ALTER TABLE worker_accounts ADD COLUMN bot_account TEXT");
     this.migrateAccountIds();
   }
 
@@ -120,7 +122,31 @@ export class AuthStore {
     }>).map(({ id, provider, enabled, ready, removing }) => ({ id, provider, enabled: Boolean(enabled), ready: Boolean(ready), removing: Boolean(removing) }));
   }
 
+  /** Each Codex Bot account's paired Codex Worker account, by Worker ID. */
+  workerPairs(): Map<string, string> {
+    return new Map((this.db.prepare("SELECT id, bot_account FROM worker_accounts WHERE bot_account IS NOT NULL ORDER BY rowid").all() as Array<{ id: string; bot_account: string }>)
+      .map(({ id, bot_account }) => [id, bot_account]));
+  }
+
+  pairedWorker(botId: string): string | undefined {
+    return (this.db.prepare("SELECT id FROM worker_accounts WHERE bot_account = ?").get(botId) as { id: string } | undefined)?.id;
+  }
+
+  /** Pair an existing, unpaired Codex Worker account with a Bot account. */
+  pairWorker(id: string, botId: string): void {
+    if (!this.db.prepare("UPDATE worker_accounts SET bot_account = ? WHERE id = ? AND provider = 'codex' AND bot_account IS NULL AND removing = 0").run(botId, id).changes)
+      throw new Error("worker account is unavailable");
+  }
+
+  /** A paired Codex Worker account starts unsigned-in; its own native sign-in makes it ready. */
+  createPairedWorker(botId: string): WorkerAccount {
+    const id = randomUUID();
+    this.db.prepare("INSERT INTO worker_accounts (id, provider, bot_account) VALUES (?, 'codex', ?)").run(id, botId);
+    return this.workerAccounts().find((item) => item.id === id)!;
+  }
+
   prepareWorker(provider: WorkerProvider, existingId?: string): WorkerAccount {
+    if (provider === "codex" && !existingId) throw new Error("Codex Worker accounts come with Codex Bot accounts; sign in the paired Worker account instead");
     const id = existingId ?? randomUUID();
     const existing = this.workerAccounts().find((item) => item.id === id);
     if (existingId && !existing) throw new Error("unknown worker account");
@@ -141,6 +167,9 @@ export class AuthStore {
       if (this.db.prepare("SELECT id FROM worker_accounts WHERE provider = 'claude' AND identity_digest = ? AND id != ?").get(identityDigest, id))
         throw new Error("this Claude identity is already bound to another worker account");
     }
+    const bot = this.workerPairs().get(id);
+    const botIdentity = bot ? this.botAccountIdentity(bot) : null;
+    if (identity && botIdentity && identity !== botIdentity) throw new Error("Codex sign-in does not match its paired Bot account");
     const duplicate = this.db.prepare("SELECT id FROM worker_accounts WHERE provider = ? AND credential_digest = ? AND id != ?").get(account.provider, digest, id);
     if (duplicate) throw new Error("these native credentials are already bound to another worker account");
     this.db.prepare("UPDATE worker_accounts SET ready = 1, credential_digest = ?, identity_digest = ? WHERE id = ?").run(digest, identityDigest, id);
@@ -183,7 +212,7 @@ export class AuthStore {
     return { id, auth: row.auth_json, version: row.version };
   }
 
-  /** Native identity is used only to correlate independently signed-in accounts. */
+  /** Native identity pairs older Codex Worker accounts and fences a paired Worker sign-in to its Bot's login; it is never published. */
   botAccountIdentity(id: string): string | null {
     try {
       const auth = JSON.parse(this.accountCredentials(id).auth) as { tokens?: { account_id?: unknown; access_token?: unknown } };
@@ -203,6 +232,7 @@ export class AuthStore {
     try {
       this.db.prepare("INSERT INTO accounts (name) VALUES (?)").run(id);
       this.db.prepare("INSERT INTO secrets.credentials (name, auth_json) VALUES (?, ?)").run(id, auth);
+      this.db.prepare("INSERT INTO worker_accounts (id, provider, bot_account) VALUES (?, 'codex', ?)").run(randomUUID(), id);
       this.db.exec("COMMIT");
       return { id, enabled: true, removing: false };
     } catch (error) {

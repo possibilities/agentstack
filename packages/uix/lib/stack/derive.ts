@@ -41,6 +41,12 @@ export function accountLinks(accounts: Account[] | null, workers: WorkerAccount[
 
 const workerProviderTitles: Record<WorkerAccount["provider"], string> = { codex: "Codex", grok: "Grok", devin: "Devin", claude: "Claude" };
 export const workerProviders = Object.keys(workerProviderTitles) as WorkerAccount["provider"][];
+/** A Codex Worker account comes with its Codex Bot account, so only these providers are added directly. */
+export const addableWorkerProviders = workerProviders.filter((provider) => provider !== "codex");
+/** A paired Codex Worker account is removed only with its Codex Bot account. */
+export function pairedWorker(account: Pick<WorkerAccount, "provider" | "linkedAccounts">): boolean {
+  return account.provider === "codex" && (account.linkedAccounts ?? []).some((link) => link.scope === "bot");
+}
 
 export function providerTitle(provider: WorkerAccount["provider"]): string {
   return workerProviderTitles[provider];

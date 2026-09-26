@@ -129,12 +129,10 @@ async function credential(stateDir: string, id: string, provider: Provider, scop
   return { access, server: url.origin };
 }
 
-export type SignIn = { identity: string | null; subscription: Subscription };
-/** Read a native identity for optional correlation and any subscription claim; never publish the identity or an OAuth token. */
-export async function accountSignIn(stateDir: string, id: string, provider: Provider, scope: AccountScope): Promise<SignIn> {
-  if (provider !== "codex") return { identity: null, subscription: null };
-  const value = await credential(stateDir, id, provider, scope);
-  return { identity: value.userId ?? null, subscription: value.subscription ?? null };
+/** Read a Codex sign-in's subscription claim; never publish the identity or an OAuth token. */
+export async function accountSubscription(stateDir: string, id: string, provider: Provider, scope: AccountScope): Promise<Subscription> {
+  if (provider !== "codex") return null;
+  return (await credential(stateDir, id, provider, scope)).subscription ?? null;
 }
 
 async function boundedJson(response: Response): Promise<RecordValue> {

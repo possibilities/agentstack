@@ -20,7 +20,10 @@ type Provider = keyof typeof fixtures;
 const commandFor = (provider: Provider) => () => ({ bin: process.execPath, args: [fixtures[provider]] });
 
 async function readyAccount(store: AuthStore, provider: Provider) {
-  const account = store.prepareWorker(provider);
+  // A Codex Worker comes with its Bot account.
+  const account = provider === "codex"
+    ? store.prepareWorker("codex", store.pairedWorker(store.addAccount(JSON.stringify({ tokens: { refresh_token: "refresh", access_token: "access", id_token: "fixture.jwt.signature" } })).id))
+    : store.prepareWorker(provider);
   await prepareAccountProfile(store.stateDir, account);
   return account;
 }

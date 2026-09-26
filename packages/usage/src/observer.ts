@@ -2,10 +2,12 @@ import { constants } from "node:fs";
 import { chmod, mkdir, open, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { socketCall, socketPath, socketSubscribe, type SocketSubscription } from "@agentstack/api";
-import { accountSignIn, collectAccount, collectGrokBot, ObservationFailure, type SignIn } from "./collect.js";
+import { accountSubscription, collectAccount, collectGrokBot, ObservationFailure } from "./collect.js";
 import { observationError, snapshotSchema, type AccountScope, type Provider, type Snapshot, type StoredMeasurement, type Subscription } from "./schema.js";
 
-export type Registered = { id: string; scope: AccountScope; provider: Provider; enabled: boolean; ready: boolean; removing: boolean };
+type Link = { scope: AccountScope; id: string };
+/** An auth inventory record; linkedAccounts is auth's Codex Bot–Worker pairing. */
+export type Registered = { id: string; scope: AccountScope; provider: Provider; enabled: boolean; ready: boolean; removing: boolean; linkedAccounts?: Link[] };
 type FetchAccount = (id: string, provider: Provider, scope: AccountScope) => Promise<StoredMeasurement["usage"]>;
 type FetchBot = () => Promise<Snapshot["grokBot"]["usage"]>;
 type LoadAccounts = () => Promise<Registered[]>;
@@ -23,7 +25,7 @@ const intervalMs = 180_000;
 
 export class UsageObserver {
   private rows = new Map<string, Row>();
-  private identities = new Map<string, string>();
+  private links = new Map<string, Link[]>();
   private subscriptions = new Map<string, NonNullable<Subscription>>();
   private bot: StoredMeasurement = empty();
   private botNextAttemptAtMs = 0;
@@ -40,7 +42,7 @@ export class UsageObserver {
   constructor(readonly stateDir: string, private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly accounts: LoadAccounts = async () => {
       const [bot, workers] = await Promise.all([
-        socketCall(socketPath("auth", env), "tools/call", { name: "account_list", arguments: {} }, { timeoutMs: 5_000 }) as Promise<{ accounts: Array<{ id: string; enabled: boolean; removing: boolean }> }>,
+        socketCall(socketPath("auth", env), "tools/call", { name: "account_list", arguments: {} }, { timeoutMs: 5_000 }) as Promise<{ accounts: Array<{ id: string; enabled: boolean; removing: boolean; linkedAccounts: Link[] }> }>,
         socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_list", arguments: {} }, { timeoutMs: 5_000 }) as Promise<{ accounts: Array<Omit<Registered, "scope">> }>,
       ]);
       return [...bot.accounts.map((account): Registered => ({ ...account, scope: "bot", provider: "codex", ready: true })),
@@ -48,8 +50,8 @@ export class UsageObserver {
     },
     private readonly fetchAccount: FetchAccount = (id, provider, scope) => collectAccount(stateDir, id, provider, fetch, this.controller.signal, scope),
     private readonly fetchBot: FetchBot = () => collectGrokBot(env.AGENTSTACK_AGENTGROK_BIN, this.controller.signal),
-    private readonly signIn: (id: string, provider: Provider, scope: AccountScope) => Promise<SignIn | null> =
-      (id, provider, scope) => accountSignIn(stateDir, id, provider, scope),
+    private readonly readSubscription: (id: string, provider: Provider, scope: AccountScope) => Promise<Subscription> =
+      (id, provider, scope) => accountSubscription(stateDir, id, provider, scope),
     private readonly watchAccounts: WatchAccounts = (onChange) =>
       socketSubscribe(socketPath("auth", env), ["accounts_changed", "worker_accounts_changed"], onChange),
   ) {}
@@ -90,10 +92,7 @@ export class UsageObserver {
   snapshot(now = Date.now()): Snapshot {
     const accounts = [...this.rows.values()].map(({ id, scope, provider, enabled, ready, measurement }) => ({
       id, scope, provider, enabled, ready,
-      linkedAccounts: provider !== "codex" || !this.identities.has(keyOf({ id, scope })) ? [] :
-        [...this.rows.values()].filter((other) => other.provider === "codex" && other.scope !== scope &&
-          this.identities.get(keyOf(other)) === this.identities.get(keyOf({ id, scope })))
-          .map((other) => ({ id: other.id, scope: other.scope })),
+      linkedAccounts: (this.links.get(keyOf({ id, scope })) ?? []).filter((link) => this.rows.has(keyOf(link))),
       subscription: this.subscription({ id, scope, provider, measurement }),
       ...measurement, fresh: this.inventoryError === null &&
         ready && fresh(measurement, now),
@@ -133,7 +132,7 @@ export class UsageObserver {
       this.inventoryError = null;
     } catch {
       this.inventoryError = "auth_unavailable";
-      this.identities.clear();
+      this.links.clear();
       this.subscriptions.clear();
       this.changed();
       return;
@@ -143,7 +142,7 @@ export class UsageObserver {
     for (const id of this.rows.keys()) if (!wanted.has(id)) this.rows.delete(id);
     // Publish a removal before this cycle's slower observations.
     if (this.rows.size < before) this.changed();
-    this.identities.clear();
+    this.links = new Map(inventory.map((account) => [keyOf(account), account.linkedAccounts ?? []]));
     this.subscriptions.clear();
     for (const account of inventory) {
       if (this.controller.signal.aborted) break;
@@ -157,9 +156,8 @@ export class UsageObserver {
       };
       this.rows.set(key, row);
       if (account.provider === "codex" && account.ready) {
-        const signIn = await this.signIn(row.id, row.provider, row.scope).catch(() => null);
-        if (signIn?.identity) this.identities.set(key, signIn.identity);
-        if (signIn?.subscription) this.subscriptions.set(key, signIn.subscription);
+        const subscription = await this.readSubscription(row.id, row.provider, row.scope).catch(() => null);
+        if (subscription) this.subscriptions.set(key, subscription);
       }
       // Disabled accounts still have usage. Readiness only fences an unfinished native sign-in.
       if (!account.ready || now < row.nextAttemptAtMs) continue;

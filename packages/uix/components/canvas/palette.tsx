@@ -3,7 +3,7 @@
 import { BookOpenIcon, BotIcon, CircleCheckIcon, CpuIcon, MicIcon, MicOffIcon, PhoneIcon, PhoneOffIcon, RefreshCwIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
 import { operationTitle } from "@/lib/stack/catalog";
-import { accountLabels, providerTitle, shortId, workerAccountLabels, workerProviders } from "@/lib/stack/derive";
+import { accountLabels, addableWorkerProviders, pairedWorker, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
 import { spaces } from "@/lib/stack/spaces";
 import type { Account, NodeRef, WorkerAccount } from "@/lib/stack/types";
 import { useAuthActions } from "./auth-actions";
@@ -122,7 +122,7 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
               <UserRoundPlusIcon />
               Add Codex Bot account
             </CommandItem>
-            {workerProviders.map((provider) => (
+            {addableWorkerProviders.map((provider) => (
               <CommandItem key={`add-${provider}`} value={`action add ${provider} worker account sign in`} onSelect={() => act(() => addWorker(provider))}>
                 <TerminalIcon />
                 Add {providerTitle(provider)} Worker account
@@ -160,10 +160,12 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
                   <RefreshCwIcon />
                   {account.ready ? "Sign in again to" : "Sign in"} {label}
                 </CommandItem>,
-                <CommandItem key={`worker-${account.id}-remove`} value={`action remove ${label} delete ${account.id}`} onSelect={() => act(() => auth.worker.confirmRemove(account))}>
-                  <Trash2Icon />
-                  Remove {label}…
-                </CommandItem>,
+                ...(pairedWorker(account) ? [] : [
+                  <CommandItem key={`worker-${account.id}-remove`} value={`action remove ${label} delete ${account.id}`} onSelect={() => act(() => auth.worker.confirmRemove(account))}>
+                    <Trash2Icon />
+                    Remove {label}…
+                  </CommandItem>,
+                ]),
               ];
             })}
             {attempt?.status === "pending" ? (

@@ -275,7 +275,8 @@ export class WorkerLoginManager {
       }
     } catch (cause) {
       const safe = new Set(["these native credentials are already bound to another worker account",
-        "this Claude identity is already bound to another worker account", "Claude sign-in does not match this Worker account"]);
+        "this Claude identity is already bound to another worker account", "Claude sign-in does not match this Worker account",
+        "Codex sign-in does not match its paired Bot account"]);
       failure = cause instanceof ClaudeCredentialError || cause instanceof Error && safe.has(cause.message)
         ? cause.message : `${name} sign-in did not finish. Try again.`;
     } finally {

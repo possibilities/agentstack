@@ -364,11 +364,11 @@ function RemoveAccountDialog({ account, label, used, linkedWorkers, pending, err
             </div>
           ) : null}
           {linkedWorkers.length ? (
-            <p className="text-[0.78rem] text-muted-foreground">{linkedWorkers.join(", ")} stay signed in.</p>
+            <p className="text-[0.78rem] text-muted-foreground">Also removes its paired {linkedWorkers.join(", ")}, stopping its runtime.</p>
           ) : null}
           <p className="flex items-start gap-1.5 text-[0.78rem] text-muted-foreground">
             <TriangleAlertIcon className="mt-px size-3.5 shrink-0 text-destructive" />
-            <span>Deletes its credentials. Can&rsquo;t be undone.</span>
+            <span>Deletes {linkedWorkers.length ? "both accounts\u2019" : "its"} credentials. Can&rsquo;t be undone.</span>
           </p>
           {needsTyping ? (
             <label className="flex flex-col gap-1.5">

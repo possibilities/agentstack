@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { serveApi, socketCall, socketPath } from "@agentstack/api";
+import { AuthStore } from "@agentstack/auth";
 import { WorkerSupervisor } from "../src/supervisor.js";
 import { catalogModels, nativeDevinModels, optionsOf } from "../src/catalog.js";
 import { writeV2Credential } from "./v2-credential-fixture.js";
@@ -38,6 +39,15 @@ process.stdin.on('data', (chunk) => {
   }
 });`;
 
+/** A Codex Worker account comes with a Codex Bot account; returns both IDs. */
+function codexBotAccount(dir: string): { bot: string; worker: string } {
+  const store = new AuthStore(dir);
+  try {
+    const bot = store.addAccount(JSON.stringify({ tokens: { refresh_token: "refresh", access_token: "access", id_token: "fixture.jwt.signature" } })).id;
+    return { bot, worker: store.pairedWorker(bot)! };
+  } finally { store.close(); }
+}
+
 test("ACP catalog reflects the exact account process and dependent effort choices without turns", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agentstack-worker-catalog-"));
   const binary = join(dir, "fake-acp");
@@ -48,7 +58,8 @@ test("ACP catalog reflects the exact account process and dependent effort choice
   const supervisor = new WorkerSupervisor(dir, env);
   try {
     const prepare = async (provider: "grok" | "codex" = "grok") => {
-      const response = await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_prepare", arguments: { provider } }) as { account: { id: string } };
+      const response = await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_prepare",
+        arguments: { provider, ...(provider === "codex" ? { id: codexBotAccount(dir).worker } : {}) } }) as { account: { id: string } };
       const id = response.account.id;
       const accountDir = join(dir, "worker-accounts", id, "data", "opencode");
       await (await import("node:fs/promises")).mkdir(accountDir, { recursive: true });
@@ -186,8 +197,9 @@ test("operator disable and removal drain the exact account process before deleti
     await assert.rejects(stat(root), /ENOENT/);
     assert.deepEqual((await call("worker_account_list", {}) as { accounts: unknown[] }).accounts, []);
 
-    const { account: codex } = await call("worker_account_prepare", { provider: "codex" }) as { account: { id: string } };
-    assert.deepEqual((await call("account_list", {}) as { accounts: unknown[] }).accounts, []);
+    const paired = codexBotAccount(dir);
+    const { account: codex } = await call("worker_account_prepare", { provider: "codex", id: paired.worker }) as { account: { id: string } };
+    assert.deepEqual((await call("account_list", {}) as { accounts: Array<{ id: string }> }).accounts.map((item) => item.id), [paired.bot]);
     const codexRoot = join(dir, "worker-accounts", codex.id);
     await (await import("node:fs/promises")).mkdir(join(codexRoot, "data", "opencode"), { recursive: true });
     await writeV2Credential(join(codexRoot, "data", "opencode", "opencode.db"), "openai",
@@ -200,8 +212,11 @@ test("operator disable and removal drain the exact account process before deleti
       name: "worker_catalog", arguments: { accountId: codex.id },
     }) as { models: Array<{ id: string; efforts: string[] }> };
     assert.equal(codexCatalog.models.length, 3, "Codex catalogs omit entries without effort choices");
-    await call("worker_account_remove", { id: codex.id });
+    // A paired Codex Worker leaves only with its Bot account.
+    await assert.rejects(call("worker_account_remove", { id: codex.id }), /removed with its Codex Bot account/);
+    await call("account_remove", { id: paired.bot });
     assert.equal((await runtimes()).length, 0);
+    await assert.rejects(stat(codexRoot), /ENOENT/);
   } finally {
     await workers.close();
     await auth.close();

@@ -56,7 +56,7 @@ export const subscription = z.strictObject({
 }).nullable().describe("Where the provider exposes it: Devin accounts and Codex Bot accounts. Codex Worker logins store no ID token; Grok and Claude report no end date. Null when unavailable.");
 export type Subscription = z.infer<typeof subscription>;
 const linkedAccounts = z.array(z.strictObject({ scope: accountScope, id: z.uuid() }))
-  .describe("Other AgentStack accounts with a matching native sign-in identity; no credential or provider account ID is exposed.");
+  .describe("The paired Codex Bot or Codex Worker account from auth's inventories; IDs only, no credential or provider account ID.");
 export const account = z.discriminatedUnion("provider", [
   z.strictObject({ id: z.uuid(), scope: accountScope, provider: z.literal("codex"), enabled: z.boolean(), ready: z.boolean(), linkedAccounts, subscription,
     ...observation, usage: codexUsage.nullable() }),
