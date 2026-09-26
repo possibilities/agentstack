@@ -24,6 +24,7 @@
     "@agentstack/api": "workspace:*",
     "@agentstack/bots": "workspace:*",
     "@agentstack/docs": "workspace:*",
+    "@agentstack/infer": "workspace:*",
     "@agentstack/uix": "workspace:*",
     "@agentstack/usage": "workspace:*",
     "@agentstack/workers": "workspace:*",

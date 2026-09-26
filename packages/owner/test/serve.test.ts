@@ -12,7 +12,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
-const socketNames = ["api", "auth", "roles", "bots", "workers", "usage", "wiki", "owner"];
+const socketNames = ["api", "auth", "roles", "bots", "workers", "usage", "infer", "wiki", "owner"];
 
 test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then shuts them down", { timeout: 120_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-serve-"));
@@ -42,7 +42,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
       children: Array<{ name: string; pid: number | null; running: boolean }>;
     };
     assert.equal(status.pid, child.pid);
-    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["api", "auth", "bots", "inspector", "roles", "uix", "usage", "websocket", "wiki", "workers"]);
+    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["api", "auth", "bots", "infer", "inspector", "roles", "uix", "usage", "websocket", "wiki", "workers"]);
     for (let i = 0; i < 200 && status.children.some((entry) => !entry.running); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
       status = (await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} })) as typeof status;
@@ -72,7 +72,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     }
     const wsUrl = /owner WebSocket: (ws:\/\/\S+)/.exec(stderr)?.[1];
     assert.ok(wsUrl, stderr);
-    for (const name of socketNames) assert.match(stderr, new RegExp(`${name} WebSocket: ws://127\\.0\\.0\\.1:\\d+/websocket/${name}`));
+    for (const name of socketNames.filter((name) => name !== "infer")) assert.match(stderr, new RegExp(`${name} WebSocket: ws://127\\.0\\.0\\.1:\\d+/websocket/${name}`));
     const ws = new WebSocket(wsUrl);
     await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = () => reject(new Error("WebSocket did not open")); });
     const frame = () => new Promise<any>((resolve) => { ws.onmessage = (event) => resolve(JSON.parse(String(event.data))); });

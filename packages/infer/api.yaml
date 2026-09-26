@@ -1,0 +1,4 @@
+name: infer
+description: Bounded, non-agentic Codex subscription inference for an explicitly selected enabled Bot account. The direct backend transport is experimental and may change.
+socket:
+  description: Private local model discovery and one-shot inference; no Codex threads, turns or tools are created.
