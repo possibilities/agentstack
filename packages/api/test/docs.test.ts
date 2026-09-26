@@ -53,7 +53,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(bots.eventScope?.required, false);
     assert.deepEqual(
       bots.operations.map((operation) => operation.name).sort(),
-      ["bot_assign", "bot_defaults_get", "bot_defaults_set", "bot_list", "bot_remove", "bot_start", "bot_stop", "voice_dial", "voice_hangup", "voice_status",
+      ["bot_assign", "bot_defaults_get", "bot_defaults_set", "bot_list", "bot_remove", "bot_start", "bot_stop", "voice_dial", "voice_hangup", "voice_speak", "voice_status",
         "chat_list", "chat_search", "chat_records", "chat_record_chunk", "chat_thread_read", "chat_turns", "chat_items", "chat_main_live", "chat_main_items", "chat_occurrences", "chat_open", "chat_send", "chat_steer", "chat_interrupt", "chat_enqueue", "chat_queue_list", "chat_queue_resolve",
         "chat_codex_queue_add", "chat_codex_queue_list", "chat_codex_queue_update", "chat_codex_queue_delete", "chat_codex_queue_reorder", "chat_codex_queue_start", "chat_upload_start", "chat_upload_status", "chat_upload_chunk", "chat_upload_finish", "chat_attachment_add", "chat_attachment_list", "chat_attachment_remove"].sort(),
     );
@@ -65,6 +65,10 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok((start.outputSchema.properties as Record<string, unknown>).roleRevision);
     assert.ok((start.outputSchema.properties as Record<string, unknown>).settings);
     assert.deepEqual(Object.keys(bots.operations.find((operation) => operation.name === "bot_defaults_get")?.outputSchema.properties ?? {}).sort(), ["approvalPolicy", "model", "reasoningEffort", "sandboxMode"]);
+    const speech = bots.operations.find((operation) => operation.name === "voice_speak") as OperationDoc;
+    assert.deepEqual(Object.keys(speech.inputSchema.properties ?? {}).sort(), ["sessionId", "text"]);
+    assert.deepEqual(Object.keys(speech.outputSchema.properties ?? {}).sort(), ["sessionId", "status"]);
+    assert.equal(speech.annotations.idempotentHint, undefined);
     assert.deepEqual(Object.keys(bots.operations.find((operation) => operation.name === "chat_search")?.inputSchema.properties ?? {}).sort(), ["botId", "limit", "offset", "query"]);
     assert.deepEqual(Object.keys(bots.operations.find((operation) => operation.name === "chat_records")?.outputSchema.properties ?? {}).sort(), ["nextLine", "records"]);
     const botsSocket = bots.transports.find((transport) => transport.type === "socket") as TransportDoc;

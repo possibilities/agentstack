@@ -171,6 +171,16 @@ export const voiceDial = operation({
   annotations: { title: "Dial voice" },
   async call(ctx: BotsContext, { botId, sessionId, sdp }) { return ctx.voice.dial(botId, sessionId, sdp); },
 });
+export const voiceSpeak = operation({
+  name: "voice_speak", description: "Submit a short announcement as speakable text on the exact connected voice call. Uses Codex thread/realtime/appendSpeech on the Bot's main thread; native acknowledgement does not confirm audible playback or verbatim delivery. Do not retry an uncertain result blindly: it may speak twice.",
+  input: z.strictObject({
+    sessionId: sessionIdSchema.describe("Exact active call ID from voice_status or voice_dial; a stale ID cannot speak on a newer call."),
+    text: z.string().min(1).max(4_000).refine((text) => text.trim().length > 0, "Speech must contain non-whitespace text").describe("Short text to offer to the realtime voice as a spoken announcement. Long text may be truncated or paraphrased by Codex."),
+  }),
+  output: z.strictObject({ sessionId: sessionIdSchema, status: z.literal("submitted").describe("Codex accepted the speech request; not a playback receipt.") }),
+  annotations: { title: "Speak on voice call" },
+  async call(ctx: BotsContext, { sessionId, text }, invocation) { return ctx.voice.speak(sessionId, text, invocation?.botId ?? undefined); },
+});
 export const voiceHangup = operation({
   name: "voice_hangup", description: "End exactly this call. An already ended call succeeds; a stale ID cannot stop another active call. Does not stop the bot or its turns.",
   input: z.strictObject({ sessionId: sessionIdSchema }), output: z.strictObject({ call: voiceCallSchema.nullable() }),
@@ -423,7 +433,7 @@ export const chatAttachmentRemove = operation({
 });
 
 export const api: PackageApi<BotsContext, BotsTopic> = {
-  operations: [botStart, botStop, botAssign, botRemove, botList, botDefaultsGet, botDefaultsSet, voiceStatus, voiceDial, voiceHangup, chatList, chatSearch, chatRecords, chatRecordChunk, chatThreadRead, chatTurns, chatItems, chatMainLive, chatMainItems, chatOccurrences, chatOpen, chatSend, chatSteer, chatInterrupt, chatEnqueue, chatQueueList, chatQueueResolve, chatCodexQueueAdd, chatCodexQueueList, chatCodexQueueUpdate, chatCodexQueueDelete, chatCodexQueueReorder, chatCodexQueueStart, chatUploadStart, chatUploadStatus, chatUploadChunk, chatUploadFinish, chatAttachmentAdd, chatAttachmentList, chatAttachmentRemove],
+  operations: [botStart, botStop, botAssign, botRemove, botList, botDefaultsGet, botDefaultsSet, voiceStatus, voiceDial, voiceSpeak, voiceHangup, chatList, chatSearch, chatRecords, chatRecordChunk, chatThreadRead, chatTurns, chatItems, chatMainLive, chatMainItems, chatOccurrences, chatOpen, chatSend, chatSteer, chatInterrupt, chatEnqueue, chatQueueList, chatQueueResolve, chatCodexQueueAdd, chatCodexQueueList, chatCodexQueueUpdate, chatCodexQueueDelete, chatCodexQueueReorder, chatCodexQueueStart, chatUploadStart, chatUploadStatus, chatUploadChunk, chatUploadFinish, chatAttachmentAdd, chatAttachmentList, chatAttachmentRemove],
   events: {
     topics,
     scope: {

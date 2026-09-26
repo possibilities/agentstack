@@ -125,6 +125,9 @@ export type VoiceCall = {
   phase: "dialing" | "connected";
 };
 
+/** API-only voice_speak receipt; the canvas has no speech control or playback confirmation. */
+export type VoiceSpeechSubmission = { sessionId: string; status: "submitted" };
+
 export type Resource<T> = { data: T | null; error: string | null; at: number | null };
 
 export type Snapshot = {

@@ -18,6 +18,7 @@ type ActiveCall = VoiceCall & {
   startSent: boolean;
   ending: boolean;
   stop: (() => Promise<unknown>) | null;
+  speak: ((text: string) => Promise<unknown>) | null;
   finish: (error: Error, answer?: string) => void;
 };
 
@@ -33,6 +34,16 @@ export class VoiceCalls {
     return call ? { sessionId: call.sessionId, botId: call.botId, threadId: call.threadId, phase: call.phase } : null;
   }
 
+  /** Submit speakable text on the call's own signaling connection; the native ACK is not playback confirmation. */
+  async speak(sessionId: string, text: string, botId?: string): Promise<{ sessionId: string; status: "submitted" }> {
+    const call = this.current;
+    if (!call || call.sessionId !== sessionId) throw new Error("Voice session ID does not match an active call");
+    if (botId && call.botId !== botId) throw new Error("Bot cannot speak on another Bot's voice call");
+    if (call.phase !== "connected" || call.ending || !call.speak) throw new Error("Voice call is not connected");
+    await call.speak(text);
+    return { sessionId, status: "submitted" };
+  }
+
   async dial(botId: string, sessionId: string, sdp: string): Promise<{ sessionId: string; answer: string }> {
     if (this.current) throw new Error(`voice call already in progress on ${this.current.botId}`);
     const bot = this.bots().find((item) => item.id === botId);
@@ -46,7 +57,7 @@ export class VoiceCalls {
     // Reserve synchronously, before any socket or native request can race a second dial.
     const call: ActiveCall = {
       sessionId, botId, threadId: bot.mainThreadId, phase: "dialing",
-      connection: null, startSent: false, ending: false, stop: null,
+      connection: null, startSent: false, ending: false, stop: null, speak: null,
       finish: (error: Error, value?: string) => value === undefined ? rejectAnswer(error) : resolveAnswer(value),
     };
     this.current = call;
@@ -132,6 +143,7 @@ export class VoiceCalls {
       // WebRTC v3 is the compatible native audio path; leave Codex's prompt,
       // model, voice, handoff policy and thread settings to their own defaults.
       call.stop = () => request("thread/realtime/stop", { threadId: call.threadId }, 5_000);
+      call.speak = (text) => request("thread/realtime/appendSpeech", { threadId: call.threadId, text });
       call.startSent = true;
       await request("thread/realtime/start", {
         threadId: call.threadId, realtimeSessionId: sessionId,

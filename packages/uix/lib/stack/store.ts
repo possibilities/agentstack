@@ -98,7 +98,7 @@ export class StackStore {
     this.scopedChannels.clear();
   }
 
-  /** Call any operation on a Package API's main channel. Auth mutations refresh accounts and sign-in state; voice calls refresh the call. */
+  /** Call any operation on a Package API's main channel. Auth mutations refresh accounts and sign-in state; dial/hangup refresh voice state. Speech submission changes no call state. */
   call = async <T>(pkg: string, name: string, args: Record<string, unknown> = {}): Promise<T> => {
     const channel = this.main.get(pkg);
     if (!channel || channel.status !== "open") throw new Error(`${pkg} WebSocket is not connected`);

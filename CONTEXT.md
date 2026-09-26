@@ -98,7 +98,7 @@ Transport-supplied information about one Package API operation invoked through M
 
 ## Voice call
 
-One ephemeral, full-duplex WebRTC audio session into a running Bot's existing main thread. The Bots Package API relays an SDP offer and answer, tracks the exact call ID, and stops only native realtime on hang-up; it never creates a thread or ends a turn. The browser owns microphone capture and speaker playback.
+One ephemeral, full-duplex WebRTC audio session into a running Bot's existing main thread. The Bots Package API relays an SDP offer and answer, tracks the exact call ID, and stops only native realtime on hang-up; it never creates a thread or ends a turn. The browser owns microphone capture and speaker playback. A caller can submit speakable text only on the exact connected call; native acknowledgement does not establish audible or verbatim delivery.
 
 _Avoid_: voice agent, voice thread
 
