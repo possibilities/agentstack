@@ -22,7 +22,8 @@ type Summary = { plan: string | null; limited: boolean; gauges: Gauge[]; notes: 
 /** When one observation behind a card was last measured; a merged gauge names its own. */
 type Sample = { label: string | null; at: number | null };
 
-const money = (value: number) => value.toLocaleString(undefined, { style: "currency", currency: "USD" });
+/** Whole dollars drop their cents to keep a card's info line short. */
+const money = (value: number) => value.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: Number.isInteger(value) ? 0 : 2 });
 /** Every gauge is remaining headroom, whichever direction the provider reports. */
 const pct = (value: number) => `${Math.round(value)}%`;
 const freshWindow = 5 * 60_000;
@@ -136,7 +137,8 @@ export function ObservationStatus({ observation }: { observation: UsageObservati
   );
 }
 
-function FreshnessDot({ observation }: { observation: UsageObservation }) {
+/** Freshness at a glance; the tooltip carries when each observation behind the card was sampled. */
+function FreshnessDot({ observation, samples }: { observation: UsageObservation; samples: Sample[] }) {
   const now = useNow(30_000);
   const state = freshness(observation, now);
   return (
@@ -145,7 +147,9 @@ function FreshnessDot({ observation }: { observation: UsageObservation }) {
         {observation.error ? <TriangleAlertIcon aria-label="Read failed" className="size-3.5 text-warning" /> : <StatusDot tone={state === "fresh" ? "success" : "muted"} label={state === "fresh" ? "Fresh" : "Stale"} className="size-1.5 [&>span]:size-1.5" />}
       </TooltipTrigger>
       <TooltipContent side="top" className="flex-col items-start gap-0.5">
-        <span>{state === "fresh" ? "Fresh" : "Stale"} · <Time at={observation.observedAtMs} /></span>
+        <span>{state === "fresh" ? "Fresh" : "Stale"} · updated {samples.map((sample, index) => (
+          <span key={sample.label ?? ""}>{index ? " · " : ""}{sample.label ? `${sample.label} ` : ""}<Time at={sample.at} /></span>
+        ))}</span>
         {observation.error ? <span className="opacity-70">{observation.error}</span> : null}
       </TooltipContent>
     </Tooltip>
@@ -174,6 +178,9 @@ function UsageCard({ node, names, observation, summary, orbs, samples, subscript
   const now = useNow(60_000);
   const headline = summary.gauges.reduce<number | null>((low, gauge) => gauge.remaining === null ? low : low === null ? gauge.remaining : Math.min(low, gauge.remaining), null);
   const tone = summary.limited ? "destructive" : headroomTone(headline);
+  // A fresh sample's age lives in the freshness tooltip; a stale one stays visible on the info line.
+  const stale = samples.filter((sample) => sample.at === null || now - sample.at > freshWindow);
+  const notes = summary.notes.join(" · ");
   return (
     <NodeCard node={node} label={`${names[0].label} usage`} className="p-2.5">
       <div className="flex items-center gap-2">
@@ -189,7 +196,7 @@ function UsageCard({ node, names, observation, summary, orbs, samples, subscript
             </span>
           ))}
         </span>
-        <FreshnessDot observation={observation} />
+        <FreshnessDot observation={observation} samples={samples} />
         {summary.plan ? <span className="shrink-0 rounded-md bg-muted px-1.5 py-px text-[0.65rem] font-medium text-muted-foreground capitalize">{summary.plan}</span> : null}
         <span className={cn("ml-auto shrink-0 text-base leading-none font-semibold tracking-tight tabular-nums",
           tone === "destructive" ? "text-destructive" : tone === "warning" ? "text-warning" : "text-foreground")}>
@@ -219,15 +226,18 @@ function UsageCard({ node, names, observation, summary, orbs, samples, subscript
           })}
         </div>
       ) : null}
-      {summary.notes.length ? <p className="text-[0.68rem] text-muted-foreground">{summary.notes.join(" · ")}</p> : null}
-      <div className="flex flex-wrap items-baseline justify-between gap-x-2 text-[0.68rem] text-muted-foreground">
-        <span>
-          sampled {samples.map((sample, index) => (
-            <span key={sample.label ?? ""}>{index ? " · " : ""}{sample.label ? `${sample.label} ` : ""}<Time at={sample.at} /></span>
-          ))}
-        </span>
-        {subscription ? <SubscriptionEnd subscription={subscription} now={now} /> : null}
-      </div>
+      {/* At most one info line: notes truncate (full text on hover) before a stale age or the subscription end gives way. */}
+      {notes || stale.length || subscription ? (
+        <p className="flex min-w-0 items-baseline gap-2 text-[0.68rem] text-muted-foreground">
+          <span className="min-w-0 truncate" title={notes || undefined}>{notes}</span>
+          {stale.length ? (
+            <span className="shrink-0 text-foreground/80">updated {stale.map((sample, index) => (
+              <span key={sample.label ?? ""}>{index ? " · " : ""}{sample.label ? `${sample.label} ` : ""}<Time at={sample.at} /></span>
+            ))}</span>
+          ) : null}
+          {subscription ? <span className="ml-auto shrink-0"><SubscriptionEnd subscription={subscription} now={now} /></span> : null}
+        </p>
+      ) : null}
     </NodeCard>
   );
 }

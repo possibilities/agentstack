@@ -133,3 +133,29 @@ export function catalogRows<T>(accounts: T[], identity: (account: T) => string |
   }
   return rows;
 }
+
+/**
+ * Split a command line into arguments the way a shell would for plain text:
+ * whitespace separates, single and double quotes group, a backslash escapes
+ * the next character (inside double quotes too). Null for an unclosed quote.
+ */
+export function splitArgs(line: string): string[] | null {
+  const args: string[] = [];
+  let current = "";
+  let started = false;
+  let quote: "'" | '"' | null = null;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (quote) {
+      if (char === quote) quote = null;
+      else if (char === "\\" && quote === '"' && i + 1 < line.length) current += line[++i];
+      else current += char;
+    } else if (char === "'" || char === '"') { quote = char; started = true; }
+    else if (char === "\\" && i + 1 < line.length) { current += line[++i]; started = true; }
+    else if (/\s/.test(char)) { if (started) args.push(current); current = ""; started = false; }
+    else { current += char; started = true; }
+  }
+  if (quote) return null;
+  if (started) args.push(current);
+  return args;
+}

@@ -11,9 +11,9 @@ import { Field, FieldDescription, FieldGroup, FieldLabel, FieldSet } from "@/com
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Spinner } from "@/components/ui/spinner";
-import { Textarea } from "@/components/ui/textarea";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { accountLabels, botsFor, shortId } from "@/lib/stack/derive";
+import { accountLabels, botsFor, shortId, splitArgs } from "@/lib/stack/derive";
 import { BotUploads } from "@/lib/stack/bot-uploads";
 import type { Account, Bot, BotSettings } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
@@ -125,7 +125,7 @@ function Segmented({ legend, name, options, value, inherit, onChange, titles }: 
       <div className="flex flex-wrap gap-0.5 rounded-lg bg-muted p-0.5">
         {["", ...options].map((option) => (
           <label key={option || "inherit"}
-            className="relative flex-1 cursor-pointer rounded-md px-2 py-1 text-center text-xs whitespace-nowrap text-muted-foreground transition-colors hover:text-foreground has-checked:bg-background has-checked:font-medium has-checked:text-foreground has-checked:shadow-xs has-focus-visible:outline-2 has-focus-visible:outline-ring has-disabled:pointer-events-none has-disabled:opacity-50">
+            className="relative flex-1 cursor-pointer rounded-md px-1.5 py-1 text-center text-xs whitespace-nowrap text-muted-foreground transition-colors hover:text-foreground has-checked:bg-background has-checked:font-medium has-checked:text-foreground has-checked:shadow-xs has-focus-visible:outline-2 has-focus-visible:outline-ring has-disabled:pointer-events-none has-disabled:opacity-50">
             <input type="radio" name={name} value={option} checked={value === option} onChange={() => onChange(option)} className="absolute inset-0 cursor-pointer appearance-none rounded-md opacity-0" />
             {option ? titles?.[option] ?? option : inherit}
           </label>
@@ -135,15 +135,16 @@ function Segmented({ legend, name, options, value, inherit, onChange, titles }: 
   );
 }
 
-function SettingsFields({ value, onChange, defaults }: { value: Partial<BotSettings>; onChange(value: Partial<BotSettings>): void; defaults: BotSettings | null }) {
+/** Each "inherit" choice names what it inherits: `Default · medium` for a new Bot, `Current · medium` for a saved one. */
+function SettingsFields({ value, onChange, defaults, inheritLabel }: { value: Partial<BotSettings>; onChange(value: Partial<BotSettings>): void; defaults: BotSettings | null; inheritLabel: "Default" | "Current" }) {
   const id = useId();
-  const inherit = (key: keyof BotSettings) => defaults ? `Default · ${key === "sandboxMode" ? sandboxTitles[defaults.sandboxMode] ?? defaults.sandboxMode : defaults[key]}` : "Keep";
+  const inherit = (key: keyof BotSettings) => defaults ? `${inheritLabel} · ${key === "sandboxMode" ? sandboxTitles[defaults.sandboxMode] ?? defaults.sandboxMode : defaults[key]}` : "Keep";
   return <FieldGroup className="gap-4">
     <Field>
       <FieldLabel htmlFor={`${id}-model`}>Model</FieldLabel>
       <Input id={`${id}-model`} value={value.model ?? ""} placeholder={defaults?.model ?? "Keep current"} onChange={(event) => onChange({ ...value, model: event.target.value })} />
     </Field>
-    <Segmented legend="Effort" name={`${id}-effort`} options={settingOptions.reasoningEffort} value={value.reasoningEffort ?? ""} inherit={defaults ? "Default" : "Keep"}
+    <Segmented legend="Effort" name={`${id}-effort`} options={settingOptions.reasoningEffort} value={value.reasoningEffort ?? ""} inherit={inherit("reasoningEffort")}
       onChange={(next) => onChange({ ...value, reasoningEffort: next as BotSettings["reasoningEffort"] })} />
     <div className="grid gap-4 sm:grid-cols-2">
       {(["sandboxMode", "approvalPolicy"] as const).map((key) => <Field key={key}>
@@ -215,6 +216,8 @@ function BotDialog({ target, uploads, close }: { target: Target; uploads: BotUpl
   const [id, setId] = useState("");
   const [cwd, setCwd] = useState("");
   const [args, setArgs] = useState("");
+  // Saved launch arguments are secret and never read back; starting can keep, replace or clear them.
+  const [clearArgs, setClearArgs] = useState(false);
   const [advanced, setAdvanced] = useState(false);
   const [settings, setSettings] = useState<Partial<BotSettings>>(() => mode === "defaults" ? state.botDefaults.data ?? {} : {});
   const [pending, setPending] = useState(false);
@@ -251,12 +254,11 @@ function BotDialog({ target, uploads, close }: { target: Target; uploads: BotUpl
     const savedSettings = Object.fromEntries(Object.entries(settings).filter(([, value]) => value !== ""));
     if (launch) {
       input = { ...input, account, ...(id.trim() && !bot ? { id: id.trim() } : {}), ...(cwd.trim() ? { cwd: cwd.trim() } : {}), ...(Object.keys(savedSettings).length ? { settings: savedSettings } : {}) };
-      if (args.trim()) {
-        try {
-          const parsed: unknown = JSON.parse(args);
-          if (!Array.isArray(parsed) || !parsed.every((arg) => typeof arg === "string")) throw new Error();
-          input.args = parsed;
-        } catch { setAdvanced(true); setArgsInvalid(true); setError("Arguments must be a JSON array of strings."); return; }
+      if (clearArgs) input.args = [];
+      else if (args.trim()) {
+        const parsed = splitArgs(args);
+        if (!parsed) { setAdvanced(true); setArgsInvalid(true); setError("Arguments have an unclosed quote."); return; }
+        input.args = parsed;
       }
     } else if (mode === "assign") input.account = account;
     else if (mode === "defaults") input = savedSettings;
@@ -295,18 +297,27 @@ function BotDialog({ target, uploads, close }: { target: Target; uploads: BotUpl
               </button>
               {advanced ? (
                 <div className="flex flex-col gap-4 rounded-xl border bg-muted/30 p-3.5 motion-safe:animate-in motion-safe:fade-in-0">
-                  <SettingsFields value={settings} onChange={setSettings} defaults={bot?.settings ?? (mode === "create" ? state.botDefaults.data : null)} />
+                  <SettingsFields value={settings} onChange={setSettings} defaults={bot?.settings ?? (mode === "create" ? state.botDefaults.data : null)} inheritLabel={mode === "create" ? "Default" : "Current"} />
                   <Field data-invalid={argsInvalid}>
                     <FieldLabel htmlFor={`${formId}-args`}>Arguments</FieldLabel>
-                    <Textarea id={`${formId}-args`} value={args} rows={2} aria-invalid={argsInvalid} className="font-mono text-xs"
-                      onChange={(event) => { setArgs(event.target.value); if (argsInvalid) { setArgsInvalid(false); setError(null); } }} placeholder={'["-c", "key=value"]'} />
-                    <FieldDescription>JSON array. Blank keeps saved; [] clears.</FieldDescription>
+                    <InputGroup>
+                      <InputGroupInput id={`${formId}-args`} value={clearArgs ? "" : args} readOnly={clearArgs} aria-invalid={argsInvalid} spellCheck={false} autoComplete="off" className="font-mono text-xs"
+                        placeholder={clearArgs ? "None" : mode === "start" ? "Keep saved arguments" : "-c key=value"}
+                        onChange={(event) => { setArgs(event.target.value); if (argsInvalid) { setArgsInvalid(false); setError(null); } }} />
+                      {mode === "start" ? (
+                        <InputGroupAddon align="inline-end">
+                          <InputGroupButton aria-pressed={clearArgs} onClick={() => { setClearArgs((value) => !value); setArgsInvalid(false); setError(null); }}>
+                            {clearArgs ? "Undo" : "Clear"}
+                          </InputGroupButton>
+                        </InputGroupAddon>
+                      ) : null}
+                    </InputGroup>
                   </Field>
                 </div>
               ) : null}
             </div>
           ) : null}
-          {mode === "defaults" ? <SettingsFields value={settings} onChange={setSettings} defaults={state.botDefaults.data} /> : null}
+          {mode === "defaults" ? <SettingsFields value={settings} onChange={setSettings} defaults={state.botDefaults.data} inheritLabel="Current" /> : null}
         </FieldSet>
         {bot?.recoveryIssue ? <Alert><AlertDescription>{bot.recoveryIssue}</AlertDescription></Alert> : null}
         {target.bot && !bot ? <Alert><AlertDescription>This Bot is gone.</AlertDescription></Alert> : null}

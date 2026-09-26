@@ -132,15 +132,18 @@ try {
   await dialog.getByLabel("Name", { exact: true }).fill("smoke-bot");
   await dialog.getByRole("button", { name: "Settings", exact: true }).click();
   await dialog.getByLabel("Model", { exact: true }).fill("fixture-model");
-  await dialog.getByLabel("Arguments", { exact: true }).fill("not json");
+  // Every inherit choice names the value it inherits.
+  await dialog.getByRole("radio", { name: "Default · medium", exact: true }).waitFor();
+  assert.equal(await dialog.getByLabel("Arguments", { exact: true }).getAttribute("placeholder"), "-c key=value");
+  await dialog.getByLabel("Arguments", { exact: true }).fill(`-c "unclosed`);
   await dialog.getByRole("button", { name: "Create and start" }).click();
-  await dialog.getByText(/Arguments must be a JSON array/).waitFor();
+  await dialog.getByText("Arguments have an unclosed quote.").waitFor();
   assert.equal(calls.filter((call) => call.name === "bot_start").length, 0);
-  await dialog.getByLabel("Arguments", { exact: true }).fill("[]");
+  await dialog.getByLabel("Arguments", { exact: true }).fill(`-c 'model_verbosity=low'`);
   await page.screenshot({ path: join(evidence, "create-bot.png"), animations: "disabled" });
   await dialog.getByRole("button", { name: "Create and start" }).click();
   await dialog.waitFor({ state: "hidden" });
-  assert.deepEqual(calls.find((call) => call.name === "bot_start").input, { id: "smoke-bot", account: id(1), settings: { model: "fixture-model" }, args: [] });
+  assert.deepEqual(calls.find((call) => call.name === "bot_start").input, { id: "smoke-bot", account: id(1), settings: { model: "fixture-model" }, args: ["-c", "model_verbosity=low"] });
   const card = page.locator('[data-node="bot:smoke-bot"]');
   await card.getByRole("button", { name: "Tools", exact: true }).click();
   await dialog.getByLabel("Operation", { exact: true }).selectOption("voice_speak");
@@ -159,6 +162,13 @@ try {
   await dialog.waitFor({ state: "hidden" });
   await card.getByRole("button", { name: "Start…", exact: true }).click();
   assert.equal(await dialog.getByRole("radio", { name: "codex-bot-account-3", exact: true }).isChecked(), true);
+  // Starting keeps saved arguments unless they are replaced or cleared.
+  await dialog.getByRole("button", { name: "Settings", exact: true }).click();
+  await dialog.getByRole("radio", { name: "Current · medium", exact: true }).waitFor();
+  assert.equal(await dialog.getByLabel("Arguments", { exact: true }).getAttribute("placeholder"), "Keep saved arguments");
+  await dialog.getByRole("button", { name: "Clear", exact: true }).click();
+  assert.equal(await dialog.getByLabel("Arguments", { exact: true }).getAttribute("placeholder"), "None");
+  await dialog.getByRole("button", { name: "Undo", exact: true }).click();
   await dialog.getByRole("button", { name: "Start Bot", exact: true }).click();
   await dialog.waitFor({ state: "hidden" });
   assert.deepEqual(calls.filter((call) => call.name === "bot_start").at(-1).input, { id: "smoke-bot", account: id(6) });
@@ -243,7 +253,7 @@ try {
   const usageWindow = page.locator('[data-window="usage"]');
   await jump("usage", "Usage");
   await usageWindow.getByRole("meter", { name: "codex-bot-account-1 5 hours remaining", exact: true }).waitFor();
-  assert.match(await usageWindow.innerText(), /\$300\.00 included/);
+  assert.match(await usageWindow.innerText(), /\$300 included/);
   await usageWindow.getByRole("button", { name: "Inspect Grok Bot usage", exact: true }).waitFor();
   await usageWindow.getByRole("button", { name: "Inspect grok-worker-account-1 usage", exact: true }).click();
   await page.getByRole("complementary", { name: "Inspector" }).getByText("allocatedUsd", { exact: true }).waitFor();
@@ -308,6 +318,20 @@ try {
   assert.ok(below.y >= accountsBottom + 20 * scale, `a window dropped inside a grown window's reach is pushed below it (${below.y} vs ${accountsBottom})`);
   await page.screenshot({ path: join(evidence, "pushed.png"), animations: "disabled" });
   await page.keyboard.press("t");
+  // A window sized taller than its content gives the extra height to its body; the footer keeps its natural height at the bottom.
+  const bottomGrip = accountsWindow.locator('[title="Resize Accounts"]').nth(1);
+  const gripBox = await bottomGrip.boundingBox();
+  await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + 300, { steps: 4 });
+  await page.mouse.up();
+  const tall = await accountsWindow.evaluate((el) => {
+    const footer = el.querySelector("footer").getBoundingClientRect(), frame = el.getBoundingClientRect(), button = el.querySelector("footer button").getBoundingClientRect();
+    return { footer: footer.height, button: button.height, gap: frame.bottom - footer.bottom, frame: frame.height };
+  });
+  assert.ok(tall.footer < 60 && tall.button < 40 && tall.gap < 4, `footer keeps its natural height at the bottom (${JSON.stringify(tall)})`);
+  await page.screenshot({ path: join(evidence, "tall-window.png"), animations: "disabled" });
+  await bottomGrip.dblclick();
   await page.emulateMedia({ colorScheme: "dark" });
   await page.screenshot({ path: join(evidence, "fleet-dark.png"), fullPage: true, animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });

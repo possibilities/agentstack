@@ -169,7 +169,7 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
           </button>
         </div>
       </header>
-      {placement.collapsed ? null : <div data-scroll className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain p-3.5">{children}</div>}
+      {placement.collapsed ? null : <div data-scroll className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain p-3.5">{children}</div>}
       {placement.collapsed || !footer ? null : <footer className="shrink-0 border-t border-border/60 p-1.5">{footer}</footer>}
       {placement.collapsed ? null : <ResizeHandles title={title} placement={placement} />}
     </section>

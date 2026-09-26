@@ -14,7 +14,7 @@ registerHooks({
   },
 });
 
-const { workerAccountLabels, providerTitle, untilTime, modelName, usageRows, catalogIdentity, catalogRows } = await import("../lib/stack/derive.ts");
+const { workerAccountLabels, providerTitle, untilTime, modelName, usageRows, catalogIdentity, catalogRows, splitArgs } = await import("../lib/stack/derive.ts");
 
 const bot = (id, linkedAccounts = []) => ({ id, enabled: true, removing: false, linkedAccounts });
 const worker = (id, provider, extra = {}) => ({ id, provider, enabled: true, ready: true, removing: false, linkedAccounts: [], ...extra });
@@ -81,4 +81,12 @@ test("catalogRows stacks accounts with identical catalogs and keeps unobserved a
   // Account ID and observation time are not part of the identity; status and provider are.
   assert.equal(identities.a, identities.c);
   assert.deepEqual(catalogRows(Object.keys(identities), (id) => identities[id]), [["a", "c"], ["b"], ["d"], ["e"], ["f"], ["g"]]);
+});
+
+test("splitArgs reads a command line: whitespace separates, quotes group, backslash escapes", () => {
+  assert.deepEqual(splitArgs(""), []);
+  assert.deepEqual(splitArgs("  -c   key=value "), ["-c", "key=value"]);
+  assert.deepEqual(splitArgs(`-c 'a b' "c \\"d\\"" e\\ f ''`), ["-c", "a b", 'c "d"', "e f", ""]);
+  assert.equal(splitArgs(`-c "open`), null);
+  assert.equal(splitArgs("-c 'open"), null);
 });
