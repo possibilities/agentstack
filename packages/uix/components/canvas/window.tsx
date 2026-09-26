@@ -47,7 +47,7 @@ export type WindowPlacement = {
   collapsed: boolean;
   animating: boolean;
   dragging: boolean;
-  onHeaderPointerDown(event: React.PointerEvent, onTap?: () => void): void;
+  onHeaderPointerDown(event: React.PointerEvent): void;
   onFocusWithin(): void;
   onToggleCollapse(): void;
   register(element: HTMLElement | null): void;
@@ -108,14 +108,10 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
     >
       {flashing ? <span key={flash!.seq} aria-hidden className="pointer-events-none absolute inset-0 rounded-[inherit] animate-uix-flash-in" /> : null}
       <header
-        onPointerDown={canvas ? (event) => placement.onHeaderPointerDown(event, toggle) : undefined}
-        onClick={!canvas && node ? (event) => {
-          if ((event.target as Element).closest("button,a,[data-interactive],[tabindex]")) return;
-          toggle();
-        } : undefined}
+        onPointerDown={canvas ? (event) => placement.onHeaderPointerDown(event) : undefined}
         className={cn(
           "group/header flex items-center gap-3 px-3.5 py-3 select-none",
-          canvas ? "cursor-grab active:cursor-grabbing" : node && "cursor-pointer",
+          canvas && "cursor-grab active:cursor-grabbing",
           !placement.collapsed && "border-b border-border/60",
         )}
       >

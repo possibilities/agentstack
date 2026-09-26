@@ -528,15 +528,13 @@ function SpaceCanvas({ space, paletteOpen, consumePendingGoTo, onArrive, onContr
         if (layoutRef.current.order.at(-1) !== id) setLayout((current) => ({ ...current, order: [...current.order.filter((entry) => entry !== id), id] }));
       },
       onToggleCollapse: () => setLayout((current) => ({ ...current, collapsed: { ...current.collapsed, [id]: !current.collapsed[id] } })),
-      onHeaderPointerDown: (event, onTap) => {
+      onHeaderPointerDown: (event) => {
         if (event.button !== 0 || (event.target as Element).closest("button,a,[data-interactive],[tabindex]")) return;
         event.preventDefault();
         const start = { px: event.clientX, py: event.clientY, ...position };
-        let moved = false;
         setDragging(id);
         const move = (next: PointerEvent) => {
           if (Math.abs(next.clientX - start.px) + Math.abs(next.clientY - start.py) <= 3) return;
-          moved = true;
           const k = viewRef.current.k;
           setLayout((current) => ({
             ...current,
@@ -545,7 +543,6 @@ function SpaceCanvas({ space, paletteOpen, consumePendingGoTo, onArrive, onContr
         };
         const up = () => {
           setDragging(null);
-          if (!moved) onTap?.();
           window.removeEventListener("pointermove", move);
           window.removeEventListener("pointerup", up);
         };

@@ -43,7 +43,7 @@ import { accountLabels, botsFor, clockTime, histogram, pathParts, providerTitle,
 import type { Account, Bot, Login, OperationDoc, PackageDoc, WorkerAccount, WorkerLogin } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
-import { BotTile, channelLabel, CopyButton, Empty, NodeCard, Orb, Row, Sparkline, StatusDot, Time } from "./primitives";
+import { BotTile, channelLabel, CopyButton, Empty, NodeCard, NodeTitle, Orb, Row, Sparkline, StatusDot, Time } from "./primitives";
 import { useActivity, useNow, useStack, useWorkbench } from "./provider";
 import { useVoice } from "./voice";
 import { accentBg, accentOf, accentText, Section, Window } from "./window";
@@ -76,9 +76,8 @@ const workerProviders: WorkerAccount["provider"][] = ["codex", "grok", "devin"];
 /** The Worker account window's menu: one terminal sign-in per provider. */
 export function AddWorkerAccountMenu({ trigger, tooltip, align = "end" }: { trigger: React.ReactElement; tooltip?: string; align?: "start" | "end" }) {
   const actions = useAuthActions();
-  const { goTo } = useWorkbench();
   const addWorker = (provider: WorkerAccount["provider"]) => {
-    void actions.worker.signIn(provider).then((attempt) => { if (attempt) goTo({ kind: "worker-account", id: attempt.account }); });
+    void actions.worker.signIn(provider);
   };
   const button = <DropdownMenuTrigger render={trigger} />;
   return (
@@ -149,7 +148,7 @@ export function SystemWindow() {
           <NodeCard node={{ kind: "owner" }} label="owner process">
             <div className="flex items-baseline justify-between gap-3">
               <div className="flex flex-col">
-                <span className="text-[0.68rem] tracking-[0.08em] text-muted-foreground uppercase">Owner</span>
+                <NodeTitle node={{ kind: "owner" }} label="owner process" className="text-[0.68rem] tracking-[0.08em] text-muted-foreground uppercase">Owner</NodeTitle>
                 <span className="font-mono text-lg font-medium tabular-nums">pid {data.pid}</span>
               </div>
               <div className="flex flex-col items-end">
@@ -172,7 +171,7 @@ export function SystemWindow() {
                   <NodeCard key={child.name} node={{ kind: "child", id: child.name }} label={`${child.name} process`} variant="row">
                     <div className="flex items-center gap-2.5 text-[0.8rem]">
                       <StatusDot tone={child.running ? "success" : failed ? "destructive" : "muted"} label={child.running ? "Running" : "Stopped"} />
-                      <span className="font-medium">{child.name}</span>
+                      <NodeTitle node={{ kind: "child", id: child.name }} label={`${child.name} process`} className="font-medium">{child.name}</NodeTitle>
                       {child.error ? <span className="truncate text-xs text-destructive" title={childFields.get("error")?.description ?? undefined}>{child.error}</span> : null}
                       {child.signal ? <Badge variant="destructive" className="h-4 text-[0.62rem]">{child.signal}</Badge> : null}
                       {child.exitCode !== null ? <Badge variant="outline" className="h-4 text-[0.62rem]">exit {child.exitCode}</Badge> : null}
@@ -222,10 +221,7 @@ export function AccountsWindow() {
   const actions = useAuthActions();
   const { goTo } = useWorkbench();
   const labels = accountLabels(accounts.data);
-  const addBot = () => {
-    actions.startSignIn();
-    goTo({ kind: "login" });
-  };
+  const addBot = () => actions.startSignIn();
 
   return (
     <Window id="accounts" title="Bot accounts" subtitle="auth · codex bot sign-ins" icon={KeyRoundIcon} accent="auth"
@@ -293,11 +289,11 @@ function SignInCard({ attempt, labels, accounts, catalog }: { attempt: Login; la
       className={cn(attempt.status === "failed" ? "border-destructive/40 bg-destructive/5" : attempt.status === "complete" ? "border-success/40 bg-success/5" : "border-pkg-auth/40 bg-pkg-auth/5")}>
       <div className="flex items-center gap-2">
         <UserRoundPlusIcon className="size-4 text-pkg-auth" />
-        <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
+        <NodeTitle node={{ kind: "login" }} label="device sign-in" className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
           {target ? (
             <>Signing in again · <Orb id={target} size="sm" /> {labels.get(target) ?? shortId(target)}</>
           ) : "New Codex Bot account"}
-        </span>
+        </NodeTitle>
         <Badge variant={attempt.status === "failed" ? "destructive" : "secondary"} className="ml-auto capitalize">{attempt.status}</Badge>
       </div>
       <div key={phase} className="flex flex-col gap-2.5 motion-safe:animate-in motion-safe:fade-in-0">
@@ -310,7 +306,7 @@ function SignInCard({ attempt, labels, accounts, catalog }: { attempt: Login; la
         ) : null}
         {phase === "code" ? (
           <>
-            <div data-interactive="" className="flex items-center justify-between gap-2 rounded-lg bg-background/70 px-3 py-2.5">
+            <div className="flex items-center justify-between gap-2 rounded-lg bg-background/70 px-3 py-2.5">
               <span className="font-mono text-2xl font-semibold tracking-[0.22em]" title={loginFields.find((field) => field.name === "userCode")?.description ?? undefined}>{attempt.userCode}</span>
               <CopyButton value={attempt.userCode ?? ""} label="one-time code" className="opacity-100" />
             </div>
@@ -386,7 +382,7 @@ function AccountCard({ account, label, bots }: { account: Account; label: string
         <Orb id={account.id} size="lg" />
         <div className="flex min-w-0 flex-col">
           <span className="flex items-center gap-2 text-sm font-semibold">
-            {label}
+            <NodeTitle node={{ kind: "account", id: account.id }} label={`account ${label}`}>{label}</NodeTitle>
             <Badge className={cn("h-4 px-1.5 text-[0.62rem]", account.enabled ? "bg-success/15 text-success" : "bg-muted text-muted-foreground")}>{account.enabled ? "Enabled" : "Disabled"}</Badge>
             {removing ? <Badge variant="destructive" className="h-4 px-1.5 text-[0.62rem]">Removing</Badge> : null}
           </span>
@@ -535,7 +531,7 @@ function WorkerAccountCard({ account, label, accounts }: { account: WorkerAccoun
         <Orb id={account.id} size="lg" />
         <div className="flex min-w-0 flex-col">
           <span className="flex flex-wrap items-center gap-1.5 text-sm font-semibold">
-            {label}
+            <NodeTitle node={{ kind: "worker-account", id: account.id }} label={`worker account ${label}`}>{label}</NodeTitle>
             <Badge className={cn("h-4 px-1.5 text-[0.62rem]", account.enabled ? "bg-success/15 text-success" : "bg-muted text-muted-foreground")}>{account.enabled ? "Enabled" : "Disabled"}</Badge>
             <Badge className={cn("h-4 px-1.5 text-[0.62rem]", account.ready ? "bg-success/15 text-success" : "bg-warning/15 text-warning")}>{account.ready ? "Ready" : "Needs sign-in"}</Badge>
             {removing ? <Badge variant="destructive" className="h-4 px-1.5 text-[0.62rem]">Removing</Badge> : null}
@@ -614,7 +610,7 @@ function WorkerAccountCard({ account, label, accounts }: { account: WorkerAccoun
 /** The link an API-run sign-in hands to the human, shown as copyable text only — never opened by the canvas. */
 function SignInLink({ url }: { url: string }) {
   return (
-    <div data-interactive="" className="group/row flex items-center gap-1.5 rounded-lg bg-background/70 px-3 py-2">
+    <div className="group/row flex items-center gap-1.5 rounded-lg bg-background/70 px-3 py-2">
       <code className="min-w-0 flex-1 truncate font-mono text-[0.72rem] text-muted-foreground" title={url}>{url}</code>
       <Button size="xs" variant="secondary" className="shrink-0" onClick={() => void navigator.clipboard.writeText(url).then(() => toast.success("Link copied")).catch(() => undefined)}>
         <CopyIcon data-icon="inline-start" />
@@ -661,7 +657,7 @@ function WorkerSignInPanel({ account, attempt, error }: { account: WorkerAccount
             </div>
           )}
           {attempt.userCode ? (
-            <div data-interactive="" className="flex items-center justify-between gap-2 rounded-lg bg-background/70 px-3 py-2.5">
+            <div className="flex items-center justify-between gap-2 rounded-lg bg-background/70 px-3 py-2.5">
               <span className="font-mono text-2xl font-semibold tracking-[0.22em]">{attempt.userCode}</span>
               <CopyButton value={attempt.userCode} label="one-time code" className="opacity-100" />
             </div>
@@ -669,14 +665,13 @@ function WorkerSignInPanel({ account, attempt, error }: { account: WorkerAccount
           {attempt.authUrl ? <SignInLink url={attempt.authUrl} /> : null}
           {attempt.needsCode ? (
             <form
-              data-interactive=""
               className="flex items-center gap-1.5"
               onSubmit={(event) => {
                 event.preventDefault();
                 if (code.trim()) void worker.submitCode(attempt, code.trim()).then(() => setCode(""), () => undefined);
               }}
             >
-              <Input value={code} onChange={(event) => setCode(event.target.value)} placeholder="Paste the code from Devin" className="h-7 flex-1 font-mono text-xs" disabled={submitting} autoFocus />
+              <Input value={code} onChange={(event) => setCode(event.target.value)} placeholder="Paste the code from Devin" className="h-7 flex-1 font-mono text-xs" disabled={submitting} />
               <Button type="submit" size="xs" variant="secondary" disabled={submitting || !code.trim()}>
                 {submitting ? <Spinner data-icon="inline-start" /> : null}
                 Submit
@@ -759,7 +754,7 @@ export function BotsWindow() {
                 <div className="flex items-center gap-3">
                   <BotTile bot={bot} pulse={!bot.recoveryIssue && Boolean(events[0] && now - events[0].at < 4_000)} />
                   <div className="flex min-w-0 flex-col">
-                    <span className="font-mono text-sm font-semibold">{bot.id}</span>
+                    <NodeTitle node={{ kind: "bot", id: bot.id }} label={`bot ${bot.id}`} className="font-mono text-sm font-semibold">{bot.id}</NodeTitle>
                     <span className="text-[0.72rem] text-muted-foreground">{bot.recoveryIssue ? "Needs inspection" : bot.state}{bot.pid ? ` · pid ${bot.pid}` : ""}</span>
                   </div>
                   {onCall ? (
@@ -873,11 +868,10 @@ export function PackagesWindow() {
             const endpoint = endpoints[doc.name];
             const channel = channelLabel(endpoint, status[doc.name]);
             return (
-              <NodeCard key={doc.name} node={{ kind: "package", id: doc.name }} label={`package ${doc.name}`} variant="row"
-                activate={() => goTo({ kind: "package", id: doc.name })}>
+              <NodeCard key={doc.name} node={{ kind: "package", id: doc.name }} label={`package ${doc.name}`} variant="row">
                 <div className="flex items-center gap-2 text-[0.8rem]">
                   <span className={cn("size-2 shrink-0 rounded-full", accentBg[accent])} aria-hidden />
-                  <span className="font-medium">{doc.name}</span>
+                  <NodeTitle node={{ kind: "package", id: doc.name }} label={`package ${doc.name}`} className="font-medium" onActivate={() => goTo({ kind: "package", id: doc.name })}>{doc.name}</NodeTitle>
                   <span className="truncate font-mono text-[0.68rem] text-muted-foreground">{doc.packageName}</span>
                   <span className="ml-auto shrink-0 text-[0.68rem] text-muted-foreground tabular-nums">
                     {doc.operations.length} ops · {Object.keys(doc.events).length} events
@@ -989,7 +983,7 @@ function OperationCard({ doc, operation }: { doc: PackageDoc; operation: Operati
   return (
     <NodeCard node={{ kind: "operation", id: operation.name, pkg: doc.name }} label={`operation ${operation.name}`}>
       <div className="flex items-center gap-2 text-[0.8rem]">
-        <span className="truncate font-medium">{operationTitle(operation)}</span>
+        <NodeTitle node={{ kind: "operation", id: operation.name, pkg: doc.name }} label={`operation ${operation.name}`} className="truncate font-medium">{operationTitle(operation)}</NodeTitle>
         <span className="truncate font-mono text-[0.68rem] text-muted-foreground">{operation.name}</span>
         <span className="ml-auto flex shrink-0 gap-1"><OperationBadges operation={operation} /></span>
       </div>

@@ -32,7 +32,7 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
   const removable = (account: Account) => !account.removing;
   const workerRemovable = (account: WorkerAccount) => !account.removing;
   const addWorker = (provider: WorkerAccount["provider"]) => {
-    void auth.worker.signIn(provider).then((attempt) => { if (attempt) goTo({ kind: "worker-account", id: attempt.account }); });
+    void auth.worker.signIn(provider);
   };
 
   return (
@@ -110,7 +110,7 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
             </CommandGroup>
           ) : null}
           <CommandGroup heading="Account actions">
-            <CommandItem value="action add codex bot account sign in" onSelect={() => act(() => { auth.startSignIn(); goTo({ kind: "login" }); })}>
+            <CommandItem value="action add codex bot account sign in" onSelect={() => act(() => auth.startSignIn())}>
               <UserRoundPlusIcon />
               Add Codex Bot account
             </CommandItem>

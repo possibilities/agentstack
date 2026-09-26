@@ -160,10 +160,10 @@ export function Sparkline({ values, className }: { values: number[]; className?:
 }
 
 /**
- * A selectable card on the canvas. The full-card button provides selection
- * and keyboard access; nested controls sit above it with `relative z-10`.
+ * A selectable card on the canvas. Nothing inside it inspects by default —
+ * put a NodeTitle on its visible name for the explicit inspect control.
  */
-export function NodeCard({ node, label, children, className, lastEvent, accent, variant = "card", activate }: {
+export function NodeCard({ node, label, children, className, lastEvent, accent, variant = "card" }: {
   node: NodeRef;
   label: string;
   children: React.ReactNode;
@@ -171,8 +171,6 @@ export function NodeCard({ node, label, children, className, lastEvent, accent, 
   lastEvent?: StackEvent;
   accent?: string;
   variant?: "card" | "row";
-  /** Overrides the default click (select toggle), e.g. to navigate to the node across spaces. */
-  activate?: () => void;
 }) {
   const { selected, hovered, select, hover, flash } = useWorkbench();
   const key = nodeKey(node);
@@ -196,17 +194,31 @@ export function NodeCard({ node, label, children, className, lastEvent, accent, 
     >
       {lastEvent ? <span key={lastEvent.seq} aria-hidden className="pointer-events-none absolute inset-0 rounded-[inherit] animate-uix-ping" /> : null}
       {flashing ? <span key={flash!.seq} aria-hidden className="pointer-events-none absolute -inset-1 rounded-[inherit] animate-uix-flash" /> : null}
-      <button
-        type="button"
-        aria-label={`Inspect ${label}`}
-        aria-pressed={isSelected}
-        className="absolute inset-0 rounded-[inherit] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        onClick={() => (activate ? activate() : select(isSelected ? null : node))}
-      />
-      <div className="pointer-events-none relative flex flex-col gap-2 [&_a]:relative [&_a]:z-10 [&_a]:pointer-events-auto [&_button]:pointer-events-auto [&_[data-interactive]]:pointer-events-auto">
-        {children}
-      </div>
+      <div className="relative flex flex-col gap-2">{children}</div>
     </article>
+  );
+}
+
+/** The card's visible name and its only inspect control — toggles selection, or navigates when `onActivate` is set. */
+export function NodeTitle({ node, label, children, className, onActivate }: {
+  node: NodeRef;
+  label: string;
+  children: React.ReactNode;
+  className?: string;
+  onActivate?: () => void;
+}) {
+  const { selected, select } = useWorkbench();
+  const isSelected = selected !== null && nodeKey(selected) === nodeKey(node);
+  return (
+    <button
+      type="button"
+      aria-pressed={isSelected}
+      aria-label={`${onActivate ? "Go to" : "Inspect"} ${label}`}
+      onClick={() => (onActivate ? onActivate() : select(isSelected ? null : node))}
+      className={cn("rounded-sm text-left decoration-muted-foreground/50 underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring", className)}
+    >
+      {children}
+    </button>
   );
 }
 
