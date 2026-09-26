@@ -23,7 +23,7 @@ test("workerAccountLabels numbers densely per provider in list order", () => {
   const labels = workerAccountLabels([
     worker("a", "codex"), worker("b", "grok"), worker("c", "codex"), worker("d", "devin"), worker("e", "grok"), worker("f", "codex"),
   ]);
-  assert.deepEqual(Object.fromEntries(labels), { a: "codex-worker-auth-1", b: "grok-worker-auth-1", c: "codex-worker-auth-2", d: "devin-worker-auth-1", e: "grok-worker-auth-2", f: "codex-worker-auth-3" });
+  assert.deepEqual(Object.fromEntries(labels), { a: "codex-worker-account-1", b: "grok-worker-account-1", c: "codex-worker-account-2", d: "devin-worker-account-1", e: "grok-worker-account-2", f: "codex-worker-account-3" });
   assert.deepEqual(workerAccountLabels(null), new Map());
   assert.deepEqual(workerAccountLabels([]), new Map());
 });
