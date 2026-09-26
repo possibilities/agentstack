@@ -144,7 +144,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     assert.ok(docsUrl, stderr);
     const indexUrl = `http://127.0.0.1:${uixPort}/`;
     const uixUrl = `http://127.0.0.1:${uixPort}/x`;
-    assert.ok(stderr.includes(`AgentStack index: ${indexUrl}`), stderr);
+    assert.ok(stderr.includes(`AgentStack UI entry: ${indexUrl}`), stderr);
     assert.ok(stderr.includes(`AgentStack UI canvas: ${uixUrl}`), stderr);
     const ownerStatus = await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} }) as {
       indexUrl: string; uixUrl: string; inspectorUrl: string; mcpUrls: Record<string, string>;
@@ -178,32 +178,33 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     assert.match(html, new RegExp((await revision.json() as { revision: string }).revision));
     assert.equal((await fetch(`${docsUrl}/site.css`)).status, 200);
     assert.equal((await fetch(new URL("/", docsUrl))).status, 404);
-    let index: Response | undefined;
+    let entry: Response | undefined;
     for (let i = 0; i < 200; i += 1) {
       try {
-        index = await fetch(new URL("/", uixUrl));
-        if (index.ok) break;
+        entry = await fetch(indexUrl, { redirect: "manual" });
+        if (entry.status === 308) break;
       } catch {
         // Next.js may still be starting.
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    assert.equal(index?.status, 200, stderr);
-    const indexHtml = await index.text();
-    assert.match(indexHtml, /<h1[^>]*>AgentStack<\/h1>/);
-    assert.match(indexHtml, /Local links and bot processes/);
-    assert.match(indexHtml, /Package API reference/);
-    assert.match(indexHtml, /MCP Inspector/);
-    assert.match(indexHtml, /No running bots/);
-    assert.match(indexHtml, /Package API URLs/);
-    assert.ok(indexHtml.includes(uixUrl));
-    assert.ok(indexHtml.includes(docsUrl));
-    assert.ok(indexHtml.includes(ownerStatus.mcpUrls.owner));
+    assert.equal(entry?.status, 308, stderr);
+    assert.equal(new URL(entry.headers.get("location")!, indexUrl).href, uixUrl);
+    const system = await fetch(new URL("/x/system", uixUrl));
+    assert.equal(system.status, 200);
+    const systemHtml = await system.text();
+    assert.match(systemHtml, /API reference/);
+    assert.match(systemHtml, /MCP Inspector/);
+    assert.match(systemHtml, /MCP endpoints/);
+    assert.ok(systemHtml.includes(docsUrl));
+    assert.ok(systemHtml.includes(ownerStatus.inspectorUrl));
+    assert.ok(systemHtml.includes(ownerStatus.mcpUrls.owner));
     const canvas = await fetch(uixUrl);
     assert.equal(canvas.status, 200);
     const canvasHtml = await canvas.text();
     assert.match(canvasHtml, /<main[^>]*data-canvas="workbench"/);
     assert.match(canvasHtml, /<h1[^>]*>AgentStack Fleet canvas<\/h1>/);
+    assert.match(canvasHtml, /No bots yet/);
     assert.doesNotMatch(canvasHtml, /Local links and Server processes/);
     const stylesheets = [...new Set([...canvasHtml.matchAll(/href="(\/_next\/static\/[^"]+\.css)"/g)].map((match) => match[1]))];
     assert.ok(stylesheets.length > 0);

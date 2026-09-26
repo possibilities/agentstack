@@ -39,7 +39,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { annotationBadges, fieldsOf, findOperation, operationTitle } from "@/lib/stack/catalog";
-import { accountLabels, botsFor, clockTime, histogram, pathParts, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
+import { accountLabels, botsFor, clockTime, histogram, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
 import type { Account, Bot, Login, OperationDoc, PackageDoc, WorkerAccount, WorkerLogin } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
@@ -50,17 +50,6 @@ import { useVoice } from "./voice";
 import { accentBg, accentOf, accentText, Section, Window } from "./window";
 
 const activitySpan = 5 * 60_000;
-
-export function Path({ path }: { path: string }) {
-  const { head, tail } = pathParts(path);
-  const parent = head.split("/").filter(Boolean).at(-1);
-  return (
-    <span className="font-mono text-[0.75rem]" title={path}>
-      <span className="text-muted-foreground">{parent ? `…/${parent}/` : head}</span>
-      {tail}
-    </span>
-  );
-}
 
 export function AccountChip({ id, labels }: { id: string | null; labels: Map<string, string> }) {
   if (!id) return <span className="text-muted-foreground">Unbound</span>;
@@ -136,9 +125,8 @@ export function SystemWindow() {
   }, [catalog.data]);
   const running = data?.children.filter((child) => child.running).length ?? 0;
   const links = data ? [
-    { name: "Runtime index", url: data.indexUrl, icon: CpuIcon },
     { name: "API reference", url: data.docsUrl, icon: BookOpenIcon },
-    { name: "MCP Inspector", url: data.inspectorUrl, icon: BracesIcon },
+    { name: "MCP Inspector", url: data.children.some((child) => child.name === "inspector" && child.running) ? data.inspectorUrl : null, icon: BracesIcon },
   ].filter((link): link is typeof link & { url: string } => link.url !== null) : [];
 
   return (
@@ -190,10 +178,12 @@ export function SystemWindow() {
                 {links.map(({ name, url, icon: Icon }) => (
                   <a key={name} href={url} target="_blank" rel="noreferrer"
                     className="group/link flex items-center gap-2.5 rounded-lg border bg-background/50 px-2.5 py-2 text-[0.8rem] transition-colors hover:border-foreground/15 hover:bg-background focus-visible:outline-2 focus-visible:outline-ring">
-                    <Icon className="size-3.5 text-muted-foreground" />
-                    <span className="font-medium">{name}</span>
-                    <span className="ml-auto truncate font-mono text-[0.7rem] text-muted-foreground">{new URL(url).host}</span>
-                    <ArrowUpRightIcon className="size-3.5 text-muted-foreground transition-transform group-hover/link:translate-x-px group-hover/link:-translate-y-px" />
+                    <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span className="font-medium">{name}</span>
+                      <span className="break-all font-mono text-[0.7rem] text-muted-foreground">{url}</span>
+                    </span>
+                    <ArrowUpRightIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover/link:translate-x-px group-hover/link:-translate-y-px" />
                   </a>
                 ))}
               </div>
@@ -203,7 +193,7 @@ export function SystemWindow() {
           <Section title="MCP endpoints">
             <dl className="flex flex-col">
               {Object.entries(data.mcpUrls).sort(([a], [b]) => a.localeCompare(b)).map(([name, url]) => (
-                <Row key={name} label={name} copy={url} mono>{url.replace(/^http:\/\//, "")}</Row>
+                <Row key={name} label={name} copy={url} mono className="[&>dd]:break-all [&>dd]:whitespace-normal">{url}</Row>
               ))}
             </dl>
           </Section>
@@ -773,7 +763,8 @@ export function BotsWindow() {
                   <Row label="Role revision" mono>{bot.roleRevision ?? "Never launched"}</Row>
                   <Row label="Saved model">{bot.settings?.model ?? "Codex implicit default"}</Row>
                   <Row label="Saved effort">{bot.settings?.reasoningEffort ?? "Codex implicit default"}</Row>
-                  <Row label="Workspace" copy={bot.cwd}><Path path={bot.cwd} /></Row>
+                  <Row label="Workspace" copy={bot.cwd} mono className="[&>dd]:break-all [&>dd]:whitespace-normal">{bot.cwd}</Row>
+                  {bot.url ? <Row label="Endpoint" copy={bot.url} mono className="[&>dd]:break-all [&>dd]:whitespace-normal">{bot.url}</Row> : null}
                 </dl>
                 {bot.recoveryIssue ? <RecoveryWarning message={bot.recoveryIssue} /> : null}
                 {bot.state === "running" && !bot.recoveryIssue && bot.account !== bot.runningAccount ? (

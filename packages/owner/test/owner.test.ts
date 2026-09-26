@@ -94,7 +94,7 @@ test("the owner starts the required socket children", () => {
   assert.equal(uix.command, process.execPath);
   assert.equal(existsSync(uix.args[0] ?? ""), true);
   assert.deepEqual(uix.args.slice(1), ["start", "--hostname", "127.0.0.1", "--port", "8745"]);
-  assert.equal(existsSync(join(uix.cwd ?? "", "app", "page.tsx")), true);
+  assert.equal(existsSync(join(uix.cwd ?? "", "app", "x", "[[...space]]", "page.tsx")), true);
   assert.equal(uixPort({}), 8745);
   assert.equal(uixPort({ AGENTSTACK_UIX_PORT: "8123" }), 8123);
   assert.throws(() => uixPort({ AGENTSTACK_UIX_PORT: "0" }), /AGENTSTACK_UIX_PORT/);

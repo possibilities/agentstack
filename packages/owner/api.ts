@@ -25,8 +25,8 @@ export const ownerStatus = operation({
   output: z.object({
     pid: z.number().int().describe("Owner process id."),
     docsUrl: z.string().nullable().describe("Loopback docs URL while the owner serves it."),
-    indexUrl: z.string().nullable().describe("Loopback runtime index URL while the owner runs it."),
-    uixUrl: z.string().nullable().describe("Loopback /x experiment canvas URL while the owner runs it."),
+    indexUrl: z.string().nullable().describe("Loopback UI entry URL; / redirects to the /x canvas while the owner runs it."),
+    uixUrl: z.string().nullable().describe("Loopback /x canvas URL while the owner runs it."),
     inspectorUrl: z.string().nullable().describe("Loopback Inspector URL while the owner runs it."),
     mcpUrls: z.record(z.string(), z.string()).describe("Loopback MCP URLs by Package API name."),
     children: z.array(childStatusSchema),
