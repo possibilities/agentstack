@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
@@ -74,6 +74,11 @@ test("Claude reads and deletes only its reserved keychain service and treats key
       calls.push(args); return { code, stdout: JSON.stringify(credential("keychain-token")) };
     } };
     await prepareAccountProfile(root, account, options);
+    // Native `security` finds the default keychain under the account HOME.
+    const keychains = join(accountRoot(root, account.id), "Library", "Keychains");
+    assert.equal(await readlink(keychains), join(userInfo().homedir, "Library", "Keychains"));
+    await prepareAccountProfile(root, account, options);
+    assert.equal(await readlink(keychains), join(userInfo().homedir, "Library", "Keychains"));
     await fixture(root, account.id, identityA, "file-token");
     code = 0;
     assert.equal((await readClaudeCredentials(root, account.id, options)).access, "keychain-token");

@@ -12,7 +12,7 @@ The public Worker identity field is `sessionId`, replacing `acpSessionId`. This 
 
 ## Accounts and observations
 
-Every Claude account uses its own native Claude Code sign-in under AgentStack state. AgentUsage's source informs credential isolation and quota parsing; its account inventory, credentials, proxy, selection and balancing policies are not imported. Native Claude remains responsible for refreshing its credentials. Ambient Anthropic keys, OAuth overrides, provider selection and routing variables cannot silently choose another identity for an AgentStack Worker.
+Every Claude account uses its own native Claude Code sign-in under AgentStack state. AgentUsage's source informs credential isolation and quota parsing; its account inventory, credentials, proxy, selection and balancing policies are not imported. Native Claude remains responsible for refreshing its credentials. On macOS it stores them through `security`, which resolves the default keychain under `$HOME`, so the account's isolated HOME links `Library/Keychains` to the user's own keychains; the per-profile service name, not a separate keychain, keeps accounts apart. Ambient Anthropic keys, OAuth overrides, provider selection and routing variables cannot silently choose another identity for an AgentStack Worker.
 
 The existing account login operations surface a copyable native sign-in link and any required paste-back code. Only the human visits that link. Account disabling and removal drain the exact account backend, preserving Worker records for inspection. Read-only usage observations retain the last good measurement, time, freshness and sanitized failure code; quota is not a dispatch recommendation.
 

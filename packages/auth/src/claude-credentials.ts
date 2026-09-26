@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readlink, symlink, unlink, writeFile } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
@@ -99,11 +99,31 @@ async function ownedProfile(stateDir: string, id: string): Promise<string> {
   return root;
 }
 
+const created = (error: NodeJS.ErrnoException) => { if (error.code !== "EEXIST") throw error; };
+
+/**
+ * Native Claude stores credentials through `security`, which resolves the login keychain under $HOME.
+ * The account HOME links the user's own keychains so that write never finds no default keychain.
+ */
+async function linkUserKeychains(accountHome: string): Promise<void> {
+  const library = join(accountHome, "Library"), link = join(library, "Keychains");
+  const target = join(userInfo().homedir, "Library", "Keychains");
+  await mkdir(library, { mode: 0o700 }).catch(created);
+  await privateDirectory(library);
+  const existing = await lstat(link).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
+  // A real directory here is a keychain created under the account HOME; never replace it.
+  if (existing && !existing.isSymbolicLink()) throw new ClaudeCredentialError("keychain_unavailable");
+  if (existing && await readlink(link) === target) return;
+  if (existing) await unlink(link);
+  await symlink(target, link);
+}
+
 export async function prepareClaudeProfile(stateDir: string, id: string, options: ClaudeCredentialOptions = {}): Promise<void> {
   const root = claudeConfigRoot(stateDir, id);
-  await mkdir(root, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => { if (error.code !== "EEXIST") throw error; });
+  await mkdir(root, { mode: 0o700 }).catch(created);
   for (const path of [resolve(stateDir), resolve(stateDir, "worker-accounts"), resolve(stateDir, "worker-accounts", id), root])
     await privateDirectory(path);
+  if (onMac(options)) await linkUserKeychains(resolve(stateDir, "worker-accounts", id));
   const marker = await privateJson(join(root, ".agentstack-profile.json"), true);
   if (marker) { await ownedProfile(stateDir, id); return; }
   // A fresh profile must not claim an existing native store or an 8-digit service-hash collision.
