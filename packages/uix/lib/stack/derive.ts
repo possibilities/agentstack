@@ -17,14 +17,14 @@ export function accountLabels(accounts: Account[] | null): Map<string, string> {
   return new Map((accounts ?? []).map((account, index) => [account.id, `codex-${index + 1}`]));
 }
 
-/** Dense per-provider labels in list order: `codex-wN`, `grok-N`, `devin-N`. */
+/** Dense per-provider labels in list order: `codex-worker-N`, `grok-worker-N`, `devin-worker-N`. */
 export function workerAccountLabels(workers: WorkerAccount[] | null): Map<string, string> {
   const labels = new Map<string, string>();
   const counts = new Map<WorkerAccount["provider"], number>();
   for (const worker of workers ?? []) {
     const next = (counts.get(worker.provider) ?? 0) + 1;
     counts.set(worker.provider, next);
-    labels.set(worker.id, worker.provider === "codex" ? `codex-w${next}` : `${worker.provider}-${next}`);
+    labels.set(worker.id, `${worker.provider}-worker-${next}`);
   }
   return labels;
 }

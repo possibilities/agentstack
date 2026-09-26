@@ -112,7 +112,7 @@ test("the UI entry redirects to the canvas without losing local links, processes
       readDock("/x/fleet?reference=package%3Abrain", "right"),
     ]);
     assert.match(system, /Filter System/);
-    for (const value of ["MCP Inspector", "MCP endpoints", "inspector", "9876", "workers", "Fixture spawn failure", owner.inspectorUrl, owner.mcpUrls.owner]) {
+    for (const value of ["MCP Inspector", "Packages", "inspector", "9876", "workers", "Fixture spawn failure", owner.inspectorUrl, owner.mcpUrls.owner]) {
       assert.ok(system.includes(value), `System is missing ${value}`);
     }
     assert.ok(!system.includes("reference=overview"), "System links only MCP Inspector as a surface");

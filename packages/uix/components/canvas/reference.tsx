@@ -1,12 +1,12 @@
 "use client";
 
 import { useDeferredValue, useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeftIcon, BookOpenIcon, Maximize2Icon, Minimize2Icon, XIcon } from "lucide-react";
+import { ArrowLeftIcon, BookOpenIcon, ChevronRightIcon, Maximize2Icon, Minimize2Icon, SearchIcon, XIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Separator } from "@/components/ui/separator";
-import { operationTitle, typeLabel } from "@/lib/stack/catalog";
+import { annotationBadges, operationTitle, typeLabel } from "@/lib/stack/catalog";
 import { emptyLocation, locationHref, type ReferenceTarget } from "@/lib/stack/navigation";
 import { requestExample, subscriptionExample, transportInstructions } from "@/lib/stack/reference";
 import { nodeKey, type JsonSchema, type NodeRef, type OperationDoc, type PackageDoc, type TransportDoc } from "@/lib/stack/types";
@@ -64,9 +64,9 @@ function Transport({ transport }: { transport: TransportDoc }) {
 
 function Operation({ doc, operation }: { doc: PackageDoc; operation: OperationDoc }) {
   return <article className="flex min-w-0 flex-col gap-6">
-    <header className="flex flex-col gap-2"><p className="text-xs text-muted-foreground"><LinkTo target={{ kind: "package", id: doc.name }}>{doc.name}</LinkTo> / Operation</p>
+    <header className="flex flex-col gap-2">
       <h3 className="text-xl font-semibold tracking-tight">{operationTitle(operation)}</h3><code className="break-all text-xs">{operation.name}</code><p className="text-sm leading-relaxed text-muted-foreground">{operation.description}</p>
-      <dl className="flex flex-wrap gap-2">{Object.entries(operation.annotations).map(([key, value]) => <div key={key} className="flex items-center gap-1 text-xs"><dt className="text-muted-foreground">{key}</dt><dd><Badge variant="outline">{String(value)}</Badge></dd></div>)}</dl>
+      {annotationBadges(operation).length ? <div className="flex flex-wrap gap-1.5">{annotationBadges(operation).map(({ key, label }) => <Badge key={key} variant={key === "destructiveHint" ? "destructive" : "secondary"}>{label}</Badge>)}</div> : null}
     </header>
     <Schema title="Input" schema={operation.inputSchema} /><Separator /><Schema title="Output" schema={operation.outputSchema} /><Separator />
     <section className="flex min-w-0 flex-col gap-4"><h4 className="text-sm font-semibold">Request templates</h4><p className="text-xs leading-relaxed text-muted-foreground">Fill each &lt;replace: …&gt; placeholder. Shows required fields only; templates are not validated.</p>
@@ -121,13 +121,27 @@ export function Reference({ target, onOverview, onClose, hasInspection, expanded
   const operation = target !== "overview" && target.kind === "operation" ? doc?.operations.find((op) => op.name === target.id) : null;
   const matches = docs.map((d) => ({ doc: d, packageMatch: `${d.name} ${d.packageName} ${d.description}`.toLowerCase().includes(search), operations: d.operations.filter((op) => `${d.name} ${op.name} ${operationTitle(op)} ${op.description}`.toLowerCase().includes(search)) })).filter((d) => d.packageMatch || d.operations.length);
   return <div className="flex min-h-0 flex-1 flex-col" data-reference>
-    <header className="flex min-h-14 shrink-0 items-center gap-2 border-b px-4"><BookOpenIcon className="size-4" /><h2 ref={heading} tabIndex={-1} className="mr-auto text-sm font-semibold outline-none">API reference</h2>
+    <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+      <BookOpenIcon aria-hidden className="size-4 shrink-0 text-pkg-api" />
+      <nav aria-label="Reference location" className="mr-auto flex min-w-0 items-center gap-1 text-sm">
+        <h2 ref={heading} tabIndex={-1} className="shrink-0 outline-none">
+          {target === "overview" ? <span className="font-semibold">API reference</span>
+            : <button type="button" className="rounded-sm font-semibold text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" onClick={() => { setQuery(""); onOverview(); }}>API reference</button>}
+        </h2>
+        {name ? <><ChevronRightIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+          {operation ? <LinkTo target={{ kind: "package", id: name }}><span className="text-muted-foreground hover:text-foreground">{name}</span></LinkTo> : <span className="truncate font-medium">{name}</span>}</> : null}
+        {operation ? <><ChevronRightIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" /><span className="truncate font-mono text-xs font-medium">{operation.name}</span></> : null}
+      </nav>
       {hasInspection ? <Button variant="ghost" size="sm" onClick={onClose}><ArrowLeftIcon data-icon="inline-start" />Inspector</Button> : null}
+      <CopyButton value={typeof window === "undefined" ? locationHref({ ...emptyLocation(space), reference: target }) : new URL(locationHref({ ...emptyLocation(space), reference: target }), window.location.origin).href} label="reference link" className="size-7 opacity-100" />
       <Button variant="ghost" size="icon-sm" className="max-[899px]:hidden" aria-label={expanded ? "Restore reference width" : "Expand reading mode"} aria-pressed={expanded} onClick={onExpand}>{expanded ? <Minimize2Icon /> : <Maximize2Icon />}</Button>
       <Button variant="ghost" size="icon-sm" aria-label="Close API reference" onClick={onClose}><XIcon /></Button>
     </header>
-    <div className="flex shrink-0 flex-col gap-2 border-b p-4"><label htmlFor="reference-search" className="text-xs font-medium">Find a package or operation</label><Input id="reference-search" type="search" autoComplete="off" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search names and descriptions…" />
-      <div className="flex items-center justify-between gap-2"><Button variant="ghost" size="sm" onClick={() => { setQuery(""); onOverview(); }}>Overview</Button><CopyButton value={typeof window === "undefined" ? locationHref({ ...emptyLocation(space), reference: target }) : new URL(locationHref({ ...emptyLocation(space), reference: target }), window.location.origin).href} label="reference link" className="opacity-100" /></div>
+    <div className="shrink-0 border-b px-4 py-3">
+      <InputGroup className="h-8">
+        <InputGroupAddon><SearchIcon /></InputGroupAddon>
+        <InputGroupInput id="reference-search" type="search" autoComplete="off" aria-label="Find a package or operation" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a package or operation" />
+      </InputGroup>
     </div>
     <div ref={scroller} data-scroll className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto overscroll-contain p-5" onScroll={(event) => positions.current.set(key, event.currentTarget.scrollTop)}>
       {catalog.error ? <p role="status" className="text-sm text-destructive">Discovery: {catalog.error}{catalog.data ? " · Showing the last successful snapshot." : ""}</p> : null}

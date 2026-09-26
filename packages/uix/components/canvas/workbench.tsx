@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { BookOpenIcon, CpuIcon, LayersIcon, LayoutDashboardIcon, MinusIcon, PanelRightIcon, PlusIcon, ScanIcon, SearchIcon } from "lucide-react";
+import { BookOpenIcon, ChevronDownIcon, CpuIcon, LayersIcon, LayoutDashboardIcon, MinusIcon, PanelLeftIcon, PanelRightIcon, PlusIcon, ScanIcon, SearchIcon } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -194,7 +195,7 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
   return <div className="contents" style={{ "--system": `${left}px`, "--sheet": `${right}px` } as React.CSSProperties}>
     <WorkbenchContext value={workbench}><AuthActionsProvider><VoiceProvider><BotActionsProvider>
       <Bench space={location.space} left={left} blocked={paletteOpen} onControls={reportControls} onScale={setScale} onArrive={flashNow} />
-      <TopBar space={location.space} setSpace={setSpace} compact={screenWidth - left - right < 440} system={systemVisible} reference={Boolean(location.reference) && rightVisible} inspectorAvailable={overlay && Boolean(location.inspect) && !rightVisible} openInspector={openInspector} openSystem={openSystem} openReference={openReference} openPalette={() => setPaletteOpen(true)} />
+      <TopBar space={location.space} setSpace={setSpace} compact={screenWidth - left - right < 440} system={systemVisible} reference={Boolean(location.reference) && rightVisible} inspectorAvailable={overlay && Boolean(location.inspect) && !rightVisible} openInspector={openInspector} openSystem={openSystem} openReference={openReference} openPalette={() => setPaletteOpen(true)} fit={() => controls?.fit()} />
       <div data-chrome className="fixed bottom-4 z-30 flex -translate-x-1/2 items-center gap-1 rounded-xl border bg-card/95 p-1 shadow-sm" style={{ left: "calc(var(--system) + (100% - var(--system) - var(--sheet))/2)" }}>
         <Tool label="Zoom out" onClick={() => controls?.zoom(1 / 1.2)}><MinusIcon /></Tool>
         <Button variant="ghost" size="sm" aria-label="Actual size" className="w-14 tabular-nums" onClick={() => controls?.zoom(1 / scale)}>{Math.round(scale * 100)}%</Button>
@@ -222,30 +223,55 @@ function Tool({ label, onClick, children }: { label: string; onClick(): void; ch
   return <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label={label} onClick={onClick} />}>{children}</TooltipTrigger><TooltipContent>{label}</TooltipContent></Tooltip>;
 }
 
-function TopBar({ space, setSpace, compact, system, reference, inspectorAvailable, openInspector, openSystem, openReference, openPalette }: {
-  space: SpaceId; setSpace(space: SpaceId): void; compact: boolean; system: boolean; reference: boolean; inspectorAvailable: boolean; openInspector(): void; openSystem(): void; openReference(): void; openPalette(): void;
+/** Places and tools are separate: the Spaces menu moves the camera; System and API open docks on their own edges. */
+function TopBar({ space, setSpace, compact, system, reference, inspectorAvailable, openInspector, openSystem, openReference, openPalette, fit }: {
+  space: SpaceId; setSpace(space: SpaceId): void; compact: boolean; system: boolean; reference: boolean; inspectorAvailable: boolean; openInspector(): void; openSystem(): void; openReference(): void; openPalette(): void; fit(): void;
 }) {
   const state = useStack();
   const attention = spaceAttention(state);
   const closed = Object.entries(state.status).filter(([, status]) => status === "closed").map(([name]) => `${name} reconnecting`);
   const reasons = [...new Set([...attention.system, ...closed])];
+  const elsewhere = spaces.some((item) => item.id !== (space as string) && (attention as Record<string, string[]>)[item.id].length > 0);
+  const dot = <span className="size-1.5 shrink-0 rounded-full bg-warning" aria-label="needs attention" />;
   return <header data-chrome className="pointer-events-none fixed top-3 z-30 flex items-start justify-between gap-2" style={{ left: "calc(var(--system) + 12px)", right: "calc(var(--sheet) + 12px)" }}>
-    <div className="pointer-events-auto flex items-center gap-1 rounded-xl border bg-card/95 p-1.5 shadow-sm">
-      {!compact ? <LayersIcon aria-hidden className="mx-1 size-4 shrink-0" /> : null}
-      <nav aria-label="Spaces" className="flex">
-        {spaces.map((item) => <a key={item.id} href={spaceHref(item.id)} aria-current={item.id === space ? "location" : undefined}
-          onClick={(event) => { if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); setSpace(item.id); } }}
-          className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring" title={attention[item.id].join(" · ")}>
-          {item.title}{attention[item.id].length ? <span className="size-1.5 rounded-full bg-warning" aria-label="needs attention" /> : null}
-        </a>)}
-      </nav>
-      {!compact ? <Separator orientation="vertical" className="mx-1 h-5! self-center" /> : null}
-      <Tooltip><TooltipTrigger render={<Button data-dock-trigger="left" variant="ghost" size="sm" aria-label="Open System dock" aria-expanded={system} onClick={openSystem} />}>
-        <CpuIcon data-icon="inline-start" />{!compact ? <span className="hidden sm:inline">System</span> : null}{reasons.length ? <span className="size-1.5 rounded-full bg-warning" aria-label="needs attention" /> : null}
-      </TooltipTrigger><TooltipContent className="max-w-80">{reasons.length ? reasons.join(" · ") : "System · processes, connections and activity"}</TooltipContent></Tooltip>
-      <Button data-dock-trigger="right" variant="ghost" size="sm" aria-label="Open API reference" aria-expanded={reference} onClick={openReference}><BookOpenIcon data-icon="inline-start" />{!compact ? <span className="hidden sm:inline">API</span> : null}{attention.api.length ? <span className="size-1.5 rounded-full bg-warning" aria-label="needs attention" /> : null}</Button>
-      {inspectorAvailable ? <Button variant="ghost" size="icon-sm" aria-label="Return to inspector" onClick={openInspector}><PanelRightIcon /></Button> : null}
+    <div className="pointer-events-auto flex items-center gap-1 rounded-xl border bg-card/95 p-1 shadow-sm">
+      <Tooltip><TooltipTrigger render={<Button data-dock-trigger="left" variant="ghost" size="sm" aria-label="Open System dock" aria-expanded={system} aria-pressed={system} onClick={openSystem} className="aria-pressed:bg-muted" />}>
+        <PanelLeftIcon data-icon="inline-start" />{!compact ? "System" : null}{reasons.length ? dot : null}
+      </TooltipTrigger><TooltipContent side="bottom" className="max-w-80">{reasons.length ? reasons.join(" · ") : "Processes, connections, activity"}</TooltipContent></Tooltip>
+      {!compact ? <Separator orientation="vertical" className="mx-0.5 h-5! self-center" /> : null}
+      <DropdownMenu>
+        <DropdownMenuTrigger render={<Button variant="ghost" size="sm" aria-label={`Spaces · ${spaceTitle(space)}`} className="gap-1.5 font-semibold" />}>
+          <LayersIcon data-icon="inline-start" />{!compact ? spaceTitle(space) : null}{attention[space].length || elsewhere ? dot : null}<ChevronDownIcon className="size-3.5 text-muted-foreground" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="min-w-60">
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>Spaces</DropdownMenuLabel>
+            {spaces.map((item) => (
+              <DropdownMenuItem key={item.id} aria-current={item.id === space ? "location" : undefined} title={attention[item.id].join(" · ") || undefined}
+                render={<a href={spaceHref(item.id)} onClick={(event) => { if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); setSpace(item.id); } }} />}>
+                <LayersIcon />
+                <span className="flex min-w-0 flex-col">
+                  <span className="flex items-center gap-1.5 font-medium">{item.title}{attention[item.id].length ? dot : null}</span>
+                  <span className="truncate text-xs text-muted-foreground">{item.description}</span>
+                </span>
+                <DropdownMenuShortcut>{item.key}</DropdownMenuShortcut>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={fit}><ScanIcon />Show all<DropdownMenuShortcut>F</DropdownMenuShortcut></DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
-    <div className="pointer-events-auto flex items-center gap-2">{!compact ? <CallLauncher /> : null}<Button variant="outline" size="icon" aria-label="Jump to (Command K)" onClick={openPalette}><SearchIcon /></Button></div>
+    <div className="pointer-events-auto flex items-center gap-2">
+      {!compact ? <CallLauncher /> : null}
+      <Tooltip><TooltipTrigger render={<Button variant="outline" size="icon" aria-label="Jump to (Command K)" onClick={openPalette} />}><SearchIcon /></TooltipTrigger><TooltipContent side="bottom">Jump to <kbd className="ml-1 font-sans opacity-70">⌘K</kbd></TooltipContent></Tooltip>
+      <div className="flex items-center gap-1 rounded-xl border bg-card/95 p-1 shadow-sm">
+        {inspectorAvailable ? <Button variant="ghost" size="icon-sm" aria-label="Return to inspector" onClick={openInspector}><PanelRightIcon /></Button> : null}
+        <Tooltip><TooltipTrigger render={<Button data-dock-trigger="right" variant="ghost" size="sm" aria-label="Open API reference" aria-expanded={reference} aria-pressed={reference} onClick={openReference} className="aria-pressed:bg-muted" />}>
+          <BookOpenIcon data-icon="inline-start" />{!compact ? "API" : null}{attention.api.length ? dot : null}
+        </TooltipTrigger><TooltipContent side="bottom" className="max-w-80">{attention.api.length ? attention.api.join(" · ") : "Package API reference"}</TooltipContent></Tooltip>
+      </div>
+    </div>
   </header>;
 }

@@ -429,8 +429,8 @@ function WorkerAccountCard({ account, label, accounts }: { account: WorkerAccoun
         <div className="flex min-w-0 flex-col">
           <span className="flex flex-wrap items-center gap-1.5 text-sm font-semibold">
             <NodeTitle node={{ kind: "worker-account", id: account.id }} label={`worker account ${label}`}>{label}</NodeTitle>
-            <Badge className={cn("h-4 px-1.5 text-[0.62rem]", account.enabled ? "bg-success/15 text-success" : "bg-muted text-muted-foreground")}>{account.enabled ? "Enabled" : "Disabled"}</Badge>
-            <Badge className={cn("h-4 px-1.5 text-[0.62rem]", account.ready ? "bg-success/15 text-success" : "bg-warning/15 text-warning")}>{account.ready ? "Ready" : "Needs sign-in"}</Badge>
+            {/* One status: disabled wins, then sign-in; a Worker is only Ready when both hold. */}
+            <Badge className={cn("h-4 px-1.5 text-[0.62rem]", !account.enabled ? "bg-muted text-muted-foreground" : account.ready ? "bg-success/15 text-success" : "bg-warning/15 text-warning")}>{!account.enabled ? "Disabled" : account.ready ? "Ready" : "Needs sign-in"}</Badge>
             {removing ? <Badge variant="destructive" className="h-4 px-1.5 text-[0.62rem]">Removing</Badge> : null}
           </span>
           <span className="group/row flex items-center gap-1 font-mono text-[0.7rem] text-muted-foreground">

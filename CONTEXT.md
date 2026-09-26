@@ -28,7 +28,7 @@ An AgentStack-owned Codex sign-in credential with an immutable account ID manage
 
 ## Worker account
 
-A stable account ID for an isolated, native ACP sign-in managed through `auth`. Codex, Grok and Devin appear in `worker_account_list`, with independent enablement and removal operations. A Codex Worker account uses its own OpenCode login; it does not require, share credentials with, or control a Codex Bot account. Older Worker profiles that share a UUID with a Bot account remain independent. Only a ready, enabled Worker account may have an owner-managed ACP process. _Avoid_: active worker account, credential copy
+A stable account ID for an isolated, native ACP sign-in managed through `auth`. Codex, Grok and Devin appear in `worker_account_list`, with independent enablement and removal operations. A Codex Worker account uses its own OpenCode login; it does not require, share credentials with, or control a Codex Bot account. Older Worker profiles that share a UUID with a Bot account remain independent. Only a ready, enabled Worker account may have an owner-managed ACP process. Like Bot accounts, Worker accounts take no durable ordinal; a UI may present dense per-provider `<provider>-worker-N` labels (`codex-worker-1`, `grok-worker-1`) derived from the Worker account list. _Avoid_: active worker account, credential copy, `codex-wN`
 
 ## ACP runtime
 

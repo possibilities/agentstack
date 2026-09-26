@@ -234,7 +234,7 @@ try {
   await usageWindow.getByRole("meter", { name: "codex-1 5 hours remaining", exact: true }).waitFor();
   assert.match(await usageWindow.innerText(), /\$300\.00 included/);
   await usageWindow.getByRole("button", { name: "Inspect grok-bot-1 usage", exact: true }).waitFor();
-  await usageWindow.getByRole("button", { name: "Inspect grok-1 usage", exact: true }).click();
+  await usageWindow.getByRole("button", { name: "Inspect grok-worker-1 usage", exact: true }).click();
   await page.getByRole("complementary", { name: "Inspector" }).getByText("allocatedUsd", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Package API reference", exact: true }).click();
   assert.equal(new URL(page.url()).searchParams.get("reference"), "package:usage");
@@ -242,11 +242,11 @@ try {
   await page.getByRole("complementary", { name: "Inspector" }).getByText("allocatedUsd", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Close inspector" }).click();
   const models = page.locator('[data-window="model-catalogs"]');
-  await jump("model catalog codex-w1", "codex-w1 models");
+  await jump("model catalog codex-worker-1", "codex-worker-1 models");
   await models.getByLabel("Filter models").fill("no-such-model");
   await models.getByText("No matches", { exact: true }).waitFor();
   await models.getByLabel("Filter models").fill("");
-  await models.getByRole("tab", { name: /devin-1/ }).click();
+  await models.getByRole("tab", { name: /devin-worker-1/ }).click();
   await models.getByRole("button", { name: "Refresh catalog" }).click();
   await models.getByRole("button", { name: "Refresh catalog" }).waitFor();
   assert.ok(calls.some((call) => call.name === "worker_catalog" && call.input.refresh === true && call.input.accountId === id(5)));

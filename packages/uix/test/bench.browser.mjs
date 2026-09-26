@@ -101,7 +101,7 @@ try {
   samePoint(initial, await point());
   await page.getByRole("button", { name: "Close System dock", exact: true }).click();
   await page.getByRole("button", { name: "Inspect bot bot-1", exact: true }).click();
-  await page.getByRole("link", { name: "Fleet", exact: true }).click();
+  await page.getByRole("button", { name: /^Spaces/ }).click(); await page.getByRole("menuitem", { name: /^Fleet/ }).click();
   assert.equal(await page.getByRole("heading", { name: "bot-1", exact: true }).count(), 1);
   await page.getByRole("button", { name: "Close inspector", exact: true }).click();
   const bench = page.getByRole("main", { name: "Open bench" });
@@ -130,7 +130,7 @@ try {
   await page.getByRole("button", { name: "Close inspector", exact: true }).click();
   await page.getByRole("button", { name: "Close System dock", exact: true }).click();
   await page.setViewportSize({ width: 1600, height: 1000 });
-  await page.getByRole("link", { name: "Fleet", exact: true }).click();
+  await page.getByRole("button", { name: /^Spaces/ }).click(); await page.getByRole("menuitem", { name: /^Fleet/ }).click();
   const windowHeader = await page.locator('[data-window="bots"] header').boundingBox();
   const beforeDrag = await point();
   await page.mouse.move(windowHeader.x + 30, windowHeader.y + 25);

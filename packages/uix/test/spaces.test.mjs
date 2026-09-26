@@ -104,7 +104,7 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
       { id: "w4", provider: "grok", enabled: true, ready: true, removing: false, linkedAccounts: [] },
     ], error: null, at: null },
   });
-  assert.deepEqual(workers.fleet, ["codex-w1 removal unfinished", "codex-w2 needs sign-in", "grok-1 needs sign-in"]);
+  assert.deepEqual(workers.fleet, ["codex-worker-1 removal unfinished", "codex-worker-2 needs sign-in", "grok-worker-1 needs sign-in"]);
 
   // System: a stopped child, a closed owner channel, a status read error.
   const system = spaceAttention({

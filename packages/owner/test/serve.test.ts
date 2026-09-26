@@ -183,7 +183,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     assert.equal(system.status, 200);
     const systemHtml = await system.text();
     assert.match(systemHtml, /MCP Inspector/);
-    assert.match(systemHtml, /MCP endpoints/);
+    assert.match(systemHtml, /Packages/);
     assert.ok(!systemHtml.includes(referenceUrl), "System links only MCP Inspector as a surface");
     assert.ok(systemHtml.includes(ownerStatus.inspectorUrl));
     assert.ok(systemHtml.includes(ownerStatus.mcpUrls.owner));
