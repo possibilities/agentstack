@@ -69,7 +69,15 @@ try {
   const inspector = page.locator('[aria-label="Inspector"] section[aria-label="Inspector"] [data-scroll]');
   await inspector.evaluate((el) => { el.scrollTop = 200; });
   const scroll = await inspector.evaluate((el) => el.scrollTop);
-  await page.getByRole("button", { name: "Open API reference", exact: true }).click();
+  const apiToggle = page.getByRole("button", { name: "Show API reference", exact: true });
+  await apiToggle.click();
+  await page.getByRole("heading", { name: "Package API reference", exact: true }).waitFor();
+  assert.equal(await apiToggle.getAttribute("aria-pressed"), "true");
+  // The toolbar button toggles: a second press closes the reference back to the inspector.
+  await apiToggle.click();
+  await page.locator("[data-reference]").waitFor({ state: "detached" });
+  assert.equal(await apiToggle.getAttribute("aria-pressed"), "false");
+  await apiToggle.click();
   await page.getByRole("heading", { name: "Package API reference", exact: true }).waitFor();
   samePoint(initial, await point());
   await page.locator('[data-reference]').getByRole("link", { name: "bots", exact: true }).click();
@@ -84,7 +92,7 @@ try {
   assert.equal(await page.getByRole("heading", { name: "bot-1", exact: true }).count(), 1);
   await page.getByRole("button", { name: "Close inspector", exact: true }).click();
   assert.equal(await page.getByRole("button", { name: "Inspect bot bot-1", exact: true }).evaluate((el) => el === document.activeElement), true);
-  await page.getByRole("button", { name: "Open System dock", exact: true }).click();
+  await page.getByRole("button", { name: "Show System", exact: true }).click();
   await page.getByRole("heading", { name: "System", exact: true }).waitFor();
   samePoint(initial, await point());
   const resize = page.getByRole("separator", { name: "Resize System", exact: true });
@@ -94,7 +102,7 @@ try {
   samePoint(initial, await point());
   await page.keyboard.press("Escape");
   assert.equal(await page.getByRole("heading", { name: "System", exact: true }).isVisible(), false);
-  assert.equal(await page.getByRole("button", { name: "Open System dock", exact: true }).evaluate((el) => el === document.activeElement), true);
+  assert.equal(await page.getByRole("button", { name: "Show System", exact: true }).evaluate((el) => el === document.activeElement), true);
   samePoint(initial, await point());
   await page.goBack();
   await page.getByRole("heading", { name: "System", exact: true }).waitFor();
@@ -109,7 +117,7 @@ try {
   const historyLength = await page.evaluate(() => history.length);
   await page.mouse.move(700, 940); await page.mouse.wheel(90, 60);
   assert.equal(await page.evaluate(() => history.length), historyLength);
-  await page.getByRole("button", { name: "Open API reference", exact: true }).click();
+  await page.getByRole("button", { name: "Show API reference", exact: true }).click();
   await page.getByLabel("Find a package or operation").fill("bot_status");
   await page.locator('[aria-label="Reference search results"]').getByRole("link", { name: "bot_status", exact: true }).click();
   await page.getByRole("heading", { name: "Request templates" }).waitFor();
@@ -119,7 +127,7 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.locator('[data-dock="right"]').evaluate((el) => Math.round(el.getBoundingClientRect().width)), 390);
   await page.getByRole("button", { name: "Close API reference", exact: true }).click();
-  await page.getByRole("button", { name: "Open System dock", exact: true }).click();
+  await page.getByRole("button", { name: "Show System", exact: true }).click();
   assert.equal(await page.locator('[data-dock="left"]').evaluate((el) => Math.round(el.getBoundingClientRect().width)), 390);
   await page.screenshot({ path: join(evidence, "system-mobile.png") });
   await page.getByRole("button", { name: "Close System dock", exact: true }).click();
@@ -146,11 +154,11 @@ try {
   samePoint(afterDrag, await point());
 
   // Retained width preferences must be jointly constrained at the desktop breakpoint.
-  await page.getByRole("button", { name: "Open System dock", exact: true }).click();
+  await page.getByRole("button", { name: "Show System", exact: true }).click();
   await page.getByRole("separator", { name: "Resize System", exact: true }).focus();
   await page.keyboard.press("End");
   assert.equal(Number(await page.getByRole("separator", { name: "Resize System", exact: true }).getAttribute("aria-valuenow")), 520);
-  await page.getByRole("button", { name: "Open API reference", exact: true }).click();
+  await page.getByRole("button", { name: "Show API reference", exact: true }).click();
   await page.setViewportSize({ width: 900, height: 1000 });
   await page.waitForFunction(() => document.querySelector('[aria-label="Resize System"]').getAttribute("aria-valuemax") === "340");
   const systemSeparator = page.getByRole("separator", { name: "Resize System", exact: true });
@@ -197,7 +205,7 @@ try {
   };
   await chooseSpace();
   assert.equal(new URL(page.url()).searchParams.get("inspect"), "bot:bot-1");
-  await page.getByRole("button", { name: "Open API reference", exact: true }).click();
+  await page.getByRole("button", { name: "Show API reference", exact: true }).click();
   await page.locator('[data-reference]').getByRole("link", { name: "bots", exact: true }).click();
   await page.locator('[data-reference]').getByRole("link", { name: "Read fixture", exact: true }).click();
   await chooseSpace();
@@ -205,7 +213,7 @@ try {
   await page.reload();
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
   await page.locator('[data-dock="right"]').waitFor({ state: "hidden" });
-  await page.getByRole("button", { name: "Open API reference", exact: true }).click();
+  await page.getByRole("button", { name: "Show API reference", exact: true }).click();
   await page.getByRole("heading", { name: "Request templates" }).waitFor();
 
   // Reproduce physically overlapping windows without adding temporary production spaces.

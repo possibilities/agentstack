@@ -407,7 +407,7 @@ export function CallLauncher() {
           }
         >
           <PopoverTrigger
-            render={<Button variant="outline" size="icon" className="size-10 rounded-xl bg-card/80 shadow-sm backdrop-blur-xl" aria-label={inCall ? "On a call" : "Call a bot"} disabled={voice.busy} />}
+            render={<Button variant="ghost" size="icon-sm" aria-label={inCall ? "On a call" : "Call a bot"} disabled={voice.busy} />}
           >
             {dialing ? <Spinner /> : (
               <span className="relative">

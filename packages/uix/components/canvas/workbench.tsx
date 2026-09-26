@@ -195,7 +195,7 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
   return <div className="contents" style={{ "--system": `${left}px`, "--sheet": `${right}px` } as React.CSSProperties}>
     <WorkbenchContext value={workbench}><AuthActionsProvider><VoiceProvider><BotActionsProvider>
       <Bench space={location.space} left={left} blocked={paletteOpen} onControls={reportControls} onScale={setScale} onArrive={flashNow} />
-      <TopBar space={location.space} setSpace={setSpace} compact={screenWidth - left - right < 440} system={systemVisible} reference={Boolean(location.reference) && rightVisible} inspectorAvailable={overlay && Boolean(location.inspect) && !rightVisible} openInspector={openInspector} openSystem={openSystem} openReference={openReference} openPalette={() => setPaletteOpen(true)} fit={() => controls?.fit()} />
+      <TopBar space={location.space} setSpace={setSpace} compact={screenWidth - left - right < 440} system={systemVisible} reference={Boolean(location.reference) && rightVisible} inspectorAvailable={overlay && Boolean(location.inspect) && !rightVisible} openInspector={openInspector} toggleSystem={systemVisible ? closeSystem : openSystem} toggleReference={Boolean(location.reference) && rightVisible ? closeRight : openReference} openPalette={() => setPaletteOpen(true)} fit={() => controls?.fit()} />
       <div data-chrome className="fixed bottom-4 z-30 flex -translate-x-1/2 items-center gap-1 rounded-xl border bg-card/95 p-1 shadow-sm" style={{ left: "calc(var(--system) + (100% - var(--system) - var(--sheet))/2)" }}>
         <Tool label="Zoom out" onClick={() => controls?.zoom(1 / 1.2)}><MinusIcon /></Tool>
         <Button variant="ghost" size="sm" aria-label="Actual size" className="w-14 tabular-nums" onClick={() => controls?.zoom(1 / scale)}>{Math.round(scale * 100)}%</Button>
@@ -224,8 +224,8 @@ function Tool({ label, onClick, children }: { label: string; onClick(): void; ch
 }
 
 /** Places and tools are separate: the Spaces menu moves the camera; System and API open docks on their own edges. */
-function TopBar({ space, setSpace, compact, system, reference, inspectorAvailable, openInspector, openSystem, openReference, openPalette, fit }: {
-  space: SpaceId; setSpace(space: SpaceId): void; compact: boolean; system: boolean; reference: boolean; inspectorAvailable: boolean; openInspector(): void; openSystem(): void; openReference(): void; openPalette(): void; fit(): void;
+function TopBar({ space, setSpace, compact, system, reference, inspectorAvailable, openInspector, toggleSystem, toggleReference, openPalette, fit }: {
+  space: SpaceId; setSpace(space: SpaceId): void; compact: boolean; system: boolean; reference: boolean; inspectorAvailable: boolean; openInspector(): void; toggleSystem(): void; toggleReference(): void; openPalette(): void; fit(): void;
 }) {
   const state = useStack();
   const attention = spaceAttention(state);
@@ -235,7 +235,7 @@ function TopBar({ space, setSpace, compact, system, reference, inspectorAvailabl
   const dot = <span className="size-1.5 shrink-0 rounded-full bg-warning" aria-label="needs attention" />;
   return <header data-chrome className="pointer-events-none fixed top-3 z-30 flex items-start justify-between gap-2" style={{ left: "calc(var(--system) + 12px)", right: "calc(var(--sheet) + 12px)" }}>
     <div className="pointer-events-auto flex items-center gap-1 rounded-xl border bg-card/95 p-1 shadow-sm">
-      <Tooltip><TooltipTrigger render={<Button data-dock-trigger="left" variant="ghost" size="sm" aria-label="Open System dock" aria-expanded={system} aria-pressed={system} onClick={openSystem} className="aria-pressed:bg-muted" />}>
+      <Tooltip><TooltipTrigger render={<Button data-dock-trigger="left" variant="ghost" size="sm" aria-label="Show System" aria-pressed={system} onClick={toggleSystem} className="aria-pressed:bg-muted" />}>
         <PanelLeftIcon data-icon="inline-start" />{!compact ? "System" : null}{reasons.length ? dot : null}
       </TooltipTrigger><TooltipContent side="bottom" className="max-w-80">{reasons.length ? reasons.join(" · ") : "Processes, connections, activity"}</TooltipContent></Tooltip>
       {!compact ? <Separator orientation="vertical" className="mx-0.5 h-5! self-center" /> : null}
@@ -263,15 +263,15 @@ function TopBar({ space, setSpace, compact, system, reference, inspectorAvailabl
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
-    <div className="pointer-events-auto flex items-center gap-2">
+    {/* Mirrors the left pill: same surface, same ghost buttons, the dock toggle on the outer edge. */}
+    <div className="pointer-events-auto flex items-center gap-1 rounded-xl border bg-card/95 p-1 shadow-sm">
       {!compact ? <CallLauncher /> : null}
-      <Tooltip><TooltipTrigger render={<Button variant="outline" size="icon" aria-label="Jump to (Command K)" onClick={openPalette} />}><SearchIcon /></TooltipTrigger><TooltipContent side="bottom">Jump to <kbd className="ml-1 font-sans opacity-70">⌘K</kbd></TooltipContent></Tooltip>
-      <div className="flex items-center gap-1 rounded-xl border bg-card/95 p-1 shadow-sm">
-        {inspectorAvailable ? <Button variant="ghost" size="icon-sm" aria-label="Return to inspector" onClick={openInspector}><PanelRightIcon /></Button> : null}
-        <Tooltip><TooltipTrigger render={<Button data-dock-trigger="right" variant="ghost" size="sm" aria-label="Open API reference" aria-expanded={reference} aria-pressed={reference} onClick={openReference} className="aria-pressed:bg-muted" />}>
-          <BookOpenIcon data-icon="inline-start" />{!compact ? "API" : null}{attention.api.length ? dot : null}
-        </TooltipTrigger><TooltipContent side="bottom" className="max-w-80">{attention.api.length ? attention.api.join(" · ") : "Package API reference"}</TooltipContent></Tooltip>
-      </div>
+      <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Jump to (Command K)" onClick={openPalette} />}><SearchIcon /></TooltipTrigger><TooltipContent side="bottom">Jump to <kbd className="ml-1 font-sans opacity-70">⌘K</kbd></TooltipContent></Tooltip>
+      {inspectorAvailable ? <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Return to inspector" onClick={openInspector} />}><PanelRightIcon /></TooltipTrigger><TooltipContent side="bottom">Inspector</TooltipContent></Tooltip> : null}
+      {!compact ? <Separator orientation="vertical" className="mx-0.5 h-5! self-center" /> : null}
+      <Tooltip><TooltipTrigger render={<Button data-dock-trigger="right" variant="ghost" size="sm" aria-label="Show API reference" aria-pressed={reference} onClick={toggleReference} className="aria-pressed:bg-muted" />}>
+        <BookOpenIcon data-icon="inline-start" />{!compact ? "API" : null}{attention.api.length ? dot : null}
+      </TooltipTrigger><TooltipContent side="bottom" className="max-w-80">{attention.api.length ? attention.api.join(" · ") : "Package API reference"}</TooltipContent></Tooltip>
     </div>
   </header>;
 }
