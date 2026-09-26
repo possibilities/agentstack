@@ -2,7 +2,6 @@
 
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowRightIcon,
   LayersIcon,
   LayoutDashboardIcon,
   LayoutGridIcon,
@@ -397,14 +396,6 @@ function SpaceCanvas({ space, paletteOpen, consumePendingGoTo, onArrive, onContr
     });
   }, [defs, tidied]);
 
-  const focusWindow = useCallback((id: string) => {
-    const element = viewport.current;
-    const position = layoutRef.current.positions[id];
-    if (!element || !position) return;
-    const k = Math.max(viewRef.current.k, 0.8);
-    animate(() => setView({ k, x: element.clientWidth / 2 - (position.x + size(id).width / 2) * k, y: top + 12 - position.y * k }));
-  }, [animate, size]);
-
   // Wheel pans, pinch or modifier-wheel zooms; scrollable lists keep their own scrolling.
   useEffect(() => {
     const element = viewport.current;
@@ -432,7 +423,9 @@ function SpaceCanvas({ space, paletteOpen, consumePendingGoTo, onArrive, onContr
       const node = document.querySelector(`[data-node="${key}"][data-window]`) ?? document.querySelector(`[data-node="${key}"]`) ?? document.querySelector(`[data-window="${CSS.escape(home)}"]`);
       if (!node) return;
       if (mode === "grid" || !world) {
-        node.scrollIntoView({ behavior: "smooth", block: "center" });
+        // A node taller than the viewport reads from its top, not its middle.
+        const tall = node.getBoundingClientRect().height > (viewport.current?.clientHeight ?? window.innerHeight);
+        node.scrollIntoView({ behavior: "smooth", block: tall ? "start" : "center" });
         setTimeout(() => onLanded?.(), 450);
         return;
       }
@@ -440,11 +433,17 @@ function SpaceCanvas({ space, paletteOpen, consumePendingGoTo, onArrive, onContr
       const origin = world.getBoundingClientRect();
       const rect = node.getBoundingClientRect();
       const cx = (rect.left + rect.width / 2 - origin.left) / current.k;
-      const cy = (rect.top + rect.height / 2 - origin.top) / current.k;
       const element = viewport.current!;
       const k = current.k < 0.7 ? 1 : current.k;
+      // Center nodes that fit the visible height; taller nodes (like package
+      // windows) anchor their top just under the chrome instead.
+      const nodeScreen = (rect.height / current.k) * k;
+      const fits = nodeScreen <= element.clientHeight - top - 12;
+      const y = fits
+        ? (element.clientHeight + top) / 2 - ((rect.top + rect.height / 2 - origin.top) / current.k) * k
+        : top + 12 - ((rect.top - origin.top) / current.k) * k;
       // The viewport already ends where the sheet begins, so its width is the visible width.
-      animate(() => setView({ k, x: element.clientWidth / 2 - cx * k, y: (element.clientHeight + top) / 2 - cy * k }));
+      animate(() => setView({ k, x: element.clientWidth / 2 - cx * k, y }));
       setTimeout(() => onLanded?.(), 520);
     }, wasCollapsed ? 60 : 0);
   }, [animate, mode, world]);
@@ -627,7 +626,6 @@ function SpaceCanvas({ space, paletteOpen, consumePendingGoTo, onArrive, onContr
           </div>
         )}
       </main>
-      {canvas && ready ? <OffscreenHints view={view} positions={layout.positions} collapsed={layout.collapsed} defs={defs} size={size} viewport={viewport.current} onFocus={focusWindow} /> : null}
       {canvas ? <CanvasToolbar scale={view.k} zoom={(factor) => animate(() => zoomAt(factor))} fit={fit} tidy={tidy} /> : null}
     </PlacementContext>
   );
@@ -752,61 +750,6 @@ function TopBar({ space, setSpace, controls, openPalette }: { space: SpaceId; se
       </div>
     </div>
   );
-}
-
-/** Edge chips for windows panned out of view; clicking one brings it back. */
-function OffscreenHints({ view, positions, collapsed, defs, size, viewport, onFocus }: {
-  view: View;
-  positions: Record<string, Point>;
-  collapsed: Record<string, boolean>;
-  defs: WindowDef[];
-  size(id: string): { width: number; height: number };
-  viewport: HTMLElement | null;
-  onFocus(id: string): void;
-}) {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const onResize = () => setTick((tick) => tick + 1);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-  if (!viewport) return null;
-  const width = viewport.clientWidth;
-  const height = viewport.clientHeight;
-  const margin = 48;
-  const hints = defs.flatMap((item) => {
-    const position = positions[item.id];
-    if (!position) return [];
-    const box = size(item.id);
-    const left = view.x + position.x * view.k;
-    const top_ = view.y + position.y * view.k;
-    const right = left + box.width * view.k;
-    const bottom = top_ + box.height * view.k;
-    if (right > margin && left < width - margin && bottom > top + margin && top_ < height - margin) return [];
-    const cx = (left + right) / 2;
-    const cy = (Math.max(top_, top) + Math.min(bottom, height)) / 2;
-    return [{
-      item,
-      x: clamp(cx, 90, width - 90),
-      y: clamp(cy, top + 24, height - 84),
-      angle: (Math.atan2(cy - height / 2, cx - width / 2) * 180) / Math.PI,
-    }];
-  });
-  return hints.map(({ item, x, y, angle }) => (
-    <button
-      key={item.id}
-      type="button"
-      data-chrome
-      onClick={() => onFocus(item.id)}
-      className="fixed z-20 flex -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 rounded-full border bg-card/85 py-1 pr-2 pl-1 text-xs font-medium shadow-sm backdrop-blur-xl transition-[left,top,box-shadow] duration-300 animate-in fade-in-0 zoom-in-95 hover:shadow-md focus-visible:outline-2 focus-visible:outline-ring"
-      style={{ left: x, top: y }}
-    >
-      <span className={cn("flex size-5 items-center justify-center rounded-full", accentTile[item.accent])}><item.icon className="size-3" /></span>
-      {item.title}
-      {collapsed[item.id] ? <span className="text-muted-foreground">· collapsed</span> : null}
-      <ArrowRightIcon className="size-3 text-muted-foreground" style={{ transform: `rotate(${angle}deg)` }} />
-    </button>
-  ));
 }
 
 function ToolbarButton({ label, shortcut, onClick, children }: { label: string; shortcut?: string; onClick(): void; children: React.ReactNode }) {
