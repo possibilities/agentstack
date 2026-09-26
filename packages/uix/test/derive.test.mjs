@@ -14,7 +14,7 @@ registerHooks({
   },
 });
 
-const { workerAccountLabels, accountLinks, providerTitle, untilTime, modelName, usageRows } = await import("../lib/stack/derive.ts");
+const { workerAccountLabels, accountLinks, providerTitle, untilTime, modelName, usageRows, catalogIdentity, catalogRows } = await import("../lib/stack/derive.ts");
 
 const bot = (id, linkedAccounts = []) => ({ id, enabled: true, removing: false, linkedAccounts });
 const worker = (id, provider, extra = {}) => ({ id, provider, enabled: true, ready: true, removing: false, linkedAccounts: [], ...extra });
@@ -83,4 +83,23 @@ test("usageRows merges linked accounts only when their observations match", () =
   const worker2 = row("worker", "w2", [{ scope: "bot", id: "b2" }], { usage: { planType: "plus" } });
   const grok = row("worker", "g1", []);
   assert.deepEqual(usageRows([bot1, worker1, bot2, worker2, grok]).map((items) => items.map((item) => item.id)), [["b1", "w1"], ["b2"], ["w2"], ["g1"]]);
+});
+
+test("catalogRows stacks accounts with identical catalogs and keeps unobserved accounts apart", () => {
+  const models = [{ id: "m1", name: "Model 1", efforts: ["low"], effortConfigId: null }];
+  const catalog = (accountId, extra = {}) => ({ accountId, provider: "codex", observedAt: `2026-09-26T00:00:0${accountId.length}Z`, source: "acp", runtimeVersion: "1",
+    modelConfigId: "model", models, nativeModelIds: [], stale: false, error: null, ...extra });
+  const state = (catalog, extra = {}) => ({ catalog, stale: false, error: null, unavailable: null, ...extra });
+  const identities = {
+    a: catalogIdentity(state(catalog("a"))),
+    b: catalogIdentity(state(catalog("bb", { models: [...models, { id: "m2", name: "Model 2", efforts: [], effortConfigId: null }] }))),
+    c: catalogIdentity(state(catalog("ccc"))),
+    d: catalogIdentity(state(catalog("dddd"), { stale: true })),
+    e: null,
+    f: null,
+    g: catalogIdentity(state(catalog("ggggggg", { provider: "grok" }))),
+  };
+  // Account ID and observation time are not part of the identity; status and provider are.
+  assert.equal(identities.a, identities.c);
+  assert.deepEqual(catalogRows(Object.keys(identities), (id) => identities[id]), [["a", "c"], ["b"], ["d"], ["e"], ["f"], ["g"]]);
 });

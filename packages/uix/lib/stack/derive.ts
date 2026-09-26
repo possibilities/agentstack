@@ -1,4 +1,4 @@
-import type { Account, Bot, WorkerAccount } from "./types";
+import type { Account, Bot, WorkerAccount, WorkerCatalog } from "./types";
 
 export function shortId(id: string | null | undefined, length = 8): string {
   if (!id) return "—";
@@ -117,6 +117,33 @@ export function usageRows<T extends { id: string; scope: string; linkedAccounts:
       row.push(twin);
     }
     rows.push(row);
+  }
+  return rows;
+}
+
+/** What a Models tab shows for one Worker account; equal identities render identically. */
+export function catalogIdentity(state: { catalog: WorkerCatalog; stale: boolean; error: string | null; unavailable: string | null }): string {
+  const { provider, source, runtimeVersion, modelConfigId, models, nativeModelIds } = state.catalog;
+  return JSON.stringify([provider, source, runtimeVersion, modelConfigId, models, nativeModelIds, state.stale, state.error, state.unavailable]);
+}
+
+/**
+ * Worker accounts grouped for the Models window: accounts with the same
+ * catalog identity collapse into one stacked tab, in list order. An account
+ * without an observed catalog (a null identity) always stands alone.
+ */
+export function catalogRows<T>(accounts: T[], identity: (account: T) => string | null): T[][] {
+  const rows: T[][] = [];
+  const byIdentity = new Map<string, T[]>();
+  for (const account of accounts) {
+    const key = identity(account);
+    const row = key === null ? undefined : byIdentity.get(key);
+    if (row) {
+      row.push(account);
+      continue;
+    }
+    rows.push([account]);
+    if (key !== null) byIdentity.set(key, rows[rows.length - 1]);
   }
   return rows;
 }

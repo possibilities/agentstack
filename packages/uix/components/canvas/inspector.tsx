@@ -132,7 +132,7 @@ function resolve(ref: NodeRef, state: StackState): View | null {
       const resource = state.workerCatalogs[ref.id];
       return { eyebrow: `${providerTitle(account.provider)} Worker catalog`, accent: "bots", title: workerLabels.get(ref.id) ?? shortId(ref.id), record: resource?.data ?? { accountId: ref.id, error: resource?.error ?? "No observed catalog" },
         body: <CatalogStatus id={ref.id} />,
-        controls: <CatalogRefresh id={ref.id} />, related: [{ ref: { kind: "worker-account", id: ref.id }, label: "Worker account" }], events: state.events.filter((event) => event.pkg === "workers") };
+        controls: <CatalogRefresh ids={[ref.id]} />, related: [{ ref: { kind: "worker-account", id: ref.id }, label: "Worker account" }], events: state.events.filter((event) => event.pkg === "workers") };
     }
     case "bot": {
       const bot = state.bots.data?.find((item) => item.id === ref.id);

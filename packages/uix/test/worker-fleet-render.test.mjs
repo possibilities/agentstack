@@ -142,4 +142,14 @@ test("Claude catalog renders SDK evidence and stale/unavailable states without A
   state.workerCatalogs["claude-a"].data.error = "catalog_unavailable";
   const failed = render(CatalogWindow, { accounts, runtimes, state });
   assert.match(text(failed), /stale.*catalog_unavailable.*Claude Sonnet fixture/);
+  // An identical, equally available catalog joins the first account's tab instead of adding its own.
+  state.workerCatalogs["claude-a"].data.error = null;
+  const twins = [accounts[0], account("claude-d")];
+  state.workerCatalogs["claude-d"] = resource(catalog("claude-d"));
+  const stacked = render(CatalogWindow, { accounts: twins, runtimes: [...runtimes, { ...runtimes[0], id: "claude-d" }], state });
+  assert.equal(stacked.match(/role="tab"/g).length, 1);
+  assert.match(stacked, /aria-selected="true"[^>]*data-node="worker-catalog:claude-a"[\s\S]*data-node="worker-catalog:claude-d"[^>]*>claude-worker-account-2/);
+  assert.match(stacked, /aria-label="Inspect claude-worker-account-2 model catalog"/);
+  state.workerCatalogs["claude-d"].data.models = [];
+  assert.equal(render(CatalogWindow, { accounts: twins, runtimes: [...runtimes, { ...runtimes[0], id: "claude-d" }], state }).match(/role="tab"/g).length, 2);
 });
