@@ -213,7 +213,7 @@ export function AuthActionsProvider({ children }: { children: React.ReactNode })
       submitCode: (attempt, code) => {
         setWorkerError(null);
         setWorkerSubmitting(attempt.id);
-        return workerLoginSubmitOp.run({ id: attempt.id, code }).then(undefined, (cause) => {
+        return workerLoginSubmitOp.run({ id: attempt.id, code }).then(() => undefined, (cause) => {
           const message = errorMessage(cause);
           setWorkerError({ op: "submit", target: attempt.account, message });
           toast.error(message);
