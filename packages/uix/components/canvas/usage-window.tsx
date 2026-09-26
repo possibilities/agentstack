@@ -33,8 +33,6 @@ const exhausted = (gauges: Gauge[]) => gauges.some((gauge) => gauge.remaining ==
 const blockedBy = (gauge: Gauge, gauges: Gauge[]) => gauge.remaining === 0 ? undefined
   : gauges.find((other) => other !== gauge && other.group === gauge.group && !other.local && other.remaining === 0);
 
-/** A linked row is one card; its oldest measurement is the one to trust least. */
-const oldest = (row: UsageObservation[]) => row.reduce<number | null>((low, item) => item.observedAtMs === null ? low : low === null ? item.observedAtMs : Math.min(low, item.observedAtMs), null);
 const day = (at: number) => new Date(at).toLocaleDateString(undefined, { month: "short", day: "numeric",
   year: new Date(at).getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
 
@@ -241,10 +239,11 @@ export function UsageWindow() {
   const workerLabels = workerAccountLabels(workerAccounts.data);
   const label = (account: UsageAccount) => (account.scope === "bot" ? botLabels : workerLabels).get(account.id) ?? shortId(account.id);
   const nodeOf = (account: UsageAccount): NodeRef => ({ kind: "usage-account", id: `${account.scope}:${account.id}` });
-  const observed = usage.data?.accounts.filter((account) => account.usage) ?? [];
-  const waiting = usage.data?.accounts.filter((account) => !account.usage) ?? [];
+  // A card shows its leading account's measurement; a linked Codex Worker folds into its Bot's card.
+  const grouped = usageRows(usage.data?.accounts ?? []);
+  const rows = grouped.filter((row) => row[0].usage);
+  const waiting = grouped.filter((row) => !row[0].usage).map((row) => row[0]);
   const grokBot = usage.data?.grokBot;
-  const rows = usageRows(observed);
   // Grok Bot folds into the card of the only Grok Worker login; otherwise it stands alone.
   const grokAccounts = usage.data?.accounts.filter((account) => account.provider === "grok") ?? [];
   const grokHost = grokBot?.usage && grokAccounts.length === 1 ? rows.find((row) => row[0] === grokAccounts[0]) ?? null : null;
@@ -268,8 +267,8 @@ export function UsageWindow() {
             return (
               <UsageCard key={`${row[0].scope}:${row[0].id}`} node={nodeOf(row[0])} observation={bot ? worstObservation(row[0], bot) : row[0]}
                 summary={bot?.usage ? withGrokBot(summarize(row[0])!, bot.usage) : summarize(row[0])!}
-                samples={[{ label: null, at: oldest(row) }, ...bot ? [{ label: "bot", at: bot.observedAtMs }] : []]}
-                subscription={row.find((account) => account.subscription)?.subscription ?? null}
+                samples={[{ label: null, at: row[0].observedAtMs }, ...bot ? [{ label: "bot", at: bot.observedAtMs }] : []]}
+                subscription={row[0].subscription}
                 orbs={row.map((account) => account.id)} names={row.map((account) => ({ node: nodeOf(account), label: label(account) }))} />
             );
           })}
@@ -295,7 +294,7 @@ export function UsageWindow() {
               ) : null}
             </div>
           ) : null}
-          {!observed.length && !waiting.length && !grokBot?.usage ? <Empty icon={GaugeIcon} title="No accounts" /> : null}
+          {!rows.length && !waiting.length && !grokBot?.usage ? <Empty icon={GaugeIcon} title="No accounts" /> : null}
         </div>
       ) : (
         <Empty icon={GaugeIcon} title="Usage unavailable">{usage.error ?? "Waiting for a snapshot."}</Empty>

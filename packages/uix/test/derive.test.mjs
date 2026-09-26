@@ -74,15 +74,19 @@ test("modelName drops a routing prefix", () => {
   assert.equal(modelName("Claude Opus 5.5"), "Claude Opus 5.5");
 });
 
-test("usageRows merges linked accounts only when their observations match", () => {
-  const usage = { planType: "pro" };
-  const row = (scope, id, links, extra = {}) => ({ scope, id, linkedAccounts: links, usage, error: null, fresh: true, ...extra });
+test("usageRows folds a linked Codex Worker into its observed Bot", () => {
+  const row = (scope, id, links, usage = { planType: "pro" }) => ({ scope, id, linkedAccounts: links, usage });
+  const worker1 = row("worker", "w1", [{ scope: "bot", id: "b1" }], { planType: "plus" });
   const bot1 = row("bot", "b1", [{ scope: "worker", id: "w1" }]);
-  const worker1 = row("worker", "w1", [{ scope: "bot", id: "b1" }]);
-  const bot2 = row("bot", "b2", [{ scope: "worker", id: "w2" }]);
-  const worker2 = row("worker", "w2", [{ scope: "bot", id: "b2" }], { usage: { planType: "plus" } });
+  const bot2 = row("bot", "b2", [{ scope: "worker", id: "w2" }], null);
+  const worker2 = row("worker", "w2", [{ scope: "bot", id: "b2" }]);
+  const bot3 = row("bot", "b3", [{ scope: "worker", id: "w3" }], null);
+  const worker3 = row("worker", "w3", [{ scope: "bot", id: "b3" }], null);
   const grok = row("worker", "g1", []);
-  assert.deepEqual(usageRows([bot1, worker1, bot2, worker2, grok]).map((items) => items.map((item) => item.id)), [["b1", "w1"], ["b2"], ["w2"], ["g1"]]);
+  // Different measurements still fold, and the Bot leads even when listed second.
+  // An unobserved Bot does not hide its observed Worker.
+  assert.deepEqual(usageRows([worker1, bot1, bot2, worker2, bot3, worker3, grok]).map((items) => items.map((item) => item.id)),
+    [["b1", "w1"], ["b2"], ["w2"], ["b3", "w3"], ["g1"]]);
 });
 
 test("catalogRows stacks accounts with identical catalogs and keeps unobserved accounts apart", () => {

@@ -97,28 +97,18 @@ export function modelName(name: string): string {
 export const effortLevels = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 /**
- * Usage accounts grouped for display: a Bot account and its linked Worker
- * account share one provider login, so identical observations collapse into
- * one row. Different observations stay separate so neither is hidden.
+ * Usage accounts grouped for display. A Worker account linked to a Bot
+ * account shares its provider login, so it folds into that Bot's row, which
+ * leads with the Bot. It keeps its own row only while that Bot is unobserved
+ * and it is not, so no measurement is hidden behind an empty one.
  */
-export function usageRows<T extends { id: string; scope: string; linkedAccounts: Array<{ scope: string; id: string }> | null | undefined; usage: unknown; error: string | null; fresh: boolean }>(accounts: T[]): T[][] {
-  const rows: T[][] = [];
-  const placed = new Set<string>();
-  const key = (account: T) => `${account.scope}:${account.id}`;
-  for (const account of accounts) {
-    if (placed.has(key(account))) continue;
-    placed.add(key(account));
-    const row = [account];
-    for (const link of account.linkedAccounts ?? []) {
-      const twin = accounts.find((item) => item.scope === link.scope && item.id === link.id);
-      if (!twin || placed.has(key(twin))) continue;
-      if (twin.error !== account.error || twin.fresh !== account.fresh || JSON.stringify(twin.usage) !== JSON.stringify(account.usage)) continue;
-      placed.add(key(twin));
-      row.push(twin);
-    }
-    rows.push(row);
-  }
-  return rows;
+export function usageRows<T extends { id: string; scope: string; linkedAccounts: Array<{ scope: string; id: string }> | null | undefined; usage: unknown }>(accounts: T[]): T[][] {
+  const host = (account: T) => account.scope === "worker" ? (account.linkedAccounts ?? []).map((link) => link.scope === "bot"
+    ? accounts.find((item) => item.scope === "bot" && item.id === link.id) : undefined)
+    .find((bot) => bot && (bot.usage !== null || account.usage === null)) : undefined;
+  const hosts = new Map(accounts.map((account) => [account, host(account)]));
+  return accounts.filter((account) => !hosts.get(account))
+    .map((account) => [account, ...accounts.filter((item) => hosts.get(item) === account)]);
 }
 
 /** What a Models tab shows for one Worker account; equal identities render identically. */
