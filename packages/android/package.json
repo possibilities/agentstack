@@ -1,0 +1,13 @@
+{
+  "name": "@agentstack/android",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/prepare.mjs",
+    "test": "node --test test/*.test.mjs",
+    "build:apk": "./gradlew --no-daemon :app:assembleDebug",
+    "test:android": "./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug",
+    "icons": "node scripts/icons.mjs"
+  }
+}

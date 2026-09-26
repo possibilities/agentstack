@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { mcpPort, runApi, runMcp, runWebSocket, serveApi, serveMcp, socketCall, socketPath, websocketPort } from "@agentstack/api";
+import { lookup } from "node:dns/promises";
 import { connect } from "node:net";
-import { apiChild, authChild, inferChild, rolesChild, usageChild, workersChild, wikiChild, websocketChild } from "./children.js";
+import { apiChild, authChild, brainChild, inferChild, rolesChild, usageChild, workersChild, wikiChild, websocketChild } from "./children.js";
 import { botsChild } from "./bots.js";
 import { createMcpEventSubscriptions } from "./mcp-delivery.js";
 import { serveInspectorCatalog } from "./inspector-catalog.js";
@@ -39,32 +40,59 @@ const inspectorListenPort = inspectorPort(process.env);
 const uixListenPort = uixPort(process.env);
 const wikiPort = Number(process.env.AGENTSTACK_WIKI_PORT ?? 8777);
 const wikiArtifactPort = Number(process.env.AGENTSTACK_WIKI_ARTIFACT_PORT ?? 8778);
-for (const [name, value] of [["AGENTSTACK_WIKI_PORT", wikiPort], ["AGENTSTACK_WIKI_ARTIFACT_PORT", wikiArtifactPort]] as const) {
+const brainSharePort = Number(process.env.AGENTSTACK_BRAIN_SHARE_PORT ?? 8877);
+const brainShareHost = process.env.AGENTSTACK_BRAIN_SHARE_HOST ?? "127.0.0.1";
+for (const [name, value] of [["AGENTSTACK_WIKI_PORT", wikiPort], ["AGENTSTACK_WIKI_ARTIFACT_PORT", wikiArtifactPort], ["AGENTSTACK_BRAIN_SHARE_PORT", brainSharePort]] as const) {
   if (!Number.isInteger(value) || value < 0 || value > 65535 || process.env[name] === "") {
     console.error(`${name} must be a port from 0 to 65535`);
     process.exit(1);
   }
 }
+if (!brainShareHost.trim()) {
+  console.error("AGENTSTACK_BRAIN_SHARE_HOST must not be empty");
+  process.exit(1);
+}
+let brainShareAddress: string;
+try {
+  ({ address: brainShareAddress } = await lookup(brainShareHost));
+} catch {
+  console.error(`AGENTSTACK_BRAIN_SHARE_HOST could not be resolved: ${brainShareHost}`);
+  process.exit(1);
+}
 if (wikiPort !== 0 && wikiPort === wikiArtifactPort) {
   console.error("wiki document and artifact ports must differ");
   process.exit(1);
 }
-for (const [transport, port, setting] of [
-  ["MCP", mcpPort(process.env), "AGENTSTACK_MCP_PORT"],
-  ["WebSocket", websocketPort(process.env), "AGENTSTACK_WEBSOCKET_PORT"],
-  ["Inspector", inspectorListenPort, "AGENTSTACK_INSPECTOR_PORT"],
-  ["UI canvas", uixListenPort, "AGENTSTACK_UIX_PORT"],
-  ["Wiki documents", wikiPort, "AGENTSTACK_WIKI_PORT"],
-  ["Wiki artifacts", wikiArtifactPort, "AGENTSTACK_WIKI_ARTIFACT_PORT"],
-] as const) {
+const listeners = [
+  ["MCP", mcpPort(process.env), "AGENTSTACK_MCP_PORT", "127.0.0.1"],
+  ["WebSocket", websocketPort(process.env), "AGENTSTACK_WEBSOCKET_PORT", "127.0.0.1"],
+  ["Inspector", inspectorListenPort, "AGENTSTACK_INSPECTOR_PORT", "127.0.0.1"],
+  ["UI canvas", uixListenPort, "AGENTSTACK_UIX_PORT", "127.0.0.1"],
+  ["Wiki documents", wikiPort, "AGENTSTACK_WIKI_PORT", "127.0.0.1"],
+  ["Wiki artifacts", wikiArtifactPort, "AGENTSTACK_WIKI_ARTIFACT_PORT", "127.0.0.1"],
+  ["Brain share", brainSharePort, "AGENTSTACK_BRAIN_SHARE_PORT", brainShareHost],
+] as const;
+// Resolve the share host as net.Server.listen does so aliases and wildcard
+// binds cannot conceal a collision with the owner's IPv4 loopback listeners.
+const bindAddress = (host: string) => host === brainShareHost ? brainShareAddress : host;
+const loopbackBinds = new Set(["127.0.0.1", "0.0.0.0", "::", "::ffff:127.0.0.1"]);
+for (const [index, [, port, setting, host]] of listeners.entries()) {
+  const conflict = listeners.slice(0, index).find(([, otherPort, , otherHost]) =>
+    port !== 0 && port === otherPort && (bindAddress(host) === bindAddress(otherHost) || loopbackBinds.has(bindAddress(host)) && loopbackBinds.has(bindAddress(otherHost))));
+  if (conflict) {
+    console.error(`${setting} and ${conflict[2]} must use different ports on ${host} (both use ${port})`);
+    process.exit(1);
+  }
+}
+for (const [transport, port, setting, host] of listeners) {
   if (port !== 0 && await new Promise<boolean>((resolve) => {
-    const probe = connect({ host: "127.0.0.1", port });
+    const probe = connect({ host: bindAddress(host), port });
     const finish = (listening: boolean) => { probe.destroy(); resolve(listening); };
     probe.setTimeout(1_000, () => finish(false));
     probe.once("connect", () => finish(true));
     probe.once("error", () => finish(false));
   })) {
-    console.error(`${transport} port ${port} is already in use on 127.0.0.1. An AgentStack owner may already be running; check its owner socket or choose another ${setting}.`);
+    console.error(`${transport} port ${port} is already in use on ${host}. An AgentStack owner may already be running; check its owner socket or choose another ${setting}.`);
     process.exit(1);
   }
 }
@@ -112,14 +140,14 @@ const shutdown = () => {
     process.exit(childFailed || failed ? 1 : 0);
   });
 };
-owner = startOwner([apiChild(), authChild(), rolesChild(), botsChild(mcp.port), workersChild(), usageChild(), inferChild(), wikiChild(), websocketChild(), inspectorChild(catalog.path, inspectorListenPort), uixChild(uixListenPort)], process.env, () => {
+owner = startOwner([apiChild(), authChild(), rolesChild(), botsChild(mcp.port), workersChild(), usageChild(), inferChild(), wikiChild(), brainChild(), websocketChild(), inspectorChild(catalog.path, inspectorListenPort), uixChild(uixListenPort)], process.env, () => {
   statusSource.notify();
   if (!closing && owner.children().some((child) => !child.running)) {
     childFailed = true;
     console.error("a required child stopped; shutting down agentstack");
     shutdown();
   }
-}, [["infer"], ["auth"], ["workers"], ["bots"], ["usage"], ["wiki"], ["roles"], ["api"]]);
+}, [["infer"], ["auth"], ["workers"], ["bots"], ["usage"], ["brain"], ["wiki"], ["roles"], ["api"]]);
 statusSource.attach(owner);
 subscriptions.resume();
 const indexUrl = `http://127.0.0.1:${uixListenPort}/`;

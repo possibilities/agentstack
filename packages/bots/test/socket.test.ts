@@ -134,8 +134,6 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
 
     const notices: string[] = [];
     subscription = await socketSubscribe(socket, ["bots_changed", "threads_changed"], (topic) => notices.push(topic), { scope: first.id });
-    await new Promise((resolve) => setTimeout(resolve, 30)); // Initial thread-watch invalidation may arrive after subscribing.
-    notices.length = 0;
     const custom = await call(socket, "bot_start", { id: "custom", cwd: external, account }) as View;
     assert.equal(custom.cwd, external);
     assert.deepEqual(custom.settings, changed);
@@ -143,7 +141,12 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
     assert.equal(named.cwd, join(stateDir, "bots", "named"));
     assert.deepEqual(named.settings, { ...changed, model: "gpt-6-sol", reasoningEffort: "medium" });
     assert.equal((await call(socket, "bot_list") as { bots: View[] }).bots.length, 3);
-    assert.equal(notices.length, 0);
+    // Thread invalidations may arrive independently of Bot lifecycle changes.
+    // Exercise that case without discarding any incorrectly scoped bots_changed.
+    await notify(opened.threadId, "thread/settings/updated", {});
+    for (let i = 0; i < 100 && !notices.includes("threads_changed"); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(notices.includes("threads_changed"));
+    assert.equal(notices.includes("bots_changed"), false, `unrelated Bot creation published scoped lifecycle notices: ${JSON.stringify(notices)}`);
     await call(socket, "bot_stop", { id: first.id });
     assert.equal((await call(socket, "chat_main_live", { botId: first.id }) as { instance: string | null }).instance, null);
     for (let i = 0; i < 100 && !notices.includes("bots_changed"); i++) await new Promise((resolve) => setTimeout(resolve, 10));

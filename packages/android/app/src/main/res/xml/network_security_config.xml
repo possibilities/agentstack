@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android blocks cleartext HTTP by default since API 28. The AgentStack share
+  ingress normally runs as plain HTTP inside a Tailscale tailnet, so cleartext
+  is permitted only for tailnet names rather than globally.
+
+  Tailscale MagicDNS names (host.tailnet-name.ts.net) work out of the box. If
+  you address the server by its raw tailnet IP instead, add that literal here,
+  for example:
+
+      <domain includeSubdomains="false">100.101.102.103</domain>
+
+  Serving the ingress over HTTPS removes the need for any entry below.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">ts.net</domain>
+    </domain-config>
+</network-security-config>

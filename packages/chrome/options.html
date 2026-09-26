@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AgentStack · Settings</title>
+    <link rel="stylesheet" href="theme.css" />
+  </head>
+  <body class="settings">
+    <header class="identity"><img src="assets/layers.svg" width="24" height="24" alt="" /><h1>AgentStack</h1></header>
+    <main>
+      <h2>Share to Brain</h2>
+      <p class="sub">Send pages, links, and selections to your private research index.</p>
+      <label for="serverUrl">Server URL</label>
+      <input id="serverUrl" type="url" placeholder="http://127.0.0.1:8877" aria-describedby="server-hint" autocomplete="off" spellcheck="false" />
+      <p id="server-hint" class="hint">Use the AgentStack address reachable from this browser. Saving grants access to that origin only.</p>
+      <label for="token">Share token</label>
+      <input id="token" type="password" placeholder="Paste the AgentStack share token" aria-describedby="token-hint" autocomplete="off" />
+      <p id="token-hint" class="hint">Use the token from AgentStack’s Brain share listener. Settings stay in this browser profile.</p>
+      <div class="row">
+        <button id="save" class="primary" type="button">Save &amp; grant access</button>
+        <button id="test" type="button">Test connection</button>
+      </div>
+      <p id="status" role="status"></p>
+      <h2>Waiting to be sent</h2>
+      <p id="outbox" role="status">Checking…</p>
+      <p class="hint">Held shares have no confirmed admission to Brain. They retry when the server answers. Changing the server keeps earlier shares bound to their original address; restore that address to send them.</p>
+      <div class="row">
+        <button id="flush" type="button">Send now</button>
+        <button id="discard" type="button">Discard held shares</button>
+      </div>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

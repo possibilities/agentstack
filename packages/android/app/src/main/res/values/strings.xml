@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AgentStack</string>
+    <string name="share_target_label">AgentStack</string>
+
+    <string name="server_url_label">Server URL</string>
+    <string name="token_label">Share token</string>
+    <string name="save">Save</string>
+    <string name="test">Test connection</string>
+    <string name="share_heading">Share to Brain</string>
+    <string name="setup_hint">Use the AgentStack address reachable from this device and the token from its Brain share listener. Loopback (127.0.0.1) refers to this device, not your computer.</string>
+
+    <string name="saved">Saved.</string>
+    <string name="settings_not_saved">Settings could not be saved. Try again.</string>
+    <string name="testing">Testing…</string>
+    <string name="connected">Connected. AgentStack is ready to receive shares.</string>
+    <string name="bad_server_url">Enter an http:// or https:// server URL.</string>
+    <string name="missing_token">Enter the share token.</string>
+
+    <string name="sending">Sending to AgentStack…</string>
+    <string name="not_configured">Set the AgentStack server URL and token first.</string>
+    <string name="nothing_to_share">Nothing shareable was received.</string>
+    <string name="queued">Admitted to Brain (job %1$d). Indexing is pending.</string>
+    <string name="duplicate">Already admitted (job %1$d).</string>
+    <string name="indexed">Already indexed in Brain (document %1$d).</string>
+    <string name="rejected">AgentStack rejected it: %1$s</string>
+    <string name="unreachable">Could not reach AgentStack. Is the tailnet up?</string>
+
+    <!--
+      Held is deliberately not "saved": nothing exists in AgentStack until the
+      ingress admits the share, so the wording must not imply a job exists.
+    -->
+    <string name="held">Could not reach AgentStack. Held to send later (waiting: %1$d).</string>
+    <string name="held_detail">%1$s Held to send later (waiting: %2$d).</string>
+    <string name="held_unconfigured">Held until the server URL and token are set (waiting: %1$d).</string>
+
+    <string name="recent_heading">Recent links</string>
+    <string name="recent_link">Recent link</string>
+    <string name="recent_hint">The newest 20 links stay on this device. Removing one clears its local reminder only; it does not delete anything from AgentStack or cancel delivery.</string>
+    <string name="recent_notifications_on">Notifications are on. Each shared link stays available with Open and Remove actions.</string>
+    <string name="recent_notifications_off">Notifications are off. Recent links are still kept here.</string>
+    <string name="recent_enable_notifications">Enable notifications</string>
+    <string name="recent_notification_channel">Recent links</string>
+    <string name="recent_notification_channel_description">Ongoing reminders for links shared with AgentStack</string>
+    <string name="recent_open">Open</string>
+    <string name="recent_remove">Remove</string>
+    <string name="recent_open_named">Open %1$s</string>
+    <string name="recent_remove_named">Remove %1$s from recent links</string>
+    <string name="recent_clear">Clear recent links</string>
+    <string name="recent_none">No recent links.</string>
+    <plurals name="recent_cleared">
+        <item quantity="one">Removed %1$d recent link reminder.</item>
+        <item quantity="other">Removed %1$d recent link reminders.</item>
+    </plurals>
+
+    <string name="outbox_heading">Waiting to be sent</string>
+    <string name="outbox_hint">Held shares have no confirmed admission to Brain. They retry when the server answers. Changing servers keeps earlier shares bound to their original address.</string>
+    <string name="outbox_none">Nothing is waiting.</string>
+    <string name="outbox_pending">Shares waiting to be sent: %1$d.</string>
+    <string name="outbox_send_now">Send now</string>
+    <string name="outbox_discard">Discard held</string>
+    <string name="outbox_sending">Sending held shares…</string>
+    <string name="outbox_flushed">Brain admitted %1$d of %2$d. Still waiting: %3$d. Not delivered: %4$d.</string>
+    <string name="outbox_other_server">Shares for another server: %1$d. Restore its address in Settings to send them.</string>
+    <string name="outbox_nothing_waiting">Nothing was waiting to be sent.</string>
+    <string name="outbox_cleared">Discarded held shares: %1$d. Any unconfirmed server admission is unaffected.</string>
+    <string name="outbox_dropped_heading">Not delivered</string>
+    <string name="outbox_dropped_expired">Abandoned after 7 days: %1$s</string>
+    <string name="outbox_dropped_overflow">Dropped because the outbox was full: %1$s</string>
+    <string name="outbox_dropped_discarded">Discarded on this device: %1$s</string>
+    <string name="outbox_dropped_rejected">Rejected by AgentStack: %1$s</string>
+    <string name="outbox_unreadable">The outbox cannot be read. Delivery is paused and its file is unchanged. Back up and repair the app-private file %1$s with developer assistance, then reopen Settings and choose Send now. Do not clear app storage to fix this.</string>
+    <string name="outbox_share_not_held">This share was not sent or held. Open AgentStack Settings to resolve the outbox problem, then share it again.</string>
+    <string name="outbox_delivery_unconfirmed">This share has no confirmed admission.</string>
+</resources>

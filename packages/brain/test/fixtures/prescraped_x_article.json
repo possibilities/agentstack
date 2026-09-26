@@ -1,0 +1,33 @@
+{
+  "schema_version": "1",
+  "status": "success",
+  "requested_url": "https://twitter.com/writer/article/987?utm_source=timeline",
+  "final_url": "https://x.com/writer/articles/987",
+  "extractor": {
+    "name": "historical-extractor",
+    "version": "0.9.0",
+    "implementation": "archived-provider",
+    "implementation_version": "historical-fixture"
+  },
+  "artifacts": [
+    {
+      "artifact_type": "document",
+      "media_type": "text/markdown",
+      "encoding": "utf-8",
+      "content": "# A Structured X Article\n\nLongform article body.",
+      "size_bytes": 48,
+      "sha256": "2a97d61262d794ef04bb74ced371f1e4b171ca25ec09e67b59b15886adc688df"
+    }
+  ],
+  "metadata": {
+    "content_type": "article",
+    "title": "A Structured X Article",
+    "author_name": "Writer Name",
+    "author_handle": "writer",
+    "published_at": "2026-07-14T12:30:00Z",
+    "source_id": "987",
+    "warnings": []
+  },
+  "relations": [],
+  "failure": null
+}

@@ -32,3 +32,11 @@ The UI canvas is a separate loopback-only Next.js listener and child process.
 It reads the Package APIs over local WebSocket and operates account and voice
 controls. It shares their local-user trust boundary and is not an authentication
 boundary.
+
+## Research and device sharing
+
+Brain's research database, content-addressed bytes and share token are private AgentStack state under `<state>/brain`. The new package initializes empty storage; it does not discover or import an earlier research application's files or credentials. Research content may itself be sensitive, and ordinary search/retrieval intentionally returns that content to an authorized local caller. Job summaries redact content by default; explicit content inspection and operator dispositions retain their audit semantics.
+
+Chrome and Android use a separate bearer-authenticated Share ingress, loopback port 8877 by default. Configuring an explicit host can make that listener reachable from personal devices; this does not expose the other Package API transports. Health and share-status routes require the same bearer credential as admission. Device configuration must supply this instance's endpoint and token. Client settings, Share outboxes and Share history use new AgentStack application namespaces.
+
+URL extraction and source discovery remain delegated to Agentscrape. Admission is durable and offline; accepting a URL does not assert that it was fetched, indexed or permitted by the extractor's network policy. An unavailable extractor leaves inspectable ingestion state rather than silently dropping the accepted share.

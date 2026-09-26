@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.AgentStack" parent="Base.Theme.AgentStack">
+        <item name="android:navigationBarColor">@color/stack_background</item>
+        <item name="android:windowLightNavigationBar">@bool/stack_light_system_bars</item>
+    </style>
+</resources>

@@ -56,7 +56,7 @@ test("the UI entry redirects to the canvas without losing local links, processes
       bots: [operation("bot_list", { bots: [bot] }), operation("bot_defaults_get", bot.settings), operation("voice_status", { call: null })],
       workers: [operation("worker_runtime_list", { runtimes: [] }), operation("worker_list", { workers: [] })],
       usage: [operation("usage_snapshot", { atMs: Date.now(), inventoryAtMs: null, inventoryError: null, accounts: [], grokBot: { observedAtMs: null, lastAttemptAtMs: null, fresh: false, error: "not_observed", usage: null } })],
-      api: [operation("docs_snapshot", { packages: [packageDoc("bots", "bot_list", "bots")] })],
+      api: [operation("docs_snapshot", { packages: [packageDoc("bots", "bot_list", "bots"), packageDoc("brain", "brain_catalog_probe", "documents")] })],
     };
     for (const [name, operations] of Object.entries(definitions)) {
       served.push(await serveSocket({ info: { name, description: name, transportDescription: "Fixture socket", path: socketPath(name, env) }, context: {}, operations }));
@@ -106,9 +106,10 @@ test("the UI entry redirects to the canvas without losing local links, processes
     assert.ok(canvas.includes(bot.url));
     assert.doesNotMatch(canvas, /Local links and bot processes/);
 
-    const [system, api] = await Promise.all([
+    const [system, api, brainReference] = await Promise.all([
       readDock("/x/fleet?system=open", "left"),
       readDock("/x/fleet?reference=package%3Abots", "right"),
+      readDock("/x/fleet?reference=package%3Abrain", "right"),
     ]);
     assert.match(system, /Filter System/);
     const referenceUrl = new URL("/x/fleet?reference=overview", owner.uixUrl).href;
@@ -117,6 +118,8 @@ test("the UI entry redirects to the canvas without losing local links, processes
     }
     assert.doesNotMatch(system, /Runtime index/);
     assert.match(api, /bot_list/);
+    assert.match(brainReference, /brain_catalog_probe/);
+    assert.match(brainReference, /@agentstack\/brain/);
 
     owner.children[0].running = false;
     owner.children[0].pid = null;

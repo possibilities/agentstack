@@ -45,6 +45,12 @@ export type PackageApi<Ctx, Topic extends string = string> = {
   operations: readonly AnyOperation<Ctx>[];
   events?: PackageEvents<Ctx, Topic>;
   createContext(env: NodeJS.ProcessEnv): Promise<Ctx>;
+  /**
+   * Stop admission and signal cancellation after events stop, before socket
+   * calls drain. Keep resources used by active calls open until closeContext.
+   * Also runs if startup fails after createContext has returned successfully.
+   */
+  prepareCloseContext?(ctx: Ctx, options?: { halt?: boolean }): void | Promise<void>;
   closeContext(ctx: Ctx, options?: { halt?: boolean }): Promise<void>;
 };
 
