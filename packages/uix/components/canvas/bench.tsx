@@ -6,7 +6,7 @@ import { homeOf, spaces, type SpaceId } from "@/lib/stack/spaces";
 import { nodeKey, type NodeRef } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { Lines } from "./lines";
-import { useStack } from "./provider";
+import { useChatWindows, useStack } from "./provider";
 import { spaceViews } from "./spaces";
 import { PlacementContext, type WindowPlacement } from "./window";
 
@@ -24,6 +24,19 @@ function naturalHeight(frame: HTMLElement): number | null {
   return height >= windowLimits.minHeight && height <= windowLimits.maxHeight ? height : null;
 }
 
+/** Saved entries for windows the current layout does not know yet; the current layout wins. */
+function withSaved(layout: BenchLayout, saved: Partial<BenchLayout>): Partial<BenchLayout> {
+  const known = (id: string) => id in layout.positions;
+  const pick = <T,>(values: Record<string, T> | undefined) => Object.fromEntries(Object.entries(values ?? {}).filter(([id]) => !known(id)));
+  return {
+    positions: { ...pick(saved.positions), ...layout.positions },
+    manual: { ...pick(saved.manual), ...layout.manual },
+    collapsed: { ...pick(saved.collapsed), ...layout.collapsed },
+    sizes: { ...pick(saved.sizes), ...layout.sizes },
+    order: layout.order,
+  };
+}
+
 /** A live move or resize: the window follows the pointer while its stored layout holds where it will land. */
 type Gesture =
   | { id: string; kind: "move"; x: number; y: number; free: boolean }
@@ -36,17 +49,20 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
   space: SpaceId; blocked: boolean; onControls(controls: BenchControls | null): void; onScale(scale: number): void; onArrive(ref: NodeRef): void;
 }) {
   const state = useStack();
-  const regions = spaces.map((s) => ({ ...s, defs: spaceViews[s.id].windows(state) }));
-  const signature = JSON.stringify(regions.map((s) => ({ id: s.id, defs: s.defs.map(({ id, width, height, column }) => ({ id, width, height, column })) })));
+  const { windows: chats } = useChatWindows();
+  const regions = spaces.map((s) => ({ ...s, defs: spaceViews[s.id].windows(state, chats) }));
+  const signature = JSON.stringify(regions.map((s) => ({ id: s.id, defs: s.defs.map(({ id, width, height, column, fixed }) => ({ id, width, height, column, fixed })) })));
   // Content refreshes cannot affect footprint or layout. Only registration geometry can.
   const structure = useMemo(() => regions.map((region) => ({
-    id: region.id, windows: region.defs.map(({ id, width, height, column }) => ({ id, width, height, column })),
+    id: region.id, windows: region.defs.map(({ id, width, height, column, fixed }) => ({ id, width, height, column, fixed })),
   })), [signature]); // eslint-disable-line react-hooks/exhaustive-deps
   const [arrangement, setArrangement] = useState(() => ({ signature, ...reconcileBench(structure) }));
+  // The saved layout also holds windows registered after restore, such as reopened chat windows.
+  const saved = useRef<Partial<BenchLayout>>({});
   // Supply new registrations during their first render, then commit before paint.
   // Dragging changes only the local layout; it never derives new region origins.
   const packed = useMemo(() => arrangement.signature === signature ? arrangement : {
-    signature, ...reconcileBench(structure, arrangement.layout),
+    signature, ...reconcileBench(structure, withSaved(arrangement.layout, saved.current)),
   }, [arrangement, signature, structure]);
   const { layout, geometry } = packed;
   // Rendered window heights; content growth pushes the windows below at render time.
@@ -125,15 +141,16 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
   }, [setLayout]);
 
   useLayoutEffect(() => {
-    let saved: SavedBench = {};
+    let stored: SavedBench = {};
     try {
       const value = JSON.parse(localStorage.getItem(storageKey) ?? "{}");
-      if (value && typeof value === "object") saved = value;
+      if (value && typeof value === "object") stored = value;
     } catch { /* optional persistence */ }
-    const restored = { signature, ...reconcileBench(structure, saved.layout) };
+    saved.current = stored.layout && typeof stored.layout === "object" ? stored.layout : {};
+    const restored = { signature, ...reconcileBench(structure, stored.layout) };
     setArrangement(restored);
     current.current.packed = restored;
-    setCamera(restoreBenchCamera(saved, space, restored, viewportSize()));
+    setCamera(restoreBenchCamera(stored, space, restored, viewportSize()));
     setReady(true);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -258,8 +275,9 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
     // Resizing, like dragging, changes only the local layout; origins repack on restore or tidy.
     const size = layout.sizes[id];
     const push = pushes[id] ?? 0;
-    // Unsized windows grow with their content up to the height limit; a human-set height is exact.
-    const stored = { x: point.x + origin.x, y: point.y + origin.y + push, width: size?.width ?? def.width, height: size?.height ?? windowLimits.maxHeight, sized: size?.height !== undefined };
+    // Unsized windows grow with their content up to the height limit; a human-set or fixed height is exact.
+    const fixed = def.fixed && def.height !== undefined ? def.height : undefined;
+    const stored = { x: point.x + origin.x, y: point.y + origin.y + push, width: size?.width ?? def.width, height: size?.height ?? fixed ?? windowLimits.maxHeight, sized: (size?.height ?? fixed) !== undefined };
     const live = gesture?.id === id ? gesture : null;
     // While a gesture runs, the window follows the pointer and an outline marks where it will land.
     const shown = live?.kind === "move" ? { ...stored, x: origin.x + live.x, y: origin.y + live.y }

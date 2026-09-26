@@ -181,6 +181,8 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         events: state.events.filter((event) => event.scope === bot.id),
       };
     }
+    case "chat":
+      return null; // A chat window is a view onto a Bot, not a record.
     case "package":
     case "operation":
       return null; // Reference destinations are rendered in the shared dock's reading mode.

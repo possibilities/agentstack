@@ -65,3 +65,50 @@ test("native item pages shrink to the response budget and preserve native contin
   const huge = await boundedMainItems(async () => ({ data: [{ turnId: "turn", item: { id: "large", type: "commandExecution", status: "failed", aggregatedOutput: "x".repeat(700_000) } }], nextCursor: "after-large" }), 1);
   assert.deepEqual(huge, { data: [{ turnId: "turn", item: { id: "large", type: "commandExecution", status: "failed" }, omitted: true }], nextCursor: "after-large" });
 });
+
+test("followers read only rows changed after their cursor and replace their copy after a reset", () => {
+  const chats = new LiveChats();
+  const first = chats.read("bot-1", url, root);
+  assert.equal(first.reset, true);
+  chats.observe("bot-1", url, root, "turn/started", { threadId: root, turn: { id: "turn", startedAt: 1_700_000_000 } });
+  chats.observe("bot-1", url, root, "item/started", { threadId: root, turnId: "turn", item: { id: "ask", type: "userMessage", content: [{ type: "text", text: "Go" }] } });
+  chats.observe("bot-1", url, root, "item/started", { threadId: root, turnId: "turn", item: { id: "say", type: "agentMessage", text: "" } });
+  const full = chats.read("bot-1", url, root, { instance: first.instance!, revision: first.revision });
+  assert.equal(full.reset, false);
+  assert.equal(full.activeTurnStartedAt, 1_700_000_000_000);
+  assert.deepEqual(full.items.map((row) => row.item.id), ["ask", "say"]);
+  chats.observe("bot-1", url, root, "item/agentMessage/delta", { threadId: root, turnId: "turn", itemId: "say", delta: "Hello" });
+  const next = chats.read("bot-1", url, root, { instance: full.instance!, revision: full.revision });
+  assert.equal(next.reset, false);
+  assert.deepEqual(next.items.map((row) => [row.item.id, row.item.text]), [["say", "Hello"]]);
+  // A completion keeps its native start position.
+  chats.observe("bot-1", url, root, "item/completed", { threadId: root, turnId: "turn", item: { id: "ask", type: "userMessage", content: [{ type: "text", text: "Go" }] } });
+  assert.deepEqual(chats.read("bot-1", url, root).items.map((row) => row.item.id), ["ask", "say"]);
+  const unchanged = chats.read("bot-1", url, root, { instance: full.instance!, revision: chats.read("bot-1", url, root).revision });
+  assert.deepEqual(unchanged.items, []);
+  const stale = chats.read("bot-1", url, root, { instance: "elsewhere", revision: 1 });
+  assert.equal(stale.reset, true);
+  assert.equal(stale.items.length, 2);
+  const beforeRevert = chats.read("bot-1", url, root);
+  chats.observe("bot-1", url, root, "thread/reverted", { threadId: root });
+  const reverted = chats.read("bot-1", url, root, { instance: beforeRevert.instance!, revision: beforeRevert.revision });
+  assert.equal(reverted.reset, true);
+  assert.deepEqual(reverted.items, []);
+  const ahead = chats.read("bot-1", url, root, { instance: reverted.instance!, revision: reverted.revision + 5 });
+  assert.equal(ahead.reset, true);
+});
+
+test("reasoning summaries and content stream into indexed parts", () => {
+  const chats = new LiveChats();
+  chats.observe("bot-1", url, root, "item/started", { threadId: root, turnId: "turn", item: { id: "think", type: "reasoning", summary: [], content: [] } });
+  chats.observe("bot-1", url, root, "item/reasoning/summaryPartAdded", { threadId: root, turnId: "turn", itemId: "think", summaryIndex: 0 });
+  chats.observe("bot-1", url, root, "item/reasoning/summaryTextDelta", { threadId: root, turnId: "turn", itemId: "think", summaryIndex: 0, delta: "**Planning**" });
+  chats.observe("bot-1", url, root, "item/reasoning/summaryTextDelta", { threadId: root, turnId: "turn", itemId: "think", summaryIndex: 1, delta: "Next" });
+  chats.observe("bot-1", url, root, "item/reasoning/textDelta", { threadId: root, turnId: "turn", itemId: "think", contentIndex: 0, delta: "raw" });
+  const [row] = chats.read("bot-1", url, root).items;
+  assert.deepEqual(row?.item.summary, ["**Planning**", "Next"]);
+  assert.deepEqual(row?.item.content, ["raw"]);
+  assert.equal(row?.complete, true);
+  chats.observe("bot-1", url, root, "item/reasoning/summaryTextDelta", { threadId: root, turnId: "turn", itemId: "think", summaryIndex: -1, delta: "bad" });
+  assert.equal(chats.read("bot-1", url, root).items[0]?.complete, false);
+});

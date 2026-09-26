@@ -2,7 +2,8 @@
 export type Point = { x: number; y: number };
 export type Bounds = Point & { width: number; height: number };
 export type Camera = Point & { k: number };
-export type WindowGeometry = { id: string; width: number; column: number; height?: number };
+/** A fixed window keeps its footprint height until a human sizes it, instead of growing with content. */
+export type WindowGeometry = { id: string; width: number; column: number; height?: number; fixed?: boolean };
 export type SpaceGeometry = { id: string; windows: WindowGeometry[] };
 /** A human-set window extent; either dimension may be absent. */
 export type WindowSize = { width?: number; height?: number };

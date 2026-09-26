@@ -74,7 +74,7 @@ const statusCopy: Record<ChannelStatus, string> = {
   closed: "Reconnecting…",
 };
 
-export function Window({ id, title, subtitle, icon: Icon, accent, count, status, endpoint, updatedAt, error, actions, footer, node, empty = false, children }: {
+export function Window({ id, title, subtitle, icon: Icon, accent, count, status, endpoint, updatedAt, error, actions, footer, node, reveal, bleed = false, empty = false, children }: {
   id: string;
   title: string;
   subtitle?: string;
@@ -92,13 +92,17 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
   actions?: React.ReactNode;
   /** When the window represents a node, a header tap or the title button inspects it. */
   node?: NodeRef;
+  /** A navigation destination that flashes the window without making it inspectable. */
+  reveal?: NodeRef;
+  /** The body has no padding or scrolling of its own; the content manages both. */
+  bleed?: boolean;
   children: React.ReactNode;
 }) {
   const placement = use(PlacementContext)?.(id);
   if (!placement) throw new Error("Window requires PlacementContext");
   const { selected, select, flash } = useWorkbench();
-  const key = node ? nodeKey(node) : null;
-  const isSelected = key !== null && selected !== null && nodeKey(selected) === key;
+  const key = node ? nodeKey(node) : reveal ? nodeKey(reveal) : null;
+  const isSelected = node !== undefined && selected !== null && nodeKey(selected) === key;
   const flashing = key !== null && flash?.key === key;
   const toggle = () => {
     if (node) select(isSelected ? null : node);
@@ -183,7 +187,7 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
           </button>
         </div>
       </header>
-      {placement.collapsed ? null : <div data-scroll className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain p-3.5">{children}</div>}
+      {placement.collapsed ? null : <div data-scroll className={cn("flex min-h-0 flex-1 flex-col", bleed ? "overflow-hidden" : "gap-4 overflow-y-auto overscroll-contain p-3.5")}>{children}</div>}
       {placement.collapsed || !footer ? null : <footer className="shrink-0 border-t border-border/60 p-1.5">{footer}</footer>}
       {placement.collapsed ? null : <ResizeHandles title={title} placement={placement} />}
     </section>

@@ -88,9 +88,10 @@ export type ChatTreeDetail = { thread: ChatTreeRow; nativeThread: Record<string,
   sessionMeta: ChatTreeEvidence | null; initialContext: ChatTreeEvidence | null; startingInput: ChatTreeEvidence | null;
   spawn: ChatTreeEvidence | null; spawnArguments: ChatTreeEvidence | null;
   coverage: ChatTreeCoverage & { detail: "bestEffort" } };
-/** Bot tools expose these records; a dedicated transcript reader can build on them. */
-export type MainChatLive = { threadId: string | null; instance: string | null; revision: number; activeTurnId: string | null;
-  coverage: "partial"; items: Array<{ turnId: string; item: Record<string, unknown>; complete: boolean; completed: boolean; omitted: boolean }> };
+/** Chat windows follow these; `after` reads return only rows changed since that instance and revision unless `reset`. */
+export type MainChatLive = { threadId: string | null; instance: string | null; revision: number; activeTurnId: string | null; activeTurnStartedAt: number | null;
+  coverage: "partial"; reset: boolean; items: Array<{ turnId: string; item: Record<string, unknown>; complete: boolean; completed: boolean; omitted: boolean }> };
+/** Newest first; entries are native `{ turnId, item, startedAtMs, completedAtMs }` or an `omitted` summary. */
 export type MainChatItems = { threadId: string; data: Array<Record<string, unknown>>; nextCursor: string | null };
 export type ChatHit = Chat & { line: number; role: string; snippet: string; score: number };
 export type ChatQueueEntry = { id: string; botId: string; threadId: string; input: unknown[];
@@ -436,6 +437,8 @@ export type NodeRef =
   | { kind: "grok-bot-usage" }
   | { kind: "login" }
   | { kind: "bot"; id: string }
+  /** A chat window on the bench, by window ID; it has no inspectable record. */
+  | { kind: "chat"; id: string }
   | { kind: "package"; id: string }
   | { kind: "operation"; id: string; pkg: string };
 

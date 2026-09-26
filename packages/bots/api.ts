@@ -42,7 +42,8 @@ export const topics = {
   threads_changed: "Published when thread lifecycle, configuration, metadata or status for this Bot may have changed, or its Codex connection resumes. Refresh chat_tree. An invalidation is not proof that a sanctioned thread changed.",
   voice_changed: "Published when the single voice call starts, connects, or ends. Refresh voice_status; the notice carries no SDP or audio.",
   defaults_changed: "Published when the defaults for newly created Bots change. Refresh bot_defaults_get.",
-  chats_changed: "A Bot's Codex thread state changed or its chat history may have grown. Re-read chat_tree, chat_list, chat_thread_read or chat_turns; poll chat_main_live for in-progress text. Notices carry no transcript content.",
+  chats_changed: "A Bot's Codex thread state changed or its chat history may have grown. Re-read chat_tree, chat_list, chat_thread_read or chat_turns. Notices carry no transcript content.",
+  chat_live_changed: "The Bot's in-progress main-thread projection changed: streamed text, reasoning, item or turn state, or a reset after reconnection. Coalesced to at most one notice per 32 ms. Read chat_main_live with the previous instance and revision as after to receive only changed items.",
   chat_queue_changed: "A queued message changed admission or dispatch state. Refresh chat_queue_list for the Bot; notices carry no message content.",
 } as const;
 export type BotsTopic = keyof typeof topics;
@@ -306,13 +307,16 @@ export const chatItems = operation({
 });
 const liveItem = z.strictObject({ turnId: z.string(), item: raw, complete: z.boolean(), completed: z.boolean(), omitted: z.boolean() });
 export const chatMainLive = operation({
-  name: "chat_main_live", description: "Read a bounded, partial snapshot of native items observed on this Bot's main thread since its current app-server watch connected. Poll while following a turn. Match items to history by turnId and item.id; completed items replace drafts. The instance changes after reconnection; omitted or incomplete items require a later native completion or history read. This is not durable history.",
-  input: z.strictObject({ botId }),
-  output: z.strictObject({ threadId: threadId.nullable(), instance: z.string().nullable(), revision: z.number().int(), activeTurnId: z.string().nullable(), coverage: z.literal("partial"), items: z.array(liveItem) }),
+  name: "chat_main_live", description: "Read a bounded, partial projection of native items observed on this Bot's main thread since its app-server watch connected. After each chat_live_changed notice, pass the previous instance and revision as after to get only changed rows. Match items to history by turnId and item.id; completed items replace drafts. Not durable history.",
+  input: z.strictObject({ botId, after: z.strictObject({ instance: z.string(), revision: z.number().int().nonnegative() }).optional()
+    .describe("The instance and revision of the last applied read. When still valid, items holds only rows changed since; otherwise reset is true and items is the full snapshot.") }),
+  output: z.strictObject({ threadId: threadId.nullable(), instance: z.string().nullable(), revision: z.number().int(), activeTurnId: z.string().nullable(),
+    activeTurnStartedAt: z.number().nullable().describe("Unix milliseconds when the active turn started: native when reported, otherwise when it was observed."),
+    coverage: z.literal("partial"), reset: z.boolean().describe("True when items is a full snapshot that replaces any previously applied rows."), items: z.array(liveItem) }),
   annotations: { title: "Follow main chat", readOnlyHint: true },
-  async call(ctx: BotsContext, { botId: id }) {
+  async call(ctx: BotsContext, { botId: id, after }) {
     const bot = botFor(ctx, id);
-    return ctx.liveChats.read(id, bot.state === "running" && !bot.recoveryIssue && bot.runningAccount ? bot.url : null, bot.mainThreadId);
+    return ctx.liveChats.read(id, bot.state === "running" && !bot.recoveryIssue && bot.runningAccount ? bot.url : null, bot.mainThreadId, after);
   },
 });
 export const chatMainItems = operation({
@@ -489,9 +493,17 @@ export const api: PackageApi<BotsContext, BotsTopic> = {
     },
     start(ctx, publish) {
       const watches = new Map<string, { url: string; stop: () => void }>();
+      // Streaming deltas arrive per token; followers need at most one read per frame.
+      const live = new Map<string, ReturnType<typeof setTimeout>>();
+      const liveChanged = (id: string) => {
+        if (live.has(id)) return;
+        const timer = setTimeout(() => { live.delete(id); publish("chat_live_changed", id); }, 32);
+        timer.unref();
+        live.set(id, timer);
+      };
       const sync = () => {
         const active = new Map(ctx.supervisor.list().flatMap((bot) => bot.state === "running" && !bot.recoveryIssue && bot.url ? [[bot.id, bot.url] as const] : []));
-        for (const [id, watch] of watches) if (active.get(id) !== watch.url) { watch.stop(); watches.delete(id); ctx.liveChats.remove(id); }
+        for (const [id, watch] of watches) if (active.get(id) !== watch.url) { watch.stop(); watches.delete(id); ctx.liveChats.remove(id); liveChanged(id); }
         for (const [id, url] of active) if (!watches.has(id)) watches.set(id, { url, stop: watchThreadEvents(url, () => {
           publish("threads_changed", id);
           publish("chats_changed", id);
@@ -499,8 +511,11 @@ export const api: PackageApi<BotsContext, BotsTopic> = {
           void ctx.supervisor.adoptMainThread(id, url).catch((error) => console.error(`failed to adopt main thread for ${id}: ${error}`));
         }, (method, params) => {
           const bot = ctx.supervisor.list().find((item) => item.id === id && item.url === url);
-          if (bot) ctx.liveChats.observe(id, url, bot.mainThreadId, method, params);
-        }, () => ctx.liveChats.connected(id, url)) });
+          if (!bot) return;
+          const before = ctx.liveChats.revision(id);
+          ctx.liveChats.observe(id, url, bot.mainThreadId, method, params);
+          if (ctx.liveChats.revision(id) !== before) liveChanged(id);
+        }, () => { ctx.liveChats.connected(id, url); liveChanged(id); }) });
       };
       ctx.supervisor.onChange = (id) => { sync(); publish("bots_changed", id); publish("threads_changed", id); publish("chats_changed", id); };
       ctx.store.onDefaultsChange = () => publish("defaults_changed");
@@ -508,7 +523,7 @@ export const api: PackageApi<BotsContext, BotsTopic> = {
       ctx.queue.onChange = (id) => publish("chat_queue_changed", id);
       sync();
       for (const bot of ctx.supervisor.list()) ctx.queue.wakeBot(bot.id);
-      return () => { ctx.supervisor.onChange = undefined; ctx.store.onDefaultsChange = undefined; ctx.voice.onChange = undefined; ctx.queue.onChange = undefined; for (const [id, watch] of watches) { watch.stop(); ctx.liveChats.remove(id); } watches.clear(); };
+      return () => { ctx.supervisor.onChange = undefined; ctx.store.onDefaultsChange = undefined; ctx.voice.onChange = undefined; ctx.queue.onChange = undefined; for (const [id, watch] of watches) { watch.stop(); ctx.liveChats.remove(id); } watches.clear(); for (const timer of live.values()) clearTimeout(timer); live.clear(); };
     },
   },
   async createContext(env) {

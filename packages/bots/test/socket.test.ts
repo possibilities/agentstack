@@ -56,6 +56,8 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
     assert.equal((await call(socket, "bot_list") as { bots: View[] }).bots[0]?.mainThreadId, opened.threadId);
     const notify = (threadId: string, method: string, params: Record<string, unknown>) => chatRpc(first.url!, "test/notify", { method, params: { threadId, ...params } });
     await notify("cccccccc-cccc-4ccc-8ccc-cccccccccccc", "item/started", { turnId: "other", item: { id: "elsewhere", type: "agentMessage", text: "not this bot" } });
+    const liveNotices: string[] = [];
+    const liveSubscription = await socketSubscribe(socket, ["chat_live_changed"], (topic) => liveNotices.push(topic), { scope: first.id });
     await notify(opened.threadId, "item/started", { turnId: "turn-live", item: { id: "live", type: "agentMessage", text: "Working" } });
     await notify(opened.threadId, "item/agentMessage/delta", { turnId: "turn-live", itemId: "live", delta: " now" });
     let followed: { items: Array<{ item: { text?: string }; completed: boolean }> } = { items: [] };
@@ -66,6 +68,20 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
     }
     assert.equal(followed.items.length, 1);
     assert.equal(followed.items[0]?.item.text, "Working now");
+    for (let n = 0; n < 100 && liveNotices.length === 0; n++) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(liveNotices.length >= 1);
+    const cursor = followed as unknown as { instance: string; revision: number };
+    const quiet = await call(socket, "chat_main_live", { botId: first.id, after: { instance: cursor.instance, revision: cursor.revision } }) as { reset: boolean; items: unknown[] };
+    assert.equal(quiet.reset, false);
+    assert.deepEqual(quiet.items, []);
+    const burst = liveNotices.length;
+    await Promise.all(Array.from({ length: 20 }, () => notify(opened.threadId, "item/agentMessage/delta", { turnId: "turn-live", itemId: "live", delta: "." })));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.ok(liveNotices.length > burst && liveNotices.length - burst < 10, `coalesced live notices: ${liveNotices.length - burst}`);
+    const delta = await call(socket, "chat_main_live", { botId: first.id, after: { instance: cursor.instance, revision: cursor.revision } }) as { reset: boolean; items: Array<{ item: { text?: string } }> };
+    assert.equal(delta.reset, false);
+    assert.equal(delta.items[0]?.item.text, "Working now" + ".".repeat(20));
+    liveSubscription.close();
     await notify(opened.threadId, "item/completed", { turnId: "turn-live", item: { id: "live", type: "agentMessage", text: "Finished" } });
     for (let n = 0; n < 100; n++) {
       followed = await call(socket, "chat_main_live", { botId: first.id }) as typeof followed;

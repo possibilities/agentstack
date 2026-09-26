@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, use, useId, useRef, useState } from "react";
-import { ChevronRightIcon, EllipsisIcon, PhoneIcon, PlayIcon, PlusIcon, Settings2Icon, SquareIcon, TerminalIcon, Trash2Icon, UserRoundIcon } from "lucide-react";
+import { ChevronRightIcon, EllipsisIcon, PhoneIcon, PlayIcon, PlusIcon, Settings2Icon, SquareIcon, SquareTerminalIcon, TerminalIcon, Trash2Icon, UserRoundIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ import { BotUploads } from "@/lib/stack/bot-uploads";
 import type { Account, Bot, BotSettings } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { Orb } from "./primitives";
-import { useStack, useStore } from "./provider";
+import { useChatWindows, useStack, useStore, useWorkbench } from "./provider";
 import { BotOperations } from "./bot-operations";
 import { footerButton } from "./window";
 import { useVoice } from "./voice";
@@ -84,6 +84,7 @@ export function BotLifecycleControls({ bot }: { bot: Bot }) {
         <TooltipContent side="bottom">{callReason ?? "Call main thread"}</TooltipContent>
       </Tooltip>
     ) : null}
+    <ChatButton bot={bot} />
     <Button size="xs" variant="ghost" onClick={() => open("tools", bot)}><TerminalIcon data-icon="inline-start" />Tools</Button>
     <DropdownMenu>
       <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" aria-label={`${bot.id} actions`} className="ml-auto" />}>
@@ -100,6 +101,25 @@ export function BotLifecycleControls({ bot }: { bot: Bot }) {
       </DropdownMenuContent>
     </DropdownMenu>
   </div>;
+}
+
+/** Show the main thread in the chat window already on this Bot, else the primary one; a modified click opens another window. */
+function ChatButton({ bot }: { bot: Bot }) {
+  const { chats } = useChatWindows();
+  const { goTo } = useWorkbench();
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<Button size="xs" variant="ghost" onClick={(event) => {
+        goTo({ kind: "chat", id: event.metaKey || event.ctrlKey || event.shiftKey ? chats.open(bot.id) : chats.show(bot.id) });
+      }} />}>
+        <SquareTerminalIcon data-icon="inline-start" />Chat
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="flex-col items-start gap-0.5">
+        <span>Show main thread</span>
+        <span className="opacity-70">⌘-click for a new window</span>
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 const settingOptions = {

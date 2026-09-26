@@ -2,18 +2,36 @@
 
 import { createContext, use, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { SpaceId } from "@/lib/stack/spaces";
+import { ChatWindowStore, type ChatWindows } from "@/lib/stack/chat-windows";
 import { StackStore, type StackConnections, type StackState } from "@/lib/stack/store";
 import type { NodeRef, Snapshot, StackEvent } from "@/lib/stack/types";
 
 const StoreContext = createContext<StackStore | null>(null);
+const ChatWindowsContext = createContext<ChatWindowStore | null>(null);
 
 export function StackProvider({ snapshot, children, connections }: { snapshot: Snapshot; children: React.ReactNode; connections?: StackConnections }) {
   const [store] = useState(() => new StackStore(snapshot));
+  const [chats] = useState(() => new ChatWindowStore());
   useEffect(() => {
     store.start(connections);
     return () => store.stop();
   }, [store, connections]);
-  return <StoreContext value={store}>{children}</StoreContext>;
+  useEffect(() => {
+    let storage: Storage | null = null;
+    try { storage = window.localStorage; } catch { /* optional persistence */ }
+    chats.attach(storage);
+  }, [chats]);
+  const bots = useSyncExternalStore(store.subscribe, () => store.getState().bots.data, () => store.getState().bots.data);
+  useEffect(() => { if (bots) chats.prune(new Set(bots.map((bot) => bot.id))); }, [bots, chats]);
+  return <StoreContext value={store}><ChatWindowsContext value={chats}>{children}</ChatWindowsContext></StoreContext>;
+}
+
+/** Fleet chat windows and the store that arranges them. */
+export function useChatWindows(): { windows: ChatWindows; chats: ChatWindowStore } {
+  const chats = use(ChatWindowsContext);
+  if (!chats) throw new Error("useChatWindows requires StackProvider");
+  const windows = useSyncExternalStore(chats.subscribe, chats.getWindows, chats.getWindows);
+  return { windows, chats };
 }
 
 export function useStore(): StackStore {
