@@ -182,10 +182,9 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     const system = await fetch(new URL("/x/fleet?system=open", uixUrl));
     assert.equal(system.status, 200);
     const systemHtml = await system.text();
-    assert.match(systemHtml, /API reference/);
     assert.match(systemHtml, /MCP Inspector/);
     assert.match(systemHtml, /MCP endpoints/);
-    assert.ok(systemHtml.includes(referenceUrl));
+    assert.ok(!systemHtml.includes(referenceUrl), "System links only MCP Inspector as a surface");
     assert.ok(systemHtml.includes(ownerStatus.inspectorUrl));
     assert.ok(systemHtml.includes(ownerStatus.mcpUrls.owner));
     const canvas = await fetch(uixUrl);

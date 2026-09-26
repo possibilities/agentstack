@@ -13,7 +13,7 @@ The parity audit maps every root-page item to its canvas home:
 | Root content | Canvas home |
 | --- | --- |
 | UI canvas link | The entry redirect opens Fleet; the space links navigate the canvas. |
-| API reference and MCP Inspector links | System → Surfaces, with full URLs. Inspector is linked only while its child reports running. |
+| API reference and MCP Inspector links | System → Surfaces, with full URLs. Inspector is linked only while its child reports running. (Amended 2026-09-26: only the Inspector remains; the reference opens from the bench.) |
 | Package API MCP URLs | System → MCP endpoints, with full, copyable URLs. |
 | Running owner children and PIDs | System → Processes, which also shows stopped and failed children. |
 | Running Bot IDs, PIDs, workspaces, endpoints, and recovery warnings | Fleet → Bots, with full, copyable paths and endpoints. Stopped Bots remain visible too. |

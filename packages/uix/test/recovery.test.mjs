@@ -112,10 +112,10 @@ test("the UI entry redirects to the canvas without losing local links, processes
       readDock("/x/fleet?reference=package%3Abrain", "right"),
     ]);
     assert.match(system, /Filter System/);
-    const referenceUrl = new URL("/x/fleet?reference=overview", owner.uixUrl).href;
-    for (const value of ["API reference", "MCP Inspector", "MCP endpoints", "inspector", "9876", "workers", "Fixture spawn failure", referenceUrl, owner.inspectorUrl, owner.mcpUrls.owner]) {
+    for (const value of ["MCP Inspector", "MCP endpoints", "inspector", "9876", "workers", "Fixture spawn failure", owner.inspectorUrl, owner.mcpUrls.owner]) {
       assert.ok(system.includes(value), `System is missing ${value}`);
     }
+    assert.ok(!system.includes("reference=overview"), "System links only MCP Inspector as a surface");
     assert.doesNotMatch(system, /Runtime index/);
     assert.match(api, /bot_list/);
     assert.match(brainReference, /brain_catalog_probe/);
@@ -125,7 +125,7 @@ test("the UI entry redirects to the canvas without losing local links, processes
     owner.children[0].pid = null;
     const stopped = await readDock("/x/fleet?system=open", "left");
     assert.doesNotMatch(stopped, /MCP Inspector/);
-    assert.match(stopped, /API reference/);
+    assert.doesNotMatch(stopped, /Surfaces/);
 
     await served.shift().close();
     const unavailable = await readDock("/x/fleet?system=open", "left");

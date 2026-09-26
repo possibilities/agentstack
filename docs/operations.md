@@ -6,7 +6,7 @@
 
 ## State and processes
 
-The UI entry `/` redirects to `/x` (Fleet). The global System dock (`/x/fleet?system=open`) contains the integrated API reference and running MCP Inspector links, full MCP URLs, and owner child processes. Fleet cards expose Bot workspaces and endpoints; clicking a card's name opens its complete record in the inspector. Fleet also contains Usage and Model catalogs windows and explicit Bot lifecycle controls and tools. Space navigation pans one shared bench and retains inspection.
+The UI entry `/` redirects to `/x` (Fleet). The global System dock (`/x/fleet?system=open`) contains the running MCP Inspector link, full MCP URLs, and owner child processes. Fleet cards expose Bot workspaces and endpoints; clicking a card's name opens its complete record in the inspector. Fleet also contains Usage and Model catalogs windows and explicit Bot lifecycle controls and tools. Space navigation pans one shared bench and retains inspection.
 
 State defaults to `~/.local/state/agentstack`; set `AGENTSTACK_STATE_DIR` for disposable checks. The owner runs `api`, `auth`, `bots`, `roles`, `workers`, `usage`, `infer`, `wiki`, and `brain` socket children, a shared WebSocket child, Inspector, and UI canvas. It serves the `owner` Package API and MCP HTTP in-process. UIX hosts the integrated Package API reference. Each Package API has `<state>/sockets/<name>.sock`. Bots launch codexnk on fresh opaque `<state>/app/<nonce>.sock` URLs. Read the reported `url` rather than deriving a socket path.
 
