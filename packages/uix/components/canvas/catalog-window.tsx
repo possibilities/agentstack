@@ -179,12 +179,13 @@ export function CatalogWindow() {
   };
 
   return (
-    <Window id="model-catalogs" title="Models" subtitle="workers" icon={ListTreeIcon} accent="bots" status={status.workers} endpoint={endpoints.workers} error={workerAccounts.error ?? workerRuntimes.error}>
+    <Window id="model-catalogs" title="Models" subtitle="workers" icon={ListTreeIcon} accent="bots" empty={!accounts.length || !active}
+      count={workerAccounts.data?.length} status={status.workers} endpoint={endpoints.workers} updatedAt={workerAccounts.at} error={workerAccounts.error ?? workerRuntimes.error}>
       {accounts.length && active ? (
         <>
           {/* Tabs and the filter stay pinned while the window body scrolls a long catalog. */}
           <div className="sticky -top-3.5 z-10 -mx-3.5 -mt-3.5 flex flex-col gap-2 border-b border-border/60 bg-card/95 px-3.5 py-3 backdrop-blur-xl">
-          <div role="tablist" aria-label="Worker accounts" className="-mx-0.5 flex flex-wrap gap-1 px-0.5">
+          <div role="tablist" aria-label="Accounts" className="-mx-0.5 flex flex-wrap gap-1 px-0.5">
             {rows.map((row) => {
               const [account] = row;
               const count = countFor(account.id);
@@ -216,7 +217,7 @@ export function CatalogWindow() {
           <CatalogPanel key={active.map((account) => account.id).join(" ")} accounts={active} labels={labels} needle={needle} />
         </>
       ) : (
-        <Empty icon={ListTreeIcon} title={workerAccounts.data ? "No Worker accounts" : "Accounts unavailable"}>{workerAccounts.data ? "Add one to see its models." : workerAccounts.error ?? "Waiting for auth."}</Empty>
+        <Empty icon={ListTreeIcon} title={workerAccounts.data ? "No accounts" : "Accounts unavailable"} />
       )}
     </Window>
   );

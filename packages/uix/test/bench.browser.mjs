@@ -59,7 +59,7 @@ try {
   await page.goto(`${origin}/x`);
   await page.getByRole("main", { name: "Open bench" }).waitFor();
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
-  assert.deepEqual(await page.locator("[data-window]").evaluateAll((nodes) => nodes.map((node) => node.dataset.window).sort()), ["accounts", "bots", "model-catalogs", "usage", "worker-accounts"]);
+  assert.deepEqual(await page.locator("[data-window]").evaluateAll((nodes) => nodes.map((node) => node.dataset.window).sort()), ["accounts", "bots", "model-catalogs", "usage"]);
   assert.equal(await page.getByRole("button", { name: "Grid", exact: true }).count(), 0);
   const point = () => page.locator('[data-window="bots"]').evaluate((el) => ({ x: el.getBoundingClientRect().x, y: el.getBoundingClientRect().y }));
   const samePoint = (a, b) => { assert.ok(Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) < 1, `${JSON.stringify(a)} != ${JSON.stringify(b)}`); };

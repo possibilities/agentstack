@@ -248,7 +248,7 @@ export function UsageWindow() {
   const grokAccounts = usage.data?.accounts.filter((account) => account.provider === "grok") ?? [];
   const grokHost = grokBot?.usage && grokAccounts.length === 1 ? rows.find((row) => row[0] === grokAccounts[0]) ?? null : null;
   return (
-    <Window id="usage" title="Usage" subtitle="usage" icon={GaugeIcon} accent="owner" node={{ kind: "usage" }}
+    <Window id="usage" title="Usage" subtitle="usage" icon={GaugeIcon} accent="owner" node={{ kind: "usage" }} empty={!usage.data || !rows.length && !waiting.length && !grokBot}
       count={usage.data ? usage.data.accounts.length + (usage.data.grokBot ? 1 : 0) : undefined} status={status.usage} endpoint={endpoints.usage} updatedAt={usage.at} error={usage.error}
       actions={
         <Tooltip>
@@ -258,7 +258,6 @@ export function UsageWindow() {
           <TooltipContent side="bottom">Re-read</TooltipContent>
         </Tooltip>
       }>
-      {usage.error ? <Alert variant="destructive"><AlertDescription>{usage.error}</AlertDescription></Alert> : null}
       {usage.data?.inventoryError ? <Alert variant="destructive"><AlertDescription>Inventory {usage.data.inventoryError.replace("_", " ")} · <Time at={usage.data.inventoryAtMs} /></AlertDescription></Alert> : null}
       {usage.data ? (
         <div className="flex flex-col gap-2">
@@ -294,10 +293,10 @@ export function UsageWindow() {
               ) : null}
             </div>
           ) : null}
-          {!rows.length && !waiting.length && !grokBot?.usage ? <Empty icon={GaugeIcon} title="No accounts" /> : null}
+          {!rows.length && !waiting.length && !grokBot ? <Empty icon={GaugeIcon} title="No accounts" /> : null}
         </div>
       ) : (
-        <Empty icon={GaugeIcon} title="Usage unavailable">{usage.error ?? "Waiting for a snapshot."}</Empty>
+        <Empty icon={GaugeIcon} title="Usage unavailable" />
       )}
     </Window>
   );

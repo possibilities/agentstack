@@ -25,8 +25,12 @@ const evidence = process.env.FLEET_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
 const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
-const botAccounts = [{ id: id(1), enabled: true, removing: false, linkedAccounts: [] }, { id: id(2), enabled: false, removing: false, linkedAccounts: [] }, { id: id(6), enabled: true, removing: false, linkedAccounts: [] }];
-const workerAccounts = ["codex", "grok", "devin"].map((provider, index) => ({ id: id(index + 3), provider, enabled: true, ready: true, removing: false, linkedAccounts: [] }));
+// Each Codex Bot account is paired with a Codex Worker account; one awaits its own sign-in.
+const botAccounts = [{ id: id(1), enabled: true, removing: false, linkedAccounts: [{ scope: "worker", id: id(3) }] }, { id: id(2), enabled: false, removing: false, linkedAccounts: [] },
+  { id: id(6), enabled: true, removing: false, linkedAccounts: [{ scope: "worker", id: id(7) }] }];
+const workerAccounts = ["codex", "grok", "devin"].map((provider, index) => ({ id: id(index + 3), provider, enabled: true, ready: true, removing: false,
+  linkedAccounts: provider === "codex" ? [{ scope: "bot", id: id(1) }] : [] }));
+workerAccounts.push({ id: id(7), provider: "codex", enabled: true, ready: false, removing: false, linkedAccounts: [{ scope: "bot", id: id(6) }] });
 let defaults = { model: "gpt-6-sol", reasoningEffort: "medium", sandboxMode: "danger-full-access", approvalPolicy: "never" };
 const bot = (name, state = "stopped") => ({ id: name, state, pid: state === "running" ? 321 : null, cwd: "/fixture/private/workspace", url: null,
   account: id(1), runningAccount: state === "running" ? id(1) : null, mainThreadId: id(10), recoveryIssue: null, roleRevision: 1, settings: defaults });

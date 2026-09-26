@@ -192,7 +192,8 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     const canvasHtml = await canvas.text();
     assert.match(canvasHtml, /<main[^>]*data-canvas="workbench"/);
     assert.match(canvasHtml, /<h1[^>]*>AgentStack open bench<\/h1>/);
-    assert.match(canvasHtml, /No bots yet/);
+    assert.match(canvasHtml, /No bots</);
+    assert.match(canvasHtml, /No accounts</);
     // The integrated discovery reader retains the retired reference's coverage of concurrent APIs.
     for (const [pkg, names] of [
       ["owner", ["owner_resources", "owner_resource_history", "resources_changed"]],

@@ -258,7 +258,7 @@ try {
   await reveal(claude);
   const claudeInput = claude.getByRole("textbox", { name: "Code from Claude", exact: true });
   await claudeInput.fill("first-claude-draft");
-  await page.locator('[data-window="worker-accounts"]').getByRole("button", { name: "Add Worker account", exact: true }).first().click();
+  await page.locator('[data-window="accounts"]').getByRole("button", { name: "Add account", exact: true }).click();
   await page.getByRole("menuitem", { name: "Claude", exact: true }).click();
   const secondAttempt = current("claude");
   assert.notEqual(secondAttempt.account, firstClaudeId);

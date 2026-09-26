@@ -33,7 +33,7 @@ registerHooks({
 const { StackProvider, WorkbenchContext, useStore } = await import("../components/canvas/provider.tsx");
 const { PlacementContext } = await import("../components/canvas/window.tsx");
 const { AuthActionsProvider } = await import("../components/canvas/auth-actions.tsx");
-const { WorkerAccountsWindow } = await import("../components/canvas/windows.tsx");
+const { AccountsWindow } = await import("../components/canvas/windows.tsx");
 const { ObservationStatus, UsageWindow } = await import("../components/canvas/usage-window.tsx");
 const { CatalogWindow } = await import("../components/canvas/catalog-window.tsx");
 const { TooltipProvider } = await import("../components/ui/tooltip.tsx");
@@ -47,8 +47,8 @@ function Seed({ state, children }) {
   Object.assign(useStore().getState(), state);
   return children;
 }
-function render(Component, { accounts, logins = [], usage = null, runtimes = [], state = {} }) {
-  const snapshot = { owner: resource(null), accounts: resource([]), workerAccounts: resource(accounts), workerRuntimes: resource(runtimes),
+function render(Component, { accounts, bots = [], logins = [], usage = null, runtimes = [], state = {} }) {
+  const snapshot = { owner: resource(null), accounts: resource(bots), workerAccounts: resource(accounts), workerRuntimes: resource(runtimes),
     workerSessions: resource([]), login: resource(null), workerLogins: resource(logins), bots: resource([]), botDefaults: resource(null),
     voice: resource(null), catalog: resource([]), usage: resource(usage), endpoints: {} };
   return renderToStaticMarkup(h(StackProvider, { snapshot }, h(Seed, { state },
@@ -66,7 +66,7 @@ test("Claude native sign-ins render independent accessible paste-code, recovery 
   const accounts = [account("claude-a", { ready: false }), account("claude-b", { enabled: false })];
   const login = { id: "attempt-a", account: accounts[0].id, provider: "claude", status: "pending", authUrl: "https://claude.ai/oauth/authorize?fixture",
     userCode: null, needsCode: true, error: "The code was rejected. Paste a new code from Claude." };
-  const html = render(WorkerAccountsWindow, { accounts, logins: [login] });
+  const html = render(AccountsWindow, { accounts, logins: [login] });
   const first = card(html, "worker-account:claude-a");
   const second = card(html, "worker-account:claude-b");
   assert.match(first, /aria-label="Inspect worker account claude-worker-account-1"/);
@@ -83,12 +83,30 @@ test("Claude native sign-ins render independent accessible paste-code, recovery 
   assert.match(text(second), /Enable/);
   assert.doesNotMatch(second, /attempt-a|Submit code|Waiting for code/);
   assert.doesNotMatch(html, /Devin|ACP/);
-  const failed = render(WorkerAccountsWindow, { accounts, logins: [{ ...login, status: "failed", needsCode: false }] });
+  const failed = render(AccountsWindow, { accounts, logins: [{ ...login, status: "failed", needsCode: false }] });
   assert.match(card(failed, "worker-account:claude-a"), /role="alert"/);
   assert.match(text(failed), /Try again/);
-  const waiting = render(WorkerAccountsWindow, { accounts, logins: [{ ...login, needsCode: false, error: null }] });
+  const waiting = render(AccountsWindow, { accounts, logins: [{ ...login, needsCode: false, error: null }] });
   assert.match(text(waiting), /finish signing in/);
   assert.doesNotMatch(text(waiting), /enter this code|paste/);
+});
+
+test("one Accounts window joins each Codex Bot account to its Worker and keeps placeholders to a title", () => {
+  const bot = { id: "bot-a", enabled: true, removing: false, linkedAccounts: [{ scope: "worker", id: "codex-w" }] };
+  const accounts = [account("codex-w", { provider: "codex", ready: false, linkedAccounts: [{ scope: "bot", id: "bot-a" }] }), account("grok-a", { provider: "grok" })];
+  const html = render(AccountsWindow, { accounts, bots: [bot] });
+  const pair = html.match(/<div role="group" aria-label="codex-bot-account-1 and its Worker account"[\s\S]*?<\/article><article[\s\S]*?<\/article>/)?.[0];
+  assert.ok(pair, "the Codex pair renders as one group");
+  assert.match(pair, /data-node="account:bot-a"/);
+  assert.match(pair, /data-node="worker-account:codex-w"/);
+  assert.match(text(card(html, "account:bot-a")), /Ready/);
+  assert.match(text(card(html, "worker-account:codex-w")), /Needs sign-in/);
+  assert.match(text(html), /CodexGrok|Codex.*Grok/);
+  assert.match(html, /Add account/);
+  assert.doesNotMatch(text(html), /Paired with|Same login as|Enabled/);
+  const empty = render(AccountsWindow, { accounts: [] });
+  assert.match(text(empty), /No accounts/);
+  assert.doesNotMatch(text(empty), /Sign in with|to add one/);
 });
 
 test("Claude usage shows per-account windows, resets, provider-unit extra usage and unobserved accounts", () => {

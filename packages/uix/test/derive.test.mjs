@@ -14,7 +14,7 @@ registerHooks({
   },
 });
 
-const { workerAccountLabels, accountLinks, providerTitle, untilTime, modelName, usageRows, catalogIdentity, catalogRows } = await import("../lib/stack/derive.ts");
+const { workerAccountLabels, providerTitle, untilTime, modelName, usageRows, catalogIdentity, catalogRows } = await import("../lib/stack/derive.ts");
 
 const bot = (id, linkedAccounts = []) => ({ id, enabled: true, removing: false, linkedAccounts });
 const worker = (id, provider, extra = {}) => ({ id, provider, enabled: true, ready: true, removing: false, linkedAccounts: [], ...extra });
@@ -33,31 +33,6 @@ test("providerTitle names each worker provider", () => {
   assert.equal(providerTitle("grok"), "Grok");
   assert.equal(providerTitle("devin"), "Devin");
   assert.equal(providerTitle("claude"), "Claude");
-});
-
-test("accountLinks derives bot→worker pairs from the bot side only", () => {
-  const workers = [worker("w1", "codex"), worker("w2", "codex"), worker("w3", "grok")];
-  const accounts = [
-    bot("b1", [{ scope: "worker", id: "w1" }, { scope: "worker", id: "w3" }]),
-    bot("b2", [{ scope: "bot", id: "b1" }]),
-    bot("b3"),
-  ];
-  assert.deepEqual(accountLinks(accounts, workers), [{ bot: "b1", worker: "w1" }, { bot: "b1", worker: "w3" }]);
-});
-
-test("accountLinks ignores links to missing workers and worker-side-only links", () => {
-  // A bot link to a worker that is gone, plus a worker that links back but whose bot does not.
-  const workers = [worker("w1", "codex", { linkedAccounts: [{ scope: "bot", id: "b1" }] })];
-  const accounts = [bot("b1", [{ scope: "worker", id: "gone" }]), bot("b2")];
-  assert.deepEqual(accountLinks(accounts, workers), []);
-  assert.deepEqual(accountLinks(accounts, null), []);
-  assert.deepEqual(accountLinks(null, workers), []);
-});
-
-test("accountLinks survives a worker ID equal to a bot account ID", () => {
-  const workers = [worker("same-id", "codex")];
-  const accounts = [bot("same-id", [{ scope: "worker", id: "same-id" }]), bot("other")];
-  assert.deepEqual(accountLinks(accounts, workers), [{ bot: "same-id", worker: "same-id" }]);
 });
 
 test("untilTime counts down to a future instant", () => {

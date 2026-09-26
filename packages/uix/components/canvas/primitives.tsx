@@ -222,12 +222,12 @@ export function NodeTitle({ node, label, children, className, onActivate }: {
   );
 }
 
-export function Empty({ icon: Icon, title, children }: { icon: React.ComponentType<{ className?: string }>; title: string; children?: React.ReactNode }) {
+/** A window's placeholder: its icon and a short title, nothing more. Creation lives in the window header. */
+export function Empty({ icon: Icon, title }: { icon: React.ComponentType<{ className?: string }>; title: string }) {
   return (
     <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed px-4 py-6 text-center">
       <Icon className="size-5 text-muted-foreground/70" />
       <p className="text-sm font-medium">{title}</p>
-      {children ? <p className="text-xs text-pretty text-muted-foreground">{children}</p> : null}
     </div>
   );
 }

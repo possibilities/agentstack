@@ -21,7 +21,7 @@ test("homeOf distinguishes spatial records from global dock destinations", () =>
   assert.deepEqual(homeOf({ kind: "owner" }), { kind: "system" });
   assert.deepEqual(homeOf({ kind: "child", id: "uix" }), { kind: "system" });
   assert.deepEqual(homeOf({ kind: "account", id: "acc-1" }), { kind: "space", space: "fleet", window: "accounts" });
-  assert.deepEqual(homeOf({ kind: "worker-account", id: "w-1" }), { kind: "space", space: "fleet", window: "worker-accounts" });
+  assert.deepEqual(homeOf({ kind: "worker-account", id: "w-1" }), { kind: "space", space: "fleet", window: "accounts" });
   assert.deepEqual(homeOf({ kind: "login" }), { kind: "space", space: "fleet", window: "accounts" });
   assert.deepEqual(homeOf({ kind: "bot", id: "bot-1" }), { kind: "space", space: "fleet", window: "bots" });
   assert.deepEqual(homeOf({ kind: "package", id: "bots" }), { kind: "reference" });

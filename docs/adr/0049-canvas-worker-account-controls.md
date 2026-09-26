@@ -1,6 +1,6 @@
 # 49. Operate Worker accounts from the canvas
 
-Status: accepted, 2026-09-25; Codex Worker creation and removal amended by [ADR 0065](0065-codex-workers-paired-with-bot-accounts.md). Extends [ADR 0026](0026-canvas-auth-controls.md) and fulfils the "separate UI request" noted in [ADR 0048](0048-separate-bot-and-worker-sign-ins.md).
+Status: accepted, 2026-09-25; Codex Worker creation and removal amended by [ADR 0065](0065-codex-workers-paired-with-bot-accounts.md); the separate account windows superseded by [ADR 0067](0067-one-accounts-window-and-bare-empty-states.md). Extends [ADR 0026](0026-canvas-auth-controls.md) and fulfils the "separate UI request" noted in [ADR 0048](0048-separate-bot-and-worker-sign-ins.md).
 
 Extended by [ADR 0060](0060-claude-sdk-workers.md) with Claude account creation, native sign-in and usage/catalog parity in these same Fleet surfaces.
 

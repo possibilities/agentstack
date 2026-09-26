@@ -68,7 +68,7 @@ const statusCopy: Record<ChannelStatus, string> = {
   closed: "Reconnecting…",
 };
 
-export function Window({ id, title, subtitle, icon: Icon, accent, count, status, endpoint, updatedAt, error, actions, node, children }: {
+export function Window({ id, title, subtitle, icon: Icon, accent, count, status, endpoint, updatedAt, error, actions, node, empty = false, children }: {
   id: string;
   title: string;
   subtitle?: string;
@@ -79,6 +79,8 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
   endpoint?: string;
   updatedAt?: number | null;
   error?: string | null;
+  /** Showing only a placeholder: fit it, treating a human-set height as a ceiling. */
+  empty?: boolean;
   actions?: React.ReactNode;
   /** When the window represents a node, a header tap or the title button inspects it. */
   node?: NodeRef;
@@ -110,7 +112,7 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
         placement.dragging && "shadow-[0_1px_0_0_rgb(255_255_255/0.06)_inset,0_40px_80px_-24px_rgb(0_0_0/0.45)] ring-1 ring-foreground/10",
         isSelected && "border-foreground/30 ring-3 ring-ring/25",
       )}
-      style={{ left: placement.x, top: placement.y, width: placement.width, [placement.sized && !placement.collapsed ? "height" : "maxHeight"]: placement.height, zIndex: placement.z }}
+      style={{ left: placement.x, top: placement.y, width: placement.width, [placement.sized && !placement.collapsed && !empty ? "height" : "maxHeight"]: placement.height, zIndex: placement.z }}
     >
       {flashing ? <span key={flash!.seq} aria-hidden className="pointer-events-none absolute inset-0 rounded-[inherit] animate-uix-flash-in" /> : null}
       <header

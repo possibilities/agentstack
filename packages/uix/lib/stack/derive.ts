@@ -29,16 +29,6 @@ export function workerAccountLabels(workers: WorkerAccount[] | null): Map<string
   return labels;
 }
 
-/** Bot↔Worker identity links, derived from the Bot side's `linkedAccounts` for Workers that still exist. */
-export function accountLinks(accounts: Account[] | null, workers: WorkerAccount[] | null): Array<{ bot: string; worker: string }> {
-  const known = new Set((workers ?? []).map((worker) => worker.id));
-  const links: Array<{ bot: string; worker: string }> = [];
-  for (const account of accounts ?? [])
-    for (const link of account.linkedAccounts ?? [])
-      if (link.scope === "worker" && known.has(link.id)) links.push({ bot: account.id, worker: link.id });
-  return links;
-}
-
 const workerProviderTitles: Record<WorkerAccount["provider"], string> = { codex: "Codex", grok: "Grok", devin: "Devin", claude: "Claude" };
 export const workerProviders = Object.keys(workerProviderTitles) as WorkerAccount["provider"][];
 /** A Codex Worker account comes with its Codex Bot account, so only these providers are added directly. */

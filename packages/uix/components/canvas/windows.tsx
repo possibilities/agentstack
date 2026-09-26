@@ -8,14 +8,13 @@ import {
   CopyIcon,
   EllipsisVerticalIcon,
   FolderIcon,
-  IdCardIcon,
   KeyRoundIcon,
   LinkIcon,
   MessageSquareIcon,
   PhoneIcon,
+  PlusIcon,
   RadioIcon,
   RefreshCwIcon,
-  ShieldAlertIcon,
   SparklesIcon,
   TerminalIcon,
   Trash2Icon,
@@ -39,13 +38,13 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { annotationBadges, fieldsOf, findOperation } from "@/lib/stack/catalog";
-import { accountLabels, addableWorkerProviders, botsFor, histogram, pairedWorker, providerTitle, shortId, workerAccountLabels, workerProviders } from "@/lib/stack/derive";
+import { accountLabels, addableWorkerProviders, botsFor, histogram, pairedWorker, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
 import type { Account, Bot, Login, OperationDoc, PackageDoc, WorkerAccount, WorkerLogin } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
 import { BotTile, CopyButton, Empty, NodeCard, NodeTitle, Orb, Row, Sparkline, StatusDot, Time } from "./primitives";
 import { BotLifecycleControls, BotWindowActions } from "./bot-actions";
-import { useActivity, useNow, useStack, useWorkbench } from "./provider";
+import { useActivity, useNow, useStack } from "./provider";
 import { useVoice } from "./voice";
 import { Section, Window } from "./window";
 
@@ -61,26 +60,25 @@ export function AccountChip({ id, labels }: { id: string | null; labels: Map<str
   );
 }
 
-/** The Worker account window's menu: create a separate native sign-in per account. Codex Workers come with Codex Bot accounts. */
-export function AddWorkerAccountMenu({ trigger, tooltip, align = "end" }: { trigger: React.ReactElement; tooltip?: string; align?: "start" | "end" }) {
+/** The Accounts window's one creation menu. Codex creates a Bot account and its paired Codex Worker account. */
+function AddAccountMenu() {
   const actions = useAuthActions();
-  const addWorker = (provider: WorkerAccount["provider"]) => {
-    void actions.worker.signIn(provider);
-  };
-  const button = <DropdownMenuTrigger render={trigger} />;
+  const { status } = useStack();
+  const worker = actions.worker;
   return (
     <DropdownMenu>
-      {tooltip ? (
-        <Tooltip>
-          <TooltipTrigger render={button} />
-          <TooltipContent side="bottom">{tooltip}</TooltipContent>
-        </Tooltip>
-      ) : button}
-      <DropdownMenuContent align={align} className="min-w-52">
+      <DropdownMenuTrigger render={<Button size="xs" variant="outline" disabled={status.auth !== "open"} />}>
+        <PlusIcon data-icon="inline-start" />Add account
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-44">
         <DropdownMenuGroup>
+          <DropdownMenuItem className="whitespace-nowrap" disabled={actions.pendingSignIn} onClick={() => actions.startSignIn()}>
+            {actions.pendingSignIn ? <Spinner /> : <TerminalIcon />}
+            Codex
+          </DropdownMenuItem>
           {addableWorkerProviders.map((provider) => (
-            <DropdownMenuItem key={provider} className="whitespace-nowrap" disabled={actions.worker.signingIn === `new:${provider}`} onClick={() => addWorker(provider)}>
-              {actions.worker.signingIn === `new:${provider}` ? <Spinner /> : <TerminalIcon />}
+            <DropdownMenuItem key={provider} className="whitespace-nowrap" disabled={worker.signingIn === `new:${provider}`} onClick={() => void worker.signIn(provider)}>
+              {worker.signingIn === `new:${provider}` ? <Spinner /> : <TerminalIcon />}
               {providerTitle(provider)}
             </DropdownMenuItem>
           ))}
@@ -90,19 +88,12 @@ export function AddWorkerAccountMenu({ trigger, tooltip, align = "end" }: { trig
   );
 }
 
-/** The dashed full-width "Add Worker account" button. */
-export function AddWorkerAccountButton() {
-  const actions = useAuthActions();
+/** One status for any account: disabled wins, then sign-in; an account is Ready only when both hold. */
+function AccountStatus({ enabled, ready }: { enabled: boolean; ready: boolean }) {
   return (
-    <AddWorkerAccountMenu align="start" trigger={
-      <button
-        type="button"
-        className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed px-3 py-2.5 text-[0.8rem] font-medium text-muted-foreground transition-colors hover:border-foreground/20 hover:bg-background/80 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50"
-      >
-        {actions.worker.signingIn?.startsWith("new:") ? <Spinner className="size-3.5" /> : <UserRoundPlusIcon className="size-3.5" />}
-        Add account
-      </button>
-    } />
+    <Badge className={cn("h-4 px-1.5 text-[0.62rem]", !enabled ? "bg-muted text-muted-foreground" : ready ? "bg-success/15 text-success" : "bg-warning/15 text-warning")}>
+      {!enabled ? "Disabled" : ready ? "Ready" : "Needs sign-in"}
+    </Badge>
   );
 }
 
@@ -114,54 +105,57 @@ export function OperationBadges({ operation }: { operation: OperationDoc }) {
 
 /* ─── Accounts ───────────────────────────────────────────────────────── */
 
+/**
+ * Every account in one window, grouped by provider. A Codex Bot account and
+ * its paired Codex Worker account read as one joined card; they are separate
+ * records with separate sign-ins.
+ */
 export function AccountsWindow() {
-  const { accounts, login, bots, catalog, status, endpoints, attempt } = useStack();
-  const actions = useAuthActions();
-  const { goTo } = useWorkbench();
+  const { accounts, workerAccounts, login, bots, catalog, status, endpoints, attempt } = useStack();
   const labels = accountLabels(accounts.data);
-  const addBot = () => actions.startSignIn();
+  const workerLabels = workerAccountLabels(workerAccounts.data);
+  const loaded = accounts.data && workerAccounts.data ? { bots: accounts.data, workers: workerAccounts.data } : null;
+  const pairOf = (id: string) => loaded?.workers.find((worker) => worker.provider === "codex" && (worker.linkedAccounts ?? []).some((link) => link.scope === "bot" && link.id === id));
+  const unpaired = loaded?.workers.filter((worker) => worker.provider === "codex" && !pairedWorker(worker)) ?? [];
+  const empty = !attempt && (!loaded || !loaded.bots.length && !loaded.workers.length);
 
   return (
-    <Window id="accounts" title="Bot accounts" subtitle="auth" icon={KeyRoundIcon} accent="auth"
-      count={accounts.data?.length} status={status.auth} endpoint={endpoints.auth} updatedAt={accounts.at} error={accounts.error ?? login.error}
-      actions={
-        <Tooltip>
-          <TooltipTrigger
-            render={<Button variant="ghost" size="icon-xs" aria-label="Add Bot account" disabled={actions.pendingSignIn} onClick={addBot} />}
-          >
-            {actions.pendingSignIn ? <Spinner /> : <UserRoundPlusIcon />}
-          </TooltipTrigger>
-          <TooltipContent side="bottom">Add account</TooltipContent>
-        </Tooltip>
-      }>
+    <Window id="accounts" title="Accounts" subtitle="auth" icon={KeyRoundIcon} accent="auth" empty={empty}
+      count={loaded ? loaded.bots.length + loaded.workers.length : undefined} status={status.auth} endpoint={endpoints.auth}
+      updatedAt={accounts.at} error={accounts.error ?? workerAccounts.error ?? login.error} actions={<AddAccountMenu />}>
       {attempt ? <SignInCard key={attempt.id} attempt={attempt} labels={labels} accounts={accounts.data} catalog={catalog.data} /> : null}
-
-      {accounts.data?.length ? (
-        <div className="flex flex-col gap-2">
-          {accounts.data.map((account) => <AccountCard key={account.id} account={account} label={labels.get(account.id)!} bots={bots.data} />)}
-          <button
-            type="button"
-            disabled={actions.pendingSignIn}
-            onClick={addBot}
-            className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed px-3 py-2.5 text-[0.8rem] font-medium text-muted-foreground transition-colors hover:border-foreground/20 hover:bg-background/80 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50"
-          >
-            {actions.pendingSignIn ? <Spinner className="size-3.5" /> : <UserRoundPlusIcon className="size-3.5" />}
-            Add account
-          </button>
+      {loaded && (loaded.bots.length || loaded.workers.length) ? (
+        <div className="flex flex-col gap-3">
+          {loaded.bots.length || unpaired.length ? (
+            <Section title={providerTitle("codex")}>
+              <div className="flex flex-col gap-2">
+                {loaded.bots.map((account) => {
+                  const worker = pairOf(account.id);
+                  return (
+                    <div key={account.id} role="group" aria-label={`${labels.get(account.id)} and its Worker account`} className="flex flex-col">
+                      <AccountCard account={account} label={labels.get(account.id)!} bots={bots.data} className={cn(worker && "rounded-b-none")} />
+                      {worker ? <WorkerAccountCard account={worker} label={workerLabels.get(worker.id)!} className="-mt-px rounded-t-none border-t-dashed" /> : null}
+                    </div>
+                  );
+                })}
+                {unpaired.map((account) => <WorkerAccountCard key={account.id} account={account} label={workerLabels.get(account.id)!} />)}
+              </div>
+            </Section>
+          ) : null}
+          {addableWorkerProviders.map((provider) => {
+            const members = loaded.workers.filter((account) => account.provider === provider);
+            return members.length ? (
+              <Section key={provider} title={providerTitle(provider)}>
+                <div className="flex flex-col gap-2">
+                  {members.map((account) => <WorkerAccountCard key={account.id} account={account} label={workerLabels.get(account.id)!} />)}
+                </div>
+              </Section>
+            ) : null;
+          })}
         </div>
-      ) : accounts.data ? (
-        <div className="flex flex-col gap-2.5">
-          <Empty icon={KeyRoundIcon} title="No Bot accounts">Sign in with Codex to add one.</Empty>
-          <div className="flex justify-center">
-            <Button size="sm" variant="outline" disabled={actions.pendingSignIn} onClick={addBot}>
-              {actions.pendingSignIn ? <Spinner data-icon="inline-start" /> : <UserRoundPlusIcon data-icon="inline-start" />}
-              Add account
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <Empty icon={ShieldAlertIcon} title="Accounts unavailable">{accounts.error ?? "Waiting for auth."}</Empty>
-      )}
+      ) : empty ? (
+        <Empty icon={KeyRoundIcon} title={loaded ? "No accounts" : "Accounts unavailable"} />
+      ) : null}
     </Window>
   );
 }
@@ -259,12 +253,8 @@ function SignInCard({ attempt, labels, accounts, catalog }: { attempt: Login; la
   );
 }
 
-function AccountCard({ account, label, bots }: { account: Account; label: string; bots: Bot[] | null }) {
+function AccountCard({ account, label, bots, className }: { account: Account; label: string; bots: Bot[] | null; className?: string }) {
   const actions = useAuthActions();
-  const { workerAccounts } = useStack();
-  const { goTo } = useWorkbench();
-  const workerLabels = workerAccountLabels(workerAccounts.data);
-  const linkedWorkers = (account.linkedAccounts ?? []).filter((link) => link.scope === "worker" && workerLabels.has(link.id));
   const used = botsFor(account.id, bots);
   const removing = account.removing || actions.removing === account.id;
   const busy = actions.removing === account.id;
@@ -272,13 +262,13 @@ function AccountCard({ account, label, bots }: { account: Account; label: string
   const errorFor = (op: "availability" | "remove") =>
     actions.error?.op === op && actions.error.target === account.id ? actions.error.message : null;
   return (
-    <NodeCard node={{ kind: "account", id: account.id }} label={`account ${label}`} className={cn(removing && "opacity-60")}>
+    <NodeCard node={{ kind: "account", id: account.id }} label={`account ${label}`} className={cn(removing && "opacity-60", className)}>
       <div className="flex items-center gap-3">
         <Orb id={account.id} size="lg" />
         <div className="flex min-w-0 flex-col">
           <span className="flex items-center gap-2 text-sm font-semibold">
             <NodeTitle node={{ kind: "account", id: account.id }} label={`account ${label}`}>{label}</NodeTitle>
-            <Badge className={cn("h-4 px-1.5 text-[0.62rem]", account.enabled ? "bg-success/15 text-success" : "bg-muted text-muted-foreground")}>{account.enabled ? "Enabled" : "Disabled"}</Badge>
+            <AccountStatus enabled={account.enabled} ready />
             {removing ? <Badge variant="destructive" className="h-4 px-1.5 text-[0.62rem]">Removing</Badge> : null}
           </span>
           <span className="group/row flex items-center gap-1 font-mono text-[0.7rem] text-muted-foreground">
@@ -316,28 +306,6 @@ function AccountCard({ account, label, bots }: { account: Account; label: string
           </span>
         )) : <span className="text-[0.7rem] text-muted-foreground">No bots</span>}
       </div>
-      {linkedWorkers.length ? (
-        <div className="flex flex-wrap items-center gap-1">
-          {linkedWorkers.map((link) => {
-            const workerLabel = workerLabels.get(link.id)!;
-            return (
-              <Tooltip key={link.id}>
-                <TooltipTrigger render={
-                  <button
-                    type="button"
-                    onClick={() => goTo({ kind: "worker-account", id: link.id })}
-                    className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem] transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
-                  >
-                    <Orb id={link.id} size="sm" className="size-2.5" />
-                    {workerLabel}
-                  </button>
-                } />
-                <TooltipContent>Paired with {workerLabel}</TooltipContent>
-              </Tooltip>
-            );
-          })}
-        </div>
-      ) : null}
       {busy ? (
         <p className="flex items-center gap-1.5 text-[0.72rem] text-muted-foreground"><Spinner className="size-3.5" /> Removing…</p>
       ) : account.removing ? (
@@ -358,62 +326,10 @@ function AccountCard({ account, label, bots }: { account: Account; label: string
   );
 }
 
-/* ─── Worker accounts ────────────────────────────────────────────────── */
-
-export function WorkerAccountsWindow() {
-  const { workerAccounts, accounts, status, endpoints } = useStack();
-  const labels = workerAccountLabels(workerAccounts.data);
-
-  return (
-    <Window id="worker-accounts" title="Worker accounts" subtitle="auth" icon={IdCardIcon} accent="auth"
-      count={workerAccounts.data?.length} status={status.auth} endpoint={endpoints.auth} updatedAt={workerAccounts.at} error={workerAccounts.error}
-      actions={
-        <AddWorkerAccountMenu tooltip="Add Worker account" trigger={
-          <Button variant="ghost" size="icon-xs" aria-label="Add Worker account"><UserRoundPlusIcon /></Button>
-        } />
-      }>
-      {workerAccounts.data?.length ? (
-        <div className="flex flex-col gap-3">
-          {workerProviders.map((provider) => {
-            const members = workerAccounts.data!.filter((account) => account.provider === provider);
-            return members.length ? (
-              <Section key={provider} title={providerTitle(provider)}>
-                <div className="flex flex-col gap-2">
-                  {members.map((account) => <WorkerAccountCard key={account.id} account={account} label={labels.get(account.id)!} accounts={accounts.data} />)}
-                </div>
-              </Section>
-            ) : null;
-          })}
-          <AddWorkerAccountButton />
-        </div>
-      ) : workerAccounts.data ? (
-        <div className="flex flex-col gap-2.5">
-          <Empty icon={IdCardIcon} title="No Worker accounts">Sign in with Grok, Devin, or Claude. Each Codex Bot account brings a Codex Worker account.</Empty>
-          <div className="flex justify-center">
-            <AddWorkerAccountMenu trigger={
-              <Button size="sm" variant="outline">
-                <UserRoundPlusIcon data-icon="inline-start" />
-                Add account
-              </Button>
-            } />
-          </div>
-        </div>
-      ) : (
-        <Empty icon={ShieldAlertIcon} title="Accounts unavailable">{workerAccounts.error ?? "Waiting for auth."}</Empty>
-      )}
-    </Window>
-  );
-}
-
-function WorkerAccountCard({ account, label, accounts }: { account: WorkerAccount; label: string; accounts: Account[] | null }) {
+function WorkerAccountCard({ account, label, className }: { account: WorkerAccount; label: string; className?: string }) {
   const actions = useAuthActions();
   const { workerAttempts } = useStack();
-  const { goTo } = useWorkbench();
   const worker = actions.worker;
-  const botLabels = accountLabels(accounts);
-  const linkedBots = account.provider === "codex"
-    ? (account.linkedAccounts ?? []).filter((link) => link.scope === "bot" && botLabels.has(link.id))
-    : [];
   const removing = account.removing || worker.removing === account.id;
   const paired = pairedWorker(account);
   const busy = worker.removing === account.id;
@@ -422,14 +338,13 @@ function WorkerAccountCard({ account, label, accounts }: { account: WorkerAccoun
   const errorFor = (op: "signin" | "submit" | "cancel" | "availability" | "remove") =>
     worker.error?.op === op && worker.error.target === account.id ? worker.error.message : null;
   return (
-    <NodeCard node={{ kind: "worker-account", id: account.id }} label={`worker account ${label}`} className={cn(removing && "opacity-60")}>
+    <NodeCard node={{ kind: "worker-account", id: account.id }} label={`worker account ${label}`} className={cn(removing && "opacity-60", className)}>
       <div className="flex items-center gap-3">
         <Orb id={account.id} size="lg" />
         <div className="flex min-w-0 flex-col">
           <span className="flex flex-wrap items-center gap-1.5 text-sm font-semibold">
             <NodeTitle node={{ kind: "worker-account", id: account.id }} label={`worker account ${label}`}>{label}</NodeTitle>
-            {/* One status: disabled wins, then sign-in; a Worker is only Ready when both hold. */}
-            <Badge className={cn("h-4 px-1.5 text-[0.62rem]", !account.enabled ? "bg-muted text-muted-foreground" : account.ready ? "bg-success/15 text-success" : "bg-warning/15 text-warning")}>{!account.enabled ? "Disabled" : account.ready ? "Ready" : "Needs sign-in"}</Badge>
+            <AccountStatus enabled={account.enabled} ready={account.ready} />
             {removing ? <Badge variant="destructive" className="h-4 px-1.5 text-[0.62rem]">Removing</Badge> : null}
           </span>
           <span className="group/row flex items-center gap-1 font-mono text-[0.7rem] text-muted-foreground">
@@ -462,28 +377,6 @@ function WorkerAccountCard({ account, label, accounts }: { account: WorkerAccoun
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      {linkedBots.length ? (
-        <div className="flex flex-wrap items-center gap-1">
-          {linkedBots.map((link) => {
-            const botLabel = botLabels.get(link.id)!;
-            return (
-              <Tooltip key={link.id}>
-                <TooltipTrigger render={
-                  <button
-                    type="button"
-                    onClick={() => goTo({ kind: "account", id: link.id })}
-                    className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem] transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
-                  >
-                    <Orb id={link.id} size="sm" className="size-2.5" />
-                    {botLabel}
-                  </button>
-                } />
-                <TooltipContent>Paired with {botLabel}</TooltipContent>
-              </Tooltip>
-            );
-          })}
-        </div>
-      ) : null}
       {busy ? (
         <p className="flex items-center gap-1.5 text-[0.72rem] text-muted-foreground"><Spinner className="size-3.5" /> Removing…</p>
       ) : account.removing ? (
@@ -689,7 +582,7 @@ export function BotsWindow() {
   const now = useNow();
 
   return (
-    <Window id="bots" title="Bots" subtitle="bots" icon={BotIcon} accent="bots"
+    <Window id="bots" title="Bots" subtitle="bots" icon={BotIcon} accent="bots" empty={!bots.data?.length}
       count={bots.data?.length} status={status.bots} endpoint={endpoints.bots} updatedAt={bots.at} error={bots.error} actions={<BotWindowActions />}>
       {bots.data?.length ? (
         <div className="flex flex-col gap-2">
@@ -752,10 +645,8 @@ export function BotsWindow() {
             );
           })}
         </div>
-      ) : bots.data ? (
-        <Empty icon={BotIcon} title="No bots yet">Create one to get started.</Empty>
       ) : (
-        <Empty icon={ShieldAlertIcon} title="Bots unavailable">{bots.error ?? "Waiting for bots."}</Empty>
+        <Empty icon={BotIcon} title={bots.data ? "No bots" : "Bots unavailable"} />
       )}
     </Window>
   );

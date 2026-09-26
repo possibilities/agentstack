@@ -186,7 +186,7 @@ function AccountPicker({ accounts, value, onChange, locked, labels, bots }: {
             );
           })}
         </div>
-      ) : <p className="rounded-xl border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">No Bot accounts yet</p>}
+      ) : <p className="rounded-xl border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">No Bot accounts</p>}
       {locked ? <FieldDescription>Assign a different account before starting.</FieldDescription> : null}
     </fieldset>
   );

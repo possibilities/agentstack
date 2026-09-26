@@ -28,9 +28,8 @@ export function homeOf(ref: NodeRef): NodeHome {
       return { kind: "system" };
     case "account":
     case "login":
-      return { kind: "space", space: "fleet", window: "accounts" };
     case "worker-account":
-      return { kind: "space", space: "fleet", window: "worker-accounts" };
+      return { kind: "space", space: "fleet", window: "accounts" };
     case "worker-catalog":
       return { kind: "space", space: "fleet", window: "model-catalogs" };
     case "usage":
