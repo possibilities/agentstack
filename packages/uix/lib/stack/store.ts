@@ -102,6 +102,8 @@ export class StackStore {
       this.refresh("workerRuntimes"); this.refresh("workerSessions"); this.reconcileCatalogs(true);
     }, ["workers_changed"]);
     open("usage", () => this.refresh("usage"), () => this.refresh("usage"), ["usage_changed"]);
+    // Calls only: discovery starts an app-server and inference spends allowance, so neither runs on open.
+    open("infer", () => {});
     open("api", () => this.refresh("catalog"));
     this.reconcileScoped();
   }

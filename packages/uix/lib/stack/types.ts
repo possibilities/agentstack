@@ -210,6 +210,21 @@ export type VoiceCall = {
 /** Bot tools expose the voice_speak receipt; submission does not confirm audible playback. */
 export type VoiceSpeechSubmission = { sessionId: string; status: "submitted" };
 
+export type InferEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+
+/** One picker-visible model from `infer_models`; discovery runs no inference. */
+export type InferModel = { id: string; defaultEffort: InferEffort; supportedEfforts: InferEffort[] };
+
+export type InferModels = { models: InferModel[]; observedAt: string };
+
+/** `infer_complete` returns only after a successful terminal response. */
+export type InferCompletion = {
+  requestId: string;
+  model: string;
+  text: string;
+  usage: { inputTokens: number | null; outputTokens: number | null; totalTokens: number | null; reasoningTokens: number | null };
+};
+
 export type Resource<T> = { data: T | null; error: string | null; at: number | null };
 
 export type Snapshot = {

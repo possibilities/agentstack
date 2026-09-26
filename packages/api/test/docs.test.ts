@@ -172,7 +172,8 @@ test("the api package serves structured documents for every workspace package", 
     assert.deepEqual(Object.keys(infer.operations[0]?.outputSchema.properties ?? {}).sort(), ["models", "observedAt"]);
     assert.deepEqual(Object.keys(infer.operations[1]?.inputSchema.properties ?? {}).sort(), ["accountId", "effort", "input", "instructions", "maxOutputTokens", "model"]);
     assert.equal(infer.operations[1]?.annotations.readOnlyHint, false);
-    assert.deepEqual(infer.transports.map((transport) => transport.type), ["socket"]);
+    // The UIX Lab reaches inference over the loopback WebSocket; agents get no MCP route to spend allowance.
+    assert.deepEqual(infer.transports.map((transport) => transport.type), ["socket", "websocket"]);
     assert.equal(infer.transports[0]?.endpoint, join(stateDir, "sockets", "infer.sock"));
 
     assert.deepEqual(bots.eventScope, {

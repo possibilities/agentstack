@@ -1,6 +1,6 @@
 "use client";
 
-import { BotIcon, FlaskConicalIcon, KeyRoundIcon, GaugeIcon, ListTreeIcon, MegaphoneIcon } from "lucide-react";
+import { BotIcon, FlaskConicalIcon, KeyRoundIcon, GaugeIcon, ListTreeIcon, MegaphoneIcon, SparklesIcon } from "lucide-react";
 import type { SpaceId } from "@/lib/stack/spaces";
 import type { StackState } from "@/lib/stack/store";
 import { type Accent } from "./window";
@@ -8,6 +8,7 @@ import { AccountsWindow, BotsWindow } from "./windows";
 import { UsageWindow } from "./usage-window";
 import { CatalogWindow } from "./catalog-window";
 import { CallSpeechWindow } from "./call-speech-window";
+import { InferenceWindow } from "./inference-window";
 
 export type WindowDef = {
   /** Globally unique across spaces; also used by Window and node destinations. */
@@ -48,6 +49,7 @@ export const spaceViews: Record<SpaceId, {
     accent: "events",
     windows: () => [
       { id: "call-speech", title: "Call speech", icon: MegaphoneIcon, accent: "bots", width: 400, height: 420, column: 0, element: <CallSpeechWindow /> },
+      { id: "inference", title: "Inference", icon: SparklesIcon, accent: "bots", width: 440, height: 720, column: 1, element: <InferenceWindow /> },
     ],
   },
 };

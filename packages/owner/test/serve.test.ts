@@ -92,7 +92,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     }
     const wsUrl = /owner WebSocket: (ws:\/\/\S+)/.exec(stderr)?.[1];
     assert.ok(wsUrl, stderr);
-    for (const name of socketNames.filter((name) => name !== "infer")) assert.match(stderr, new RegExp(`${name} WebSocket: ws://127\\.0\\.0\\.1:\\d+/websocket/${name}`));
+    for (const name of socketNames) assert.match(stderr, new RegExp(`${name} WebSocket: ws://127\\.0\\.0\\.1:\\d+/websocket/${name}`));
     const ws = websocket = new WebSocket(wsUrl);
     await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = () => reject(new Error("WebSocket did not open")); });
     const frame = () => new Promise<any>((resolve) => { ws.onmessage = (event) => resolve(JSON.parse(String(event.data))); });
