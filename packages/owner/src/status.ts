@@ -67,6 +67,10 @@ export class StatusSource {
       children: this.owner?.children() ?? [],
     };
   }
+
+  resourceRoots() {
+    return { pid: process.pid, attached: this.owner !== null, children: this.owner?.children() ?? [] };
+  }
 }
 
 export const statusSource = new StatusSource();

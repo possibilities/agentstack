@@ -142,8 +142,12 @@ test("the api package serves structured documents for every workspace package", 
     });
 
     const owner = found.get("owner") as PackageDoc;
-    assert.deepEqual(Object.keys(owner.events), ["pids_changed"]);
-    assert.deepEqual(owner.operations.map((operation) => operation.name), ["owner_status"]);
+    assert.deepEqual(Object.keys(owner.events), ["pids_changed", "resources_changed"]);
+    assert.deepEqual(owner.operations.map((operation) => operation.name), ["owner_status", "owner_resources", "owner_resource_history"]);
+    assert.equal(owner.operations[1].annotations.readOnlyHint, true);
+    assert.equal(owner.operations[2].annotations.readOnlyHint, true);
+    assert.ok(JSON.stringify(owner.operations[1].outputSchema).includes("cpuMeasuredProcessCount"));
+    assert.ok(JSON.stringify(owner.operations[2].outputSchema).includes("retention"));
     const ownerSocket = owner.transports.find((transport) => transport.type === "socket") as TransportDoc;
     assert.equal(ownerSocket.subscriptions, true);
     assert.equal(ownerSocket.endpoint, join(stateDir, "sockets", "owner.sock"));

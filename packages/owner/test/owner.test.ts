@@ -235,8 +235,8 @@ test("owner api serves status and pids_changed on its socket", async () => {
       events: { topics: Record<string, string> } | null;
       tools: Array<{ name: string }>;
     };
-    assert.deepEqual(listed.tools.map((tool) => tool.name), ["owner_status"]);
-    assert.deepEqual(Object.keys(listed.events?.topics ?? {}), ["pids_changed"]);
+    assert.deepEqual(listed.tools.map((tool) => tool.name), ["owner_status", "owner_resources", "owner_resource_history"]);
+    assert.deepEqual(Object.keys(listed.events?.topics ?? {}), ["pids_changed", "resources_changed"]);
 
     const empty = (await socketCall(served.socketPath, "tools/call", { name: "owner_status", arguments: {} })) as {
       pid: number;

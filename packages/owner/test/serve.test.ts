@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { socketCall, socketSubscribe } from "@agentstack/api";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { ownerResourcesOutput, ownerResourceHistoryOutput } from "../src/resources/schema.js";
 
 const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
 const socketNames = ["api", "auth", "roles", "bots", "workers", "usage", "infer", "wiki", "owner"];
@@ -48,6 +49,19 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
       status = (await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} })) as typeof status;
     }
     assert.ok(status.children.every((entry) => entry.running));
+    let resourceSubscription: Awaited<ReturnType<typeof socketSubscribe>> | undefined;
+    const nextResourceSample = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("resource sampler did not publish")), 10_000);
+      void socketSubscribe(ownerSock, ["resources_changed"], () => {
+        clearTimeout(timeout); resolve(); void resourceSubscription?.close();
+      }).then((subscription) => { resourceSubscription = subscription; }, (error) => { clearTimeout(timeout); reject(error); });
+    });
+    try { await nextResourceSample; } finally { await resourceSubscription?.close(); }
+    const resourceSnapshot = ownerResourcesOutput.parse(await socketCall(ownerSock, "tools/call", { name: "owner_resources", arguments: { view: "processes", limit: 100 } }));
+    assert.equal(resourceSnapshot.observation.coverage?.mode, "owner_tree");
+    assert.equal(resourceSnapshot.observation.freshness, "fresh");
+    assert.ok(resourceSnapshot.processes.some((entry) => entry.pid === child.pid));
+    for (const entry of status.children) assert.ok(resourceSnapshot.processes.some((process) => process.pid === entry.pid && process.component === entry.name), `${entry.name} absent from resource snapshot`);
     const usage = await socketCall(join(stateDir, "sockets", "usage.sock"), "tools/call", { name: "usage_snapshot", arguments: {} }) as { accounts: unknown[]; grokBot: { fresh: boolean } };
     assert.deepEqual(usage.accounts, []);
     assert.equal(typeof usage.grokBot.fresh, "boolean");
@@ -60,9 +74,11 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     const client = new Client({ name: "owner-test", version: "1.0.0" });
     await client.connect(new StreamableHTTPClientTransport(new URL(url)));
     try {
-      assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), ["owner_status", "events_catalog", "events_subscribe", "events_status", "events_unsubscribe"]);
+      assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), ["owner_status", "owner_resources", "owner_resource_history", "events_catalog", "events_subscribe", "events_status", "events_unsubscribe"]);
       const result = await client.callTool({ name: "owner_status", arguments: {} });
       assert.equal((result.structuredContent as { pid?: number } | undefined)?.pid, child.pid);
+      const resources = await client.callTool({ name: "owner_resources", arguments: {} });
+      assert.ok(ownerResourcesOutput.parse(resources.structuredContent).scope!.metrics.rssBytes! > 0);
     } finally {
       await client.close();
     }
@@ -82,6 +98,9 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     const subscribed = frame();
     ws.send(JSON.stringify({ id: 2, method: "events/subscribe", params: { topics: ["pids_changed"] } }));
     assert.deepEqual(await subscribed, { id: 2, result: { topics: ["pids_changed"] } });
+    const historyCall = frame();
+    ws.send(JSON.stringify({ id: 3, method: "tools/call", params: { name: "owner_resource_history", arguments: {} } }));
+    assert.ok(ownerResourceHistoryOutput.parse((await historyCall).result).points.length > 0);
 
     let servers: Response | undefined;
     for (let i = 0; i < 200; i += 1) {
