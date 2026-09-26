@@ -83,13 +83,42 @@ test("ACP catalog reflects the exact account process and dependent effort choice
     assert.equal((await supervisor.catalog(first, false)).observedAt, a.observedAt);
     assert.equal(supervisor.runtimeList().length, 4);
     await supervisor.drain(second);
-    const stale = await supervisor.catalog(second, true);
-    assert.equal(stale.stale, true);
-    assert.equal(stale.observedAt, b.observedAt);
-    assert.equal((await supervisor.catalog(second, false)).stale, true);
+    const relaunched = await supervisor.catalog(second, true);
+    assert.equal(relaunched.stale, false, "catalog reads reconcile an enabled account's missing runtime");
+    assert.equal(supervisor.runtimeList().length, 4);
+    assert.equal((await supervisor.catalog(second, false)).stale, false);
     await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_set_enabled", arguments: { id: first, enabled: false } }).catch(() => undefined);
     await supervisor.reconcile();
     assert.equal(supervisor.runtimeList().length, 3);
+  } finally {
+    await supervisor.close();
+    await auth.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("catalog failure reports the discovery error for an account that cannot launch", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentstack-worker-catalog-"));
+  const binary = join(dir, "dead-acp");
+  await writeFile(binary, `#!/usr/bin/env node
+if (process.argv[2] === '--version') { console.log('fake-acp 2.0'); process.exit(0); }
+process.exit(1);`);
+  await chmod(binary, 0o700);
+  const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, AGENTSTACK_OPENCODE_BIN: binary };
+  const auth = await serveApi({ name: "auth", transport: "socket", env });
+  const supervisor = new WorkerSupervisor(dir, env);
+  try {
+    const { account } = await socketCall(socketPath("auth", env), "tools/call", {
+      name: "worker_account_prepare", arguments: { provider: "grok" } }) as { account: { id: string } };
+    const accountDir = join(dir, "worker-accounts", account.id, "data", "opencode");
+    await (await import("node:fs/promises")).mkdir(accountDir, { recursive: true });
+    await writeV2Credential(join(accountDir, "opencode.db"), "xai",
+      JSON.stringify({ type: "oauth", access: account.id, refresh: account.id }));
+    await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_confirm", arguments: { id: account.id } });
+    const catalog = await supervisor.catalog(account.id, true);
+    assert.equal(catalog.stale, true);
+    assert.equal(catalog.models.length, 0);
+    assert.match(catalog.error ?? "", /refresh failed \(ACP initialization failed/);
   } finally {
     await supervisor.close();
     await auth.close();

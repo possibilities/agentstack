@@ -179,13 +179,15 @@ export class WorkerSupervisor {
     if (!refresh && saved?.stale && Date.now() < (this.retryAfter.get(id) ?? 0)) return saved;
     const prior = this.inflight.get(id);
     if (prior) return prior;
+    if (!this.live.has(id)) await this.reconcile();
     const run = this.discover(account).then((result) => {
       this.catalogs.set(id, result);
       this.retryAfter.delete(id);
       this.onChange?.();
       return result;
-    }).catch(() => {
-      const message = "Worker catalog refresh failed; inspect the private account runtime";
+    }).catch((error) => {
+      const detail = (error instanceof Error ? error.message : String(error)).slice(0, 160) || "unknown";
+      const message = `Worker catalog refresh failed (${detail}); inspect the private account runtime`;
       const failed: Catalog = saved ? { ...saved, stale: true, error: message } : { accountId: id, provider: account.provider, observedAt: new Date(0).toISOString(), source: account.provider === "claude" ? "claude-sdk-supported-models" : account.provider === "devin" ? "acp-session" : "acp-v2-session",
         runtimeVersion: "unknown", modelConfigId: null, models: [], nativeModelIds: [], stale: true, error: message } satisfies Catalog;
       this.catalogs.set(id, failed);
