@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,7 +31,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.deepEqual(
       docs.packages.map((item) => item.name),
-      ["api", "auth", "bots", "infer", "owner", "roles", "usage", "wiki", "workers"],
+      ["api", "auth", "bots", "brain", "infer", "owner", "roles", "usage", "wiki", "workers"],
     );
     assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@agentstack/${item.name}`));
 
@@ -113,6 +114,15 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok(wiki.operations.some((op) => op.name === "publish"));
     assert.ok(wiki.operations.some((op) => op.name === "wiki_status"));
     assert.equal(wiki.transports.find((transport) => transport.type === "mcp")?.supported, true);
+    const brain = found.get("brain") as PackageDoc;
+    assert.ok(brain.operations.length > 0);
+    assert.ok(brain.operations.every((operation) => operation.description && operation.inputSchema.type === "object" && operation.outputSchema.type === "object"));
+    assert.deepEqual(brain.transports.map((transport) => transport.type).sort(), ["mcp", "socket", "websocket"]);
+    assert.ok(brain.transports.every((transport) => transport.supported));
+    assert.equal(brain.transports.find((transport) => transport.type === "socket")?.endpoint, join(stateDir, "sockets", "brain.sock"));
+    assert.equal(brain.transports.find((transport) => transport.type === "mcp")?.endpoint, "http://127.0.0.1:8743/mcp/brain");
+    assert.equal(brain.transports.find((transport) => transport.type === "websocket")?.endpoint, "ws://127.0.0.1:8744/websocket/brain");
+    assert.equal(existsSync(join(stateDir, "brain")), false, "read-only discovery must not initialize Brain storage");
     assert.deepEqual(Object.keys(workers.events).sort(), ["worker_changed", "workers_changed"]);
     assert.equal(workers.eventScope?.required, false);
     assert.deepEqual(workers.operations.map((operation) => operation.name), ["worker_catalog", "worker_runtime_list", "worker_account_drain",

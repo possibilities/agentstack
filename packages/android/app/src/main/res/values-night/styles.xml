@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Base.Theme.AgentStack" parent="Theme.AppCompat.DayNight">
+        <item name="colorPrimary">@color/stack_surface</item>
+        <item name="colorPrimaryDark">@color/stack_background</item>
+        <item name="colorAccent">@color/stack_primary</item>
+        <item name="android:windowBackground">@color/stack_background</item>
+        <item name="android:colorBackground">@color/stack_background</item>
+        <item name="android:textColorPrimary">@color/stack_foreground</item>
+        <item name="android:textColorSecondary">@color/stack_secondary</item>
+        <item name="android:navigationBarColor">#171717</item>
+        <item name="android:statusBarColor">@color/stack_background</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:fontFamily">sans</item>
+    </style>
+    <bool name="stack_light_system_bars">false</bool>
+</resources>

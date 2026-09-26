@@ -18,7 +18,7 @@ test("the reference renders all current Package APIs from the discovery socket",
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("cache-control"), "no-store");
     const html = await response.text();
-    for (const name of ["auth", "bots", "roles", "owner", "usage", "wiki", "workers"]) assert.match(html, new RegExp(`id="package-${name}"`));
+    for (const name of ["auth", "bots", "brain", "roles", "owner", "usage", "wiki", "workers"]) assert.match(html, new RegExp(`id="package-${name}"`));
     assert.doesNotMatch(html, /id="package-api"/);
     assert.match(html, /bot_start/);
     assert.match(html, /bot_defaults_set/);
@@ -40,6 +40,7 @@ test("the reference renders all current Package APIs from the discovery socket",
     const markdownText = await markdown.text();
     assert.match(markdownText, /^# Package API reference/m);
     assert.match(markdownText, /^## auth$/m);
+    assert.match(markdownText, /^## brain$/m);
     assert.match(markdownText, /`bot_start`/);
     assert.match(markdownText, /`bot_defaults_get`/);
     assert.match(markdownText, /`accounts_changed`/);

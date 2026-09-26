@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="stack_background">#FFFFFF</color>
+    <color name="stack_foreground">#171717</color>
+    <color name="stack_secondary">#666666</color>
+    <color name="stack_surface">#F5F5F5</color>
+    <color name="stack_primary">#262626</color>
+    <color name="stack_launcher_background">#171717</color>
+</resources>

@@ -46,7 +46,7 @@ test("the index and canvas render a fenced bot honestly", { timeout: 30_000 }, a
       owner: [operation("owner_status", { pid: process.pid, docsUrl: null, indexUrl: null, uixUrl: null, inspectorUrl: null, mcpUrls: {}, children: [] })],
       auth: [operation("account_list", { accounts: [] }), operation("account_login_current", { login: null })],
       bots: [operation("bot_list", { bots: [bot] }), operation("bot_defaults_get", bot.settings), operation("voice_status", { call: null })],
-      api: [operation("docs_snapshot", { packages: [packageDoc("bots", "bot_list", "bots")] })],
+      api: [operation("docs_snapshot", { packages: [packageDoc("bots", "bot_list", "bots"), packageDoc("brain", "brain_catalog_probe", "documents")] })],
     };
     for (const [name, operations] of Object.entries(definitions)) {
       served.push(await serveSocket({ info: { name, description: name, transportDescription: "Fixture socket", path: socketPath(name, env) }, context: {}, operations }));
@@ -85,6 +85,8 @@ test("the index and canvas render a fenced bot honestly", { timeout: 30_000 }, a
       return response.text();
     }));
     assert.match(api, /bot_list/);
+    assert.match(api, /brain_catalog_probe/);
+    assert.match(api, /@agentstack\/brain/);
     assert.equal((await fetch(`${origin}/x/nope`)).status, 404);
     assert.equal((await fetch(`${origin}/x.md`)).status, 404);
     assert.equal((await fetch(`${origin}/index.md`)).status, 404);

@@ -7,6 +7,12 @@
 - `scripts/install.sh --check` prints the installation plan. `--install` installs the pinned codexnk runtime, builds, and links the command; neither command restarts a running owner.
 - A Bot's `mainThreadId` is its sanctioned root. AgentStack thread and future subagent views must include only that root and its descendants. Other top-level Codex threads on the same socket are not Bot threads; `threads_changed` is an invalidation notice, not evidence that a sanctioned thread changed.
 
+## Brain and device clients
+
+- `packages/brain` owns research admission, the ingestion ledger and index writes. URL extraction and source discovery remain delegated to Agentscrape. Admission is not indexing completion; an Ingestion worker is not an ACP Worker.
+- Brain defaults belong under `<AGENTSTACK_STATE_DIR>/brain`. Never import an existing research store, source manifest, token or client settings as part of setup or a test. The Chrome and Android packages are AgentStack applications, with sharing as their first feature.
+- Preserve the maintenance invariants in [`docs/brain-maintenance.md`](docs/brain-maintenance.md) and the device [share contract](docs/brain-share-contract.md), including read-only retrieval, fenced completion, full FTS row replacement, and destination-bound Share outboxes.
+
 ## The UI (`packages/uix`)
 
 `packages/uix` is the central UI for interacting with AgentStack. The `/x` canvas ([ADR 0024](docs/adr/0024-live-canvas-workbench.md)) is how a human sees every Package API and operates `auth` ([canvas auth controls](docs/adr/0026-canvas-auth-controls.md) and [Worker accounts](docs/adr/0049-canvas-worker-account-controls.md)) and Codex voice calls ([ADR 0028](docs/adr/0028-main-thread-voice-call.md)); other APIs remain read-only there. It is organized into spaces — Fleet, System, API — each its own canvas at `/x/<space>` ([ADR 0042](docs/adr/0042-canvas-spaces.md)). Its data layer is in `lib/stack/` (space routing and each node's home space in `lib/stack/spaces.ts`) and its components are in `components/canvas/` (each space's windows in `spaces.tsx`). Links go to a card (`goTo`); a card's name inspects it in the edge sheet; changing space closes the sheet ([ADR 0045](docs/adr/0045-canvas-links-and-inspector-sheet.md), [ADR 0051](docs/adr/0051-explicit-inspect-controls.md)).

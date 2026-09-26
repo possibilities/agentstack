@@ -1,0 +1,8 @@
+name: brain
+description: Search local research and admit durable ingestion into an isolated AgentStack Brain index. Admission is asynchronous; the owned worker delegates all URL extraction to Agentscrape.
+socket:
+  description: Unix socket for research, ingestion ledger, recurring sources and recovery operations.
+mcp:
+  description: HTTP MCP operations forwarded to the Brain socket.
+websocket:
+  description: Loopback WebSocket operations forwarded to the Brain socket.

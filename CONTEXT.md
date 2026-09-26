@@ -119,3 +119,69 @@ The second loopback HTTP origin owned by the `wiki` Package API. It serves only 
 One focused canvas of related windows in the `/x` UI, addressed as `/x/<space>`: Fleet, System, or API. Spaces share one live connection, inspector, and voice call; each keeps its own arrangement. Every card has one home space, so focusing a card from anywhere moves to that space.
 
 _Avoid_: page, tab, workspace (a Bot's working directory)
+
+## Brain
+
+The `brain` Package API's isolated research index and durable ingestion system. Its database, research artifacts and device-share credentials live under AgentStack state. It collects material for retrieval; the Wiki Vault holds authored documents.
+
+_Avoid_: external research service, Wiki Vault
+
+## Admission
+
+The synchronous boundary that validates ingestion intent and durably creates or identifies an ingestion job. Accepted admission proves that the job exists, not that extraction or indexing has completed.
+
+_Avoid_: indexing completion, successful extraction
+
+## Ingestion job
+
+One durable intent to ingest or reconcile an item in Brain. Execution appends attempts; retry does not replace the job or erase prior outcomes. Expiring claims fence late completion.
+
+_Avoid_: Worker turn, task, source
+
+## Ingestion worker
+
+Brain's owned execution loop that leases ingestion jobs, delegates URL extraction to Agentscrape, and commits fenced outcomes. It is distinct from an account-bound ACP Worker.
+
+_Avoid_: Worker, Bot, source
+
+## Research resource
+
+One logical collected item with a stable identity independent of its locator, captured bytes or current searchable representation. Conservative aliases and provider identities support reconciliation without equating all matching content.
+
+_Avoid_: artifact digest, document ID
+
+## Research document
+
+The current searchable representation of a Research resource in Brain's SQLite index. It is not a plain-text document in the Wiki Vault.
+
+_Avoid_: Vault document, research artifact
+
+## Research artifact
+
+Immutable captured or derived bytes in Brain's content-addressed store, referenced by typed SQLite records. A content digest identifies bytes, not a Research resource; this is separate from a named, published Wiki Artifact.
+
+_Avoid_: Wiki Artifact, resource identity
+
+## Research source
+
+A versioned recurring producer or discovery definition, such as a feed or account timeline. Synchronization creates a durable run grouping observations and child jobs; cadence and checkpoints are policy and evidence, not an independent scheduling service.
+
+_Avoid_: ingress, individual URL job, attempt
+
+## Share ingress
+
+Brain's authenticated inbound HTTP listener for AgentStack device clients. It resolves each share into the same Admission boundary and owns no separate queue or index. Network reachability alone is not authorization.
+
+_Avoid_: public API, research extractor
+
+## Share outbox
+
+A device client's bounded durable hold of intent the Share ingress has not acknowledged. It retries delivery using the original destination identity; a held entry is not an ingestion job or proof of saving.
+
+_Avoid_: ingestion queue, saved item
+
+## Share history
+
+A client's bounded record of shares and their last observed outcomes. It echoes server admission and job state rather than deciding whether indexing succeeded; unlike the Share outbox, it does not hold delivery intent.
+
+_Avoid_: ingestion ledger, queue

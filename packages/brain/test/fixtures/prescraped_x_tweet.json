@@ -1,0 +1,66 @@
+{
+  "schema_version": "1",
+  "status": "success",
+  "requested_url": "https://twitter.com/original_handle/status/123?ref=timeline",
+  "final_url": "https://x.com/original_handle/status/123",
+  "extractor": {
+    "name": "historical-extractor",
+    "version": "0.9.0",
+    "implementation": "archived-provider",
+    "implementation_version": "historical-fixture"
+  },
+  "artifacts": [
+    {
+      "artifact_type": "document",
+      "media_type": "text/markdown",
+      "encoding": "utf-8",
+      "content": "# Example post\n\nA post with authoritative outbound relations.",
+      "size_bytes": 61,
+      "sha256": "969e7b6dc1aee66dc02e5e345d97a08496abf574ce95651e59ea4c242b07e5b2"
+    }
+  ],
+  "metadata": {
+    "content_type": "social_post",
+    "title": "Example post",
+    "author_name": "Example Author",
+    "author_handle": "original_handle",
+    "published_at": "2026-07-14T12:00:00Z",
+    "source_id": "123",
+    "warnings": []
+  },
+  "relations": [
+    {
+      "relation_type": "content_link",
+      "target_url": "https://example.com/story"
+    },
+    {
+      "relation_type": "content_link",
+      "target_url": "https://example.com/story#duplicate-alias"
+    },
+    {
+      "relation_type": "quoted_post",
+      "target_url": "https://x.com/renamed/status/123"
+    },
+    {
+      "relation_type": "content_link",
+      "target_url": "https://x.com/original_handle"
+    },
+    {
+      "relation_type": "article",
+      "target_url": "https://twitter.com/writer/articles/987"
+    },
+    {
+      "relation_type": "quoted_post",
+      "target_url": "https://twitter.com/peer/status/456"
+    },
+    {
+      "relation_type": "content_link",
+      "target_url": "https://cdn.example.com/preview.jpg"
+    },
+    {
+      "relation_type": "content_link",
+      "target_url": "http://127.0.0.1/private"
+    }
+  ],
+  "failure": null
+}

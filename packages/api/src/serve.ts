@@ -75,6 +75,7 @@ export async function serveApi(options: {
           let failure: unknown;
           for (const close of [
             () => stopEvents?.(),
+            () => api.prepareCloseContext?.(context, { halt: true }),
             () => socket?.close(),
             () => api.closeContext(context, { halt: true }),
           ]) {
@@ -95,6 +96,12 @@ export async function serveApi(options: {
     } catch {
     }
     rejectContext(error);
+    if (contextCreated) {
+      try {
+        await api.prepareCloseContext?.(context, { halt: true });
+      } catch {
+      }
+    }
     await socket?.close().catch(() => undefined);
     if (contextCreated) await api.closeContext(context, { halt: true }).catch(() => undefined);
     throw error;

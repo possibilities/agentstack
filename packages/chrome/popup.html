@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AgentStack · Brain shares</title>
+    <link rel="stylesheet" href="theme.css" />
+  </head>
+  <body class="popup">
+    <header>
+      <div class="identity"><img src="assets/layers.svg" width="20" height="20" alt="" /><h1>AgentStack</h1><span class="sub">Brain</span></div>
+      <div class="toolbar">
+        <button type="button" id="share" class="primary">Send this page</button>
+        <span class="spacer"></span>
+        <button type="button" id="flush" title="Try held shares now">Send held</button>
+        <button type="button" id="options">Settings</button>
+      </div>
+    </header>
+    <main aria-label="Recent shares">
+      <ul id="list"></ul>
+      <div id="empty" class="empty" hidden>Nothing shared yet. Send a page to Brain to keep it here.</div>
+    </main>
+    <footer>
+      <span id="status" role="status">Loading…</span>
+      <span class="spacer"></span>
+      <button type="button" id="clear" title="Clear recent history without cancelling delivery">Clear list</button>
+    </footer>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

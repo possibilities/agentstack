@@ -12,7 +12,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
-const socketNames = ["api", "auth", "roles", "bots", "workers", "usage", "infer", "wiki", "owner"];
+const socketNames = ["api", "auth", "roles", "bots", "brain", "workers", "usage", "infer", "wiki", "owner"];
+const brainEnv = { AGENTSTACK_BRAIN_SHARE_HOST: "127.0.0.1", AGENTSTACK_BRAIN_SHARE_PORT: "0", AGENTSTACK_DOCS_PORT: "0" };
 
 test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then shuts them down", { timeout: 120_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-serve-"));
@@ -20,7 +21,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
   const uixPort = await availablePort();
   const child = spawn(process.execPath, [cli, "serve"], {
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_AGENTGROK_BIN: join(stateDir, "missing-agentgrok"),
+    env: { ...process.env, ...brainEnv, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_AGENTGROK_BIN: join(stateDir, "missing-agentgrok"),
       AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UIX_PORT: String(uixPort), AGENTSTACK_WIKI_PORT: "0", AGENTSTACK_WIKI_ARTIFACT_PORT: "0", MCP_INSPECTOR_API_TOKEN: "test-token" },
   });
   let stderr = "";
@@ -42,7 +43,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
       children: Array<{ name: string; pid: number | null; running: boolean }>;
     };
     assert.equal(status.pid, child.pid);
-    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["api", "auth", "bots", "infer", "inspector", "roles", "uix", "usage", "websocket", "wiki", "workers"]);
+    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["api", "auth", "bots", "brain", "infer", "inspector", "roles", "uix", "usage", "websocket", "wiki", "workers"]);
     for (let i = 0; i < 200 && status.children.some((entry) => !entry.running); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
       status = (await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} })) as typeof status;
@@ -96,7 +97,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     assert.equal(servers?.status, 200, stderr);
-    assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["auth", "bots", "owner", "roles", "usage", "wiki", "workers"]);
+    assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["auth", "bots", "brain", "owner", "roles", "usage", "wiki", "workers"]);
     const inspectorUrl = `http://127.0.0.1:${inspectorPort}/`;
     assert.equal((await fetch(inspectorUrl)).status, 200);
     const catalogDir = (await readdir(stateDir)).find((entry) => entry.startsWith("inspector-"));
@@ -134,7 +135,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     assert.equal(ownerStatus.mcpUrls.owner, url);
     const duplicate = spawn(process.execPath, [cli, "serve"], {
       stdio: ["ignore", "ignore", "pipe"],
-      env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0" },
+      env: { ...process.env, ...brainEnv, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0" },
     });
     let duplicateError = "";
     duplicate.stderr?.on("data", (chunk: Buffer) => { duplicateError += chunk.toString(); });
@@ -150,6 +151,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     assert.equal(page.headers.get("cache-control"), "no-store");
     const html = await page.text();
     assert.match(html, /id="package-bots"/);
+    assert.match(html, /id="package-brain"/);
     assert.match(html, /href="\/docs\/site\.css"/);
     assert.match(html, /src="\/docs\/site\.js"/);
     const revision = await fetch(`${docsUrl}/revision`);
@@ -227,7 +229,7 @@ test("a claimed MCP port refuses startup before the owner creates a socket", { t
   try {
     const child = spawn(process.execPath, [cli, "serve"], {
       stdio: ["ignore", "ignore", "pipe"],
-      env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: String(address.port) },
+      env: { ...process.env, ...brainEnv, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: String(address.port) },
     });
     let stderr = "";
     child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
@@ -249,7 +251,7 @@ test("a claimed WebSocket port refuses startup before the owner creates a socket
   try {
     const child = spawn(process.execPath, [cli, "serve"], {
       stdio: ["ignore", "ignore", "pipe"],
-      env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: String(address.port) },
+      env: { ...process.env, ...brainEnv, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: String(address.port) },
     });
     let stderr = "";
     child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
@@ -271,7 +273,7 @@ test("a claimed Inspector port refuses startup before the owner creates a socket
   try {
     const child = spawn(process.execPath, [cli, "serve"], {
       stdio: ["ignore", "ignore", "pipe"],
-      env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_INSPECTOR_PORT: String(address.port) },
+      env: { ...process.env, ...brainEnv, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_INSPECTOR_PORT: String(address.port) },
     });
     let stderr = "";
     child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
@@ -294,7 +296,7 @@ test("a claimed UI canvas port refuses startup before the owner creates a socket
   try {
     const child = spawn(process.execPath, [cli, "serve"], {
       stdio: ["ignore", "ignore", "pipe"],
-      env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UIX_PORT: String(address.port) },
+      env: { ...process.env, ...brainEnv, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UIX_PORT: String(address.port) },
     });
     let stderr = "";
     child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
@@ -318,7 +320,7 @@ test("a claimed wiki document port refuses startup before the owner creates a so
   try {
     const child = spawn(process.execPath, [cli, "serve"], {
       stdio: ["ignore", "ignore", "pipe"],
-      env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UIX_PORT: String(uixPort), AGENTSTACK_WIKI_PORT: String(address.port), AGENTSTACK_WIKI_ARTIFACT_PORT: "0" },
+      env: { ...process.env, ...brainEnv, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UIX_PORT: String(uixPort), AGENTSTACK_WIKI_PORT: String(address.port), AGENTSTACK_WIKI_ARTIFACT_PORT: "0" },
     });
     let stderr = "";
     child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
@@ -330,6 +332,56 @@ test("a claimed wiki document port refuses startup before the owner creates a so
     await rm(stateDir, { recursive: true, force: true });
   }
 });
+
+test("a claimed Brain share port on its configured host refuses startup before creating sockets", { timeout: 30_000 }, async () => {
+  const listener = createServer();
+  await new Promise<void>((resolve, reject) => { listener.once("error", reject); listener.listen(0, "::1", resolve); });
+  const address = listener.address();
+  assert.ok(address && typeof address !== "string");
+  try {
+    const stderr = await refusedStartup({ AGENTSTACK_BRAIN_SHARE_HOST: "::1", AGENTSTACK_BRAIN_SHARE_PORT: String(address.port) });
+    assert.match(stderr, new RegExp(`Brain share port ${address.port} is already in use on ::1`));
+  } finally {
+    await new Promise<void>((resolve) => listener.close(() => resolve()));
+  }
+});
+
+test("Brain share rejects invalid ports before creating sockets", { timeout: 30_000 }, async () => {
+  for (const value of ["", "not-a-port", "-1", "65536", "1.5"]) {
+    assert.match(await refusedStartup({ AGENTSTACK_BRAIN_SHARE_PORT: value }), /AGENTSTACK_BRAIN_SHARE_PORT must be a port from 0 to 65535/);
+  }
+  assert.match(await refusedStartup({ AGENTSTACK_BRAIN_SHARE_HOST: "" }), /AGENTSTACK_BRAIN_SHARE_HOST must not be empty/);
+});
+
+test("Brain share rejects collisions with owner listeners before creating sockets", { timeout: 30_000 }, async () => {
+  for (const setting of ["AGENTSTACK_MCP_PORT", "AGENTSTACK_WEBSOCKET_PORT", "AGENTSTACK_INSPECTOR_PORT", "AGENTSTACK_UIX_PORT", "AGENTSTACK_WIKI_PORT", "AGENTSTACK_WIKI_ARTIFACT_PORT", "AGENTSTACK_DOCS_PORT"]) {
+    const port = String(await availablePort());
+    const stderr = await refusedStartup({ [setting]: port, AGENTSTACK_BRAIN_SHARE_PORT: port });
+    assert.match(stderr, new RegExp(`AGENTSTACK_BRAIN_SHARE_PORT and ${setting} must use different ports`));
+  }
+});
+
+async function refusedStartup(settings: NodeJS.ProcessEnv): Promise<string> {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-brain-preflight-"));
+  const inspectorPort = await availablePort();
+  const uixPort = await availablePort();
+  const child = spawn(process.execPath, [cli, "serve"], {
+    stdio: ["ignore", "ignore", "pipe"],
+    env: { ...process.env, ...brainEnv, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0",
+      AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UIX_PORT: String(uixPort), AGENTSTACK_WIKI_PORT: "0", AGENTSTACK_WIKI_ARTIFACT_PORT: "0", ...settings },
+  });
+  let stderr = "";
+  child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+  try {
+    assert.equal(await new Promise<number | null>((resolve) => child.once("exit", resolve)), 1, stderr);
+    assert.equal(existsSync(join(stateDir, "sockets")), false, stderr);
+    assert.equal(existsSync(join(stateDir, "brain")), false, stderr);
+    return stderr;
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    await rm(stateDir, { recursive: true, force: true });
+  }
+}
 
 async function availablePort(): Promise<number> {
   const server = createServer();
