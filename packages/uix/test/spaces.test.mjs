@@ -46,6 +46,7 @@ test("parseSpacePath resolves /x and single space segments only", () => {
   assert.equal(parseSpacePath("/x/system"), null);
   assert.equal(parseSpacePath("/x/fleet"), "fleet");
   assert.equal(parseSpacePath("/x/accounts"), "accounts");
+  assert.equal(parseSpacePath("/x/lab"), "lab");
   assert.equal(parseSpacePath("/x/nope"), null);
   assert.equal(parseSpacePath("/x/api/extra"), null);
   assert.equal(parseSpacePath("/y"), null);
@@ -83,7 +84,7 @@ const quiet = {
 };
 
 test("spaceAttention reports human reasons per space and ignores healthy state", () => {
-  assert.deepEqual(spaceAttention(quiet), { fleet: [], accounts: [], system: [], api: [] });
+  assert.deepEqual(spaceAttention(quiet), { fleet: [], accounts: [], lab: [], system: [], api: [] });
 
   // Fleet: a bot recovery issue and its channel. Accounts: an unfinished removal, a failed sign-in, its channels.
   const fleet = spaceAttention({
@@ -126,5 +127,5 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
 
   // Idle and connecting channels are normal, not attention.
   const waiting = spaceAttention({ ...quiet, status: { auth: "connecting", bots: "idle", owner: "connecting", api: "idle" } });
-  assert.deepEqual(waiting, { fleet: [], accounts: [], system: [], api: [] });
+  assert.deepEqual(waiting, { fleet: [], accounts: [], lab: [], system: [], api: [] });
 });

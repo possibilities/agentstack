@@ -250,6 +250,26 @@ try {
   await dialog.getByText(id(31), { exact: true }).waitFor();
   assert.equal(calls.filter((call) => call.name === "voice_speak").at(-1).input.sessionId, id(31));
   await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  // The Lab's Call speech window shows the open call and speaks into it; Enter sends the trimmed text once.
+  await jump("space lab", /Lab/);
+  await page.waitForURL((url) => url.pathname === "/x/lab");
+  const speech = page.locator('[data-window="call-speech"]');
+  await speech.getByText(`call ${id(31).slice(0, 8)}`, { exact: false }).waitFor();
+  const say = speech.getByRole("button", { name: "Say", exact: true });
+  assert.equal(await say.isDisabled(), true, "empty text cannot be sent");
+  await speech.getByLabel("Text for bot-1 to say").fill("  Lab speech  ");
+  await speech.getByLabel("Text for bot-1 to say").press("Enter");
+  await speech.getByText("Lab speech", { exact: true }).waitFor();
+  assert.deepEqual(calls.filter((call) => call.name === "voice_speak").at(-1).input, { sessionId: id(31), text: "Lab speech" });
+  assert.equal(await speech.getByLabel("Text for bot-1 to say").inputValue(), "");
+  await page.screenshot({ path: join(evidence, "lab-call-speech.png"), animations: "disabled" });
+  const previous = { ...activeCall };
+  activeCall.phase = "dialing";
+  served.get("bots").publish("voice_changed");
+  await speech.getByText("Call still connecting", { exact: true }).waitFor();
+  Object.assign(activeCall, previous);
+  served.get("bots").publish("voice_changed");
+  await speech.getByText("Enter to send · Shift+Enter for a new line", { exact: true }).waitFor();
   const usageWindow = page.locator('[data-window="usage"]');
   await jump("usage", "Usage");
   await usageWindow.getByRole("meter", { name: "codex-bot-account-1 5 hours remaining", exact: true }).waitFor();
@@ -365,7 +385,7 @@ try {
   assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 391, "mobile dialog fits the viewport");
   await page.screenshot({ path: join(evidence, "create-mobile.png"), animations: "disabled" });
   assert.deepEqual(errors, [], "browser has no uncaught application errors");
-  console.log(JSON.stringify({ ok: true, evidence, assertions: "live discovery defaults, catalog tabs/filter/refresh, usage meters/inspection, create validation/payload, stop/assign/restart/remove/defaults, scoped history/speech, stopped queue admission, interrupted upload reopening/resume, light/dark/mobile", actions: calls.filter((call) => mutations.has(call.name)) }, null, 2));
+  console.log(JSON.stringify({ ok: true, evidence, assertions: "live discovery defaults, catalog tabs/filter/refresh, usage meters/inspection, create validation/payload, stop/assign/restart/remove/defaults, scoped history/speech, Lab call speech, stopped queue admission, interrupted upload reopening/resume, light/dark/mobile", actions: calls.filter((call) => mutations.has(call.name)) }, null, 2));
 } catch (error) {
   const page = browser?.contexts()[0]?.pages()[0];
   if (page) await page.screenshot({ path: join(evidence, "failure.png"), animations: "disabled" }).catch(() => undefined);

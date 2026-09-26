@@ -2,11 +2,12 @@ import { accountLabels, workerAccountLabels } from "./derive";
 import type { StackState } from "./store";
 import { nodeKey, type NodeRef } from "./types";
 
-export type SpaceId = "fleet" | "accounts";
+export type SpaceId = "fleet" | "accounts" | "lab";
 
 export const spaces: { id: SpaceId; title: string; description: string; key: string }[] = [
   { id: "fleet", title: "Fleet", description: "Bots and their controls", key: "1" },
   { id: "accounts", title: "Accounts", description: "Accounts, usage limits, and model catalogs", key: "2" },
+  { id: "lab", title: "Lab", description: "Experimental windows for tinkering", key: "3" },
 ];
 
 export const defaultSpace: SpaceId = "fleet";
@@ -60,7 +61,7 @@ export function parseSpacePath(pathname: string): SpaceId | null {
 
 /** Human-readable reasons each space needs attention; an empty list means all quiet. Only "closed" channels count — idle and connecting are normal. */
 export function spaceAttention(state: Pick<StackState, "status" | "owner" | "accounts" | "workerAccounts" | "bots" | "attempt" | "catalog" | "endpoints">): Record<SpaceId | "system" | "api", string[]> {
-  const attention: Record<SpaceId | "system" | "api", string[]> = { fleet: [], accounts: [], system: [], api: [] };
+  const attention: Record<SpaceId | "system" | "api", string[]> = { fleet: [], accounts: [], lab: [], system: [], api: [] };
   for (const bot of state.bots.data ?? []) if (bot.recoveryIssue) attention.fleet.push(`${bot.id} needs inspection`);
   const labels = accountLabels(state.accounts.data);
   for (const account of state.accounts.data ?? []) if (account.removing) attention.accounts.push(`${labels.get(account.id) ?? account.id} removal unfinished`);
