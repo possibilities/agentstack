@@ -43,6 +43,7 @@ import { accountLabels, botsFor, clockTime, histogram, pathParts, providerTitle,
 import type { Account, Bot, Login, OperationDoc, PackageDoc, WorkerAccount, WorkerLogin } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
+import { BotLifecycleControls, BotWindowActions } from "./bot-actions";
 import { BotTile, channelLabel, CopyButton, Empty, NodeCard, NodeTitle, Orb, Row, Sparkline, StatusDot, Time } from "./primitives";
 import { useActivity, useNow, useStack, useWorkbench } from "./provider";
 import { useVoice } from "./voice";
@@ -738,7 +739,7 @@ export function BotsWindow() {
 
   return (
     <Window id="bots" title="Bots" subtitle="bots · private workspaces" icon={BotIcon} accent="bots"
-      count={bots.data?.length} status={status.bots} endpoint={endpoints.bots} updatedAt={bots.at} error={bots.error}>
+      count={bots.data?.length} status={status.bots} endpoint={endpoints.bots} updatedAt={bots.at} error={bots.error} actions={<BotWindowActions />}>
       {bots.data?.length ? (
         <div className="flex flex-col gap-2">
           {sortBots(bots.data).map((bot) => {
@@ -770,6 +771,8 @@ export function BotsWindow() {
                   <Row label="Bot account"><AccountChip id={bot.account} labels={labels} /></Row>
                   <Row label="Main thread" mono copy={bot.mainThreadId}>{bot.mainThreadId ? shortId(bot.mainThreadId) : "Awaiting first turn"}</Row>
                   <Row label="Role revision" mono>{bot.roleRevision ?? "Never launched"}</Row>
+                  <Row label="Saved model">{bot.settings?.model ?? "Codex implicit default"}</Row>
+                  <Row label="Saved effort">{bot.settings?.reasoningEffort ?? "Codex implicit default"}</Row>
                   <Row label="Workspace" copy={bot.cwd}><Path path={bot.cwd} /></Row>
                 </dl>
                 {bot.recoveryIssue ? <RecoveryWarning message={bot.recoveryIssue} /> : null}
@@ -794,12 +797,13 @@ export function BotsWindow() {
                     Call
                   </Button>
                 ) : null}
+                <BotLifecycleControls bot={bot} />
               </NodeCard>
             );
           })}
         </div>
       ) : bots.data ? (
-        <Empty icon={BotIcon} title="No bots yet">bot_start needs an enabled Codex Bot account ID; add one in the Bot accounts window.</Empty>
+        <Empty icon={BotIcon} title="No bots yet">Choose Create Bot to start with an enabled Codex Bot account. Add an account in Bot accounts if needed.</Empty>
       ) : (
         <Empty icon={ShieldAlertIcon} title="Bots unavailable">{bots.error ?? "Waiting for the bots socket."}</Empty>
       )}

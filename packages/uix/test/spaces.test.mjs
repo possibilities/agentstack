@@ -24,6 +24,10 @@ test("homeOf maps every node kind to its space and window", () => {
   assert.deepEqual(homeOf({ kind: "worker-account", id: "w-1" }), { space: "fleet", window: "worker-accounts" });
   assert.deepEqual(homeOf({ kind: "login" }), { space: "fleet", window: "accounts" });
   assert.deepEqual(homeOf({ kind: "bot", id: "bot-1" }), { space: "fleet", window: "bots" });
+  assert.deepEqual(homeOf({ kind: "usage" }), { space: "fleet", window: "usage" });
+  assert.deepEqual(homeOf({ kind: "usage-account", id: "bot:a1" }), { space: "fleet", window: "usage" });
+  assert.deepEqual(homeOf({ kind: "grok-bot-usage" }), { space: "fleet", window: "usage" });
+  assert.deepEqual(homeOf({ kind: "worker-catalog", id: "w1" }), { space: "fleet", window: "model-catalogs" });
   assert.deepEqual(homeOf({ kind: "package", id: "bots" }), { space: "api", window: "package:bots" });
   assert.deepEqual(homeOf({ kind: "operation", id: "bot_start", pkg: "bots" }), { space: "api", window: "package:bots" });
 });
@@ -55,6 +59,10 @@ test("parseNodeKey inverts nodeKey for every kind and rejects malformed keys", (
     { kind: "worker-account", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" },
     { kind: "login" },
     { kind: "bot", id: "bot-1" },
+    { kind: "usage" },
+    { kind: "usage-account", id: "worker:account-with-colons:ok" },
+    { kind: "grok-bot-usage" },
+    { kind: "worker-catalog", id: "w1" },
     { kind: "package", id: "bots" },
     { kind: "operation", id: "bot_start", pkg: "bots" },
   ];

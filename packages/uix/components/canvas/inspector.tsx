@@ -14,6 +14,10 @@ import type { StackState } from "@/lib/stack/store";
 import { nodeKey, type Account, type Bot, type Login, type NodeRef, type OperationDoc, type PackageDoc, type StackEvent, type WorkerAccount } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
+import { BotLifecycleControls } from "./bot-actions";
+import { CatalogRefresh, CatalogStatus } from "./catalog-window";
+import { RecordTree } from "./record-tree";
+import { ObservationStatus } from "./usage-window";
 import { channelLabel, CopyButton, Orb, StatusDot, Time } from "./primitives";
 import { useOperation, useStack, useWorkbench } from "./provider";
 import { useVoice } from "./voice";
@@ -84,7 +88,7 @@ function resolve(ref: NodeRef, state: StackState): View | null {
       return {
         eyebrow: `${providerTitle(account.provider)} Worker account`, accent: "auth", title: workerLabels.get(account.id) ?? shortId(account.id), orb: account.id, record: account,
         fields: recordFields(catalog, "auth", "worker_account_list"),
-        related: linkedBots.map((link) => ({ ref: { kind: "account", id: link.id } as NodeRef, label: `${labels.get(link.id)} · same ChatGPT account` })),
+        related: [{ ref: { kind: "worker-catalog", id: account.id }, label: "Model catalog" }, ...linkedBots.map((link) => ({ ref: { kind: "account", id: link.id } as NodeRef, label: `${labels.get(link.id)} · same ChatGPT account` }))],
         operations: { pkg: "auth", list: recordOperations(catalog, "auth").filter((operation) => operation.name.startsWith("worker_account") && !workerControls.has(operation.name)) },
         controls: <WorkerAccountControls account={account} />,
         events: state.events.filter((event) => event.pkg === "auth"),
@@ -102,18 +106,45 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         events: state.events.filter((event) => event.topic === "login_changed"),
       };
     }
+    case "usage": {
+      const snapshot = state.usage.data;
+      if (!snapshot) return null;
+      return { eyebrow: "Usage snapshot", accent: "owner", title: "Usage", record: snapshot,
+        fields: new Map(fieldsOf(findOperation(catalog, "usage", "usage_snapshot")?.outputSchema).map((field) => [field.name, field])),
+        events: state.events.filter((event) => event.pkg === "usage") };
+    }
+    case "usage-account": {
+      const account = state.usage.data?.accounts.find((item) => `${item.scope}:${item.id}` === ref.id);
+      if (!account) return null;
+      return { eyebrow: `${providerTitle(account.provider)} ${account.scope} usage`, accent: "owner", title: (account.scope === "bot" ? labels : workerLabels).get(account.id) ?? shortId(account.id), record: account,
+        body: <ObservationStatus observation={account} />,
+        related: [{ ref: { kind: account.scope === "bot" ? "account" : "worker-account", id: account.id }, label: "Account" }],
+        events: state.events.filter((event) => event.pkg === "usage") };
+    }
+    case "grok-bot-usage": {
+      const observation = state.usage.data?.grokBot;
+      if (!observation) return null;
+      return { eyebrow: "Machine CLI observation", accent: "owner", title: "Grok Bot usage", record: observation, body: <ObservationStatus observation={observation} /> };
+    }
+    case "worker-catalog": {
+      const account = state.workerAccounts.data?.find((item) => item.id === ref.id);
+      if (!account) return null;
+      const resource = state.workerCatalogs[ref.id];
+      return { eyebrow: `${providerTitle(account.provider)} Worker catalog`, accent: "bots", title: workerLabels.get(ref.id) ?? shortId(ref.id), record: resource?.data ?? { accountId: ref.id, error: resource?.error ?? "No observed catalog" },
+        body: <CatalogStatus id={ref.id} />,
+        controls: <CatalogRefresh id={ref.id} />, related: [{ ref: { kind: "worker-account", id: ref.id }, label: "Worker account" }], events: state.events.filter((event) => event.pkg === "workers") };
+    }
     case "bot": {
       const bot = state.bots.data?.find((item) => item.id === ref.id);
       if (!bot) return null;
       const related: View["related"] = [];
       if (bot.account) related.push({ ref: { kind: "account", id: bot.account }, label: `${labels.get(bot.account) ?? shortId(bot.account)} · assigned` });
       if (bot.runningAccount && bot.runningAccount !== bot.account) related.push({ ref: { kind: "account", id: bot.runningAccount }, label: `${labels.get(bot.runningAccount) ?? shortId(bot.runningAccount)} · ${bot.recoveryIssue ? "last launched" : "running"}` });
-      const voiceStatus = findOperation(catalog, "bots", "voice_status");
       return {
         eyebrow: "Bot", accent: "bots", title: bot.id, record: bot,
         recoveryIssue: bot.recoveryIssue,
         fields: recordFields(catalog, "bots", "bot_list"),
-        related, operations: { pkg: "bots", list: [...recordOperations(catalog, "bots"), ...(voiceStatus ? [voiceStatus] : [])] },
+        related,
         controls: <BotControls bot={bot} />,
         events: state.events.filter((event) => event.scope === bot.id),
       };
@@ -147,6 +178,7 @@ function BotControls({ bot }: { bot: Bot }) {
   const onCall = voice.botId === bot.id;
   return (
     <div className="flex flex-col gap-1.5">
+      <BotLifecycleControls bot={bot} />
       <div className="flex flex-wrap gap-1.5">
         {onCall ? (
           <Button size="sm" variant="destructive" disabled={voice.phase === "ending"} onClick={voice.hangup}>
@@ -276,7 +308,7 @@ function Value({ value }: { value: unknown }) {
   if (typeof value === "boolean") return <Badge variant={value ? "secondary" : "outline"} className="font-mono">{String(value)}</Badge>;
   if (typeof value === "number") return <span className="font-mono tabular-nums">{value}</span>;
   if (typeof value === "string") return <span className="font-mono break-all">{value}</span>;
-  return <span className="font-mono break-all">{JSON.stringify(value)}</span>;
+  return <RecordTree value={value} />;
 }
 
 function Block({ title, aside, children }: { title: string; aside?: React.ReactNode; children: React.ReactNode }) {

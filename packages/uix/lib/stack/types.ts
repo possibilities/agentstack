@@ -58,10 +58,10 @@ export type Bot = {
   settings: BotSettings | null;
 };
 
-/** Bot chat APIs expose sanctioned Codex threads; the canvas does not yet browse them. */
+/** Bot chat APIs expose sanctioned Codex threads, inspectable through Bot tools. */
 export type Chat = { botId: string; threadId: string; parentThreadId: string | null; title: string; cwd: string;
   createdAt: string; updatedAt: string; messageCount: number };
-/** API-only tree reads; the canvas currently exposes their schemas in the API catalog. */
+/** Tree snapshots are inspectable through Bot tools; dedicated tree presentation is separate. */
 export type ChatTreeRow = {
   botId: string; threadId: string; parentThreadId: string | null; depth: number;
   name: string | null; preview: string; agentNickname: string | null; agentRole: string | null; agentPath: string | null;
@@ -83,7 +83,7 @@ export type ChatTreeDetail = { thread: ChatTreeRow; nativeThread: Record<string,
   sessionMeta: ChatTreeEvidence | null; initialContext: ChatTreeEvidence | null; startingInput: ChatTreeEvidence | null;
   spawn: ChatTreeEvidence | null; spawnArguments: ChatTreeEvidence | null;
   coverage: ChatTreeCoverage & { detail: "bestEffort" } };
-/** Available for a future transcript reader; the canvas does not yet consume these Bot reads. */
+/** Bot tools expose these records; a dedicated transcript reader can build on them. */
 export type MainChatLive = { threadId: string | null; instance: string | null; revision: number; activeTurnId: string | null;
   coverage: "partial"; items: Array<{ turnId: string; item: Record<string, unknown>; complete: boolean; completed: boolean; omitted: boolean }> };
 export type MainChatItems = { threadId: string; data: Array<Record<string, unknown>>; nextCursor: string | null };
@@ -94,6 +94,31 @@ export type ChatQueueEntry = { id: string; botId: string; threadId: string; inpu
 export type Account = { id: string; enabled: boolean; removing: boolean; linkedAccounts: Array<{ scope: "bot" | "worker"; id: string }> };
 export type WorkerAccount = Account & { provider: "codex" | "grok" | "devin"; ready: boolean };
 export type WorkerRuntime = { id: string; provider: WorkerAccount["provider"]; state: "running" | "stopped" | "error"; pid: number | null; instance: string | null; error: string | null };
+export type WorkerCatalog = { accountId: string; provider: WorkerAccount["provider"]; observedAt: string;
+  source: string; runtimeVersion: string; modelConfigId: string | null;
+  models: Array<{ id: string; name: string; efforts: string[]; effortConfigId: string | null }>;
+  nativeModelIds: string[]; stale: boolean; error: string | null };
+
+export type UsageObservation = { observedAtMs: number | null; lastAttemptAtMs: number | null; fresh: boolean; error: string | null };
+export type CodexUsage = { planType: string | null; limitReached: boolean | null; resetCreditsAvailable: number | null;
+  resetCreditExpirations: Array<string | null> | null;
+  lanes: Array<{ id: string; title: string; windows: Array<{ role: "primary" | "secondary" | "code_review" | "other";
+    label: string; windowSeconds: number | null; usedPercent: number; remainingPercent: number; resetsAt: string | null;
+    limitName: string | null; meteredFeature: string | null }> }> };
+export type GrokUsage = { subscriptionTier: string | null;
+  included: { usedPercent: number | null; remainingPercent: number | null; periodType: string | null; periodStart: string | null; resetsAt: string | null; allocatedUsd: number | null };
+  prepaidBalanceUsd: number | null; paygEnabled: boolean | null; paygUsedUsd: number | null; paygCapUsd: number | null; paygRemainingUsd: number | null };
+export type DevinUsage = { planLabel: string | null; billing: string | null; dailyRemainingPercent: number | null;
+  weeklyRemainingPercent: number | null; dailyResetsAt: string | null; weeklyResetsAt: string | null; periodStart: string | null;
+  periodEnd: string | null; promptCreditsMonthly: number | null; promptCreditsAvailable: number | null; weeklyQuotaHidden: boolean | null; displayName: string | null };
+export type UsageAccount = UsageObservation & { id: string; enabled: boolean; ready: boolean; linkedAccounts: Account["linkedAccounts"] } & (
+  | { provider: "codex"; scope: "bot" | "worker"; usage: CodexUsage | null }
+  | { provider: "grok"; scope: "worker"; usage: GrokUsage | null }
+  | { provider: "devin"; scope: "worker"; usage: DevinUsage | null });
+export type UsageSnapshot = { atMs: number; inventoryAtMs: number | null; inventoryError: "not_observed" | "auth_unavailable" | null;
+  accounts: UsageAccount[]; grokBot: UsageObservation & { usage: { usedPercent: number; periodStart: string; resetsAt: string;
+    hasAvailableUsage: boolean; planLabel: string | null; fundingPlan: string | null; onDemandEligible: boolean | null;
+    onDemandEnabled: boolean | null; trial: boolean | null; teamSeat: boolean | null } | null } };
 export type WorkerSession = { id: string; botId: string; threadId: string; accountId: string; provider: WorkerAccount["provider"];
   model: string; effort: string | null; repo: string; cwd: string | null; branch: string | null; baseCommit: string | null;
   sourceDirty: boolean; roleRevision: number | null; acpSessionId: string | null; runtimeInstance: string | null;
@@ -176,7 +201,7 @@ export type VoiceCall = {
   phase: "dialing" | "connected";
 };
 
-/** API-only voice_speak receipt; the canvas has no speech control or playback confirmation. */
+/** Bot tools expose the voice_speak receipt; submission does not confirm audible playback. */
 export type VoiceSpeechSubmission = { sessionId: string; status: "submitted" };
 
 export type Resource<T> = { data: T | null; error: string | null; at: number | null };
@@ -187,6 +212,7 @@ export type Snapshot = {
   workerAccounts: Resource<WorkerAccount[]>;
   workerRuntimes: Resource<WorkerRuntime[]>;
   workerSessions: Resource<WorkerSession[]>;
+  usage: Resource<UsageSnapshot>;
   login: Resource<Login | null>;
   workerLogins: Resource<WorkerLogin[]>;
   bots: Resource<Bot[]>;
@@ -211,6 +237,10 @@ export type NodeRef =
   | { kind: "child"; id: string }
   | { kind: "account"; id: string }
   | { kind: "worker-account"; id: string }
+  | { kind: "worker-catalog"; id: string }
+  | { kind: "usage" }
+  | { kind: "usage-account"; id: string }
+  | { kind: "grok-bot-usage" }
   | { kind: "login" }
   | { kind: "bot"; id: string }
   | { kind: "package"; id: string }

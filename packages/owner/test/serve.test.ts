@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { socketCall, socketSubscribe } from "@agentstack/api";
+import { socketCall, socketSubscribe, type SocketSubscription } from "@agentstack/api";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { ownerResourcesOutput, ownerResourceHistoryOutput } from "../src/resources/schema.js";
@@ -30,6 +30,8 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     stderr += chunk;
   });
   const ownerSock = join(stateDir, "sockets", "owner.sock");
+  let websocket: WebSocket | undefined;
+  let subscription: SocketSubscription | undefined;
   try {
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline && !socketNames.every((name) => existsSync(join(stateDir, "sockets", `${name}.sock`)))) {
@@ -89,7 +91,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     const wsUrl = /owner WebSocket: (ws:\/\/\S+)/.exec(stderr)?.[1];
     assert.ok(wsUrl, stderr);
     for (const name of socketNames.filter((name) => name !== "infer")) assert.match(stderr, new RegExp(`${name} WebSocket: ws://127\\.0\\.0\\.1:\\d+/websocket/${name}`));
-    const ws = new WebSocket(wsUrl);
+    const ws = websocket = new WebSocket(wsUrl);
     await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = () => reject(new Error("WebSocket did not open")); });
     const frame = () => new Promise<any>((resolve) => { ws.onmessage = (event) => resolve(JSON.parse(String(event.data))); });
     const call = frame();
@@ -133,7 +135,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     }
     assert.equal(refreshed, true, "Inspector did not reload its server list");
 
-    const subscription = await socketSubscribe(ownerSock, ["pids_changed"], () => undefined);
+    subscription = await socketSubscribe(ownerSock, ["pids_changed"], () => undefined);
 
     for (let i = 0; i < 200 && !/AgentStack reference: (http:\/\/\S+\/docs)/.test(stderr); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -203,11 +205,14 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     assert.match(canvasHtml, /<main[^>]*data-canvas="workbench"/);
     assert.match(canvasHtml, /<h1[^>]*>AgentStack Fleet canvas<\/h1>/);
     assert.doesNotMatch(canvasHtml, /Local links and Server processes/);
-    const stylesheet = /href="(\/_next\/static\/[^"]+\.css)"/.exec(canvasHtml)?.[1];
-    assert.ok(stylesheet);
-    const css = await fetch(new URL(stylesheet, uixUrl));
-    assert.equal(css.status, 200);
-    assert.match(await css.text(), /prefers-color-scheme:\s*dark/);
+    const stylesheets = [...new Set([...canvasHtml.matchAll(/href="(\/_next\/static\/[^"]+\.css)"/g)].map((match) => match[1]))];
+    assert.ok(stylesheets.length > 0);
+    const css = await Promise.all(stylesheets.map(async (stylesheet) => {
+      const response = await fetch(new URL(stylesheet, uixUrl));
+      assert.equal(response.status, 200);
+      return response.text();
+    }));
+    assert.match(css.join("\n"), /prefers-color-scheme:\s*dark/);
 
     assert.ok(!stderr.includes("https://"), stderr);
     assert.ok(!stderr.includes("token="), stderr);
@@ -232,7 +237,14 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
       assert.equal(existsSync(sock), false, `${name}.sock left behind`);
     }
   } finally {
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    websocket?.close();
+    await subscription?.close();
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+      child.kill("SIGTERM");
+      const force = setTimeout(() => child.kill("SIGKILL"), 10_000);
+      try { await exited; } finally { clearTimeout(force); }
+    }
     await rm(stateDir, { recursive: true, force: true });
   }
 });
