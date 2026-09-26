@@ -17,29 +17,28 @@ registerHooks({
 const { homeOf, spaceHref, parseSpacePath, parseNodeKey, spaceAttention } = await import("../lib/stack/spaces.ts");
 const { nodeKey } = await import("../lib/stack/types.ts");
 
-test("homeOf maps every node kind to its space and window", () => {
-  assert.deepEqual(homeOf({ kind: "owner" }), { space: "system", window: "system" });
-  assert.deepEqual(homeOf({ kind: "child", id: "uix" }), { space: "system", window: "system" });
-  assert.deepEqual(homeOf({ kind: "account", id: "acc-1" }), { space: "fleet", window: "accounts" });
-  assert.deepEqual(homeOf({ kind: "worker-account", id: "w-1" }), { space: "fleet", window: "worker-accounts" });
-  assert.deepEqual(homeOf({ kind: "login" }), { space: "fleet", window: "accounts" });
-  assert.deepEqual(homeOf({ kind: "bot", id: "bot-1" }), { space: "fleet", window: "bots" });
-  assert.deepEqual(homeOf({ kind: "package", id: "bots" }), { space: "api", window: "package:bots" });
-  assert.deepEqual(homeOf({ kind: "operation", id: "bot_start", pkg: "bots" }), { space: "api", window: "package:bots" });
+test("homeOf distinguishes spatial records from global dock destinations", () => {
+  assert.deepEqual(homeOf({ kind: "owner" }), { kind: "system" });
+  assert.deepEqual(homeOf({ kind: "child", id: "uix" }), { kind: "system" });
+  assert.deepEqual(homeOf({ kind: "account", id: "acc-1" }), { kind: "space", space: "fleet", window: "accounts" });
+  assert.deepEqual(homeOf({ kind: "worker-account", id: "w-1" }), { kind: "space", space: "fleet", window: "worker-accounts" });
+  assert.deepEqual(homeOf({ kind: "login" }), { kind: "space", space: "fleet", window: "accounts" });
+  assert.deepEqual(homeOf({ kind: "bot", id: "bot-1" }), { kind: "space", space: "fleet", window: "bots" });
+  assert.deepEqual(homeOf({ kind: "package", id: "bots" }), { kind: "reference" });
+  assert.deepEqual(homeOf({ kind: "operation", id: "bot_start", pkg: "bots" }), { kind: "reference" });
 });
 
 test("spaceHref builds space links with an optional encoded focus", () => {
-  assert.equal(spaceHref("system"), "/x/system");
-  assert.equal(spaceHref("api", { kind: "operation", id: "bot_start", pkg: "bots" }), "/x/api?focus=operation%3Abots.bot_start");
+  assert.equal(spaceHref("fleet"), "/x/fleet");
   assert.equal(spaceHref("fleet", { kind: "bot", id: "bot-1" }), "/x/fleet?focus=bot%3Abot-1");
 });
 
 test("parseSpacePath resolves /x and single space segments only", () => {
   assert.equal(parseSpacePath("/x"), "fleet");
   assert.equal(parseSpacePath("/x/"), "fleet");
-  assert.equal(parseSpacePath("/x/api"), "api");
-  assert.equal(parseSpacePath("/x/api/"), "api");
-  assert.equal(parseSpacePath("/x/system"), "system");
+  assert.equal(parseSpacePath("/x/api"), null);
+  assert.equal(parseSpacePath("/x/api/"), null);
+  assert.equal(parseSpacePath("/x/system"), null);
   assert.equal(parseSpacePath("/x/fleet"), "fleet");
   assert.equal(parseSpacePath("/x/nope"), null);
   assert.equal(parseSpacePath("/x/api/extra"), null);
@@ -102,7 +101,7 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
   // System: a stopped child, a closed owner channel, a status read error.
   const system = spaceAttention({
     ...quiet,
-    owner: { data: { pid: 1, docsUrl: null, indexUrl: null, uixUrl: null, inspectorUrl: null, mcpUrls: {}, children: [{ name: "wiki", pid: null, running: false, exitCode: 1, signal: null, error: "crashed" }, { name: "api", pid: 2, running: true, exitCode: null, signal: null, error: null }] }, error: "socket read failed", at: null },
+    owner: { data: { pid: 1, indexUrl: null, uixUrl: null, inspectorUrl: null, mcpUrls: {}, children: [{ name: "wiki", pid: null, running: false, exitCode: 1, signal: null, error: "crashed" }, { name: "api", pid: 2, running: true, exitCode: null, signal: null, error: null }] }, error: "socket read failed", at: null },
     status: { owner: "closed" },
   });
   assert.deepEqual(system.system, ["wiki stopped", "owner reconnecting", "Owner status: socket read failed"]);

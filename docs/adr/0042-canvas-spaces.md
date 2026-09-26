@@ -1,6 +1,6 @@
 # 42. Organize the canvas into spaces
 
-Status: accepted, 2026-09-25. Extends [ADR 0024](0024-live-canvas-workbench.md). Supersedes the UI app's `/index.md` and `/x.md` twins from [ADR 0019](0019-markdown-twins.md).
+Status: superseded in its independent-canvas and System/API-space design by [ADR 0058](0058-open-bench-and-global-tools.md), 2026-09-25. Accepted 2026-09-25. Extends [ADR 0024](0024-live-canvas-workbench.md). Supersedes the UI app's `/index.md` and `/x.md` twins from [ADR 0019](0019-markdown-twins.md).
 
 One canvas holding every window stopped scaling: unrelated windows competed for the same plane, and the UI is expected to grow many times over (subagents, single-conversation views, richer references). A person usually works on one concern at a time and jumps between them. The canvas is therefore split into **spaces**, each an independent canvas of related windows: **Fleet** (Accounts and Bots, and later subagents), **System** (owner, processes, surfaces, MCP endpoints, and the Activity feed), and **API** (the Package API reference).
 

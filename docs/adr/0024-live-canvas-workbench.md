@@ -2,6 +2,8 @@
 
 Status: accepted, 2026-09-24. Extends [ADR 0013](0013-owner-managed-ui-canvas.md), [ADR 0016](0016-live-ui-index-and-system-theme.md), and [ADR 0019](0019-markdown-twins.md). `/x` is no longer blank.
 
+Grid mode and the System/API canvas windows are superseded by [ADR 0058](0058-open-bench-and-global-tools.md).
+
 The separate Servers window and Bot-to-Server curves were superseded by [ADR 0029](0029-bots-own-codex-lifecycle.md); this paragraph records the original canvas design.
 
 `/x` renders every Package API as windows on a pannable canvas: System (`owner_status`), Accounts and device sign-in (`account_list`, `account_login_current`), Servers (`server_list`), Bots (`bot_list`), an Activity feed of change notices, and the discovery catalog. Each record is a card; relationship curves join Servers to their assigned or running accounts and Bots to their Servers. A grid mode lays the same windows out as masonry columns, and window arrangement is kept in the browser's local storage.

@@ -14,14 +14,15 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
 const socketNames = ["api", "auth", "roles", "bots", "workers", "usage", "infer", "wiki", "owner"];
 
-test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then shuts them down", { timeout: 120_000 }, async () => {
+test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a standalone reference listener, then shuts them down", { timeout: 120_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-serve-"));
   const inspectorPort = await availablePort();
   const uixPort = await availablePort();
+  const retiredDocsPort = await availablePort();
   const child = spawn(process.execPath, [cli, "serve"], {
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_AGENTGROK_BIN: join(stateDir, "missing-agentgrok"),
-      AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UIX_PORT: String(uixPort), AGENTSTACK_WIKI_PORT: "0", AGENTSTACK_WIKI_ARTIFACT_PORT: "0", MCP_INSPECTOR_API_TOKEN: "test-token" },
+      AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UIX_PORT: String(uixPort), AGENTSTACK_DOCS_PORT: String(retiredDocsPort), AGENTSTACK_WIKI_PORT: "0", AGENTSTACK_WIKI_ARTIFACT_PORT: "0", MCP_INSPECTOR_API_TOKEN: "test-token" },
   });
   let stderr = "";
   child.stderr?.setEncoding("utf8");
@@ -116,13 +117,11 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
 
     const subscription = await socketSubscribe(ownerSock, ["pids_changed"], () => undefined);
 
-    for (let i = 0; i < 200 && !/AgentStack reference: (http:\/\/\S+\/docs)/.test(stderr); i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    const docsUrl = /AgentStack reference: (http:\/\/\S+\/docs)/.exec(stderr)?.[1];
-    assert.ok(docsUrl, stderr);
+    assert.doesNotMatch(stderr, /AgentStack reference:/);
+    await assert.rejects(fetch(`http://127.0.0.1:${retiredDocsPort}/docs`));
     const indexUrl = `http://127.0.0.1:${uixPort}/`;
     const uixUrl = `http://127.0.0.1:${uixPort}/x`;
+    const referenceUrl = `http://127.0.0.1:${uixPort}/x/fleet?reference=overview`;
     assert.ok(stderr.includes(`AgentStack index: ${indexUrl}`), stderr);
     assert.ok(stderr.includes(`AgentStack UI canvas: ${uixUrl}`), stderr);
     const ownerStatus = await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} }) as {
@@ -132,6 +131,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     assert.equal(ownerStatus.uixUrl, uixUrl);
     assert.equal(ownerStatus.inspectorUrl, inspectorUrl);
     assert.equal(ownerStatus.mcpUrls.owner, url);
+    assert.equal(Object.hasOwn(ownerStatus, "docsUrl"), false);
     const duplicate = spawn(process.execPath, [cli, "serve"], {
       stdio: ["ignore", "ignore", "pipe"],
       env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0" },
@@ -140,23 +140,11 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     duplicate.stderr?.on("data", (chunk: Buffer) => { duplicateError += chunk.toString(); });
     assert.equal(await new Promise<number | null>((resolve) => duplicate.once("exit", resolve)), 0);
     assert.match(duplicateError, /AgentStack is already running/);
-    assert.ok(duplicateError.includes(docsUrl), duplicateError);
+    assert.doesNotMatch(duplicateError, /Reference:/);
     assert.ok(duplicateError.includes(indexUrl), duplicateError);
     assert.ok(duplicateError.includes(uixUrl), duplicateError);
     assert.doesNotMatch(duplicateError, /a required child stopped|EADDRINUSE/);
     assert.equal((await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} }) as { pid: number }).pid, child.pid);
-    const page = await fetch(docsUrl);
-    assert.equal(page.status, 200);
-    assert.equal(page.headers.get("cache-control"), "no-store");
-    const html = await page.text();
-    assert.match(html, /id="package-bots"/);
-    assert.match(html, /href="\/docs\/site\.css"/);
-    assert.match(html, /src="\/docs\/site\.js"/);
-    const revision = await fetch(`${docsUrl}/revision`);
-    assert.equal(revision.status, 200);
-    assert.match(html, new RegExp((await revision.json() as { revision: string }).revision));
-    assert.equal((await fetch(`${docsUrl}/site.css`)).status, 200);
-    assert.equal((await fetch(new URL("/", docsUrl))).status, 404);
     let index: Response | undefined;
     for (let i = 0; i < 200; i += 1) {
       try {
@@ -176,13 +164,13 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     assert.match(indexHtml, /No running bots/);
     assert.match(indexHtml, /Package API URLs/);
     assert.ok(indexHtml.includes(uixUrl));
-    assert.ok(indexHtml.includes(docsUrl));
+    assert.ok(indexHtml.includes(referenceUrl));
     assert.ok(indexHtml.includes(ownerStatus.mcpUrls.owner));
     const canvas = await fetch(uixUrl);
     assert.equal(canvas.status, 200);
     const canvasHtml = await canvas.text();
     assert.match(canvasHtml, /<main[^>]*data-canvas="workbench"/);
-    assert.match(canvasHtml, /<h1[^>]*>AgentStack Fleet canvas<\/h1>/);
+    assert.match(canvasHtml, /<h1[^>]*>AgentStack open bench<\/h1>/);
     assert.doesNotMatch(canvasHtml, /Local links and Server processes/);
     const stylesheet = /href="(\/_next\/static\/[^"]+\.css)"/.exec(canvasHtml)?.[1];
     assert.ok(stylesheet);
@@ -198,7 +186,6 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
     const code = await new Promise<number | null>((resolve) => child.once("exit", (exitCode) => resolve(exitCode)));
     assert.equal(code, 0, stderr);
     await assert.rejects(fetch(inspectorUrl));
-    await assert.rejects(fetch(docsUrl));
     await assert.rejects(fetch(uixUrl));
     await subscription.closed;
     await new Promise<void>((resolve) => { if (ws.readyState === WebSocket.CLOSED) resolve(); else ws.onclose = () => resolve(); });
@@ -213,7 +200,32 @@ test("serve owns sockets, MCP, WebSocket, Inspector, docs, and UI canvas, then s
       assert.equal(existsSync(sock), false, `${name}.sock left behind`);
     }
   } finally {
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    if (child.exitCode === null && child.signalCode === null) {
+      // Let the owner reap its detached children even when an assertion fails.
+      const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+      child.kill("SIGTERM");
+      const timer = setTimeout(() => child.kill("SIGKILL"), 10_000);
+      try { await exited; } finally { clearTimeout(timer); }
+    }
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("the retired docs command is rejected before startup", { timeout: 30_000 }, async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-retired-docs-"));
+  try {
+    const child = spawn(process.execPath, [cli, "docs"], {
+      stdio: ["ignore", "ignore", "pipe"],
+      env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir },
+      timeout: 5_000,
+    });
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    assert.equal(await new Promise<number | null>((resolve) => child.once("exit", resolve)), 1);
+    assert.match(stderr, /usage: agentstack serve/);
+    assert.doesNotMatch(stderr, /usage: agentstack docs|AgentStack reference:/);
+    assert.equal(existsSync(join(stateDir, "sockets", "owner.sock")), false);
+  } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
 });

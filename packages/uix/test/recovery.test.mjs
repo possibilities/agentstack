@@ -43,7 +43,7 @@ test("the index and canvas render a fenced bot honestly", { timeout: 30_000 }, a
   let output = "";
   try {
     const definitions = {
-      owner: [operation("owner_status", { pid: process.pid, docsUrl: null, indexUrl: null, uixUrl: null, inspectorUrl: null, mcpUrls: {}, children: [] })],
+      owner: [operation("owner_status", { pid: process.pid, indexUrl: null, uixUrl: null, inspectorUrl: null, mcpUrls: {}, children: [] })],
       auth: [operation("account_list", { accounts: [] }), operation("account_login_current", { login: null })],
       bots: [operation("bot_list", { bots: [bot] }), operation("bot_defaults_get", bot.settings), operation("voice_status", { call: null })],
       api: [operation("docs_snapshot", { packages: [packageDoc("bots", "bot_list", "bots")] })],
@@ -79,13 +79,16 @@ test("the index and canvas render a fenced bot honestly", { timeout: 30_000 }, a
     assert.match(canvas, /Call a bot/);
     assert.doesNotMatch(index, /bot-1[^<]*Running · PID/);
 
-    const [system, api] = await Promise.all(["/x/system", "/x/api"].map(async (path) => {
+    const [system, api] = await Promise.all(["/x/fleet?system=open", "/x/fleet?reference=package%3Abots"].map(async (path) => {
       const response = await fetch(`${origin}${path}`);
       assert.equal(response.status, 200, `${path}: ${output}`);
       return response.text();
     }));
+    assert.match(system, /Filter System/);
     assert.match(api, /bot_list/);
     assert.equal((await fetch(`${origin}/x/nope`)).status, 404);
+    assert.equal((await fetch(`${origin}/x/system`)).status, 404);
+    assert.equal((await fetch(`${origin}/x/api`)).status, 404);
     assert.equal((await fetch(`${origin}/x.md`)).status, 404);
     assert.equal((await fetch(`${origin}/index.md`)).status, 404);
   } finally {

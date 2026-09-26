@@ -22,21 +22,21 @@ For ACP Workers, call `worker_account_prepare` for Grok or Devin, run its return
 
 Structured documents for every package API — operations with their JSON Schemas, event topics, and configured transports — come from the `api` socket: `docs_list` names the packages, `docs_get` returns one package's document, and `docs_snapshot` returns one consistent catalog for a full reference. MCP and WebSocket URLs are included when their ports are fixed.
 
-`agentstack serve` also prints the loopback URL for its browsable reference,
-`http://127.0.0.1:<port>/docs`. The page reads one `docs_snapshot` per request
-each time it loads, shows the configured Package APIs, MCP and WebSocket URLs, and socket
-change events, and refreshes when the document changes. Set
-`AGENTSTACK_DOCS_PORT` before starting to choose a port; otherwise an available
-port is selected. The optional `agentstack docs` command still serves an
-independent reference on a separate loopback port when needed. The page is
-also served as markdown at `index.md` (or with `.md` appended to the page
-URL).
+The browsable Package API reference is built into UIX. Open **API reference**
+from anywhere on the bench, or follow a contextual operation link. Its searchable
+reader uses `docs_snapshot` and exposes descriptions, full input/output schemas,
+transports and scoped event subscriptions. The direct entry is
+`http://127.0.0.1:8745/x/fleet?reference=overview` with the default UI port.
+There is no separate docs listener, `agentstack docs` command or Markdown twin.
 
 The owner also starts the standalone UI app at `http://127.0.0.1:8745/` and
 prints this index URL.
 Its root lists current local links, Package API URLs, owner processes, and
-running bots; the live canvas is at `/x`, organized into spaces
-(`/x/fleet`, `/x/system`, `/x/api`). The owner
+running bots; the live open bench is at `/x` (also `/x/fleet`). Spaces are
+physical regions of one shared canvas, initially Fleet. System is a global
+left dock; API reference and record inspection share the right dock. Space
+navigation moves the camera, and window headers let you arrange the composition.
+The owner
 also prints the canvas URL. Set `AGENTSTACK_UIX_PORT` before starting to choose
 another port. `pnpm build` prepares `packages/uix` for `agentstack serve`.
 Both pages follow the system light/dark preference. The owner stops the app

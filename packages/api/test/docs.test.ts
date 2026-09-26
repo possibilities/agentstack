@@ -144,6 +144,7 @@ test("the api package serves structured documents for every workspace package", 
     const owner = found.get("owner") as PackageDoc;
     assert.deepEqual(Object.keys(owner.events), ["pids_changed"]);
     assert.deepEqual(owner.operations.map((operation) => operation.name), ["owner_status"]);
+    assert.deepEqual(Object.keys(owner.operations[0]?.outputSchema.properties ?? {}).sort(), ["children", "indexUrl", "inspectorUrl", "mcpUrls", "pid", "uixUrl"]);
     const ownerSocket = owner.transports.find((transport) => transport.type === "socket") as TransportDoc;
     assert.equal(ownerSocket.subscriptions, true);
     assert.equal(ownerSocket.endpoint, join(stateDir, "sockets", "owner.sock"));

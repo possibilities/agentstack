@@ -2,12 +2,10 @@ import { accountLabels, workerAccountLabels } from "./derive";
 import type { StackState } from "./store";
 import { nodeKey, type NodeRef } from "./types";
 
-export type SpaceId = "fleet" | "system" | "api";
+export type SpaceId = "fleet";
 
 export const spaces: { id: SpaceId; title: string; description: string; key: string }[] = [
   { id: "fleet", title: "Fleet", description: "Bot accounts, Worker accounts, and bots", key: "1" },
-  { id: "system", title: "System", description: "Owner processes, surfaces, and activity", key: "2" },
-  { id: "api", title: "API", description: "Package API reference", key: "3" },
 ];
 
 export const defaultSpace: SpaceId = "fleet";
@@ -20,23 +18,24 @@ export function spaceTitle(space: SpaceId): string {
   return spaces.find((item) => item.id === space)?.title ?? space;
 }
 
-/** The space and window where a node's card lives. */
-export function homeOf(ref: NodeRef): { space: SpaceId; window: string } {
+export type NodeHome = { kind: "space"; space: SpaceId; window: string } | { kind: "system" } | { kind: "reference" };
+
+/** Dock records deliberately have no spatial home. */
+export function homeOf(ref: NodeRef): NodeHome {
   switch (ref.kind) {
     case "owner":
     case "child":
-      return { space: "system", window: "system" };
+      return { kind: "system" };
     case "account":
     case "login":
-      return { space: "fleet", window: "accounts" };
+      return { kind: "space", space: "fleet", window: "accounts" };
     case "worker-account":
-      return { space: "fleet", window: "worker-accounts" };
+      return { kind: "space", space: "fleet", window: "worker-accounts" };
     case "bot":
-      return { space: "fleet", window: "bots" };
+      return { kind: "space", space: "fleet", window: "bots" };
     case "package":
-      return { space: "api", window: `package:${ref.id}` };
     case "operation":
-      return { space: "api", window: `package:${ref.pkg}` };
+      return { kind: "reference" };
   }
 }
 
@@ -54,8 +53,8 @@ export function parseSpacePath(pathname: string): SpaceId | null {
 }
 
 /** Human-readable reasons each space needs attention; an empty list means all quiet. Only "closed" channels count — idle and connecting are normal. */
-export function spaceAttention(state: Pick<StackState, "status" | "owner" | "accounts" | "workerAccounts" | "bots" | "attempt" | "catalog" | "endpoints">): Record<SpaceId, string[]> {
-  const attention: Record<SpaceId, string[]> = { fleet: [], system: [], api: [] };
+export function spaceAttention(state: Pick<StackState, "status" | "owner" | "accounts" | "workerAccounts" | "bots" | "attempt" | "catalog" | "endpoints">): Record<SpaceId | "system" | "api", string[]> {
+  const attention: Record<SpaceId | "system" | "api", string[]> = { fleet: [], system: [], api: [] };
   for (const bot of state.bots.data ?? []) if (bot.recoveryIssue) attention.fleet.push(`${bot.id} needs inspection`);
   const labels = accountLabels(state.accounts.data);
   for (const account of state.accounts.data ?? []) if (account.removing) attention.fleet.push(`${labels.get(account.id) ?? account.id} removal unfinished`);

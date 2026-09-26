@@ -23,6 +23,9 @@ export function typeLabel(schema: JsonSchema | undefined): string {
   if (!schema) return "unknown";
   if (schema.enum) return schema.enum.map((value) => JSON.stringify(value)).join(" | ");
   if (schema.anyOf) return schema.anyOf.map(typeLabel).join(" | ");
+  if (Array.isArray(schema.oneOf)) return (schema.oneOf as JsonSchema[]).map(typeLabel).join(" | ");
+  if (Array.isArray(schema.allOf)) return (schema.allOf as JsonSchema[]).map(typeLabel).join(" & ");
+  if (typeof schema.$ref === "string") return schema.$ref;
   if (schema.type === "array") return `${typeLabel(schema.items)}[]`;
   if (Array.isArray(schema.type)) return schema.type.join(" | ");
   return schema.type ?? "unknown";

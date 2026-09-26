@@ -2,7 +2,6 @@ import type { ChildStatus, RunningOwner } from "./owner.js";
 
 export type OwnerStatus = {
   pid: number;
-  docsUrl: string | null;
   indexUrl: string | null;
   uixUrl: string | null;
   inspectorUrl: string | null;
@@ -12,7 +11,6 @@ export type OwnerStatus = {
 
 export class StatusSource {
   private owner: RunningOwner | null = null;
-  private docsUrl: string | null = null;
   private indexUrl: string | null = null;
   private uixUrl: string | null = null;
   private inspectorUrl: string | null = null;
@@ -21,10 +19,6 @@ export class StatusSource {
 
   attach(owner: RunningOwner): void {
     this.owner = owner;
-  }
-
-  setDocsUrl(url: string): void {
-    this.docsUrl = url;
   }
 
   setUixUrl(url: string): void {
@@ -45,7 +39,6 @@ export class StatusSource {
 
   detach(): void {
     this.owner = null;
-    this.docsUrl = null;
     this.indexUrl = null;
     this.uixUrl = null;
     this.inspectorUrl = null;
@@ -59,7 +52,6 @@ export class StatusSource {
   snapshot(): OwnerStatus {
     return {
       pid: process.pid,
-      docsUrl: this.docsUrl,
       indexUrl: this.indexUrl,
       uixUrl: this.uixUrl,
       inspectorUrl: this.inspectorUrl,

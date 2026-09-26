@@ -1,6 +1,6 @@
 # 9. Serve the Package API reference with the owner
 
-Status: accepted, 2026-09-24. Supersedes [ADR 0006](0006-live-package-api-reference.md)'s separate-by-default docs process.
+Status: superseded by [ADR 0058](0058-open-bench-and-global-tools.md), 2026-09-25. Accepted 2026-09-24. Supersedes [ADR 0006](0006-live-package-api-reference.md)'s separate-by-default docs process.
 
 `agentstack serve` starts the read-only docs listener alongside its sockets and
 required children, and closes it on shutdown. It binds to loopback at an

@@ -2,6 +2,8 @@
 
 Status: accepted, 2026-09-25. Refines [ADR 0042](0042-canvas-spaces.md) and the inspector from [ADR 0024](0024-live-canvas-workbench.md).
 
+The space-change inspection rule and card-only navigation destinations are superseded by [ADR 0058](0058-open-bench-and-global-tools.md). Explicit inspection controls were refined by [ADR 0051](0051-explicit-inspect-controls.md).
+
 Spaces made two interactions collide. A single `focus` both moved the canvas and opened the inspector, so a Packages index row opened the inspector instead of taking you to the package, and a jump into another space could leave the inspector showing a record from the space you had just left. The inspector also floated as an inset card over the canvas, hiding the cards it described.
 
 The canvas now separates the two. **Links go to a card**: palette results, Packages index rows, Activity rows, inspector "Related" and operation links, and `?focus=` URLs pan to the card's home window, switching spaces if needed, and briefly flash it. They never open the inspector. **Clicking a card inspects it.** A window that represents one record, such as a package window, is itself a card: clicking its header inspects it. The inspector only ever describes something on the current canvas, so any space change closes it, and its "Show on canvas" action goes back to the inspected card.

@@ -116,6 +116,12 @@ The second loopback HTTP origin owned by the `wiki` Package API. It serves only 
 
 ## Canvas space
 
-One focused canvas of related windows in the `/x` UI, addressed as `/x/<space>`: Fleet, System, or API. Spaces share one live connection, inspector, and voice call; each keeps its own arrangement. Every card has one home space, so focusing a card from anywhere moves to that space.
+A named physical region of related windows on UIX's shared open bench, addressed as `/x/<space>`. Fleet is the initial space; spaces have independent local window arrangements and deterministic centered bench positions. Navigating to a space moves the shared camera. System and API reference are global docks rather than spaces.
 
 _Avoid_: page, tab, workspace (a Bot's working directory)
+
+## Open bench
+
+UIX's continuous canvas containing all Canvas spaces under one camera. Record relationships do not determine space placement. System, API reference and record inspection are global tools attached to the viewport; their destinations need not name a canvas card.
+
+_Avoid_: independent canvases, space tabs

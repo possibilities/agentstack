@@ -6,7 +6,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { nodeKey, type ChannelStatus, type NodeRef } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { StatusDot, Time } from "./primitives";
-import { useWorkbench, type Mode } from "./provider";
+import { useWorkbench } from "./provider";
 
 export type Accent = "owner" | "auth" | "bots" | "api" | "events";
 
@@ -39,11 +39,11 @@ export function accentOf(pkg: string): Accent {
 }
 
 export type WindowPlacement = {
-  mode: Mode;
   x: number;
   y: number;
   z: number;
   width: number;
+  height: number;
   collapsed: boolean;
   animating: boolean;
   dragging: boolean;
@@ -81,7 +81,6 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
   const placement = use(PlacementContext)?.(id);
   if (!placement) throw new Error("Window requires PlacementContext");
   const { selected, select, flash } = useWorkbench();
-  const canvas = placement.mode === "canvas";
   const key = node ? nodeKey(node) : null;
   const isSelected = key !== null && selected !== null && nodeKey(selected) === key;
   const flashing = key !== null && flash?.key === key;
@@ -96,22 +95,22 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
       data-node={key ?? undefined}
       aria-labelledby={`window-${id}-title`}
       onPointerDownCapture={placement.onFocusWithin}
+      onFocusCapture={placement.onFocusWithin}
       className={cn(
         "flex flex-col overflow-hidden rounded-2xl border bg-card/85 text-card-foreground backdrop-blur-xl",
         "shadow-[0_1px_0_0_rgb(255_255_255/0.06)_inset,0_1px_2px_rgb(0_0_0/0.06),0_24px_48px_-24px_rgb(0_0_0/0.28)]",
-        canvas ? "absolute" : "relative",
-        canvas && placement.animating && "transition-[left,top] duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]",
+        "absolute",
+        placement.animating && "transition-[left,top] duration-300 ease-out motion-reduce:transition-none",
         placement.dragging && "shadow-[0_1px_0_0_rgb(255_255_255/0.06)_inset,0_40px_80px_-24px_rgb(0_0_0/0.45)] ring-1 ring-foreground/10",
         isSelected && "border-foreground/30 ring-3 ring-ring/25",
       )}
-      style={canvas ? { left: placement.x, top: placement.y, width: placement.width, zIndex: placement.z } : undefined}
+      style={{ left: placement.x, top: placement.y, width: placement.width, maxHeight: placement.height, zIndex: placement.z }}
     >
       {flashing ? <span key={flash!.seq} aria-hidden className="pointer-events-none absolute inset-0 rounded-[inherit] animate-uix-flash-in" /> : null}
       <header
-        onPointerDown={canvas ? (event) => placement.onHeaderPointerDown(event) : undefined}
+        onPointerDown={placement.onHeaderPointerDown}
         className={cn(
-          "group/header flex items-center gap-3 px-3.5 py-3 select-none",
-          canvas && "cursor-grab active:cursor-grabbing",
+          "group/header flex shrink-0 cursor-grab items-center gap-3 px-3.5 py-3 select-none active:cursor-grabbing",
           !placement.collapsed && "border-b border-border/60",
         )}
       >
@@ -134,7 +133,7 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
         </div>
         <div className="ml-auto flex items-center gap-1">
           {actions}
-          {canvas ? <GripHorizontalIcon aria-hidden className="size-4 text-muted-foreground/0 transition-colors group-hover/header:text-muted-foreground/50" /> : null}
+          <GripHorizontalIcon aria-hidden className="size-4 text-muted-foreground/0 transition-colors group-hover/header:text-muted-foreground/50" />
           {status ? (
             <Tooltip>
               <TooltipTrigger render={<span tabIndex={0} className="flex size-7 items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-ring" />}>
@@ -159,7 +158,7 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
           </button>
         </div>
       </header>
-      {placement.collapsed ? null : <div className="flex flex-col gap-4 p-3.5">{children}</div>}
+      {placement.collapsed ? null : <div data-scroll className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain p-3.5">{children}</div>}
     </section>
   );
 }

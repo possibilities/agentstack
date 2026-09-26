@@ -1,792 +1,250 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import {
-  LayersIcon,
-  LayoutDashboardIcon,
-  LayoutGridIcon,
-  MinusIcon,
-  MousePointer2Icon,
-  PlusIcon,
-  ScanIcon,
-  SearchIcon,
-  SquareDashedMousePointerIcon,
-} from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { BookOpenIcon, CpuIcon, LayersIcon, LayoutDashboardIcon, MinusIcon, PanelRightIcon, PlusIcon, ScanIcon, SearchIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Kbd } from "@/components/ui/kbd";
 import { Separator } from "@/components/ui/separator";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { homeOf, parseNodeKey, parseSpacePath, spaceAttention, spaceHref, spaces, spaceTitle, type SpaceId } from "@/lib/stack/spaces";
+import { activeSurface, dockGeometry, dockMinimum, type BenchSurface } from "@/lib/stack/geometry";
+import { emptyLocation, locationHref, navigateTo, parseLocation, type BenchLocation } from "@/lib/stack/navigation";
+import { homeOf, spaceAttention, spaceHref, spaces, spaceTitle, type SpaceId } from "@/lib/stack/spaces";
 import { nodeKey, type NodeRef, type Snapshot } from "@/lib/stack/types";
-import { cn } from "@/lib/utils";
 import { AuthActionsProvider } from "./auth-actions";
+import { Dock, useDockSizes } from "./dock";
 import { Inspector } from "./inspector";
-import { Lines } from "./lines";
 import { Palette, type PaletteAction } from "./palette";
-import { StatusDot } from "./primitives";
-import { StackProvider, useStack, useWorkbench, WorkbenchContext, type Mode, type WorkbenchValue } from "./provider";
-import { spaceViews, type WindowDef } from "./spaces";
-import { accentTile, PlacementContext, type WindowPlacement } from "./window";
+import { StackProvider, useStack, WorkbenchContext, type WorkbenchValue } from "./provider";
+import { Reference } from "./reference";
+import { SystemPanel } from "./system-panel";
+import { Bench, type BenchControls } from "./bench";
 import { CallLauncher, VoiceProvider } from "./voice";
 
-type Point = { x: number; y: number };
-type View = Point & { k: number };
-type Layout = { positions: Record<string, Point>; collapsed: Record<string, boolean>; order: string[] };
-
-/** View controls a mounted space reports upward for the shared chrome to use. */
-export type SpaceControls = {
-  mode: Mode;
-  setMode(mode: Mode): void;
-  fit(): void;
-  tidy(): void;
-  goToNode(ref: NodeRef, onLanded?: () => void): void;
-};
-
-type Persisted = { spaces?: Partial<Record<SpaceId, { mode?: Mode; layout?: Partial<Layout>; view?: View }>> };
-
-const storageKey = "agentstack.uix.canvas.v3";
-const legacyStorageKeys = ["agentstack.uix.canvas.v1", "agentstack.uix.canvas.v2"];
-const gapX = 72;
-const gapY = 24;
-const top = 76;
-const gridGap = 20;
-const gridMinColumn = 340;
-const pad = 32;
-const minScale = 0.3;
-const maxScale = 1.6;
-
-const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-const pageTitle = (space: SpaceId) => `AgentStack · ${spaceTitle(space)}`;
-
-function initialLayout(defs: WindowDef[]): Layout {
-  let x = 0;
-  const positions: Record<string, Point> = {};
-  const maxColumn = Math.max(0, ...defs.map((item) => item.column));
-  for (let column = 0; column <= maxColumn; column += 1) {
-    const members = defs.filter((item) => item.column === column);
-    if (!members.length) continue;
-    members.forEach((item, index) => { positions[item.id] = { x, y: index * 520 }; });
-    x += Math.max(...members.map((item) => item.width)) + gapX;
-  }
-  return { positions, collapsed: {}, order: defs.map((item) => item.id) };
+export function Workbench({ snapshot, initialSpace, initialFocus, initialLocation }: { snapshot: Snapshot; initialSpace: SpaceId; initialFocus: NodeRef | null; initialLocation?: BenchLocation }) {
+  const start = initialLocation ?? (initialFocus ? navigateTo(emptyLocation(initialSpace), initialFocus) : emptyLocation(initialSpace));
+  return <StackProvider snapshot={snapshot}><Shell initialLocation={start} /></StackProvider>;
 }
 
-export function Workbench({ snapshot, initialSpace, initialFocus }: { snapshot: Snapshot; initialSpace: SpaceId; initialFocus: NodeRef | null }) {
-  return (
-    <StackProvider snapshot={snapshot}>
-      <Shell initialSpace={initialSpace} initialFocus={initialFocus} />
-    </StackProvider>
-  );
-}
-
-function Shell({ initialSpace, initialFocus }: { initialSpace: SpaceId; initialFocus: NodeRef | null }) {
-  const [space, setSpaceState] = useState<SpaceId>(initialSpace);
-  const [selected, setSelected] = useState<NodeRef | null>(null);
-  const [hovered, setHovered] = useState<string | null>(null);
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  const [controls, setControls] = useState<SpaceControls | null>(null);
+function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
+  const [location, setLocation] = useState(initialLocation);
+  const locationRef = useRef(location);
+  const referenceReturn = useRef<HTMLElement | null>(null);
+  const systemReturn = useRef<HTMLElement | null>(null);
+  const inspectorReturn = useRef<HTMLElement | null>(null);
+  const [hovered, hover] = useState<string | null>(null);
   const [flash, setFlash] = useState<{ key: string; seq: number } | null>(null);
-  const [wide, setWide] = useState(false);
-  const spaceRef = useRef(space);
-  const controlsRef = useRef<SpaceControls | null>(null);
-  const flashSeq = useRef(0);
-  const flashTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  /** A node to pan to and flash once the active space's canvas reports ready. */
-  const pendingGoTo = useRef<NodeRef | null>(initialFocus);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const sequence = useRef(0);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [controls, setControls] = useState<BenchControls | null>(null);
+  const controlsRef = useRef<BenchControls | null>(null);
+  const pending = useRef<{ space: SpaceId; ref: NodeRef | null } | null>({ space: initialLocation.space, ref: initialLocation.focus });
+  const [scale, setScale] = useState(1);
+  const [screenWidth, setScreenWidth] = useState(1200);
+  const [sizes, setSizes] = useDockSizes();
+  const [expanded, setExpanded] = useState(false);
+  const [surface, setSurface] = useState<BenchSurface>(() => activeSurface(undefined, openDocks(initialLocation)));
+  const surfaceRef = useRef(surface);
+  const benchFocusFrame = useRef<number | undefined>(undefined);
+  const rightOpen = Boolean(location.reference || location.inspect);
+  const { overlay, systemVisible, rightVisible, leftWidth, leftMax, rightWidth, rightMax, left, right } = dockGeometry({
+    screenWidth, ...openDocks(location), surface, systemWidth: sizes.system,
+    rightWidth: location.reference ? sizes.reference : sizes.inspector, expanded: expanded && Boolean(location.reference),
+  });
 
-  const reportControls = useCallback((next: SpaceControls | null) => {
-    controlsRef.current = next;
-    setControls(next);
-  }, []);
+  useLayoutEffect(() => {
+    const initialSurface = activeSurface(new URLSearchParams(window.location.search).get("surface"), openDocks(initialLocation));
+    surfaceRef.current = initialSurface;
+    setSurface(initialSurface);
+    setScreenWidth(window.innerWidth);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The inspector is an edge sheet: the canvas area shrinks by its width on wide screens.
   useEffect(() => {
-    const query = window.matchMedia("(min-width: 900px)");
-    const update = () => setWide(query.matches);
-    update();
-    query.addEventListener("change", update);
-    return () => query.removeEventListener("change", update);
+    const update = () => setScreenWidth(window.innerWidth);
+    update(); window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
   }, []);
-
   const flashNow = useCallback((ref: NodeRef) => {
-    setFlash({ key: nodeKey(ref), seq: ++flashSeq.current });
+    setFlash({ key: nodeKey(ref), seq: ++sequence.current });
     clearTimeout(flashTimer.current);
     flashTimer.current = setTimeout(() => setFlash(null), 1400);
   }, []);
-
-  // Every space switch — tabs, keys, palette, cross-space goTo — closes the sheet.
-  const switchSpace = useCallback((next: SpaceId, ref?: NodeRef | null) => {
-    window.history.pushState(null, "", spaceHref(next, ref));
-    document.title = pageTitle(next);
-    spaceRef.current = next;
-    setSelected(null);
-    setSpaceState(next);
+  useEffect(() => () => {
+    clearTimeout(flashTimer.current);
+    if (benchFocusFrame.current !== undefined) cancelAnimationFrame(benchFocusFrame.current);
   }, []);
-
-  const setSpace = useCallback((next: SpaceId) => {
-    if (next !== spaceRef.current) switchSpace(next);
-  }, [switchSpace]);
-
-  const consumePendingGoTo = useCallback(() => {
-    const ref = pendingGoTo.current;
-    pendingGoTo.current = null;
-    return ref;
+  const focusBench = useCallback(() => {
+    if (benchFocusFrame.current !== undefined) cancelAnimationFrame(benchFocusFrame.current);
+    benchFocusFrame.current = requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>("[data-canvas=workbench]")?.focus({ preventScroll: true });
+      benchFocusFrame.current = undefined;
+    });
   }, []);
-
+  const reportControls = useCallback((next: BenchControls | null) => {
+    controlsRef.current = next; setControls(next);
+    if (next && pending.current) {
+      const target = pending.current; pending.current = null;
+      if (target.ref) next.goToNode(target.ref);
+      // Default load restores the saved camera; only explicit navigation fits a region.
+    }
+  }, []);
+  const write = useCallback((next: BenchLocation, requestedSurface: BenchSurface = surfaceRef.current) => {
+    const nextSurface = activeSurface(requestedSurface, openDocks(next));
+    const url = new URL(locationHref(next), window.location.origin);
+    url.searchParams.set("surface", nextSurface);
+    const href = `${url.pathname}${url.search}`;
+    if (`${window.location.pathname}${window.location.search}` !== href) window.history.pushState(null, "", href);
+    locationRef.current = next; setLocation(next);
+    surfaceRef.current = nextSurface; setSurface(nextSurface);
+    document.title = `AgentStack · ${next.reference && nextSurface === "right" ? "API reference" : spaceTitle(next.space)}`;
+  }, []);
+  const setSpace = useCallback((space: SpaceId) => {
+    write({ ...locationRef.current, space, focus: null }, "bench");
+    controlsRef.current?.goToSpace(space);
+    focusBench();
+  }, [focusBench, write]);
   const goTo = useCallback((ref: NodeRef) => {
     const home = homeOf(ref);
-    if (home.space === spaceRef.current) {
-      window.history.replaceState(null, "", spaceHref(home.space, ref));
-      const canvas = controlsRef.current;
-      if (canvas) canvas.goToNode(ref, () => flashNow(ref));
-      else pendingGoTo.current = ref;
-    } else {
-      pendingGoTo.current = ref;
-      switchSpace(home.space, ref);
-    }
-  }, [switchSpace, flashNow]);
+    if (home.kind === "reference" && !locationRef.current.reference) referenceReturn.current = document.activeElement as HTMLElement;
+    if (home.kind === "reference" && !locationRef.current.reference && !locationRef.current.inspect) inspectorReturn.current = document.activeElement as HTMLElement;
+    if (home.kind === "system" && !locationRef.current.system) systemReturn.current = document.activeElement as HTMLElement;
+    write(navigateTo(locationRef.current, ref), home.kind === "space" ? "bench" : home.kind === "system" ? "left" : "right");
+    if (home.kind === "space") {
+      if (controlsRef.current) controlsRef.current.goToNode(ref);
+      else pending.current = { space: home.space, ref };
+      focusBench();
+    } else if (home.kind === "system") flashNow(ref);
+  }, [flashNow, focusBench, write]);
+  const select = useCallback((ref: NodeRef | null) => {
+    if (ref && homeOf(ref).kind === "reference") { goTo(ref); return; }
+    if (ref && !locationRef.current.inspect && !locationRef.current.reference) inspectorReturn.current = document.activeElement as HTMLElement;
+    write({ ...locationRef.current, inspect: ref, reference: null }, "right");
+  }, [goTo, write]);
+  const openSystem = useCallback(() => {
+    if (!locationRef.current.system) systemReturn.current = document.activeElement as HTMLElement;
+    write({ ...locationRef.current, system: locationRef.current.system ?? "open" }, "left");
+  }, [write]);
+  const openReference = useCallback(() => {
+    if (!locationRef.current.reference) referenceReturn.current = document.activeElement as HTMLElement;
+    if (!locationRef.current.reference && !locationRef.current.inspect) inspectorReturn.current = document.activeElement as HTMLElement;
+    write({ ...locationRef.current, reference: locationRef.current.reference ?? "overview" }, "right");
+  }, [write]);
+  const referenceOverview = useCallback(() => write({ ...locationRef.current, reference: "overview" }, "right"), [write]);
+  const openInspector = useCallback(() => {
+    if (!locationRef.current.inspect) return;
+    inspectorReturn.current = document.activeElement as HTMLElement;
+    write({ ...locationRef.current, reference: null }, "right");
+  }, [write]);
+  const closeSystem = useCallback(() => write({ ...locationRef.current, system: null }), [write]);
+  const closeRight = useCallback(() => {
+    const current = locationRef.current;
+    write(current.reference ? { ...current, reference: null } : { ...current, inspect: null });
+    if (current.reference && current.inspect) requestAnimationFrame(() => {
+      const target = referenceReturn.current;
+      if (target?.isConnected && !target.closest("[inert],[hidden]")) target.focus({ preventScroll: true });
+      else document.querySelector<HTMLElement>("[data-inspector-heading]")?.focus({ preventScroll: true });
+    });
+  }, [write]);
 
-  // Back/forward: re-parse the location and sync without reloading the page.
   useEffect(() => {
-    const onPop = () => {
-      const next = parseSpacePath(window.location.pathname);
+    const pop = () => {
+      const query = new URLSearchParams(window.location.search);
+      const next = parseLocation(window.location.pathname, query);
       if (!next) return;
-      const raw = new URLSearchParams(window.location.search).get("focus");
-      const ref = raw ? parseNodeKey(raw) : null;
-      document.title = pageTitle(next);
-      if (next !== spaceRef.current) {
-        if (ref) pendingGoTo.current = ref;
-        spaceRef.current = next;
-        setSelected(null);
-        setSpaceState(next);
-      } else if (ref) {
-        const canvas = controlsRef.current;
-        if (canvas) canvas.goToNode(ref, () => flashNow(ref));
-        else pendingGoTo.current = ref;
+      const previous = locationRef.current;
+      locationRef.current = next; setLocation(next);
+      const nextSurface = activeSurface(query.get("surface"), openDocks(next));
+      surfaceRef.current = nextSurface; setSurface(nextSurface);
+      document.title = `AgentStack · ${next.reference && nextSurface === "right" ? "API reference" : spaceTitle(next.space)}`;
+      // Dock/inspection history must never move the camera.
+      if (nodeKeyOrNull(next.focus) !== nodeKeyOrNull(previous.focus) || next.space !== previous.space) {
+        if (next.focus) controlsRef.current?.goToNode(next.focus);
+        else controlsRef.current?.goToSpace(next.space);
       }
+      if (nextSurface === "bench") focusBench();
     };
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, [flashNow]);
-
-  const select = useCallback((ref: NodeRef | null) => setSelected(ref), []);
-
-  // Global keys: ⌘K palette, digits switch spaces. Canvas keys live in SpaceCanvas.
+    window.addEventListener("popstate", pop);
+    return () => window.removeEventListener("popstate", pop);
+  }, [focusBench]);
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+    const key = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setPaletteOpen((value) => !value); return; }
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || paletteOpen || (event.target as Element).closest("input,textarea,select,button,a,[contenteditable=true],[role=dialog],[role=alertdialog]")) return;
+      if (event.key === "Escape") {
+        if (rightVisible) closeRight(); else if (systemVisible) closeSystem(); else return;
         event.preventDefault();
-        setPaletteOpen((open) => !open);
-        return;
       }
-      const target = event.target as HTMLElement;
-      if (event.metaKey || event.ctrlKey || event.altKey || paletteOpen || target.closest("input,textarea,[contenteditable=true],[role=dialog],[role=alertdialog]")) return;
-      const targetSpace = spaces.find((item) => item.key === event.key);
-      if (targetSpace) setSpace(targetSpace.id);
+      const space = spaces.find((s) => s.key === event.key);
+      if (space) setSpace(space.id);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [paletteOpen, setSpace]);
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [paletteOpen, rightVisible, systemVisible, closeRight, closeSystem, setSpace]);
 
-  const actions: PaletteAction[] = useMemo(() => {
-    if (!controls) return [];
-    return [
-      { id: "fit", label: "Fit everything in view", shortcut: "F", icon: ScanIcon, run: controls.fit },
-      { id: "tidy", label: "Tidy windows", shortcut: "T", icon: LayoutDashboardIcon, run: controls.tidy },
-      { id: "mode", label: controls.mode === "canvas" ? "Switch to grid" : "Switch to canvas", shortcut: "G", icon: controls.mode === "canvas" ? LayoutGridIcon : SquareDashedMousePointerIcon, run: () => controls.setMode(controls.mode === "canvas" ? "grid" : "canvas") },
-    ];
-  }, [controls]);
-
-  const workbench: WorkbenchValue = useMemo(() => ({
-    mode: controls?.mode ?? "canvas",
-    space,
-    setSpace,
-    selected,
-    hovered,
-    select,
-    hover: setHovered,
-    goTo,
-    flash,
-  }), [controls?.mode, space, setSpace, selected, hovered, select, goTo, flash]);
-
-  return (
-    <div className="contents" style={{ "--sheet": selected && wide ? "420px" : "0px" } as React.CSSProperties}>
-      <WorkbenchContext value={workbench}>
-        <AuthActionsProvider>
-          <VoiceProvider>
-            <SpaceCanvas key={space} space={space} paletteOpen={paletteOpen} consumePendingGoTo={consumePendingGoTo} onArrive={flashNow} onControls={reportControls} />
-            <TopBar space={space} setSpace={setSpace} controls={controls} openPalette={() => setPaletteOpen(true)} />
-            <Inspector />
-            <Palette open={paletteOpen} onOpenChange={setPaletteOpen} actions={actions} />
-          </VoiceProvider>
-        </AuthActionsProvider>
-      </WorkbenchContext>
-    </div>
-  );
+  const actions: PaletteAction[] = useMemo(() => [
+    { id: "system", label: "Open System dock", icon: CpuIcon, run: openSystem },
+    { id: "reference", label: "Open API reference", icon: BookOpenIcon, run: openReference },
+    ...(location.inspect ? [{ id: "inspector", label: "Return to inspector", icon: PanelRightIcon, run: openInspector }] : []),
+    ...(controls ? [
+      { id: "fit", label: "Fit bench", shortcut: "F", icon: ScanIcon, run: controls.fit },
+      { id: "tidy", label: "Reset local window positions", shortcut: "T", icon: LayoutDashboardIcon, run: controls.tidy },
+    ] : []),
+  ], [controls, location.inspect, openSystem, openReference, openInspector]);
+  const workbench: WorkbenchValue = useMemo(() => ({ space: location.space, setSpace, selected: location.inspect, hovered, select, hover, goTo, flash }), [location.space, location.inspect, setSpace, hovered, select, goTo, flash]);
+  return <div className="contents" style={{ "--system": `${left}px`, "--sheet": `${right}px` } as React.CSSProperties}>
+    <WorkbenchContext value={workbench}><AuthActionsProvider><VoiceProvider>
+      <Bench space={location.space} left={left} blocked={paletteOpen} onControls={reportControls} onScale={setScale} onArrive={flashNow} />
+      <TopBar space={location.space} setSpace={setSpace} compact={screenWidth - left - right < 440} system={systemVisible} reference={Boolean(location.reference) && rightVisible} inspectorAvailable={overlay && Boolean(location.inspect) && !rightVisible} openInspector={openInspector} openSystem={openSystem} openReference={openReference} openPalette={() => setPaletteOpen(true)} />
+      <div data-chrome className="fixed bottom-4 z-30 flex -translate-x-1/2 items-center gap-1 rounded-xl border bg-card/95 p-1 shadow-sm" style={{ left: "calc(var(--system) + (100% - var(--system) - var(--sheet))/2)" }}>
+        <Tool label="Zoom out" onClick={() => controls?.zoom(1 / 1.2)}><MinusIcon /></Tool>
+        <Button variant="ghost" size="sm" aria-label="Actual size" className="w-14 tabular-nums" onClick={() => controls?.zoom(1 / scale)}>{Math.round(scale * 100)}%</Button>
+        <Tool label="Zoom in" onClick={() => controls?.zoom(1.2)}><PlusIcon /></Tool>
+        <Separator orientation="vertical" className="mx-1 h-5! self-center" />
+        <Tool label="Fit bench (F)" onClick={() => controls?.fit()}><ScanIcon /></Tool>
+        <Tool label="Reset window positions (T)" onClick={() => controls?.tidy()}><LayoutDashboardIcon /></Tool>
+      </div>
+      <Dock side="left" label="System" open={systemVisible} overlay={overlay} width={leftWidth} min={dockMinimum.left} max={leftMax} onResize={(system) => setSizes((s) => ({ ...s, system }))} onClose={closeSystem} returnFocus={systemReturn} restoreFocusOnHide={!location.system && (!overlay || surface === "bench")}>
+        <SystemPanel target={location.system} visible={systemVisible} onClose={closeSystem} />
+      </Dock>
+      <Dock side="right" label={location.reference ? "API reference" : "Inspector"} open={rightVisible} overlay={overlay} width={rightWidth} min={dockMinimum.right} max={rightMax}
+        onResize={(width) => { setExpanded(false); setSizes((s) => ({ ...s, [location.reference ? "reference" : "inspector"]: width })); }} onClose={closeRight} returnFocus={inspectorReturn} restoreFocusOnHide={!rightOpen && (!overlay || surface === "bench")}>
+        <Inspector hidden={Boolean(location.reference)} />
+        {location.reference ? <Reference target={location.reference} onOverview={referenceOverview} onClose={closeRight} hasInspection={Boolean(location.inspect)} expanded={expanded} onExpand={() => setExpanded((value) => !value)} /> : null}
+      </Dock>
+      <Palette open={paletteOpen} onOpenChange={setPaletteOpen} actions={actions} />
+    </VoiceProvider></AuthActionsProvider></WorkbenchContext>
+  </div>;
 }
 
-function SpaceCanvas({ space, paletteOpen, consumePendingGoTo, onArrive, onControls }: {
-  space: SpaceId;
-  paletteOpen: boolean;
-  consumePendingGoTo(): NodeRef | null;
-  onArrive(ref: NodeRef): void;
-  onControls(controls: SpaceControls | null): void;
+const nodeKeyOrNull = (ref: NodeRef | null) => ref ? nodeKey(ref) : null;
+const openDocks = (location: BenchLocation) => ({ systemOpen: Boolean(location.system), rightOpen: Boolean(location.reference || location.inspect) });
+function Tool({ label, onClick, children }: { label: string; onClick(): void; children: React.ReactNode }) {
+  return <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label={label} onClick={onClick} />}>{children}</TooltipTrigger><TooltipContent>{label}</TooltipContent></Tooltip>;
+}
+
+function TopBar({ space, setSpace, compact, system, reference, inspectorAvailable, openInspector, openSystem, openReference, openPalette }: {
+  space: SpaceId; setSpace(space: SpaceId): void; compact: boolean; system: boolean; reference: boolean; inspectorAvailable: boolean; openInspector(): void; openSystem(): void; openReference(): void; openPalette(): void;
 }) {
   const state = useStack();
-  const { select } = useWorkbench();
-  const defs = useMemo(() => spaceViews[space].windows(state), [space, state.catalog.data]); // eslint-disable-line react-hooks/exhaustive-deps
-  const viewport = useRef<HTMLElement>(null);
-  const [world, setWorld] = useState<HTMLDivElement | null>(null);
-  const elements = useRef(new Map<string, HTMLElement>());
-  const registrars = useRef(new Map<string, (element: HTMLElement | null) => void>());
-  const [mode, setMode] = useState<Mode>("canvas");
-  const [view, setView] = useState<View>({ x: pad, y: top, k: 1 });
-  const [layout, setLayout] = useState<Layout>(() => initialLayout(defs));
-  const [ready, setReady] = useState(false);
-  const [animating, setAnimating] = useState(false);
-  const [dragging, setDragging] = useState<string | null>(null);
-  const [panning, setPanning] = useState(false);
-  const viewRef = useRef(view);
-  const layoutRef = useRef(layout);
-  const defsRef = useRef(defs);
-  const animationTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-
-  useLayoutEffect(() => {
-    viewRef.current = view;
-    layoutRef.current = layout;
-    defsRef.current = defs;
-  });
-
-  const animate = useCallback((change: () => void) => {
-    setAnimating(true);
-    change();
-    clearTimeout(animationTimer.current);
-    animationTimer.current = setTimeout(() => setAnimating(false), 560);
-  }, []);
-
-  const size = useCallback((id: string) => {
-    const element = elements.current.get(id);
-    return { width: element?.offsetWidth ?? defsRef.current.find((item) => item.id === id)?.width ?? 400, height: element?.offsetHeight ?? 400 };
-  }, []);
-
-  const tidied = useCallback((): Record<string, Point> => {
-    const positions: Record<string, Point> = {};
-    let x = 0;
-    const defsNow = defsRef.current;
-    const maxColumn = Math.max(0, ...defsNow.map((item) => item.column));
-    for (let column = 0; column <= maxColumn; column += 1) {
-      const members = defsNow.filter((item) => item.column === column);
-      if (!members.length) continue;
-      let y = 0;
-      for (const item of members) {
-        positions[item.id] = { x, y };
-        y += size(item.id).height + gapY;
-      }
-      x += Math.max(...members.map((item) => item.width)) + gapX;
-    }
-    return positions;
-  }, [size]);
-
-  const fitted = useCallback((positions: Record<string, Point>, minK = minScale): View => {
-    const element = viewport.current;
-    if (!element) return viewRef.current;
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const [id, point] of Object.entries(positions)) {
-      const { width, height } = size(id);
-      minX = Math.min(minX, point.x); minY = Math.min(minY, point.y);
-      maxX = Math.max(maxX, point.x + width); maxY = Math.max(maxY, point.y + height);
-    }
-    const availableWidth = element.clientWidth - pad * 2;
-    const availableHeight = element.clientHeight - top - pad;
-    const k = clamp(Math.min(availableWidth / (maxX - minX), availableHeight / (maxY - minY), 1), minK, 1);
-    const width = (maxX - minX) * k;
-    const x = width <= availableWidth ? pad + (availableWidth - width) / 2 - minX * k : pad - minX * k;
-    return { x, y: top - minY * k, k };
-  }, [size]);
-
-  /** Opening view: the first columns fill the width at a readable scale; the rest peek in from the right. */
-  const primaryView = useCallback((positions: Record<string, Point>): View => {
-    const element = viewport.current;
-    if (!element) return viewRef.current;
-    const defsNow = defsRef.current;
-    const maxColumn = Math.max(0, ...defsNow.map((item) => item.column));
-    const primary = defsNow.filter((item) => item.column <= Math.min(maxColumn, 2));
-    if (!primary.length) return viewRef.current;
-    const minX = Math.min(...primary.map((item) => positions[item.id]?.x ?? 0));
-    const maxX = Math.max(...primary.map((item) => (positions[item.id]?.x ?? 0) + size(item.id).width));
-    const minY = Math.min(...primary.map((item) => positions[item.id]?.y ?? 0));
-    const availableWidth = element.clientWidth - pad * 2;
-    const k = clamp(availableWidth / (maxX - minX), 0.8, 1);
-    return { k, x: pad + Math.max(0, (availableWidth - (maxX - minX) * k) / 2) - minX * k, y: top - minY * k };
-  }, [size]);
-
-  const tidy = useCallback(() => animate(() => {
-    const positions = tidied();
-    setLayout((current) => ({ ...current, positions }));
-    setView(primaryView(positions));
-  }), [animate, primaryView, tidied]);
-  const fit = useCallback(() => animate(() => setView(fitted(layoutRef.current.positions))), [animate, fitted]);
-
-  const zoomAt = useCallback((factor: number, clientX?: number, clientY?: number) => {
-    const element = viewport.current;
-    if (!element) return;
-    const rect = element.getBoundingClientRect();
-    const px = (clientX ?? rect.left + rect.width / 2) - rect.left;
-    const py = (clientY ?? rect.top + rect.height / 2) - rect.top;
-    setView((current) => {
-      const k = clamp(current.k * factor, minScale, maxScale);
-      return { k, x: px - (px - current.x) * (k / current.k), y: py - (py - current.y) * (k / current.k) };
-    });
-  }, []);
-
-  // Restore this space's saved arrangement before first paint; otherwise tidy and fit.
-  useLayoutEffect(() => {
-    let saved: Persisted = {};
-    try {
-      saved = JSON.parse(localStorage.getItem(storageKey) ?? "{}");
-    } catch {
-      saved = {};
-    }
-    for (const key of legacyStorageKeys) localStorage.removeItem(key);
-    const slice = saved.spaces?.[space] ?? {};
-    const present = new Set(defsRef.current.map((item) => item.id));
-    const fresh = tidied();
-    const positions = { ...fresh };
-    for (const [id, point] of Object.entries(slice.layout?.positions ?? {})) if (present.has(id)) positions[id] = point;
-    const collapsed = Object.fromEntries(Object.entries(slice.layout?.collapsed ?? {}).filter(([id]) => present.has(id)));
-    const order = [...new Set([...(slice.layout?.order ?? []), ...defsRef.current.map((item) => item.id)])].filter((id) => present.has(id));
-    setLayout({ positions, collapsed, order });
-    setView(slice.view ?? primaryView(positions));
-    setMode(slice.mode ?? (window.innerWidth < 900 ? "grid" : "canvas"));
-    setReady(true);
-  }, [space, primaryView, tidied]);
-
-  useEffect(() => {
-    if (!ready) return;
-    const timer = setTimeout(() => {
-      let all: Persisted = {};
-      try {
-        all = JSON.parse(localStorage.getItem(storageKey) ?? "{}");
-      } catch {
-        all = {};
-      }
-      all.spaces = { ...all.spaces, [space]: { mode, layout, view } };
-      localStorage.setItem(storageKey, JSON.stringify(all));
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [ready, space, mode, layout, view]);
-
-  // Windows come and go with the data (e.g. the API catalog): keep positions for
-  // the ids still present, fill missing ones from the tidied layout, drop stale order entries.
-  useEffect(() => {
-    setLayout((current) => {
-      const present = new Set(defs.map((item) => item.id));
-      const missing = defs.some((item) => !current.positions[item.id]);
-      const stale = current.order.some((id) => !present.has(id))
-        || Object.keys(current.positions).some((id) => !present.has(id))
-        || Object.keys(current.collapsed).some((id) => !present.has(id));
-      if (!missing && !stale) return current;
-      const fresh = tidied();
-      const positions: Record<string, Point> = {};
-      for (const id of present) positions[id] = current.positions[id] ?? fresh[id];
-      const collapsed = Object.fromEntries(Object.entries(current.collapsed).filter(([id]) => present.has(id)));
-      const order = [...current.order.filter((id) => present.has(id)), ...defs.map((item) => item.id).filter((id) => !current.order.includes(id))];
-      return { positions, collapsed, order };
-    });
-  }, [defs, tidied]);
-
-  // Wheel pans, pinch or modifier-wheel zooms; scrollable lists keep their own scrolling.
-  useEffect(() => {
-    const element = viewport.current;
-    if (!element || mode !== "canvas") return;
-    const onWheel = (event: WheelEvent) => {
-      const scroller = (event.target as Element).closest("[data-scroll]");
-      if (scroller && !event.ctrlKey && !event.metaKey && scroller.scrollHeight > scroller.clientHeight) return;
-      if ((event.target as Element).closest("[data-chrome],[role=dialog]")) return;
-      event.preventDefault();
-      if (event.ctrlKey || event.metaKey) zoomAt(Math.exp(-event.deltaY * 0.01), event.clientX, event.clientY);
-      else setView((current) => ({ ...current, x: current.x - event.deltaX, y: current.y - event.deltaY }));
-    };
-    element.addEventListener("wheel", onWheel, { passive: false });
-    return () => element.removeEventListener("wheel", onWheel);
-  }, [mode, zoomAt]);
-
-  /** Expand the node's home window if collapsed, then center the node (or scroll to it in grid mode). */
-  const goToNode = useCallback((ref: NodeRef, onLanded?: () => void) => {
-    const home = homeOf(ref).window;
-    const wasCollapsed = layoutRef.current.collapsed[home];
-    if (wasCollapsed) setLayout((current) => ({ ...current, collapsed: { ...current.collapsed, [home]: false } }));
-    setTimeout(() => {
-      const key = CSS.escape(nodeKey(ref));
-      // A window that is itself the node (package:<name>) wins over a row carrying the same key.
-      const node = document.querySelector(`[data-node="${key}"][data-window]`) ?? document.querySelector(`[data-node="${key}"]`) ?? document.querySelector(`[data-window="${CSS.escape(home)}"]`);
-      if (!node) return;
-      if (mode === "grid" || !world) {
-        // A node taller than the viewport reads from its top, not its middle.
-        const tall = node.getBoundingClientRect().height > (viewport.current?.clientHeight ?? window.innerHeight);
-        node.scrollIntoView({ behavior: "smooth", block: tall ? "start" : "center" });
-        setTimeout(() => onLanded?.(), 450);
-        return;
-      }
-      const current = viewRef.current;
-      const origin = world.getBoundingClientRect();
-      const rect = node.getBoundingClientRect();
-      const cx = (rect.left + rect.width / 2 - origin.left) / current.k;
-      const element = viewport.current!;
-      const k = current.k < 0.7 ? 1 : current.k;
-      // Center nodes that fit the visible height; taller nodes (like package
-      // windows) anchor their top just under the chrome instead.
-      const nodeScreen = (rect.height / current.k) * k;
-      const fits = nodeScreen <= element.clientHeight - top - 12;
-      const y = fits
-        ? (element.clientHeight + top) / 2 - ((rect.top + rect.height / 2 - origin.top) / current.k) * k
-        : top + 12 - ((rect.top - origin.top) / current.k) * k;
-      // The viewport already ends where the sheet begins, so its width is the visible width.
-      animate(() => setView({ k, x: element.clientWidth / 2 - cx * k, y }));
-      setTimeout(() => onLanded?.(), 520);
-    }, wasCollapsed ? 60 : 0);
-  }, [animate, mode, world]);
-
-  // A cross-space goTo (or the URL's ?focus= on load) lands here once mounted.
-  useEffect(() => {
-    if (!ready) return;
-    const ref = consumePendingGoTo();
-    if (ref) goToNode(ref, () => onArrive(ref));
-  }, [ready, consumePendingGoTo, goToNode, onArrive]);
-
-  const toggleMode = useCallback(() => setMode((current) => current === "canvas" ? "grid" : "canvas"), []);
-
-  // Report this space's controls upward so the shared TopBar and Palette operate it.
-  useEffect(() => {
-    const next: SpaceControls = { mode, setMode, fit, tidy, goToNode };
-    onControls(next);
-    return () => onControls(null);
-  }, [mode, fit, tidy, goToNode, onControls]);
-
-  // Canvas keys: G toggles mode; F/T/+/-/0 only apply in canvas mode.
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement;
-      if (event.metaKey || event.ctrlKey || event.altKey || paletteOpen || target.closest("input,textarea,[contenteditable=true],[role=dialog],[role=alertdialog]")) return;
-      const key = event.key.toLowerCase();
-      if (key === "g") {
-        toggleMode();
-        return;
-      }
-      if (mode !== "canvas") return;
-      if (key === "f") fit();
-      else if (key === "t") tidy();
-      else if (key === "=" || key === "+") animate(() => zoomAt(1.2));
-      else if (key === "-") animate(() => zoomAt(1 / 1.2));
-      else if (key === "0") animate(() => zoomAt(1 / viewRef.current.k));
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [animate, fit, mode, paletteOpen, tidy, toggleMode, zoomAt]);
-
-  const onBackgroundPointerDown = (event: React.PointerEvent<HTMLElement>) => {
-    if (mode !== "canvas" || (event.button !== 0 && event.button !== 1)) return;
-    if ((event.target as Element).closest("[data-window],[data-chrome]")) return;
-    const start = { px: event.clientX, py: event.clientY, x: view.x, y: view.y };
-    let moved = false;
-    setPanning(true);
-    const move = (next: PointerEvent) => {
-      if (Math.abs(next.clientX - start.px) + Math.abs(next.clientY - start.py) > 3) moved = true;
-      setView((current) => ({ ...current, x: start.x + next.clientX - start.px, y: start.y + next.clientY - start.py }));
-    };
-    const up = () => {
-      setPanning(false);
-      if (!moved) select(null);
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  };
-
-  const placement = useCallback((id: string): WindowPlacement => {
-    const item = defsRef.current.find((entry) => entry.id === id)!;
-    const position = layout.positions[id] ?? { x: 0, y: 0 };
-    if (!registrars.current.has(id)) {
-      registrars.current.set(id, (element) => {
-        if (element) elements.current.set(id, element);
-        else elements.current.delete(id);
-      });
-    }
-    return {
-      mode,
-      ...position,
-      z: layout.order.indexOf(id) + 1,
-      width: item.width,
-      collapsed: Boolean(layout.collapsed[id]),
-      animating,
-      dragging: dragging === id,
-      register: registrars.current.get(id)!,
-      onFocusWithin: () => {
-        if (layoutRef.current.order.at(-1) !== id) setLayout((current) => ({ ...current, order: [...current.order.filter((entry) => entry !== id), id] }));
-      },
-      onToggleCollapse: () => setLayout((current) => ({ ...current, collapsed: { ...current.collapsed, [id]: !current.collapsed[id] } })),
-      onHeaderPointerDown: (event) => {
-        if (event.button !== 0 || (event.target as Element).closest("button,a,[data-interactive],[tabindex]")) return;
-        event.preventDefault();
-        const start = { px: event.clientX, py: event.clientY, ...position };
-        setDragging(id);
-        const move = (next: PointerEvent) => {
-          if (Math.abs(next.clientX - start.px) + Math.abs(next.clientY - start.py) <= 3) return;
-          const k = viewRef.current.k;
-          setLayout((current) => ({
-            ...current,
-            positions: { ...current.positions, [id]: { x: Math.round(start.x + (next.clientX - start.px) / k), y: Math.round(start.y + (next.clientY - start.py) / k) } },
-          }));
-        };
-        const up = () => {
-          setDragging(null);
-          window.removeEventListener("pointermove", move);
-          window.removeEventListener("pointerup", up);
-        };
-        window.addEventListener("pointermove", move);
-        window.addEventListener("pointerup", up);
-      },
-    };
-  }, [animating, dragging, layout, mode]);
-
-  // Grid mode: masonry columns, each window placed in reading order into the shortest column.
-  const [gridColumns, setGridColumns] = useState<string[][]>(() => [defs.map((item) => item.id)]);
-  useLayoutEffect(() => {
-    if (mode !== "grid" || !world) return;
-    let frame = 0;
-    const arrange = () => {
-      const count = clamp(Math.floor((world.clientWidth + gridGap) / (gridMinColumn + gridGap)), 1, 4);
-      const heights = new Array<number>(count).fill(0);
-      const columns = Array.from({ length: count }, () => [] as string[]);
-      for (const id of defsRef.current.map((item) => item.id)) {
-        const index = heights.indexOf(Math.min(...heights));
-        columns[index].push(id);
-        heights[index] += (elements.current.get(id)?.offsetHeight ?? 400) + gridGap;
-      }
-      setGridColumns((current) => JSON.stringify(current) === JSON.stringify(columns) ? current : columns);
-    };
-    arrange();
-    const observer = new ResizeObserver(() => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(arrange);
-    });
-    observer.observe(world);
-    for (const element of elements.current.values()) observer.observe(element);
-    return () => {
-      observer.disconnect();
-      cancelAnimationFrame(frame);
-    };
-  }, [mode, world, gridColumns, defs]);
-
-  const canvas = mode === "canvas";
-
-  return (
-    <PlacementContext value={placement}>
-      <main
-        ref={viewport}
-        data-canvas="workbench"
-        onPointerDown={onBackgroundPointerDown}
-        className={cn(
-          "canvas-dots",
-          canvas
-            ? "fixed inset-y-0 left-0 right-[var(--sheet)] touch-none overflow-hidden overscroll-none transition-[right] duration-200 ease-out motion-reduce:transition-none"
-            : "min-h-dvh mr-[var(--sheet)] transition-[margin-right] duration-200 ease-out motion-reduce:transition-none",
-          canvas && (panning ? "cursor-grabbing" : "cursor-grab"),
-        )}
-        style={canvas ? { backgroundSize: `${22 * view.k}px ${22 * view.k}px`, backgroundPosition: `${view.x}px ${view.y}px` } : { backgroundSize: "22px 22px" }}
-      >
-        <div aria-hidden className="pointer-events-none fixed inset-0 bg-[radial-gradient(90%_60%_at_50%_-10%,color-mix(in_oklch,var(--pkg-bots)_9%,transparent),transparent_70%)]" />
-        <h1 className="sr-only">{`AgentStack ${spaceTitle(space)} canvas`}</h1>
-        {canvas ? (
-          <div
-            ref={setWorld}
-            className={cn("absolute top-0 left-0 origin-top-left transition-opacity duration-500", ready ? "opacity-100" : "opacity-0", animating && "transition-[transform,opacity] duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]", dragging && "select-none")}
-            style={{ transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.k})` }}
-          >
-            <Lines world={world} scale={view.k} version={[layout, mode]} animating={animating || dragging !== null} subtle={false} />
-            {defs.map(({ id, element }) => <Fragment key={id}>{element}</Fragment>)}
-          </div>
-        ) : (
-          <div className={cn("relative mx-auto max-w-[1760px] px-4 pt-20 pb-16 transition-opacity duration-500 sm:px-6", ready ? "opacity-100" : "opacity-0")}>
-            <div ref={setWorld} className="relative">
-              <Lines world={world} scale={1} version={[layout, mode, gridColumns]} animating={false} subtle />
-              <div className="flex items-start gap-5">
-                {gridColumns.map((column, index) => (
-                  <div key={index} className="flex min-w-0 flex-1 flex-col gap-5">
-                    {column.map((id) => {
-                      const def = defs.find((item) => item.id === id);
-                      return def ? <Fragment key={id}>{def.element}</Fragment> : null;
-                    })}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </main>
-      {canvas ? <CanvasToolbar scale={view.k} zoom={(factor) => animate(() => zoomAt(factor))} fit={fit} tidy={tidy} /> : null}
-    </PlacementContext>
-  );
-}
-
-function TopBar({ space, setSpace, controls, openPalette }: { space: SpaceId; setSpace(space: SpaceId): void; controls: SpaceControls | null; openPalette(): void }) {
-  const state = useStack();
-  const { status, endpoints, scoped, catalog } = state;
-  // Every Package API with a WebSocket endpoint, in catalog order (unknowns last, alphabetical).
-  const packageOrder = useMemo(() => {
-    const order = new Map((catalog.data ?? []).map((doc, index) => [doc.name, index]));
-    return Object.keys(endpoints).sort((a, b) => (order.get(a) ?? Number.MAX_SAFE_INTEGER) - (order.get(b) ?? Number.MAX_SAFE_INTEGER) || a.localeCompare(b));
-  }, [catalog.data, endpoints]);
-  const attention = useMemo(() => spaceAttention(state), [state]);
-  // Only channels this page opened have a status entry; endpoints without one were never connected here.
-  const opened = packageOrder.filter((name) => status[name] !== undefined);
-  const unopened = packageOrder.filter((name) => status[name] === undefined);
-  const live = opened.filter((name) => status[name] === "open").length;
-  const scopedLive = Object.values(scoped).filter((value) => value.status === "open").length;
-  const mode = controls?.mode ?? "canvas";
-  return (
-    <div data-chrome
-      className="pointer-events-none fixed top-3 left-3 z-30 flex items-start justify-between gap-3 transition-[right] duration-200 ease-out motion-reduce:transition-none"
-      style={{ right: "calc(var(--sheet) + 0.75rem)" }}>
-      <div className="pointer-events-auto flex items-center gap-2 rounded-xl border bg-card/80 py-1.5 pr-3 pl-1.5 shadow-sm backdrop-blur-xl sm:gap-3">
-        <span className="flex size-8 items-center justify-center rounded-lg bg-foreground text-background shadow-inner">
-          <LayersIcon className="size-4" />
-        </span>
-        <div className="hidden flex-col leading-tight lg:flex">
-          <span className="text-sm font-semibold tracking-tight">AgentStack</span>
-        </div>
-        <nav aria-label="Spaces" className="flex items-center gap-0.5">
-          {spaces.map((item) => {
-            const Icon = spaceViews[item.id].icon;
-            const active = item.id === space;
-            const reasons = attention[item.id];
-            return (
-              <Tooltip key={item.id}>
-                <TooltipTrigger
-                  render={
-                    <a
-                      href={spaceHref(item.id)}
-                      aria-current={active ? "page" : undefined}
-                      onClick={(event) => {
-                        if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
-                          event.preventDefault();
-                          setSpace(item.id);
-                        }
-                      }}
-                      className={cn(
-                        "flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring",
-                        active ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                      )}
-                    >
-                      <Icon className="size-3.5" />
-                      <span className="hidden md:inline">{item.title}</span>
-                      {reasons.length ? (
-                        <>
-                          <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-warning" />
-                          <span className="sr-only">needs attention</span>
-                        </>
-                      ) : null}
-                    </a>
-                  }
-                />
-                <TooltipContent side="bottom" className="flex-col items-start gap-1">
-                  <span>{item.title} <Kbd>{item.key}</Kbd></span>
-                  {reasons.map((reason) => <span key={reason} className="text-warning">{reason}</span>)}
-                </TooltipContent>
-              </Tooltip>
-            );
-          })}
-        </nav>
-        <Separator orientation="vertical" className="mx-0.5 hidden h-6! self-center sm:block" />
-        <Tooltip>
-          <TooltipTrigger render={<span tabIndex={0} className="flex items-center gap-2 rounded-md focus-visible:outline-2 focus-visible:outline-ring" />}>
-            <span className="flex items-center gap-1">
-              {opened.map((name) => (
-                <StatusDot key={name} tone={status[name] === "open" ? "success" : status[name] === "closed" ? "destructive" : "muted"} />
-              ))}
-            </span>
-            <span className="hidden text-xs text-muted-foreground tabular-nums sm:inline">{live}/{opened.length} live</span>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="flex-col items-stretch gap-1 py-2">
-            {opened.map((name) => (
-              <span key={name} className="flex items-center justify-between gap-6">
-                <span className="font-medium">{name}</span>
-                <span className="opacity-70">{status[name]}</span>
-              </span>
-            ))}
-            {unopened.length ? <span className="opacity-60">Not opened by this page: {unopened.join(", ")}</span> : null}
-            <span className="mt-1 border-t border-background/20 pt-1 opacity-70">{scopedLive} scoped bot subscription{scopedLive === 1 ? "" : "s"}</span>
-          </TooltipContent>
-        </Tooltip>
-      </div>
-      <div className="pointer-events-auto flex items-center gap-2">
-        <CallLauncher />
-        <Button variant="outline" className="h-10 gap-2 rounded-xl bg-card/80 pr-1.5 pl-3 text-muted-foreground shadow-sm backdrop-blur-xl" onClick={openPalette}>
-          <SearchIcon data-icon="inline-start" />
-          <span className="hidden sm:inline">Jump to…</span>
-          <Kbd>⌘K</Kbd>
-        </Button>
-        <ToggleGroup
-          value={[mode]}
-          onValueChange={(value) => { if (value[0]) controls?.setMode(value[0] as Mode); }}
-          className="h-10 rounded-xl border bg-card/80 p-1 shadow-sm backdrop-blur-xl"
-          aria-label="Layout"
-        >
-          <Tooltip>
-            <TooltipTrigger render={<ToggleGroupItem value="canvas" aria-label="Canvas" className="h-8 rounded-lg px-2.5" />}>
-              <SquareDashedMousePointerIcon />
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Canvas <Kbd>G</Kbd></TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger render={<ToggleGroupItem value="grid" aria-label="Grid" className="h-8 rounded-lg px-2.5" />}>
-              <LayoutGridIcon />
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Grid <Kbd>G</Kbd></TooltipContent>
-          </Tooltip>
-        </ToggleGroup>
-      </div>
+  const attention = spaceAttention(state);
+  const closed = Object.entries(state.status).filter(([, status]) => status === "closed").map(([name]) => `${name} reconnecting`);
+  const reasons = [...new Set([...attention.system, ...closed])];
+  return <header data-chrome className="pointer-events-none fixed top-3 z-30 flex items-start justify-between gap-2" style={{ left: "calc(var(--system) + 12px)", right: "calc(var(--sheet) + 12px)" }}>
+    <div className="pointer-events-auto flex items-center gap-1 rounded-xl border bg-card/95 p-1.5 shadow-sm">
+      {!compact ? <LayersIcon aria-hidden className="mx-1 size-4 shrink-0" /> : null}
+      <nav aria-label="Spaces" className="flex">
+        {spaces.map((item) => <a key={item.id} href={spaceHref(item.id)} aria-current={item.id === space ? "location" : undefined}
+          onClick={(event) => { if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); setSpace(item.id); } }}
+          className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring" title={attention[item.id].join(" · ")}>
+          {item.title}{attention[item.id].length ? <span className="size-1.5 rounded-full bg-warning" aria-label="needs attention" /> : null}
+        </a>)}
+      </nav>
+      {!compact ? <Separator orientation="vertical" className="mx-1 h-5! self-center" /> : null}
+      <Tooltip><TooltipTrigger render={<Button data-dock-trigger="left" variant="ghost" size="sm" aria-label="Open System dock" aria-expanded={system} onClick={openSystem} />}>
+        <CpuIcon data-icon="inline-start" />{!compact ? <span className="hidden sm:inline">System</span> : null}{reasons.length ? <span className="size-1.5 rounded-full bg-warning" aria-label="needs attention" /> : null}
+      </TooltipTrigger><TooltipContent className="max-w-80">{reasons.length ? reasons.join(" · ") : "System · processes, connections and activity"}</TooltipContent></Tooltip>
+      <Button data-dock-trigger="right" variant="ghost" size="sm" aria-label="Open API reference" aria-expanded={reference} onClick={openReference}><BookOpenIcon data-icon="inline-start" />{!compact ? <span className="hidden sm:inline">API</span> : null}{attention.api.length ? <span className="size-1.5 rounded-full bg-warning" aria-label="needs attention" /> : null}</Button>
+      {inspectorAvailable ? <Button variant="ghost" size="icon-sm" aria-label="Return to inspector" onClick={openInspector}><PanelRightIcon /></Button> : null}
     </div>
-  );
-}
-
-function ToolbarButton({ label, shortcut, onClick, children }: { label: string; shortcut?: string; onClick(): void; children: React.ReactNode }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label={label} onClick={onClick} />}>{children}</TooltipTrigger>
-      <TooltipContent>{label}{shortcut ? <Kbd>{shortcut}</Kbd> : null}</TooltipContent>
-    </Tooltip>
-  );
-}
-
-function CanvasToolbar({ scale, zoom, fit, tidy }: { scale: number; zoom(factor: number): void; fit(): void; tidy(): void }) {
-  return (
-    <>
-      <div data-chrome className="fixed bottom-4 left-[calc((100%-var(--sheet))/2)] z-30 flex -translate-x-1/2 items-center gap-0.5 rounded-xl border bg-card/80 p-1 shadow-sm backdrop-blur-xl transition-[left] duration-200 ease-out motion-reduce:transition-none">
-        <ToolbarButton label="Zoom out" shortcut="−" onClick={() => zoom(1 / 1.2)}><MinusIcon /></ToolbarButton>
-        <Tooltip>
-          <TooltipTrigger render={<Button variant="ghost" size="sm" className="w-14 font-mono text-xs tabular-nums" onClick={() => zoom(1 / scale)} />}>
-            {Math.round(scale * 100)}%
-          </TooltipTrigger>
-          <TooltipContent>Actual size <Kbd>0</Kbd></TooltipContent>
-        </Tooltip>
-        <ToolbarButton label="Zoom in" shortcut="+" onClick={() => zoom(1.2)}><PlusIcon /></ToolbarButton>
-        <Separator orientation="vertical" className="mx-1 h-5! self-center" />
-        <ToolbarButton label="Fit everything" shortcut="F" onClick={fit}><ScanIcon /></ToolbarButton>
-        <ToolbarButton label="Tidy windows" shortcut="T" onClick={tidy}><LayoutDashboardIcon /></ToolbarButton>
-        <Separator orientation="vertical" className="mx-1 h-5! self-center" />
-        <Tooltip>
-          <TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Canvas gestures" />}><MousePointer2Icon /></TooltipTrigger>
-          <TooltipContent className="flex-col items-start gap-1 py-2">
-            <span>Drag empty space or scroll to pan</span>
-            <span>Pinch or <Kbd>⌘</Kbd> scroll to zoom</span>
-            <span>Drag a window header to arrange</span>
-            <span>Click a card to inspect · <Kbd>⌘K</Kbd> to jump</span>
-          </TooltipContent>
-        </Tooltip>
-      </div>
-    </>
-  );
+    <div className="pointer-events-auto flex items-center gap-2">{!compact ? <CallLauncher /> : null}<Button variant="outline" size="icon" aria-label="Jump to (Command K)" onClick={openPalette}><SearchIcon /></Button></div>
+  </header>;
 }

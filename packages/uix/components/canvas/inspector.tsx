@@ -1,7 +1,7 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState } from "react";
-import { ArrowRightIcon, CircleCheckIcon, CopyIcon, LocateFixedIcon, LockIcon, PhoneIcon, PhoneOffIcon, RefreshCwIcon, Trash2Icon, XIcon } from "lucide-react";
+import { Fragment, useLayoutEffect, useRef, useState } from "react";
+import { ArrowRightIcon, BookOpenIcon, CircleCheckIcon, CopyIcon, LocateFixedIcon, LockIcon, PhoneIcon, PhoneOffIcon, RefreshCwIcon, Trash2Icon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,13 +11,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { fieldsOf, findOperation, operationTitle, recordFields, recordOperations, type Field } from "@/lib/stack/catalog";
 import { accountLabels, clockTime, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
 import type { StackState } from "@/lib/stack/store";
-import { nodeKey, type Account, type Bot, type Login, type NodeRef, type OperationDoc, type PackageDoc, type StackEvent, type WorkerAccount } from "@/lib/stack/types";
+import { nodeKey, type Account, type Bot, type Login, type NodeRef, type OperationDoc, type StackEvent, type WorkerAccount } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
-import { channelLabel, CopyButton, Orb, StatusDot, Time } from "./primitives";
+import { CopyButton, Orb } from "./primitives";
 import { useOperation, useStack, useWorkbench } from "./provider";
 import { useVoice } from "./voice";
-import { accentBg, accentOf, accentText, type Accent } from "./window";
+import { accentBg, accentText, type Accent } from "./window";
 import { OperationBadges, RecoveryWarning } from "./windows";
 
 type View = {
@@ -118,21 +118,9 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         events: state.events.filter((event) => event.scope === bot.id),
       };
     }
-    case "package": {
-      const doc = catalog?.find((item) => item.name === ref.id);
-      if (!doc) return null;
-      return { eyebrow: "Package API", accent: accentOf(doc.name), title: doc.name, body: <PackageBody doc={doc} />, events: state.events.filter((event) => event.pkg === doc.name) };
-    }
-    case "operation": {
-      const doc = catalog?.find((item) => item.name === ref.pkg);
-      const operation = doc?.operations.find((item) => item.name === ref.id);
-      if (!doc || !operation) return null;
-      return {
-        eyebrow: `${doc.name} operation`, accent: accentOf(doc.name), title: operationTitle(operation),
-        body: <OperationBody doc={doc} operation={operation} endpoint={state.endpoints[doc.name]} mcp={state.owner.data?.mcpUrls[doc.name]} />,
-        related: [{ ref: { kind: "package", id: doc.name }, label: `${doc.name} Package API` }],
-      };
-    }
+    case "package":
+    case "operation":
+      return null; // Reference destinations are rendered in the shared dock's reading mode.
   }
 }
 
@@ -291,142 +279,26 @@ function Block({ title, aside, children }: { title: string; aside?: React.ReactN
   );
 }
 
-function FieldList({ fields, depth = 0 }: { fields: Field[]; depth?: number }) {
-  if (!fields.length) return <p className="text-xs text-muted-foreground">No fields.</p>;
-  return (
-    <ul className={cn("flex flex-col gap-2", depth > 0 && "mt-1.5 border-l pl-3")}>
-      {fields.map((field) => (
-        <li key={field.name} className="flex flex-col gap-0.5">
-          <div className="flex flex-wrap items-baseline gap-x-2">
-            <span className="font-mono text-[0.78rem] font-medium">{field.name}</span>
-            <span className="font-mono text-[0.68rem] text-muted-foreground">{field.type}</span>
-            {field.required ? <span className="text-[0.62rem] tracking-wide text-muted-foreground uppercase">required</span> : null}
-          </div>
-          {field.description ? <p className="text-xs text-pretty text-muted-foreground">{field.description}</p> : null}
-          {field.children.length ? <FieldList fields={field.children} depth={depth + 1} /> : null}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function PackageBody({ doc }: { doc: PackageDoc }) {
-  const { status, endpoints, owner, catalog, events } = useStack();
-  const channel = channelLabel(endpoints[doc.name], status[doc.name]);
-  const websocket = endpoints[doc.name];
-  const socket = doc.transports.find((transport) => transport.type === "socket")?.endpoint ?? null;
-  const mcp = owner.data?.mcpUrls[doc.name];
-  const counts = new Map<string, number>();
-  for (const event of events) if (event.pkg === doc.name) counts.set(event.topic, (counts.get(event.topic) ?? 0) + 1);
-  return (
-    <>
-      <p className="text-sm text-pretty text-muted-foreground">{doc.description}</p>
-      <Block title="Connection">
-        <ul className="flex flex-col gap-2">
-          <li className="group/row flex flex-col gap-0.5 rounded-lg border bg-background/50 p-2.5">
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-xs font-medium">WebSocket</span>
-              <StatusDot tone={channel.tone} label={websocket ? `WebSocket ${channel.label}` : channel.label} />
-              <span className="text-[0.68rem] text-muted-foreground">{channel.label}</span>
-              {websocket ? <CopyButton value={websocket} label="WebSocket endpoint" className="ml-auto" /> : null}
-            </div>
-            {websocket ? <p className="font-mono text-[0.7rem] break-all">{websocket}</p> : null}
-          </li>
-          {socket ? (
-            <li className="group/row flex flex-col gap-0.5 rounded-lg border bg-background/50 p-2.5">
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-xs font-medium">Socket</span>
-                <CopyButton value={socket} label="socket endpoint" className="ml-auto" />
-              </div>
-              <p className="font-mono text-[0.7rem] break-all">{socket}</p>
-            </li>
-          ) : null}
-          {mcp ? (
-            <li className="group/row flex flex-col gap-0.5 rounded-lg border bg-background/50 p-2.5">
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-xs font-medium">MCP</span>
-                <CopyButton value={mcp} label="MCP URL" className="ml-auto" />
-              </div>
-              <p className="font-mono text-[0.7rem] break-all">{mcp}</p>
-            </li>
-          ) : null}
-        </ul>
-        <p className="text-[0.7rem] text-muted-foreground">Catalog read <Time at={catalog.at} /></p>
-      </Block>
-      {Object.keys(doc.events).length ? (
-        <Block title="Events">
-          <ul className="flex flex-col gap-2">
-            {Object.entries(doc.events).map(([topic, description]) => (
-              <li key={topic} className="flex flex-col gap-0.5">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-[0.78rem] font-medium">{topic}</span>
-                  <span className="ml-auto font-mono text-[0.7rem] text-muted-foreground tabular-nums" title="notices seen this session">{counts.get(topic) ?? 0}</span>
-                </div>
-                <p className="text-xs text-pretty text-muted-foreground">{description}</p>
-              </li>
-            ))}
-          </ul>
-          {doc.eventScope ? (
-            <p className="rounded-lg bg-muted/60 p-2.5 text-xs text-pretty text-muted-foreground">
-              <span className="font-medium text-foreground">{doc.eventScope.required ? "Required" : "Optional"} scope</span> — {doc.eventScope.description} Example: <span className="font-mono">{doc.eventScope.example}</span>
-            </p>
-          ) : null}
-        </Block>
-      ) : null}
-    </>
-  );
-}
-
-function OperationBody({ doc, operation, endpoint, mcp }: { doc: PackageDoc; operation: OperationDoc; endpoint?: string; mcp?: string }) {
-  const input = fieldsOf(operation.inputSchema);
-  const example = Object.fromEntries(input.filter((field) => field.required).map((field) => [field.name, `<${field.type}>`]));
-  const frame = JSON.stringify({ id: 1, method: "tools/call", params: { name: operation.name, arguments: example } }, null, 2);
-  return (
-    <>
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Badge variant="outline" className="font-mono">{operation.name}</Badge>
-        <OperationBadges operation={operation} />
-      </div>
-      <p className="text-sm text-pretty text-muted-foreground">{operation.description}</p>
-      <Block title="Input"><FieldList fields={input} /></Block>
-      <Block title="Output"><FieldList fields={fieldsOf(operation.outputSchema)} /></Block>
-      <Block title="Call over WebSocket" aside={<CopyButton value={frame} label="request frame" className="opacity-100" />}>
-        {endpoint ? <p className="font-mono text-[0.7rem] break-all text-muted-foreground">{endpoint}</p> : null}
-        <pre className="overflow-x-auto rounded-lg border bg-muted/40 p-3 font-mono text-[0.72rem] leading-relaxed">{frame}</pre>
-        {mcp ? <p className="text-xs text-muted-foreground">Also an MCP tool on <span className="font-mono">{mcp}</span>.</p> : doc.transports.some((transport) => transport.type === "mcp") ? null : <p className="text-xs text-muted-foreground">Not exposed over MCP.</p>}
-      </Block>
-    </>
-  );
-}
-
-export function Inspector() {
+export function Inspector({ hidden = false }: { hidden?: boolean }) {
   const { selected, select, goTo } = useWorkbench();
   const state = useStack();
   // Keep the last selection mounted through the slide-out so the sheet never blanks.
   const last = useRef<NodeRef | null>(null);
   if (selected) last.current = selected;
   const shown = selected ?? last.current;
-
-  useEffect(() => {
-    if (!selected) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !event.defaultPrevented && !document.querySelector("[role=dialog],[role=alertdialog]")) select(null);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [selected, select]);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const selectedKey = selected ? nodeKey(selected) : null;
+  useLayoutEffect(() => { if (!hidden && selectedKey) heading.current?.focus({ preventScroll: true }); }, [hidden, selectedKey]);
 
   const view = shown ? resolve(shown, state) : null;
 
   return (
-    <aside
+    <section
       aria-label="Inspector"
-      aria-hidden={!selected || undefined}
-      inert={!selected}
-      className={cn(
-        "fixed inset-y-0 right-0 z-40 flex w-full flex-col overflow-hidden border-l bg-popover text-popover-foreground shadow-[-12px_0_32px_-20px_rgb(0_0_0/0.3)] transition-transform duration-200 ease-out min-[900px]:w-[420px] motion-reduce:transition-none",
-        selected ? "translate-x-0" : "translate-x-full",
-      )}
+      aria-hidden={hidden || !selected || undefined}
+      inert={hidden || !selected}
+      hidden={hidden || !selected}
+      className={cn("flex min-h-0 flex-1 flex-col overflow-hidden", (hidden || !selected) && "!hidden")}
     >
       {shown ? (
         <Fragment key={nodeKey(shown)}>
@@ -436,17 +308,18 @@ export function Inspector() {
             )}
             <div className="flex min-w-0 flex-col">
               <span className={cn("text-[0.68rem] font-medium tracking-[0.08em] uppercase", view ? accentText[view.accent] : "text-muted-foreground")}>{view?.eyebrow ?? shown.kind}</span>
-              <h2 className="truncate text-lg leading-tight font-semibold tracking-tight">{view?.title ?? ("id" in shown ? shown.id : shown.kind)}</h2>
+              <h2 ref={heading} data-inspector-heading tabIndex={-1} className="truncate text-lg leading-tight font-semibold tracking-tight outline-none">{view?.title ?? ("id" in shown ? shown.id : shown.kind)}</h2>
             </div>
             <Tooltip>
-              <TooltipTrigger render={<Button variant="ghost" size="icon-sm" className="ml-auto" aria-label="Show on canvas" onClick={() => goTo(shown)} />}>
+              <TooltipTrigger render={<Button variant="ghost" size="icon-sm" className="ml-auto" aria-label={shown.kind === "owner" || shown.kind === "child" ? "Reveal in System" : "Show on bench"} onClick={() => goTo(shown)} />}>
                 <LocateFixedIcon />
               </TooltipTrigger>
-              <TooltipContent side="bottom">Show on canvas</TooltipContent>
+              <TooltipContent side="bottom">{shown.kind === "owner" || shown.kind === "child" ? "Reveal in System" : "Show on bench"}</TooltipContent>
             </Tooltip>
             <Button variant="ghost" size="icon-sm" aria-label="Close inspector" onClick={() => select(null)}><XIcon /></Button>
           </header>
           <div data-scroll className="flex flex-1 flex-col gap-6 overflow-y-auto overscroll-contain px-4 py-4">
+            <Button variant="outline" size="sm" className="self-start" onClick={() => goTo({ kind: "package", id: shown.kind === "bot" ? "bots" : shown.kind === "owner" || shown.kind === "child" ? "owner" : "auth" })}><BookOpenIcon data-icon="inline-start" />Package API reference</Button>
         {!view ? (
           <p className="text-sm text-muted-foreground">This item is no longer present in the current state.</p>
         ) : (
@@ -532,6 +405,6 @@ export function Inspector() {
           </footer>
         </Fragment>
       ) : null}
-    </aside>
+    </section>
   );
 }

@@ -69,17 +69,14 @@ export function useNow(interval = 1_000): number {
   return now;
 }
 
-export type Mode = "canvas" | "grid";
-
 export type WorkbenchValue = {
-  mode: Mode;
   space: SpaceId;
   setSpace(space: SpaceId): void;
   selected: NodeRef | null;
   hovered: string | null;
   select(ref: NodeRef | null): void;
   hover(key: string | null): void;
-  /** Navigate to a node's card — switches space and pans, never selects. */
+  /** Reveal a spatial card or a dock destination; never implicitly inspect. */
   goTo(ref: NodeRef): void;
   /** The most recent goTo target; matches nodeKey values so cards can flash. */
   flash: { key: string; seq: number } | null;

@@ -240,7 +240,6 @@ test("owner api serves status and pids_changed on its socket", async () => {
 
     const empty = (await socketCall(served.socketPath, "tools/call", { name: "owner_status", arguments: {} })) as {
       pid: number;
-      docsUrl: string | null;
       indexUrl: string | null;
       uixUrl: string | null;
       inspectorUrl: string | null;
@@ -248,7 +247,7 @@ test("owner api serves status and pids_changed on its socket", async () => {
       children: Array<{ name: string; running: boolean }>;
     };
     assert.equal(empty.pid, process.pid);
-    assert.equal(empty.docsUrl, null);
+    assert.deepEqual(Object.keys(empty).sort(), ["children", "indexUrl", "inspectorUrl", "mcpUrls", "pid", "uixUrl"]);
     assert.equal(empty.indexUrl, null);
     assert.equal(empty.uixUrl, null);
     assert.equal(empty.inspectorUrl, null);

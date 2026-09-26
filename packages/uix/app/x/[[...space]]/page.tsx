@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Workbench } from "@/components/canvas/workbench";
 import { loadSnapshot } from "@/lib/stack/snapshot";
 import { defaultSpace, isSpaceId, parseNodeKey, spaceTitle } from "@/lib/stack/spaces";
+import { parseLocation } from "@/lib/stack/navigation";
 
 export const dynamic = "force-dynamic";
 
@@ -20,8 +21,11 @@ export default async function Page({ params, searchParams }: { params: Promise<P
   const segment = space?.[0];
   if (segment !== undefined && !isSpaceId(segment)) notFound();
   if (space && space.length > 1) notFound();
-  const { focus: focusParam } = await searchParams;
+  const query = await searchParams;
+  const { focus: focusParam } = query;
   const raw = Array.isArray(focusParam) ? focusParam[0] : focusParam;
   const initialFocus = raw ? parseNodeKey(raw) : null;
-  return <Workbench snapshot={await loadSnapshot()} initialSpace={segment ?? defaultSpace} initialFocus={initialFocus} />;
+  const paramsQuery = new URLSearchParams(Object.entries(query).flatMap(([key, value]) => value === undefined ? [] : [[key, Array.isArray(value) ? value[0] : value]]));
+  const initialLocation = parseLocation(`/x/${segment ?? defaultSpace}`, paramsQuery)!;
+  return <Workbench snapshot={await loadSnapshot()} initialSpace={segment ?? defaultSpace} initialFocus={initialFocus} initialLocation={initialLocation} />;
 }

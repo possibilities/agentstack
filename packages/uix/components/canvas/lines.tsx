@@ -87,8 +87,10 @@ export function Lines({ world, scale, version, animating, subtle }: {
     const observer = new ResizeObserver(schedule);
     observer.observe(world);
     for (const element of world.querySelectorAll("[data-window]")) observer.observe(element);
+    world.addEventListener("scroll", schedule, true);
     return () => {
       observer.disconnect();
+      world.removeEventListener("scroll", schedule, true);
       cancelAnimationFrame(frame);
     };
   }, [world, compute, version]);

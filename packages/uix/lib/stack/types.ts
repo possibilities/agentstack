@@ -110,7 +110,6 @@ export type OwnerChild = {
 
 export type OwnerStatus = {
   pid: number;
-  docsUrl: string | null;
   indexUrl: string | null;
   uixUrl: string | null;
   inspectorUrl: string | null;

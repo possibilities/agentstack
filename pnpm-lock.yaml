@@ -239,19 +239,6 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
-  packages/docs:
-    dependencies:
-      '@agentstack/api':
-        specifier: workspace:*
-        version: link:../api
-    devDependencies:
-      '@types/node':
-        specifier: ^26.6.2
-        version: 26.6.2
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
   packages/infer:
     dependencies:
       '@agentstack/api':
@@ -276,9 +263,6 @@ importers:
       '@agentstack/bots':
         specifier: workspace:*
         version: link:../bots
-      '@agentstack/docs':
-        specifier: workspace:*
-        version: link:../docs
       '@agentstack/infer':
         specifier: workspace:*
         version: link:../infer

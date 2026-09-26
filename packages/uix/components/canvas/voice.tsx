@@ -319,7 +319,7 @@ function CallDock() {
     : "Connecting…";
 
   return (
-    <aside data-chrome aria-label="Voice call" className="fixed top-16 left-[calc((100%-var(--sheet))/2)] z-30 -translate-x-1/2 transition-[left] duration-200 ease-out motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-3 motion-reduce:transition-none sm:top-3">
+    <aside data-chrome aria-label="Voice call" className="fixed top-16 z-30 -translate-x-1/2 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-3" style={{ left: "calc(var(--system) + (100% - var(--system) - var(--sheet))/2)" }}>
       <div className="flex items-center gap-3 rounded-2xl border bg-card/80 py-1.5 pr-1.5 pl-2 whitespace-nowrap shadow-sm backdrop-blur-xl">
         {elsewhere ? (
           <>
