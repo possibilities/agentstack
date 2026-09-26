@@ -16,6 +16,7 @@ import { statusSource } from "../src/status.js";
 import { uixChild, uixPort } from "../src/uix.js";
 
 const childBin = fileURLToPath(new URL("../../test/fixtures/child.mjs", import.meta.url));
+const guardedServerBin = fileURLToPath(new URL("../src/guarded-server.js", import.meta.url));
 
 test("the owner stops a child it started", async () => {
   const owner = startOwner([{ name: "fixture", command: process.execPath, args: [childBin] }]);
@@ -35,6 +36,45 @@ test("the owner signals descendants in its process group", { skip: process.platf
     assert.equal(await readFile(stopped, "utf8"), "yes");
   } finally {
     await owner.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("the UI guardian closes its listener when the owner disappears", { skip: process.platform === "win32" }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentstack-uix-guardian-"));
+  const ready = join(dir, "ready.json");
+  const script = `
+    const fs = require("node:fs"), net = require("node:net");
+    process.on("SIGTERM", () => { server.close(() => process.exit(0)); });
+    const server = net.createServer(() => {});
+    server.listen(0, "127.0.0.1", () => fs.writeFileSync(${JSON.stringify(ready)},
+      JSON.stringify({ pid: process.pid, port: server.address().port })));
+  `;
+  const guardian = spawn(process.execPath, [guardedServerBin, process.execPath, "-e", script],
+    { stdio: ["ignore", "ignore", "inherit", "ipc"], detached: true });
+  let serverPid: number | undefined;
+  try {
+    await waitFor(() => existsSync(ready), 5_000);
+    const { pid, port } = JSON.parse(await readFile(ready, "utf8")) as { pid: number; port: number };
+    serverPid = pid;
+    assert.notEqual(guardian.pid, serverPid, "the Next-like listener is a distinct process");
+    await new Promise<void>((resolve, reject) => {
+      const socket = connect(port, "127.0.0.1");
+      socket.once("connect", () => { socket.destroy(); resolve(); });
+      socket.once("error", reject);
+    });
+    guardian.disconnect(); // The owner died before its staged shutdown completed.
+    await waitFor(() => !processAlive(serverPid), 5_000);
+    await waitFor(() => guardian.exitCode !== null, 5_000);
+    assert.equal(guardian.exitCode, 0);
+    await assert.rejects(new Promise<void>((resolve, reject) => {
+      const socket = connect(port, "127.0.0.1");
+      socket.once("connect", () => { socket.destroy(); resolve(); });
+      socket.once("error", reject);
+    }), /ECONNREFUSED/);
+  } finally {
+    if (guardian.exitCode === null && guardian.signalCode === null) guardian.kill("SIGKILL");
+    killProcessGroup(serverPid);
     await rm(dir, { recursive: true, force: true });
   }
 });
@@ -93,7 +133,9 @@ test("the owner starts the required socket children", () => {
   assert.equal(uix.name, "uix");
   assert.equal(uix.command, process.execPath);
   assert.equal(existsSync(uix.args[0] ?? ""), true);
-  assert.deepEqual(uix.args.slice(1), ["start", "--hostname", "127.0.0.1", "--port", "8745"]);
+  assert.equal(uix.args[1], process.execPath);
+  assert.equal(existsSync(uix.args[2] ?? ""), true);
+  assert.deepEqual(uix.args.slice(3), ["start", "--hostname", "127.0.0.1", "--port", "8745"]);
   assert.equal(existsSync(join(uix.cwd ?? "", "app", "x", "[[...space]]", "page.tsx")), true);
   assert.equal(uixPort({}), 8745);
   assert.equal(uixPort({ AGENTSTACK_UIX_PORT: "8123" }), 8123);

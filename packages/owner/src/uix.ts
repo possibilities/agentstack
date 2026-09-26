@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { OwnedChild } from "./owner.js";
 
 const require = createRequire(import.meta.url);
@@ -18,7 +19,8 @@ export function uixChild(port: number): OwnedChild {
   return {
     name: "uix",
     command: process.execPath,
-    args: [require.resolve("next/dist/bin/next", { paths: [cwd] }), "start", "--hostname", "127.0.0.1", "--port", String(port)],
+    args: [fileURLToPath(new URL("./guarded-server.js", import.meta.url)), process.execPath,
+      require.resolve("next/dist/bin/next", { paths: [cwd] }), "start", "--hostname", "127.0.0.1", "--port", String(port)],
     cwd,
     env: { NEXT_TELEMETRY_DISABLED: "1" },
   };

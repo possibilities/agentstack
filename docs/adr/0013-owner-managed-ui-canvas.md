@@ -12,3 +12,9 @@ the canvas on its own listener lets Next.js serve its assets and future routes
 without teaching the docs listener to proxy them. The installation build
 prepares `.next`; changing an experiment requires a rebuild and an authorized
 owner restart to appear in the owned app.
+
+Next's server can outlive a terminated owner because it does not handle the
+owner's IPC disconnect. The owner therefore runs it behind a small guardian
+child, which stops Next's process group on both staged shutdown and owner
+disconnection. The guardian waits for that group to exit before reporting its
+own exit, so an interrupted shutdown cannot leave the UI port occupied.
