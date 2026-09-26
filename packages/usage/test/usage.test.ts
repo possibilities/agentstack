@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { accountIdentity, collectAccount, collectGrokBot } from "../src/collect.js";
 import { UsageObserver } from "../src/observer.js";
-import { snapshotSchema, type Provider } from "../src/schema.js";
+import { grokUsage, snapshotSchema, type Provider } from "../src/schema.js";
 
 const codexId = "00000000-0000-4000-8000-000000000001";
 const grokId = "00000000-0000-4000-8000-000000000002";
@@ -67,6 +67,7 @@ test("observes each registered account with its own credentials and projects onl
     assert.equal((workerUsage as { lanes: Array<{ windows: Array<{ usedPercent: number }> }> }).lanes[0]?.windows[0]?.usedPercent, 34);
     assert.equal(await accountIdentity(root, codexId, "codex", "worker"), "native-worker");
     assert.equal((results[1] as { prepaidBalanceUsd: number }).prepaidBalanceUsd, 2.5);
+    assert.equal((results[1] as { included: { allocatedUsd: number | null } }).included.allocatedUsd, null);
     assert.equal((results[2] as { dailyRemainingPercent: number }).dailyRemainingPercent, 76);
     assert.equal(seen.length, 5);
     assert.ok(!JSON.stringify(results).includes("secret"));
@@ -78,6 +79,29 @@ test("observes each registered account with its own credentials and projects onl
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("Grok includes a provider-declared monthly dollar allocation without guessing one from percentages", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-usage-credits-"));
+  try {
+    await mkdir(join(root, "worker-accounts", grokId, "data/opencode"), { recursive: true });
+    const db = new DatabaseSync(join(root, "worker-accounts", grokId, "data/opencode/opencode.db"));
+    db.exec("CREATE TABLE credential (integration_id TEXT, value TEXT)");
+    db.prepare("INSERT INTO credential VALUES (?, ?)").run("xai", JSON.stringify({ type: "oauth", access: "grok-secret" }));
+    db.close();
+    await chmod(join(root, "worker-accounts", grokId, "data/opencode/opencode.db"), 0o600);
+    const observe = async (monthlyLimit: unknown) => collectAccount(root, grokId, "grok", async (input) =>
+      String(input).endsWith("/userinfo") ? Response.json({ sub: "grok-user" }) : Response.json({
+        config: { monthlyLimit, used: { val: "500" }, prepaidBalance: { val: "125" } },
+      }));
+    const allocated = grokUsage.parse(await observe({ val: "2000" }));
+    assert.deepEqual(allocated.included, { usedPercent: 25, remainingPercent: 75, periodType: null,
+      periodStart: null, resetsAt: null, allocatedUsd: 20 });
+    assert.equal(allocated.prepaidBalanceUsd, 1.25);
+    assert.equal(grokUsage.parse(await observe({})).included.allocatedUsd, 0);
+    assert.equal(grokUsage.parse(await observe({ unexpected: 20 })).included.allocatedUsd, null);
+    assert.equal(grokUsage.parse(await observe({ val: "-1" })).included.allocatedUsd, null);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("owner observer keeps last-good records, removes deleted accounts and paces retries", async () => {
   const root = await mkdtemp(join(tmpdir(), "agentstack-usage-"));
   try {
@@ -86,7 +110,7 @@ test("owner observer keeps last-good records, removes deleted accounts and paces
       { id: grokId, scope: "worker", provider: "grok", enabled: false, ready: true, removing: false }] : [],
       async (_id, provider) => { calls++; if (!successes) throw new Error("provider echoed private credentials");
         return provider === "codex" ? { planType: "pro", limitReached: false, resetCreditsAvailable: null, resetCreditExpirations: null, lanes: [] } : {
-          subscriptionTier: null, included: { usedPercent: 10, remainingPercent: 90, periodType: null, periodStart: null, resetsAt: null },
+          subscriptionTier: null, included: { usedPercent: 10, remainingPercent: 90, periodType: null, periodStart: null, resetsAt: null, allocatedUsd: null },
           prepaidBalanceUsd: null, paygEnabled: false, paygUsedUsd: null, paygCapUsd: null, paygRemainingUsd: null,
         }; },
       async () => null);
@@ -195,9 +219,33 @@ test("version-one usage rows migrate as Bot Codex and Worker Grok/Devin", async 
     assert.deepEqual(observer.snapshot().accounts.map((row) => row.scope), ["bot", "worker"]);
     await observer.cycle();
     const persisted = JSON.parse(await readFile(path, "utf8")) as { schemaVersion: number; accounts: Array<{ scope: string }> };
-    assert.equal(persisted.schemaVersion, 2);
+    assert.equal(persisted.schemaVersion, 3);
     assert.deepEqual(persisted.accounts.map((row) => row.scope), ["bot", "worker"]);
   } finally { await observer.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("version-two Grok last-good usage survives the new dollar allocation field", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-usage-migrate-"));
+  const path = join(root, "usage/observations.json");
+  try {
+    await mkdir(join(root, "usage"));
+    const usage = { subscriptionTier: null, included: { usedPercent: 25, remainingPercent: 75,
+      periodType: null, periodStart: null, resetsAt: null }, prepaidBalanceUsd: 1.25, paygEnabled: false,
+      paygUsedUsd: null, paygCapUsd: null, paygRemainingUsd: null };
+    await writeFile(path, JSON.stringify({ schemaVersion: 2, accounts: [{ id: grokId, scope: "worker",
+      provider: "grok", enabled: true, ready: true, measurement: {
+        observedAtMs: Date.now(), lastAttemptAtMs: Date.now(), error: null, usage }, nextAttemptAtMs: Date.now() + 180_000,
+    }], bot: { observedAtMs: null, lastAttemptAtMs: null, error: null, usage: null } }), { mode: 0o600 });
+    const observer = new UsageObserver(root, {}, async () => [{ id: grokId, scope: "worker", provider: "grok",
+      enabled: true, ready: true, removing: false }], async () => { throw new Error("should not fetch"); }, async () => null);
+    await observer.load();
+    const [row] = observer.snapshot().accounts;
+    assert.equal(row?.provider === "grok" ? row.usage?.included.allocatedUsd : undefined, null);
+    assert.equal(row?.provider === "grok" ? row.usage?.prepaidBalanceUsd : undefined, 1.25);
+    await observer.cycle();
+    assert.equal(JSON.parse(await readFile(path, "utf8")).schemaVersion, 3);
+    await observer.close();
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("Grok Bot CLI output is bounded and its provider identifiers are never published", async () => {

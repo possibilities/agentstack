@@ -58,10 +58,13 @@ export class UsageObserver {
       const stat = await handle.stat();
       if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.getuid?.() || stat.mode & 0o077 || stat.size > 1024 * 1024) return;
       const value = JSON.parse(await handle.readFile("utf8")) as Persisted;
-      if (![1, 2].includes(value.schemaVersion) || !Array.isArray(value.accounts) || value.accounts.length > 128) return;
+      if (![1, 2, 3].includes(value.schemaVersion) || !Array.isArray(value.accounts) || value.accounts.length > 128) return;
       for (const row of value.accounts) {
         const scope = value.schemaVersion === 1 ? row.provider === "codex" ? "bot" : "worker" : row.scope;
-        const candidate = snapshotSchema.shape.accounts.element.safeParse({ ...row.measurement,
+        const measurement = value.schemaVersion < 3 && row.provider === "grok" && row.measurement?.usage
+          ? { ...row.measurement, usage: { ...row.measurement.usage,
+            included: { ...("included" in row.measurement.usage ? row.measurement.usage.included : {}), allocatedUsd: null } } } : row.measurement;
+        const candidate = snapshotSchema.shape.accounts.element.safeParse({ ...measurement,
           id: row.id, scope, provider: row.provider, enabled: row.enabled, ready: row.ready, linkedAccounts: [], fresh: false });
         if (candidate.success && Number.isSafeInteger(row.nextAttemptAtMs)) this.rows.set(keyOf(candidate.data), {
           id: candidate.data.id, scope: candidate.data.scope, provider: candidate.data.provider,
@@ -97,7 +100,7 @@ export class UsageObserver {
     await chmod(dir, 0o700);
     const temp = join(dir, `observations.${process.pid}.${crypto.randomUUID()}.tmp`);
     try {
-      const value: Persisted = { schemaVersion: 2, accounts: [...this.rows.values()], bot: this.bot };
+      const value: Persisted = { schemaVersion: 3, accounts: [...this.rows.values()], bot: this.bot };
       await writeFile(temp, JSON.stringify(value), { mode: 0o600, flag: "wx" });
       await rename(temp, this.path);
     } finally {

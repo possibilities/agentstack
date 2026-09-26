@@ -213,7 +213,8 @@ function grok(value: RecordValue): Measurement {
   const onDemandUsed = cents(config.onDemandUsed), onDemandCap = cents(config.onDemandCap);
   return grokUsage.parse({ subscriptionTier: label(value.subscriptionTier),
     included: { usedPercent: used, remainingPercent: used === null ? null : 100 - used,
-      periodType: periodType?.toLowerCase().replace(/^usage_period_type_/, "") ?? null, periodStart, resetsAt },
+      periodType: periodType?.toLowerCase().replace(/^usage_period_type_/, "") ?? null, periodStart, resetsAt,
+      allocatedUsd: monthlyLimit !== null && monthlyLimit >= 0 ? usd(monthlyLimit) : null },
     prepaidBalanceUsd: usd(cents(config.prepaidBalance)), paygEnabled: flag(value.onDemandEnabled) ?? (onDemandCap === null ? null : onDemandCap > 0),
     paygUsedUsd: usd(onDemandUsed), paygCapUsd: usd(onDemandCap),
     paygRemainingUsd: onDemandUsed === null || onDemandCap === null ? null : usd(Math.max(0, onDemandCap - onDemandUsed)) });

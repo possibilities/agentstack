@@ -119,6 +119,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.deepEqual(usage.operations.map((operation) => operation.name), ["usage_snapshot"]);
     assert.equal(usage.operations[0]?.annotations.readOnlyHint, true);
     assert.deepEqual(Object.keys(usage.operations[0]?.outputSchema.properties ?? {}).sort(), ["accounts", "atMs", "grokBot", "inventoryAtMs", "inventoryError"]);
+    assert.ok(JSON.stringify(usage.operations[0]?.outputSchema).includes("allocatedUsd"));
     assert.equal(usage.transports.find((transport) => transport.type === "socket")?.endpoint, join(stateDir, "sockets", "usage.sock"));
     assert.equal(usage.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
 

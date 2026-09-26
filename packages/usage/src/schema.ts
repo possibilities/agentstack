@@ -16,7 +16,8 @@ export const codexUsage = z.strictObject({ planType: nullableString, limitReache
   lanes: z.array(z.strictObject({ id: z.string().max(100), title: z.string().max(80), windows: z.array(window).max(2) })).max(36) });
 export const grokUsage = z.strictObject({ subscriptionTier: nullableString,
   included: z.strictObject({ usedPercent: nullableNumber, remainingPercent: nullableNumber,
-    periodType: nullableString, periodStart: nullableString, resetsAt: nullableString }),
+    periodType: nullableString, periodStart: nullableString, resetsAt: nullableString,
+    allocatedUsd: nullableNumber.describe("Included monthly dollar allocation from Grok's monthlyLimit in the legacy billing response; null when the provider omits it. Not a remaining balance.") }),
   prepaidBalanceUsd: nullableNumber, paygEnabled: nullableBoolean,
   paygUsedUsd: nullableNumber, paygCapUsd: nullableNumber, paygRemainingUsd: nullableNumber });
 export const devinUsage = z.strictObject({ planLabel: nullableString, billing: nullableString,
