@@ -28,15 +28,21 @@ An AgentStack-owned Codex sign-in credential with an immutable account ID manage
 
 ## Worker account
 
-A stable account ID for an isolated, native ACP sign-in managed through `auth`. Codex, Grok and Devin appear in `worker_account_list`, with independent enablement and removal operations. A Codex Worker account uses its own OpenCode login; it does not require, share credentials with, or control a Codex Bot account. Older Worker profiles that share a UUID with a Bot account remain independent. Only a ready, enabled Worker account may have an owner-managed ACP process. Like Bot accounts, Worker accounts take no durable ordinal; a UI may present dense per-provider `<provider>-worker-account-N` labels (`codex-worker-account-1`, `grok-worker-account-1`) derived from the Worker account list. The machine-level Grok Bot login is `grok-bot-account-1`. _Avoid_: active worker account, credential copy, `codex-wN`, `codex-worker-N`
+A stable account ID for an isolated, native sign-in managed through `auth`. Codex, Grok, Devin and Claude appear in `worker_account_list`, with independent enablement and removal operations. A Codex Worker account uses its own OpenCode login; it does not require, share credentials with, or control a Codex Bot account. A Claude Worker account has its own Claude Code sign-in, independent of AgentUsage and ambient Claude sessions. Older Worker profiles that share a UUID with a Bot account remain independent. Only a ready, enabled Worker account may admit native Worker sessions. Like Bot accounts, Worker accounts take no durable ordinal; a UI may present dense per-provider `<provider>-worker-account-N` labels (`codex-worker-account-1`, `claude-worker-account-1`) derived from the Worker account list. The machine-level Grok Bot login is `grok-bot-account-1`. _Avoid_: active worker account, credential copy, `codex-wN`, `codex-worker-N`, `claude-N`
 
 ## ACP runtime
 
 An owner-supervised stdio ACP process for one ready Worker account: OpenCode for Grok or Codex, Devin CLI for Devin. Its pipe is private to AgentStack and is not itself a Package API Transport. The `workers` Package API reports health and account-bound capabilities.
 
+## Claude runtime
+
+An account-bound Claude Agent SDK backend supervised by the `workers` Package API. It owns native Claude Code sessions under one isolated Worker account, sharing the Worker lifecycle and durable records with ACP Workers. Its private SDK control channel is not a Package API Transport, and an available backend does not imply one shared account process.
+
+_Avoid_: Claude ACP process, Bot, ambient Claude session
+
 ## Worker catalog
 
-A no-turn observation of model and dependent effort choices actually offered by one account's ACP session, with native Devin model IDs as separately labelled evidence. A Codex catalog omits OpenAI registry entries that offer no effort choice or belong to the o3, realtime and image families, since the ChatGPT sign-in cannot dispatch them; a Grok catalog likewise omits Imagine media-generation models; a Devin catalog omits entries that offer no effort choice. Cached values retain source, observation time and stale/error state; they do not by themselves prove successful inference or spendable quota.
+A no-turn observation of model and dependent effort choices actually offered by one account's native runtime: an ACP session or the Claude Agent SDK. Native Devin model IDs remain separately labelled evidence. A Codex catalog omits OpenAI registry entries that offer no effort choice or belong to the o3, realtime and image families, since the ChatGPT sign-in cannot dispatch them; a Grok catalog likewise omits Imagine media-generation models; a Devin catalog omits entries that offer no effort choice. Cached values retain source, observation time and stale/error state; they do not by themselves prove successful inference or spendable quota.
 
 ## Usage observation
 
@@ -52,15 +58,15 @@ _Avoid_: per-chat cost, unique RAM, complete accounting
 
 ## Worker
 
-An AgentStack-owned ACP session started by a Bot (or the local operator) under one enabled Worker account in an owned Git worktree. It retains its account, model/effort, Role revision, transcript and origin across turns. Closing a Worker retains the worktree and branch for review. _Avoid_: Bot, active account, disposable prompt
+An AgentStack-owned native session started by a Bot (or the local operator) under one enabled Worker account in an owned Git worktree. Its backend is ACP or the Claude Agent SDK. It retains its account, model/effort, Role revision, transcript and origin across turns. Closing a Worker retains the worktree and branch for review. _Avoid_: Bot, active account, disposable prompt
 
 ## Worker turn
 
-One `session/prompt` request on an existing Worker. Admission returns durable Worker and turn IDs before completion; status and transcript reads establish the outcome. A lost response is `unknown`, never a reason to resubmit the turn automatically. A subsequent turn can request corrections in the same ACP session after it is idle or explicitly loaded for recovery.
+One admitted prompt on an existing Worker, dispatched through its native backend. Admission returns durable Worker and turn IDs before completion; status and transcript reads establish the outcome. A lost response is `unknown`, never a reason to resubmit the turn automatically. A subsequent turn can request corrections in the same native session after it is idle or explicitly loaded for recovery.
 
 ## Worker MCP invocation context
 
-Transport-supplied Worker ID and exact ACP runtime instance from a private signed MCP URL. The owner checks both against the durable Worker and live account process before admitting tools; the URL exposes read-only Package API operations and cannot subscribe a Bot thread. It is a same-user correlation and stale-runtime fence, not an OS sandbox. _Avoid_: Bot identity, operator authority
+Transport-supplied Worker ID and exact native runtime instance from a private signed MCP URL. The owner checks both against the durable Worker and live account backend before admitting tools; the URL exposes read-only Package API operations and cannot subscribe a Bot thread. It is a same-user correlation and stale-runtime fence, not an OS sandbox. _Avoid_: Bot identity, operator authority
 
 ## Main thread
 
@@ -68,11 +74,11 @@ The single Codex thread ID retained by a Bot. A fresh Bot has no main thread unt
 
 ## Chat
 
-A Codex app-server thread in an AgentStack-owned Bot's sanctioned main-thread lineage. Historical search and raw records belong to the Bot's history, while live turns, items and interactions come from its owned app-server. Other top-level threads and ACP Worker sessions are not chats. _Avoid_: session, Worker thread
+A Codex app-server thread in an AgentStack-owned Bot's sanctioned main-thread lineage. Historical search and raw records belong to the Bot's history, while live turns, items and interactions come from its owned app-server. Other top-level threads and Worker sessions are not chats. _Avoid_: session, Worker thread
 
 ## Bot subagent
 
-A Codex child thread whose parent chain reaches a Bot's sanctioned main thread. Subagents can themselves have children; a thread's identity and parentage do not establish that it is currently loaded or working. ACP task or child-session evidence belongs to its Worker and is not a Bot subagent. _Avoid_: Worker, arbitrary thread on the Bot socket
+A Codex child thread whose parent chain reaches a Bot's sanctioned main thread. Subagents can themselves have children; a thread's identity and parentage do not establish that it is currently loaded or working. Native task or child-session evidence belongs to its Worker and is not a Bot subagent. _Avoid_: Worker, arbitrary thread on the Bot socket
 
 ## Bot
 

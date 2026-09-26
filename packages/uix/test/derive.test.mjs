@@ -21,9 +21,9 @@ const worker = (id, provider, extra = {}) => ({ id, provider, enabled: true, rea
 
 test("workerAccountLabels numbers densely per provider in list order", () => {
   const labels = workerAccountLabels([
-    worker("a", "codex"), worker("b", "grok"), worker("c", "codex"), worker("d", "devin"), worker("e", "grok"), worker("f", "codex"),
+    worker("a", "codex"), worker("b", "grok"), worker("c", "codex"), worker("d", "devin"), worker("g", "claude"), worker("e", "grok"), worker("f", "codex"), worker("h", "claude", { enabled: false, ready: false }),
   ]);
-  assert.deepEqual(Object.fromEntries(labels), { a: "codex-worker-account-1", b: "grok-worker-account-1", c: "codex-worker-account-2", d: "devin-worker-account-1", e: "grok-worker-account-2", f: "codex-worker-account-3" });
+  assert.deepEqual(Object.fromEntries(labels), { a: "codex-worker-account-1", b: "grok-worker-account-1", c: "codex-worker-account-2", d: "devin-worker-account-1", g: "claude-worker-account-1", e: "grok-worker-account-2", f: "codex-worker-account-3", h: "claude-worker-account-2" });
   assert.deepEqual(workerAccountLabels(null), new Map());
   assert.deepEqual(workerAccountLabels([]), new Map());
 });
@@ -32,6 +32,7 @@ test("providerTitle names each worker provider", () => {
   assert.equal(providerTitle("codex"), "Codex");
   assert.equal(providerTitle("grok"), "Grok");
   assert.equal(providerTitle("devin"), "Devin");
+  assert.equal(providerTitle("claude"), "Claude");
 });
 
 test("accountLinks derives bot→worker pairs from the bot side only", () => {

@@ -15,7 +15,8 @@ const botList = z.object({ bots: z.array(z.object({
 })).max(2048) });
 const runtimeList = z.object({ runtimes: z.array(z.object({
   id: identifier, pid: z.number().int().positive().nullable(), state: z.string(),
-  instance: identifier.nullable(), provider: z.enum(["codex", "grok", "devin"]),
+  instance: identifier.nullable(), provider: z.enum(["codex", "grok", "devin", "claude"]),
+  pids: z.array(z.number().int().positive()).max(2048).optional(),
 })).max(2048) });
 
 export function createDomainReader(env: NodeJS.ProcessEnv): DomainReader {
@@ -36,9 +37,11 @@ export function createDomainReader(env: NodeJS.ProcessEnv): DomainReader {
           status.unmatched = running.length - labels.length;
         } else {
           const running = runtimeList.parse(raw).runtimes.filter((runtime) => runtime.state === "running");
-          labels = running.flatMap((runtime) => runtime.pid && runtime.instance
-            ? [{ pid: runtime.pid, component: source, botId: null, accountId: runtime.id, runtimeInstance: runtime.instance, provider: runtime.provider }] : []);
-          status.unmatched = running.length - labels.length;
+          labels = running.flatMap((runtime) => {
+            const pids = [...new Set([...(runtime.pids ?? []), ...(runtime.pid ? [runtime.pid] : [])])];
+            if (!runtime.instance || !pids.length) { status.unmatched++; return []; }
+            return pids.map((pid) => ({ pid, component: source, botId: null, accountId: runtime.id, runtimeInstance: runtime.instance, provider: runtime.provider }));
+          });
         }
         status.capturedAt = new Date().toISOString();
         status.state = "current";

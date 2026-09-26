@@ -6,9 +6,10 @@ import { AuthStore, type Account } from "./src/store.js";
 import { LoginManager, type LoginState } from "./src/login.js";
 import { WorkerLoginManager, type WorkerLoginState } from "./src/worker-login.js";
 import { accountRoot, credentialEvidence, loginCommand, prepareAccountProfile, type WorkerAccount, type WorkerProvider } from "./src/worker-accounts.js";
+import { removeClaudeCredentials, type ClaudeCredentialOptions } from "./src/claude-credentials.js";
 
 const accountId = z.uuid().describe("Stable account ID from the corresponding Bot or Worker account list.");
-const providerSchema = z.enum(["codex", "grok", "devin"]);
+const providerSchema = z.enum(["codex", "grok", "devin", "claude"]);
 const linkedAccounts = z.array(z.strictObject({ scope: z.enum(["bot", "worker"]), id: accountId }))
   .describe("Independent accounts with a matching native sign-in identity. IDs only; no provider identity or credentials.");
 const accountSchema = z.strictObject({ id: accountId, enabled: z.boolean(), removing: z.boolean(), linkedAccounts });
@@ -30,6 +31,7 @@ export type AuthContext = {
   workerLogin: WorkerLoginManager;
   botsSocket: string;
   workersSocket?: string;
+  claude?: ClaudeCredentialOptions;
   onAccountsChanged: (() => void) | undefined;
   onWorkerAccountsChanged: (() => void) | undefined;
 };
@@ -99,7 +101,7 @@ function operatorOnly(invocation?: { botId: string | null; workerId?: string | n
 }
 
 export const workerAccountPrepare = operation({
-  name: "worker_account_prepare", description: "Terminal fallback: create a private native Codex, Grok or Devin Worker sign-in independent of Bot accounts. Run the returned command, then call worker_account_confirm. Pass an existing Worker ID to reauthenticate it. Prefer worker_account_login_start, which runs the sign-in itself.",
+  name: "worker_account_prepare", description: "Terminal fallback: create a private native Codex, Grok, Devin or Claude Worker sign-in independent of Bot accounts. Run the returned command, then call worker_account_confirm. Pass an existing Worker ID to reauthenticate it. Prefer worker_account_login_start, which runs the sign-in itself.",
   input: z.strictObject({ provider: providerSchema, id: accountId.optional() }),
   output: z.strictObject({ account: workerAccountSchema, command: z.string() }),
   annotations: { title: "Prepare worker sign-in" },
@@ -107,10 +109,11 @@ export const workerAccountPrepare = operation({
     operatorOnly(invocation);
     const existing = id ? ctx.store.workerAccounts().find((account) => account.id === id) : undefined;
     if (id && (!existing || existing.provider !== provider || existing.removing)) throw new Error("worker account is unavailable");
+    if (id) await ctx.workerLogin.cancelAccount(id);
     if (existing?.ready && ctx.workersSocket)
       await socketCall(ctx.workersSocket, "tools/call", { name: "worker_account_drain", arguments: { id } }, { timeoutMs: 30_000 });
     const account = ctx.store.prepareWorker(provider as WorkerProvider, id);
-    await prepareAccountProfile(ctx.store.stateDir, account);
+    await prepareAccountProfile(ctx.store.stateDir, account, ctx.claude);
     ctx.onWorkerAccountsChanged?.();
     return { account: (await inventories(ctx.store)).workers.find((item) => item.id === account.id)!, command: loginCommand(ctx.store.stateDir, account) };
   },
@@ -124,23 +127,23 @@ export const workerAccountConfirm = operation({
     operatorOnly(invocation);
     const account = ctx.store.workerAccounts().find((item) => item.id === id);
     if (!account) throw new Error("unknown worker account");
-    const evidence = await credentialEvidence(ctx.store.stateDir, account);
+    const evidence = await credentialEvidence(ctx.store.stateDir, account, ctx.claude);
     if (account.ready && ctx.workersSocket) await socketCall(ctx.workersSocket, "tools/call", { name: "worker_account_drain", arguments: { id } }, { timeoutMs: 30_000 });
-    const confirmed = ctx.store.confirmWorker(id, evidence.digest);
+    const confirmed = ctx.store.confirmWorker(id, evidence.digest, evidence.identity);
     ctx.onWorkerAccountsChanged?.();
     return (await inventories(ctx.store)).workers.find((account) => account.id === confirmed.id)!;
   },
 });
 
 export const workerAccountList = operation({
-  name: "worker_account_list", description: "List independent Codex, Grok and Devin Worker accounts and optional native-identity links without credentials. Ready means the ACP sign-in is confirmed.",
+  name: "worker_account_list", description: "List independent Codex, Grok, Devin and Claude Worker accounts and optional native-identity links without credentials. Ready means the native Worker sign-in is confirmed.",
   input: z.strictObject({}), output: z.strictObject({ accounts: z.array(workerAccountSchema) }),
   annotations: { title: "List worker accounts", readOnlyHint: true },
   async call(ctx: AuthContext) { return { accounts: (await inventories(ctx.store)).workers }; },
 });
 
 export const workerAccountSetEnabled = operation({
-  name: "worker_account_set_enabled", description: "Enable or disable a Codex, Grok or Devin Worker account. Disabling fences new Worker turns and drains its ACP process; Bot accounts are unaffected.",
+  name: "worker_account_set_enabled", description: "Enable or disable a Codex, Grok, Devin or Claude Worker account. Disabling fences new Worker turns and drains its runtime; Bot accounts are unaffected.",
   input: z.strictObject({ id: accountId, enabled: z.boolean() }), output: workerAccountSchema,
   annotations: { title: "Set worker account availability", idempotentHint: true },
   async call(ctx: AuthContext, { id, enabled }, invocation) {
@@ -154,18 +157,19 @@ export const workerAccountSetEnabled = operation({
 });
 
 export const workerAccountRemove = operation({
-  name: "worker_account_remove", description: "Fence and remove one Codex, Grok or Devin Worker account, its ACP process and private credentials. Bot accounts remain untouched, even for an older Worker with the same ID. Retry after interruption.",
+  name: "worker_account_remove", description: "Fence and remove one Codex, Grok, Devin or Claude Worker account, its runtime and private credentials, including Claude's exact profile-bound keychain item. Bot accounts remain untouched, even for an older Worker with the same ID. Retry after interruption.",
   input: z.strictObject({ id: accountId }), output: z.strictObject({ id: accountId }),
   annotations: { title: "Remove worker account", destructiveHint: true },
   async call(ctx: AuthContext, { id }, invocation) {
     operatorOnly(invocation);
     const account = ctx.store.workerAccounts().find((item) => item.id === id);
     if (!account) throw new Error("unknown worker account");
-    await ctx.workerLogin.cancelAccount(id);
     ctx.store.beginWorkerRemoval(id);
     ctx.onWorkerAccountsChanged?.();
+    await ctx.workerLogin.cancelAccount(id);
     if (account.ready && ctx.workersSocket)
       await socketCall(ctx.workersSocket, "tools/call", { name: "worker_account_drain", arguments: { id } }, { timeoutMs: 30_000 });
+    if (account.provider === "claude") await removeClaudeCredentials(ctx.store.stateDir, id, ctx.claude);
     await rm(accountRoot(ctx.store.stateDir, id), { recursive: true, force: true });
     ctx.store.finishWorkerRemoval(id);
     ctx.onWorkerAccountsChanged?.();
@@ -174,17 +178,18 @@ export const workerAccountRemove = operation({
 });
 
 export const workerAccountLoginStart = operation({
-  name: "worker_account_login_start", description: "Create or re-sign-in a Codex, Grok or Devin Worker account. The API runs the native sign-in itself and returns a link to open manually, with a one-time code for Codex and Grok; Devin asks for its pasted code through worker_account_login_submit. Finishing marks the Worker ready. Poll worker_account_login_status or subscribe to worker_login_changed.",
+  name: "worker_account_login_start", description: "Create or re-sign-in a Codex, Grok, Devin or Claude Worker account. The API runs the native sign-in itself and returns a link to copy into your browser, with a one-time code for Codex and Grok; Devin and Claude support pasted codes through worker_account_login_submit when needsCode is true. Finishing marks the Worker ready. Poll worker_account_login_status or subscribe to worker_login_changed.",
   input: z.strictObject({ provider: providerSchema, id: accountId.optional() }), output: workerLoginStateSchema,
   annotations: { title: "Start worker sign-in" },
   async call(ctx: AuthContext, { provider, id }, invocation) {
     operatorOnly(invocation);
     const existing = id ? ctx.store.workerAccounts().find((account) => account.id === id) : undefined;
     if (id && (!existing || existing.provider !== provider || existing.removing)) throw new Error("worker account is unavailable");
+    if (id) await ctx.workerLogin.cancelAccount(id);
     if (existing?.ready && ctx.workersSocket)
       await socketCall(ctx.workersSocket, "tools/call", { name: "worker_account_drain", arguments: { id } }, { timeoutMs: 30_000 });
     const account = ctx.store.prepareWorker(provider as WorkerProvider, id);
-    await prepareAccountProfile(ctx.store.stateDir, account);
+    await prepareAccountProfile(ctx.store.stateDir, account, ctx.claude);
     ctx.onWorkerAccountsChanged?.();
     return ctx.workerLogin.start(account);
   },
@@ -205,7 +210,7 @@ export const workerAccountLoginCurrent = operation({
 });
 
 export const workerAccountLoginSubmit = operation({
-  name: "worker_account_login_submit", description: "Paste the code a Devin Worker sign-in asks for once its link has been opened. Only valid while the attempt reports needsCode.",
+  name: "worker_account_login_submit", description: "Paste the code a Devin or Claude Worker sign-in asks for after visiting its copied link. Only valid while the attempt reports needsCode.",
   input: z.strictObject({ id: z.string(), code: z.string() }), output: workerLoginStateSchema,
   annotations: { title: "Submit worker sign-in code" },
   async call(ctx: AuthContext, { id, code }, invocation) {
@@ -220,7 +225,7 @@ export const workerAccountLoginCancel = operation({
   annotations: { title: "Cancel worker sign-in" },
   async call(ctx: AuthContext, { id }, invocation) {
     operatorOnly(invocation);
-    ctx.workerLogin.cancel(id);
+    await ctx.workerLogin.cancel(id);
     return ctx.workerLogin.status(id);
   },
 });
@@ -297,7 +302,7 @@ export const api: PackageApi<AuthContext, AuthTopic> = {
     await mkdir(dir, { recursive: true, mode: 0o700 });
     await chmod(dir, 0o700);
     const store = new AuthStore(dir);
-    return { store, login: new LoginManager(store), workerLogin: new WorkerLoginManager(store), botsSocket: socketPath("bots", env), workersSocket: socketPath("workers", env), onAccountsChanged: undefined, onWorkerAccountsChanged: undefined };
+    return { store, login: new LoginManager(store), workerLogin: new WorkerLoginManager(store, { env }), botsSocket: socketPath("bots", env), workersSocket: socketPath("workers", env), onAccountsChanged: undefined, onWorkerAccountsChanged: undefined };
   },
   async closeContext(ctx) {
     await ctx.login.close();

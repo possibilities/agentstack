@@ -1,7 +1,7 @@
 import { record } from "./acp.js";
 
 export type ModelChoice = { id: string; name: string; efforts: string[]; effortConfigId: string | null };
-export type Catalog = { accountId: string; provider: "codex" | "grok" | "devin"; observedAt: string; source: string;
+export type Catalog = { accountId: string; provider: "codex" | "grok" | "devin" | "claude"; observedAt: string; source: string;
   runtimeVersion: string; modelConfigId: string | null; models: ModelChoice[]; nativeModelIds: string[]; stale: boolean; error: string | null };
 
 type Option = { id: string; category?: string; name: string; values: Array<{ value: string; name: string }> };
@@ -48,6 +48,7 @@ const catalogExclusions: Record<Catalog["provider"], RegExp[]> = {
   codex: [/^o3/, /realtime/i, /image/i],
   grok: [/imagine/i],
   devin: [],
+  claude: [],
 };
 
 /**
@@ -61,7 +62,8 @@ const catalogExclusions: Record<Catalog["provider"], RegExp[]> = {
  */
 export function catalogModels(provider: Catalog["provider"], models: ModelChoice[]): ModelChoice[] {
   return models.filter((model) => {
-    if (provider !== "grok" && model.efforts.length === 0) return false;
+    // Claude SDK models without effort levels remain dispatchable as offered.
+    if ((provider === "codex" || provider === "devin") && model.efforts.length === 0) return false;
     const local = model.id.slice(model.id.lastIndexOf("/") + 1);
     return !catalogExclusions[provider].some((pattern) => pattern.test(local));
   });

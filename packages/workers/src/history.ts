@@ -218,7 +218,7 @@ export class WorkerHistory {
       const output = record(data.rawOutput) ? data.rawOutput : {};
       const meta = record(output.metadata) ? output.metadata : {};
       // OpenCode task.ts -> acp/tool.ts. This is an invocation reference, NOT an ACP parent/child declaration.
-      if (worker.provider !== "devin" && data.kind === "think" && typeof input.subagent_type === "string"
+      if (["codex", "grok"].includes(worker.provider) && data.kind === "think" && typeof input.subagent_type === "string"
         && typeof input.prompt === "string" && typeof meta.sessionId === "string" && meta.sessionId.length <= 512 && typeof meta.parentSessionId === "string"
         && meta.parentSessionId === worker.acp_session_id) {
         tasks.push({ toolCallId: row.tool_call_id, sessionId: meta.sessionId, callingSessionId: meta.parentSessionId,

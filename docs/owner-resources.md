@@ -21,7 +21,7 @@ Use returned IDs rather than constructing them. Scope kinds are:
 | `component` | The owner itself and otherwise unnamed owner descendants, or one named required child and its descendants. Components partition the total. |
 | `bot` | One Bot's observed app-server subtree, including its tools and MCP children; nested labelled roots have their own domain attribution. |
 | `account` | Bot-account or Worker-account costs, with separate ID namespaces. Does not merge independently managed sign-ins. |
-| `runtime` | One account-bound ACP launch and its descendants. Shared by all Worker sessions in that runtime. |
+| `runtime` | One account-bound native runtime's observed process roots and descendants. Shared by its Worker sessions; Claude can report several session process roots. |
 | `process` | Exactly one OS process, identified by PID and OS birth token. |
 | `subtree` | That process plus surviving observed descendants, including retained ancestry after reparenting. |
 
@@ -78,6 +78,8 @@ Retention is at most 120 attempts (about ten minutes at default cadence) and 50,
 ## Attribution and sampling limits
 
 An attached owner admits its own process and all observed descendants. Required children receive component names only after their current OS parent is the owner. Standalone `agentstack api owner socket` reports `self_only`, not unrelated process descendants or another running stack. Bot and ACP labels are accepted only for an already owned process under the corresponding named component. A record with an unverified Bot `recoveryIssue` cannot label a process. Inventories never add foreign PIDs. Unmatched running/fenced records increment the relevant domain's coverage count.
+
+Claude SDK availability is an account-backend observation, not one shared account process. The domain reader labels the reported `pids` as roots of the same account/runtime scope, subject to the same observed-ancestry check. An available backend with no process roots counts as unmatched domain attribution. Unlabelled observed descendants still contribute to the `workers` component; no per-session cost allocation is inferred.
 
 On a domain-source failure, collection can still succeed: current memory/CPU remain available while `coverage.domains` reports stale/unavailable labels and their last successful times. Labels are retained only on known birth identities, and each process reports attribution provenance and `attributedAt`. Previously observed descendants may survive reparenting; `parentId` is the currently observed owned parent, `ancestryParentId` is the last observed owned parent (possibly exited), and `ownership: "retained"` exposes that evidence. Process names are bounded executable basenames, never full command lines or environments.
 

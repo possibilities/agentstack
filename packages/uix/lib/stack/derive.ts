@@ -17,7 +17,7 @@ export function accountLabels(accounts: Account[] | null): Map<string, string> {
   return new Map((accounts ?? []).map((account, index) => [account.id, `codex-bot-account-${index + 1}`]));
 }
 
-/** Dense per-provider labels in list order: `codex-worker-account-N`, `grok-worker-account-N`, `devin-worker-account-N`. */
+/** Dense per-provider labels in list order: `codex-worker-account-N`, `grok-worker-account-N`, `devin-worker-account-N`, `claude-worker-account-N`. */
 export function workerAccountLabels(workers: WorkerAccount[] | null): Map<string, string> {
   const labels = new Map<string, string>();
   const counts = new Map<WorkerAccount["provider"], number>();
@@ -39,8 +39,11 @@ export function accountLinks(accounts: Account[] | null, workers: WorkerAccount[
   return links;
 }
 
+const workerProviderTitles: Record<WorkerAccount["provider"], string> = { codex: "Codex", grok: "Grok", devin: "Devin", claude: "Claude" };
+export const workerProviders = Object.keys(workerProviderTitles) as WorkerAccount["provider"][];
+
 export function providerTitle(provider: WorkerAccount["provider"]): string {
-  return provider === "codex" ? "Codex" : provider === "grok" ? "Grok" : "Devin";
+  return workerProviderTitles[provider];
 }
 
 export function relativeTime(at: number | null, now: number): string {

@@ -1,11 +1,13 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { AccountScope, Provider, Measurement } from "./schema.js";
-import { codexUsage, grokUsage, devinUsage, grokBotUsage } from "./schema.js";
+import { codexUsage, grokUsage, devinUsage, claudeUsage, grokBotUsage } from "./schema.js";
+import { ClaudeCredentialError, readClaudeCredentials, type ClaudeCredentialOptions } from "@agentstack/auth";
 import type { z } from "zod";
 
 type RecordValue = Record<string, unknown>;
@@ -56,8 +58,27 @@ async function privateDatabase(path: string): Promise<void> {
 }
 
 /** No file or token leaves this module. Sign-in and token rotation stay with auth and native runtimes. */
-async function credential(stateDir: string, id: string, provider: Provider, scope: AccountScope): Promise<{ access: string; userId?: string; server?: string }> {
+async function credential(stateDir: string, id: string, provider: Provider, scope: AccountScope, claude: ClaudeCredentialOptions = {}): Promise<{ access: string; userId?: string; server?: string }> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw new ObservationFailure("account_invalid");
+  if (provider === "claude") {
+    if (scope !== "worker") throw new ObservationFailure("account_invalid");
+    try {
+      const value = await readClaudeCredentials(stateDir, id, claude);
+      // Bind a read to the confirmed native identity without publishing or rotating it.
+      const path = join(stateDir, "configuration.sqlite");
+      await privateDatabase(path);
+      const db = new DatabaseSync(path, { readOnly: true });
+      try {
+        const row = db.prepare("SELECT identity_digest FROM worker_accounts WHERE id = ? AND provider = 'claude' AND ready = 1 AND removing = 0").get(id) as { identity_digest: string | null } | undefined;
+        if (!row?.identity_digest || row.identity_digest !== createHash("sha256").update(value.identity).digest("hex"))
+          throw new ObservationFailure("identity_invalid");
+      } finally { db.close(); }
+      return { access: value.access };
+    } catch (error) {
+      if (error instanceof ObservationFailure) throw error;
+      throw new ObservationFailure(error instanceof ClaudeCredentialError && ["credentials_unsafe", "identity_invalid"].includes(error.code) ? error.code : "credentials_unavailable");
+    }
+  }
   if (provider === "codex" && scope === "bot") {
     const path = join(stateDir, "secrets.sqlite");
     await privateDatabase(path);
@@ -235,9 +256,47 @@ function devin(value: RecordValue): Measurement {
     displayName: label(record(plan.devinInfo)?.accountDisplayName) });
 }
 
+export function parseClaudeUsage(value: RecordValue): z.infer<typeof claudeUsage> {
+  const windows: z.infer<typeof claudeUsage>["windows"] = [];
+  for (const [id, raw] of Object.entries(value)) {
+    // Weekly breakdown metadata is not an independent model quota window.
+    if (id === "seven_day_breakdown") continue;
+    if (id !== "five_hour" && id !== "seven_day" && !/^seven_day_[a-z0-9_]{1,60}$/.test(id)) continue;
+    if (raw === null) continue;
+    const window = record(raw), used = number(window?.utilization);
+    if (!window || used === null || used < 0) throw new ObservationFailure("response_invalid");
+    const reset = string(window.resets_at);
+    windows.push({ id, label: id === "five_hour" ? "5h" : id === "seven_day" ? "Weekly" : `Weekly ${id.slice(10).replaceAll("_", " ")}`,
+      usedPercent: used, remainingPercent: Math.max(0, 100 - used),
+      resetsAt: reset && /(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(reset) ? iso(reset) : null });
+  }
+  if (!windows.some((window) => window.id === "five_hour") || !windows.some((window) => window.id === "seven_day") || windows.length > 32)
+    throw new ObservationFailure("response_invalid");
+  let extraUsage: z.infer<typeof claudeUsage>["extraUsage"] = null;
+  if (value.extra_usage != null) {
+    const extra = record(value.extra_usage);
+    if (!extra) throw new ObservationFailure("response_invalid");
+    const optional = (raw: unknown) => {
+      if (raw == null) return null;
+      const parsed = number(raw);
+      if (parsed === null || parsed < 0) throw new ObservationFailure("response_invalid");
+      return parsed;
+    };
+    extraUsage = { enabled: flag(extra.is_enabled), monthlyLimit: optional(extra.monthly_limit),
+      usedCredits: optional(extra.used_credits), utilization: optional(extra.utilization) };
+  }
+  return claudeUsage.parse({ windows, extraUsage });
+}
+
 export async function collectAccount(stateDir: string, id: string, provider: Provider, fetcher: typeof fetch = fetch,
-  signal: AbortSignal = new AbortController().signal, scope: AccountScope = provider === "codex" ? "bot" : "worker"): Promise<Measurement> {
-  const credentials = await credential(stateDir, id, provider, scope);
+  signal: AbortSignal = new AbortController().signal, scope: AccountScope = provider === "codex" ? "bot" : "worker",
+  claude: ClaudeCredentialOptions = {}): Promise<Measurement> {
+  const credentials = await credential(stateDir, id, provider, scope, claude);
+  if (provider === "claude") {
+    return parseClaudeUsage(await request("https://api.anthropic.com/api/oauth/usage", { headers: {
+      authorization: `Bearer ${credentials.access}`, "anthropic-beta": "oauth-2025-04-20", "anthropic-version": "2023-06-01",
+    } }, fetcher, signal));
+  }
   if (provider === "codex") {
     const headers = { authorization: `Bearer ${credentials.access}`, ...(credentials.userId ? { "ChatGPT-Account-ID": credentials.userId } : {}) };
     let data: RecordValue;

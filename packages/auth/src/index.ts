@@ -32,4 +32,6 @@ export { LoginManager } from "./login.js";
 export { WorkerLoginManager } from "./worker-login.js";
 export { codexRuntimePath, stateDir } from "./paths.js";
 export { accountEnvironment, accountRoot, credentialEvidence, prepareAccountProfile } from "./worker-accounts.js";
-export type { WorkerAccount } from "./worker-accounts.js";
+export type { WorkerAccount, WorkerProvider } from "./worker-accounts.js";
+export { ClaudeCredentialError, claudeConfigRoot, claudeKeychainService, claudeRuntimePath, readClaudeCredentials, removeClaudeCredentials } from "./claude-credentials.js";
+export type { ClaudeCredentialOptions } from "./claude-credentials.js";

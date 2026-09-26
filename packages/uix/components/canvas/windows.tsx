@@ -39,7 +39,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { annotationBadges, fieldsOf, findOperation } from "@/lib/stack/catalog";
-import { accountLabels, botsFor, histogram, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
+import { accountLabels, botsFor, histogram, providerTitle, shortId, workerAccountLabels, workerProviders } from "@/lib/stack/derive";
 import type { Account, Bot, Login, OperationDoc, PackageDoc, WorkerAccount, WorkerLogin } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
@@ -61,9 +61,7 @@ export function AccountChip({ id, labels }: { id: string | null; labels: Map<str
   );
 }
 
-const workerProviders: WorkerAccount["provider"][] = ["codex", "grok", "devin"];
-
-/** The Worker account window's menu: one terminal sign-in per provider. */
+/** The Worker account window's menu: create a separate native sign-in per account. */
 export function AddWorkerAccountMenu({ trigger, tooltip, align = "end" }: { trigger: React.ReactElement; tooltip?: string; align?: "start" | "end" }) {
   const actions = useAuthActions();
   const addWorker = (provider: WorkerAccount["provider"]) => {
@@ -390,7 +388,7 @@ export function WorkerAccountsWindow() {
         </div>
       ) : workerAccounts.data ? (
         <div className="flex flex-col gap-2.5">
-          <Empty icon={IdCardIcon} title="No Worker accounts">Sign in with Codex, Grok, or Devin.</Empty>
+          <Empty icon={IdCardIcon} title="No Worker accounts">Sign in with Codex, Grok, Devin, or Claude.</Empty>
           <div className="flex justify-center">
             <AddWorkerAccountMenu trigger={
               <Button size="sm" variant="outline">
@@ -497,9 +495,9 @@ function WorkerAccountCard({ account, label, accounts }: { account: WorkerAccoun
             {changingAvailability ? <Spinner data-icon="inline-start" /> : null}
             Enable
           </Button>
-          {errorFor("availability") ? <p className="text-[0.72rem] text-pretty text-destructive">{errorFor("availability")}</p> : null}
         </div>
       ) : null}
+      {errorFor("availability") ? <p role="alert" className="text-[0.72rem] text-pretty text-destructive">{errorFor("availability")}</p> : null}
     </NodeCard>
   );
 }
@@ -534,6 +532,7 @@ function SignInStatus({ label, since, now }: { label: string; since: number; now
 
 function WorkerSignInPanel({ account, attempt, error }: { account: WorkerAccount; attempt: WorkerLogin | undefined; error: string | null }) {
   const worker = useAuthActions().worker;
+  const provider = providerTitle(account.provider);
   const now = useNow();
   // The parent keys this panel by attempt, so its timer and draft reset together.
   const [since] = useState(() => Date.now());
@@ -566,9 +565,9 @@ function WorkerSignInPanel({ account, attempt, error }: { account: WorkerAccount
           {attempt.authUrl ? (
             <>
               <p id={`worker-signin-help-${attempt.id}`} className="text-[0.72rem] text-pretty text-muted-foreground">
-                {attempt.provider === "devin"
-                  ? "Open the link, then paste Devin’s code here."
-                  : "Open the link and enter this code."}
+                {attempt.needsCode
+                  ? `Open the link, then paste ${provider}’s code here.`
+                  : attempt.userCode ? "Open the link and enter this code." : "Open the link and finish signing in."}
               </p>
               <SignInLink url={attempt.authUrl} />
             </>
@@ -581,7 +580,7 @@ function WorkerSignInPanel({ account, attempt, error }: { account: WorkerAccount
           ) : null}
           {attempt.needsCode ? (
             <form
-              aria-label="Submit Devin sign-in code"
+              aria-label={`Submit ${provider} sign-in code`}
               onSubmit={(event) => {
                 event.preventDefault();
                 if (code.trim() && !submitting && !cancelling) void worker.submitCode(attempt, code.trim()).then(() => setCode(""), () => undefined);
@@ -590,7 +589,7 @@ function WorkerSignInPanel({ account, attempt, error }: { account: WorkerAccount
               <SignInCodeRow>
                 <FieldGroup>
                   <Field orientation="horizontal" data-disabled={submitting || cancelling} data-invalid={Boolean(attempt.error)}>
-                    <FieldLabel htmlFor={`worker-signin-code-${attempt.id}`} className="sr-only">Code from Devin</FieldLabel>
+                    <FieldLabel htmlFor={`worker-signin-code-${attempt.id}`} className="sr-only">Code from {provider}</FieldLabel>
                     <Input
                       id={`worker-signin-code-${attempt.id}`}
                       value={code}
@@ -631,7 +630,7 @@ function WorkerSignInPanel({ account, attempt, error }: { account: WorkerAccount
         </>
       ) : (
         <>
-          <p className="flex items-start gap-1.5 rounded-lg bg-background/70 px-3 py-2 text-[0.78rem] text-pretty text-destructive">
+          <p role="alert" className="flex items-start gap-1.5 rounded-lg bg-background/70 px-3 py-2 text-[0.78rem] text-pretty text-destructive">
             <TriangleAlertIcon className="mt-px size-3.5 shrink-0" />
             {attempt.error ?? "Sign-in failed."}
           </p>

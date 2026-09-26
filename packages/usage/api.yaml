@@ -1,5 +1,5 @@
 name: usage
-description: Observe scoped Codex Bot and Codex, Grok and Devin Worker account usage, available dollar allocations and the local Grok Bot allowance without routing or balancing.
+description: Observe scoped Codex Bot and Codex, Grok, Devin and Claude Worker account usage, available dollar allocations and the local Grok Bot allowance without routing or balancing.
 socket:
   description: Private read-only usage snapshots maintained by the owner-owned observer.
 mcp:

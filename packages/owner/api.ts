@@ -38,7 +38,7 @@ export const ownerStatus = operation({
 
 export const ownerResources = operation({
   name: "owner_resources",
-  description: "Read cached CPU, memory and process-tree observations for AgentStack, components, Bots, accounts, shared ACP runtimes or individual processes/subtrees. Pin snapshotId when paging. Costs overlap across scope kinds; RSS is not unique RAM. Unknown/expired IDs are errors. No collection is triggered by a read.",
+  description: "Read cached CPU, memory and process-tree observations for AgentStack, components, Bots, accounts, observed Worker runtimes or individual processes/subtrees. Pin snapshotId when paging. Costs overlap across scope kinds; RSS is not unique RAM. Unknown/expired IDs are errors. No collection is triggered by a read.",
   input: ownerResourcesInput, output: ownerResourcesOutput,
   annotations: { title: "Owner resource snapshot", readOnlyHint: true },
   async call(ctx: OwnerContext, input) { return ctx.resources.resources(input); },

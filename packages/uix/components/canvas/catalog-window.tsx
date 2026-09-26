@@ -33,12 +33,14 @@ export function CatalogRefresh({ id, iconOnly = false }: { id: string; iconOnly?
 }
 
 function useCatalogState(id: string) {
-  const { workerCatalogs, workerRuntimes, status } = useStack();
+  const { workerAccounts, workerCatalogs, workerRuntimes, status } = useStack();
   const now = useNow(30_000);
   const resource = workerCatalogs[id];
   const catalog = resource?.data;
+  const account = workerAccounts.data?.find((item) => item.id === id);
   const runtime = workerRuntimes.data?.find((item) => item.id === id);
-  const stale = !catalog || catalog.stale || Boolean(resource?.error) || status.workers !== "open" || runtime?.state !== "running" || now - Date.parse(catalog.observedAt) >= 30 * 60_000;
+  const stale = !catalog || catalog.stale || Boolean(catalog.error || resource?.error || workerRuntimes.error) || !account?.ready || !account.enabled || account.removing
+    || status.workers !== "open" || runtime?.state !== "running" || now - Date.parse(catalog.observedAt) >= 30 * 60_000;
   return { catalog, stale, error: resource?.error ?? catalog?.error ?? runtime?.error ?? null };
 }
 

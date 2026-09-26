@@ -53,6 +53,20 @@ function summarize(account: UsageAccount): Summary | null {
       notes,
     };
   }
+  if (account.provider === "claude") {
+    const usage = account.usage;
+    const extra = usage.extraUsage;
+    const notes: string[] = [];
+    // Extra-usage credits and limits are provider units, not dollars.
+    if (extra?.enabled) notes.push(`extra usage ${extra.usedCredits?.toLocaleString() ?? "?"}${extra.monthlyLimit !== null ? ` / ${extra.monthlyLimit.toLocaleString()}` : ""} credits`);
+    else if (extra?.enabled === false) notes.push("extra usage off");
+    return {
+      plan: null,
+      limited: false,
+      gauges: usage.windows.map((window) => ({ label: window.label, remaining: window.remainingPercent, resetsAt: window.resetsAt })),
+      notes,
+    };
+  }
   const usage = account.usage;
   const gauges: Gauge[] = [];
   if (usage.dailyRemainingPercent !== null) gauges.push({ label: "daily", remaining: usage.dailyRemainingPercent, resetsAt: usage.dailyResetsAt });

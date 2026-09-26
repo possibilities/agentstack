@@ -155,7 +155,7 @@ test("a bot-bound MCP URL forwards verified bot and Codex thread context without
   }
 });
 
-test("a Worker-bound MCP URL exposes only read operations and fences a replaced ACP process", { timeout: 30_000 }, async () => {
+test("a Worker-bound MCP URL exposes only read operations and fences a replaced native runtime", { timeout: 30_000 }, async () => {
   const root = await mkdtemp("/tmp/as-mcp-w-");
   const env = { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_MCP_PORT: "0" };
   const packageDir = join(root, "packages", "sample");

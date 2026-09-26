@@ -52,7 +52,7 @@ export type AuthActions = {
     signIn(provider: WorkerAccount["provider"], id?: string): Promise<WorkerLogin | null>;
     /** `new:<provider>` or the Worker id whose sign-in call is in flight. */
     signingIn: string | null;
-    /** Paste the code a pending Devin sign-in is waiting for. Resolves after the call. */
+    /** Paste the code a pending native sign-in is waiting for. Resolves after the call. */
     submitCode(attempt: WorkerLogin, code: string): Promise<void>;
     submitting: string | null;
     cancel(attempt: WorkerLogin): void;
@@ -281,7 +281,7 @@ export function AuthActionsProvider({ children }: { children: React.ReactNode })
           <AlertDialogHeader>
             <AlertDialogMedia>{reprepare ? <Orb id={reprepare.id} /> : null}</AlertDialogMedia>
             <AlertDialogTitle>Sign in again to {reprepare ? workerLabel(reprepare.id) : ""}?</AlertDialogTitle>
-            <AlertDialogDescription>Its process stops until you finish.</AlertDialogDescription>
+            <AlertDialogDescription>Its runtime stops until you finish.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -411,7 +411,7 @@ function RemoveWorkerDialog({ account, label, pending, error, onConfirm, onClose
         <div className="flex flex-col gap-3 text-[0.8rem]">
           <p className="flex items-start gap-1.5 text-[0.78rem] text-muted-foreground">
             <TriangleAlertIcon className="mt-px size-3.5 shrink-0 text-destructive" />
-            <span>Stops its process and deletes its credentials.</span>
+            <span>Stops its runtime and deletes its credentials.</span>
           </p>
           {error ? <p className="text-[0.75rem] text-pretty text-destructive">{error}</p> : null}
         </div>

@@ -116,6 +116,11 @@ test("the api package serves structured documents for every workspace package", 
     const workerAccount = auth.operations.find((operation) => operation.name === "worker_account_list") as OperationDoc;
     assert.ok(JSON.stringify(botAccount.outputSchema).includes("linkedAccounts"));
     assert.ok(JSON.stringify(workerAccount.outputSchema).includes("linkedAccounts"));
+    const prepareWorker = auth.operations.find((operation) => operation.name === "worker_account_prepare") as OperationDoc;
+    const loginWorker = auth.operations.find((operation) => operation.name === "worker_account_login_start") as OperationDoc;
+    assert.ok(JSON.stringify(prepareWorker.inputSchema).includes('"claude"'));
+    assert.ok(JSON.stringify(loginWorker.inputSchema).includes('"claude"'));
+    assert.ok(JSON.stringify(workerAccount.outputSchema).includes('"claude"'));
     const workers = found.get("workers") as PackageDoc;
     const wiki = found.get("wiki") as PackageDoc;
     assert.ok(wiki.operations.some((op) => op.name === "publish"));
@@ -140,6 +145,13 @@ test("the api package serves structured documents for every workspace package", 
     }
     const workerDetail = workers.operations.find((operation) => operation.name === "worker_detail") as OperationDoc;
     assert.deepEqual(Object.keys(workerDetail.outputSchema.properties ?? {}).sort(), ["capture", "freshness", "metadata", "observedSettings", "subagents", "worker"]);
+    const workerRecord = (workerDetail.outputSchema.properties as Record<string, { properties: Record<string, unknown> }>).worker;
+    assert.ok(workerRecord.properties.sessionId, "Worker session identity is native-runtime neutral");
+    assert.equal(workerRecord.properties.acpSessionId, undefined);
+    assert.ok(JSON.stringify(workerRecord).includes('"claude"'));
+    for (const name of ["worker_catalog", "worker_runtime_list"]) {
+      assert.ok(JSON.stringify(workers.operations.find((operation) => operation.name === name)?.outputSchema).includes('"claude"'));
+    }
     const workerTurns = workers.operations.find((operation) => operation.name === "worker_turn_list") as OperationDoc;
     for (const field of ["prompt", "requestedModel", "observedSettings", "dispatchedPromptSeq"]) assert.ok(JSON.stringify(workerTurns.outputSchema).includes(`"${field}"`));
     assert.ok(JSON.stringify(workers.operations.find((operation) => operation.name === "worker_tool_list")?.outputSchema).includes('"hierarchyVerified"'));
@@ -150,6 +162,8 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(usage.operations[0]?.annotations.readOnlyHint, true);
     assert.deepEqual(Object.keys(usage.operations[0]?.outputSchema.properties ?? {}).sort(), ["accounts", "atMs", "grokBot", "inventoryAtMs", "inventoryError"]);
     assert.ok(JSON.stringify(usage.operations[0]?.outputSchema).includes("allocatedUsd"));
+    assert.ok(JSON.stringify(usage.operations[0]?.outputSchema).includes('"claude"'));
+    assert.ok(JSON.stringify(usage.operations[0]?.outputSchema).includes('"extraUsage"'));
     assert.equal(usage.transports.find((transport) => transport.type === "socket")?.endpoint, join(stateDir, "sockets", "usage.sock"));
     assert.equal(usage.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
 

@@ -112,6 +112,8 @@ test("catalog parsing preserves native IDs and grouped ACP options", () => {
   ]).map((model) => model.id), ["xai/grok-4.20-0309-non-reasoning", "xai/grok-4.7"], "Grok keeps no-effort chat models");
   assert.deepEqual(catalogModels("devin", [choice("adaptive", []), choice("MODEL_PRIVATE_11", []), choice("swe-2-high")]).map((model) => model.id),
     ["swe-2-high"], "Devin omits entries without effort choices");
+  assert.deepEqual(catalogModels("claude", [choice("claude-haiku-fixture", []), choice("claude-opus-fixture")]).map((model) => model.id),
+    ["claude-haiku-fixture", "claude-opus-fixture"], "Claude keeps SDK models that offer no effort levels");
 });
 
 test("operator disable and removal drain the exact account process before deleting credentials", async () => {

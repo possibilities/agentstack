@@ -92,8 +92,9 @@ export type ChatQueueEntry = { id: string; botId: string; threadId: string; inpu
   state: "pending" | "dispatching" | "sent" | "unknown" | "cancelled"; turnId: string | null; issue: string | null };
 
 export type Account = { id: string; enabled: boolean; removing: boolean; linkedAccounts: Array<{ scope: "bot" | "worker"; id: string }> };
-export type WorkerAccount = Account & { provider: "codex" | "grok" | "devin"; ready: boolean };
-export type WorkerRuntime = { id: string; provider: WorkerAccount["provider"]; state: "running" | "stopped" | "error"; pid: number | null; instance: string | null; error: string | null };
+export type WorkerAccount = Account & { provider: "codex" | "grok" | "devin" | "claude"; ready: boolean };
+export type WorkerRuntime = { id: string; provider: WorkerAccount["provider"]; backend: "acp" | "claude-sdk"; processModel: "account" | "session"; pids: number[];
+  state: "running" | "stopped" | "error"; pid: number | null; instance: string | null; error: string | null };
 export type WorkerCatalog = { accountId: string; provider: WorkerAccount["provider"]; observedAt: string;
   source: string; runtimeVersion: string; modelConfigId: string | null;
   models: Array<{ id: string; name: string; efforts: string[]; effortConfigId: string | null }>;
@@ -111,17 +112,20 @@ export type GrokUsage = { subscriptionTier: string | null;
 export type DevinUsage = { planLabel: string | null; billing: string | null; dailyRemainingPercent: number | null;
   weeklyRemainingPercent: number | null; dailyResetsAt: string | null; weeklyResetsAt: string | null; periodStart: string | null;
   periodEnd: string | null; promptCreditsMonthly: number | null; promptCreditsAvailable: number | null; weeklyQuotaHidden: boolean | null; displayName: string | null };
+export type ClaudeUsage = { windows: Array<{ id: string; label: string; usedPercent: number; remainingPercent: number; resetsAt: string | null }>;
+  extraUsage: { enabled: boolean | null; monthlyLimit: number | null; usedCredits: number | null; utilization: number | null } | null };
 export type UsageAccount = UsageObservation & { id: string; enabled: boolean; ready: boolean; linkedAccounts: Account["linkedAccounts"] } & (
   | { provider: "codex"; scope: "bot" | "worker"; usage: CodexUsage | null }
   | { provider: "grok"; scope: "worker"; usage: GrokUsage | null }
-  | { provider: "devin"; scope: "worker"; usage: DevinUsage | null });
+  | { provider: "devin"; scope: "worker"; usage: DevinUsage | null }
+  | { provider: "claude"; scope: "worker"; usage: ClaudeUsage | null });
 export type UsageSnapshot = { atMs: number; inventoryAtMs: number | null; inventoryError: "not_observed" | "auth_unavailable" | null;
   accounts: UsageAccount[]; grokBot: UsageObservation & { usage: { usedPercent: number; periodStart: string; resetsAt: string;
     hasAvailableUsage: boolean; planLabel: string | null; fundingPlan: string | null; onDemandEligible: boolean | null;
     onDemandEnabled: boolean | null; trial: boolean | null; teamSeat: boolean | null } | null } };
 export type WorkerSession = { id: string; botId: string; threadId: string; accountId: string; provider: WorkerAccount["provider"];
   model: string; effort: string | null; repo: string; cwd: string | null; branch: string | null; baseCommit: string | null;
-  sourceDirty: boolean; roleRevision: number | null; acpSessionId: string | null; runtimeInstance: string | null;
+  sourceDirty: boolean; roleRevision: number | null; sessionId: string | null; runtimeInstance: string | null;
   phase: "preparing" | "idle" | "running" | "awaiting_input" | "cancelling" | "closed" | "failed" | "needs_recovery";
   currentTurnId: string | null; issue: string | null; createdAt: number; updatedAt: number };
 

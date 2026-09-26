@@ -21,7 +21,7 @@ const config = (model = "xai/grok-observed", effort = "low") => ({ configOptions
 
 function managerFixture(root: string, request = intent()) {
   const runtime: Runtime = { account: { id: request.accountId, provider: "grok", enabled: true, ready: true, removing: false },
-    process: { notify() {}, cancelPermissions() {} } as unknown as AcpProcess,
+    backend: "acp", process: { notify() {}, cancelPermissions() {} } as unknown as AcpProcess,
     instance: randomUUID(), version: "fixture", probeSession: null, canLoad: true, canClose: true, supportsHttp: true,
     capabilities: { loadSession: true }, agentInfo: { name: "fixture" } };
   const seed = new WorkerLedger(root);
@@ -241,7 +241,7 @@ test("session metadata outside turns, runtime fencing, permission ownership and 
   const process = {} as AcpProcess;
   const accountId = randomUUID();
   const runtime: Runtime = { account: { id: accountId, provider: "grok", enabled: true, ready: true, removing: false },
-    process, instance: randomUUID(), version: "fixture", probeSession: null, canLoad: true, canClose: true, supportsHttp: true,
+    backend: "acp", process, instance: randomUUID(), version: "fixture", probeSession: null, canLoad: true, canClose: true, supportsHttp: true,
     capabilities: { loadSession: true }, agentInfo: { name: "fixture" } };
   supervisor.runtime = () => runtime;
   supervisor.onRuntimeReady!(runtime);

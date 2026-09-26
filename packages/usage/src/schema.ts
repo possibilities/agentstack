@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const provider = z.enum(["codex", "grok", "devin"]);
+export const provider = z.enum(["codex", "grok", "devin", "claude"]);
 export type Provider = z.infer<typeof provider>;
 export const accountScope = z.enum(["bot", "worker"]);
 export type AccountScope = z.infer<typeof accountScope>;
@@ -25,11 +25,19 @@ export const devinUsage = z.strictObject({ planLabel: nullableString, billing: n
   dailyResetsAt: nullableString, weeklyResetsAt: nullableString, periodStart: nullableString,
   periodEnd: nullableString, promptCreditsMonthly: nullableNumber, promptCreditsAvailable: nullableNumber,
   weeklyQuotaHidden: nullableBoolean, displayName: nullableString });
+export const claudeUsage = z.strictObject({
+  windows: z.array(z.strictObject({ id: z.string().max(80), label: z.string().max(80),
+    usedPercent: z.number().finite().nonnegative(), remainingPercent: z.number().finite().min(0).max(100), resetsAt: nullableString })).max(32),
+  extraUsage: z.strictObject({ enabled: nullableBoolean,
+    monthlyLimit: nullableNumber.describe("Native extra_usage.monthly_limit, in provider units; not converted to dollars."),
+    usedCredits: nullableNumber.describe("Native extra_usage.used_credits, in provider units; not an inferred balance."),
+    utilization: nullableNumber.describe("Native extra_usage.utilization percentage, when reported.") }).nullable(),
+});
 export const grokBotUsage = z.strictObject({ usedPercent: z.number().finite(), periodStart: z.string(),
   resetsAt: z.string(), hasAvailableUsage: z.boolean(), planLabel: nullableString,
   fundingPlan: nullableString, onDemandEligible: nullableBoolean, onDemandEnabled: nullableBoolean,
   trial: nullableBoolean, teamSeat: nullableBoolean });
-export type Measurement = z.infer<typeof codexUsage> | z.infer<typeof grokUsage> | z.infer<typeof devinUsage>;
+export type Measurement = z.infer<typeof codexUsage> | z.infer<typeof grokUsage> | z.infer<typeof devinUsage> | z.infer<typeof claudeUsage>;
 
 export const observationError = z.enum(["credentials_unavailable", "credentials_unsafe", "account_invalid",
   "response_invalid", "provider_unavailable", "auth_unavailable", "rate_limited", "not_found", "provider_error",
@@ -50,6 +58,8 @@ export const account = z.discriminatedUnion("provider", [
     ...observation, usage: grokUsage.nullable() }),
   z.strictObject({ id: z.uuid(), scope: z.literal("worker"), provider: z.literal("devin"), enabled: z.boolean(), ready: z.boolean(), linkedAccounts,
     ...observation, usage: devinUsage.nullable() }),
+  z.strictObject({ id: z.uuid(), scope: z.literal("worker"), provider: z.literal("claude"), enabled: z.boolean(), ready: z.boolean(), linkedAccounts,
+    ...observation, usage: claudeUsage.nullable() }),
 ]);
 export const snapshotSchema = z.strictObject({ atMs: z.number().int(), inventoryAtMs: z.number().int().nullable(),
   inventoryError: z.enum(["not_observed", "auth_unavailable"]).nullable(), accounts: z.array(account).describe("Bot Codex and independent Worker accounts, including disabled accounts. Scope and ID together identify a record."),

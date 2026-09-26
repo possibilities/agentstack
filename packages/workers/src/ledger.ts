@@ -7,9 +7,9 @@ import { WorkerHistory, type ObservedSettings } from "./history.js";
 export type WorkerPhase = "preparing" | "idle" | "running" | "awaiting_input" | "cancelling" | "closed" | "failed" | "needs_recovery";
 export type TurnPhase = "queued" | "running" | "awaiting_input" | "cancelling" | "completed" | "cancelled" | "failed" | "unknown";
 export type WorkerRecord = {
-  id: string; botId: string; threadId: string; accountId: string; provider: "codex" | "grok" | "devin";
+  id: string; botId: string; threadId: string; accountId: string; provider: "codex" | "grok" | "devin" | "claude";
   model: string; effort: string | null; repo: string; cwd: string | null; branch: string | null; baseCommit: string | null;
-  sourceDirty: boolean; roleRevision: number | null; acpSessionId: string | null; phase: WorkerPhase;
+  sourceDirty: boolean; roleRevision: number | null; sessionId: string | null; phase: WorkerPhase;
   runtimeInstance: string | null;
   currentTurnId: string | null; issue: string | null; createdAt: number; updatedAt: number;
 };
@@ -80,7 +80,7 @@ export class WorkerLedger {
     this.db.prepare("UPDATE workers SET phase = 'needs_recovery', issue = 'Owner restarted during a worker operation; inspect before resuming', updated_at = ? WHERE phase IN ('preparing','running','awaiting_input','cancelling')").run(Date.now());
     this.db.prepare("UPDATE turns SET phase = 'unknown', issue = 'Turn outcome is unknown after owner restart', updated_at = ? WHERE phase IN ('queued','running','awaiting_input','cancelling')").run(Date.now());
     this.db.prepare("UPDATE pending_requests SET state = 'unknown' WHERE state = 'pending'").run();
-    this.db.prepare("UPDATE workers SET phase = 'needs_recovery', issue = 'Owner restarted; load the saved ACP session before sending', updated_at = ? WHERE phase = 'idle' AND acp_session_id IS NOT NULL").run(Date.now());
+    this.db.prepare("UPDATE workers SET phase = 'needs_recovery', issue = 'Owner restarted; load the saved session before sending', updated_at = ? WHERE phase = 'idle' AND acp_session_id IS NOT NULL").run(Date.now());
   }
 
   close(): void { this.db.close(); }
@@ -92,7 +92,7 @@ export class WorkerLedger {
       model: row.model as string, effort: row.effort as string | null, repo: row.repo as string,
       cwd: row.cwd as string | null, branch: row.branch as string | null, baseCommit: row.base_commit as string | null,
       sourceDirty: Boolean(row.source_dirty), roleRevision: row.role_revision as number | null,
-      acpSessionId: row.acp_session_id as string | null, phase: row.phase as WorkerPhase,
+      sessionId: row.acp_session_id as string | null, phase: row.phase as WorkerPhase,
       runtimeInstance: row.runtime_instance as string | null,
       currentTurnId: row.current_turn_id as string | null, issue: row.issue as string | null,
       createdAt: row.created_at as number, updatedAt: row.updated_at as number,
@@ -154,9 +154,9 @@ export class WorkerLedger {
       .run(claim.repo, claim.cwd, claim.branch, claim.baseCommit, Number(claim.sourceDirty), claim.roleRevision, Date.now(), id);
     return this.worker(id)!;
   }
-  setSession(id: string, acpSessionId: string): WorkerRecord {
+  setSession(id: string, sessionId: string): WorkerRecord {
     this.db.prepare("UPDATE workers SET acp_session_id = ?, phase = 'idle', issue = NULL, updated_at = ? WHERE id = ?")
-      .run(acpSessionId, Date.now(), id);
+      .run(sessionId, Date.now(), id);
     return this.worker(id)!;
   }
   setRuntimeInstance(id: string, instance: string): WorkerRecord {
@@ -171,9 +171,9 @@ export class WorkerLedger {
     const now = Date.now();
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      this.db.prepare("UPDATE turns SET phase = 'unknown', issue = 'ACP process stopped before the turn outcome was confirmed', updated_at = ? WHERE worker_id IN (SELECT id FROM workers WHERE account_id = ?) AND phase IN ('queued','running','awaiting_input','cancelling')")
+      this.db.prepare("UPDATE turns SET phase = 'unknown', issue = 'Worker runtime stopped before the turn outcome was confirmed', updated_at = ? WHERE worker_id IN (SELECT id FROM workers WHERE account_id = ?) AND phase IN ('queued','running','awaiting_input','cancelling')")
         .run(now, accountId);
-      this.db.prepare("UPDATE workers SET phase = 'needs_recovery', issue = 'ACP process stopped; load the saved session before sending', updated_at = ? WHERE account_id = ? AND phase NOT IN ('closed','failed')")
+      this.db.prepare("UPDATE workers SET phase = 'needs_recovery', issue = 'Worker runtime stopped; load the saved session before sending', updated_at = ? WHERE account_id = ? AND phase NOT IN ('closed','failed')")
         .run(now, accountId);
       this.db.prepare("UPDATE pending_requests SET state = 'unknown' WHERE worker_id IN (SELECT id FROM workers WHERE account_id = ?) AND state = 'pending'").run(accountId);
       this.db.exec("COMMIT");

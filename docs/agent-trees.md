@@ -5,8 +5,8 @@ The `bots` and `workers` Package APIs provide the read models for a UI of delega
 ## Identity and ownership
 
 - A Bot owns exactly its `mainThreadId` and threads with a proven parent chain to that root. Use `(botId, threadId)` as a Chat key. Other top-level Codex threads on the same app-server are outside the Bot's tree.
-- A Worker is a separate ACP conversation keyed by its durable Worker `id`. Its `botId` and originating `threadId` place it under the Chat that dispatched it. A local-operator Worker has no Bot-tree parent. Keep `acpSessionId` as provider correlation, not as an AgentStack Worker ID.
-- A provider's task tool or child-session reference is evidence within a Worker conversation. It is not another managed Worker and does not imply that ACP exposes the child's full conversation or nested descendants.
+- A Worker is a separate ACP or Claude SDK conversation keyed by its durable Worker `id`. Its `botId` and originating `threadId` place it under the Chat that dispatched it. A local-operator Worker has no Bot-tree parent. Keep `sessionId` as native provider correlation, not as an AgentStack Worker ID. This field replaces the earlier ACP-only `acpSessionId`; existing saved ACP sessions retain their identity.
+- A provider's task tool or child-session reference is evidence within a Worker conversation. It is not another managed Worker and does not imply that the backend exposes the child's full conversation or nested descendants.
 
 ## Bot subagent reads
 
@@ -70,7 +70,7 @@ After the subscription acknowledgement, process the snapshot response and render
 {"id":2,"method":"tools/call","params":{"name":"worker_detail","arguments":{"id":"00000000-0000-4000-8000-000000000001"}}}
 ```
 
-The UUID is illustrative; use a real Worker ID from inventory. These are Package API transport requests, not native Codex or ACP requests.
+The UUID is illustrative; use a real Worker ID from inventory. These are Package API transport requests, not native Codex, ACP or Claude SDK requests.
 
 ## Detail and completeness
 

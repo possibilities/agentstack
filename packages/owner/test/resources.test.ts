@@ -313,6 +313,27 @@ test("domain readers validate inventories, flag unverified Bots, retain last-goo
   } finally { await server.close(); await rm(state, { recursive: true, force: true }); }
 });
 
+test("Claude session process roots share account attribution without fabricating a shared PID", async () => {
+  const state = await mkdtemp(join(tmpdir(), "resource-claude-"));
+  const server = await serveSocket({ info: { path: join(state, "sockets", "workers.sock"), name: "workers", description: "test", transportDescription: "test" },
+    context: {}, operations: [operation({ name: "worker_runtime_list", description: "Test Worker inventory", input: z.object({}), output: z.unknown(), async call() {
+      return { runtimes: [
+        { id: "claude-account", provider: "claude", state: "running", instance: "claude-runtime", pid: null, pids: [40, 41] },
+        { id: "claude-idle", provider: "claude", state: "running", instance: "claude-idle-runtime", pid: null, pids: [] },
+        { id: "codex-account", provider: "codex", state: "running", instance: "acp-runtime", pid: 42, pids: [42] },
+      ] };
+    } })] });
+  try {
+    const result = await createDomainReader({ AGENTSTACK_STATE_DIR: state })(true, new AbortController().signal);
+    assert.equal(result.statuses[1].state, "current");
+    assert.equal(result.statuses[1].error, null);
+    assert.equal(result.statuses[1].unmatched, 1);
+    assert.deepEqual(result.labels.map(({ accountId, pid }) => ({ accountId, pid })), [
+      { accountId: "claude-account", pid: 40 }, { accountId: "claude-account", pid: 41 }, { accountId: "codex-account", pid: 42 },
+    ]);
+  } finally { await server.close(); await rm(state, { recursive: true, force: true }); }
+});
+
 test("resource operations and payload-free invalidations work on the existing socket transport", async () => {
   const state = await mkdtemp(join(tmpdir(), "resource-api-"));
   const resources = new ResourceMonitor({ roots: () => roots, collect: async () => collection(tree()), domains: async () => domains() });

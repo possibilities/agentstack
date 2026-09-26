@@ -3,8 +3,9 @@ import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { claudeConfigRoot, claudeKeychainAccount, claudeLoginInvocation, claudeRuntimePath, prepareClaudeProfile, readClaudeCredentials, type ClaudeCredentialOptions } from "./claude-credentials.js";
 
-export type WorkerProvider = "codex" | "grok" | "devin";
+export type WorkerProvider = "codex" | "grok" | "devin" | "claude";
 export type WorkerAccount = {
   id: string; provider: WorkerProvider; enabled: boolean; ready: boolean; removing: boolean;
 };
@@ -14,28 +15,44 @@ export function accountRoot(stateDir: string, id: string): string {
   return join(stateDir, "worker-accounts", id);
 }
 
+const scrubbed = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "XAI_API_KEY", "WINDSURF_API_KEY", "DEVIN_MODEL",
+  "DEVIN_REFUSAL_FALLBACK", "OPENAI_BASE_URL", "OPENCODE_AUTH_CONTENT", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_DB", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME",
+  "AGENTUSAGE_ACCOUNT", "AGENTUSAGE_AUTH_TOKEN", "AGENTSTART_SHIM_BYPASS"];
+const claudeAmbient = /^(?:ANTHROPIC_|CLAUDE_|AWS_|AMAZON_|BEDROCK_|GOOGLE_|GCLOUD_|VERTEX_|AZURE_|CLOUD_ML_)/;
+
 export function accountEnvironment(stateDir: string, account: WorkerAccount, source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const root = accountRoot(stateDir, account.id);
   const env = { ...source };
-  for (const key of ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "XAI_API_KEY", "WINDSURF_API_KEY", "DEVIN_MODEL",
-    "DEVIN_REFUSAL_FALLBACK", "OPENAI_BASE_URL", "OPENCODE_AUTH_CONTENT", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_DB", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME",
-    "AGENTUSAGE_ACCOUNT", "AGENTUSAGE_AUTH_TOKEN"]) delete env[key];
+  for (const key of Object.keys(env)) if (scrubbed.includes(key) || claudeAmbient.test(key)) delete env[key];
   env.XDG_DATA_HOME = join(root, "data");
   env.XDG_CONFIG_HOME = account.provider === "devin" ? join(root, "config") : join(root, ".config");
   env.XDG_CACHE_HOME = join(root, "cache");
   if (account.provider !== "devin") {
     env.HOME = root;
-    env.OPENCODE_CONFIG = join(root, ".config", "opencode", "opencode.json");
-    env.OPENCODE_CONFIG_DIR = join(root, ".config", "opencode");
+    if (account.provider === "claude") {
+      env.CLAUDE_CONFIG_DIR = claudeConfigRoot(stateDir, account.id);
+      env.AGENTSTACK_CLAUDE_BIN = claudeRuntimePath(source);
+      env.AGENTSTART_SHIM_BYPASS = "1";
+      env.USER = env.LOGNAME = claudeKeychainAccount();
+    } else {
+      env.OPENCODE_CONFIG = join(root, ".config", "opencode", "opencode.json");
+      env.OPENCODE_CONFIG_DIR = join(root, ".config", "opencode");
+    }
   }
   return env;
 }
 
-export async function prepareAccountProfile(stateDir: string, account: WorkerAccount): Promise<void> {
+export async function prepareAccountProfile(stateDir: string, account: WorkerAccount, claude: ClaudeCredentialOptions = {}): Promise<void> {
   const root = accountRoot(stateDir, account.id);
-  for (const directory of [root, join(root, "data"), join(root, "config"), join(root, ".config"), join(root, "cache"), join(root, "probe")]) {
+  for (const directory of [join(stateDir, "worker-accounts"), root, join(root, "data"), join(root, "config"), join(root, ".config"), join(root, "cache"), join(root, "probe")]) {
     await mkdir(directory, { recursive: true, mode: 0o700 });
+    const info = await lstat(directory);
+    if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== process.getuid?.()) throw new Error("native worker profile is not a private directory");
     await chmod(directory, 0o700);
+  }
+  if (account.provider === "claude") {
+    await prepareClaudeProfile(stateDir, account.id, claude);
+    return;
   }
   if (account.provider === "devin") {
     const dir = join(root, "config", "devin");
@@ -58,17 +75,28 @@ export async function prepareAccountProfile(stateDir: string, account: WorkerAcc
 }
 
 export function loginCommand(stateDir: string, account: WorkerAccount): string {
-  const env = accountEnvironment(stateDir, account, {});
-  const assignments = ["HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR"]
+  const env = accountEnvironment(stateDir, account);
+  if (account.provider === "claude") env.BROWSER = "/usr/bin/true";
+  const assignments = ["HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR",
+    ...(account.provider === "claude" ? ["CLAUDE_CONFIG_DIR", "AGENTSTART_SHIM_BYPASS", "USER", "LOGNAME", "BROWSER"] : [])]
     .flatMap((key) => env[key] ? [`${key}=${quote(env[key])}`] : []);
-  const command = account.provider === "devin" ? "devin auth login"
+  const claude = claudeLoginInvocation(process.env);
+  const command = account.provider === "claude" ? [claude.bin, ...claude.args].map(quote).join(" ")
+    : account.provider === "devin" ? "devin auth login"
     : `${quote(join(process.env.HOME ?? homedir(), ".local", "bin", "opencode"))} auth login --standalone ${account.provider === "grok" ? "xai" : "openai"}`;
-  return `cd ${quote(join(accountRoot(stateDir, account.id), "probe"))} && umask 077 && env -u OPENAI_API_KEY -u CODEX_API_KEY -u CODEX_ACCESS_TOKEN -u XAI_API_KEY -u WINDSURF_API_KEY -u OPENAI_BASE_URL -u OPENCODE_AUTH_CONTENT -u OPENCODE_CONFIG_CONTENT -u OPENCODE_DB -u AGENTUSAGE_ACCOUNT -u AGENTUSAGE_AUTH_TOKEN ${assignments.join(" ")} ${command}`;
+  const remove = [...new Set([...scrubbed, ...Object.keys(process.env).filter((key) => claudeAmbient.test(key)),
+    "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+    "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"])];
+  return `cd ${quote(join(accountRoot(stateDir, account.id), "probe"))} && umask 077 && env ${remove.map((key) => `-u ${quote(key)}`).join(" ")} ${assignments.join(" ")} ${command}`;
 }
 
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
 
-export async function credentialEvidence(stateDir: string, account: WorkerAccount): Promise<{ digest: string; identity: string | null }> {
+export async function credentialEvidence(stateDir: string, account: WorkerAccount, claude: ClaudeCredentialOptions = {}): Promise<{ digest: string; identity: string | null }> {
+  if (account.provider === "claude") {
+    const { digest, identity } = await readClaudeCredentials(stateDir, account.id, claude);
+    return { digest, identity };
+  }
   const root = accountRoot(stateDir, account.id);
   const path = account.provider === "devin" ? join(root, "data", "devin", "credentials.toml") : join(root, "data", "opencode", "opencode.db");
   const info = await lstat(path);

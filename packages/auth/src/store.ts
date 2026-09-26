@@ -1,6 +1,6 @@
 import { closeSync, constants, mkdirSync, openSync, chmodSync } from "node:fs";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type { WorkerAccount, WorkerProvider } from "./worker-accounts.js";
 
@@ -39,14 +39,38 @@ export class AuthStore {
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS secrets.credentials (name TEXT PRIMARY KEY, auth_json TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1);
       CREATE TABLE IF NOT EXISTS worker_accounts (
-        id TEXT PRIMARY KEY, provider TEXT NOT NULL CHECK(provider IN ('codex','grok','devin')),
+        id TEXT PRIMARY KEY, provider TEXT NOT NULL CHECK(provider IN ('codex','grok','devin','claude')),
         enabled INTEGER NOT NULL DEFAULT 1, ready INTEGER NOT NULL DEFAULT 0, removing INTEGER NOT NULL DEFAULT 0,
-        credential_digest TEXT
+        credential_digest TEXT, identity_digest TEXT
       );
     `);
     const secretColumns = this.db.prepare("PRAGMA secrets.table_info(credentials)").all() as Array<{ name: string }>;
     if (!secretColumns.some(({ name }) => name === "version")) this.db.exec("ALTER TABLE secrets.credentials ADD COLUMN version INTEGER NOT NULL DEFAULT 1");
+    this.migrateWorkerProviders();
     this.migrateAccountIds();
+  }
+
+  private migrateWorkerProviders(): void {
+    const definition = this.db.prepare("SELECT sql FROM sqlite_master WHERE name = 'worker_accounts'").get() as { sql: string };
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      if (!definition.sql.includes("'claude'")) {
+        this.db.exec(`
+          ALTER TABLE worker_accounts RENAME TO worker_accounts_legacy;
+          CREATE TABLE worker_accounts (
+            id TEXT PRIMARY KEY, provider TEXT NOT NULL CHECK(provider IN ('codex','grok','devin','claude')),
+            enabled INTEGER NOT NULL DEFAULT 1, ready INTEGER NOT NULL DEFAULT 0, removing INTEGER NOT NULL DEFAULT 0,
+            credential_digest TEXT, identity_digest TEXT
+          );
+          INSERT INTO worker_accounts (rowid, id, provider, enabled, ready, removing, credential_digest)
+            SELECT rowid, id, provider, enabled, ready, removing, credential_digest FROM worker_accounts_legacy;
+          DROP TABLE worker_accounts_legacy;
+        `);
+      } else if (!(this.db.prepare("PRAGMA table_info(worker_accounts)").all() as Array<{ name: string }>).some(({ name }) => name === "identity_digest")) {
+        this.db.exec("ALTER TABLE worker_accounts ADD COLUMN identity_digest TEXT");
+      }
+      this.db.exec("COMMIT");
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
 
   private migrateAccountIds(): void {
@@ -106,12 +130,20 @@ export class AuthStore {
     return this.workerAccounts().find((item) => item.id === id)!;
   }
 
-  confirmWorker(id: string, digest: string): WorkerAccount {
+  confirmWorker(id: string, digest: string, identity: string | null = null): WorkerAccount {
     const account = this.workerAccounts().find((item) => item.id === id);
     if (!account || account.removing) throw new Error("unknown worker account");
+    const identityDigest = account.provider === "claude" && identity ? createHash("sha256").update(identity).digest("hex") : null;
+    if (account.provider === "claude") {
+      if (!identityDigest) throw new Error("Claude account identity is unavailable; sign in again");
+      const prior = this.db.prepare("SELECT identity_digest FROM worker_accounts WHERE id = ?").get(id) as { identity_digest: string | null };
+      if (prior.identity_digest && prior.identity_digest !== identityDigest) throw new Error("Claude sign-in does not match this Worker account");
+      if (this.db.prepare("SELECT id FROM worker_accounts WHERE provider = 'claude' AND identity_digest = ? AND id != ?").get(identityDigest, id))
+        throw new Error("this Claude identity is already bound to another worker account");
+    }
     const duplicate = this.db.prepare("SELECT id FROM worker_accounts WHERE provider = ? AND credential_digest = ? AND id != ?").get(account.provider, digest, id);
     if (duplicate) throw new Error("these native credentials are already bound to another worker account");
-    this.db.prepare("UPDATE worker_accounts SET ready = 1, credential_digest = ? WHERE id = ?").run(digest, id);
+    this.db.prepare("UPDATE worker_accounts SET ready = 1, credential_digest = ?, identity_digest = ? WHERE id = ?").run(digest, identityDigest, id);
     return this.workerAccounts().find((item) => item.id === id)!;
   }
 

@@ -67,7 +67,7 @@ function workerProof(key: Buffer, workerId: string, instance: string): Buffer {
   return createHmac("sha256", key).update(`worker-mcp-v1\0${workerId}\0${instance}`).digest();
 }
 
-/** Mint an exact Worker/runtime-bound URL for one ACP session's internal MCP list. */
+/** Mint an exact Worker/runtime-bound URL for one native session's internal MCP list. */
 export function workerMcpUrl(base: string, workerId: string, instance: string, env: NodeJS.ProcessEnv = process.env): string {
   if (!workerIdPattern.test(workerId) || !workerIdPattern.test(instance)) throw new Error("invalid worker MCP identity");
   const url = new URL(base);

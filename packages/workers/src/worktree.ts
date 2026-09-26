@@ -118,10 +118,24 @@ export async function saveWorkerRole(stateDir: string, id: string, snapshot: Rol
   await mkdir(join(stateDir, "workers", "roles"), { recursive: true, mode: 0o700 });
   await writeFile(rolePath(stateDir, id), JSON.stringify(snapshot), { mode: 0o600, flag: "wx" });
 }
+/** SDK plugins avoid importing ambient/project Claude settings or pretending Role text is a user turn. */
+export async function claudeRole(stateDir: string, id: string, snapshot: RoleSnapshot): Promise<{ instructions: string; pluginPath: string }> {
+  const pluginPath = join(stateDir, "workers", "roles", id, "claude-plugin");
+  // The snapshot is immutable; recreation on explicit recovery never changes ambient configuration.
+  await rm(pluginPath, { recursive: true, force: true });
+  await mkdir(join(pluginPath, ".claude-plugin"), { recursive: true, mode: 0o700 });
+  await writeFile(join(pluginPath, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "agentstack-role", version: "1.0.0" }), { mode: 0o600 });
+  await mkdir(join(pluginPath, "skills"), { mode: 0o700 });
+  for (const skill of snapshot.skills) await writeSkill(join(pluginPath, "skills"), skill);
+  return { instructions: renderInstructions(snapshot), pluginPath };
+}
 export async function loadWorkerRole(stateDir: string, id: string): Promise<RoleSnapshot> {
   const snapshot = JSON.parse(await readFile(rolePath(stateDir, id), "utf8")) as RoleSnapshot;
   if (!Number.isInteger(snapshot.revision) || !Array.isArray(snapshot.skills) || !Array.isArray(snapshot.mcpServers))
     throw new Error("worker role snapshot is invalid");
   return snapshot;
 }
-export async function removeWorkerRole(stateDir: string, id: string): Promise<void> { await rm(rolePath(stateDir, id), { force: true }); }
+export async function removeWorkerRole(stateDir: string, id: string): Promise<void> {
+  await rm(rolePath(stateDir, id), { force: true });
+  await rm(join(stateDir, "workers", "roles", id), { recursive: true, force: true });
+}

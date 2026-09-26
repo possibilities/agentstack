@@ -226,6 +226,56 @@ test("an explicit catalog refresh arriving during a cache read is preserved once
   } finally { h.close(); }
 });
 
+test("Claude accounts keep independent login recovery, usage, catalogs and native session identities", async () => {
+  const accounts = ["claude-a", "claude-b"].map((id) => ({ id, provider: "claude", ready: true, enabled: true, removing: false, linkedAccounts: [] }));
+  const attempts = accounts.map((account, index) => ({ id: `login-${index}`, account: account.id, provider: "claude", status: "pending",
+    authUrl: "https://claude.ai/oauth/authorize", userCode: null, needsCode: true, error: null }));
+  const h = harness({ accounts });
+  const { store, handlers, publish, calls } = h;
+  let current = attempts;
+  const session = { id: "worker-claude", accountId: accounts[0].id, provider: "claude", sessionId: "native-claude-session", phase: "idle" };
+  const measurement = { windows: [{ id: "five_hour", label: "5 hours", usedPercent: 23, remainingPercent: 77, resetsAt: null }], extraUsage: null };
+  handlers.worker_account_login_current = () => ({ logins: current.map((attempt) => ({ ...attempt })) });
+  handlers.worker_account_login_status = ({ id }) => attempts.find((attempt) => attempt.id === id);
+  handlers.worker_account_login_submit = ({ id }) => {
+    const attempt = attempts.find((item) => item.id === id);
+    attempt.needsCode = false;
+    return attempt;
+  };
+  handlers.worker_list = () => ({ workers: [session] });
+  handlers.worker_catalog = ({ accountId }) => ({ accountId, provider: "claude", source: "claude-sdk-supported-models", runtimeVersion: "fixture-sdk",
+    models: [{ id: `${accountId}-model`, efforts: [] }], stale: false });
+  handlers.usage_snapshot = () => ({ atMs: 10, accounts: accounts.map((account, index) => ({ ...account, scope: "worker",
+    observedAtMs: index ? null : 10, lastAttemptAtMs: 10, fresh: !index, error: index ? "credentials_unavailable" : null, usage: index ? null : measurement })) });
+  try {
+    store.start({ scopedBots: false });
+    await until(store, () => accounts.every(({ id }) => store.getState().workerCatalogs[id]?.data && store.getState().workerAttempts[id]) && store.getState().workerSessions.data.length && store.getState().usage.data);
+    assert.deepEqual(store.getState().workerSessions.data[0], session);
+    assert.equal(store.getState().workerCatalogs["claude-a"].data.models[0].id, "claude-a-model");
+    assert.equal(store.getState().workerCatalogs["claude-b"].data.models[0].id, "claude-b-model");
+    assert.equal(store.getState().workerCatalogs["claude-a"].data.source, "claude-sdk-supported-models");
+    assert.equal(store.getState().usage.data.accounts[0].usage.windows[0].remainingPercent, 77);
+    assert.equal(store.getState().usage.data.accounts[1].usage, null, "an unobserved account cannot inherit its peer's measurement");
+    await store.call("auth", "worker_account_login_submit", { id: attempts[0].id, code: "fixture-code" });
+    await until(store, () => store.getState().workerLogins.data.find((attempt) => attempt.id === attempts[0].id)?.needsCode === false);
+    assert.equal(store.getState().workerAttempts["claude-a"].needsCode, false);
+    assert.equal(store.getState().workerAttempts["claude-b"].needsCode, true);
+    attempts[0].status = "complete";
+    current = [attempts[1]];
+    publish("auth", "worker_login_changed");
+    await until(store, () => store.getState().workerAttempts["claude-a"].status === "complete");
+    assert.equal(store.getState().workerAttempts["claude-b"].status, "pending");
+    assert.ok(calls.some((call) => call.name === "worker_account_login_status" && call.arguments.id === attempts[0].id), "completed login is recovered by attempt ID");
+    store.dismissWorkerAttempt("claude-a");
+    assert.equal(store.getState().workerAttempts["claude-a"], undefined);
+    assert.equal(store.getState().workerAttempts["claude-b"].id, attempts[1].id);
+    handlers.worker_account_list = () => ({ accounts: [accounts[0], { ...accounts[1], enabled: false }] });
+    publish("auth", "worker_accounts_changed");
+    await until(store, () => store.getState().workerAccounts.data[1].enabled === false && !store.getState().workerCatalogs["claude-b"]);
+    assert.ok(store.getState().workerCatalogs["claude-a"].data, "disabling one Claude account preserves its peer's catalog");
+  } finally { h.close(); }
+});
+
 test("per-Bot invalidations survive activity eviction and both kinds of scoped reconnect", async () => {
   const h = harness({ bots: [{ id: "bot-1" }, { id: "bot-2" }] });
   const { store, sockets, publish } = h;

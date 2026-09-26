@@ -6,15 +6,15 @@ import { WorkerManager } from "./src/manager.js";
 
 const id = z.uuid();
 const model = z.strictObject({ id: z.string(), name: z.string(), efforts: z.array(z.string()), effortConfigId: z.string().nullable() });
-const catalogSchema = z.strictObject({ accountId: id, provider: z.enum(["codex", "grok", "devin"]), observedAt: z.string(),
+const catalogSchema = z.strictObject({ accountId: id, provider: z.enum(["codex", "grok", "devin", "claude"]), observedAt: z.string(),
   source: z.string(), runtimeVersion: z.string(), modelConfigId: z.string().nullable(), models: z.array(model), nativeModelIds: z.array(z.string()), stale: z.boolean(), error: z.string().nullable() });
 const phase = z.enum(["preparing", "idle", "running", "awaiting_input", "cancelling", "closed", "failed", "needs_recovery"]);
 const turnPhase = z.enum(["queued", "running", "awaiting_input", "cancelling", "completed", "cancelled", "failed", "unknown"]);
 const observedSettingsSchema = z.strictObject({ model: z.string().nullable(), effort: z.string().nullable(), mode: z.string().nullable(),
   at: z.number().int(), recordSeq: z.number().int() });
-const workerSchema = z.strictObject({ id, botId: z.string(), threadId: z.string(), accountId: id, provider: z.enum(["codex", "grok", "devin"]),
+const workerSchema = z.strictObject({ id, botId: z.string(), threadId: z.string(), accountId: id, provider: z.enum(["codex", "grok", "devin", "claude"]),
   model: z.string(), effort: z.string().nullable(), repo: z.string(), cwd: z.string().nullable(), branch: z.string().nullable(),
-  baseCommit: z.string().nullable(), sourceDirty: z.boolean(), roleRevision: z.number().int().nullable(), acpSessionId: z.string().nullable(),
+  baseCommit: z.string().nullable(), sourceDirty: z.boolean(), roleRevision: z.number().int().nullable(), sessionId: z.string().nullable(),
   runtimeInstance: id.nullable(),
   phase, currentTurnId: id.nullable(), issue: z.string().nullable(), createdAt: z.number().int(), updatedAt: z.number().int() });
 const turnSchema = z.strictObject({ id, workerId: id, phase: turnPhase, stopReason: z.string().nullable(), issue: z.string().nullable(),
@@ -29,9 +29,9 @@ const permissionSchema = z.strictObject({ id, workerId: id, turnId: id, acpReque
   runtimeInstance: id.nullable(), toolCallId: z.string().nullable(), recordSeq: z.number().int().nullable(),
   options: z.array(z.strictObject({ optionId: z.string(), name: z.string(), kind: z.string() })), state: z.enum(["pending", "responded", "unknown"]) });
 const recordSchema = z.strictObject({ seq: z.number().int(), workerId: id,
-  turnId: id.nullable().describe("Active admission window, or the tool's original observed turn. ACP has no native turn IDs; replay and unattributed session observations remain null."), kind: z.string(),
+  turnId: id.nullable().describe("Active admission window, or the tool's original observed turn. Replay and unattributed session observations remain null."), kind: z.string(),
   source: z.enum(["live", "replay", "response", "submitted"]), at: z.number().int(),
-  data: z.record(z.string(), z.unknown()).nullable().describe("Safe structured ACP JSON; oversized values are recovered through worker_record_read."),
+  data: z.record(z.string(), z.unknown()).nullable().describe("Safe structured runtime observations; oversized values are recovered through worker_record_read."),
   dataChars: z.number().int(), oversized: z.boolean() });
 const captureSchema = z.strictObject({ records: z.number().int(), retainedChars: z.number().int(), droppedRecords: z.number().int(),
   lastObservedAt: z.number().int().nullable(), maxRecords: z.number().int(), maxChars: z.number().int(), truncated: z.boolean() });
@@ -41,21 +41,22 @@ const requestId = z.uuid().describe("Client-generated idempotency key. Retry wit
 
 export type WorkersContext = { supervisor: WorkerSupervisor; manager: WorkerManager };
 export const workerCatalog = operation({
-  name: "worker_catalog", description: "Read model and effort choices observed through this account's native ACP session. Codex omits no-effort, o3, realtime and image OpenAI entries its ChatGPT sign-in cannot dispatch; Grok omits Imagine media models; Devin omits no-effort entries. Refresh on demand; stale results are labelled and never authorize dispatch.",
+  name: "worker_catalog", description: "Read model and effort choices observed through this account's ACP session or Claude SDK supportedModels. Codex omits no-effort, o3, realtime and image OpenAI entries its ChatGPT sign-in cannot dispatch; Grok omits Imagine media models; Devin omits no-effort entries. Refresh on demand; stale results are labelled and never authorize dispatch.",
   input: z.strictObject({ accountId: id, refresh: z.boolean().optional() }), output: catalogSchema,
   annotations: { title: "Account-bound worker catalog", readOnlyHint: true },
   async call(ctx: WorkersContext, { accountId, refresh }) { return ctx.supervisor.catalog(accountId, refresh ?? false); },
 });
 export const workerRuntimeList = operation({
-  name: "worker_runtime_list", description: "Read owned per-account ACP process health without exposing credentials or the ACP pipes.",
-  input: z.strictObject({}), output: z.strictObject({ runtimes: z.array(z.strictObject({ id, provider: z.enum(["codex", "grok", "devin"]),
+  name: "worker_runtime_list", description: "Read account runtime health. ACP owns one account process; Claude SDK owns separate session children (pid is null, pids lists current children). A running SDK group may have no children until catalog or session setup.",
+  input: z.strictObject({}), output: z.strictObject({ runtimes: z.array(z.strictObject({ id, provider: z.enum(["codex", "grok", "devin", "claude"]),
+    backend: z.enum(["acp", "claude-sdk"]), processModel: z.enum(["account", "session"]), pids: z.array(z.number().int()),
     state: z.enum(["running", "stopped", "error"]), pid: z.number().int().nullable(), instance: id.nullable(), error: z.string().nullable() })) }),
-  annotations: { title: "List ACP runtimes", readOnlyHint: true },
+  annotations: { title: "List Worker runtimes", readOnlyHint: true },
   async call(ctx: WorkersContext) { return { runtimes: ctx.supervisor.runtimeList() }; },
 });
 export const workerAccountDrain = operation({
-  name: "worker_account_drain", description: "Internal operator lifecycle: stop one exact ACP process before disabling or removing its account.",
-  input: z.strictObject({ id }), output: z.strictObject({ id }), annotations: { title: "Drain ACP account", idempotentHint: true },
+  name: "worker_account_drain", description: "Internal operator lifecycle: stop an account's exact runtime and all owned session children before disabling or removing it.",
+  input: z.strictObject({ id }), output: z.strictObject({ id }), annotations: { title: "Drain Worker account", idempotentHint: true },
   async call(ctx: WorkersContext, { id }, invocation) {
     if (invocation?.botId || invocation?.workerId) throw new Error("account lifecycle is operator-only");
     await ctx.supervisor.drain(id);
@@ -64,10 +65,10 @@ export const workerAccountDrain = operation({
 });
 
 export const workerStart = operation({
-  name: "worker_start", description: "Start a persistent ACP worker session in an owned Git worktree and dispatch its first turn. Choose exact account, model and effort from worker_catalog. An acknowledged request returns IDs promptly; read worker_status for completion.",
+  name: "worker_start", description: "Start a persistent Worker session in an owned Git worktree and dispatch its first turn through its native ACP or Claude SDK backend. Choose exact account, model and effort from worker_catalog. Admission returns IDs promptly; read worker_status for completion.",
   input: z.strictObject({ accountId: id, model: z.string().min(1).max(200), effort: z.string().min(1).max(64).optional(),
     repo: z.string().min(1).max(4_096), baseRef: z.string().min(1).max(256).optional(), task: z.string().min(1).max(65_536), requestId }),
-  output: resultSchema, annotations: { title: "Start ACP worker" },
+  output: resultSchema, annotations: { title: "Start Worker" },
   async call(ctx: WorkersContext, input, invocation) { return ctx.manager.start(input, invocation); },
 });
 export const workerList = operation({
@@ -89,7 +90,7 @@ export const workerRead = operation({
   async call(ctx: WorkersContext, { id, afterSeq, limit }, invocation) { return ctx.manager.read(id, afterSeq ?? 0, limit ?? 20, invocation); },
 });
 export const workerDetail = operation({
-  name: "worker_detail", description: "Read retained Worker session metadata, safe runtime arguments/capabilities, observed settings, capture limits and freshness. Submitted model/effort remains distinct from ACP observations. Subagent coverage is explicitly partial: no portable ACP hierarchy or child transcript is claimed.",
+  name: "worker_detail", description: "Read retained Worker session metadata, safe runtime arguments/capabilities, observed settings, capture limits and freshness. Submitted model/effort remains distinct from native observations. Subagent coverage is explicitly partial; no complete hierarchy or child transcript is claimed.",
   input: z.strictObject({ id }), output: z.strictObject({ worker: workerSchema, observedSettings: observedSettingsSchema.nullable(),
     metadata: z.array(recordSchema), capture: captureSchema,
     freshness: z.strictObject({ connected: z.boolean(), stale: z.boolean(), readAt: z.number().int(), reason: z.string().nullable() }),
@@ -105,7 +106,7 @@ export const workerTurnList = operation({
   async call(ctx: WorkersContext, { id, afterId, limit }, invocation) { return ctx.manager.turns(id, afterId, limit ?? 20, invocation); },
 });
 export const workerRecordList = operation({
-  name: "worker_record_list", description: "Page structured safe ACP observations: content parts, tool calls and merged partial updates, plans, configuration, session info, commands, usage and vendor _meta. Excludes raw reasoning. Replay/out-of-turn observations have no fabricated turn ID. Oversized immutable JSON is recoverable through worker_record_read; capture reports retention loss.",
+  name: "worker_record_list", description: "Page structured safe runtime observations: content parts, tool calls and merged updates, plans, configuration, session info, commands, usage and vendor _meta. Claude SDK projections identify their backend. Excludes raw reasoning. Replay/out-of-turn observations have no fabricated turn ID. Oversized JSON is recoverable through worker_record_read; capture reports retention loss.",
   input: z.strictObject({ ...pageInput, turnId: id.optional() }),
   output: z.strictObject({ entries: z.array(recordSchema), nextSeq: z.number().int(), hasMore: z.boolean(), capture: captureSchema }),
   annotations: { title: "Read structured Worker records", readOnlyHint: true },
@@ -119,7 +120,7 @@ export const workerRecordRead = operation({
   async call(ctx: WorkersContext, { id, seq, offset, limit }, invocation) { return ctx.manager.recordChunk(id, seq, offset ?? 0, limit ?? 16_000, invocation); },
 });
 export const workerToolList = operation({
-  name: "worker_tool_list", description: "Page merged ACP tool calls in first-observed order, retaining no-title status/output updates. Records include rawInput/rawOutput/content/locations and _meta. OpenCode task references are projected only from matching task input and explicit output metadata; they are not verified parent IDs or live child status. Refresh from the first page after progress invalidation.",
+  name: "worker_tool_list", description: "Page merged Worker tool calls in first-observed order, retaining no-title status/output updates. Records include rawInput/rawOutput/content/locations and _meta. OpenCode task references are projected only from matching input and explicit output metadata; they are not verified parent IDs or live child status. Refresh from the first page after progress invalidation.",
   input: z.strictObject(pageInput), output: z.strictObject({ tools: z.array(z.strictObject({ toolCallId: z.string(), turnId: id.nullable(),
     firstSeq: z.number().int(), lastSeq: z.number().int(), title: z.string().nullable(), kind: z.string().nullable(), status: z.string().nullable(), record: recordSchema })),
     tasks: z.array(z.strictObject({ toolCallId: z.string(), sessionId: z.string(), callingSessionId: z.string(), toolStatus: z.string().nullable(),
@@ -130,14 +131,14 @@ export const workerToolList = operation({
   async call(ctx: WorkersContext, { id, afterSeq, limit }, invocation) { return ctx.manager.tools(id, afterSeq ?? 0, limit ?? 20, invocation); },
 });
 export const workerSend = operation({
-  name: "worker_send", description: "Give the same idle ACP session follow-up work, including a request to fix or revise. Optional model/effort changes must match this account's current catalog.",
+  name: "worker_send", description: "Give the same idle native session follow-up work, including a request to fix or revise. Optional model/effort changes must match this account's current catalog.",
   input: z.strictObject({ id, message: z.string().min(1).max(65_536), requestId,
     model: z.string().min(1).max(200).optional(), effort: z.string().min(1).max(64).optional() }),
   output: resultSchema, annotations: { title: "Send worker follow-up" },
   async call(ctx: WorkersContext, input, invocation) { return ctx.manager.send(input, invocation); },
 });
 export const workerRespond = operation({
-  name: "worker_respond", description: "Answer one exact pending ACP permission request with an offered optionId, or null to cancel. Never infer approval from silence.",
+  name: "worker_respond", description: "Answer one exact pending native permission request with an offered optionId, or null to cancel. Claude offers allow-once and deny-once for the exact SDK tool callback; no persistent grant is inferred.",
   input: z.strictObject({ id, permissionId: id, optionId: z.string().nullable() }), output: permissionSchema,
   annotations: { title: "Respond to worker permission" },
   async call(ctx: WorkersContext, { id, permissionId, optionId }, invocation) { return ctx.manager.respond(id, permissionId, optionId, invocation); },
@@ -149,7 +150,7 @@ export const workerCancel = operation({
   async call(ctx: WorkersContext, { id }, invocation) { return ctx.manager.cancel(id, invocation); },
 });
 export const workerResume = operation({
-  name: "worker_resume", description: "Load a saved ACP session after process interruption without replaying a turn. If its prior outcome is unknown, explicitly acknowledge that after inspecting the worktree.",
+  name: "worker_resume", description: "Load a saved native session after runtime interruption without replaying a turn. If its prior outcome is unknown, explicitly acknowledge that after inspecting the worktree. Claude uses SDK resume with open input; no prompt is sent by recovery.",
   input: z.strictObject({ id, acknowledgeUnknownTurn: z.boolean().optional() }), output: workerSchema,
   annotations: { title: "Resume worker session" },
   async call(ctx: WorkersContext, { id, acknowledgeUnknownTurn }, invocation) { return ctx.manager.resume(id, acknowledgeUnknownTurn ?? false, invocation); },
@@ -167,7 +168,7 @@ export const workerRemove = operation({
 });
 
 export const topics = {
-  workers_changed: "ACP account, catalog or Worker state changed. Refresh the relevant read operation.",
+  workers_changed: "Worker account, runtime, catalog or session state changed. Refresh the relevant read operation.",
   worker_changed: "One Worker's turn, permission or recovery state changed. Subscribe with its Worker ID and re-read worker_status for the latest value.",
   worker_progress: "Scoped UI invalidation for structured transcript, tool and session metadata progress. Subscribe with a Worker ID and refresh Worker detail/history reads. This is separate from Bot wakeups on worker_changed.",
 } as const;

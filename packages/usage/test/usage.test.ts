@@ -11,7 +11,7 @@ import { grokUsage, snapshotSchema, type Provider } from "../src/schema.js";
 const codexId = "00000000-0000-4000-8000-000000000001";
 const grokId = "00000000-0000-4000-8000-000000000002";
 const devinId = "00000000-0000-4000-8000-000000000003";
-const ids: Record<Provider, string> = { codex: codexId, grok: grokId, devin: devinId };
+const ids: Partial<Record<Provider, string>> = { codex: codexId, grok: grokId, devin: devinId };
 
 test("observes each registered account with its own credentials and projects only usage", async () => {
   const root = await mkdtemp(join(tmpdir(), "agentstack-usage-"));
@@ -61,7 +61,7 @@ test("observes each registered account with its own credentials and projects onl
       return Response.json({ userStatus: { planStatus: { dailyQuotaRemainingPercent: 76, weeklyQuotaRemainingPercent: 54,
         planInfo: { planName: "Pro", billingStrategy: "BILLING_STRATEGY_QUOTA", monthlyPromptCredits: 100 } } } });
     };
-    const results = await Promise.all((["codex", "grok", "devin"] as const).map((provider) => collectAccount(root, ids[provider], provider, fetcher)));
+    const results = await Promise.all((["codex", "grok", "devin"] as const).map((provider) => collectAccount(root, ids[provider]!, provider, fetcher)));
     const workerUsage = await collectAccount(root, codexId, "codex", fetcher, undefined, "worker");
     assert.equal((results[0] as { lanes: Array<{ windows: Array<{ usedPercent: number }> }> }).lanes[0]?.windows[0]?.usedPercent, 12);
     assert.equal((workerUsage as { lanes: Array<{ windows: Array<{ usedPercent: number }> }> }).lanes[0]?.windows[0]?.usedPercent, 34);

@@ -1,5 +1,5 @@
 name: workers
-description: Run durable account-bound ACP Workers in owned Git worktrees; inspect structured conversations, turns, tool/task evidence, session metadata and account runtime health.
+description: Run durable account-bound Workers through ACP or the native Claude Agent SDK in owned Git worktrees; inspect conversations, turns, tool/task evidence, session metadata and account runtime health.
 socket:
   description: Private socket for Worker lifecycle, bounded structured history, account catalog and runtime operations.
 mcp:

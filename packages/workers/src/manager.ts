@@ -5,7 +5,8 @@ import { WorkerLedger, summarizeTurn, type WorkerRecord, type TurnSummary, type 
 import { LOCAL_OPERATOR_ID, ownsWorker, workerOwner, type WorkerOwner } from "./owner.js";
 import { roleSnapshot, sessionMcpServers } from "./resources.js";
 import { WorkerSupervisor, type Runtime } from "./supervisor.js";
-import { claimWorktree, loadWorkerRole, removeWorkerRole, removeWorktree, saveWorkerRole } from "./worktree.js";
+import { claimWorktree, claudeRole, loadWorkerRole, removeWorkerRole, removeWorktree, saveWorkerRole } from "./worktree.js";
+import { safeValue } from "./history.js";
 
 export type StartInput = { accountId: string; model: string; effort?: string; repo: string; baseRef?: string; task: string; requestId: string };
 export type SendInput = { id: string; message: string; requestId: string; model?: string; effort?: string };
@@ -24,8 +25,8 @@ export class WorkerManager {
 
   constructor(private readonly stateDir: string, readonly supervisor: WorkerSupervisor, private readonly env: NodeJS.ProcessEnv) {
     this.ledger = new WorkerLedger(stateDir);
-    for (const worker of this.ledger.workers()) if (worker.acpSessionId)
-      this.sessions.set(`${worker.accountId}:${worker.acpSessionId}`, worker.id);
+    for (const worker of this.ledger.workers()) if (worker.sessionId)
+      this.sessions.set(`${worker.accountId}:${worker.sessionId}`, worker.id);
     supervisor.onChange = () => this.onChange?.();
     supervisor.onRuntimeReady = (runtime) => this.attach(runtime);
     supervisor.onRuntimeExit = (accountId) => {
@@ -86,6 +87,7 @@ export class WorkerManager {
   }
 
   private captureUpdate(worker: WorkerRecord, update: Record<string, unknown>, meta?: unknown): void {
+    update = safeValue(update) as Record<string, unknown>;
     const type = update.sessionUpdate;
     if (type === "agent_thought_chunk") return;
     const replay = this.loading.has(worker.id);
@@ -120,7 +122,7 @@ export class WorkerManager {
     }) : [];
     if (!options.length || options.length > 32 || options.some((option) => option.optionId.length > 256 || option.name.length > 1_000)) return false;
     const toolCall = request.params.toolCall;
-    const title = record(toolCall) && typeof toolCall.title === "string" ? toolCall.title : "Worker requests permission";
+    const title = safeValue(record(toolCall) && typeof toolCall.title === "string" ? toolCall.title : "Worker requests permission") as string;
     const seq = this.ledger.history.append(worker.id, worker.currentTurnId, "session/request_permission", "live", request.params);
     this.ledger.addPermission(worker.id, worker.currentTurnId, request.id, title, options, runtime.instance,
       record(toolCall) && typeof toolCall.toolCallId === "string" && toolCall.toolCallId.length <= 512 ? toolCall.toolCallId : null, seq);
@@ -152,7 +154,7 @@ export class WorkerManager {
   async detail(id: string, invocation?: InvocationContext) {
     const worker = await this.owned(id, invocation);
     const runtime = this.supervisor.runtime(worker.accountId);
-    const connected = Boolean(worker.acpSessionId && runtime && runtime.instance === worker.runtimeInstance
+    const connected = Boolean(worker.sessionId && runtime && runtime.instance === worker.runtimeInstance
       && ["idle", "running", "awaiting_input", "cancelling"].includes(worker.phase));
     const capture = this.ledger.history.capture(id);
     return { worker, observedSettings: this.ledger.history.settings(id), metadata: this.ledger.history.metadata(id),
@@ -160,7 +162,8 @@ export class WorkerManager {
         reason: capture.truncated ? "Capture limit reached; retained projections may be incomplete" : connected ? null : "Retained observations; the exact Worker session is not connected" },
       subagents: { coverage: worker.provider === "devin" ? "unavailable" as const : "partial" as const,
         hierarchyAvailable: false as const, childTranscriptsAvailable: false as const,
-        reason: "ACP supplies no portable parent/child enumeration. OpenCode task rawOutput.metadata can reference a called session; tool completion is not a live child status. Vendor _meta is evidence only; absence does not prove no children." } };
+        reason: worker.provider === "claude" ? "Claude SDK tool observations may carry parent_tool_use_id; this API does not enumerate native child sessions or read child transcripts. Missing evidence does not prove no children."
+          : "ACP supplies no portable parent/child enumeration. OpenCode task rawOutput.metadata can reference a called session; tool completion is not a live child status. Vendor _meta is evidence only; absence does not prove no children." } };
   }
   async turns(id: string, afterId: string | undefined, limit: number, invocation?: InvocationContext) {
     await this.owned(id, invocation);
@@ -189,9 +192,10 @@ export class WorkerManager {
   }
   private bindRuntime(id: string, runtime: Runtime): void {
     this.ledger.setRuntimeInstance(id, runtime.instance);
-    this.ledger.history.append(id, null, "runtime", "response", { protocolVersion: 1, version: runtime.version,
+    this.ledger.history.append(id, null, "runtime", "response", { backend: runtime.backend, protocolVersion: runtime.backend === "acp" ? 1 : null, version: runtime.version,
       agentInfo: runtime.agentInfo, capabilities: runtime.capabilities, instance: runtime.instance,
-      command: runtime.account.provider === "devin" ? "devin" : "opencode", args: ["acp"] });
+      command: runtime.backend === "claude-sdk" ? "@anthropic-ai/claude-agent-sdk" : runtime.account.provider === "devin" ? "devin" : "opencode",
+      args: runtime.backend === "acp" ? ["acp"] : [], processModel: runtime.backend === "claude-sdk" ? "session" : "account" });
   }
 
   private async account(id: string) {
@@ -207,12 +211,12 @@ export class WorkerManager {
     const catalog = await this.supervisor.catalog(accountId, false);
     if (catalog.stale) throw new Error("worker catalog is stale; refresh it before dispatch");
     const selected = catalog.models.find((item) => item.id === model);
-    if (!selected) throw new Error("model is not in this account's ACP catalog");
+    if (!selected) throw new Error("model is not in this account's runtime catalog");
     if (selected.efforts.length && !effort) throw new Error("select an explicit effort from this model's catalog choices");
     if (effort && !selected.efforts.includes(effort)) throw new Error("effort is not offered for this account/model combination");
   }
 
-  private async select(id: string, turnId: string, runtime: Runtime, sessionId: string, initial: unknown, model: string, effort: string | null): Promise<void> {
+  private async select(id: string, turnId: string | null, runtime: Runtime, sessionId: string, initial: unknown, model: string, effort: string | null): Promise<void> {
     const option = modelOption(optionsOf(initial));
     if (!option || !option.values.some((value) => value.value === model)) throw new Error("ACP session did not offer the selected model");
     const selected = await runtime.process.request("session/set_config_option", { sessionId, configId: option.id, value: model });
@@ -254,16 +258,17 @@ export class WorkerManager {
       stage = "Role snapshot";
       await saveWorkerRole(this.stateDir, id, snapshot);
       this.ledger.setWorktree(id, claim);
-      stage = "ACP session";
+      stage = "Worker session";
       const runtime = this.supervisor.runtime(input.accountId);
-      if (!runtime) throw new Error("account ACP process is unavailable");
+      if (!runtime) throw new Error("account runtime is unavailable");
       this.bindRuntime(id, runtime);
       const mcpServers = await sessionMcpServers(snapshot, this.env, runtime.supportsHttp, claim.cwd, { id, instance: runtime.instance });
       const creating = this.creating.get(runtime.instance) ?? { count: 0, chars: 0, dropped: 0, updates: [] };
       this.creating.set(runtime.instance, creating); creating.count++;
       let result: Record<string, unknown>;
       try {
-        const value = await runtime.process.request("session/new", { cwd: claim.cwd, mcpServers });
+        const resources = account.provider === "claude" ? await claudeRole(this.stateDir, id, snapshot) : {};
+        const value = await runtime.process.request("session/new", { cwd: claim.cwd, mcpServers, ...resources });
         if (!record(value) || typeof value.sessionId !== "string") throw new Error("ACP returned no session ID");
         result = value;
         this.ledger.setSession(id, value.sessionId);
@@ -275,7 +280,7 @@ export class WorkerManager {
         this.response(id, reserved.turn.id, "session/new", value);
       } finally { if (--creating.count === 0) this.creating.delete(runtime.instance); }
       await this.select(id, reserved.turn.id, runtime, result.sessionId as string, result, input.model, input.effort ?? null);
-      this.prompt(id, reserved.turn.id, claim.instructions && account.provider !== "devin"
+      this.prompt(id, reserved.turn.id, claim.instructions && account.provider !== "devin" && account.provider !== "claude"
         ? `AgentStack Role instructions for this worker:\n${claim.instructions}\n\nTask:\n${input.task}` : input.task);
     } catch {
       const issue = `${stage} preparation failed; inspect the owned worktree and account runtime`;
@@ -296,9 +301,9 @@ export class WorkerManager {
     }
     const worker = this.ledger.worker(id)!;
     const runtime = this.supervisor.runtime(worker.accountId);
-    if (!runtime || runtime.instance !== worker.runtimeInstance || !worker.acpSessionId) {
-      this.ledger.completeTurn(turnId, "unknown", null, "ACP process unavailable before prompt dispatch");
-      this.ledger.append(id, turnId, "turn", "outcome unknown · ACP process unavailable before prompt dispatch");
+    if (!runtime || runtime.instance !== worker.runtimeInstance || !worker.sessionId) {
+      this.ledger.completeTurn(turnId, "unknown", null, "Worker runtime unavailable before prompt dispatch");
+      this.ledger.append(id, turnId, "turn", "outcome unknown · Worker runtime unavailable before prompt dispatch");
       this.changed(false, id);
       return;
     }
@@ -306,23 +311,24 @@ export class WorkerManager {
     this.ledger.setWorkerPhase(id, "running");
     this.ledger.dispatchTurn(turnId, promptText);
     this.changed(false, id);
-    void runtime.process.request("session/prompt", { sessionId: worker.acpSessionId, prompt: [{ type: "text", text: promptText }] }, 0)
+    void runtime.process.request("session/prompt", { sessionId: worker.sessionId, prompt: [{ type: "text", text: promptText }] }, 0)
       .then((result) => {
         if (this.closing) return;
         const current = this.ledger.turn(turnId);
         if (!current || ["completed", "cancelled", "failed", "unknown"].includes(current.phase)) return;
         const reason = record(result) && typeof result.stopReason === "string" ? result.stopReason : null;
         this.response(id, turnId, "session/prompt", result);
-        this.ledger.completeTurn(turnId, reason === "cancelled" ? "cancelled" : reason ? "completed" : "unknown", reason,
-          reason ? null : "ACP prompt returned no stop reason; inspect before continuing");
+        const failed = record(result) && result.failed === true;
+        this.ledger.completeTurn(turnId, reason === "cancelled" ? "cancelled" : failed ? "failed" : reason ? "completed" : "unknown", reason,
+          failed ? "Native runtime reported a failed turn" : reason ? null : "Worker prompt returned no stop reason; inspect before continuing");
         this.ledger.append(id, turnId, "turn", reason ? `stopped · ${reason}` : "outcome unknown · no stop reason");
         this.changed(false, id);
       }).catch(() => {
         if (this.closing) return;
         const current = this.ledger.turn(turnId);
         if (!current || ["completed", "cancelled", "failed", "unknown"].includes(current.phase)) return;
-        this.ledger.completeTurn(turnId, "unknown", null, "ACP prompt outcome is unknown; inspect the worktree before resuming");
-        this.ledger.append(id, turnId, "turn", "outcome unknown · ACP connection failed");
+        this.ledger.completeTurn(turnId, "unknown", null, "Worker prompt outcome is unknown; inspect the worktree before resuming");
+        this.ledger.append(id, turnId, "turn", "outcome unknown · Worker connection failed");
         this.changed(false, id);
       });
   }
@@ -336,14 +342,14 @@ export class WorkerManager {
     if (prior) return { worker: this.ledger.worker(worker.id)!, turn: summarizeTurn(prior), duplicate: true };
     await this.checkChoice(worker.accountId, selected, effort);
     const runtime = this.supervisor.runtime(worker.accountId);
-    if (!runtime || runtime.instance !== worker.runtimeInstance || !worker.acpSessionId) throw new Error("worker ACP session is not loaded; use worker_resume");
+    if (!runtime || runtime.instance !== worker.runtimeInstance || !worker.sessionId) throw new Error("worker session is not loaded; use worker_resume");
     const reserved = this.ledger.reserveTurn(worker.id, input.requestId, input.message, selected, effort);
     if (reserved.duplicate) return { worker, turn: summarizeTurn(reserved.turn), duplicate: true };
     try {
       if (input.model || input.effort) {
         const catalog = await this.supervisor.catalog(worker.accountId, false);
         if (!catalog.modelConfigId || catalog.stale) throw new Error("account model configuration is unavailable");
-        const current = await runtime.process.request("session/set_config_option", { sessionId: worker.acpSessionId,
+        const current = await runtime.process.request("session/set_config_option", { sessionId: worker.sessionId,
           configId: catalog.modelConfigId, value: selected });
         this.response(worker.id, reserved.turn.id, "config_option_update", current);
         const actualModel = currentOption(current, catalog.modelConfigId);
@@ -351,7 +357,7 @@ export class WorkerManager {
         const option = effortOption(optionsOf(current));
         if (effort) {
           if (!option?.values.some((value) => value.value === effort)) throw new Error("ACP did not offer requested effort");
-          const confirmed = await runtime.process.request("session/set_config_option", { sessionId: worker.acpSessionId, configId: option.id, value: effort });
+          const confirmed = await runtime.process.request("session/set_config_option", { sessionId: worker.sessionId, configId: option.id, value: effort });
           this.response(worker.id, reserved.turn.id, "config_option_update", confirmed);
           const actualEffort = currentOption(confirmed, option.id);
           if (actualEffort && actualEffort !== effort) throw new Error("ACP selected a different effort");
@@ -360,8 +366,8 @@ export class WorkerManager {
       }
       this.prompt(worker.id, reserved.turn.id, input.message);
     } catch {
-      this.ledger.completeTurn(reserved.turn.id, "unknown", null, "ACP selection outcome is unknown; inspect before retrying");
-      this.ledger.append(worker.id, reserved.turn.id, "turn", "outcome unknown · ACP selection failed");
+      this.ledger.completeTurn(reserved.turn.id, "unknown", null, "Worker selection outcome is unknown; inspect before retrying");
+      this.ledger.append(worker.id, reserved.turn.id, "turn", "outcome unknown · Worker selection failed");
     }
     this.changed(false, worker.id);
     return { worker: this.ledger.worker(worker.id)!, turn: summarizeTurn(this.ledger.turn(reserved.turn.id)!), duplicate: false };
@@ -387,36 +393,38 @@ export class WorkerManager {
     const turn = worker.currentTurnId ? this.ledger.turn(worker.currentTurnId) : null;
     if (!turn || !["queued", "running", "awaiting_input", "cancelling"].includes(turn.phase)) return { worker, turn: turn ? summarizeTurn(turn) : null };
     const runtime = this.supervisor.runtime(worker.accountId);
-    if (!runtime || runtime.instance !== worker.runtimeInstance || !worker.acpSessionId) throw new Error("ACP session is unavailable; turn outcome requires recovery");
-    runtime.process.cancelPermissions(worker.acpSessionId);
+    if (!runtime || runtime.instance !== worker.runtimeInstance || !worker.sessionId) throw new Error("Worker session is unavailable; turn outcome requires recovery");
+    runtime.process.cancelPermissions(worker.sessionId);
     this.ledger.cancelPending(id);
     this.ledger.setTurnPhase(turn.id, "cancelling");
     this.ledger.setWorkerPhase(id, "cancelling");
-    runtime.process.notify("session/cancel", { sessionId: worker.acpSessionId });
+    runtime.process.notify("session/cancel", { sessionId: worker.sessionId });
     this.changed(false, id);
     return { worker: this.ledger.worker(id)!, turn: summarizeTurn(this.ledger.turn(turn.id)!) };
   }
 
   async resume(id: string, acknowledgeUnknownTurn: boolean, invocation?: InvocationContext): Promise<WorkerRecord> {
     const worker = await this.owned(id, invocation);
-    if (worker.phase !== "needs_recovery" || !worker.acpSessionId || !worker.cwd) throw new Error("worker has no loadable saved ACP session");
+    if (worker.phase !== "needs_recovery" || !worker.sessionId || !worker.cwd) throw new Error("worker has no loadable saved session");
     const turn = worker.currentTurnId ? this.ledger.turn(worker.currentTurnId) : null;
     if (turn?.phase === "unknown" && !acknowledgeUnknownTurn) throw new Error("acknowledge the unknown turn outcome after inspecting the worktree");
     const runtime = this.supervisor.runtime(worker.accountId);
-    if (!runtime?.canLoad) throw new Error("account ACP process cannot load saved sessions");
+    if (!runtime?.canLoad) throw new Error("account runtime cannot load saved sessions");
     this.bindRuntime(id, runtime);
     this.ledger.setWorkerPhase(id, "preparing");
     this.loading.add(id);
     try {
       const snapshot = await loadWorkerRole(this.stateDir, id);
       const mcpServers = await sessionMcpServers(snapshot, this.env, runtime.supportsHttp, worker.cwd, { id, instance: runtime.instance });
-      const result = await runtime.process.request("session/load", { sessionId: worker.acpSessionId, cwd: worker.cwd, mcpServers }, 60_000);
+      const resources = worker.provider === "claude" ? await claudeRole(this.stateDir, id, snapshot) : {};
+      const result = await runtime.process.request("session/load", { sessionId: worker.sessionId, cwd: worker.cwd, mcpServers, ...resources }, 60_000);
       this.response(id, null, "session/load", result);
+      if (worker.provider === "claude") await this.select(id, null, runtime, worker.sessionId, result, worker.model, worker.effort);
       this.ledger.setWorkerPhase(id, "idle");
     } catch {
-      this.ledger.setWorkerPhase(id, "needs_recovery", "ACP session load failed; inspect before retrying");
+      this.ledger.setWorkerPhase(id, "needs_recovery", "Worker session load failed; inspect before retrying");
       this.changed(false, id);
-      throw new Error("ACP session load failed; inspect before retrying");
+      throw new Error("Worker session load failed; inspect before retrying");
     } finally { this.loading.delete(id); }
     this.changed(false, id);
     return this.ledger.worker(id)!;
@@ -427,10 +435,10 @@ export class WorkerManager {
     if (worker.phase === "closed") return worker;
     if (["running", "awaiting_input", "cancelling", "preparing"].includes(worker.phase)) throw new Error("worker has active or uncertain preparation; cancel or inspect before closing");
     const runtime = this.supervisor.runtime(worker.accountId);
-    if (runtime?.canClose && worker.acpSessionId && worker.phase === "idle")
-      await runtime.process.request("session/close", { sessionId: worker.acpSessionId });
+    if (runtime?.canClose && runtime.instance === worker.runtimeInstance && worker.sessionId && ["idle", "failed"].includes(worker.phase))
+      await runtime.process.request("session/close", { sessionId: worker.sessionId });
     this.ledger.setWorkerPhase(id, "closed");
-    if (worker.acpSessionId) this.sessions.delete(`${worker.accountId}:${worker.acpSessionId}`);
+    if (worker.sessionId) this.sessions.delete(`${worker.accountId}:${worker.sessionId}`);
     this.changed(false, id);
     return this.ledger.worker(id)!;
   }
@@ -442,7 +450,7 @@ export class WorkerManager {
     if (worker.cwd && worker.branch) await removeWorktree({ repo: worker.repo, cwd: worker.cwd, branch: worker.branch }, id);
     await removeWorkerRole(this.stateDir, id);
     this.ledger.removeWorker(id);
-    if (worker.acpSessionId) this.sessions.delete(`${worker.accountId}:${worker.acpSessionId}`);
+    if (worker.sessionId) this.sessions.delete(`${worker.accountId}:${worker.sessionId}`);
     this.changed(false, id);
     return { id, retainedBranch: worker.branch };
   }

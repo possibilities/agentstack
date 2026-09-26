@@ -42,7 +42,7 @@ async function verifiedWorker(workerId: string, instance: string, env: NodeJS.Pr
   ]);
   if (status.worker.runtimeInstance !== instance || !["preparing", "idle", "running", "awaiting_input", "cancelling"].includes(status.worker.phase) ||
       !runtimes.runtimes.some((runtime) => runtime.id === status.worker.accountId && runtime.state === "running" && runtime.instance === instance))
-    throw new Error("worker MCP connection is no longer bound to a live ACP session");
+    throw new Error("worker MCP connection is no longer bound to a live Worker session");
 }
 
 export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string; port?: number; subscriptions?: McpEventSubscriptions } = {}): Promise<ServedMcp> {

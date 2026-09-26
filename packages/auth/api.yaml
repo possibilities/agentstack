@@ -1,5 +1,5 @@
 name: auth
-description: Manage independent Codex Bot sign-ins and Codex, Grok and Devin Worker sign-ins without exposing credentials.
+description: Manage independent Codex Bot sign-ins and Codex, Grok, Devin and Claude Worker sign-ins without exposing credentials.
 socket:
   description: Unix socket for account and sign-in operations, namespaced as auth.
 mcp:

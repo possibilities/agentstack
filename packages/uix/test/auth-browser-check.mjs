@@ -19,19 +19,21 @@ const dir = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agentstack-auth-br
 const evidence = process.env.AUTH_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
 const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
-const providers = ["codex", "grok", "devin"];
+const providers = ["codex", "grok", "devin", "claude"];
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const accounts = providers.map((provider, index) => ({ id: id(index + 1), provider, enabled: true, ready: false, removing: false, linkedAccounts: [] }));
 const authUrls = {
   codex: "https://auth.openai.com/codex/device",
   grok: "https://accounts.x.ai/oauth2/device?user_code=GROK-CODE",
   devin: "https://windsurf.com/devin/account/login?state=fixture-long-state-for-copy-verification&code_challenge=fixture",
+  claude: "https://claude.ai/oauth/authorize?state=fixture-claude-sign-in",
 };
 let serial = 10;
 const attempts = new Map();
 function newAttempt(account) {
+  const needsCode = account.provider === "devin" || account.provider === "claude";
   const attempt = { id: id(serial++), account: account.id, provider: account.provider, status: "pending", authUrl: authUrls[account.provider],
-    userCode: account.provider === "devin" ? null : `${account.provider.toUpperCase()}-CODE`, needsCode: account.provider === "devin", error: null };
+    userCode: needsCode ? null : `${account.provider.toUpperCase()}-CODE`, needsCode, error: null };
   attempts.set(attempt.id, attempt);
   return attempt;
 }
@@ -51,7 +53,15 @@ const handlers = {
   worker_account_list: () => ({ accounts }),
   worker_account_login_current: () => ({ logins: [...attempts.values()].filter((attempt) => attempt.status === "pending") }),
   worker_account_login_status: ({ id }) => attempts.get(id),
-  worker_account_login_start: ({ id }) => { const account = accounts.find((account) => account.id === id); current(account.provider).status = "failed"; return newAttempt(account); },
+  worker_account_login_start: ({ id: accountId, provider }) => {
+    let account = accounts.find((account) => account.id === accountId);
+    if (!account) { account = { id: id(serial++), provider, enabled: true, ready: false, removing: false, linkedAccounts: [] }; accounts.push(account); }
+    const previous = [...attempts.values()].findLast((attempt) => attempt.account === account.id);
+    if (previous) previous.status = "failed";
+    return newAttempt(account);
+  },
+  worker_account_set_enabled: ({ id, enabled }) => { const account = accounts.find((item) => item.id === id); account.enabled = enabled; return account; },
+  worker_account_remove: ({ id }) => { accounts.splice(accounts.findIndex((account) => account.id === id), 1); for (const [key, attempt] of attempts) if (attempt.account === id) attempts.delete(key); return { id }; },
   worker_account_login_submit: async ({ id }) => {
     submitEntered?.resolve();
     await submitGate?.promise;
@@ -99,7 +109,8 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_BIN ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1200 }, reducedMotion: "reduce", colorScheme: "light" });
+  const desktopViewport = { width: 1440, height: 1200 };
+  const context = await browser.newContext({ viewport: desktopViewport, reducedMotion: "reduce", colorScheme: "light" });
   const externalRequests = [], popups = [], navigations = [], errors = [];
   await context.route("**/*", (route) => {
     if (new URL(route.request().url()).origin !== origin) { externalRequests.push(route.request().url()); return route.abort(); }
@@ -121,8 +132,11 @@ try {
   const reveal = async (panel) => {
     // Inspect an off-camera card without native scrolling; explicit reveal owns the camera.
     const inspect = panel.getByRole("button", { name: /^Inspect / });
-    await inspect.evaluate((element) => element.focus({ preventScroll: true }));
-    await page.keyboard.press("Enter");
+    // The name toggles inspection; a card still inspected from a prior step must stay selected.
+    if (await inspect.getAttribute("aria-pressed") !== "true") {
+      await inspect.evaluate((element) => element.focus({ preventScroll: true }));
+      await page.keyboard.press("Enter");
+    }
     await page.getByRole("button", { name: "Show on bench", exact: true }).click();
     const close = page.getByRole("button", { name: "Close inspector", exact: true });
     if (await close.isVisible()) await close.click();
@@ -147,7 +161,7 @@ try {
     await panel.getByRole("button", { name: "Copy link", exact: true }).click();
     assert.equal(await page.evaluate(() => window.authFixture.copies.at(-1)), authUrls[provider]);
     assert.equal(await panel.locator("code").getAttribute("title"), authUrls[provider], "full URL remains inspectable");
-    if (provider !== "devin") {
+    if (current(provider).userCode) {
       await panel.getByRole("button", { name: "Copy one-time code", exact: true }).click();
       assert.equal(await page.evaluate(() => window.authFixture.copies.at(-1)), current(provider).userCode);
     }
@@ -187,6 +201,7 @@ try {
       await panel.screenshot({ path: join(evidence, `${provider}-${theme}-narrow.png`), animations: "disabled" });
     }
   }
+  await page.setViewportSize(desktopViewport);
   await input().fill("  returned-devin-code  ");
   await input().focus();
   await page.waitForFunction(() => document.querySelector('[data-node="worker-account:00000000-0000-4000-8000-000000000003"] [role="timer"]')?.textContent !== "0:00");
@@ -237,12 +252,59 @@ try {
   await devin.getByText("Signed in", { exact: true }).waitFor();
   await devin.getByRole("button", { name: "Dismiss", exact: true }).click();
   await devin.getByText("Signed in", { exact: true }).waitFor({ state: "hidden" });
+  // Claude shares the same code-paste operation, with multiple account IDs kept separate.
+  const claude = card("claude");
+  const firstClaudeId = accounts.find((account) => account.provider === "claude").id;
+  await reveal(claude);
+  const claudeInput = claude.getByRole("textbox", { name: "Code from Claude", exact: true });
+  await claudeInput.fill("first-claude-draft");
+  await page.locator('[data-window="worker-accounts"]').getByRole("button", { name: "Add Worker account", exact: true }).first().click();
+  await page.getByRole("menuitem", { name: "Claude", exact: true }).click();
+  const secondAttempt = current("claude");
+  assert.notEqual(secondAttempt.account, firstClaudeId);
+  assert.deepEqual(calls.filter((call) => call.name === "worker_account_login_start").at(-1).input, { provider: "claude" });
+  const secondClaude = page.locator(`[data-node="worker-account:${secondAttempt.account}"]`);
+  await secondClaude.getByRole("button", { name: "Inspect worker account claude-worker-account-2", exact: true }).waitFor();
+  await reveal(secondClaude);
+  const secondInput = secondClaude.getByRole("textbox", { name: "Code from Claude", exact: true });
+  await secondInput.fill("  second-claude-code  ");
+  await secondInput.press("Enter");
+  await secondInput.waitFor({ state: "hidden" });
+  assert.deepEqual(calls.filter((call) => call.name === "worker_account_login_submit").at(-1).input, { id: secondAttempt.id, code: "second-claude-code" });
+  assert.equal(await claudeInput.inputValue(), "first-claude-draft", "submitting the second account preserves the first account's draft");
+  Object.assign(secondAttempt, { status: "complete", needsCode: false });
+  accounts.find((account) => account.id === secondAttempt.account).ready = true;
+  publish();
+  served.get("auth").publish("worker_accounts_changed");
+  await secondClaude.getByText("Signed in", { exact: true }).waitFor();
+  await secondClaude.getByRole("button", { name: "Dismiss", exact: true }).click();
+  await secondClaude.getByRole("button", { name: "claude-worker-account-2 actions", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Sign in again", exact: true }).click();
+  const confirm = page.getByRole("alertdialog");
+  await confirm.getByRole("heading", { name: "Sign in again to claude-worker-account-2?", exact: true }).waitFor();
+  assert.match(await confirm.innerText(), /Its runtime stops|Stops its runtime/);
+  assert.doesNotMatch(await confirm.innerText(), /ACP/);
+  await confirm.getByRole("button", { name: "Cancel", exact: true }).click();
+  await secondClaude.getByRole("button", { name: "claude-worker-account-2 actions", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Disable", exact: true }).click();
+  await secondClaude.getByText("Disabled", { exact: true }).waitFor();
+  assert.deepEqual(calls.filter((call) => call.name === "worker_account_set_enabled").at(-1).input, { id: secondAttempt.account, enabled: false });
+  await secondClaude.getByRole("button", { name: "Enable", exact: true }).click();
+  await secondClaude.getByText("Disabled", { exact: true }).waitFor({ state: "hidden" });
+  assert.deepEqual(calls.filter((call) => call.name === "worker_account_set_enabled").at(-1).input, { id: secondAttempt.account, enabled: true });
+  await secondClaude.getByRole("button", { name: "claude-worker-account-2 actions", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Remove…", exact: true }).click();
+  assert.match(await confirm.innerText(), /Its runtime stops|Stops its runtime/);
+  await confirm.getByRole("button", { name: "Remove account", exact: true }).click();
+  await secondClaude.waitFor({ state: "hidden" });
+  assert.deepEqual(calls.filter((call) => call.name === "worker_account_remove").at(-1).input, { id: secondAttempt.account });
+  assert.equal(await claudeInput.inputValue(), "first-claude-draft", "removing the second account leaves the first sign-in intact");
   assert.deepEqual(await page.evaluate(() => window.authFixture.opens), [], "no browser opening attempted");
   assert.deepEqual(popups, [], "no popup created");
   assert.deepEqual(navigations, [], "auth actions do not navigate");
   assert.deepEqual(externalRequests, [], "no external HTTP or navigation requests");
   assert.deepEqual(errors, [], "no uncaught application errors");
-  console.log(JSON.stringify({ ok: true, mode, evidence, assertions: "exact Worker/Bot URL and code copies; no opens/popups/navigation/external requests; empty/busy/error/retry/approval/cancel/restart/complete states; attempt draft reset; timer and focus; light/dark/narrow" }, null, 2));
+  console.log(JSON.stringify({ ok: true, mode, evidence, assertions: "exact Worker/Bot URL and code copies; no opens/popups/navigation/external requests; empty/busy/error/retry/approval/cancel/restart/complete states; independent Claude create/submit/re-sign-in/disable/enable/remove; attempt draft reset; timer and focus; light/dark/narrow" }, null, 2));
 } catch (error) {
   const page = browser?.contexts()[0]?.pages()[0];
   if (page) await page.screenshot({ path: join(evidence, "failure.png"), fullPage: true, animations: "disabled" }).catch(() => undefined);
