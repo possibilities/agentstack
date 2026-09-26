@@ -105,8 +105,10 @@ test("Claude usage shows per-account windows, resets, provider-unit extra usage 
   const first = card(html, "usage-account:worker:claude-a");
   assert.match(first, /aria-label="Inspect claude-worker-account-1 usage"/);
   assert.match(first, /aria-label="Read failed"/);
-  assert.match(first, /aria-label="claude-worker-account-1 5h remaining"[^>]*aria-valuenow="77"/);
+  // The exhausted weekly window blocks the 5h headroom: it keeps its tone but dims.
+  assert.match(first, /aria-label="claude-worker-account-1 5h remaining, unavailable until Weekly resets"[^>]*aria-valuenow="77"[^>]*opacity-35/);
   assert.match(first, /aria-label="claude-worker-account-1 Weekly remaining"[^>]*aria-valuenow="0"/);
+  assert.match(text(first), /0% left/);
   assert.match(first, /title="2026-09-26T18:00:00Z"/);
   assert.match(text(first), /extra usage 120 \/ 5,000 credits/);
   assert.doesNotMatch(text(first), /\$/);
@@ -137,8 +139,11 @@ test("Exhausted Devin quota reads Limit and Grok Bot folds into the sole Grok Wo
   const html = render(UsageWindow, { accounts, usage: snapshot([accounts[1]]) });
   const devinCard = card(html, "usage-account:worker:devin-a");
   assert.match(devinCard, />Limit</);
+  assert.match(devinCard, /aria-label="devin-worker-account-1 daily remaining, unavailable until weekly resets"[^>]*opacity-35/);
+  assert.match(devinCard, /aria-label="devin-worker-account-1 weekly remaining"[^>]*class="(?![^"]*opacity-35)/);
   const grokCard = card(html, "usage-account:worker:grok-a");
   assert.match(grokCard, /aria-label="grok-worker-account-1 weekly remaining"[^>]*aria-valuenow="51"/);
+  assert.match(text(grokCard), /51%left/);
   assert.match(grokCard, /aria-label="grok-worker-account-1 bot remaining"[^>]*aria-valuenow="77.5"/);
   assert.match(grokCard, /aria-label="Inspect Grok Bot usage"/);
   assert.match(text(grokCard), /SuperGrok Plus/);

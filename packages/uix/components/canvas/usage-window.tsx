@@ -12,15 +12,24 @@ import { Empty, headroomTone, Meter, NodeCard, NodeTitle, Orb, StatusDot, Time }
 import { useNow, useStack, useStore } from "./provider";
 import { Window } from "./window";
 
-type Gauge = { label: string; remaining: number | null; resetsAt: string | null; inspect?: { node: NodeRef; label: string } };
+/**
+ * A gauge's group is the set of windows that gate the same quota: an exhausted
+ * window blocks its siblings unless it is local, gating only its own model.
+ */
+type Gauge = { label: string; remaining: number | null; resetsAt: string | null; group: string; local?: boolean;
+  inspect?: { node: NodeRef; label: string } };
 type Summary = { plan: string | null; limited: boolean; gauges: Gauge[]; notes: string[] };
 
 const money = (value: number) => value.toLocaleString(undefined, { style: "currency", currency: "USD" });
+/** Every gauge is remaining headroom, whichever direction the provider reports. */
 const pct = (value: number) => `${Math.round(value)}%`;
 const freshWindow = 5 * 60_000;
 const grokBotNode: NodeRef = { kind: "grok-bot-usage" };
 /** An exhausted window is a limit, like Codex's own limit flag. */
 const exhausted = (gauges: Gauge[]) => gauges.some((gauge) => gauge.remaining === 0);
+/** The exhausted sibling that makes a gauge's remaining headroom unusable, if any. */
+const blockedBy = (gauge: Gauge, gauges: Gauge[]) => gauge.remaining === 0 ? undefined
+  : gauges.find((other) => other !== gauge && other.group === gauge.group && !other.local && other.remaining === 0);
 
 function freshness(observation: UsageObservation, now: number): "fresh" | "stale" | "never" {
   if (observation.observedAtMs === null) return "never";
@@ -39,6 +48,7 @@ function summarize(account: UsageAccount): Summary | null {
         label: lanes.length > 1 ? `${lane.title} · ${window.label}` : window.label,
         remaining: window.remainingPercent,
         resetsAt: window.resetsAt,
+        group: lane.id,
       }))),
       notes: usage.resetCreditsAvailable ? [`${usage.resetCreditsAvailable} reset credit${usage.resetCreditsAvailable === 1 ? "" : "s"}`] : [],
     };
@@ -49,7 +59,7 @@ function summarize(account: UsageAccount): Summary | null {
     if (usage.included.allocatedUsd !== null) notes.push(`${money(usage.included.allocatedUsd)} included`);
     if (usage.prepaidBalanceUsd) notes.push(`${money(usage.prepaidBalanceUsd)} prepaid`);
     if (usage.paygEnabled || usage.paygUsedUsd) notes.push(`PAYG ${money(usage.paygUsedUsd ?? 0)}${usage.paygCapUsd ? ` / ${money(usage.paygCapUsd)}` : ""}`);
-    const gauges = [{ label: usage.included.periodType ?? "included", remaining: usage.included.remainingPercent, resetsAt: usage.included.resetsAt }];
+    const gauges = [{ label: usage.included.periodType ?? "included", remaining: usage.included.remainingPercent, resetsAt: usage.included.resetsAt, group: "included" }];
     // Pay-as-you-go continues past the included allocation.
     return { plan: usage.subscriptionTier, limited: !usage.paygEnabled && exhausted(gauges), gauges, notes };
   }
@@ -60,13 +70,15 @@ function summarize(account: UsageAccount): Summary | null {
     // Extra-usage credits and limits are provider units, not dollars.
     if (extra?.enabled) notes.push(`extra usage ${extra.usedCredits?.toLocaleString() ?? "?"}${extra.monthlyLimit !== null ? ` / ${extra.monthlyLimit.toLocaleString()}` : ""} credits`);
     else if (extra?.enabled === false) notes.push("extra usage off");
-    const gauges = usage.windows.map((window) => ({ label: window.label, remaining: window.remainingPercent, resetsAt: window.resetsAt }));
+    // The 5h and weekly windows gate every model; a per-model weekly window gates only its model.
+    const gauges = usage.windows.map((window) => ({ label: window.label, remaining: window.remainingPercent, resetsAt: window.resetsAt,
+      group: "claude", local: window.id !== "five_hour" && window.id !== "seven_day" }));
     return { plan: null, limited: exhausted(gauges), gauges, notes };
   }
   const usage = account.usage;
   const gauges: Gauge[] = [];
-  if (usage.dailyRemainingPercent !== null) gauges.push({ label: "daily", remaining: usage.dailyRemainingPercent, resetsAt: usage.dailyResetsAt });
-  if (usage.weeklyRemainingPercent !== null) gauges.push({ label: "weekly", remaining: usage.weeklyRemainingPercent, resetsAt: usage.weeklyResetsAt });
+  if (usage.dailyRemainingPercent !== null) gauges.push({ label: "daily", remaining: usage.dailyRemainingPercent, resetsAt: usage.dailyResetsAt, group: "devin" });
+  if (usage.weeklyRemainingPercent !== null) gauges.push({ label: "weekly", remaining: usage.weeklyRemainingPercent, resetsAt: usage.weeklyResetsAt, group: "devin" });
   const notes: string[] = [];
   if (usage.weeklyQuotaHidden) notes.push("weekly quota hidden");
   // Devin reports -1 when an account has no prompt-credit budget.
@@ -83,7 +95,7 @@ function grokBotSummary(usage: NonNullable<GrokBot["usage"]>, label: string): Su
   return {
     plan: usage.planLabel,
     limited: !usage.hasAvailableUsage,
-    gauges: [{ label, remaining: Math.max(0, 100 - usage.usedPercent), resetsAt: usage.resetsAt, inspect: { node: grokBotNode, label: "Grok Bot usage" } }],
+    gauges: [{ label, remaining: Math.max(0, 100 - usage.usedPercent), resetsAt: usage.resetsAt, group: "grok-bot", inspect: { node: grokBotNode, label: "Grok Bot usage" } }],
     notes: usage.onDemandEnabled ? [`${label} on-demand on`] : [],
   };
 }
@@ -164,22 +176,27 @@ function UsageCard({ node, names, observation, summary, orbs }: {
         {summary.plan ? <span className="shrink-0 rounded-md bg-muted px-1.5 py-px text-[0.65rem] font-medium text-muted-foreground capitalize">{summary.plan}</span> : null}
         <span className={cn("ml-auto shrink-0 text-base leading-none font-semibold tracking-tight tabular-nums",
           tone === "destructive" ? "text-destructive" : tone === "warning" ? "text-warning" : "text-foreground")}>
-          {summary.limited ? "Limit" : headline === null ? "—" : pct(headline)}
+          {summary.limited ? "Limit" : headline === null ? "—" : <>{pct(headline)}<span className="ml-0.5 text-[0.65rem] font-medium text-muted-foreground">left</span></>}
         </span>
       </div>
       {summary.gauges.length ? (
         <div className="flex flex-col gap-1.5">
-          {summary.gauges.map((gauge) => (
-            <div key={gauge.label} className="grid grid-cols-[3.75rem_1fr_auto] items-center gap-2 text-[0.68rem] text-muted-foreground">
+          {summary.gauges.map((gauge) => {
+            const blocker = blockedBy(gauge, summary.gauges);
+            return (
+            <div key={gauge.label} title={blocker ? `Unavailable until ${blocker.label} resets` : undefined}
+              className="grid grid-cols-[3.75rem_1fr_auto] items-center gap-2 text-[0.68rem] text-muted-foreground">
               {gauge.inspect ? (
                 <span data-node={nodeKey(gauge.inspect.node)} className="truncate"><NodeTitle node={gauge.inspect.node} label={gauge.inspect.label}>{gauge.label}</NodeTitle></span>
               ) : <span className="truncate">{gauge.label}</span>}
-              <Meter value={gauge.remaining} label={`${names[0].label} ${gauge.label} remaining`} />
-              <span className="w-12 text-right tabular-nums" title={gauge.resetsAt ?? undefined}>
-                {gauge.resetsAt ? untilTime(Date.parse(gauge.resetsAt), now) : gauge.remaining === null ? "—" : pct(gauge.remaining)}
+              <Meter value={gauge.remaining} className={cn(blocker && "opacity-35")}
+                label={`${names[0].label} ${gauge.label} remaining${blocker ? `, unavailable until ${blocker.label} resets` : ""}`} />
+              <span className="min-w-12 text-right tabular-nums" title={gauge.resetsAt ?? undefined}>
+                {gauge.resetsAt ? untilTime(Date.parse(gauge.resetsAt), now) : gauge.remaining === null ? "—" : `${pct(gauge.remaining)} left`}
               </span>
             </div>
-          ))}
+            );
+          })}
         </div>
       ) : null}
       {summary.notes.length ? <p className="text-[0.68rem] text-muted-foreground">{summary.notes.join(" · ")}</p> : null}
