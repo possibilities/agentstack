@@ -246,9 +246,12 @@ const meterFill: Record<Tone, string> = {
   info: "bg-pkg-codex",
 };
 
-/** A thin remaining-quota bar. `value` is the percentage left. */
+/**
+ * A thin quota bar. `value` is the percentage left; the fill shows what is used,
+ * like the providers' own usage bars, so an exhausted window reads full.
+ */
 export function Meter({ value, label, className }: { value: number | null; label: string; className?: string }) {
-  const width = value === null ? 0 : Math.max(0, Math.min(100, value));
+  const width = value === null ? 0 : 100 - Math.max(0, Math.min(100, value));
   return (
     <span
       role="meter"

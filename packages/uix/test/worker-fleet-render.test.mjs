@@ -109,6 +109,9 @@ test("Claude usage shows per-account windows, resets, provider-unit extra usage 
   assert.match(first, /aria-label="claude-worker-account-1 5h remaining, unavailable until Weekly resets"[^>]*aria-valuenow="77"[^>]*opacity-35/);
   assert.match(first, /aria-label="claude-worker-account-1 Weekly remaining"[^>]*aria-valuenow="0"/);
   assert.match(text(first), /5h77% left/);
+  // Bars fill with usage, like the providers' own: 77% left fills 23%, an exhausted window fills fully.
+  assert.match(first, /aria-valuenow="77"[^>]*><span[^>]*width:23%/);
+  assert.match(first, /aria-valuenow="0"[^>]*><span[^>]*bg-destructive[^>]*width:100%/);
   assert.match(text(first), /Weekly0% left—/);
   assert.match(first, /title="2026-09-26T18:00:00Z"/);
   assert.match(text(first), /extra usage 120 \/ 5,000 credits/);
