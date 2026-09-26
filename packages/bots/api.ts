@@ -11,6 +11,7 @@ import { Supervisor, type ServerView } from "./src/supervisor.js";
 import { watchThreadEvents } from "./src/threads.js";
 import { VoiceCalls } from "./src/voice.js";
 import { ChatIndex, ChatQueue, ChatUploads, chatRpc, live } from "./src/chats.js";
+import { LiveChats, boundedMainItems } from "./src/chat-live.js";
 
 const botId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/).describe("Bot id. Omit for the next bot-N; supply a name to override it.");
 const botSettings = z.strictObject({
@@ -33,13 +34,13 @@ const botView = z.object({
   settings: botSettings.nullable().describe("Saved launch settings for this Bot, or null for a pre-existing Bot that retains Codex's implicit model and effort. Caller args can override settings at launch."),
 });
 
-export type BotsContext = { root: string; ledger: BotLedger; store: StateStore; supervisor: Supervisor; voice: VoiceCalls; chats: ChatIndex; queue: ChatQueue; uploads: ChatUploads };
+export type BotsContext = { root: string; ledger: BotLedger; store: StateStore; supervisor: Supervisor; voice: VoiceCalls; chats: ChatIndex; liveChats: LiveChats; queue: ChatQueue; uploads: ChatUploads };
 export const topics = {
   bots_changed: "Published when a bot starts, stops, exits, changes assignment, or is fenced for recovery. Refresh bot_list.",
   threads_changed: "Published when loaded thread state for this bot changes or its Codex connection resumes. Read its app-server thread state.",
   voice_changed: "Published when the single voice call starts, connects, or ends. Refresh voice_status; the notice carries no SDP or audio.",
   defaults_changed: "Published when the defaults for newly created Bots change. Refresh bot_defaults_get.",
-  chats_changed: "A Bot's Codex thread state changed or its chat history may have grown. Re-read chat_list, chat_thread_read or chat_turns; notices carry no transcript content.",
+  chats_changed: "A Bot's Codex thread state changed or its chat history may have grown. Re-read chat_list, chat_thread_read or chat_turns; poll chat_main_live for in-progress text. Notices carry no transcript content.",
   chat_queue_changed: "A queued message changed admission or dispatch state. Refresh chat_queue_list for the Bot; notices carry no message content.",
 } as const;
 export type BotsTopic = keyof typeof topics;
@@ -127,6 +128,7 @@ export const botRemove = operation({
     if (!existing && !ctx.ledger.has(id) && !ctx.ledger.ownsWorkspace(id)) throw new Error(`unknown bot: ${id}`);
     if (existing) await ctx.supervisor.remove(id);
     ctx.chats.removeBot(id);
+    ctx.liveChats.remove(id);
     await ctx.uploads.removeBot(id);
     if (ctx.ledger.ownsWorkspace(id)) await rm(workspacePath(ctx.root, id), { recursive: true, force: true });
     ctx.ledger.forgetWorkspace(id);
@@ -255,6 +257,34 @@ export const chatItems = operation({
   input: z.strictObject({ botId, threadId, turnId: z.string().optional(), cursor: z.string().optional(), limit: z.number().int().min(1).max(50).default(20) }),
   output: codexPage, annotations: { title: "Page chat items", readOnlyHint: true },
   async call(ctx: BotsContext, { botId: id, threadId: target, ...args }) { const bot = await allowed(ctx, id, target); return codexPage.parse(await chatRpc(live(bot), "thread/items/list", { threadId: target, ...args })); },
+});
+const liveItem = z.strictObject({ turnId: z.string(), item: raw, complete: z.boolean(), completed: z.boolean(), omitted: z.boolean() });
+export const chatMainLive = operation({
+  name: "chat_main_live", description: "Read a bounded, partial snapshot of native items observed on this Bot's main thread since its current app-server watch connected. Poll while following a turn. Match items to history by turnId and item.id; completed items replace drafts. The instance changes after reconnection; omitted or incomplete items require a later native completion or history read. This is not durable history.",
+  input: z.strictObject({ botId }),
+  output: z.strictObject({ threadId: threadId.nullable(), instance: z.string().nullable(), revision: z.number().int(), activeTurnId: z.string().nullable(), coverage: z.literal("partial"), items: z.array(liveItem) }),
+  annotations: { title: "Follow main chat", readOnlyHint: true },
+  async call(ctx: BotsContext, { botId: id }) {
+    const bot = botFor(ctx, id);
+    return ctx.liveChats.read(id, bot.state === "running" && !bot.recoveryIssue && bot.runningAccount ? bot.url : null, bot.mainThreadId);
+  },
+});
+export const chatMainItems = operation({
+  name: "chat_main_items", description: "Page the running Bot's main thread items newest first, with native turn and item IDs. Pages fit the socket budget; an oversized single item is replaced by an explicit omitted summary. Use chat_records and chat_record_chunk for stopped history or full raw detail. Native cursors are opaque; restart paging after a changed thread or app-server instance.",
+  input: z.strictObject({ botId, cursor: z.string().optional(), limit: z.number().int().min(1).max(50).default(20) }),
+  output: z.strictObject({ threadId, data: z.array(raw), nextCursor: z.string().nullable() }),
+  annotations: { title: "Page main chat items", readOnlyHint: true },
+  async call(ctx: BotsContext, { botId: id, cursor, limit }) {
+    const bot = botFor(ctx, id);
+    if (!bot.mainThreadId) throw new Error("Bot has no durable main thread");
+    const url = live(bot);
+    const data = await boundedMainItems((count) => chatRpc(url, "thread/items/list", {
+      threadId: bot.mainThreadId, sortDirection: "desc", limit: count, ...(cursor ? { cursor } : {}),
+    }), limit);
+    const current = botFor(ctx, id);
+    if (current.url !== url || current.mainThreadId !== bot.mainThreadId || current.state !== "running" || current.recoveryIssue) throw new Error("Bot changed while reading main chat; refresh bot_list");
+    return { threadId: bot.mainThreadId, ...data };
+  },
 });
 export const chatSend = operation({
   name: "chat_send", description: "Start a Codex turn on a sanctioned live thread. Fails if Codex cannot accept it; an interrupted RPC may have started the turn, so inspect history before retrying. An active turn may be steered by Codex; use chat_steer for explicit expected-turn protection.",
@@ -393,7 +423,7 @@ export const chatAttachmentRemove = operation({
 });
 
 export const api: PackageApi<BotsContext, BotsTopic> = {
-  operations: [botStart, botStop, botAssign, botRemove, botList, botDefaultsGet, botDefaultsSet, voiceStatus, voiceDial, voiceHangup, chatList, chatSearch, chatRecords, chatRecordChunk, chatThreadRead, chatTurns, chatItems, chatOccurrences, chatOpen, chatSend, chatSteer, chatInterrupt, chatEnqueue, chatQueueList, chatQueueResolve, chatCodexQueueAdd, chatCodexQueueList, chatCodexQueueUpdate, chatCodexQueueDelete, chatCodexQueueReorder, chatCodexQueueStart, chatUploadStart, chatUploadStatus, chatUploadChunk, chatUploadFinish, chatAttachmentAdd, chatAttachmentList, chatAttachmentRemove],
+  operations: [botStart, botStop, botAssign, botRemove, botList, botDefaultsGet, botDefaultsSet, voiceStatus, voiceDial, voiceHangup, chatList, chatSearch, chatRecords, chatRecordChunk, chatThreadRead, chatTurns, chatItems, chatMainLive, chatMainItems, chatOccurrences, chatOpen, chatSend, chatSteer, chatInterrupt, chatEnqueue, chatQueueList, chatQueueResolve, chatCodexQueueAdd, chatCodexQueueList, chatCodexQueueUpdate, chatCodexQueueDelete, chatCodexQueueReorder, chatCodexQueueStart, chatUploadStart, chatUploadStatus, chatUploadChunk, chatUploadFinish, chatAttachmentAdd, chatAttachmentList, chatAttachmentRemove],
   events: {
     topics,
     scope: {
@@ -405,13 +435,16 @@ export const api: PackageApi<BotsContext, BotsTopic> = {
       const watches = new Map<string, { url: string; stop: () => void }>();
       const sync = () => {
         const active = new Map(ctx.supervisor.list().flatMap((bot) => bot.state === "running" && !bot.recoveryIssue && bot.url ? [[bot.id, bot.url] as const] : []));
-        for (const [id, watch] of watches) if (active.get(id) !== watch.url) { watch.stop(); watches.delete(id); }
+        for (const [id, watch] of watches) if (active.get(id) !== watch.url) { watch.stop(); watches.delete(id); ctx.liveChats.remove(id); }
         for (const [id, url] of active) if (!watches.has(id)) watches.set(id, { url, stop: watchThreadEvents(url, () => {
           publish("threads_changed", id);
           publish("chats_changed", id);
           ctx.queue.wakeBot(id);
           void ctx.supervisor.adoptMainThread(id, url).catch((error) => console.error(`failed to adopt main thread for ${id}: ${error}`));
-        }) });
+        }, (method, params) => {
+          const bot = ctx.supervisor.list().find((item) => item.id === id && item.url === url);
+          if (bot) ctx.liveChats.observe(id, url, bot.mainThreadId, method, params);
+        }, () => ctx.liveChats.connected(id, url)) });
       };
       ctx.supervisor.onChange = (id) => { sync(); publish("bots_changed", id); };
       ctx.store.onDefaultsChange = () => publish("defaults_changed");
@@ -419,7 +452,7 @@ export const api: PackageApi<BotsContext, BotsTopic> = {
       ctx.queue.onChange = (id) => publish("chat_queue_changed", id);
       sync();
       for (const bot of ctx.supervisor.list()) ctx.queue.wakeBot(bot.id);
-      return () => { ctx.supervisor.onChange = undefined; ctx.store.onDefaultsChange = undefined; ctx.voice.onChange = undefined; ctx.queue.onChange = undefined; for (const watch of watches.values()) watch.stop(); watches.clear(); };
+      return () => { ctx.supervisor.onChange = undefined; ctx.store.onDefaultsChange = undefined; ctx.voice.onChange = undefined; ctx.queue.onChange = undefined; for (const [id, watch] of watches) { watch.stop(); ctx.liveChats.remove(id); } watches.clear(); };
     },
   },
   async createContext(env) {
@@ -436,7 +469,7 @@ export const api: PackageApi<BotsContext, BotsTopic> = {
     await supervisor.reap();
     await supervisor.resumeAll();
     const chats = new ChatIndex(dir);
-    return { root, ledger, store, supervisor, voice: new VoiceCalls(() => supervisor.list()), chats, queue: new ChatQueue(chats, (id) => supervisor.list().find((bot) => bot.id === id)), uploads: new ChatUploads(dir) };
+    return { root, ledger, store, supervisor, voice: new VoiceCalls(() => supervisor.list()), chats, liveChats: new LiveChats(), queue: new ChatQueue(chats, (id) => supervisor.list().find((bot) => bot.id === id)), uploads: new ChatUploads(dir) };
   },
   async closeContext(ctx) {
     try { await ctx.voice.close(); }

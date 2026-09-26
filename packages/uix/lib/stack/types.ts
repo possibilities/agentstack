@@ -61,6 +61,10 @@ export type Bot = {
 /** Bot chat APIs expose sanctioned Codex threads; the canvas does not yet browse them. */
 export type Chat = { botId: string; threadId: string; parentThreadId: string | null; title: string; cwd: string;
   createdAt: string; updatedAt: string; messageCount: number };
+/** Available for a future transcript reader; the canvas does not yet consume these Bot reads. */
+export type MainChatLive = { threadId: string | null; instance: string | null; revision: number; activeTurnId: string | null;
+  coverage: "partial"; items: Array<{ turnId: string; item: Record<string, unknown>; complete: boolean; completed: boolean; omitted: boolean }> };
+export type MainChatItems = { threadId: string; data: Array<Record<string, unknown>>; nextCursor: string | null };
 export type ChatHit = Chat & { line: number; role: string; snippet: string; score: number };
 export type ChatQueueEntry = { id: string; botId: string; threadId: string; input: unknown[];
   state: "pending" | "dispatching" | "sent" | "unknown" | "cancelled"; turnId: string | null; issue: string | null };

@@ -36,6 +36,10 @@ if (process.argv.includes("--device-auth")) {
   wss.on("connection", (peer) => peer.on("message", (raw) => {
     const frame = JSON.parse(String(raw));
     if (frame.method === "initialize") peer.send(JSON.stringify({ id: frame.id, result: {} }));
+    if (frame.method === "test/notify") {
+      for (const client of wss.clients) client.send(JSON.stringify({ method: frame.params.method, params: frame.params.params }));
+      peer.send(JSON.stringify({ id: frame.id, result: {} }));
+    }
     if (frame.method === "thread/start") {
       const id = randomUUID();
       appendFileSync(log, JSON.stringify({ method: frame.method, cwd: frame.params.cwd ?? process.cwd(), threadId: id }) + "\n");

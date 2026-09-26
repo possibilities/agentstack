@@ -1,7 +1,7 @@
 name: bots
-description: Own Codex Bots and their sanctioned chats. Search history, browse paged turns and items, send and steer live turns, interrupt, stage files, and queue messages. Only a Bot's main thread and descendants are visible; ACP Workers are excluded. For token deltas and approval responses, a live UI connects to the Bot's app-server endpoint; Package API notices are invalidations.
+description: Own Codex Bots and their sanctioned chats. Search history, page turns and items, follow bounded live main-thread items, and send, steer or queue messages. Only a Bot's main thread and descendants are visible; ACP Workers are excluded. Notices are invalidations, not transcript content; approvals still require a native Codex client.
 socket:
-  description: Unix socket for bot lifecycle, chat search, transcript reading, live turn controls, durable queue, scoped change notices, and voice calls.
+  description: Unix socket for bot lifecycle, chat search, bounded transcript history and live observation, live turn controls, durable queue, scoped change notices, and voice calls.
 mcp:
   description: HTTP MCP operations for Bots and chats, forwarded to the bots socket.
 websocket:

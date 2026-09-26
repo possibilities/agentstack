@@ -220,7 +220,7 @@ const threadChangeMethods = new Set([
   "item/completed",
 ]);
 
-export function watchThreadEvents(url: string, onChange: () => void): () => void {
+export function watchThreadEvents(url: string, onChange: () => void, onNotification?: (method: string, params: unknown) => void, onConnect?: () => void): () => void {
   let stopped = false;
   let ws: WebSocket | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
@@ -230,7 +230,7 @@ export function watchThreadEvents(url: string, onChange: () => void): () => void
     ws = current;
     current.on("open", () => current.send(JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "agentstack", version: "0.0.0" } } })));
     current.on("message", (raw) => {
-      let message: { id?: unknown; result?: unknown; method?: unknown };
+      let message: { id?: unknown; result?: unknown; method?: unknown; params?: unknown };
       try {
         message = JSON.parse(String(raw)) as typeof message;
       } catch {
@@ -238,9 +238,11 @@ export function watchThreadEvents(url: string, onChange: () => void): () => void
       }
       if (message.id === 1 && message.result) {
         current.send(JSON.stringify({ method: "initialized" }));
+        if (!stopped) onConnect?.();
         if (!stopped) onChange();
-      } else if (typeof message.method === "string" && threadChangeMethods.has(message.method)) {
-        if (!stopped) onChange();
+      } else if (typeof message.method === "string" && !stopped) {
+        onNotification?.(message.method, message.params);
+        if (threadChangeMethods.has(message.method)) onChange();
       }
     });
     current.on("error", () => current.terminate());

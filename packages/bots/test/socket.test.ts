@@ -6,6 +6,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { serveApi, socketCall, socketSubscribe, type ServedApi, type SocketSubscription } from "@agentstack/api";
 import { StateStore } from "../src/store.js";
+import { chatRpc } from "../src/chats.js";
 
 const fakeBin = fileURLToPath(new URL("../../test/fixtures/fake-app-server.mjs", import.meta.url));
 type View = { id: string; pid: number | null; cwd: string; url: string | null; state: string; account: string | null; runningAccount: string | null; mainThreadId: string | null; settings: { model: string; reasoningEffort: string; sandboxMode: string; approvalPolicy: string } };
@@ -34,7 +35,7 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
   let defaultsSubscription: SocketSubscription | undefined;
   try {
     const tools = await socketCall(socket, "tools/list") as { tools: Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }>; events: { scope: { required: boolean } } };
-    assert.deepEqual(tools.tools.map((tool) => tool.name), ["bot_start", "bot_stop", "bot_assign", "bot_remove", "bot_list", "bot_defaults_get", "bot_defaults_set", "voice_status", "voice_dial", "voice_hangup", "chat_list", "chat_search", "chat_records", "chat_record_chunk", "chat_thread_read", "chat_turns", "chat_items", "chat_occurrences", "chat_open", "chat_send", "chat_steer", "chat_interrupt", "chat_enqueue", "chat_queue_list", "chat_queue_resolve", "chat_codex_queue_add", "chat_codex_queue_list", "chat_codex_queue_update", "chat_codex_queue_delete", "chat_codex_queue_reorder", "chat_codex_queue_start", "chat_upload_start", "chat_upload_status", "chat_upload_chunk", "chat_upload_finish", "chat_attachment_add", "chat_attachment_list", "chat_attachment_remove"]);
+    assert.deepEqual(tools.tools.map((tool) => tool.name), ["bot_start", "bot_stop", "bot_assign", "bot_remove", "bot_list", "bot_defaults_get", "bot_defaults_set", "voice_status", "voice_dial", "voice_hangup", "chat_list", "chat_search", "chat_records", "chat_record_chunk", "chat_thread_read", "chat_turns", "chat_items", "chat_main_live", "chat_main_items", "chat_occurrences", "chat_open", "chat_send", "chat_steer", "chat_interrupt", "chat_enqueue", "chat_queue_list", "chat_queue_resolve", "chat_codex_queue_add", "chat_codex_queue_list", "chat_codex_queue_update", "chat_codex_queue_delete", "chat_codex_queue_reorder", "chat_codex_queue_start", "chat_upload_start", "chat_upload_status", "chat_upload_chunk", "chat_upload_finish", "chat_attachment_add", "chat_attachment_list", "chat_attachment_remove"]);
     assert.deepEqual(Object.keys(tools.tools[0].inputSchema.properties).sort(), ["account", "args", "cwd", "id", "settings"]);
     assert.equal(tools.events.scope.required, false);
     const initial = await call(socket, "bot_defaults_get") as View["settings"];
@@ -50,8 +51,28 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
     assert.equal(first.account, account);
     assert.equal(first.state, "running");
     assert.equal(first.mainThreadId, null);
+    assert.equal((await call(socket, "chat_main_live", { botId: first.id }) as { threadId: string | null }).threadId, null);
     const opened = await call(socket, "chat_open", { botId: first.id, input: [{ type: "text", text: "first chat" }] }) as { threadId: string; turn: { id: string } };
     assert.equal((await call(socket, "bot_list") as { bots: View[] }).bots[0]?.mainThreadId, opened.threadId);
+    const notify = (threadId: string, method: string, params: Record<string, unknown>) => chatRpc(first.url!, "test/notify", { method, params: { threadId, ...params } });
+    await notify("cccccccc-cccc-4ccc-8ccc-cccccccccccc", "item/started", { turnId: "other", item: { id: "elsewhere", type: "agentMessage", text: "not this bot" } });
+    await notify(opened.threadId, "item/started", { turnId: "turn-live", item: { id: "live", type: "agentMessage", text: "Working" } });
+    await notify(opened.threadId, "item/agentMessage/delta", { turnId: "turn-live", itemId: "live", delta: " now" });
+    let followed: { items: Array<{ item: { text?: string }; completed: boolean }> } = { items: [] };
+    for (let n = 0; n < 100; n++) {
+      followed = await call(socket, "chat_main_live", { botId: first.id }) as typeof followed;
+      if (followed.items[0]?.item.text === "Working now") break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(followed.items.length, 1);
+    assert.equal(followed.items[0]?.item.text, "Working now");
+    await notify(opened.threadId, "item/completed", { turnId: "turn-live", item: { id: "live", type: "agentMessage", text: "Finished" } });
+    for (let n = 0; n < 100; n++) {
+      followed = await call(socket, "chat_main_live", { botId: first.id }) as typeof followed;
+      if (followed.items[0]?.completed) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(followed.items[0]?.item.text, "Finished");
     await assert.rejects(call(socket, "chat_open", { botId: first.id, input: [{ type: "text", text: "duplicate root" }] }), /already has a main thread/);
     const history = join(stateDir, "history", first.id, "2026", "09", "25");
     await mkdir(history, { recursive: true });
@@ -75,6 +96,11 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
     const sent = await call(socket, "chat_send", { botId: first.id, threadId: opened.threadId, input: [{ type: "text", text: "follow-up" }] }) as { turn: { id: string } };
     assert.equal((await call(socket, "chat_turns", { botId: first.id, threadId: opened.threadId }) as { data: unknown[] }).data.length, 2);
     assert.equal((await call(socket, "chat_items", { botId: first.id, threadId: opened.threadId }) as { data: unknown[] }).data.length, 2);
+    const mainItems = await call(socket, "chat_main_items", { botId: first.id }) as { threadId: string; data: unknown[]; nextCursor: string | null };
+    assert.equal(mainItems.threadId, opened.threadId);
+    assert.equal(mainItems.data.length, 2);
+    assert.equal(mainItems.nextCursor, null);
+    assert.equal((await call(socket, "chat_main_live", { botId: first.id }) as { threadId: string }).threadId, opened.threadId);
     assert.deepEqual((await call(socket, "chat_occurrences", { botId: first.id, threadId: opened.threadId, query: "follow" }) as { data: unknown[] }).data, []);
     assert.equal((await call(socket, "chat_steer", { botId: first.id, threadId: opened.threadId, expectedTurnId: sent.turn.id, input: [{ type: "text", text: "steer" }] }) as { turnId: string }).turnId, sent.turn.id);
     await call(socket, "chat_interrupt", { botId: first.id, threadId: opened.threadId, turnId: sent.turn.id });
@@ -119,6 +145,7 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
     assert.equal((await call(socket, "bot_list") as { bots: View[] }).bots.length, 3);
     assert.equal(notices.length, 0);
     await call(socket, "bot_stop", { id: first.id });
+    assert.equal((await call(socket, "chat_main_live", { botId: first.id }) as { instance: string | null }).instance, null);
     for (let i = 0; i < 100 && !notices.includes("bots_changed"); i++) await new Promise((resolve) => setTimeout(resolve, 10));
     assert.ok(notices.includes("bots_changed"));
     await call(socket, "bot_start", { id: first.id, account, args: [] });
