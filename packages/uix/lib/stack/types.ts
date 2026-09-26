@@ -122,7 +122,8 @@ export type UsageAccount = UsageObservation & { id: string; enabled: boolean; re
   | { provider: "devin"; scope: "worker"; usage: DevinUsage | null }
   | { provider: "claude"; scope: "worker"; usage: ClaudeUsage | null });
 export type UsageSnapshot = { atMs: number; inventoryAtMs: number | null; inventoryError: "not_observed" | "auth_unavailable" | null;
-  accounts: UsageAccount[]; grokBot: UsageObservation & { usage: { usedPercent: number; periodStart: string; resetsAt: string;
+  /** Null unless a signed-in Grok Worker account exists. */
+  accounts: UsageAccount[]; grokBot: null | UsageObservation & { usage: { usedPercent: number; periodStart: string; resetsAt: string;
     hasAvailableUsage: boolean; planLabel: string | null; fundingPlan: string | null; onDemandEligible: boolean | null;
     onDemandEnabled: boolean | null; trial: boolean | null; teamSeat: boolean | null } | null } };
 export type WorkerSession = { id: string; botId: string; threadId: string; accountId: string; provider: WorkerAccount["provider"];

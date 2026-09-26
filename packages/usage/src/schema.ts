@@ -69,9 +69,10 @@ export const account = z.discriminatedUnion("provider", [
 ]);
 export const snapshotSchema = z.strictObject({ atMs: z.number().int(), inventoryAtMs: z.number().int().nullable(),
   inventoryError: z.enum(["not_observed", "auth_unavailable"]).nullable(), accounts: z.array(account).describe("Bot Codex and independent Worker accounts, including disabled accounts. Scope and ID together identify a record."),
-  grokBot: z.strictObject({ ...observation, usage: grokBotUsage.nullable() }).describe("Machine-level Grok Bot CLI login; not an AgentStack Worker account.") });
+  grokBot: z.strictObject({ ...observation, usage: grokBotUsage.nullable() }).nullable()
+    .describe("Machine-level Grok Bot CLI login, observed only while a signed-in Grok Worker account exists; null otherwise. Not itself a Worker account.") });
 export type Snapshot = z.infer<typeof snapshotSchema>;
 export type Account = z.infer<typeof account>;
-export type GrokBot = Snapshot["grokBot"];
+export type GrokBot = NonNullable<Snapshot["grokBot"]>;
 export type StoredMeasurement = { observedAtMs: number | null; lastAttemptAtMs: number | null;
   error: ObservationError | null; usage: Measurement | z.infer<typeof grokBotUsage> | null };

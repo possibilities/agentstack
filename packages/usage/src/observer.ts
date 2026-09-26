@@ -9,7 +9,7 @@ type Link = { scope: AccountScope; id: string };
 /** An auth inventory record; linkedAccounts is auth's Codex Bot–Worker pairing. */
 export type Registered = { id: string; scope: AccountScope; provider: Provider; enabled: boolean; ready: boolean; removing: boolean; linkedAccounts?: Link[] };
 type FetchAccount = (id: string, provider: Provider, scope: AccountScope) => Promise<StoredMeasurement["usage"]>;
-type FetchBot = () => Promise<Snapshot["grokBot"]["usage"]>;
+type FetchBot = () => Promise<NonNullable<Snapshot["grokBot"]>["usage"]>;
 type LoadAccounts = () => Promise<Registered[]>;
 type WatchAccounts = (onChange: () => void) => Promise<SocketSubscription>;
 type Row = { id: string; scope: AccountScope; provider: Provider; enabled: boolean; ready: boolean; measurement: StoredMeasurement; nextAttemptAtMs: number };
@@ -29,6 +29,8 @@ export class UsageObserver {
   private subscriptions = new Map<string, NonNullable<Subscription>>();
   private bot: StoredMeasurement = empty();
   private botNextAttemptAtMs = 0;
+  /** Grok Bot usage is observed and reported only beside a signed-in Grok Worker account. */
+  private botReferenced = false;
   private inventoryAtMs: number | null = null;
   private inventoryError: Snapshot["inventoryError"] = "not_observed";
   private controller = new AbortController();
@@ -82,7 +84,7 @@ export class UsageObserver {
             error: candidate.data.error, usage: candidate.data.usage }, nextAttemptAtMs: row.nextAttemptAtMs,
         });
       }
-      const bot = snapshotSchema.shape.grokBot.safeParse({ ...value.bot, fresh: false });
+      const bot = snapshotSchema.shape.grokBot.unwrap().safeParse({ ...value.bot, fresh: false });
       if (bot.success) this.bot = { observedAtMs: bot.data.observedAtMs, lastAttemptAtMs: bot.data.lastAttemptAtMs,
         error: bot.data.error, usage: bot.data.usage };
     } catch { /* malformed persisted state is not evidence */ }
@@ -98,7 +100,7 @@ export class UsageObserver {
         ready && fresh(measurement, now),
     })) as Snapshot["accounts"];
     return { atMs: now, inventoryAtMs: this.inventoryAtMs, inventoryError: this.inventoryError,
-      accounts, grokBot: { ...this.bot, fresh: fresh(this.bot, now), usage: this.bot.usage as Snapshot["grokBot"]["usage"] } };
+      accounts, grokBot: this.botReferenced ? { ...this.bot, fresh: fresh(this.bot, now), usage: this.bot.usage as NonNullable<Snapshot["grokBot"]>["usage"] } : null };
   }
 
   /** A Devin plan period is part of its measurement; a Codex sign-in claim is re-read each cycle and never persisted. */
@@ -170,7 +172,12 @@ export class UsageObserver {
         row.nextAttemptAtMs = Date.now() + (row.measurement.error === "rate_limited" ? 900_000 : 300_000);
       }
     }
-    if (!this.controller.signal.aborted && now >= this.botNextAttemptAtMs) {
+    this.botReferenced = inventory.some((account) => account.provider === "grok" && account.ready && !account.removing);
+    if (!this.botReferenced) {
+      // Forget the reading so a later Grok Worker never resurrects it; observe as soon as one is ready.
+      this.bot = empty();
+      this.botNextAttemptAtMs = 0;
+    } else if (!this.controller.signal.aborted && now >= this.botNextAttemptAtMs) {
       try {
         const usage = await this.fetchBot();
         this.bot = { usage, observedAtMs: Date.now(), lastAttemptAtMs: Date.now(), error: null };

@@ -94,7 +94,7 @@ function summarize(account: UsageAccount): Summary | null {
   return { plan: usage.planLabel, limited: exhausted(gauges), gauges, notes };
 }
 
-type GrokBot = UsageSnapshot["grokBot"];
+type GrokBot = NonNullable<UsageSnapshot["grokBot"]>;
 
 function grokBotSummary(usage: NonNullable<GrokBot["usage"]>, label: string): Summary {
   return {
@@ -249,7 +249,7 @@ export function UsageWindow() {
   const grokHost = grokBot?.usage && grokAccounts.length === 1 ? rows.find((row) => row[0] === grokAccounts[0]) ?? null : null;
   return (
     <Window id="usage" title="Usage" subtitle="usage" icon={GaugeIcon} accent="owner" node={{ kind: "usage" }}
-      count={usage.data ? usage.data.accounts.length + 1 : undefined} status={status.usage} endpoint={endpoints.usage} updatedAt={usage.at} error={usage.error}
+      count={usage.data ? usage.data.accounts.length + (usage.data.grokBot ? 1 : 0) : undefined} status={status.usage} endpoint={endpoints.usage} updatedAt={usage.at} error={usage.error}
       actions={
         <Tooltip>
           <TooltipTrigger render={<Button variant="ghost" size="icon-xs" aria-label="Re-read usage" disabled={status.usage !== "open"} onClick={store.reloadUsage} />}>

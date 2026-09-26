@@ -316,3 +316,33 @@ test("a Devin plan period end is its subscription end, checked when measured", a
     assert.deepEqual(restored.snapshot().accounts[0]?.subscription, row?.subscription);
   } finally { await observer.close(); await rm(root, { recursive: true, force: true }); }
 });
+
+test("Grok Bot usage is read and reported only beside a signed-in Grok Worker account", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-usage-grok-bot-"));
+  let grok: { ready: boolean; removing: boolean } | null = null;
+  let reads = 0;
+  const bot = { usedPercent: 20, periodStart: "2026-09-20T00:00:00.000Z", resetsAt: "2026-09-27T00:00:00.000Z", hasAvailableUsage: true,
+    planLabel: null, fundingPlan: null, onDemandEligible: null, onDemandEnabled: null, trial: null, teamSeat: null };
+  const observer = new UsageObserver(root, {}, async () => grok ? [{ id: grokId, scope: "worker" as const, provider: "grok" as const, enabled: true, ...grok }] : [],
+    async () => null, async () => { reads++; return bot; }, async () => null);
+  try {
+    await observer.cycle();
+    assert.equal(observer.snapshot().grokBot, null);
+    grok = { ready: false, removing: false };
+    await observer.cycle();
+    assert.equal(observer.snapshot().grokBot, null, "a Grok Worker awaiting sign-in is not a reference");
+    assert.equal(reads, 0);
+    grok = { ready: true, removing: false };
+    await observer.cycle();
+    assert.deepEqual(observer.snapshot().grokBot?.usage, bot);
+    assert.equal(reads, 1);
+    grok = null;
+    await observer.cycle();
+    assert.equal(observer.snapshot().grokBot, null);
+    const restored = new UsageObserver(root, {}, async () => [{ id: grokId, scope: "worker", provider: "grok", enabled: true, ready: true, removing: false }],
+      async () => null, async () => { throw new Error("unavailable"); }, async () => null);
+    await restored.load();
+    await restored.cycle();
+    assert.equal(restored.snapshot().grokBot?.usage, null, "the forgotten reading does not return with a new Grok Worker");
+  } finally { await observer.close(); await rm(root, { recursive: true, force: true }); }
+});

@@ -68,7 +68,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     for (const entry of status.children) assert.ok(resourceSnapshot.processes.some((process) => process.pid === entry.pid && process.component === entry.name), `${entry.name} absent from resource snapshot`);
     const usage = await socketCall(join(stateDir, "sockets", "usage.sock"), "tools/call", { name: "usage_snapshot", arguments: {} }) as { accounts: unknown[]; grokBot: { fresh: boolean } };
     assert.deepEqual(usage.accounts, []);
-    assert.equal(typeof usage.grokBot.fresh, "boolean");
+    assert.equal(usage.grokBot, null); // No signed-in Grok Worker account to reference.
 
     for (let i = 0; i < 200 && !/owner MCP: (http:\/\/\S+)/.test(stderr); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
