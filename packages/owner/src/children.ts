@@ -51,6 +51,11 @@ export function inferChild(): OwnedChild {
     args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "infer", "socket"],
   };
 }
+export function attentionChild(): OwnedChild {
+  const apiPackage = require.resolve("@agentstack/api/package.json");
+  return { name: "attention", command: process.execPath,
+    args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "attention", "socket"] };
+}
 export function wikiChild(): OwnedChild {
   const apiPackage = require.resolve("@agentstack/api/package.json");
   return {

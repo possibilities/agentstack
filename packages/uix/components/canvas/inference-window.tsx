@@ -16,7 +16,7 @@ import { useStack, useStore } from "./provider";
 import { Section, Window } from "./window";
 
 /** Mirror infer_complete's input limits. */
-const limits = { instructions: 4_000, input: 16_000, maxOutputTokens: 1_024 };
+const limits = { instructions: 32_000, input: 128_000, maxOutputTokens: 8_192 };
 const keptRuns = 10;
 
 type Discovery = { models: InferModel[] | null; at: number | null; error: string | null; pending: boolean };
@@ -194,7 +194,7 @@ export function InferenceWindow() {
           ) : null}
           <div className="flex items-end gap-2">
             <div className="flex flex-col gap-1.5">
-              <label htmlFor={`${formId}-tokens`} className={labelClass}>Max tokens</label>
+              <label htmlFor={`${formId}-tokens`} className={labelClass} title="Checked against returned usage after generation; this backend cannot cap generation or spend.">Token threshold</label>
               <Input id={`${formId}-tokens`} type="number" inputMode="numeric" min={1} max={limits.maxOutputTokens} step={1} value={maxTokens} disabled={running}
                 aria-invalid={tokensValid ? undefined : true} onChange={(event) => setMaxTokens(event.target.value)} className="h-7 w-20 tabular-nums" />
             </div>
@@ -211,7 +211,7 @@ export function InferenceWindow() {
         <Empty icon={KeyRoundIcon} title="No Bot accounts" />
       )}
       {runs.length ? (
-        <Section title="Runs" aside={<span className="text-[0.65rem] text-muted-foreground">This page only</span>}>
+        <Section title="Runs" aside={<span className="text-[0.65rem] text-muted-foreground">Recent on this page</span>}>
           <ul className="flex flex-col gap-1.5">
             {runs.map((item) => (
               <li key={item.requestId} className="group/row flex flex-col gap-1.5 rounded-xl border p-2.5">

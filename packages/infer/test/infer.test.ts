@@ -45,7 +45,7 @@ test("one-shot inference checks a fresh model/effort and returns only completed 
       const headers = init?.headers as Record<string, string>;
       assert.equal(headers.Authorization, "Bearer test-secret");
       const body = JSON.parse(String(init?.body));
-      assert.equal(body.max_output_tokens, 256);
+      assert.equal(body.max_output_tokens, undefined, "the live Codex backend rejects this parameter");
       assert.equal(body.store, false);
       assert.equal(body.stream, true);
       assert.equal(body.tools, undefined);
@@ -78,7 +78,7 @@ test("partial SSE and an ambiguous network result never count as success or retr
 });
 
 test("bounds input and refuses a catalog failure before sending", async () => {
-  assert.equal(completeInput.safeParse({ ...input(), input: "x".repeat(16_001) }).success, false);
+  assert.equal(completeInput.safeParse({ ...input(), input: "x".repeat(128_001) }).success, false);
   const service = new InferService("unused", async () => { throw new Error("secret detail"); },
     (async () => { throw new Error("should not send"); }) as typeof fetch,
     async () => ({ access: "test-secret", nativeId: "native_account", auth }));

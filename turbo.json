@@ -16,6 +16,8 @@
       "dependsOn": [
         "build",
         "@agentstack/auth#build",
+        "@agentstack/attention#build",
+        "@agentstack/infer#build",
         "@agentstack/bots#build",
         "@agentstack/roles#build",
         "@agentstack/owner#build",

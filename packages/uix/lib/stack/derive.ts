@@ -177,6 +177,8 @@ const inferFailures: Record<string, string> = {
  * so it must be reported, never retried automatically.
  */
 export function inferenceFailure(message: string): { text: string; unknown: boolean; requestId: string | null; code: string } {
+  const budget = /^infer_output_budget_exceeded:([0-9a-f-]{36})$/.exec(message);
+  if (budget) return { text: "Generation completed above the token threshold. The output and usage are retained in the inference trace; the threshold is not a spending cap.", unknown: false, requestId: budget[1], code: message };
   const outcome = /^infer_outcome_unknown:([0-9a-f-]{36})$/.exec(message);
   if (outcome) return { text: "The response was interrupted, so the outcome is unknown. It may have been charged and was not retried.", unknown: true, requestId: outcome[1], code: message };
   if (message === "connection closed" || message.startsWith("socket call timed out") || message === "socket call aborted")

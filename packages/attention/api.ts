@@ -1,0 +1,49 @@
+import { z } from "zod";
+import { operation, stateDir, type PackageApi } from "@agentstack/api";
+import { AttentionService } from "./src/service.js";
+import { settings, itemState, attentionReason, statusSchema, itemPage, modelsSchema, messagePageSchema, runPageSchema, eventPageSchema } from "./src/schema.js";
+import { digest } from "./src/store.js";
+
+type Context={service:AttentionService};
+const page=z.strictObject({after:z.number().int().nonnegative().default(0),limit:z.number().int().min(1).max(25).default(20)});
+const chunk=z.strictObject({offset:z.number().int().nonnegative().default(0),limit:z.number().int().min(1).max(32_000).default(16_000),revision:z.string().optional()});
+const chunkOutput=z.strictObject({text:z.string(),nextOffset:z.number().int(),totalChars:z.number().int(),revision:z.string()});
+const slice=(text:string,offset:number,limit:number,expected?:string)=>{const revision=digest(text);if(expected&&expected!==revision)throw new Error("attention_export_changed");return {text:text.slice(offset,offset+limit),nextOffset:Math.min(text.length,offset+limit),totalChars:text.length,revision};};
+const read={readOnlyHint:true} as const;
+export const api:PackageApi<Context,"attention_changed">={
+  operations:[
+    operation({name:"attention_defaults_get",description:"Read revisioned system inference defaults: model, reasoningEffort and nullable Codex Bot account assignment. Defaults to gpt-5.6-luna/low; null uses the first available enabled account.",input:z.strictObject({}),output:settings.extend({revision:z.number().int()}),annotations:read,
+      async call(ctx:Context){return ctx.service.store.defaults();}}),
+    operation({name:"attention_defaults_set",description:"Update system inference model, effort or account assignment for subsequent runs. Null account enables first-available selection. Existing runs retain their exact settings. expectedRevision prevents lost updates.",input:settings.partial().extend({expectedRevision:z.number().int().optional()}),output:settings.extend({revision:z.number().int()}),annotations:{idempotentHint:false},
+      async call(ctx:Context,{expectedRevision,...update}){return ctx.service.configure(update,expectedRevision);}}),
+    operation({name:"attention_models",description:"Discover model/effort choices through infer for the assigned or first available Codex Bot account. No inference; returns the effective account ID for future default-choice controls.",input:z.strictObject({}),output:modelsSchema,annotations:read,
+      async call(ctx:Context){return modelsSchema.parse(await ctx.service.models());}}),
+    operation({name:"attention_status",description:"Read processor health, activation and baseline state, source errors, processing counts and last inference outcome. New appearance includes newly imported historical messages; authored timestamps are not a filter.",input:z.strictObject({}),output:statusSchema,annotations:read,
+      async call(ctx:Context){return statusSchema.parse(ctx.service.store.status());}}),
+    operation({name:"attention_control",description:"Enable or pause automatic interpretation. First enable establishes source baselines; subsequent enable resumes durable checkpoints and catches up. Captured history and traces are retained.",input:z.strictObject({enabled:z.boolean()}),output:statusSchema,annotations:{idempotentHint:true},
+      async call(ctx:Context,{enabled}){return statusSchema.parse(ctx.service.control(enabled));}}),
+    operation({name:"attention_list",description:"Page current semantic attention items with exact source-message/run IDs, evidence spans, audience, engagement, timing, relations and derived resolution state. Awareness requires no response. Historical interpretations remain in run exports.",input:page.extend({conversation:z.string().optional(),state:itemState.optional(),audience:z.enum(["human","agent","team","unspecified","none"]).optional(),reason:attentionReason.optional()}),output:itemPage,annotations:read,
+      async call(ctx:Context,{after,limit,...filters}){return itemPage.parse(ctx.service.store.page("items",after,limit,filters));}}),
+    operation({name:"attention_message_list",description:"Page captured message revisions, provenance and bounded text previews in observed order. Use attention_message_read for the complete immutable source record.",input:page.extend({conversation:z.string().optional()}),output:messagePageSchema,annotations:read,
+      async call(ctx:Context,{after,limit,...filters}){return messagePageSchema.parse(ctx.service.store.page("messages",after,limit,filters));}}),
+    operation({name:"attention_message_read",description:"Read one immutable message revision as JSON chunks. Includes full text and source references; offsets count UTF-16 code units.",input:chunk.extend({id:z.string()}),output:chunkOutput,annotations:read,
+      async call(ctx:Context,{id,offset,limit,revision}){return slice(JSON.stringify(ctx.service.store.message(id)),offset,limit,revision);}}),
+    operation({name:"attention_run_list",description:"Page historical interpretation attempts, settings, correlated inference IDs and outcomes, including failed and unknown runs.",input:page,output:runPageSchema,annotations:read,
+      async call(ctx:Context,{after,limit}){return runPageSchema.parse(ctx.service.store.page("runs",after,limit));}}),
+    operation({name:"attention_trace_read",description:"Export an interpretation example as JSON chunks: original message, frozen rendered input/context, instructions, raw completion, parsed annotation, versions and explicit feedback. infer_trace_read supplies provider-level evidence using the correlated request ID. Replays never overwrite original results.",input:chunk.extend({id:z.string()}),output:chunkOutput,annotations:read,
+      async call(ctx:Context,{id,offset,limit,revision}){return slice(JSON.stringify(ctx.service.store.exportRun(id)),offset,limit,revision);}}),
+    operation({name:"attention_blob_read",description:"Read complete immutable captured text by its content hash, including oversized source evidence referenced by a message. Concatenate UTF-16 chunks; revision fences exports.",input:chunk.extend({hash:z.string().regex(/^[a-f0-9]{64}$/)}),output:chunkOutput,annotations:read,
+      async call(ctx:Context,{hash,offset,limit,revision}){return slice(ctx.service.store.text(hash),offset,limit,revision);}}),
+    operation({name:"attention_event_read",description:"Read one complete durable event as JSON chunks, including bodies omitted from attention_changes pages.",input:chunk.extend({seq:z.number().int().positive()}),output:chunkOutput,annotations:read,
+      async call(ctx:Context,{seq,offset,limit,revision}){const row=ctx.service.store.db.prepare("SELECT * FROM events WHERE seq=?").get(seq);if(!row)throw new Error("unknown attention event");return slice(JSON.stringify({...row,body:JSON.parse(String(row.body))}),offset,limit,revision);}}),
+    operation({name:"attention_changes",description:"Read the durable sequence of source, processing and state-transition observations. The attention_changed event is only an invalidation; this operation supplies resumable evidence.",input:page,output:eventPageSchema,annotations:read,
+      async call(ctx:Context,{after,limit}){return eventPageSchema.parse(ctx.service.store.page("events",after,limit));}}),
+    operation({name:"attention_feedback",description:"Record explicitly attributed correction, label or outcome evidence for evaluation. Feedback is distinct from model predictions and implicit behavior; it does not silently resolve requests or retrain the model.",input:z.strictObject({id:z.uuid(),messageId:z.string(),runId:z.string().optional(),kind:z.enum(["correction","label","outcome","behavior"]),author:z.string().min(1).max(200),body:z.string().min(1).max(32_000)}),output:z.strictObject({id:z.uuid()}),annotations:{idempotentHint:true},
+      async call(ctx:Context,input){ctx.service.store.message(input.messageId);if(input.runId&&ctx.service.store.run(input.runId).body.messageId!==input.messageId)throw new Error("feedback run does not belong to message");const result=ctx.service.store.feedback(input.id,input);ctx.service.onChange?.();return result;}}),
+    operation({name:"attention_replay",description:"Explicitly evaluate one prior run using its exact frozen input/context and current model/effort defaults and prompt. Uses allowance when processing is enabled; appends a run without replacing live attention. Stable requestId deduplicates admission.",input:z.strictObject({runId:z.string(),requestId:z.uuid()}),output:z.strictObject({jobIds:z.array(z.string())}),annotations:{idempotentHint:true},
+      async call(ctx:Context,{runId,requestId}){return ctx.service.store.replay(runId,requestId);}}),
+  ],
+  events:{topics:{attention_changed:"Attention inputs, interpretations, processing state or configuration changed. Re-read relevant snapshots or attention_changes."},start(ctx,publish){ctx.service.onChange=()=>publish("attention_changed");return()=>{ctx.service.onChange=undefined;};}},
+  async createContext(env){const service=new AttentionService(stateDir(env),env);service.start();return {service};},
+  async closeContext(ctx){await ctx.service.close();},
+};

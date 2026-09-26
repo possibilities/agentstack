@@ -96,6 +96,14 @@ An explicit, revisioned Role entry for a canonical project root. Only a Bot laun
 
 An ordered group of instruction fragments in the Role. Its title and description help humans manage content but do not render into the prompt. Disabling it suppresses all its fragments.
 
+## Attention interpretation
+
+An LLM-produced, versioned annotation of newly observed human or assistant conversation text. It identifies semantic items, exact evidence, audience, engagement, informational attention and relationships. Current resolution state is derived separately; an interpretation is not an executable permission grant. Its original input, context, output and processing evidence remain addressable for evaluation.
+
+## Attention inference defaults
+
+The headless `attention` Package API's revisioned model, reasoning effort and optional Codex Bot account assignment. Defaults are Luna/low; a null account uses the first available enabled Bot account in inventory order. These defaults affect subsequent interpretations, independently of Bot launch defaults.
+
 ## Fragment
 
 A durable, ordered developer-instruction body with a stable ID and human-only title and description. Only enabled fragments in enabled categories enter `SYSTEM_APPEND.md`.

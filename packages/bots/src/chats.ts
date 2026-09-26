@@ -7,6 +7,7 @@ import { appServerSocket } from "./threads.js";
 import type { ServerView } from "./supervisor.js";
 import WebSocket from "ws";
 import { historicalMetadata, parent } from "./chat-metadata.js";
+import { pageMessages } from "./chat-messages.js";
 
 type RecordValue = Record<string, unknown>;
 const object = (value: unknown): RecordValue => value && typeof value === "object" && !Array.isArray(value) ? value as RecordValue : {};
@@ -298,6 +299,12 @@ export class ChatIndex {
     if (offset > source.length) throw new Error("offset exceeds record length");
     const end = Math.min(source.length, offset + length);
     return { text: source.slice(offset, end), totalChars: source.length, nextOffset: end < source.length ? end : null };
+  }
+  async messagePage(botId: string, threadId: string, mainThreadId: string | null, cursor: Parameters<typeof pageMessages>[2], headOnly: boolean, limit: number) {
+    if (!this.allowed(botId, threadId, mainThreadId)) throw new Error("thread is not in this Bot's main-thread lineage");
+    const row = this.row(botId, threadId)!;
+    const sourceId = createHash("sha256").update(JSON.stringify([botId,threadId,row.path])).digest("hex");
+    return pageMessages(await fileText(row.path),sourceId,cursor,headOnly,limit);
   }
   enqueue(botId: string, threadId: string, id: string, input: unknown[]): QueuedChat {
     const serialized = JSON.stringify(input);

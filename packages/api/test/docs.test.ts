@@ -31,7 +31,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.deepEqual(
       docs.packages.map((item) => item.name),
-      ["api", "auth", "bots", "brain", "infer", "owner", "roles", "usage", "wiki", "workers"],
+      ["api", "attention", "auth", "bots", "brain", "infer", "owner", "roles", "usage", "wiki", "workers"],
     );
     assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@agentstack/${item.name}`));
 
@@ -55,7 +55,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.deepEqual(
       bots.operations.map((operation) => operation.name).sort(),
       ["bot_assign", "bot_defaults_get", "bot_defaults_set", "bot_list", "bot_remove", "bot_start", "bot_stop", "voice_dial", "voice_hangup", "voice_speak", "voice_status",
-        "chat_list", "chat_tree", "chat_tree_detail", "chat_search", "chat_records", "chat_record_chunk", "chat_thread_read", "chat_turns", "chat_items", "chat_main_live", "chat_main_items", "chat_occurrences", "chat_open", "chat_send", "chat_steer", "chat_interrupt", "chat_enqueue", "chat_queue_list", "chat_queue_resolve",
+        "chat_list", "chat_tree", "chat_tree_detail", "chat_search", "chat_records", "chat_record_chunk", "chat_message_changes", "chat_thread_read", "chat_turns", "chat_items", "chat_main_live", "chat_main_items", "chat_occurrences", "chat_open", "chat_send", "chat_steer", "chat_interrupt", "chat_enqueue", "chat_queue_list", "chat_queue_resolve",
         "chat_codex_queue_add", "chat_codex_queue_list", "chat_codex_queue_update", "chat_codex_queue_delete", "chat_codex_queue_reorder", "chat_codex_queue_start", "chat_upload_start", "chat_upload_status", "chat_upload_chunk", "chat_upload_finish", "chat_attachment_add", "chat_attachment_list", "chat_attachment_remove"].sort(),
     );
     const start = bots.operations.find((operation) => operation.name === "bot_start") as OperationDoc;
@@ -168,13 +168,18 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(usage.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
 
     const infer = found.get("infer") as PackageDoc;
-    assert.deepEqual(infer.operations.map((operation) => operation.name), ["infer_models", "infer_complete"]);
+    assert.deepEqual(infer.operations.map((operation) => operation.name), ["infer_models", "infer_complete", "infer_trace_read"]);
     assert.deepEqual(Object.keys(infer.operations[0]?.outputSchema.properties ?? {}).sort(), ["models", "observedAt"]);
-    assert.deepEqual(Object.keys(infer.operations[1]?.inputSchema.properties ?? {}).sort(), ["accountId", "effort", "input", "instructions", "maxOutputTokens", "model"]);
+    assert.deepEqual(Object.keys(infer.operations[1]?.inputSchema.properties ?? {}).sort(), ["accountId", "effort", "input", "instructions", "maxOutputTokens", "model", "requestId"]);
     assert.equal(infer.operations[1]?.annotations.readOnlyHint, false);
     // The UIX Lab reaches inference over the loopback WebSocket; agents get no MCP route to spend allowance.
     assert.deepEqual(infer.transports.map((transport) => transport.type), ["socket", "websocket"]);
     assert.equal(infer.transports[0]?.endpoint, join(stateDir, "sockets", "infer.sock"));
+    const attention = found.get("attention") as PackageDoc;
+    assert.deepEqual(attention.transports.map((transport) => transport.type), ["socket", "websocket"]);
+    assert.deepEqual(Object.keys(attention.events), ["attention_changed"]);
+    assert.ok(attention.operations.some((operation) => operation.name === "attention_replay"));
+    assert.deepEqual(Object.keys(attention.operations.find((operation) => operation.name === "attention_defaults_get")!.outputSchema.properties ?? {}).sort(), ["accountId", "model", "reasoningEffort", "revision"]);
 
     assert.deepEqual(bots.eventScope, {
       description: "Optional bot ID. Scoped subscriptions receive changes only for that bot; omit scope to receive global voice, defaults, and bot notices.",

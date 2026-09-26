@@ -2,6 +2,7 @@ import { lstatSync, mkdirSync } from "node:fs";
 import { chmod, lstat, mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod";
+import { chatMessagePage, messageCursor } from "./src/chat-messages.js";
 import { operation, workspaceRoot, type PackageApi } from "@agentstack/api";
 import { BotLedger } from "./src/ledger.js";
 import { ownerMcpUrls } from "./src/owner-mcp.js";
@@ -467,8 +468,18 @@ export const chatAttachmentRemove = operation({
   async call(ctx: BotsContext, { botId: id, threadId: target, ...args }) { const bot = await interactive(ctx, id, target); await chatRpc(live(bot), "thread/attachment/remove", { threadId: target, ...args }); return {}; },
 });
 
+export const chatMessageChanges = operation({
+  name: "chat_message_changes", description: "Read newly appearing user/assistant text from a sanctioned Chat's durable rollout. Prefix-fenced cursors detect replaced or rewritten history; timestamps never exclude imported history. headOnly establishes a forward baseline. Excludes tools, reasoning, known harness instructions and inherited child context. Recover large text with chat_record_chunk. Refresh chat_list before reading.",
+  input: z.strictObject({ botId, threadId: z.string(), cursor: messageCursor.optional(), headOnly: z.boolean().default(false), limit: z.number().int().min(1).max(25).default(25) }),
+  output: chatMessagePage, annotations: { title: "Read new Chat messages", readOnlyHint: true },
+  async call(ctx: BotsContext, input) {
+    const bot = ctx.supervisor.list().find((row) => row.id === input.botId);
+    if (!bot) throw new Error("unknown Bot");
+    return ctx.chats.messagePage(bot.id,input.threadId,bot.mainThreadId,input.cursor,input.headOnly,input.limit);
+  },
+});
 export const api: PackageApi<BotsContext, BotsTopic> = {
-  operations: [botStart, botStop, botAssign, botRemove, botList, botDefaultsGet, botDefaultsSet, voiceStatus, voiceDial, voiceSpeak, voiceHangup, chatList, chatTree, chatTreeDetail, chatSearch, chatRecords, chatRecordChunk, chatThreadRead, chatTurns, chatItems, chatMainLive, chatMainItems, chatOccurrences, chatOpen, chatSend, chatSteer, chatInterrupt, chatEnqueue, chatQueueList, chatQueueResolve, chatCodexQueueAdd, chatCodexQueueList, chatCodexQueueUpdate, chatCodexQueueDelete, chatCodexQueueReorder, chatCodexQueueStart, chatUploadStart, chatUploadStatus, chatUploadChunk, chatUploadFinish, chatAttachmentAdd, chatAttachmentList, chatAttachmentRemove],
+  operations: [botStart, botStop, botAssign, botRemove, botList, botDefaultsGet, botDefaultsSet, voiceStatus, voiceDial, voiceSpeak, voiceHangup, chatList, chatTree, chatTreeDetail, chatSearch, chatRecords, chatRecordChunk, chatMessageChanges, chatThreadRead, chatTurns, chatItems, chatMainLive, chatMainItems, chatOccurrences, chatOpen, chatSend, chatSteer, chatInterrupt, chatEnqueue, chatQueueList, chatQueueResolve, chatCodexQueueAdd, chatCodexQueueList, chatCodexQueueUpdate, chatCodexQueueDelete, chatCodexQueueReorder, chatCodexQueueStart, chatUploadStart, chatUploadStatus, chatUploadChunk, chatUploadFinish, chatAttachmentAdd, chatAttachmentList, chatAttachmentRemove],
   events: {
     topics,
     scope: {

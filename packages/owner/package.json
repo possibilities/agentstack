@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@agentstack/api": "workspace:*",
+    "@agentstack/attention": "workspace:*",
     "@agentstack/bots": "workspace:*",
     "@agentstack/brain": "workspace:*",
     "@agentstack/infer": "workspace:*",

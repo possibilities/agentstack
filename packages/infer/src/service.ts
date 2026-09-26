@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { discoverModels } from "./catalog.js";
 import { type CompleteInput, type CompleteOutput, type Model } from "./schema.js";
+import type { InferTraces } from "./traces.js";
 
 type Credentials = { access: string; nativeId: string; auth: string };
 type Discover = (stateDir: string, auth: string) => Promise<Model[]>;
@@ -43,7 +44,7 @@ export async function readCredentials(stateDir: string, accountId: string): Prom
 }
 
 /** Parse only successful terminal SSE; partial deltas never constitute a completed answer. */
-export async function readCompletion(response: Response, requestId: string, model: string): Promise<CompleteOutput> {
+export async function readCompletion(response: Response, requestId: string, model: string, observe?: (kind: string, data: unknown) => void): Promise<CompleteOutput> {
   if (!response.body) throw new Error(`infer_outcome_unknown:${requestId}`);
   const reader = response.body.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -57,20 +58,25 @@ export async function readCompletion(response: Response, requestId: string, mode
     if (event.type === "response.output_text.delta") {
       if (typeof event.delta !== "string") throw new Error("invalid");
       text += event.delta;
-      if (text.length > 16_000) throw new Error("invalid");
+      observe?.("output_text.delta", { delta: event.delta });
+      if (text.length > 128_000) throw new Error("invalid");
     } else if (event.type === "response.completed") {
       completed = object(event.response);
       if (!completed || completed.status !== "completed") throw new Error("invalid");
-    } else if (event.type === "response.failed" || event.type === "error" || event.type === "response.incomplete") failed = true;
+      observe?.("response.completed", { id: completed.id ?? null, model: completed.model ?? null, status: completed.status, usage: completed.usage ?? null });
+    } else if (event.type === "response.failed" || event.type === "error" || event.type === "response.incomplete") {
+      failed = true; observe?.("response.failure", { type: event.type, code: object(event.error)?.code ?? null,
+        status: object(event.response)?.status ?? null, incompleteDetails: object(event.response)?.incomplete_details ?? null });
+    }
   };
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       bytes += value.byteLength;
-      if (bytes > 512_000) throw new Error("invalid");
+      if (bytes > 2_000_000) throw new Error("invalid");
       buffer += decoder.decode(value, { stream: true });
-      if (buffer.length > 64_000) throw new Error("invalid");
+      if (buffer.length > 512_000) throw new Error("invalid");
       let at = buffer.indexOf("\n");
       while (at !== -1) {
         consume(buffer.slice(0, at).replace(/\r$/, ""));
@@ -82,7 +88,8 @@ export async function readCompletion(response: Response, requestId: string, mode
     if (buffer) consume(buffer.replace(/\r$/, ""));
     if (failed || !completed) throw new Error("incomplete");
     const usage = object((completed as Record<string, unknown>).usage), details = object(usage?.output_tokens_details);
-    return { requestId, model, text, usage: {
+    const reportedModel = (completed as Record<string, unknown>).model;
+    return { requestId, model, reportedModel: typeof reportedModel === "string" ? reportedModel : null, text, usage: {
       inputTokens: count(usage?.input_tokens), outputTokens: count(usage?.output_tokens),
       totalTokens: count(usage?.total_tokens), reasoningTokens: count(details?.reasoning_tokens),
     } };
@@ -93,7 +100,8 @@ export async function readCompletion(response: Response, requestId: string, mode
 export class InferService {
   private readonly inFlight = new Set<string>();
   constructor(readonly stateDir: string, private readonly discover: Discover = discoverModels,
-    private readonly fetcher: typeof fetch = fetch, private readonly credentials: typeof readCredentials = readCredentials) {}
+    private readonly fetcher: typeof fetch = fetch, private readonly credentials: typeof readCredentials = readCredentials,
+    readonly traces?: InferTraces) {}
 
   async models(accountId: string): Promise<{ models: Model[]; observedAt: string }> {
     const { auth } = await this.credentials(this.stateDir, accountId);
@@ -105,35 +113,60 @@ export class InferService {
     // One request per account at a time; callers must not flood shared Codex allowance.
     if (this.inFlight.has(input.accountId) || this.inFlight.size >= 2) throw new Error("infer_busy");
     this.inFlight.add(input.accountId);
-    try { return await this.completeOnce(input); }
+    const requestId = input.requestId ?? randomUUID();
+    try {
+      const previous = this.traces?.reserve(requestId, input);
+      if (previous) return previous;
+      try {
+        const result = await this.completeOnce(input, requestId);
+        this.traces?.finish(requestId, result, null);
+        return result;
+      } catch (error) {
+        this.traces?.finish(requestId, null, error instanceof Error ? error.message : "infer_error");
+        throw error;
+      }
+    }
     finally { this.inFlight.delete(input.accountId); }
   }
 
-  private async completeOnce(input: CompleteInput): Promise<CompleteOutput> {
+  private async completeOnce(input: CompleteInput, requestId: string): Promise<CompleteOutput> {
     const credentials = await this.credentials(this.stateDir, input.accountId);
     let models: Model[];
     try { models = await this.discover(this.stateDir, credentials.auth); }
     catch { throw new Error("catalog_unavailable"); }
     if (!models.some((row) => row.id === input.model && row.supportedEfforts.includes(input.effort))) throw new Error("model_unavailable");
-    const requestId = randomUUID();
+    this.traces?.event(requestId, "catalog", { models });
+    const body = { model: input.model, instructions: input.instructions,
+      input: [{ role: "user", content: [{ type: "input_text", text: input.input }] }],
+      reasoning: { effort: input.effort }, stream: true, store: false };
+    this.traces?.event(requestId, "dispatch", { url: "https://chatgpt.com/backend-api/codex/responses", body });
     let response: Response;
     try {
       response = await this.fetcher("https://chatgpt.com/backend-api/codex/responses", {
         method: "POST", redirect: "manual", signal: AbortSignal.timeout(30_000),
         headers: { Authorization: `Bearer ${credentials.access}`, "chatgpt-account-id": credentials.nativeId,
           "Content-Type": "application/json", Accept: "text/event-stream", originator: "codex_cli_rs", session_id: requestId },
-        body: JSON.stringify({ model: input.model, instructions: input.instructions,
-          input: [{ role: "user", content: [{ type: "input_text", text: input.input }] }],
-          reasoning: { effort: input.effort }, max_output_tokens: input.maxOutputTokens, stream: true, store: false }),
+        body: JSON.stringify(body),
       });
     } catch { throw new Error(`infer_outcome_unknown:${requestId}`); }
+    this.traces?.event(requestId, "http", { status: response.status, requestId: response.headers.get("x-request-id"), contentType: response.headers.get("content-type") });
     if (!response.ok) {
-      await response.body?.cancel().catch(() => {});
+      const reader=response.body?.getReader();let diagnostic="",truncated=false;
+      if(reader)try{
+        const decoder=new TextDecoder();
+        while(true){const part=await reader.read();if(part.done)break;diagnostic+=decoder.decode(part.value,{stream:true});if(diagnostic.length>16_000){truncated=true;diagnostic=diagnostic.slice(0,16_000);break;}}
+      }catch{diagnostic="response body unavailable";}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
+      diagnostic=diagnostic.replaceAll(credentials.access,"[credential]").replaceAll(credentials.auth,"[credential]");
+      this.traces?.event(requestId,"http_error",{status:response.status,diagnostic,truncated});
       if (response.status === 401) throw new Error("codex_sign_in_required");
       if (response.status === 403) throw new Error("codex_access_denied");
       if (response.status === 429) throw new Error("codex_rate_limited");
       throw new Error(`infer_http_error:${response.status}`);
     }
-    return readCompletion(response, requestId, input.model);
+    const result=await readCompletion(response, requestId, input.model, (kind, data) => this.traces?.event(requestId, kind, data));
+    this.traces?.event(requestId,"output_budget",{limit:input.maxOutputTokens,observedTokens:result.usage.outputTokens,
+      exceeded:result.usage.outputTokens===null?null:result.usage.outputTokens>input.maxOutputTokens,enforcement:"post_response"});
+    if(result.usage.outputTokens!==null&&result.usage.outputTokens>input.maxOutputTokens)throw new Error(`infer_output_budget_exceeded:${requestId}`);
+    return result;
   }
 }

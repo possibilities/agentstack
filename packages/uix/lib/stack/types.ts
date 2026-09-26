@@ -221,9 +221,19 @@ export type InferModels = { models: InferModel[]; observedAt: string };
 export type InferCompletion = {
   requestId: string;
   model: string;
+  reportedModel: string | null;
   text: string;
   usage: { inputTokens: number | null; outputTokens: number | null; totalTokens: number | null; reasoningTokens: number | null };
 };
+
+/** Headless attention defaults; API reference exposes these before dedicated controls exist. */
+export type AttentionDefaults = { model: string; reasoningEffort: InferEffort; accountId: string | null; revision: number };
+export type InferTraceChunk = { text: string; nextOffset: number; totalChars: number; complete: boolean; revision: string };
+export type ChatMessageCursor = { sourceId: string; line: number; prefixHash: string };
+export type ChatMessagePage = { cursor: ChatMessageCursor; reset: boolean; hasMore: boolean; entries: Array<{
+  key: string; revision: string; line: number; role: "user" | "assistant"; text: string | null;
+  textChars: number; timestamp: string | null; phase: string | null;
+}> };
 
 export type Resource<T> = { data: T | null; error: string | null; at: number | null };
 

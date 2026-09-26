@@ -270,6 +270,13 @@ export class WorkerLedger {
   }
 
   append(workerId: string, turnId: string, kind: string, text: string): void {
+    // Conversation text is a durable source for forward attention capture. The
+    // diagnostic/tool budget must not silently drop human or assistant messages.
+    if (kind === "user" || kind === "agent") {
+      const insert = this.db.prepare("INSERT INTO transcript (worker_id, turn_id, kind, text, at) VALUES (?,?,?,?,?)");
+      for (let offset = 0; offset < text.length; offset += 16_000) insert.run(workerId, turnId, kind, text.slice(offset, offset + 16_000), Date.now());
+      return;
+    }
     const size = this.db.prepare("SELECT COALESCE(SUM(length(text)),0) AS bytes FROM transcript WHERE turn_id = ?").get(turnId) as { bytes: number };
     if (size.bytes >= 1_000_000) return;
     const value = text.slice(0, 1_000_000 - size.bytes);
