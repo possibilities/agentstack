@@ -54,14 +54,14 @@ const catalogExclusions: Record<Catalog["provider"], RegExp[]> = {
  * Model entries a provider's catalog reports. The Codex account's ChatGPT
  * sign-in reaches only current reasoning models; OpenAI registry entries that
  * offer no effort choice, and the o3, realtime and image families, cannot be
- * dispatched and are omitted rather than listed as selectable.
- * Grok's Imagine media-generation models are omitted for the same reason.
- * Other providers lack equally strong non-chat evidence and report every
- * advertised choice.
+ * dispatched and are omitted rather than listed as selectable. Grok's Imagine
+ * media-generation models are omitted for the same reason. Devin catalogs
+ * likewise omit entries that offer no effort choice; its remaining name
+ * families lack equally strong evidence and are reported as observed.
  */
 export function catalogModels(provider: Catalog["provider"], models: ModelChoice[]): ModelChoice[] {
   return models.filter((model) => {
-    if (provider === "codex" && model.efforts.length === 0) return false;
+    if (provider !== "grok" && model.efforts.length === 0) return false;
     const local = model.id.slice(model.id.lastIndexOf("/") + 1);
     return !catalogExclusions[provider].some((pattern) => pattern.test(local));
   });

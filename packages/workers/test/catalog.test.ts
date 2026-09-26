@@ -11,6 +11,7 @@ import { writeV2Credential } from "./v2-credential-fixture.js";
 const fake = `#!/usr/bin/env node
 import { basename } from 'node:path';
 if (process.argv[2] === '--version') { console.log('fake-acp 2.0'); process.exit(0); }
+if (process.argv[2] === 'models') { console.log(JSON.stringify({ families: [{ variants: [{ model_uid: 'native-1' }] }] })); process.exit(0); }
 let buffer = '';
 let selected = '';
 const id = basename(process.env.XDG_DATA_HOME.replace(/\\/data$/, ''));
@@ -42,7 +43,7 @@ test("ACP catalog reflects the exact account process and dependent effort choice
   const binary = join(dir, "fake-acp");
   await writeFile(binary, fake);
   await chmod(binary, 0o700);
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, AGENTSTACK_OPENCODE_BIN: binary };
+  const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, AGENTSTACK_OPENCODE_BIN: binary, AGENTSTACK_DEVIN_BIN: binary };
   const auth = await serveApi({ name: "auth", transport: "socket", env });
   const supervisor = new WorkerSupervisor(dir, env);
   try {
@@ -59,18 +60,28 @@ test("ACP catalog reflects the exact account process and dependent effort choice
     const first = await prepare();
     const second = await prepare();
     const codex = await prepare("codex");
+    const { account: devinAccount } = await socketCall(socketPath("auth", env), "tools/call", {
+      name: "worker_account_prepare", arguments: { provider: "devin" } }) as { account: { id: string } };
+    const devin = devinAccount.id;
+    const devinDir = join(dir, "worker-accounts", devin, "data", "devin");
+    await (await import("node:fs/promises")).mkdir(devinDir, { recursive: true });
+    await writeFile(join(devinDir, "credentials.toml"), 'api_key = "test-key"\napi_server_url = "https://api.devin.ai/"\n', { mode: 0o600 });
+    await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_confirm", arguments: { id: devin } });
     await supervisor.reconcile();
     const a = await supervisor.catalog(first, true);
     const b = await supervisor.catalog(second, true);
     const c = await supervisor.catalog(codex, true);
+    const d = await supervisor.catalog(devin, true);
     assert.equal(a.models.length, 3);
     assert.deepEqual(a.models.map((model) => model.efforts), [["low"], ["high", "max"], []]);
     assert.ok(a.models.every((model) => model.id.startsWith(first) && !model.id.endsWith("imagine")), "Grok omits Imagine media models");
     assert.ok(b.models.every((model) => model.id.startsWith(second)));
     assert.notEqual(a.models[0]!.id, b.models[0]!.id);
     assert.deepEqual(c.models.map((model) => model.id), [codex + "-small", codex + "-large", codex + "-imagine"], "Codex catalogs omit entries without effort choices");
+    assert.deepEqual(d.models.map((model) => model.id), [devin + "-small", devin + "-large", devin + "-imagine"], "Devin catalogs omit entries without effort choices");
+    assert.deepEqual(d.nativeModelIds, ["native-1"]);
     assert.equal((await supervisor.catalog(first, false)).observedAt, a.observedAt);
-    assert.equal(supervisor.runtimeList().length, 3);
+    assert.equal(supervisor.runtimeList().length, 4);
     await supervisor.drain(second);
     const stale = await supervisor.catalog(second, true);
     assert.equal(stale.stale, true);
@@ -78,7 +89,7 @@ test("ACP catalog reflects the exact account process and dependent effort choice
     assert.equal((await supervisor.catalog(second, false)).stale, true);
     await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_set_enabled", arguments: { id: first, enabled: false } }).catch(() => undefined);
     await supervisor.reconcile();
-    assert.equal(supervisor.runtimeList().length, 2);
+    assert.equal(supervisor.runtimeList().length, 3);
   } finally {
     await supervisor.close();
     await auth.close();
@@ -99,8 +110,8 @@ test("catalog parsing preserves native IDs and grouped ACP options", () => {
   assert.deepEqual(catalogModels("grok", [
     choice("xai/grok-4.20-0309-non-reasoning", []), choice("xai/grok-imagine-video"), choice("xai/grok-4.7"),
   ]).map((model) => model.id), ["xai/grok-4.20-0309-non-reasoning", "xai/grok-4.7"], "Grok keeps no-effort chat models");
-  assert.deepEqual(catalogModels("devin", [choice("adaptive", []), choice("MODEL_PRIVATE_11", [])]).map((model) => model.id),
-    ["adaptive", "MODEL_PRIVATE_11"], "Devin reports every advertised choice");
+  assert.deepEqual(catalogModels("devin", [choice("adaptive", []), choice("MODEL_PRIVATE_11", []), choice("swe-2-high")]).map((model) => model.id),
+    ["swe-2-high"], "Devin omits entries without effort choices");
 });
 
 test("operator disable and removal drain the exact account process before deleting credentials", async () => {
