@@ -201,6 +201,12 @@ export function NodeCard({ node, label, children, className, lastEvent, accent, 
   );
 }
 
+/** Focus-flash overlay for a `data-node` row: matches the last goTo target's node key. */
+export function Flash({ id }: { id: string }) {
+  const { flash } = useWorkbench();
+  return flash?.key === id ? <span key={flash.seq} aria-hidden className="pointer-events-none absolute inset-0 rounded-md animate-uix-flash-in" /> : null;
+}
+
 /** The card's visible name and its only inspect control — toggles selection, or navigates when `onActivate` is set. */
 export function NodeTitle({ node, label, children, className, onActivate }: {
   node: NodeRef;

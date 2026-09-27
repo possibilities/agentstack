@@ -22,8 +22,37 @@ const op = (name, result) => ({ name, description: name, input: pass, output: pa
 const bots = Array.from({ length: 8 }, (_, i) => ({ id: `bot-${i + 1}`, pid: 100 + i, cwd: "/fixture/project", state: "running", account: "account-1", runningAccount: "account-1", mainThreadId: `thread-${i}`, url: null, recoveryIssue: null, roleRevision: 1, settings: { model: "fixture", reasoningEffort: "medium", sandboxMode: "read-only", approvalPolicy: "never" } }));
 const doc = (name, operation) => ({ name, packageName: `@agentstack/${name}`, description: `${name} fixture description`, events: { changed: "Fixture changed" }, eventScope: { required: true, description: "A current Bot ID", example: "bot-1" }, transports: [{ type: "socket", supported: true, subscriptions: true, endpoint: socketPath(name, env), description: "Fixture Unix socket" }], operations: [{ name: operation, title: "Read fixture", description: "Read current fixture state", annotations: { readOnlyHint: true, destructiveHint: false }, inputSchema: { type: "object", properties: { id: { type: "string", description: "Current ID", minLength: 1 } }, required: ["id"], additionalProperties: false }, outputSchema: { oneOf: [{ type: "object", properties: { value: { type: "string" } } }, { type: "null" }], $defs: { complete: { type: "number" } } } }] });
 const catalog = [doc("owner", "owner_status"), doc("bots", "bot_status"), doc("auth", "account_list")];
+const resourcesFixture = {
+  observation: { snapshotId: "snap-1", capturedAt: new Date().toISOString(), ageMs: 400, freshness: "fresh", lastAttemptAt: new Date().toISOString(), error: null,
+    source: "darwin_ps", intervalMs: 5_000, staleAfterMs: 14_000, collectionDurationMs: 18,
+    coverage: { mode: "owner_tree", observedHostProcesses: 512, ownedProcesses: 3, unreadableProcesses: 0, vanishedDuringCollection: 0, retainedProcesses: 0, excludedCollectorProcesses: 1, domains: [] } },
+  host: { platform: "darwin", logicalCpuCount: 8, hostname: "fixture-host", arch: "arm64", release: "24.5.0", cpuModel: "Apple M4", uptimeSeconds: 86_400,
+    totalMemoryBytes: 16_000_000_000, freeMemoryBytes: 2_000_000_000, loadAverage: [1.5, 1.2, 1.1] },
+  capabilities: { rssBytes: true, virtualBytes: true, cpuTimeMs: true, cpuPercent: true, threads: false,
+    diskIoBytes: false, openFileDescriptors: false, networkBytes: false, gpu: false, perSessionAllocation: false },
+  retention: { maxSamples: 120, maxProcessRecords: 50_000, retainedSamples: 1, oldestAttemptAt: new Date().toISOString(), newestAttemptAt: new Date().toISOString(), droppedSamples: 0 },
+  runtime: { pid: 123, nodeVersion: process.version, uptimeSeconds: 60, heapUsedBytes: 24_000_000, heapTotalBytes: 40_000_000, externalBytes: 2_000_000, arrayBuffersBytes: 100_000, eventLoopUtilization: null },
+  scope: null,
+  scopes: [{ id: "total", kind: "total", name: "AgentStack", component: null, botId: null, accountId: null, runtimeInstance: null, provider: null, shared: true,
+    metrics: { processCount: 3, rssBytes: 120_000_000, virtualBytes: 360_000_000, cpuTimeMs: 2_400, cpuPercent: 4.2, cpuMeasuredProcessCount: 3, threads: null } }],
+  processes: [{ id: "process:1:root", subtreeId: "subtree:1:root", pid: 123, ppid: 1, birth: "b1", name: "agentstack", parentId: null, ancestryParentId: null,
+    ownership: "root", component: "owner", botId: null, accountId: null, runtimeInstance: null, provider: null, attribution: "component", attributedAt: null,
+    cpuIntervalMs: 5_000, cpuStatus: "measured",
+    self: { processCount: 1, rssBytes: 40_000_000, virtualBytes: 120_000_000, cpuTimeMs: 800, cpuPercent: 1.4, cpuMeasuredProcessCount: 1, threads: null },
+    subtree: { processCount: 3, rssBytes: 120_000_000, virtualBytes: 360_000_000, cpuTimeMs: 2_400, cpuPercent: 4.2, cpuMeasuredProcessCount: 3, threads: null } }],
+  page: { offset: 0, limit: 100, total: 1, nextOffset: null },
+};
+const historyFixture = { scopeId: "total", intervalMs: 5_000, truncated: false, retention: resourcesFixture.retention,
+  points: [{ attemptId: "a1", attemptedAt: new Date().toISOString(), snapshotId: "snap-1", capturedAt: new Date().toISOString(), state: "measured", error: null,
+    metrics: resourcesFixture.scopes[0].metrics, host: resourcesFixture.host, coverage: resourcesFixture.observation.coverage }] };
 const definitions = {
-  owner: [op("owner_status", { pid: 123, indexUrl: "http://127.0.0.1:1", uixUrl: null, inspectorUrl: null, mcpUrls: { bots: "http://127.0.0.1:2/mcp/bots" }, children: [{ name: "api", pid: 124, running: true, exitCode: null, signal: null, error: null }, { name: "fixture-stopped", pid: null, running: false, exitCode: 1, signal: null, error: "Fixture stopped" }] })],
+  owner: [
+    op("owner_status", { pid: 123, startedAt: new Date(Date.now() - 60_000).toISOString(), nodeVersion: process.version, indexUrl: "http://127.0.0.1:1", uixUrl: null, inspectorUrl: null, mcpUrls: { bots: "http://127.0.0.1:2/mcp/bots" },
+      children: [{ name: "api", pid: 124, running: true, exitCode: null, signal: null, error: null, startedAt: new Date(Date.now() - 50_000).toISOString(), exitedAt: null },
+        { name: "fixture-stopped", pid: null, running: false, exitCode: 1, signal: null, error: "Fixture stopped", startedAt: null, exitedAt: new Date(Date.now() - 40_000).toISOString() }] }),
+    op("owner_resources", resourcesFixture),
+    op("owner_resource_history", historyFixture),
+  ],
   auth: [op("account_list", { accounts: [{ id: "account-1", enabled: true, removing: false, linkedAccounts: [] }] }), op("account_login_current", { login: null }), op("worker_account_list", { accounts: [] }), op("worker_account_login_current", { logins: [] })],
   bots: [op("bot_list", { bots }), op("bot_defaults_get", bots[0].settings), op("voice_status", { call: null })],
   workers: [op("worker_runtime_list", { runtimes: [] }), op("worker_list", { workers: [] })],
@@ -59,7 +88,8 @@ try {
   await page.goto(`${origin}/x`);
   await page.getByRole("main", { name: "Open bench" }).waitFor();
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
-  assert.deepEqual(await page.locator("[data-window]").evaluateAll((nodes) => nodes.map((node) => node.dataset.window).sort()), ["accounts", "bots", "model-catalogs", "usage"]);
+  assert.deepEqual(await page.locator("[data-window]").evaluateAll((nodes) => nodes.map((node) => node.dataset.window).sort()),
+    ["accounts", "activity", "bots", "host", "model-catalogs", "owner", "packages", "processes", "resources", "sampling", "usage"]);
   assert.equal(await page.getByRole("button", { name: "Grid", exact: true }).count(), 0);
   const point = () => page.locator('[data-window="bots"]').evaluate((el) => ({ x: el.getBoundingClientRect().x, y: el.getBoundingClientRect().y }));
   const samePoint = (a, b) => { assert.ok(Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) < 1, `${JSON.stringify(a)} != ${JSON.stringify(b)}`); };
@@ -92,22 +122,14 @@ try {
   assert.equal(await page.getByRole("heading", { name: "bot-1", exact: true }).count(), 1);
   await page.getByRole("button", { name: "Close inspector", exact: true }).click();
   assert.equal(await page.getByRole("button", { name: "Inspect bot bot-1", exact: true }).evaluate((el) => el === document.activeElement), true);
-  await page.getByRole("button", { name: "Show System", exact: true }).click();
-  await page.getByRole("heading", { name: "System", exact: true }).waitFor();
-  samePoint(initial, await point());
-  const resize = page.getByRole("separator", { name: "Resize System", exact: true });
-  const width = Number(await resize.getAttribute("aria-valuenow"));
-  await resize.focus(); await page.keyboard.press("ArrowRight");
-  assert.equal(Number(await resize.getAttribute("aria-valuenow")), width + 16);
-  samePoint(initial, await point());
-  await page.keyboard.press("Escape");
-  assert.equal(await page.getByRole("heading", { name: "System", exact: true }).isVisible(), false);
-  assert.equal(await page.getByRole("button", { name: "Show System", exact: true }).evaluate((el) => el === document.activeElement), true);
-  samePoint(initial, await point());
+  // System is a space now: the menu moves the camera there and back.
+  await page.getByRole("button", { name: /^Spaces/ }).click();
+  await page.getByRole("menuitem", { name: /^System/ }).click();
+  await page.locator('[data-window="owner"]').waitFor({ state: "visible" });
+  assert.ok(new URL(page.url()).pathname.endsWith("/x/system"));
+  assert.ok(await page.locator('[data-window="sampling"]').isVisible());
   await page.goBack();
-  await page.getByRole("heading", { name: "System", exact: true }).waitFor();
-  samePoint(initial, await point());
-  await page.getByRole("button", { name: "Close System dock", exact: true }).click();
+  assert.ok(new URL(page.url()).pathname.endsWith("/x/fleet"));
   await page.getByRole("button", { name: "Inspect bot bot-1", exact: true }).click();
   await page.getByRole("button", { name: /^Spaces/ }).click(); await page.getByRole("menuitem", { name: /^Fleet/ }).click();
   assert.equal(await page.getByRole("heading", { name: "bot-1", exact: true }).count(), 1);
@@ -127,16 +149,14 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.locator('[data-dock="right"]').evaluate((el) => Math.round(el.getBoundingClientRect().width)), 390);
   await page.getByRole("button", { name: "Close API reference", exact: true }).click();
-  await page.getByRole("button", { name: "Show System", exact: true }).click();
-  assert.equal(await page.locator('[data-dock="left"]').evaluate((el) => Math.round(el.getBoundingClientRect().width)), 390);
+  await page.goto(`${origin}/x/system`);
+  await page.locator('[data-window="owner"]').waitFor({ state: "visible" });
   await page.screenshot({ path: join(evidence, "system-mobile.png") });
-  await page.getByRole("button", { name: "Close System dock", exact: true }).click();
-  await page.goto(`${origin}/x/fleet?system=child%3Afixture-stopped&reference=operation%3Abots.bot_status&inspect=bot%3Abot-1`);
+  await page.goto(`${origin}/x/system?focus=child%3Afixture-stopped&reference=operation%3Abots.bot_status&inspect=bot%3Abot-1`);
   await page.getByRole("heading", { name: "Request templates" }).waitFor();
   await page.getByRole("button", { name: "Inspector", exact: true }).click();
   await page.getByRole("heading", { name: "bot-1", exact: true }).waitFor();
   await page.getByRole("button", { name: "Close inspector", exact: true }).click();
-  await page.getByRole("button", { name: "Close System dock", exact: true }).click();
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.getByRole("button", { name: /^Spaces/ }).click(); await page.getByRole("menuitem", { name: /^Fleet/ }).click();
   const windowHeader = await page.locator('[data-window="bots"] header').boundingBox();
@@ -153,19 +173,15 @@ try {
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
   samePoint(afterDrag, await point());
 
-  // Retained width preferences must be jointly constrained at the desktop breakpoint.
-  await page.getByRole("button", { name: "Show System", exact: true }).click();
-  await page.getByRole("separator", { name: "Resize System", exact: true }).focus();
-  await page.keyboard.press("End");
-  assert.equal(Number(await page.getByRole("separator", { name: "Resize System", exact: true }).getAttribute("aria-valuenow")), 520);
+  // The retained reference width is bounded by the desktop breakpoint's usable bench.
   await page.getByRole("button", { name: "Show API reference", exact: true }).click();
-  await page.setViewportSize({ width: 900, height: 1000 });
-  await page.waitForFunction(() => document.querySelector('[aria-label="Resize System"]').getAttribute("aria-valuemax") === "340");
-  const systemSeparator = page.getByRole("separator", { name: "Resize System", exact: true });
   const referenceSeparator = page.getByRole("separator", { name: "Resize API reference", exact: true });
-  assert.equal(Number(await systemSeparator.getAttribute("aria-valuemax")), 340);
-  assert.equal(Number(await systemSeparator.getAttribute("aria-valuenow")), 340);
-  assert.equal(Number(await referenceSeparator.getAttribute("aria-valuemax")), 320);
+  await referenceSeparator.focus();
+  await page.keyboard.press("End");
+  assert.equal(Number(await referenceSeparator.getAttribute("aria-valuenow")), Number(await referenceSeparator.getAttribute("aria-valuemax")));
+  await page.setViewportSize({ width: 900, height: 1000 });
+  await page.waitForFunction(() => document.querySelector('[aria-label="Resize API reference"]').getAttribute("aria-valuemax") === "660");
+  assert.equal(Number(await referenceSeparator.getAttribute("aria-valuemax")), 660);
   await page.getByRole("button", { name: "Expand reading mode", exact: true }).click();
   for (const width of [900, 1100, 1600]) {
     await page.setViewportSize({ width, height: 1000 });

@@ -2,11 +2,13 @@ import { createHash } from "node:crypto";
 import type { ChildStatus } from "../owner.js";
 import { CollectionError, maxOwnedProcesses, type Collection, type ProcessReading } from "./collector.js";
 import type { DomainLabel, DomainReading } from "./domains.js";
-import type { ResourceCoverage, ResourceMetrics, ResourceProcess, ResourceScope } from "./schema.js";
+import type { OwnerRuntime, ResourceCoverage, ResourceMetrics, ResourceProcess, ResourceScope } from "./schema.js";
 
 export type ResourceRoots = { pid: number; attached: boolean; children: ChildStatus[] };
 export type ResourceFrame = {
   id: string; collection: Collection; durationMs: number; coverage: ResourceCoverage;
+  /** Runtime vitals of the process serving the owner API, pinned to this snapshot by the monitor. */
+  runtime: OwnerRuntime | null;
   processes: Map<string, ResourceProcess>; scopes: Map<string, ResourceScope>;
   members: Map<string, Set<string>>;
   // Nearest surviving ancestry parent, including observed links through an exited intermediary.
@@ -181,7 +183,7 @@ export function attribute(collection: Collection, roots: ResourceRoots, domains:
     const process = processes.get(id)!;
     process.subtree = sumMetrics([process.self, ...(children.get(id) ?? []).map((child) => processes.get(child)!.subtree)]);
   }
-  return { id: "", collection: { ...collection, processes: collection.processes.filter((item) => processes.has(item.id)) }, durationMs: 0,
+  return { id: "", collection: { ...collection, processes: collection.processes.filter((item) => processes.has(item.id)) }, durationMs: 0, runtime: null,
     processes, parents, children, scopes, members,
     coverage: { mode: roots.attached ? "owner_tree" : "self_only", observedHostProcesses: collection.processes.length,
       ownedProcesses: processes.size, unreadableProcesses: collection.unreadableProcesses, vanishedDuringCollection: collection.vanishedDuringCollection,

@@ -194,7 +194,7 @@ test("the api package serves structured documents for every workspace package", 
     });
 
     const owner = found.get("owner") as PackageDoc;
-    assert.deepEqual(Object.keys(owner.operations[0]?.outputSchema.properties ?? {}).sort(), ["children", "indexUrl", "inspectorUrl", "mcpUrls", "pid", "uixUrl"]);
+    assert.deepEqual(Object.keys(owner.operations[0]?.outputSchema.properties ?? {}).sort(), ["children", "indexUrl", "inspectorUrl", "mcpUrls", "nodeVersion", "pid", "startedAt", "uixUrl"]);
     assert.deepEqual(Object.keys(owner.events), ["pids_changed", "resources_changed"]);
     assert.deepEqual(owner.operations.map((operation) => operation.name), ["owner_status", "owner_resources", "owner_resource_history"]);
     assert.equal(owner.operations[1].annotations.readOnlyHint, true);

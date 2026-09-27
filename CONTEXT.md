@@ -144,13 +144,13 @@ A named, optional group of Content items. Items exist independently of collectio
 
 ## Canvas space
 
-A named physical region of related windows on UIX's shared open bench, addressed as `/x/<space>`. Fleet (Bots) is the default space, Accounts (accounts, usage limits and model catalogs) sits beside it, and Lab holds experimental windows; a relationship between cards in different spaces is a link, not a wire. Spaces have independent local window arrangements and deterministic centered bench positions. Navigating to a space moves the shared camera. System and API reference are global docks rather than spaces.
+A named physical region of related windows on UIX's shared open bench, addressed as `/x/<space>`. Fleet (Bots) is the default space, Accounts (accounts, usage limits and model catalogs) sits beside it, Lab holds experimental windows, and System holds the owner, its processes, package channels, host resources and sampling; a relationship between cards in different spaces is a link, not a wire. Spaces have independent local window arrangements and deterministic centered bench positions. Navigating to a space moves the shared camera. API reference is a global dock rather than a space.
 
 _Avoid_: page, tab, workspace (a Bot's working directory)
 
 ## Open bench
 
-UIX's continuous canvas containing all Canvas spaces under one camera. Record relationships do not determine space placement. System, API reference and record inspection are global tools attached to the viewport; their destinations need not name a canvas card.
+UIX's continuous canvas containing all Canvas spaces under one camera. Record relationships do not determine space placement. API reference and record inspection are global tools attached to the viewport; their destinations need not name a canvas card.
 
 _Avoid_: independent canvases, space tabs
 

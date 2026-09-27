@@ -1,6 +1,7 @@
 import { loadCatalog } from "./catalog";
 import { Channel } from "./channel";
-import type { Account, Bot, BotSettings, ChannelStatus, Login, OwnerStatus, PackageDoc, Resource, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
+import { loadResources, mergeHistory } from "./resources";
+import type { Account, Bot, BotSettings, ChannelStatus, Login, OwnerResources, OwnerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
 
 export type StackState = Snapshot & {
   /** Main channel status by Package API name. */
@@ -14,6 +15,8 @@ export type StackState = Snapshot & {
   workerAttempts: Record<string, WorkerLogin>;
   workerCatalogs: Record<string, Resource<WorkerCatalog>>;
   catalogPending: Record<string, boolean>;
+  /** Watched per-scope resource history, keyed by scope id. */
+  resourceHistory: Record<string, Resource<ResourceHistoryPoint[]>>;
   /** Monotonic invalidation generations, independent of the bounded activity log. */
   botInvalidations: Record<string, number>;
 };
@@ -30,7 +33,7 @@ function isWorkerLoginState(value: unknown): value is WorkerLogin {
   return typeof value === "object" && value !== null && "status" in value && "account" in value && "provider" in value && "needsCode" in value;
 }
 
-type ResourceKey = "owner" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "catalog" | "usage";
+type ResourceKey = "owner" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "catalog" | "usage";
 
 const maxEvents = 250;
 
@@ -47,12 +50,15 @@ export class StackStore {
   private catalogDirty = new Map<string, boolean>();
   private catalogAvailable = new Set<string>();
   private catalogGeneration = new Map<string, number>();
+  private historyWatchers = new Map<string, number>();
+  private historyInflight = new Map<string, Promise<void>>();
+  private historyDirty = new Set<string>();
 
   constructor(snapshot: Snapshot) {
     this.state = {
       ...snapshot, status: {}, scoped: {}, events: [], attempt: snapshot.login.data,
       workerAttempts: Object.fromEntries((snapshot.workerLogins.data ?? []).map((login) => [login.account, login])),
-      workerCatalogs: {}, catalogPending: {}, botInvalidations: {},
+      workerCatalogs: {}, catalogPending: {}, resourceHistory: {}, botInvalidations: {},
     };
     for (const account of snapshot.workerAccounts.data ?? []) if (this.catalogAccountAvailable(account.id)) this.catalogAvailable.add(account.id);
   }
@@ -68,22 +74,27 @@ export class StackStore {
     this.scopedBots = scopedBots;
     const { endpoints } = this.state;
     const enabled = packages && new Set(packages);
-    const open = (pkg: string, onOpen: () => void, onNotice?: (topic: string) => void, topics?: string[]) => {
+    const open = (pkg: string, onOpen: () => void, onNotice?: (topic: string) => void, topics?: string[], options?: { silent?: readonly string[] }) => {
       if (enabled && !enabled.has(pkg)) return;
       const url = endpoints[pkg];
       if (!url) return;
+      const silent = new Set(options?.silent ?? []);
       const channel = new Channel(url, {
         onStatus: (status) => this.set({ status: { ...this.state.status, [pkg]: status } }),
         onOpen,
         onNotice: (topic) => {
-          this.log(pkg, topic, null);
+          if (!silent.has(topic)) this.log(pkg, topic, null);
           onNotice?.(topic);
         },
       });
       if (topics) channel.subscribe(topics);
       this.main.set(pkg, channel.connect());
     };
-    open("owner", () => this.refresh("owner"), () => this.refresh("owner"), ["pids_changed"]);
+    // resources_changed is a five-second sampling tick: refreshing state must not flood the activity log.
+    open("owner", () => { this.refresh("owner"); this.refresh("resources"); this.refreshWatchedHistories(); }, (topic) => {
+      if (topic === "pids_changed") this.refresh("owner");
+      if (topic === "resources_changed") { this.refresh("resources"); this.refreshWatchedHistories(); }
+    }, ["pids_changed", "resources_changed"], { silent: ["resources_changed"] });
     open("auth", () => { this.refresh("accounts"); this.refresh("workerAccounts"); this.refresh("login"); this.refresh("workerLogins"); }, (topic) => {
       this.refresh("accounts");
       if (topic === "worker_accounts_changed") this.refresh("workerAccounts");
@@ -175,6 +186,56 @@ export class StackStore {
     return run;
   };
 
+  /**
+   * Reference-counted history subscription per scope id. The first watcher
+   * loads it; the last unwatch drops the entry and its single-flight chain.
+   */
+  watchResourceHistory = (scopeId: string): (() => void) => {
+    const watchers = (this.historyWatchers.get(scopeId) ?? 0) + 1;
+    this.historyWatchers.set(scopeId, watchers);
+    if (watchers === 1) this.refreshHistory(scopeId);
+    return () => {
+      const remaining = (this.historyWatchers.get(scopeId) ?? 0) - 1;
+      if (remaining > 0) {
+        this.historyWatchers.set(scopeId, remaining);
+        return;
+      }
+      this.historyWatchers.delete(scopeId);
+      this.historyDirty.delete(scopeId);
+      if (this.state.resourceHistory[scopeId]) {
+        const resourceHistory = { ...this.state.resourceHistory };
+        delete resourceHistory[scopeId];
+        this.set({ resourceHistory });
+      }
+    };
+  };
+
+  private refreshWatchedHistories(): void {
+    for (const scopeId of this.historyWatchers.keys()) this.refreshHistory(scopeId);
+  }
+
+  private refreshHistory(scopeId: string): void {
+    if (!this.historyWatchers.has(scopeId)) return;
+    if (this.historyInflight.has(scopeId)) {
+      this.historyDirty.add(scopeId);
+      return;
+    }
+    const existing = this.state.resourceHistory[scopeId]?.data ?? [];
+    const newest = existing.at(-1)?.attemptedAt;
+    const args = newest ? { scopeId, since: newest } : { scopeId, limit: 120 };
+    const run = this.call<ResourceHistoryPage>("owner", "owner_resource_history", args)
+      .then((page) => ({ data: mergeHistory(existing, page.points, page.retention), error: null, at: Date.now() }),
+        (error: Error) => ({ data: this.state.resourceHistory[scopeId]?.data ?? null, error: error.message, at: Date.now() }))
+      .then((next) => {
+        if (this.historyWatchers.has(scopeId)) this.set({ resourceHistory: { ...this.state.resourceHistory, [scopeId]: next } });
+      })
+      .finally(() => {
+        this.historyInflight.delete(scopeId);
+        if (this.historyDirty.delete(scopeId)) this.refreshHistory(scopeId);
+      });
+    this.historyInflight.set(scopeId, run);
+  }
+
   private catalogAccountAvailable(id: string): boolean {
     return Boolean(this.state.workerAccounts.data?.some((account) => account.id === id && account.enabled && account.ready && !account.removing));
   }
@@ -246,6 +307,7 @@ export class StackStore {
     };
     switch (key) {
       case "owner": return call<OwnerStatus>("owner", "owner_status");
+      case "resources": return loadResources((name, args) => call<never>("owner", name, args)) as Promise<OwnerResources>;
       case "accounts": return call<{ accounts: Account[] }>("auth", "account_list").then((result) => result.accounts);
       case "workerAccounts": return call<{ accounts: WorkerAccount[] }>("auth", "worker_account_list").then((result) => result.accounts);
       case "workerRuntimes": return call<{ runtimes: WorkerRuntime[] }>("workers", "worker_runtime_list").then((result) => result.runtimes);

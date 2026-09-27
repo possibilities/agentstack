@@ -64,7 +64,7 @@ export function Dock({ side, label, open, overlay, width, min, max, onResize, on
 }
 
 export function useDockSizes() {
-  const [sizes, setSizes] = useState({ system: 352, inspector: 420, reference: 680 });
+  const [sizes, setSizes] = useState({ inspector: 420, reference: 680 });
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     try {

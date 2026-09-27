@@ -48,7 +48,7 @@ function Seed({ state, children }) {
   return children;
 }
 function render(Component, { accounts, bots = [], logins = [], usage = null, runtimes = [], state = {} }) {
-  const snapshot = { owner: resource(null), accounts: resource(bots), workerAccounts: resource(accounts), workerRuntimes: resource(runtimes),
+  const snapshot = { owner: resource(null), resources: resource(null), accounts: resource(bots), workerAccounts: resource(accounts), workerRuntimes: resource(runtimes),
     workerSessions: resource([]), login: resource(null), workerLogins: resource(logins), bots: resource([]), botDefaults: resource(null),
     voice: resource(null), catalog: resource([]), usage: resource(usage), endpoints: {} };
   return renderToStaticMarkup(h(StackProvider, { snapshot }, h(Seed, { state },

@@ -2,6 +2,10 @@ import type { ChildStatus, RunningOwner } from "./owner.js";
 
 export type OwnerStatus = {
   pid: number;
+  /** ISO time the owner process started. */
+  startedAt: string;
+  /** Node.js version string of the owner process. */
+  nodeVersion: string;
   indexUrl: string | null;
   uixUrl: string | null;
   inspectorUrl: string | null;
@@ -11,6 +15,7 @@ export type OwnerStatus = {
 
 export class StatusSource {
   private owner: RunningOwner | null = null;
+  private readonly startedAt = new Date(Date.now() - process.uptime() * 1000).toISOString();
   private indexUrl: string | null = null;
   private uixUrl: string | null = null;
   private inspectorUrl: string | null = null;
@@ -52,6 +57,8 @@ export class StatusSource {
   snapshot(): OwnerStatus {
     return {
       pid: process.pid,
+      startedAt: this.startedAt,
+      nodeVersion: process.version,
       indexUrl: this.indexUrl,
       uixUrl: this.uixUrl,
       inspectorUrl: this.inspectorUrl,

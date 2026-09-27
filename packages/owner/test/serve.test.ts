@@ -64,6 +64,8 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     const resourceSnapshot = ownerResourcesOutput.parse(await socketCall(ownerSock, "tools/call", { name: "owner_resources", arguments: { view: "processes", limit: 100 } }));
     assert.equal(resourceSnapshot.observation.coverage?.mode, "owner_tree");
     assert.equal(resourceSnapshot.observation.freshness, "fresh");
+    assert.equal(resourceSnapshot.runtime?.pid, child.pid);
+    assert.ok(resourceSnapshot.host?.hostname);
     assert.ok(resourceSnapshot.processes.some((entry) => entry.pid === child.pid));
     for (const entry of status.children) assert.ok(resourceSnapshot.processes.some((process) => process.pid === entry.pid && process.component === entry.name), `${entry.name} absent from resource snapshot`);
     const usage = await socketCall(join(stateDir, "sockets", "usage.sock"), "tools/call", { name: "usage_snapshot", arguments: {} }) as { accounts: unknown[]; grokBot: { fresh: boolean } };
@@ -179,7 +181,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     }
     assert.equal(entry?.status, 308, stderr);
     assert.equal(new URL(entry.headers.get("location")!, indexUrl).href, uixUrl);
-    const system = await fetch(new URL("/x/fleet?system=open", uixUrl));
+    const system = await fetch(new URL("/x/system", uixUrl));
     assert.equal(system.status, 200);
     const systemHtml = await system.text();
     assert.match(systemHtml, /MCP Inspector/);

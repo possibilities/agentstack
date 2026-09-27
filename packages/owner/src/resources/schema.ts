@@ -39,6 +39,11 @@ export const resourceProcessSchema = z.object({
 });
 export const resourceHostSchema = z.object({
   platform: z.string(), logicalCpuCount: count,
+  hostname: z.string().max(255).describe("Host name as reported by the OS."),
+  arch: z.string().max(40).describe("Processor architecture, e.g. arm64 or x64."),
+  release: z.string().max(120).describe("OS release string."),
+  cpuModel: z.string().max(160).nullable().describe("Model name of the first logical CPU, trimmed; null when the OS does not report one."),
+  uptimeSeconds: value.describe("Host uptime at capture time."),
   totalMemoryBytes: value, freeMemoryBytes: value,
   loadAverage: z.array(z.number().nonnegative()).length(3).nullable(),
 }).describe("Host-wide OS context, not AgentStack consumption or cgroup capacity. Free memory is not available/reclaimable memory.");
@@ -74,6 +79,15 @@ export const resourceCapabilitiesSchema = z.object({
   diskIoBytes: z.literal(false), openFileDescriptors: z.literal(false), networkBytes: z.literal(false), gpu: z.literal(false),
   perSessionAllocation: z.literal(false),
 }).describe("False means unavailable, never zero. Sampling misses processes that start and exit between observations.");
+export const ownerRuntimeSchema = z.object({
+  pid: z.number().int().nonnegative(),
+  nodeVersion: z.string().max(40).describe("Node.js version string of the process serving this owner API."),
+  uptimeSeconds: value,
+  heapUsedBytes: z.number().nonnegative(), heapTotalBytes: z.number().nonnegative(),
+  externalBytes: z.number().nonnegative(), arrayBuffersBytes: z.number().nonnegative(),
+  eventLoopUtilization: z.number().min(0).max(1).nullable()
+    .describe("Event-loop utilization since the previous successful capture; null until a second sample exists."),
+}).describe("Runtime vitals of the Node.js process serving this owner API — the owner itself when attached — pinned to the returned snapshot.");
 export const ownerResourcesInput = z.strictObject({
   snapshotId: id.optional().describe("Pin the returned immutable snapshot for subsequent pages; unknown/expired IDs are errors."),
   scopeId: id.optional().describe("Default total. Use scope/process/subtree IDs returned by this API; unknown IDs are errors."),
@@ -83,7 +97,7 @@ export const ownerResourcesInput = z.strictObject({
 });
 export const ownerResourcesOutput = z.object({
   observation: resourceMetadataSchema, host: resourceHostSchema.nullable(), capabilities: resourceCapabilitiesSchema,
-  retention: resourceRetentionSchema, scope: resourceScopeSchema.nullable(),
+  retention: resourceRetentionSchema, runtime: ownerRuntimeSchema.nullable(), scope: resourceScopeSchema.nullable(),
   scopes: z.array(resourceScopeSchema).max(100), processes: z.array(resourceProcessSchema).max(100),
   page: z.object({ offset: count, limit: count, total: count, nextOffset: count.nullable() }),
 });
@@ -110,6 +124,7 @@ export type ResourceProcess = z.infer<typeof resourceProcessSchema>;
 export type ResourceHost = z.infer<typeof resourceHostSchema>;
 export type ResourceCoverage = z.infer<typeof resourceCoverageSchema>;
 export type DomainStatus = z.infer<typeof domainStatusSchema>;
+export type OwnerRuntime = z.infer<typeof ownerRuntimeSchema>;
 export type ResourceError = z.infer<typeof resourceErrorSchema>;
 export type ResourcesInput = z.infer<typeof ownerResourcesInput>;
 export type ResourcesOutput = z.infer<typeof ownerResourcesOutput>;

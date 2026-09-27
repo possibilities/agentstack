@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
-import { cpus, freemem, loadavg, totalmem } from "node:os";
+import { arch, cpus, freemem, hostname, loadavg, release, totalmem, uptime } from "node:os";
 import { basename } from "node:path";
 import type { ResourceError, ResourceHost } from "./schema.js";
 
@@ -137,7 +137,9 @@ export function createCollector(platform: NodeJS.Platform = process.platform): C
       if (failure?.status === "rejected") throw failure.reason;
     } else throw new CollectionError("unsupported_platform");
     signal.throwIfAborted();
+    const model = cpus()[0]?.model.trim().slice(0, 160) ?? null;
     return { processes, capturedAt: new Date().toISOString(), monotonicMs: performance.now(), unreadableProcesses, vanishedDuringCollection, excludedCollectorProcesses,
-      host: { platform, logicalCpuCount: cpus().length, totalMemoryBytes: totalmem(), freeMemoryBytes: freemem(), loadAverage: loadavg() } };
+      host: { platform, logicalCpuCount: cpus().length, hostname: hostname().slice(0, 255), arch: arch().slice(0, 40), release: release().slice(0, 120),
+        cpuModel: model || null, uptimeSeconds: uptime(), totalMemoryBytes: totalmem(), freeMemoryBytes: freemem(), loadAverage: loadavg() } };
   };
 }

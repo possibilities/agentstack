@@ -43,15 +43,46 @@ test("the UI entry redirects to the canvas without losing local links, processes
   let output = "";
   try {
     const owner = {
-      pid: process.pid, indexUrl: "http://127.0.0.1:43102/", uixUrl: "http://127.0.0.1:43102/x",
+      pid: process.pid, startedAt: new Date(Date.now() - 60_000).toISOString(), nodeVersion: process.version,
+      indexUrl: "http://127.0.0.1:43102/", uixUrl: "http://127.0.0.1:43102/x",
       inspectorUrl: "http://127.0.0.1:43103/", mcpUrls: { owner: "http://127.0.0.1:43104/mcp/owner" },
       children: [
-        { name: "inspector", pid: 9876, running: true, exitCode: null, signal: null, error: null },
-        { name: "workers", pid: null, running: false, exitCode: 1, signal: null, error: "Fixture spawn failure" },
+        { name: "inspector", pid: 9876, running: true, exitCode: null, signal: null, error: null, startedAt: new Date(Date.now() - 50_000).toISOString(), exitedAt: null },
+        { name: "workers", pid: null, running: false, exitCode: 1, signal: null, error: "Fixture spawn failure", startedAt: null, exitedAt: new Date(Date.now() - 40_000).toISOString() },
       ],
     };
+    const metric = (processCount, rssBytes) => ({ processCount, rssBytes, virtualBytes: rssBytes * 3, cpuTimeMs: 2_400, cpuPercent: 4.2, cpuMeasuredProcessCount: processCount, threads: null });
+    const resources = {
+      observation: {
+        snapshotId: "fixture-snap-1", capturedAt: new Date().toISOString(), ageMs: 400, freshness: "fresh",
+        lastAttemptAt: new Date().toISOString(), error: null, source: "darwin_ps", intervalMs: 5_000, staleAfterMs: 14_000, collectionDurationMs: 18,
+        coverage: { mode: "owner_tree", observedHostProcesses: 512, ownedProcesses: 4, unreadableProcesses: 0, vanishedDuringCollection: 0, retainedProcesses: 0, excludedCollectorProcesses: 1, domains: [] },
+      },
+      host: { platform: "darwin", logicalCpuCount: 8, hostname: "fixture-host", arch: "arm64", release: "24.5.0", cpuModel: "Apple M4", uptimeSeconds: 86_400, totalMemoryBytes: 16_000_000_000, freeMemoryBytes: 2_000_000_000, loadAverage: [1.5, 1.2, 1.1] },
+      capabilities: { rssBytes: true, virtualBytes: true, cpuTimeMs: true, cpuPercent: true, threads: false,
+        diskIoBytes: false, openFileDescriptors: false, networkBytes: false, gpu: false, perSessionAllocation: false },
+      retention: { maxSamples: 120, maxProcessRecords: 50_000, retainedSamples: 1, oldestAttemptAt: new Date().toISOString(), newestAttemptAt: new Date().toISOString(), droppedSamples: 0 },
+      runtime: { pid: process.pid, nodeVersion: process.version, uptimeSeconds: 60, heapUsedBytes: 24_000_000, heapTotalBytes: 40_000_000, externalBytes: 2_000_000, arrayBuffersBytes: 100_000, eventLoopUtilization: null },
+      scope: null,
+      scopes: [
+        { id: "total", kind: "total", name: "AgentStack", component: null, botId: null, accountId: null, runtimeInstance: null, provider: null, shared: true, metrics: metric(4, 120_000_000) },
+        { id: "component:owner", kind: "component", name: "owner", component: "owner", botId: null, accountId: null, runtimeInstance: null, provider: null, shared: true, metrics: metric(1, 40_000_000) },
+        { id: "component:inspector", kind: "component", name: "inspector", component: "inspector", botId: null, accountId: null, runtimeInstance: null, provider: null, shared: true, metrics: metric(1, 30_000_000) },
+      ],
+      processes: [
+        { id: "process:1:root", subtreeId: "subtree:1:root", pid: process.pid, ppid: 1, birth: "b1", name: "agentstack", parentId: null, ancestryParentId: null, ownership: "root", component: "owner",
+          botId: null, accountId: null, runtimeInstance: null, provider: null, attribution: "component", attributedAt: null, cpuIntervalMs: 5_000, cpuStatus: "measured", self: metric(1, 40_000_000), subtree: metric(4, 120_000_000) },
+        { id: "process:2:child", subtreeId: "subtree:2:child", pid: 9876, ppid: process.pid, birth: "b2", name: "inspector", parentId: "process:1:root", ancestryParentId: "process:1:root", ownership: "descendant", component: "inspector",
+          botId: null, accountId: null, runtimeInstance: null, provider: null, attribution: "component", attributedAt: null, cpuIntervalMs: 5_000, cpuStatus: "measured", self: metric(1, 30_000_000), subtree: metric(1, 30_000_000) },
+      ],
+      page: { offset: 0, limit: 100, total: 2, nextOffset: null },
+    };
+    const history = {
+      scopeId: "total", intervalMs: 5_000, truncated: false, retention: resources.retention,
+      points: [{ attemptId: "a1", attemptedAt: new Date().toISOString(), snapshotId: "fixture-snap-1", capturedAt: new Date().toISOString(), state: "measured", error: null, metrics: metric(4, 120_000_000), host: resources.host, coverage: resources.observation.coverage }],
+    };
     const definitions = {
-      owner: [operation("owner_status", owner)],
+      owner: [operation("owner_status", owner), operation("owner_resources", resources), operation("owner_resource_history", history)],
       auth: [operation("account_list", { accounts: [] }), operation("account_login_current", { login: null }), operation("worker_account_list", { accounts: [] }), operation("worker_account_login_current", { logins: [] })],
       bots: [operation("bot_list", { bots: [bot] }), operation("bot_defaults_get", bot.settings), operation("voice_status", { call: null })],
       workers: [operation("worker_runtime_list", { runtimes: [] }), operation("worker_list", { workers: [] })],
@@ -107,33 +138,35 @@ test("the UI entry redirects to the canvas without losing local links, processes
     assert.doesNotMatch(canvas, /Local links and bot processes/);
 
     const [system, api, brainReference] = await Promise.all([
-      readDock("/x/fleet?system=open", "left"),
+      readCanvas("/x/system"),
       readDock("/x/fleet?reference=package%3Abots", "right"),
       readDock("/x/fleet?reference=package%3Abrain", "right"),
     ]);
-    assert.match(system, /Filter System/);
-    for (const value of ["MCP Inspector", "Packages", "inspector", "9876", "workers", "Fixture spawn failure", owner.inspectorUrl, owner.mcpUrls.owner]) {
+    assert.match(system, /Filter activity/);
+    for (const value of ["MCP Inspector", "Packages", "inspector", "9876", "workers", "Fixture spawn failure", owner.inspectorUrl, owner.mcpUrls.owner,
+      "fixture-host", "Apple M4", "Fresh", "owner_tree", "AgentStack", "darwin_ps"]) {
       assert.ok(system.includes(value), `System is missing ${value}`);
     }
-    assert.ok(!system.includes("reference=overview"), "System links only MCP Inspector as a surface");
     assert.doesNotMatch(system, /Runtime index/);
+    assert.doesNotMatch(system, /data-dock="left"/);
     assert.match(api, /bot_list/);
     assert.match(brainReference, /brain_catalog_probe/);
     assert.match(brainReference, /@agentstack\/brain/);
 
     owner.children[0].running = false;
     owner.children[0].pid = null;
-    const stopped = await readDock("/x/fleet?system=open", "left");
+    const stopped = await readCanvas("/x/system");
     assert.doesNotMatch(stopped, /MCP Inspector/);
-    assert.doesNotMatch(stopped, /Surfaces/);
+    assert.match(stopped, /inspector/);
 
     await served.shift().close();
-    const unavailable = await readDock("/x/fleet?system=open", "left");
+    const unavailable = await readCanvas("/x/system");
     assert.match(unavailable, /Owner status unavailable/);
+    assert.match(unavailable, /No resource data/);
     assert.doesNotMatch(unavailable, /MCP Inspector/);
     assert.match(await readCanvas("/x"), /bot-1/);
     assert.equal((await fetch(`${origin}/x/nope`)).status, 404);
-    assert.equal((await fetch(`${origin}/x/system`)).status, 404);
+    assert.equal((await fetch(`${origin}/x/system`)).status, 200);
     assert.equal((await fetch(`${origin}/x/api`)).status, 404);
     assert.equal((await fetch(`${origin}/x.md`)).status, 404);
     assert.equal((await fetch(`${origin}/index.md`)).status, 404);
