@@ -51,7 +51,7 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
         <CommandInput placeholder="Jump to a bot, account, operation…" />
         <CommandList className="max-h-96">
           <CommandEmpty>No matches.</CommandEmpty>
-          <CommandGroup heading="Spaces">
+          <CommandGroup>
             {spaces.map((item) => {
               const Icon = spaceViews[item.id].icon;
               return (
