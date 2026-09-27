@@ -83,8 +83,8 @@ function ModelList({ catalog, needle }: { catalog: WorkerCatalog; needle: string
   const native = catalog.nativeModelIds.filter((id) => matches(needle, id));
   if (!models.length && !native.length) return <Empty icon={SearchIcon} title="No matches" />;
   return (
-    <>
-      <ul className="-mx-1 flex flex-col">
+    <div data-scroll className="flex max-h-80 flex-col gap-2 overflow-y-auto overscroll-contain">
+      <ul className="flex flex-col">
         {models.map((model) => {
           const levels = model.efforts.filter((effort) => effort !== "default");
           return (
@@ -109,7 +109,7 @@ function ModelList({ catalog, needle }: { catalog: WorkerCatalog; needle: string
           <ul className="mt-2 flex flex-col gap-0.5">{native.map((id) => <li key={id} className="font-mono text-[0.7rem] break-all">{id}</li>)}</ul>
         </details>
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -183,7 +183,7 @@ export function CatalogWindow() {
       count={workerAccounts.data?.length} status={status.workers} endpoint={endpoints.workers} updatedAt={workerAccounts.at} error={workerAccounts.error ?? workerRuntimes.error}>
       {accounts.length && active ? (
         <>
-          {/* Tabs and the filter stay pinned while the window body scrolls a long catalog. */}
+          {/* Tabs and the filter stay above the bounded, scrollable catalog list. */}
           <div className="sticky -top-3.5 z-10 -mx-3.5 -mt-3.5 flex flex-col gap-2 border-b border-border/60 bg-card/95 px-3.5 py-3 backdrop-blur-xl">
           <div role="tablist" aria-label="Accounts" className="-mx-0.5 flex flex-wrap gap-1 px-0.5">
             {rows.map((row) => {
