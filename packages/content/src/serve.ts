@@ -7,6 +7,7 @@ import { createServer, type Server } from "node:http";
 import { join, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import type { ArtifactRow, ArtifactStore } from "./artifacts.js";
+import type { Collections } from "./collections.js";
 import { mediaTypeFor, objectPath } from "./artifacts.js";
 import { buildGraph, edgesTo } from "./graph.js";
 import type { DocumentRow, VaultIndex } from "./index.js";
@@ -27,9 +28,12 @@ export interface ServeOptions {
   casRoot: string;
   index: VaultIndex;
   store: ArtifactStore;
+  collections: Collections;
   port: number;
   artifactPort: number;
   host: string;
+  documentOrigin?: string;
+  artifactOrigin?: string;
 }
 
 export interface RunningServer {
@@ -96,8 +100,8 @@ export async function startServer(options: ServeOptions): Promise<RunningServer>
   // Only undefined for a unix-socket server; we always bind a TCP port.
   const port = (documentServer.address() as { port: number }).port;
   const artifactPort = (artifactServer.address() as { port: number }).port;
-  documentOrigin = origin(port, options.host);
-  artifactOrigin = origin(artifactPort, options.host);
+  documentOrigin = options.documentOrigin ?? origin(port, options.host);
+  artifactOrigin = options.artifactOrigin ?? origin(artifactPort, options.host);
 
   return {
     port,
@@ -119,7 +123,7 @@ function listen(port: number, host: string, route: (request: Request) => Promise
           .pipe(outgoing);
       } else outgoing.end();
     } catch (error) {
-      console.error("wiki serve:", error);
+      console.error("content serve:", error);
       outgoing.writeHead(500).end();
     }
   });
@@ -151,9 +155,10 @@ async function routeDocuments(
     if (pathname.startsWith("/a/")) {
       return redirect(request, `${artifactOrigin()}${pathname}${url.search}`, 302);
     }
+    if (pathname.startsWith("/c/")) return redirect(request, `${artifactOrigin()}${pathname}`, 302);
     return notFound(request);
   } catch (error) {
-    console.error("agentwiki serve: request failed:", error);
+    console.error("content serve: request failed:", error);
     return respond(request, 500, htmlHeaders(NO_CACHE), errorPage(500, "internal server error"));
   }
 }
@@ -168,13 +173,39 @@ async function routeArtifacts(
     const url = new URL(request.url);
     const pathname = url.pathname;
     if (pathname.startsWith("/a/")) return handleArtifact(request, options, pathname, url.search);
+    if (pathname.startsWith("/c/")) return handleCollectionItem(request, options, pathname);
     // Nothing else lives here: a human who lands on the artifact origin's root
     // wanted the vault, which is on the other one.
     if (pathname === "/") return redirect(request, `${documentOrigin()}/`, 302);
     return notFound(request);
   } catch (error) {
-    console.error("agentwiki serve: request failed:", error);
+    console.error("content serve: request failed:", error);
     return respond(request, 500, htmlHeaders(NO_CACHE), errorPage(500, "internal server error"));
+  }
+}
+
+function handleCollectionItem(request: Request, options: ServeOptions, pathname: string): Response {
+  const match = /^\/c\/([a-f0-9-]{36})$/.exec(pathname);
+  const legacy = /^\/c\/([a-z0-9]+(?:-[a-z0-9]+)*)\/([a-f0-9-]{36})$/.exec(pathname);
+  if (legacy) {
+    try {
+      options.collections.item(legacy[2]!);
+      return redirect(request, `/c/${legacy[2]}`, 302);
+    } catch { return notFound(request); }
+  }
+  if (!match) return notFound(request);
+  try {
+    const item = options.collections.item(match[1]!);
+    const headers = new Headers({
+      "Content-Type": item.mediaType,
+      "X-Content-Type-Options": "nosniff",
+      "Cache-Control": NO_CACHE,
+      "Content-Security-Policy": ARTIFACT_CSP,
+      "Content-Disposition": `${item.kind === "file" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(item.name)}`,
+    });
+    return new Response(request.method === "HEAD" ? null : Readable.toWeb(options.collections.stream(item)) as ReadableStream, { status: 200, headers });
+  } catch {
+    return notFound(request);
   }
 }
 
@@ -185,7 +216,7 @@ function safeReconcile(index: VaultIndex): void {
   try {
     index.reconcile();
   } catch (error) {
-    console.error("agentwiki serve: reconcile failed:", error);
+    console.error("content serve: reconcile failed:", error);
   }
 }
 
@@ -203,7 +234,7 @@ function handleIndex(request: Request, options: ServeOptions): Response {
     version: row.version,
     title: row.title,
   }));
-  const html = indexPage({ vaultRoot: options.vaultRoot, documents, artifacts });
+  const html = indexPage({ documents, artifacts });
   return respond(request, 200, htmlHeaders(NO_CACHE), html);
 }
 

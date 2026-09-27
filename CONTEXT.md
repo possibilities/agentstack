@@ -128,15 +128,19 @@ _Avoid_: voice agent, voice thread
 
 ## Vault
 
-The `wiki` Package API's directory of plain-text documents. Files are authoritative; its SQLite Index is derived and reconciles on reads. This vault is under AgentStack state, separate from the original agentwiki vault. _Avoid_: notebook, workspace
+The `content` Package API's directory of plain-text wiki documents. Files are authoritative; its SQLite Index is derived and reconciles on reads. This vault remains under AgentStack's `wiki` state directory to preserve existing documents, separate from the original agentwiki vault. _Avoid_: notebook, workspace
 
 ## Artifact
 
-A named static file or directory held by `wiki` with an immutable content-hash Version and a mutable latest pointer. Its manifest and bytes live in AgentStack state, and a stub Document in the Vault makes it searchable and linkable. _Avoid_: attachment, upload
+A named static file or directory held by `content` with an immutable content-hash Version and a mutable latest pointer. Its manifest and bytes live in AgentStack state, and a stub Document in the Vault makes it searchable and linkable. _Avoid_: attachment, upload
 
 ## Artifact origin
 
-The second loopback HTTP origin owned by the `wiki` Package API. It serves only static Artifact bytes and has no access to the document origin; the separate origin and CSP isolate Artifact scripts from the Vault. _Avoid_: sandbox
+The second HTTP origin owned by the `content` Package API. It serves static Artifact and Content item bytes and has no access to the document origin; the separate origin and CSP isolate Artifact scripts from the Vault. Both listeners default to loopback, but may be explicitly bound and advertised on distinct remote origins. _Avoid_: sandbox
+
+## Content collection
+
+A named, optional group of Content items. Items exist independently of collections: each document, file or image has a stable ID and revision, a portable `/c/<id>` path and immutable content-addressed bytes; moving or deleting a collection does not change an item's identity or discard its bytes. The Package API uses IDs and bounded byte transfer rather than machine paths. An explicitly exposed HTTP origin serves read-only bytes without access control; it is not an authenticated sharing service.
 
 ## Canvas space
 
@@ -152,9 +156,9 @@ _Avoid_: independent canvases, space tabs
 
 ## Brain
 
-The `brain` Package API's isolated research index and durable ingestion system. Its database, research artifacts and device-share credentials live under AgentStack state. It collects material for retrieval; the Wiki Vault holds authored documents.
+The `brain` Package API's isolated research index and durable ingestion system. Its database, research artifacts and device-share credentials live under AgentStack state. It collects material for retrieval; the Content Vault holds authored wiki documents.
 
-_Avoid_: external research service, Wiki Vault
+_Avoid_: external research service, Content Vault
 
 ## Admission
 
@@ -182,15 +186,15 @@ _Avoid_: artifact digest, document ID
 
 ## Research document
 
-The current searchable representation of a Research resource in Brain's SQLite index. It is not a plain-text document in the Wiki Vault.
+The current searchable representation of a Research resource in Brain's SQLite index. It is not a plain-text document in the Content Vault.
 
 _Avoid_: Vault document, research artifact
 
 ## Research artifact
 
-Immutable captured or derived bytes in Brain's content-addressed store, referenced by typed SQLite records. A content digest identifies bytes, not a Research resource; this is separate from a named, published Wiki Artifact.
+Immutable captured or derived bytes in Brain's content-addressed store, referenced by typed SQLite records. A content digest identifies bytes, not a Research resource; this is separate from a named, published Content Artifact.
 
-_Avoid_: Wiki Artifact, resource identity
+_Avoid_: Content Artifact, resource identity
 
 ## Research source
 

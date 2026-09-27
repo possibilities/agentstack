@@ -485,7 +485,7 @@ export class ArtifactStore {
         version === null
           ? `no live artifact named "${name}"`
           : `artifact "${name}" has no live version ${version}`,
-        "Run: agentwiki artifacts list --json",
+        "Call the content artifacts_list operation",
       );
     }
     const update = this.db.query(
@@ -639,7 +639,7 @@ function initializeSchema(db: Database): void {
       throw new CliError(
         "unsupported_schema_version",
         `artifact manifest schema version ${version} is newer than supported version ${MANIFEST_SCHEMA_VERSION}`,
-        "Upgrade agentwiki; the manifest is authoritative and must not be downgraded.",
+        "Upgrade AgentStack Content; the manifest is authoritative and must not be downgraded.",
       );
     }
   }

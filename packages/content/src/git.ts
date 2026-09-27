@@ -94,7 +94,7 @@ function untrackDerivedIndex(root: string): void {
  * vault's history matters more than the name attached to it. */
 function identity(root: string): string[] {
   if (git(root, ["config", "user.email"]).out !== "") return [];
-  return ["-c", "user.name=agentwiki", "-c", "user.email=agentwiki@localhost"];
+  return ["-c", "user.name=agentstack-content", "-c", "user.email=content@agentstack.localhost"];
 }
 
 function parseStaged(out: string): StagedChange[] {

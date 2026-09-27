@@ -293,6 +293,31 @@ importers:
 
   packages/chrome: {}
 
+  packages/content:
+    dependencies:
+      '@agentstack/api':
+        specifier: workspace:*
+        version: link:../api
+      markdown-it:
+        specifier: ^15.0.0
+        version: 15.0.2
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.1
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@types/markdown-it':
+        specifier: ^14.1.2
+        version: 14.2.0
+      '@types/node':
+        specifier: ^26.6.2
+        version: 26.6.2
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   packages/infer:
     dependencies:
       '@agentstack/api':
@@ -323,6 +348,9 @@ importers:
       '@agentstack/brain':
         specifier: workspace:*
         version: link:../brain
+      '@agentstack/content':
+        specifier: workspace:*
+        version: link:../content
       '@agentstack/infer':
         specifier: workspace:*
         version: link:../infer
@@ -332,9 +360,6 @@ importers:
       '@agentstack/usage':
         specifier: workspace:*
         version: link:../usage
-      '@agentstack/wiki':
-        specifier: workspace:*
-        version: link:../wiki
       '@agentstack/workers':
         specifier: workspace:*
         version: link:../workers
@@ -447,31 +472,6 @@ importers:
         specifier: ^4.6.5
         version: 4.6.5
     devDependencies:
-      '@types/node':
-        specifier: ^26.6.2
-        version: 26.6.2
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
-  packages/wiki:
-    dependencies:
-      '@agentstack/api':
-        specifier: workspace:*
-        version: link:../api
-      markdown-it:
-        specifier: ^15.0.0
-        version: 15.0.2
-      yaml:
-        specifier: ^2.9.0
-        version: 2.9.1
-      zod:
-        specifier: ^4.6.5
-        version: 4.6.5
-    devDependencies:
-      '@types/markdown-it':
-        specifier: ^14.1.2
-        version: 14.2.0
       '@types/node':
         specifier: ^26.6.2
         version: 26.6.2

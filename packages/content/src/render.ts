@@ -223,7 +223,6 @@ export function documentPage(options: {
 }
 
 export function indexPage(options: {
-  vaultRoot: string;
   documents: { slug: string; title: string; tags: string[]; updated: string | null }[];
   artifacts: { name: string; kind: string; version: string; title: string | null }[];
 }): string {
@@ -254,10 +253,9 @@ export function indexPage(options: {
       .join("\n    ")}
   </ul>`;
   return page(
-    "agentwiki",
+    "AgentStack Content",
     `<main>
-  <h1>agentwiki</h1>
-  <p class="meta">${escapeHtml(options.vaultRoot)}</p>
+   <h1>Content</h1>
   <h2>Documents</h2>
   ${documents}
   <h2>Artifacts</h2>

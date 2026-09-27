@@ -29,7 +29,7 @@
     "@agentstack/uix": "workspace:*",
     "@agentstack/usage": "workspace:*",
     "@agentstack/workers": "workspace:*",
-    "@agentstack/wiki": "workspace:*",
+    "@agentstack/content": "workspace:*",
     "@modelcontextprotocol/inspector": "2.7.0",
     "zod": "^4.6.5"
   },

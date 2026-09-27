@@ -114,10 +114,10 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
   // System: a stopped child, a closed owner channel, a status read error.
   const system = spaceAttention({
     ...quiet,
-    owner: { data: { pid: 1, indexUrl: null, uixUrl: null, inspectorUrl: null, mcpUrls: {}, children: [{ name: "wiki", pid: null, running: false, exitCode: 1, signal: null, error: "crashed" }, { name: "api", pid: 2, running: true, exitCode: null, signal: null, error: null }] }, error: "socket read failed", at: null },
+    owner: { data: { pid: 1, indexUrl: null, uixUrl: null, inspectorUrl: null, mcpUrls: {}, children: [{ name: "content", pid: null, running: false, exitCode: 1, signal: null, error: "crashed" }, { name: "api", pid: 2, running: true, exitCode: null, signal: null, error: null }] }, error: "socket read failed", at: null },
     status: { owner: "closed" },
   });
-  assert.deepEqual(system.system, ["wiki stopped", "owner reconnecting", "Owner status: socket read failed"]);
+  assert.deepEqual(system.system, ["content stopped", "owner reconnecting", "Owner status: socket read failed"]);
   assert.deepEqual(system.fleet, []);
   assert.deepEqual(system.accounts, []);
 

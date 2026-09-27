@@ -52,7 +52,7 @@ export function assertVaultExists(root: string): void {
   throw new CliError(
     "vault_not_found",
     `no vault at ${root}`,
-    'Create one by capturing something: agentwiki new "First document"',
+    'Create one with the content new operation, for example title "First document"',
   );
 }
 

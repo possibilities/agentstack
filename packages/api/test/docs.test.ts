@@ -31,7 +31,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.deepEqual(
       docs.packages.map((item) => item.name),
-      ["api", "attention", "auth", "bots", "brain", "infer", "owner", "roles", "usage", "wiki", "workers"],
+      ["api", "attention", "auth", "bots", "brain", "content", "infer", "owner", "roles", "usage", "workers"],
     );
     assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@agentstack/${item.name}`));
 
@@ -123,10 +123,15 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok(JSON.stringify(loginWorker.inputSchema).includes('"claude"'));
     assert.ok(JSON.stringify(workerAccount.outputSchema).includes('"claude"'));
     const workers = found.get("workers") as PackageDoc;
-    const wiki = found.get("wiki") as PackageDoc;
-    assert.ok(wiki.operations.some((op) => op.name === "publish"));
-    assert.ok(wiki.operations.some((op) => op.name === "wiki_status"));
-    assert.equal(wiki.transports.find((transport) => transport.type === "mcp")?.supported, true);
+    const content = found.get("content") as PackageDoc;
+    assert.ok(content.operations.some((op) => op.name === "artifact_publish"));
+    assert.ok(content.operations.some((op) => op.name === "content_status"));
+    for (const name of ["collection_create", "collection_list", "collection_get", "collection_update", "collection_delete", "item_put", "item_list", "item_get", "item_move", "item_delete", "item_read", "document_update", "blob_stage_start", "blob_stage_chunk", "blob_stage_status", "blob_stage_finish"])
+      assert.ok(content.operations.some((op) => op.name === name), name);
+    for (const name of ["path", "publish", "doctor", "reindex", "commit"]) assert.equal(content.operations.some((op) => op.name === name), false);
+    assert.deepEqual(Object.keys(content.operations.find((op) => op.name === "content_status")?.outputSchema.properties ?? {}).sort(), ["artifactPath", "documentPath", "itemPath"]);
+    assert.equal(JSON.stringify(content.operations.find((op) => op.name === "item_put")?.inputSchema).includes('"path"'), false);
+    assert.equal(content.transports.find((transport) => transport.type === "mcp")?.supported, true);
     const brain = found.get("brain") as PackageDoc;
     assert.ok(brain.operations.length > 0);
     assert.ok(brain.operations.every((operation) => operation.description && operation.inputSchema.type === "object" && operation.outputSchema.type === "object"));

@@ -129,12 +129,12 @@ export function resolveRef<T extends RefCandidate>(ref: string, candidates: read
     throw new CliError(
       "ambiguous_ref",
       `"${ref}" matches ${names.length} documents: ${names.slice(0, 8).join(", ")}${names.length > 8 ? ", …" : ""}`,
-      `Use one of those slugs, or run: agentwiki resolve "${ref}" --json`,
+      `Use one of those slugs, or call the content resolve operation with "${ref}".`,
     );
   }
   throw new CliError(
     "document_not_found",
     `no document matches "${ref}"`,
-    `Run: agentwiki search "${ref}" --json`,
+    `Call the content search operation with "${ref}".`,
   );
 }

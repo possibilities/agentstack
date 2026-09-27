@@ -13,7 +13,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { ownerResourcesOutput, ownerResourceHistoryOutput } from "../src/resources/schema.js";
 
 const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
-const socketNames = ["api", "attention", "auth", "roles", "bots", "brain", "workers", "usage", "infer", "wiki", "owner"];
+const socketNames = ["api", "attention", "auth", "roles", "bots", "brain", "content", "workers", "usage", "infer", "owner"];
 const brainEnv = { AGENTSTACK_BRAIN_SHARE_HOST: "127.0.0.1", AGENTSTACK_BRAIN_SHARE_PORT: "0" };
 
 test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a standalone reference listener, then shuts them down", { timeout: 120_000 }, async () => {
@@ -47,7 +47,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       children: Array<{ name: string; pid: number | null; running: boolean }>;
     };
     assert.equal(status.pid, child.pid);
-    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["api", "attention", "auth", "bots", "brain", "infer", "inspector", "roles", "uix", "usage", "websocket", "wiki", "workers"]);
+    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["api", "attention", "auth", "bots", "brain", "content", "infer", "inspector", "roles", "uix", "usage", "websocket", "workers"]);
     for (let i = 0; i < 200 && status.children.some((entry) => !entry.running); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
       status = (await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} })) as typeof status;
@@ -119,7 +119,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     assert.equal(servers?.status, 200, stderr);
-    assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["auth", "bots", "brain", "owner", "roles", "usage", "wiki", "workers"]);
+    assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["auth", "bots", "brain", "content", "owner", "roles", "usage", "workers"]);
     const inspectorUrl = `http://127.0.0.1:${inspectorPort}/`;
     assert.equal((await fetch(inspectorUrl)).status, 200);
     const catalogDir = (await readdir(stateDir)).find((entry) => entry.startsWith("inspector-"));
@@ -362,7 +362,7 @@ test("a claimed UI canvas port refuses startup before the owner creates a socket
   }
 });
 
-test("a claimed wiki document port refuses startup before the owner creates a socket", { timeout: 30_000 }, async () => {
+test("a claimed content document port refuses startup before the owner creates a socket", { timeout: 30_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-wiki-occupied-"));
   const inspectorPort = await availablePort();
   const uixPort = await availablePort();
@@ -373,12 +373,12 @@ test("a claimed wiki document port refuses startup before the owner creates a so
   try {
     const child = spawn(process.execPath, [cli, "serve"], {
       stdio: ["ignore", "ignore", "pipe"],
-      env: { ...process.env, ...brainEnv, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UIX_PORT: String(uixPort), AGENTSTACK_WIKI_PORT: String(address.port), AGENTSTACK_WIKI_ARTIFACT_PORT: "0" },
+      env: { ...process.env, ...brainEnv, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UIX_PORT: String(uixPort), AGENTSTACK_CONTENT_PORT: String(address.port), AGENTSTACK_CONTENT_ARTIFACT_PORT: "0" },
     });
     let stderr = "";
     child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
     assert.equal(await new Promise<number | null>((resolve) => child.once("exit", resolve)), 1);
-    assert.match(stderr, new RegExp(`Wiki documents port ${address.port} is already in use`));
+    assert.match(stderr, new RegExp(`Content documents port ${address.port} is already in use`));
     assert.equal(existsSync(join(stateDir, "sockets", "owner.sock")), false);
   } finally {
     await new Promise<void>((resolve) => listener.close(() => resolve()));
@@ -406,8 +406,13 @@ test("Brain share rejects invalid ports before creating sockets", { timeout: 30_
   assert.match(await refusedStartup({ AGENTSTACK_BRAIN_SHARE_HOST: "" }), /AGENTSTACK_BRAIN_SHARE_HOST must not be empty/);
 });
 
+test("remote content listeners require two distinct public origins before creating sockets", { timeout: 30_000 }, async () => {
+  assert.match(await refusedStartup({ AGENTSTACK_CONTENT_HOST: "0.0.0.0" }), /require explicit document and artifact origins/);
+  assert.match(await refusedStartup({ AGENTSTACK_CONTENT_DOCUMENT_ORIGIN: "https:\/\/same.example", AGENTSTACK_CONTENT_ARTIFACT_ORIGIN: "https:\/\/same.example" }), /origins must differ/);
+});
+
 test("Brain share rejects collisions with owner listeners before creating sockets", { timeout: 30_000 }, async () => {
-  for (const setting of ["AGENTSTACK_MCP_PORT", "AGENTSTACK_WEBSOCKET_PORT", "AGENTSTACK_INSPECTOR_PORT", "AGENTSTACK_UIX_PORT", "AGENTSTACK_WIKI_PORT", "AGENTSTACK_WIKI_ARTIFACT_PORT"]) {
+  for (const setting of ["AGENTSTACK_MCP_PORT", "AGENTSTACK_WEBSOCKET_PORT", "AGENTSTACK_INSPECTOR_PORT", "AGENTSTACK_UIX_PORT", "AGENTSTACK_CONTENT_PORT", "AGENTSTACK_CONTENT_ARTIFACT_PORT"]) {
     const port = String(await availablePort());
     const stderr = await refusedStartup({ [setting]: port, AGENTSTACK_BRAIN_SHARE_PORT: port });
     assert.match(stderr, new RegExp(`AGENTSTACK_BRAIN_SHARE_PORT and ${setting} must use different ports`));
@@ -421,7 +426,7 @@ async function refusedStartup(settings: NodeJS.ProcessEnv): Promise<string> {
   const child = spawn(process.execPath, [cli, "serve"], {
     stdio: ["ignore", "ignore", "pipe"],
     env: { ...process.env, ...brainEnv, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0",
-      AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UIX_PORT: String(uixPort), AGENTSTACK_WIKI_PORT: "0", AGENTSTACK_WIKI_ARTIFACT_PORT: "0", ...settings },
+      AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UIX_PORT: String(uixPort), AGENTSTACK_CONTENT_PORT: "0", AGENTSTACK_CONTENT_ARTIFACT_PORT: "0", ...settings },
   });
   let stderr = "";
   child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });

@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { basename, extname, isAbsolute, join, resolve as resolvePath } from "node:path";
 import { ArtifactStore } from "./artifacts.js";
 import type { CommandResult, Context } from "./context.js";
@@ -87,7 +88,7 @@ export function newDocument(context: Context, flags: ParsedFlags): CommandResult
       throw new CliError(
         "document_exists",
         `${slug}.md already exists`,
-        `Read it with: agentwiki get ${slug} — or capture alongside it with: agentwiki add`,
+        `Read it with the content get operation, or capture alongside it with add.`,
       );
     }
     const now = context.now();
@@ -236,6 +237,28 @@ export function getDocument(context: Context, flags: ParsedFlags): CommandResult
   } finally {
     index.close();
   }
+}
+
+/** API editing never asks the caller to open a path on this machine. The hash
+ * fences both another API writer and direct edits to the authoritative file. */
+export function updateDocument(context: Context, ref: string, expectedDigest: string, body: string): {
+  slug: string; title: string; digest: string; updated: string;
+} {
+  if (!/^[a-f0-9]{64}$/.test(expectedDigest)) throw new Error("expectedDigest must be a SHA-256 hex string from get");
+  const index = openIndex(context, { create: false });
+  try {
+    const document = findDocument(index, ref);
+    if (!document.markdown) throw new Error("only Markdown documents can be updated; use item_put for other text");
+    const absolute = join(context.vaultRoot, document.path);
+    const original = readFileSync(absolute);
+    if (createHash("sha256").update(original).digest("hex") !== expectedDigest) throw new Error("document changed; get a new digest before editing");
+    const split = splitDocument(original.toString("utf8"));
+    const updated = context.now();
+    const next = serializeDocument({ ...split.frontmatter, updated }, body);
+    writeFileSync(absolute, next, { mode: 0o600 });
+    index.reconcile();
+    return { slug: document.slug, title: document.title, digest: createHash("sha256").update(next).digest("hex"), updated };
+  } finally { index.close(); }
 }
 
 export function documentPath(context: Context, flags: ParsedFlags): CommandResult {
@@ -535,7 +558,7 @@ export function removeDocument(context: Context, flags: ParsedFlags): CommandRes
     index.reconcile();
     return {
       data: { slug: document.slug, title: document.title, path: absolute, deleted: now, reason },
-      human: `tombstoned ${document.slug} (${reason})\nthe file is untouched at ${absolute}; restore with: agentwiki restore ${document.slug}`,
+      human: `tombstoned ${document.slug} (${reason})\nthe file is untouched at ${absolute}; restore with the content restore operation`,
     };
   } finally {
     index.close();

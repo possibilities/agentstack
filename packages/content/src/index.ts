@@ -384,7 +384,7 @@ function initializeSchema(db: Database): void {
       throw new CliError(
         "unsupported_schema_version",
         `index schema version ${version} is newer than supported version ${INDEX_SCHEMA_VERSION}`,
-        "Upgrade agentwiki, or delete the index and run: agentwiki reindex",
+        "Upgrade AgentStack Content, or delete the derived index and call the content reindex operation",
       );
     }
   }

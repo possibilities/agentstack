@@ -1,0 +1,8 @@
+name: content
+description: Store and share documents, files and images in collections, search linked wiki documents, and publish versioned static sites and artifacts.
+socket:
+  description: Unix socket for document and artifact operations.
+mcp:
+  description: HTTP MCP operations forwarded to the content socket.
+websocket:
+  description: Loopback WebSocket for content operations forwarded to the content socket.

@@ -233,7 +233,7 @@ export function artifactsCommand(context: Context, flags: ParsedFlags): CommandR
       const stub = live ? null : stampStub(context, target, reason, now);
       return {
         data: { name: target, tombstoned: rows.map(describe), reason, stub },
-        human: `tombstoned ${rows.length} version${rows.length === 1 ? "" : "s"} of ${target}${stub === null ? "" : `\nstub tombstoned at ${stub}`}\nbytes stay until: agentwiki gc`,
+        human: `tombstoned ${rows.length} version${rows.length === 1 ? "" : "s"} of ${target}${stub === null ? "" : `\nstub tombstoned at ${stub}`}\nbytes stay until the content gc operation`,
       };
     }
     if (subcommand === "restore") {
@@ -257,7 +257,7 @@ function notFound(name: string): CliError {
   return new CliError(
     "artifact_not_found",
     `no artifact named "${name}"`,
-    "Run: agentwiki artifacts list",
+    "Call the content artifacts_list operation",
   );
 }
 
