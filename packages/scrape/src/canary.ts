@@ -72,6 +72,8 @@ export async function checkPresets(
   options: {
     presets?: string[];
     canaryPath?: string;
+    /** Reuse an operator-established signed-in session without taking ownership of it. */
+    session?: string;
     signal?: AbortSignal;
     allowPrivateNetwork?: boolean | undefined;
   } = {},
@@ -113,7 +115,7 @@ export async function checkPresets(
         });
         continue;
       }
-      const session = `agentscrape-canary-${process.pid}-${name}`;
+      const session = options.session ?? `agentscrape-canary-${process.pid}-${name}`;
       try {
         const result = await scrapeWithPreset(canary.url, preset, {
           session,
@@ -143,7 +145,7 @@ export async function checkPresets(
           detail: `${failureClass}: ${redactDiagnostic(evidence)}`,
         });
       } finally {
-        if (currentBrowserNetworkPolicy()) await closeSessionBestEffort(session);
+        if (!options.session && currentBrowserNetworkPolicy()) await closeSessionBestEffort(session);
       }
     }
     return { checked_at: new Date().toISOString().replace(/\.\d{3}Z$/, "+00:00"), results };
