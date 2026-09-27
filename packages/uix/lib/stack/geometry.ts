@@ -54,7 +54,7 @@ export function localLayout(defs: WindowGeometry[]): { positions: Record<string,
     let y = 0;
     for (const def of members) {
       positions[def.id] = { x, y };
-      y += (def.height ?? windowHeight) + 22;
+      y += snap(def.height ?? windowHeight) + 22;
     }
     x += Math.max(...members.map((d) => d.width)) + 66;
   }
@@ -149,7 +149,7 @@ export function benchBounds(bench: PackedBench, space?: string, rendered: { push
  * returns when the content shrinks. Render-time only: stored positions and
  * space packing never change. Returns each window's downward push.
  */
-export function settleWindows(bench: PackedBench, heights: Record<string, number>, gap = 24): Record<string, number> {
+export function settleWindows(bench: PackedBench, heights: Record<string, number>, gap = gridSize): Record<string, number> {
   const pushes: Record<string, number> = {};
   for (const region of bench.geometry.regions) {
     const origin = bench.geometry.origins[region.id];

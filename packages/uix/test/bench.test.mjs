@@ -51,7 +51,7 @@ test("heterogeneous negative-origin footprints remain deterministic, centered an
 test("local structure uses stable explicit bounds, not record count or connection state", () => {
   const defs = [{ id: "a", column: 0, width: 300, height: 200 }, { id: "b", column: 0, width: 400, height: 100 }, { id: "c", column: 1, width: 180, height: 500 }];
   const a = localLayout(defs);
-  assert.equal(a.positions.b.y, 222);
+  assert.equal(a.positions.b.y, 220);
   assert.equal(a.positions.c.x, 466);
   assert.equal(a.bounds.width, 646);
   assert.equal(a.bounds.height, 500);
@@ -307,6 +307,9 @@ test("registered default extents snap to cells, so default windows land on the g
     assert.ok(point.x % gridSize === 0, `${def.id} left is on the grid`);
     assert.ok(point.y % gridSize === 0, `${def.id} top is on the grid`);
   }
+  // A window without a registered height reserves whole cells too, keeping a follower on the grid.
+  const heightless = reconcileBench([{ id: "fleet", windows: [{ id: "top", width: 300, column: 0 }, { id: "below", width: 300, column: 0 }] }]);
+  assert.ok(windowPoint(heightless, "below").y % gridSize === 0, "a window below a height-less window stays on the grid");
 });
 
 test("content growth pushes the windows below it out of the way and releases them when it shrinks", () => {
@@ -319,12 +322,12 @@ test("content growth pushes the windows below it out of the way and releases the
   const onGrid = (local) => (origin.y + local) % gridSize === 0;
   // Within its footprint, or unmeasured, nothing moves.
   assert.deepEqual(settleWindows(packed, {}), { a: 0, b: 0, c: 0, side: 0 });
-  assert.deepEqual(settleWindows(packed, { a: 120, b: 190, c: 190, side: 900 }), { a: 0, b: 0, c: 0, side: 0 });
+  assert.deepEqual(settleWindows(packed, { a: 120, b: 198, c: 198, side: 900 }), { a: 0, b: 0, c: 0, side: 0 });
   // A grows past its footprint: B clears it on the grid and C cascades; the other column stays.
   const grown = settleWindows(packed, { a: 500, b: 200, c: 200, side: 200 });
   const b = packed.layout.positions.b.y + grown.b;
-  assert.ok(b >= packed.layout.positions.a.y + 500 + 24 && b < packed.layout.positions.a.y + 500 + 24 + gridSize && onGrid(b));
-  assert.ok(packed.layout.positions.c.y + grown.c >= b + 200 + 24);
+  assert.ok(b >= packed.layout.positions.a.y + 500 + gridSize && b < packed.layout.positions.a.y + 500 + gridSize + gridSize && onGrid(b));
+  assert.ok(packed.layout.positions.c.y + grown.c >= b + 200 + gridSize);
   assert.equal(grown.a, 0);
   assert.equal(grown.side, 0);
   // A window that already overlapped in the stored layout is not below it, so it is not pushed.
