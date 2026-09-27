@@ -229,7 +229,7 @@ function UsageCard({ node, names, observation, summary, orbs, samples, subscript
       {/* At most one info line: notes truncate (full text on hover) before a stale age or the subscription end gives way. */}
       {notes || stale.length || subscription ? (
         <p className="flex min-w-0 items-baseline gap-2 text-[0.68rem] text-muted-foreground">
-          <span className="min-w-0 truncate" title={notes || undefined}>{notes}</span>
+          {notes ? <span className="min-w-0 truncate" title={notes}>{notes}</span> : null}
           {stale.length ? (
             <span className="shrink-0 text-foreground/80">updated {stale.map((sample, index) => (
               <span key={sample.label ?? ""}>{index ? " · " : ""}{sample.label ? `${sample.label} ` : ""}<Time at={sample.at} /></span>

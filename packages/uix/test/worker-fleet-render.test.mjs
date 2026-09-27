@@ -177,6 +177,13 @@ test("Exhausted Devin quota reads Limit and Grok Bot folds into the sole Grok Wo
   assert.match(devinCard, />Limit</);
   assert.match(devinCard, /aria-label="devin-worker-account-1 daily remaining, unavailable until weekly resets"[^>]*opacity-35/);
   assert.match(devinCard, /aria-label="devin-worker-account-1 weekly remaining"[^>]*class="(?![^"]*opacity-35)/);
+  const staleSnapshot = snapshot([]);
+  const staleDevin = render(UsageWindow, { accounts: [accounts[0]], usage: {
+    ...staleSnapshot, grokBot: null, accounts: [{ ...staleSnapshot.accounts[0], observedAtMs: at - 13 * 60_000, fresh: false }],
+  } });
+  const staleCard = card(staleDevin, "usage-account:worker:devin-a");
+  assert.match(text(staleCard), /updated 13m ago/);
+  assert.match(staleCard, /<p class="flex min-w-0 items-baseline gap-2 text-\[0\.68rem\] text-muted-foreground"><span class="shrink-0 text-foreground\/80">updated /);
   const grokCard = card(html, "usage-account:worker:grok-a");
   assert.match(grokCard, /aria-label="grok-worker-account-1 weekly remaining"[^>]*aria-valuenow="51"/);
   assert.match(text(grokCard), /51%/);
