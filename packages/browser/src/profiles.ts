@@ -3,7 +3,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { botInstance, parseBotMcpIdentity, socketCall, socketPath } from "@agentstack/api";
+import { botInstance, parseBotMcpIdentity, socketCall, socketPath, type InvocationContext } from "@agentstack/api";
 import { z } from "zod";
 import { Backend, backendSession } from "./backend.js";
 import { BrowserSystem } from "./system.js";
@@ -24,6 +24,7 @@ export const bindingSchema = z.strictObject({
   observedAt: z.string().nullable(), error: z.string().nullable(),
 });
 type Binding = z.infer<typeof bindingSchema>;
+export type BrowserCaller = { botId: string; instance: string };
 type Bot = { id: string; url: string | null; state: string; recoveryIssue: string | null };
 const ledgerSchema = z.strictObject({ version: z.literal(1), profiles: z.array(profileSchema), bindings: z.array(bindingSchema) });
 type Ledger = z.infer<typeof ledgerSchema>;
@@ -84,6 +85,19 @@ export class Profiles {
   list(): Profile[] { return structuredClone(this.ledger.profiles); }
   bindings(): Binding[] { return structuredClone(this.ledger.bindings); }
 
+  async caller(invocation?: InvocationContext): Promise<BrowserCaller | null> {
+    if (!invocation) return null; // Local operator socket/WebSocket.
+    if (!invocation.botId || !invocation.instance || invocation.workerId) throw new Error("browser management requires a Bot-bound MCP invocation");
+    const caller = { botId: invocation.botId, instance: invocation.instance };
+    await this.verifyCaller(caller);
+    return caller;
+  }
+
+  private async verifyCaller(caller: BrowserCaller): Promise<void> {
+    const bot = (await this.bots()).find((item) => item.id === caller.botId);
+    if (!bot?.url || bot.state !== "running" || bot.recoveryIssue || botInstance(bot.url) !== caller.instance) throw new Error("browser caller is not the verified live Bot launch");
+  }
+
   /** Owner lifecycle fence, also called before reusing a removed Bot's ID. */
   async releaseBot(botId: string): Promise<{ released: true }> {
     await this.serial("inventory", async () => {
@@ -100,9 +114,13 @@ export class Profiles {
     return { released: true };
   }
 
-  async create(botId: string | null, label: string, isDefault = false): Promise<Profile> {
+  async create(botId: string | null, label: string, isDefault = false, caller?: BrowserCaller | null): Promise<Profile> {
     if (this.closing) throw new Error("browser is shutting down");
     return this.serial("inventory", async () => {
+      if (caller) {
+        await this.verifyCaller(caller);
+        if (botId !== caller.botId) throw new Error("profile must belong to the invoking Bot");
+      }
       if (botId && !(await this.bots()).some((bot) => bot.id === botId)) throw new Error("unknown Bot");
       if (isDefault) {
         const existing = this.ledger.profiles.find((profile) => profile.botId === botId && profile.default);
@@ -168,9 +186,11 @@ export class Profiles {
     return this.cycle;
   }
 
-  async remove(id: string): Promise<{ deleted: true }> {
+  async remove(id: string, caller?: BrowserCaller | null): Promise<{ deleted: true }> {
     return this.serial(`profile:${id}`, async () => {
+      if (caller) await this.verifyCaller(caller);
       const profile = this.ledger.profiles.find((item) => item.id === id);
+      if (caller && profile?.botId !== caller.botId) throw new Error("profile does not belong to the invoking Bot");
       if (!profile) return { deleted: true };
       if (profile.default && profile.botId) throw new Error("cannot delete a Bot's default profile");
       if (this.ledger.bindings.some((binding) => binding.botId === profile.botId && ["connecting", "unknown"].includes(binding.state))) throw new Error("a Bot controller has an uncertain binding; resolve it before deleting a profile");
@@ -256,16 +276,20 @@ export class Profiles {
     binding.state = "disconnected"; binding.actualProfileId = null; binding.cdpUrl = null; binding.targetId = null;
   }
 
-  async select(botId: string, session: string, profileId: string): Promise<Binding> {
+  async select(botId: string, session: string, profileId: string, caller?: BrowserCaller | null): Promise<Binding> {
     const bot = (await this.bots()).find((item) => item.id === botId);
     if (!bot?.url || bot.state !== "running" || bot.recoveryIssue) throw new Error("Bot is not a verified running launch");
     const instance = botInstance(bot.url);
+    if (caller && (caller.botId !== botId || caller.instance !== instance)) throw new Error("controller must belong to the invoking live Bot launch");
     return this.serial(`controller:${botId}:${instance}:${session}`, async () => {
+      if (caller) await this.verifyCaller(caller);
       if (this.closing) throw new Error("browser is shutting down");
+      if (this.ledger.profiles.find((item) => item.id === profileId)?.botId !== botId) throw new Error("profile is not exclusively assigned to this Bot");
       const profile = await this.ensure(profileId);
       if (profile.botId !== botId) throw new Error("profile is not exclusively assigned to this Bot");
       if (profile.state !== "ready" || !profile.cdpUrl) throw new Error(profile.error ?? "profile is not ready");
       const binding = await this.serial(`profile:${profileId}`, async () => {
+        if (caller) await this.verifyCaller(caller);
         const current = this.ledger.profiles.find((item) => item.id === profileId);
         if (!current || current.botId !== botId || current.state !== "ready") throw new Error("profile changed before controller selection");
         const binding = await this.binding(bot, instance, session);

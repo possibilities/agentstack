@@ -75,7 +75,9 @@ test("the api package serves structured documents for every workspace package", 
     const contentHttp = found.get("content")!.transports.find((transport) => transport.type === "http")!;
     assert.ok(contentHttp.routes.some((route) => route.surface === "artifacts" && route.path === "/a/*" && route.operation === null && route.format === "artifact media type" && route.authentication === "none" && route.outputSchema === null));
     const browser = found.get("browser") as PackageDoc;
-    assert.deepEqual(browser.transports.map((transport) => transport.type), ["socket", "websocket"]);
+    assert.deepEqual(browser.transports.map((transport) => transport.type), ["socket", "mcp", "websocket"]);
+    assert.deepEqual(browser.transports.find((transport) => transport.type === "mcp")!.operations.sort(),
+      ["browser_profile_list", "browser_profile_create", "browser_profile_delete", "browser_controller_list", "browser_controller_select"].sort());
     assert.deepEqual(browser.operations.map((operation) => operation.name).sort(),
       ["browser_status", "browser_session_get", "browser_session_list", "browser_session_close", "browser_session_reconcile",
         "browser_profile_list", "browser_profile_create", "browser_profile_delete", "browser_controller_list", "browser_controller_select", "browser_controller_launch", "browser_controller_close", "browser_bot_release",

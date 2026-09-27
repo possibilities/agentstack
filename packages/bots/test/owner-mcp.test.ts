@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { botInstance, parseBotMcpIdentity } from "@agentstack/api";
+import { botInstance, parseBotMcpIdentity, workspaceRoot } from "@agentstack/api";
 import { ownerMcpUrls } from "../src/owner-mcp.js";
 
 test("bot MCP URLs follow the owner catalog and bind each connection to its launch", async () => {
@@ -29,4 +29,16 @@ test("bot MCP URLs follow the owner catalog and bind each connection to its laun
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("the real owner catalog gives Bots a signed browser management connection", async () => {
+  const state = await mkdtemp(join(tmpdir(), "agentstack-browser-mcp-"));
+  try {
+    const env = { AGENTSTACK_STATE_DIR: state };
+    const endpoint = "unix:///fixture/browser-bot.sock";
+    const urls = await ownerMcpUrls(workspaceRoot(import.meta.dirname), 43123, "bot-1", endpoint, env);
+    assert.ok(urls.browser, "browser management must be discoverable by launched Bots");
+    assert.equal(new URL(urls.browser).pathname, "/mcp/browser");
+    assert.deepEqual(parseBotMcpIdentity(new URL(urls.browser), env), { botId: "bot-1", instance: botInstance(endpoint) });
+  } finally { await rm(state, { recursive: true, force: true }); }
 });

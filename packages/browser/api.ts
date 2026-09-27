@@ -60,31 +60,36 @@ export const browserStatus = operation({
 });
 
 export const browserProfileList = operation({
-  name: "browser_profile_list", description: "List durable, exclusively Bot-assigned or retained unassigned browser profiles and their last observed runtime health. Observation connections follow the visible tab; video delivery is not yet verified.",
+  name: "browser_profile_list", description: "List durable profiles and last observed runtime health. Verified Bot MCP callers see only their own profiles; local operators also see other Bots and retained unassigned profiles. Observation follows the visible tab; delivery is not probed by this read.",
   input: z.strictObject({}), output: z.strictObject({ profiles: z.array(profileSchema) }), annotations: { readOnlyHint: true },
-  async call(ctx: BrowserContext) { return { profiles: ctx.profiles.list() }; },
+  async call(ctx: BrowserContext, _input, invocation) {
+    const caller = await ctx.profiles.caller(invocation);
+    return { profiles: ctx.profiles.list().filter((profile) => !caller || profile.botId === caller.botId) };
+  },
 });
 export const browserProfileCreate = operation({
-  name: "browser_profile_create", description: "Admit an empty additional durable profile exclusively for an existing Bot, or unassigned. Its supervised browser starts asynchronously; read state for readiness. Never clones or imports sign-ins.",
+  name: "browser_profile_create", description: "Admit an empty additional durable profile. Verified Bot MCP callers must name their own botId; local operators may name another existing Bot or null for unassigned. Startup is asynchronous; read state for readiness. Never clones or imports sign-ins.",
   input: z.strictObject({ botId: z.string().nullable(), label: z.string().min(1).max(128) }), output: profileSchema,
-  async call(ctx: BrowserContext, input) { return ctx.profiles.create(input.botId, input.label); },
+  async call(ctx: BrowserContext, input, invocation) { return ctx.profiles.create(input.botId, input.label, false, await ctx.profiles.caller(invocation)); },
 });
 export const browserProfileDelete = operation({
-  name: "browser_profile_delete", description: "Permanently delete an unselected profile and its exact owned VM and volume. Refuses a Bot's default profile; Bot deletion only unassigns it. This discards sign-ins and all stored browser data.",
+  name: "browser_profile_delete", description: "Permanently delete an unselected profile and its exact owned VM and volume. Verified Bot MCP callers may delete only their own profiles. Refuses an assigned default; Bot deletion only unassigns it. Discards sign-ins and stored browser data.",
   input: z.strictObject({ profileId: z.uuid(), confirm: z.literal("delete") }), output: z.strictObject({ deleted: z.literal(true) }), annotations: { destructiveHint: true },
-  async call(ctx: BrowserContext, input) { return ctx.profiles.remove(input.profileId); },
+  async call(ctx: BrowserContext, input, invocation) { return ctx.profiles.remove(input.profileId, await ctx.profiles.caller(invocation)); },
 });
 export const browserControllerList = operation({
-  name: "browser_controller_list", description: "Read controller selections and last confirmed bindings. Connected is a timestamped observation, not a liveness guarantee; unknown never asserts the requested profile is actually attached.",
+  name: "browser_controller_list", description: "Read controller selections and last confirmed bindings. Verified Bot MCP callers see only their current-launch controllers; local operators see all. Connected is a timestamped observation, not a liveness guarantee; unknown never asserts attachment.",
   input: z.strictObject({}), output: z.strictObject({ controllers: z.array(bindingSchema) }), annotations: { readOnlyHint: true },
-  async call(ctx: BrowserContext) { return { controllers: ctx.profiles.bindings() }; },
+  async call(ctx: BrowserContext, _input, invocation) {
+    const caller = await ctx.profiles.caller(invocation);
+    return { controllers: ctx.profiles.bindings().filter((binding) => !caller || (binding.botId === caller.botId && binding.instance === caller.instance)) };
+  },
 });
 export const browserControllerSelect = operation({
   name: "browser_controller_select", description: "Select one exclusively assigned profile for a live Bot's controller session. Serialize native reconnect with its page commands, invalidate old refs, and read back actual CDP binding and active target. An unknown result reports failure without claiming the switch succeeded. Other controllers remain independent.",
   input: z.strictObject({ botId: z.string(), session: sessionInput.shape.session.default("default"), profileId: z.uuid() }), output: bindingSchema,
   async call(ctx: BrowserContext, input, invocation) {
-    if (invocation && invocation.botId !== input.botId) throw new Error("controller selection must belong to the invoking Bot");
-    return ctx.profiles.select(input.botId, input.session, input.profileId);
+    return ctx.profiles.select(input.botId, input.session, input.profileId, await ctx.profiles.caller(invocation));
   },
 });
 export const browserControllerLaunch = operation({

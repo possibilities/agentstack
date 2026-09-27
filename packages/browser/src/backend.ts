@@ -166,7 +166,7 @@ export class Backend {
       } catch { /* Guest starts asynchronously. */ }
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    throw new Error("Kernel Chrome did not expose CDP before the provider deadline; session receipt retained");
+    throw new Error("Kernel Chrome did not expose CDP within 35 seconds; receipt retained. Kernel supervises Chrome; AgentStack does not force-reboot a Running VM with unflushed profile data");
   }
 
   private async provision(receipt: NativeRecord): Promise<NativeRecord> {
@@ -246,7 +246,9 @@ export class Backend {
       }
       const native = current.native;
       if (!native) throw new Error("browser target was not provisioned");
-      let instance = row(await this.request("GET", `/instances/${encodeURIComponent(native.instanceName)}`));
+      const observed = await this.request("GET", `/instances/${encodeURIComponent(native.instanceName)}`);
+      if (!observed) throw new Error("recorded browser VM is missing; automatic replacement is disabled and the profile volume receipt is retained for operator recovery");
+      let instance = row(observed);
       if (instance.id !== native.instanceId || !owned(instance, name, current.lease, "browser")) throw new Error("browser target changed; refusing to attach to another incarnation");
       const volume = records(await this.request("GET", "/volumes")).find((item) => item.id === native.volumeId);
       if (!volume || volume.name !== native.volumeName || !owned(volume, name, current.lease, current.persistent ? "durable-profile" : "disposable-profile")) throw new Error("browser profile changed; refusing to attach to another volume");

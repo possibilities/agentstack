@@ -21,6 +21,16 @@ session names are routing keys within that scope, never proof of identity.
 These are same-user correlation and stale-instance fences, not an OS sandbox.
 Worker account processes do not inherit Bot browser configuration.
 
+The owner also issues a signed browser management MCP connection to Bots. Its
+positive operation list contains only profile list/create/delete and controller
+list/select. Handlers verify the transport-supplied Bot ID and instance against
+the live Bot inventory; requested IDs do not establish identity. Reads include
+only that Bot's profiles and its current-launch controllers. All three mutations
+recheck live ownership at the mutation boundary and refuse foreign or unassigned
+profiles. Anonymous/Worker MCP calls are refused. Local operator socket and
+WebSocket management retain broad access; provider launch/close, Bot retirement,
+and installation operations are absent from MCP.
+
 Agent-browser 0.38.1 supports queued `connect` on an existing controller.
 The selection ledger must change before reconnect: a later command reapplying
 provider configuration would otherwise return to the former provider selection.
@@ -43,6 +53,16 @@ Stopped instances restart with `{}` and their new address replaces the old relay
 The browser process receives planned shutdown before its process group: it drains
 controllers, sends Chrome `Browser.close`, then stops exact owned VMs, retaining
 volumes. The external/shared Hypeman service is not stopped by AgentStack.
+
+Recovery has a deliberate data-preserving limit: AgentStack restarts a verified
+Stopped VM and refreshes its relay, while the pinned Kernel runtime supervises
+Chrome inside a Running VM. CDP readiness is bounded to 35 seconds per attempt;
+a persistent Chrome/CDP failure is reported failed and re-probed, never converted
+into an automatic hard reboot that might discard unflushed writes. A missing
+recorded VM or changed ownership also fails closed, retaining the volume receipt.
+Automatic exact-volume VM reconstruction and guest process remediation are not
+implemented; these failure domains require operator recovery and remain an
+explicit limitation of this phase's supervision.
 
 Kernel/Neko observation connection information follows the visible tab. Connection
 availability and verified video delivery are distinct; no background preview or

@@ -9,7 +9,8 @@ import { Backend, backendSession } from "../src/backend.js";
 import { handleProvider } from "../src/provider.js";
 import { prepareBrowserConfig } from "../src/config.js";
 import { Profiles } from "../src/profiles.js";
-import { botMcpUrl } from "@agentstack/api";
+import { botMcpUrl, botInstance, type InvocationContext } from "@agentstack/api";
+import { browserProfileList, browserProfileCreate, browserProfileDelete, browserControllerList, browserControllerSelect } from "../api.js";
 
 type Item = Record<string, unknown>;
 async function fixture(options: { failInstanceCreate?: boolean } = {}) {
@@ -95,7 +96,26 @@ test("durable restart refreshes the relay and fences both native instance and pr
     s.volumes()[0]!.id = "foreign";
     await assert.rejects(backend.launch("durable", true), /another volume/);
     s.volumes()[0]!.id = "volume-1";
+    const missing = s.instances().pop()!;
+    await assert.rejects(backend.launch("durable", true), /VM is missing; automatic replacement is disabled/);
+    assert.deepEqual(s.counts(), { instances: 0, volumes: 1 }, "missing VM does not replace or discard its profile volume");
+    s.instances().push(missing);
     await backend.close(a.cleanup);
+  } finally { await backend.closeContext(); await s.close(); }
+});
+
+test("persistent CDP failure retains a Running instance and volume rather than force-rebooting", async () => {
+  const s = await fixture(); let probes = 0;
+  const backend = new Backend(s.system, async () => { probes++; throw new Error("CDP readiness deadline"); });
+  try {
+    await s.system.setHypemanLocation(s.root); await s.system.enableHypeman(s.root);
+    await assert.rejects(backend.launch("cdp-failed", true), /CDP readiness deadline/);
+    const receipt = (await backend.list())[0]!;
+    await assert.rejects(backend.launch("cdp-failed", true), /CDP readiness deadline/);
+    assert.equal(probes, 2); assert.deepEqual(s.counts(), { instances: 1, volumes: 1 });
+    assert.equal(s.instances()[0]!.state, "Running");
+    assert.deepEqual((await backend.list())[0], receipt);
+    await backend.close({ session: receipt.session, lease: receipt.lease, browserProfile: receipt.profile, browserTarget: receipt.target!.name, backend: "local" });
   } finally { await backend.closeContext(); await s.close(); }
 });
 
@@ -161,6 +181,55 @@ test("failed controller selection reports unknown and fences uncertain profile d
     await profiles.releaseBot(bot.id);
     for (const profile of profiles.list()) await profiles.remove(profile.id);
   } finally { await profiles.close(); await backend.closeContext(); await s.close(); }
+});
+
+test("MCP management scopes reads and every mutation to a verified live Bot launch", async () => {
+  const s = await fixture(); const backend = new Backend(s.system, async () => undefined);
+  const bots = ["a", "b"].map((id) => ({ id, url: `unix:///bot-${id}`, state: "running", recoveryIssue: null as string | null }));
+  const profiles = new Profiles(backend, s.system, s.env, async () => bots);
+  const ctx = { backend, system: s.system, profiles };
+  const invocation: InvocationContext = { transport: "mcp", botId: "a", instance: botInstance(bots[0]!.url), threadId: "main", sessionId: null };
+  const receipts: Array<{ controller: string; revision: number }> = [];
+  try {
+    await s.system.setHypemanLocation(s.root); await s.system.enableHypeman(s.root); await profiles.start(false);
+    const own = await browserProfileCreate.call(ctx, { botId: "a", label: "own" }, invocation);
+    const foreign = await profiles.create("b", "foreign"); const orphan = await profiles.create(null, "orphan");
+    for (const p of profiles.list()) await profiles.ensure(p.id);
+    assert.deepEqual((await browserProfileList.call(ctx, {}, invocation)).profiles.map((p) => p.id), [own.id]);
+    assert.equal((await browserProfileList.call(ctx, {})).profiles.length, 3);
+    for (const bot of bots) receipts.push((await profiles.launch(botMcpUrl("http://127.0.0.1/browser", bot.id, bot.url, s.env), "same-session")).cleanup);
+    assert.deepEqual((await browserControllerList.call(ctx, {}, invocation)).controllers.map((c) => c.botId), ["a"]);
+    assert.equal((await browserControllerList.call(ctx, {})).controllers.length, 2);
+    for (const botId of ["b", null]) await assert.rejects(browserProfileCreate.call(ctx, { botId, label: "denied" }, invocation), /invoking Bot/);
+    for (const profileId of [foreign.id, orphan.id]) {
+      await assert.rejects(browserProfileDelete.call(ctx, { profileId, confirm: "delete" }, invocation), /invoking Bot/);
+      await assert.rejects(browserControllerSelect.call(ctx, { botId: "a", session: "same-session", profileId }, invocation), /exclusively assigned/);
+    }
+    await assert.rejects(browserControllerSelect.call(ctx, { botId: "b", session: "same-session", profileId: foreign.id }, invocation), /invoking live Bot/);
+    for (const denied of [
+      { ...invocation, instance: "stale" }, { ...invocation, botId: null, instance: null },
+      { ...invocation, workerId: "worker", workerInstance: "runtime" },
+    ]) {
+      await assert.rejects(browserProfileList.call(ctx, {}, denied), /Bot/);
+      await assert.rejects(browserControllerList.call(ctx, {}, denied), /Bot/);
+      await assert.rejects(browserProfileCreate.call(ctx, { botId: "a", label: "denied" }, denied), /Bot/);
+      await assert.rejects(browserProfileDelete.call(ctx, { profileId: own.id, confirm: "delete" }, denied), /Bot/);
+      await assert.rejects(browserControllerSelect.call(ctx, { botId: "a", session: "same-session", profileId: own.id }, denied), /Bot/);
+    }
+    bots[0]!.state = "stopped";
+    await assert.rejects(browserProfileList.call(ctx, {}, invocation), /verified live Bot/);
+    bots[0]!.state = "running"; bots[0]!.recoveryIssue = "unverified process";
+    await assert.rejects(browserProfileDelete.call(ctx, { profileId: own.id, confirm: "delete" }, invocation), /verified live Bot/);
+    bots[0]!.recoveryIssue = null;
+    for (const receipt of receipts) await profiles.disconnected(receipt.controller, receipt.revision);
+    await browserProfileDelete.call(ctx, { profileId: own.id, confirm: "delete" }, invocation);
+    assert.ok(!profiles.list().some((p) => p.id === own.id));
+  } finally {
+    for (const receipt of receipts) await profiles.disconnected(receipt.controller, receipt.revision);
+    for (const bot of bots) await profiles.releaseBot(bot.id);
+    for (const profile of profiles.list()) await profiles.remove(profile.id);
+    await profiles.close(); await backend.closeContext(); await s.close();
+  }
 });
 
 test("disposable launch and exact close use only the selected local Hypeman API", async () => {

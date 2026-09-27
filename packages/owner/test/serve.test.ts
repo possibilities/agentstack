@@ -124,7 +124,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     assert.equal(servers?.status, 200, stderr);
-    assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["auth", "bots", "brain", "content", "notify", "owner", "roles", "usage", "workers"]);
+    assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["auth", "bots", "brain", "browser", "content", "notify", "owner", "roles", "usage", "workers"]);
     const inspectorUrl = `http://127.0.0.1:${inspectorPort}/`;
     assert.equal((await fetch(inspectorUrl)).status, 200);
     const catalogDir = (await readdir(stateDir)).find((entry) => entry.startsWith("inspector-"));

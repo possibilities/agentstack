@@ -31,6 +31,14 @@ new controllers on its default profile.
 
 ## Management
 
+Bots discover a signed `browser` MCP connection through the owner's launch
+catalog. It exposes exactly the five operations below. MCP callers must be a
+verified live Bot launch: requested `botId` never supplies identity. Reads are
+scoped to the caller's profiles and current-launch controllers. Creation must
+name the caller's own Bot; deletion and selection reject foreign and unassigned
+profiles. Worker and anonymous MCP connections cannot use these operations.
+The local operator socket/WebSocket retain broad management access.
+
 - `browser_profile_list`: durable assignment, last observed health, CDP relay,
   and Kernel/Neko observation connection.
 - `browser_profile_create {botId, label}`: admit an empty additional profile;
@@ -66,6 +74,15 @@ process closes controllers and Chrome before stopping exact VMs. Profiles remain
 on disk. Restart refreshes guest IP and CDP relays; old relay URLs are not durable
 identities. Sudden power/process loss is not a clean Chrome flush guarantee.
 Do not delete or claim a foreign instance/volume to make recovery pass.
+
+Supported automatic recovery is limited to an exact owned Stopped VM, a changed
+guest IP/relay, and transient CDP loss that Kernel's in-guest Chrome supervisor
+can repair. Each CDP readiness attempt is bounded to 35 seconds, followed by a
+later supervision cycle. A persistently unresponsive Chrome in a Running VM
+stays failed; AgentStack does not force-stop that VM and risk unflushed data.
+A missing recorded VM also stays failed with a specific retained-volume error.
+Exact-volume VM reconstruction and guest process remediation need an intentional
+operator recovery workflow; they are not implemented automatic recovery paths.
 
 Observation URLs address the selected host's local guest subnet on port 8080
 with Neko's `readOnly=1` presentation. Neko follows the visible tab. The guest

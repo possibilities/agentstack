@@ -2,6 +2,14 @@ name: browser
 description: Durable Bot browser profiles, supervised Kernel runtimes, controller binding and local toolchain management. Page actions remain in agent-browser.
 socket:
   description: Owner-local provider lifecycle and system management; not an agent-facing browser transport.
+mcp:
+  description: Verified live Bots manage only their own profiles and current-launch controllers. Page actions remain in agent-browser.
+  operations:
+    - browser_profile_list
+    - browser_profile_create
+    - browser_profile_delete
+    - browser_controller_list
+    - browser_controller_select
 websocket:
   description: Loopback management operations and change notices for future operator clients.
   operations:
