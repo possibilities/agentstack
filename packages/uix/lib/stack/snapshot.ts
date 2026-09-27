@@ -3,7 +3,7 @@ import { loadCatalog } from "./catalog";
 import { loadResources } from "./resources";
 import type { Account, Bot, BotSettings, Login, OwnerStatus, PackageDoc, Resource, RolePreview, RoleSnapshot, Snapshot, UsageSnapshot, VoiceCall, WorkerAccount, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
 
-const knownPackages = ["api", "attention", "auth", "bots", "brain", "content", "infer", "notifications", "roles", "owner", "usage", "workers"];
+const knownPackages = ["api", "attention", "auth", "bots", "brain", "content", "infer", "notify", "roles", "owner", "usage", "workers"];
 
 function call<T>(pkg: string, name: string, args: Record<string, unknown> = {}): Promise<T> {
   return socketCall(socketPath(pkg), "tools/call", { name, arguments: args }, { timeoutMs: 2_000 }) as Promise<T>;

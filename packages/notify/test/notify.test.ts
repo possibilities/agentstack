@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,10 +9,10 @@ import type { Notification } from "../src/schema.js";
 test("notifications persist, filter independently, update by revision, and dismiss all", async () => {
   const root = await mkdtemp(join(tmpdir(), "n-"));
   const env = { ...process.env, AGENTSTACK_STATE_DIR: root };
-  let served = await serveApi({ name: "notifications", transport: "socket", env });
+  let served = await serveApi({ name: "notify", transport: "socket", env });
   const call = <T>(name: string, args: Record<string, unknown> = {}) => socketCall(served.socketPath!, "tools/call", { name, arguments: args }) as Promise<T>;
   let notices = 0;
-  const subscription = await socketSubscribe(served.socketPath!, ["notifications_changed"], () => { notices += 1; });
+  const subscription = await socketSubscribe(served.socketPath!, ["notify_changed"], () => { notices += 1; });
   try {
     const id = "718f6656-b34c-400e-b996-093070880710";
     const first = await call<Notification>("notification_send", { id, title: "Build", message: "Started", source: "worker" });
@@ -55,13 +55,39 @@ test("notifications persist, filter independently, update by revision, and dismi
     assert.ok(notices >= 7, `expected change notices, got ${notices}`);
     await subscription.close();
     await served.close();
-    served = await serveApi({ name: "notifications", transport: "socket", env });
+    served = await serveApi({ name: "notify", transport: "socket", env });
     assert.deepEqual(await call("notification_get", { id }), editedDismissed);
     const afterRestart = await call<Notification>("notification_get", { id });
     assert.equal(afterRestart.title, "Updated");
     assert.ok(afterRestart.dismissedAt);
   } finally {
     await subscription.close();
+    await served.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("notify adopts the prior notification store without losing history", async () => {
+  const root = await mkdtemp(join(tmpdir(), "n-migrate-"));
+  const env = { ...process.env, AGENTSTACK_STATE_DIR: root };
+  let served = await serveApi({ name: "notify", transport: "socket", env });
+  try {
+    const id = "718f6656-b34c-400e-b996-093070880711";
+    const first = await socketCall(served.socketPath!, "tools/call", { name: "notification_send", arguments: { id, title: "Legacy", message: "Retained" } });
+    await served.close();
+    await rename(join(root, "notify"), join(root, "notifications"));
+    served = await serveApi({ name: "notify", transport: "socket", env });
+    assert.deepEqual(await socketCall(served.socketPath!, "tools/call", { name: "notification_get", arguments: { id } }), first);
+    assert.ok((await stat(join(root, "notify", "notifications.sqlite"))).isFile());
+    await assert.rejects(stat(join(root, "notifications")), { code: "ENOENT" });
+    await served.close();
+    await rename(join(root, "notify"), join(root, "notifications"));
+    await stat(join(root, "notifications", "notifications.sqlite"));
+    // A second store must not hide the first by silently choosing one.
+    const fresh = await mkdtemp(join(root, "notify-"));
+    await rename(fresh, join(root, "notify"));
+    await assert.rejects(serveApi({ name: "notify", transport: "socket", env }), /notify_state_conflict/);
+  } finally {
     await served.close();
     await rm(root, { recursive: true, force: true });
   }

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Content, Notification } from "./schema.js";
@@ -17,7 +17,13 @@ export class NotificationStore {
   readonly db: DatabaseSync;
 
   constructor(stateRoot: string) {
-    const dir = join(stateRoot, "notifications");
+    const dir = join(stateRoot, "notify");
+    const legacy = join(stateRoot, "notifications");
+    if (existsSync(legacy)) {
+      if (existsSync(dir)) throw new Error("notify_state_conflict: both notify and notifications state directories exist");
+      // Move the whole directory so SQLite's WAL and journal files travel with the database.
+      renameSync(legacy, dir);
+    }
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const path = join(dir, "notifications.sqlite");
     this.db = new DatabaseSync(path);

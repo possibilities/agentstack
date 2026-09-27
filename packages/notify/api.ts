@@ -9,7 +9,7 @@ const read = { readOnlyHint: true } as const;
 const edit = z.strictObject({ title: content.shape.title.optional(), message: content.shape.message.optional(),
   subtitle: z.string().trim().max(400).nullable().optional(), source: z.string().trim().min(1).max(200).nullable().optional() });
 
-export const api: PackageApi<Context, "notifications_changed"> = {
+export const api: PackageApi<Context, "notify_changed"> = {
   operations: [
     operation({ name: "notification_send", description: "Persist a notification with title, message, optional subtitle and source. Returns its stable ID and record. Optional caller ID deduplicates identical submissions; no system banner or action is triggered.",
       input: content.extend({ id: z.uuid().optional() }), output: notification, annotations: { idempotentHint: false },
@@ -33,8 +33,8 @@ export const api: PackageApi<Context, "notifications_changed"> = {
       input: z.strictObject({}), output: z.strictObject({ dismissed: z.number().int().nonnegative() }),
       annotations: { idempotentHint: true }, async call(ctx) { const dismissed = ctx.store.dismissAll(); if (dismissed) ctx.changed?.(); return { dismissed }; } }),
   ],
-  events: { topics: { notifications_changed: "Notification records changed. Re-read notification_list or notification_get; notices contain no notification text." },
-    start(ctx, publish) { ctx.changed = () => publish("notifications_changed"); return () => { ctx.changed = undefined; }; } },
+  events: { topics: { notify_changed: "Notification records changed. Re-read notification_list or notification_get; notices contain no notification text." },
+    start(ctx, publish) { ctx.changed = () => publish("notify_changed"); return () => { ctx.changed = undefined; }; } },
   async createContext(env) { return { store: new NotificationStore(stateDir(env)) }; },
   async closeContext(ctx) { ctx.store.close(); },
 };

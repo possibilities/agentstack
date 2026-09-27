@@ -350,7 +350,7 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
-  packages/notifications:
+  packages/notify:
     dependencies:
       '@agentstack/api':
         specifier: workspace:*
@@ -389,9 +389,9 @@ importers:
       '@agentstack/infer':
         specifier: workspace:*
         version: link:../infer
-      '@agentstack/notifications':
+      '@agentstack/notify':
         specifier: workspace:*
-        version: link:../notifications
+        version: link:../notify
       '@agentstack/uix':
         specifier: workspace:*
         version: link:../uix
