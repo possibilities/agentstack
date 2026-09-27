@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { attribute, processScope, scopeSummary, selectScope, type ResourceFrame, type ResourceRoots } from "./attribution.js";
 import { CollectionError, createCollector, type Collector } from "./collector.js";
 import { createDomainReader, type DomainReader } from "./domains.js";
-import { ownerResourceHistoryInput, ownerResourcesInput, type HistoryInput, type HistoryOutput, type ResourceError,
+import { ownerResourceHistoryInput, ownerResourcesInput, type HistoryInput, type HistoryOutput, type OwnerRuntime, type ResourceError,
   type ResourceScope, type ResourcesInput, type ResourcesOutput } from "./schema.js";
 
 type Attempt = { id: string; at: string; error: ResourceError | null; frame: ResourceFrame | null };
@@ -30,6 +31,7 @@ export class ResourceMonitor {
   private attempts: Attempt[] = [];
   private lastGood: ResourceFrame | undefined;
   private lastAttempt: Attempt | undefined;
+  private lastElu: ReturnType<typeof performance.eventLoopUtilization> | undefined;
   private droppedSamples = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private abort: AbortController | undefined;
@@ -88,6 +90,7 @@ export class ResourceMonitor {
       const frame = attribute(metrics.value, roots, labels.value, this.lastGood);
       frame.id = id;
       frame.durationMs = performance.now() - start;
+      frame.runtime = this.runtime();
       attempt.frame = frame;
     } catch (error) {
       attempt.error = error instanceof CollectionError ? error.code : abort.signal.aborted ? "collection_timeout" : "collection_failed";
@@ -116,6 +119,16 @@ export class ResourceMonitor {
     this.onChange = undefined;
     this.attempts = [];
     this.lastGood = undefined;
+  }
+
+  /** Vitals of this Node.js process; event-loop utilization spans the previous successful capture. */
+  private runtime(): OwnerRuntime {
+    const elu = performance.eventLoopUtilization();
+    const utilization = this.lastElu ? performance.eventLoopUtilization(elu, this.lastElu).utilization : null;
+    this.lastElu = elu;
+    const memory = process.memoryUsage();
+    return { pid: process.pid, nodeVersion: process.version, uptimeSeconds: process.uptime(), heapUsedBytes: memory.heapUsed,
+      heapTotalBytes: memory.heapTotal, externalBytes: memory.external, arrayBuffersBytes: memory.arrayBuffers, eventLoopUtilization: utilization };
   }
 
   private retention(): ResourcesOutput["retention"] {
@@ -147,7 +160,7 @@ export class ResourceMonitor {
       capabilities: { rssBytes: this.platform === "darwin" || this.platform === "linux", virtualBytes: this.platform === "darwin" || this.platform === "linux",
         cpuTimeMs: this.platform === "darwin" || this.platform === "linux", cpuPercent: this.platform === "darwin" || this.platform === "linux", threads: this.platform === "linux",
         diskIoBytes: false, openFileDescriptors: false, networkBytes: false, gpu: false, perSessionAllocation: false },
-      retention: this.retention(), scope: null, scopes: [], processes: [], page: { offset, limit, total: 0, nextOffset: null },
+      retention: this.retention(), runtime: frame?.runtime ?? null, scope: null, scopes: [], processes: [], page: { offset, limit, total: 0, nextOffset: null },
     };
     const scopeId = query.scopeId ?? "total";
     if (!frame) {

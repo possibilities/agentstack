@@ -16,15 +16,18 @@ import { ResourceMonitor } from "../src/resources/monitor.js";
 import { ownerResourcesOutput, ownerResourceHistoryOutput } from "../src/resources/schema.js";
 
 const roots: ResourceRoots = { pid: 10, attached: true, children: [
-  { name: "bots", pid: 20, running: true, exitCode: null, signal: null, error: null },
-  { name: "workers", pid: 30, running: true, exitCode: null, signal: null, error: null },
+  { name: "bots", pid: 20, running: true, exitCode: null, signal: null, error: null, startedAt: new Date().toISOString(), exitedAt: null },
+  { name: "workers", pid: 30, running: true, exitCode: null, signal: null, error: null, startedAt: new Date().toISOString(), exitedAt: null },
 ] };
 function proc(pid: number, ppid: number, cpuTimeMs = 100, birth = "birth-1"): ProcessReading {
   return { pid, ppid, cpuTimeMs, birth, id: processIdentity(pid, birth), name: `p${pid}`, rssBytes: pid * 100, virtualBytes: pid * 1000, threads: 2 };
 }
+function host(): Collection["host"] {
+  return { platform: "linux", logicalCpuCount: 4, hostname: "test-host", arch: "x64", release: "6.1.0", cpuModel: "Fixture CPU", uptimeSeconds: 3600,
+    totalMemoryBytes: 100_000_000, freeMemoryBytes: 10_000_000, loadAverage: [1, 2, 3] };
+}
 function collection(processes = [proc(10, 1)], monotonicMs = performance.now()): Collection {
-  return { processes, monotonicMs, capturedAt: new Date().toISOString(), unreadableProcesses: 0, vanishedDuringCollection: 0, excludedCollectorProcesses: 0,
-    host: { platform: "linux", logicalCpuCount: 4, totalMemoryBytes: 100_000_000, freeMemoryBytes: 10_000_000, loadAverage: [1, 2, 3] } };
+  return { processes, monotonicMs, capturedAt: new Date().toISOString(), unreadableProcesses: 0, vanishedDuringCollection: 0, excludedCollectorProcesses: 0, host: host() };
 }
 function domains(): DomainReading {
   return { labels: [
@@ -155,12 +158,22 @@ test("cached reads, pinned pagination, bounded history, explicit failure gaps an
     await monitor.sample();
     const first = ownerResourcesOutput.parse(await monitor.resources({ view: "processes", limit: 2 }));
     assert.equal(first.observation.freshness, "fresh"); assert.equal(first.page.total, 8); assert.equal(first.page.nextOffset, 2);
+    assert.equal(first.host!.hostname, "test-host");
+    assert.equal(first.host!.cpuModel, "Fixture CPU");
+    assert.equal(first.runtime!.pid, process.pid);
+    assert.equal(first.runtime!.nodeVersion, process.version);
+    assert.ok(first.runtime!.heapUsedBytes > 0 && first.runtime!.heapTotalBytes >= first.runtime!.heapUsedBytes);
+    assert.equal(first.runtime!.eventLoopUtilization, null, "no baseline exists before a second successful capture");
     const firstId = first.observation.snapshotId!;
     await Promise.all(Array.from({ length: 50 }, () => monitor.resources()));
     assert.equal(calls, 1, "API reads must not trigger sampling");
     await monitor.sample();
     const page = await monitor.resources({ snapshotId: firstId, view: "processes", offset: 2, limit: 2 });
     assert.equal(page.observation.snapshotId, firstId); assert.equal(page.processes[0].pid, 21);
+    const second = ownerResourcesOutput.parse(await monitor.resources());
+    const elu = second.runtime!.eventLoopUtilization;
+    assert.ok(typeof elu === "number" && elu >= 0 && elu <= 1, "the second successful capture reports interval utilization");
+    assert.equal(second.runtime!.pid, first.runtime!.pid);
     await assert.rejects(monitor.resources({ offset: 1 }), /snapshotId/);
     await assert.rejects(monitor.resources({ scopeId: "bogus" }), /unknown_resource_scope/);
     await assert.rejects(monitor.resources({ limit: 101 }), /100/);
@@ -201,7 +214,8 @@ test("history absent scopes are null and record-budget pressure shortens retenti
 
 test("maximum process pages and history responses retain socket-line headroom", async () => {
   const items = [proc(10, 1), ...Array.from({ length: 200 }, (_, i) => ({ ...proc(100 + i, 10), name: "😀".repeat(60), birth: "b".repeat(160) }))];
-  const monitor = new ResourceMonitor({ roots: () => roots, platform: "linux", collect: async () => collection(items), domains: async () => domains() });
+  const wide = { ...host(), hostname: "h".repeat(255), arch: "a".repeat(40), release: "r".repeat(120), cpuModel: "m".repeat(160) };
+  const monitor = new ResourceMonitor({ roots: () => roots, platform: "linux", collect: async () => ({ ...collection(items), host: wide }), domains: async () => domains() });
   try {
     for (let i = 0; i < 120; i++) await monitor.sample();
     const page = ownerResourcesOutput.parse(await monitor.resources({ view: "processes", limit: 100 }));

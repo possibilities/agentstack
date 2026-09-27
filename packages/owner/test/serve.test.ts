@@ -13,7 +13,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { ownerResourcesOutput, ownerResourceHistoryOutput } from "../src/resources/schema.js";
 
 const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
-const socketNames = ["api", "attention", "auth", "roles", "bots", "brain", "content", "workers", "usage", "infer", "owner"];
+const socketNames = ["api", "attention", "auth", "roles", "bots", "brain", "browser", "content", "workers", "usage", "infer", "owner"];
 const brainEnv = { AGENTSTACK_BRAIN_SHARE_HOST: "127.0.0.1", AGENTSTACK_BRAIN_SHARE_PORT: "0" };
 
 test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a standalone reference listener, then shuts them down", { timeout: 120_000 }, async () => {
@@ -47,7 +47,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       children: Array<{ name: string; pid: number | null; running: boolean }>;
     };
     assert.equal(status.pid, child.pid);
-    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["api", "attention", "auth", "bots", "brain", "content", "infer", "inspector", "roles", "uix", "usage", "websocket", "workers"]);
+    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["api", "attention", "auth", "bots", "brain", "browser", "content", "infer", "inspector", "roles", "uix", "usage", "websocket", "workers"]);
     for (let i = 0; i < 200 && status.children.some((entry) => !entry.running); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
       status = (await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} })) as typeof status;
@@ -64,6 +64,8 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     const resourceSnapshot = ownerResourcesOutput.parse(await socketCall(ownerSock, "tools/call", { name: "owner_resources", arguments: { view: "processes", limit: 100 } }));
     assert.equal(resourceSnapshot.observation.coverage?.mode, "owner_tree");
     assert.equal(resourceSnapshot.observation.freshness, "fresh");
+    assert.equal(resourceSnapshot.runtime?.pid, child.pid);
+    assert.ok(resourceSnapshot.host?.hostname);
     assert.ok(resourceSnapshot.processes.some((entry) => entry.pid === child.pid));
     for (const entry of status.children) assert.ok(resourceSnapshot.processes.some((process) => process.pid === entry.pid && process.component === entry.name), `${entry.name} absent from resource snapshot`);
     const usage = await socketCall(join(stateDir, "sockets", "usage.sock"), "tools/call", { name: "usage_snapshot", arguments: {} }) as { accounts: unknown[]; grokBot: { fresh: boolean } };
@@ -179,7 +181,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     }
     assert.equal(entry?.status, 308, stderr);
     assert.equal(new URL(entry.headers.get("location")!, indexUrl).href, uixUrl);
-    const system = await fetch(new URL("/x/fleet?system=open", uixUrl));
+    const system = await fetch(new URL("/x/system", uixUrl));
     assert.equal(system.status, 200);
     const systemHtml = await system.text();
     assert.match(systemHtml, /MCP Inspector/);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { BookOpenIcon, ChevronDownIcon, CpuIcon, LayersIcon, LayoutDashboardIcon, MinusIcon, PanelLeftIcon, PanelRightIcon, PlusIcon, ScanIcon, SearchIcon } from "lucide-react";
+import { BookOpenIcon, ChevronDownIcon, LayersIcon, LayoutDashboardIcon, MinusIcon, PanelRightIcon, PlusIcon, ScanIcon, SearchIcon } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -17,7 +17,6 @@ import { Inspector } from "./inspector";
 import { Palette, type PaletteAction } from "./palette";
 import { StackProvider, useStack, WorkbenchContext, type WorkbenchValue } from "./provider";
 import { Reference } from "./reference";
-import { SystemPanel } from "./system-panel";
 import { Bench, type BenchControls } from "./bench";
 import { CallLauncher, VoiceProvider } from "./voice";
 
@@ -30,7 +29,6 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
   const [location, setLocation] = useState(initialLocation);
   const locationRef = useRef(location);
   const referenceReturn = useRef<HTMLElement | null>(null);
-  const systemReturn = useRef<HTMLElement | null>(null);
   const inspectorReturn = useRef<HTMLElement | null>(null);
   const [hovered, hover] = useState<string | null>(null);
   const [flash, setFlash] = useState<{ key: string; seq: number } | null>(null);
@@ -48,8 +46,8 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
   const surfaceRef = useRef(surface);
   const benchFocusFrame = useRef<number | undefined>(undefined);
   const rightOpen = Boolean(location.reference || location.inspect);
-  const { overlay, systemVisible, rightVisible, leftWidth, leftMax, rightWidth, rightMax, left, right } = dockGeometry({
-    screenWidth, ...openDocks(location), surface, systemWidth: sizes.system,
+  const { overlay, rightVisible, rightWidth, rightMax, right } = dockGeometry({
+    screenWidth, ...openDocks(location), surface,
     rightWidth: location.reference ? sizes.reference : sizes.inspector, expanded: expanded && Boolean(location.reference),
   });
 
@@ -108,14 +106,13 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
     const home = homeOf(ref);
     if (home.kind === "reference" && !locationRef.current.reference) referenceReturn.current = document.activeElement as HTMLElement;
     if (home.kind === "reference" && !locationRef.current.reference && !locationRef.current.inspect) inspectorReturn.current = document.activeElement as HTMLElement;
-    if (home.kind === "system" && !locationRef.current.system) systemReturn.current = document.activeElement as HTMLElement;
-    write(navigateTo(locationRef.current, ref), home.kind === "space" ? "bench" : home.kind === "system" ? "left" : "right");
+    write(navigateTo(locationRef.current, ref), home.kind === "space" ? "bench" : "right");
     if (home.kind === "space") {
       if (controlsRef.current) controlsRef.current.goToNode(ref);
       else pending.current = { space: home.space, ref };
       focusBench();
-    } else if (home.kind === "system") flashNow(ref);
-  }, [flashNow, focusBench, write]);
+    }
+  }, [focusBench, write]);
   const select = useCallback((ref: NodeRef | null) => {
     if (ref && homeOf(ref).kind === "reference") { goTo(ref); return; }
     if (ref && !locationRef.current.inspect && !locationRef.current.reference) inspectorReturn.current = document.activeElement as HTMLElement;
@@ -125,10 +122,6 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
   const dropInspect = useCallback((ref: NodeRef) => {
     const current = locationRef.current;
     if (current.inspect && nodeKey(current.inspect) === nodeKey(ref)) write({ ...current, inspect: null });
-  }, [write]);
-  const openSystem = useCallback(() => {
-    if (!locationRef.current.system) systemReturn.current = document.activeElement as HTMLElement;
-    write({ ...locationRef.current, system: locationRef.current.system ?? "open" }, "left");
   }, [write]);
   const openReference = useCallback(() => {
     if (!locationRef.current.reference) referenceReturn.current = document.activeElement as HTMLElement;
@@ -141,7 +134,6 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
     inspectorReturn.current = document.activeElement as HTMLElement;
     write({ ...locationRef.current, reference: null }, "right");
   }, [write]);
-  const closeSystem = useCallback(() => write({ ...locationRef.current, system: null }), [write]);
   const closeRight = useCallback(() => {
     const current = locationRef.current;
     write(current.reference ? { ...current, reference: null } : { ...current, inspect: null });
@@ -177,7 +169,7 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setPaletteOpen((value) => !value); return; }
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || paletteOpen || (event.target as Element).closest("input,textarea,select,button,a,[contenteditable=true],[role=dialog],[role=alertdialog]")) return;
       if (event.key === "Escape") {
-        if (rightVisible) closeRight(); else if (systemVisible) closeSystem(); else return;
+        if (rightVisible) closeRight(); else return;
         event.preventDefault();
       }
       const space = spaces.find((s) => s.key === event.key);
@@ -185,23 +177,22 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [paletteOpen, rightVisible, systemVisible, closeRight, closeSystem, setSpace]);
+  }, [paletteOpen, rightVisible, closeRight, setSpace]);
 
   const actions: PaletteAction[] = useMemo(() => [
-    { id: "system", label: "Open System dock", icon: CpuIcon, run: openSystem },
     { id: "reference", label: "Open API reference", icon: BookOpenIcon, run: openReference },
     ...(location.inspect ? [{ id: "inspector", label: "Return to inspector", icon: PanelRightIcon, run: openInspector }] : []),
     ...(controls ? [
       { id: "fit", label: "Fit bench", shortcut: "F", icon: ScanIcon, run: controls.fit },
       { id: "tidy", label: "Reset local window positions", shortcut: "T", icon: LayoutDashboardIcon, run: controls.tidy },
     ] : []),
-  ], [controls, location.inspect, openSystem, openReference, openInspector]);
+  ], [controls, location.inspect, openReference, openInspector]);
   const workbench: WorkbenchValue = useMemo(() => ({ space: location.space, setSpace, selected: location.inspect, hovered, select, hover, goTo, flash }), [location.space, location.inspect, setSpace, hovered, select, goTo, flash]);
-  return <div className="contents" style={{ "--system": `${left}px`, "--sheet": `${right}px` } as React.CSSProperties}>
+  return <div className="contents" style={{ "--sheet": `${right}px` } as React.CSSProperties}>
     <WorkbenchContext value={workbench}><AuthActionsProvider><VoiceProvider><BotActionsProvider>
-      <Bench space={location.space} left={left} blocked={paletteOpen} onControls={reportControls} onScale={setScale} onArrive={flashNow} />
-      <TopBar space={location.space} setSpace={setSpace} compact={screenWidth - left - right < 440} system={systemVisible} reference={Boolean(location.reference) && rightVisible} inspectorAvailable={overlay && Boolean(location.inspect) && !rightVisible} openInspector={openInspector} toggleSystem={systemVisible ? closeSystem : openSystem} toggleReference={Boolean(location.reference) && rightVisible ? closeRight : openReference} openPalette={() => setPaletteOpen(true)} fit={() => controls?.fit()} />
-      <div data-chrome className="fixed bottom-4 z-30 flex -translate-x-1/2 items-center gap-1 rounded-xl border bg-card/95 p-1 shadow-sm" style={{ left: "calc(var(--system) + (100% - var(--system) - var(--sheet))/2)" }}>
+      <Bench space={location.space} blocked={paletteOpen} onControls={reportControls} onScale={setScale} onArrive={flashNow} />
+      <TopBar space={location.space} setSpace={setSpace} compact={screenWidth - right < 440} reference={Boolean(location.reference) && rightVisible} inspectorAvailable={overlay && Boolean(location.inspect) && !rightVisible} openInspector={openInspector} toggleReference={Boolean(location.reference) && rightVisible ? closeRight : openReference} openPalette={() => setPaletteOpen(true)} fit={() => controls?.fit()} />
+      <div data-chrome className="fixed bottom-4 z-30 flex -translate-x-1/2 items-center gap-1 rounded-xl border bg-card/95 p-1 shadow-sm" style={{ left: "calc((100% - var(--sheet))/2)" }}>
         <Tool label="Zoom out" onClick={() => controls?.zoom(1 / 1.2)}><MinusIcon /></Tool>
         <Button variant="ghost" size="sm" aria-label="Actual size" className="w-14 tabular-nums" onClick={() => controls?.zoom(1 / scale)}>{Math.round(scale * 100)}%</Button>
         <Tool label="Zoom in" onClick={() => controls?.zoom(1.2)}><PlusIcon /></Tool>
@@ -209,9 +200,6 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
         <Tool label="Fit bench (F)" onClick={() => controls?.fit()}><ScanIcon /></Tool>
         <Tool label="Reset window positions (T)" onClick={() => controls?.tidy()}><LayoutDashboardIcon /></Tool>
       </div>
-      <Dock side="left" label="System" open={systemVisible} overlay={overlay} width={leftWidth} min={dockMinimum.left} max={leftMax} onResize={(system) => setSizes((s) => ({ ...s, system }))} onClose={closeSystem} returnFocus={systemReturn} restoreFocusOnHide={!location.system && (!overlay || surface === "bench")}>
-        <SystemPanel target={location.system} visible={systemVisible} onClose={closeSystem} />
-      </Dock>
       <Dock side="right" label={location.reference ? "API reference" : "Inspector"} open={rightVisible} overlay={overlay} width={rightWidth} min={dockMinimum.right} max={rightMax}
         onResize={(width) => { setExpanded(false); setSizes((s) => ({ ...s, [location.reference ? "reference" : "inspector"]: width })); }} onClose={closeRight} returnFocus={inspectorReturn} restoreFocusOnHide={!rightOpen && (!overlay || surface === "bench")}>
         <Inspector hidden={Boolean(location.reference)} onGone={dropInspect} />
@@ -223,27 +211,21 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
 }
 
 const nodeKeyOrNull = (ref: NodeRef | null) => ref ? nodeKey(ref) : null;
-const openDocks = (location: BenchLocation) => ({ systemOpen: Boolean(location.system), rightOpen: Boolean(location.reference || location.inspect) });
+const openDocks = (location: BenchLocation) => ({ rightOpen: Boolean(location.reference || location.inspect) });
 function Tool({ label, onClick, children }: { label: string; onClick(): void; children: React.ReactNode }) {
   return <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label={label} onClick={onClick} />}>{children}</TooltipTrigger><TooltipContent>{label}</TooltipContent></Tooltip>;
 }
 
-/** Places and tools are separate: the Spaces menu moves the camera; System and API open docks on their own edges. */
-function TopBar({ space, setSpace, compact, system, reference, inspectorAvailable, openInspector, toggleSystem, toggleReference, openPalette, fit }: {
-  space: SpaceId; setSpace(space: SpaceId): void; compact: boolean; system: boolean; reference: boolean; inspectorAvailable: boolean; openInspector(): void; toggleSystem(): void; toggleReference(): void; openPalette(): void; fit(): void;
+/** Places and tools are separate: the Spaces menu moves the camera; API reference opens the right dock. */
+function TopBar({ space, setSpace, compact, reference, inspectorAvailable, openInspector, toggleReference, openPalette, fit }: {
+  space: SpaceId; setSpace(space: SpaceId): void; compact: boolean; reference: boolean; inspectorAvailable: boolean; openInspector(): void; toggleReference(): void; openPalette(): void; fit(): void;
 }) {
   const state = useStack();
   const attention = spaceAttention(state);
-  const closed = Object.entries(state.status).filter(([, status]) => status === "closed").map(([name]) => `${name} reconnecting`);
-  const reasons = [...new Set([...attention.system, ...closed])];
   const elsewhere = spaces.some((item) => item.id !== (space as string) && (attention as Record<string, string[]>)[item.id].length > 0);
   const dot = <span className="size-1.5 shrink-0 rounded-full bg-warning" aria-label="needs attention" />;
-  return <header data-chrome className="pointer-events-none fixed top-3 z-30 flex items-start justify-between gap-2" style={{ left: "calc(var(--system) + 12px)", right: "calc(var(--sheet) + 12px)" }}>
+  return <header data-chrome className="pointer-events-none fixed top-3 z-30 flex items-start justify-between gap-2" style={{ left: 12, right: "calc(var(--sheet) + 12px)" }}>
     <div className="pointer-events-auto flex items-center gap-1 rounded-xl border bg-card/95 p-1 shadow-sm">
-      <Tooltip><TooltipTrigger render={<Button data-dock-trigger="left" variant="ghost" size="sm" aria-label="Show System" aria-pressed={system} onClick={toggleSystem} className="aria-pressed:bg-muted" />}>
-        <PanelLeftIcon data-icon="inline-start" />{!compact ? "System" : null}{reasons.length ? dot : null}
-      </TooltipTrigger><TooltipContent side="bottom" className="max-w-80">{reasons.length ? reasons.join(" · ") : "Processes, connections, activity"}</TooltipContent></Tooltip>
-      {!compact ? <Separator orientation="vertical" className="mx-0.5 h-5! self-center" /> : null}
       <DropdownMenu>
         <DropdownMenuTrigger render={<Button variant="ghost" size="sm" aria-label={`Spaces · ${spaceTitle(space)}`} className="gap-1.5 font-semibold" />}>
           <LayersIcon data-icon="inline-start" />{!compact ? spaceTitle(space) : null}{attention[space].length || elsewhere ? dot : null}<ChevronDownIcon className="size-3.5 text-muted-foreground" />

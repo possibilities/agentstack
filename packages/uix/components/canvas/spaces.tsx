@@ -1,6 +1,6 @@
 "use client";
 
-import { BotIcon, FlaskConicalIcon, KeyRoundIcon, GaugeIcon, ListTreeIcon, MegaphoneIcon, SparklesIcon } from "lucide-react";
+import { BotIcon, ChartLineIcon, CpuIcon, FlaskConicalIcon, KeyRoundIcon, GaugeIcon, ListTreeIcon, MegaphoneIcon, PackageIcon, RadioIcon, ScanLineIcon, ServerIcon, SparklesIcon } from "lucide-react";
 import type { SpaceId } from "@/lib/stack/spaces";
 import type { StackState } from "@/lib/stack/store";
 import { type Accent } from "./window";
@@ -9,6 +9,8 @@ import { UsageWindow } from "./usage-window";
 import { CatalogWindow } from "./catalog-window";
 import { CallSpeechWindow } from "./call-speech-window";
 import { InferenceWindow } from "./inference-window";
+import { HostWindow, ProcessesWindow, ResourcesWindow, SamplingWindow } from "./resource-windows";
+import { ActivityWindow, OwnerWindow, PackagesWindow } from "./system-windows";
 
 export type WindowDef = {
   /** Globally unique across spaces; also used by Window and node destinations. */
@@ -50,6 +52,19 @@ export const spaceViews: Record<SpaceId, {
     windows: () => [
       { id: "call-speech", title: "Call speech", icon: MegaphoneIcon, accent: "bots", width: 400, height: 420, column: 0, element: <CallSpeechWindow /> },
       { id: "inference", title: "Inference", icon: SparklesIcon, accent: "bots", width: 440, height: 720, column: 1, element: <InferenceWindow /> },
+    ],
+  },
+  system: {
+    icon: CpuIcon,
+    accent: "owner",
+    windows: () => [
+      { id: "owner", title: "Owner", icon: CpuIcon, accent: "owner", width: 400, height: 520, column: 0, element: <OwnerWindow /> },
+      { id: "packages", title: "Packages", icon: PackageIcon, accent: "owner", width: 400, height: 420, column: 0, element: <PackagesWindow /> },
+      { id: "resources", title: "Resources", icon: ChartLineIcon, accent: "owner", width: 460, height: 640, column: 1, element: <ResourcesWindow /> },
+      { id: "host", title: "Host", icon: ServerIcon, accent: "owner", width: 400, height: 460, column: 1, element: <HostWindow /> },
+      { id: "processes", title: "Processes", icon: ListTreeIcon, accent: "owner", width: 560, height: 760, column: 2, element: <ProcessesWindow /> },
+      { id: "sampling", title: "Sampling", icon: ScanLineIcon, accent: "owner", width: 400, height: 560, column: 3, element: <SamplingWindow /> },
+      { id: "activity", title: "Activity", icon: RadioIcon, accent: "events", width: 400, height: 460, column: 3, element: <ActivityWindow /> },
     ],
   },
 };

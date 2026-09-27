@@ -193,11 +193,11 @@ export function preserveViewedWindow(camera: Camera, before: PackedBench, after:
 }
 
 /** An address to another logical space wins over a saved global camera. Legacy saves keep their layout only. */
-export function restoreBenchCamera(saved: SavedBench, space: string, bench: PackedBench, viewport: ViewportSize, left: number): Camera {
+export function restoreBenchCamera(saved: SavedBench, space: string, bench: PackedBench, viewport: ViewportSize): Camera {
   if (saved.space !== space || !validPoint(saved.camera) || !Number.isFinite(saved.camera.k) || saved.camera.k <= 0) {
     return fitBounds(benchBounds(bench, space), viewport.width, viewport.height, 0.65);
   }
-  const camera = { ...saved.camera, x: saved.camera.x - left, k: clamp(saved.camera.k, 0.3, 1.6) };
+  const camera = { ...saved.camera, k: clamp(saved.camera.k, 0.3, 1.6) };
   const point = saved.anchor && windowPoint(bench, saved.anchor.id);
   return point && validPoint(saved.anchor?.point) ? preserveAnchor(camera, saved.anchor.point, point) : camera;
 }
@@ -217,35 +217,25 @@ export function fitBounds(bounds: Bounds, width: number, height: number, min = 0
   return { k, x: width / 2 - (bounds.x + bounds.width / 2) * k, y: 76 + (height - 148) / 2 - (bounds.y + bounds.height / 2) * k };
 }
 
-export function compensateLeft(camera: Camera, before: number, after: number): Camera {
-  return { ...camera, x: camera.x + before - after };
-}
-
-export type BenchSurface = "bench" | "left" | "right";
-type OpenDocks = { systemOpen: boolean; rightOpen: boolean };
+export type BenchSurface = "bench" | "right";
+type OpenDocks = { rightOpen: boolean };
 
 /** Retained dock content does not force a mobile overlay over a deliberately revealed spatial destination. */
 export function activeSurface(value: unknown, docks: OpenDocks): BenchSurface {
   if (value === "bench") return value;
-  if (value === "left" && docks.systemOpen) return value;
   if (value === "right" && docks.rightOpen) return value;
-  return docks.rightOpen ? "right" : docks.systemOpen ? "left" : "bench";
+  return docks.rightOpen ? "right" : "bench";
 }
 
-export const dockMinimum = { left: 280, right: 320, bench: 240 };
+export const dockMinimum = { right: 320, bench: 240 };
 
-/** Joint allocation: no desktop combination may consume the bench's usable minimum. */
-export function dockGeometry({ screenWidth, systemOpen, rightOpen, surface, systemWidth, rightWidth, expanded = false }: OpenDocks & {
-  screenWidth: number; surface: BenchSurface; systemWidth: number; rightWidth: number; expanded?: boolean;
+/** Joint allocation: an open dock may not consume the bench's usable minimum. */
+export function dockGeometry({ screenWidth, rightOpen, surface, rightWidth, expanded = false }: OpenDocks & {
+  screenWidth: number; surface: BenchSurface; rightWidth: number; expanded?: boolean;
 }) {
-  const minimum = dockMinimum.bench + (systemOpen ? dockMinimum.left : 0) + (rightOpen ? dockMinimum.right : 0);
-  const overlay = screenWidth < 900 || screenWidth < minimum;
-  const systemVisible = systemOpen && (!overlay || surface === "left");
+  const overlay = screenWidth < 900 || screenWidth < dockMinimum.bench + (rightOpen ? dockMinimum.right : 0);
   const rightVisible = rightOpen && (!overlay || surface === "right");
-  const leftMax = overlay ? 520 : Math.min(520, screenWidth - dockMinimum.bench - (rightOpen ? dockMinimum.right : 0));
-  const leftWidth = clamp(systemWidth, dockMinimum.left, leftMax);
-  const left = !overlay && systemVisible ? leftWidth : 0;
-  const rightMax = Math.max(dockMinimum.right, screenWidth - left - dockMinimum.bench);
+  const rightMax = Math.max(dockMinimum.right, screenWidth - dockMinimum.bench);
   const width = clamp(expanded ? rightMax : rightWidth, dockMinimum.right, rightMax);
-  return { overlay, systemVisible, rightVisible, leftWidth, leftMax, rightWidth: width, rightMax, left, right: !overlay && rightVisible ? width : 0 };
+  return { overlay, rightVisible, rightWidth: width, rightMax, right: !overlay && rightVisible ? width : 0 };
 }

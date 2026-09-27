@@ -23,6 +23,7 @@
         "@agentstack/owner#build",
         "@agentstack/workers#build",
         "@agentstack/brain#build",
+        "@agentstack/browser#build",
         "@agentstack/content#build"
       ],
       "cache": false

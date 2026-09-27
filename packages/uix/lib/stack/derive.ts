@@ -42,15 +42,40 @@ export function providerTitle(provider: WorkerAccount["provider"]): string {
   return workerProviderTitles[provider];
 }
 
+/** Calendar months (clamped at month end), then elapsed days and smaller units. Keep the two largest units for compact labels. */
+function durationParts(from: number, to: number): string {
+  const start = new Date(from);
+  const end = new Date(to);
+  let months = (end.getUTCFullYear() - start.getUTCFullYear()) * 12 + end.getUTCMonth() - start.getUTCMonth();
+  const afterMonths = (count: number) => {
+    const date = new Date(start);
+    const month = start.getUTCMonth() + count;
+    date.setUTCDate(1);
+    date.setUTCMonth(month);
+    const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+    date.setUTCDate(Math.min(start.getUTCDate(), lastDay));
+    return date.getTime();
+  };
+  if (afterMonths(months) > to) months -= 1;
+  let minutes = Math.floor((to - afterMonths(months)) / 60_000);
+  const days = Math.floor(minutes / 1_440);
+  minutes %= 1_440;
+  const hours = Math.floor(minutes / 60);
+  minutes %= 60;
+  const units: Array<[number, string]> = [[Math.floor(months / 12), "y"], [months % 12, "mo"], [days, "d"], [hours, "h"], [minutes, "m"]];
+  const parts: string[] = [];
+  for (const [value, unit] of units) {
+    if (value && parts.length < 2) parts.push(`${value}${unit}`);
+  }
+  return parts.join(" ") || "0m";
+}
+
 export function relativeTime(at: number | null, now: number): string {
   if (at === null) return "never";
   const seconds = Math.max(0, Math.round((now - at) / 1000));
   if (seconds < 5) return "just now";
   if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  return hours < 24 ? `${hours}h ago` : `${Math.floor(hours / 24)}d ago`;
+  return `${durationParts(at, now)} ago`;
 }
 
 export function clockTime(at: number): string {
@@ -73,14 +98,12 @@ export function histogram(times: number[], now: number, count: number, span: num
   return bins;
 }
 
-/** Countdown text for a future instant: "in 3h", "in 5d". Past instants read "now". */
+/** Countdown text for a future instant: "in 1d 16h". Past instants read "now". */
 export function untilTime(at: number | null, now: number): string {
   if (at === null || Number.isNaN(at)) return "unknown";
   const minutes = Math.round((at - now) / 60_000);
   if (minutes < 1) return "now";
-  if (minutes < 60) return `in ${minutes}m`;
-  const hours = Math.round(minutes / 60);
-  return hours < 48 ? `in ${hours}h` : `in ${Math.round(hours / 24)}d`;
+  return `in ${durationParts(now, now + minutes * 60_000)}`;
 }
 
 /** A catalog model's display name without its routing prefix ("openai/GPT-5" → "GPT-5"). */

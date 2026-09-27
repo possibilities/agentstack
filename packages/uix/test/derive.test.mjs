@@ -14,7 +14,7 @@ registerHooks({
   },
 });
 
-const { workerAccountLabels, providerTitle, untilTime, modelName, usageRows, catalogIdentity, catalogRows, splitArgs, inferenceFailure } = await import("../lib/stack/derive.ts");
+const { workerAccountLabels, providerTitle, relativeTime, untilTime, modelName, usageRows, catalogIdentity, catalogRows, splitArgs, inferenceFailure } = await import("../lib/stack/derive.ts");
 
 const bot = (id, linkedAccounts = []) => ({ id, enabled: true, removing: false, linkedAccounts });
 const worker = (id, provider, extra = {}) => ({ id, provider, enabled: true, ready: true, removing: false, linkedAccounts: [], ...extra });
@@ -42,6 +42,22 @@ test("untilTime counts down to a future instant", () => {
   assert.equal(untilTime(now + 12 * 60_000, now), "in 12m");
   assert.equal(untilTime(now + 5 * 3_600_000, now), "in 5h");
   assert.equal(untilTime(now + 5 * 86_400_000, now), "in 5d");
+  assert.equal(untilTime(now + 40 * 3_600_000, now), "in 1d 16h");
+  assert.equal(untilTime(now + 47 * 3_600_000, now), "in 1d 23h");
+  assert.equal(untilTime(now + 90 * 60_000, now), "in 1h 30m");
+});
+
+test("time labels split calendar years and months before days, hours, and minutes", () => {
+  const date = (value) => Date.parse(value);
+  const start = date("2024-01-31T12:00:00Z");
+  assert.equal(untilTime(date("2024-02-29T12:00:00Z"), start), "in 1mo");
+  assert.equal(untilTime(date("2024-03-01T16:00:00Z"), start), "in 1mo 1d");
+  assert.equal(untilTime(date("2025-03-31T12:00:00Z"), start), "in 1y 2mo");
+  assert.equal(relativeTime(start, date("2024-02-29T12:00:00Z")), "1mo ago");
+  assert.equal(relativeTime(start, date("2024-02-02T04:00:00Z")), "1d 16h ago");
+  assert.equal(relativeTime(start, date("2024-01-31T13:30:00Z")), "1h 30m ago");
+  assert.equal(relativeTime(start, start + 10_000), "10s ago");
+  assert.equal(relativeTime(null, start), "never");
 });
 
 test("modelName drops a routing prefix", () => {

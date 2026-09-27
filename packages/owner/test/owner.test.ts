@@ -8,7 +8,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { serveApi, socketCall, socketSubscribe } from "@agentstack/api";
-import { apiChild, attentionChild, authChild, brainChild, contentChild, inferChild, rolesChild, workersChild, websocketChild } from "../src/children.js";
+import { apiChild, attentionChild, authChild, brainChild, browserChild, contentChild, inferChild, rolesChild, workersChild, websocketChild } from "../src/children.js";
 import { inspectorChild, inspectorPort } from "../src/inspector.js";
 import { botsChild } from "../src/bots.js";
 import { startOwner } from "../src/owner.js";
@@ -112,12 +112,12 @@ test("shutdown drains a dependent child before stopping its dependency", async (
 });
 
 test("the owner starts the required socket children", () => {
-  for (const child of [apiChild(), attentionChild(), authChild(), rolesChild(), botsChild(), workersChild(), inferChild(), contentChild(), brainChild()]) {
+  for (const child of [apiChild(), attentionChild(), authChild(), rolesChild(), botsChild(), workersChild(), inferChild(), contentChild(), brainChild(), browserChild()]) {
     assert.equal(child.command, process.execPath);
     assert.deepEqual(child.args.slice(1), [child.name, "socket"]);
     assert.equal(existsSync(child.args[0] ?? ""), true);
   }
-  assert.deepEqual([apiChild(), attentionChild(), authChild(), rolesChild(), botsChild(), workersChild(), inferChild(), contentChild(), brainChild()].map((child) => child.name), ["api", "attention", "auth", "roles", "bots", "workers", "infer", "content", "brain"]);
+  assert.deepEqual([apiChild(), attentionChild(), authChild(), rolesChild(), botsChild(), workersChild(), inferChild(), contentChild(), brainChild(), browserChild()].map((child) => child.name), ["api", "attention", "auth", "roles", "bots", "workers", "infer", "content", "brain", "browser"]);
   assert.deepEqual(botsChild(43123).env, { AGENTSTACK_OWNER_MCP_PORT: "43123" });
   const websocket = websocketChild();
   assert.equal(websocket.command, process.execPath);
@@ -250,6 +250,14 @@ test("owner retains running and failed child statuses", async () => {
     await waitFor(() => events.length >= 2 && owner.children().filter((child) => child.running).length === 1, 5_000);
     assert.equal(owner.children().find((child) => child.running)?.name, "fixture");
     assert.match(owner.children().find((child) => child.name === "missing")?.error ?? "", /ENOENT/);
+    const fixture = owner.children().find((child) => child.name === "fixture")!;
+    assert.ok(fixture.startedAt && !Number.isNaN(Date.parse(fixture.startedAt)));
+    assert.equal(fixture.exitedAt, null);
+    const missing = owner.children().find((child) => child.name === "missing")!;
+    assert.equal(missing.startedAt, null);
+    assert.ok(missing.exitedAt, "a failed spawn records its exit time");
+    const exited = owner.children().find((child) => child.name === "exit")!;
+    assert.ok(exited.startedAt && exited.exitedAt && Date.parse(exited.exitedAt) >= Date.parse(exited.startedAt));
   } finally {
     await owner.close();
   }
@@ -289,7 +297,9 @@ test("owner api serves status and pids_changed on its socket", async () => {
       children: Array<{ name: string; running: boolean }>;
     };
     assert.equal(empty.pid, process.pid);
-    assert.deepEqual(Object.keys(empty).sort(), ["children", "indexUrl", "inspectorUrl", "mcpUrls", "pid", "uixUrl"]);
+    assert.deepEqual(Object.keys(empty).sort(), ["children", "indexUrl", "inspectorUrl", "mcpUrls", "nodeVersion", "pid", "startedAt", "uixUrl"]);
+    assert.ok(Number.isFinite(Date.parse((empty as { startedAt?: string }).startedAt!)));
+    assert.equal((empty as { nodeVersion?: string }).nodeVersion, process.version);
     assert.equal(empty.indexUrl, null);
     assert.equal(empty.uixUrl, null);
     assert.equal(empty.inspectorUrl, null);
@@ -309,15 +319,17 @@ test("owner api serves status and pids_changed on its socket", async () => {
     try {
       const status = (await socketCall(served.socketPath, "tools/call", { name: "owner_status", arguments: {} })) as {
         pid: number;
-        children: Array<{ name: string; pid: number | null; running: boolean; exitCode: number | null; signal: string | null; error: string | null }>;
+        children: Array<{ name: string; pid: number | null; running: boolean; exitCode: number | null; signal: string | null; error: string | null; startedAt: string | null; exitedAt: string | null }>;
       };
       const fixture = status.children.find((child) => child.name === "fixture");
       assert.equal(status.pid, process.pid);
       assert.equal(fixture?.running, true);
       assert.ok(fixture?.pid);
       assert.equal(fixture?.error, null);
+      assert.ok(fixture?.startedAt && !Number.isNaN(Date.parse(fixture.startedAt)));
+      assert.equal(fixture?.exitedAt, null);
       for (let i = 0; i < 100 && received.length === 0; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
-      assert.deepEqual(received, ["pids_changed"]);
+      assert.ok(received.length >= 1 && received.every((topic) => topic === "pids_changed"), `unexpected notices: ${received}`);
     } finally {
       statusSource.detach();
       await owner.close();

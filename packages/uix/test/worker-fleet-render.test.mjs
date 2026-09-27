@@ -48,7 +48,7 @@ function Seed({ state, children }) {
   return children;
 }
 function render(Component, { accounts, bots = [], logins = [], usage = null, runtimes = [], state = {} }) {
-  const snapshot = { owner: resource(null), accounts: resource(bots), workerAccounts: resource(accounts), workerRuntimes: resource(runtimes),
+  const snapshot = { owner: resource(null), resources: resource(null), accounts: resource(bots), workerAccounts: resource(accounts), workerRuntimes: resource(runtimes),
     workerSessions: resource([]), login: resource(null), workerLogins: resource(logins), bots: resource([]), botDefaults: resource(null),
     voice: resource(null), catalog: resource([]), usage: resource(usage), endpoints: {} };
   return renderToStaticMarkup(h(StackProvider, { snapshot }, h(Seed, { state },
@@ -139,11 +139,11 @@ test("Claude usage shows per-account windows, resets, provider-unit extra usage 
   // The exhausted weekly window blocks the 5h headroom: it keeps its tone but dims.
   assert.match(first, /aria-label="claude-worker-account-1 5h remaining, unavailable until Weekly resets"[^>]*aria-valuenow="77"[^>]*opacity-35/);
   assert.match(first, /aria-label="claude-worker-account-1 Weekly remaining"[^>]*aria-valuenow="0"/);
-  assert.match(text(first), /5h77% left/);
-  // Bars fill with usage, like the providers' own: 77% left fills 23%, an exhausted window fills fully.
+  assert.match(text(first), /5h77% remaining/);
+  // Bars fill with usage, like the providers' own: 77% remaining fills 23%, an exhausted window fills fully.
   assert.match(first, /aria-valuenow="77"[^>]*><span[^>]*width:23%/);
   assert.match(first, /aria-valuenow="0"[^>]*><span[^>]*bg-destructive[^>]*width:100%/);
-  assert.match(text(first), /Weekly0% left—/);
+  assert.match(text(first), /Weekly0% remaining—/);
   assert.match(first, /title="2026-09-26T18:00:00Z"/);
   assert.match(text(first), /extra usage 120 \/ 5,000 credits/);
   assert.doesNotMatch(text(first), /\$/);
@@ -178,7 +178,7 @@ test("Exhausted Devin quota reads Limit and Grok Bot folds into the sole Grok Wo
   assert.match(devinCard, /aria-label="devin-worker-account-1 weekly remaining"[^>]*class="(?![^"]*opacity-35)/);
   const grokCard = card(html, "usage-account:worker:grok-a");
   assert.match(grokCard, /aria-label="grok-worker-account-1 weekly remaining"[^>]*aria-valuenow="51"/);
-  assert.match(text(grokCard), /51%left/);
+  assert.match(text(grokCard), /51%remaining/);
   assert.match(grokCard, /aria-label="grok-worker-account-1 bot remaining"[^>]*aria-valuenow="77.5"/);
   assert.match(grokCard, /aria-label="Inspect Grok Bot usage"/);
   assert.match(text(grokCard), /SuperGrok Plus/);

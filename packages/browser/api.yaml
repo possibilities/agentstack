@@ -1,0 +1,6 @@
+name: browser
+description: Internal disposable browser lifecycle and local browser toolchain management. Page actions remain in agent-browser.
+socket:
+  description: Owner-local provider lifecycle and system management; not an agent-facing browser transport.
+websocket:
+  description: Loopback management operations and change notices for future operator clients.

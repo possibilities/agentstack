@@ -7,7 +7,7 @@ import test from "node:test";
 registerHooks({ resolve(specifier, context, next) {
   return next(context.parentURL?.includes("/lib/stack/") && specifier.startsWith("./") && !extname(specifier) ? `${specifier}.ts` : specifier, context);
 } });
-const { snap, snapLocal, snapExtent, gridSize, validSize, packSpaces, localLayout, boundsOf, preserveAnchor, compensateLeft, fitBounds, reconcileBench, settleWindows, windowPoint, benchBounds, viewedWindow, preserveViewedWindow, restoreBenchCamera, raiseWindow, activeSurface, dockGeometry, dockMinimum } = await import("../lib/stack/geometry.ts");
+const { snap, snapLocal, snapExtent, gridSize, validSize, packSpaces, localLayout, boundsOf, preserveAnchor, fitBounds, reconcileBench, settleWindows, windowPoint, benchBounds, viewedWindow, preserveViewedWindow, restoreBenchCamera, raiseWindow, activeSurface, dockGeometry, dockMinimum } = await import("../lib/stack/geometry.ts");
 const { emptyLocation, navigateTo, parseLocation, locationHref } = await import("../lib/stack/navigation.ts");
 const { inputTemplate, requestExample, subscriptionExample } = await import("../lib/stack/reference.ts");
 
@@ -58,7 +58,7 @@ test("local structure uses stable explicit bounds, not record count or connectio
   assert.deepEqual(localLayout(defs.map((d) => ({ ...d, records: [1, 2, 3], connected: true }))), a);
 });
 
-test("repacking and a left dock resize preserve a manual local point's screen coordinates", () => {
+test("repacking preserves a manual local point's screen coordinates", () => {
   const before = packSpaces([region("a"), region("b")]);
   const after = packSpaces([region("a"), region("b"), region("c", 340, 700)]);
   const camera = { x: 130, y: -50, k: 0.73 };
@@ -66,10 +66,6 @@ test("repacking and a left dock resize preserve a manual local point's screen co
   const moved = preserveAnchor(camera, before.b, after.b);
   assert.equal(camera.x + (before.b.x + manual.x) * camera.k, moved.x + (after.b.x + manual.x) * moved.k);
   assert.ok(Math.abs(camera.y + (before.b.y + manual.y) * camera.k - moved.y - (after.b.y + manual.y) * moved.k) < 1e-9);
-  const resized = compensateLeft(moved, 320, 460);
-  assert.equal(moved.x + 320, resized.x + 460);
-  assert.equal(moved.y, resized.y);
-  assert.equal(moved.k, resized.k);
 });
 
 test("fit handles empty, tall and wide bounds without non-finite camera values", () => {
@@ -137,58 +133,54 @@ test("an incoming logical space overrides another space's persisted camera; matc
   const packed = reconcileBench(syntheticSpaces);
   const viewport = { width: 1200, height: 900 };
   const saved = { space: "fleet", camera: { x: -700, y: 123, k: 0.9 }, anchor: { id: "bots", point: windowPoint(original, "bots") } };
-  const incoming = restoreBenchCamera(saved, "future", packed, viewport, 352);
+  const incoming = restoreBenchCamera(saved, "future", packed, viewport);
   assert.deepEqual(incoming, fitBounds(benchBounds(packed, "future"), viewport.width, viewport.height, 0.65));
-  const matching = restoreBenchCamera(saved, "fleet", packed, viewport, 352);
+  const matching = restoreBenchCamera(saved, "fleet", packed, viewport);
   const nextPoint = windowPoint(packed, "bots");
-  assert.equal(matching.x + 352 + nextPoint.x * matching.k, saved.camera.x + saved.anchor.point.x * saved.camera.k);
+  assert.equal(matching.x + nextPoint.x * matching.k, saved.camera.x + saved.anchor.point.x * saved.camera.k);
   assert.equal(matching.y + nextPoint.y * matching.k, saved.camera.y + saved.anchor.point.y * saved.camera.k);
   assert.equal(matching.k, saved.camera.k);
   for (const invalid of [{ ...saved, space: undefined }, { ...saved, camera: { x: NaN, y: 1, k: 1 } }, { ...saved, camera: { x: 1, y: 1, k: 0 } }]) {
-    assert.deepEqual(restoreBenchCamera(invalid, "fleet", packed, viewport, 0), fitBounds(benchBounds(packed, "fleet"), viewport.width, viewport.height, 0.65));
+    assert.deepEqual(restoreBenchCamera(invalid, "fleet", packed, viewport), fitBounds(benchBounds(packed, "fleet"), viewport.width, viewport.height, 0.65));
   }
 });
 
-test("joint dock sizing reserves a usable bench after viewport shrink and expanded reading", () => {
-  const options = { systemOpen: true, rightOpen: true, surface: "right", systemWidth: 520, rightWidth: 1200 };
+test("right dock sizing reserves a usable bench after viewport shrink and expanded reading", () => {
+  const options = { rightOpen: true, surface: "right", rightWidth: 1200 };
   const narrow = dockGeometry({ ...options, screenWidth: 900 });
-  assert.equal(narrow.leftWidth, 340);
-  assert.equal(narrow.leftMax, 340);
-  assert.equal(narrow.rightWidth, 320);
-  assert.equal(narrow.rightMax, 320);
+  assert.equal(narrow.overlay, false);
+  assert.equal(narrow.rightWidth, 660);
+  assert.equal(narrow.rightMax, 660);
   for (const width of [900, 920, 1024, 1100, 1600]) for (const expanded of [true, false]) {
     const value = dockGeometry({ ...options, screenWidth: width, expanded });
     assert.equal(value.overlay, false);
-    assert.ok(width - value.left - value.right >= dockMinimum.bench);
-    assert.ok(value.leftWidth >= dockMinimum.left && value.leftWidth <= value.leftMax);
+    assert.ok(width - value.right >= dockMinimum.bench);
     assert.ok(value.rightWidth >= dockMinimum.right && value.rightWidth <= value.rightMax);
     if (expanded) assert.equal(value.rightWidth, value.rightMax);
   }
-  assert.equal(dockGeometry({ ...options, screenWidth: 800 }).overlay, true);
-  const single = dockGeometry({ ...options, screenWidth: 900, rightOpen: false });
-  assert.equal(single.leftWidth, 520);
-  assert.equal(single.right, 0);
+  assert.equal(dockGeometry({ ...options, screenWidth: 500 }).overlay, true);
+  const closed = dockGeometry({ ...options, screenWidth: 900, rightOpen: false });
+  assert.equal(closed.rightVisible, false);
+  assert.equal(closed.right, 0);
 });
 
 test("mobile spatial navigation reveals the bench while retaining every dock destination", () => {
-  const retained = { ...emptyLocation(), inspect: { kind: "bot", id: "bot-7" }, reference: { kind: "operation", pkg: "bots", id: "bot_status" }, system: { kind: "child", id: "uix" } };
+  const retained = { ...emptyLocation(), inspect: { kind: "bot", id: "bot-7" }, reference: { kind: "operation", pkg: "bots", id: "bot_status" } };
   const next = navigateTo(retained, { kind: "account", id: "a-1" });
   assert.deepEqual(next.inspect, retained.inspect);
   assert.deepEqual(next.reference, retained.reference);
-  assert.deepEqual(next.system, retained.system);
-  const options = { screenWidth: 390, systemOpen: true, rightOpen: true, systemWidth: 520, rightWidth: 680 };
+  const options = { screenWidth: 390, rightOpen: true, rightWidth: 680 };
   const bench = dockGeometry({ ...options, surface: activeSurface("bench", options) });
-  assert.equal(bench.systemVisible, false);
   assert.equal(bench.rightVisible, false);
-  assert.equal(bench.left + bench.right, 0);
+  assert.equal(bench.right, 0);
   assert.equal(dockGeometry({ ...options, surface: activeSurface("right", options) }).rightVisible, true);
-  assert.equal(dockGeometry({ ...options, surface: activeSurface("left", options) }).systemVisible, true);
   const url = new URL(locationHref(next), "http://localhost");
   url.searchParams.set("surface", "bench");
   assert.deepEqual(parseLocation(url.pathname, url.searchParams), next);
   assert.equal(activeSurface(url.searchParams.get("surface"), options), "bench");
   assert.equal(activeSurface(undefined, options), "right");
-  assert.equal(activeSurface("right", { systemOpen: true, rightOpen: false }), "left");
+  assert.equal(activeSurface("right", { rightOpen: false }), "bench");
+  assert.equal(activeSurface("left", options), "right");
 });
 
 test("focus and navigation use the same stable front ordering without adding removed windows", () => {
@@ -202,19 +194,28 @@ test("focus and navigation use the same stable front ordering without adding rem
   assert.deepEqual(original, ["accounts", "bots", "tasks"]);
 });
 
-test("dock and card destinations retain inspection; complete URLs restore both docks and target", () => {
+test("dock and card destinations retain inspection; complete URLs restore the dock and target", () => {
   const selected = { kind: "account", id: "account: with spaces" };
   const base = { ...emptyLocation(), inspect: selected };
   const card = navigateTo(base, { kind: "bot", id: "bot-7" });
   const system = navigateTo(card, { kind: "child", id: "uix" });
-  const reference = navigateTo(system, { kind: "operation", pkg: "bots", id: "bot_status" });
+  assert.equal(system.space, "system");
+  assert.deepEqual(system.focus, { kind: "child", id: "uix" });
+  const resource = navigateTo(system, { kind: "resource", id: "component:uix" });
+  assert.equal(resource.space, "system");
+  assert.deepEqual(resource.focus, { kind: "resource", id: "component:uix" });
+  const process = navigateTo(system, { kind: "process", id: "process:9:ab" });
+  assert.equal(process.space, "system");
+  assert.deepEqual(process.focus, { kind: "process", id: "process:9:ab" });
+  const reference = navigateTo(process, { kind: "operation", pkg: "bots", id: "bot_status" });
   assert.deepEqual(reference.inspect, selected);
-  assert.deepEqual(reference.focus, card.focus);
-  assert.equal(reference.space, "fleet");
+  assert.deepEqual(reference.focus, process.focus);
+  assert.equal(reference.space, "system");
   const url = new URL(locationHref(reference), "http://localhost");
   assert.deepEqual(parseLocation(url.pathname, url.searchParams), reference);
-  assert.deepEqual(parseLocation("/x/fleet", new URLSearchParams("reference=overview&system=open")), { ...emptyLocation(), reference: "overview", system: "open" });
-  assert.equal(parseLocation("/x/system", new URLSearchParams()), null);
+  // The retired `system` dock parameter is ignored; only real destinations resolve.
+  assert.deepEqual(parseLocation("/x/fleet", new URLSearchParams("reference=overview&system=open")), { ...emptyLocation(), reference: "overview" });
+  assert.deepEqual(parseLocation("/x/system", new URLSearchParams()), { ...emptyLocation("system") });
   assert.deepEqual(parseLocation("/x", new URLSearchParams("reference=bot:bad&inspect=package:bots&system=account:bad")), emptyLocation());
 });
 

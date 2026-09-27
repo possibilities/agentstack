@@ -1,6 +1,6 @@
 # Owner resource observations
 
-`owner_resources` and `owner_resource_history` are read-only operations on the existing owner socket, MCP and WebSocket Transports. `owner_status` is unchanged. Subscribe to the payload-free `resources_changed` Event, then re-read after subscription and every invalidation. There is no UI resource presentation or new UI subscription.
+`owner_resources` and `owner_resource_history` are read-only operations on the existing owner socket, MCP and WebSocket Transports. Subscribe to the payload-free `resources_changed` Event, then re-read after subscription and every invalidation. UIX presents all of it in the System space (`/x/system`): an Owner window (status, runtime vitals, children), Resources and Host windows (totals, per-scope history charts, machine identity), a Processes tree, and a Sampling window (attempts, coverage, retention, capabilities). Watched scopes fetch history incrementally with `since`, merging retained attempts by `attemptId`.
 
 ## Read and drill down
 
@@ -57,7 +57,9 @@ Take `observation.snapshotId` from the first page and pass it on every subsequen
 
 `null` is unavailable/unknown, never zero. `capabilities` explicitly reports unsupported thread, disk I/O, file-descriptor, network, GPU and per-session-allocation measurements. CPU after a collection gap averages over the longer interval between successful observations; do not reinterpret it as an exact five-second interval. CPU quantization follows the OS source (macOS `ps` time, Linux clock ticks).
 
-`host.logicalCpuCount`, `totalMemoryBytes`, `freeMemoryBytes` and the 1/5/15-minute `loadAverage` are host-wide context, not stack totals. Free memory is not available/reclaimable memory. Linux values describe the OS/proc namespace and are not a promise of cgroup limits. Remote inference, provider services, disk-space consumption and other machines are outside the census.
+`host` also carries machine identity — `hostname`, `arch`, `release`, `cpuModel` — and `uptimeSeconds`, so a snapshot answers which machine produced it. `host.logicalCpuCount`, `totalMemoryBytes`, `freeMemoryBytes` and the 1/5/15-minute `loadAverage` are host-wide context, not stack totals. Free memory is not available/reclaimable memory. Linux values describe the OS/proc namespace and are not a promise of cgroup limits. Remote inference, provider services, disk-space consumption and other machines are outside the census.
+
+`runtime` describes the Node.js process serving this owner API — the owner itself when attached — pinned to the returned snapshot: `pid`, `nodeVersion`, `uptimeSeconds`, `heapUsedBytes`, `heapTotalBytes`, `externalBytes`, `arrayBuffersBytes`, and `eventLoopUtilization` measured since the previous successful capture (null until a second sample exists). It is null while no good snapshot exists.
 
 ## Freshness, history and failure
 

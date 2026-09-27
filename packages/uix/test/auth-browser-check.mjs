@@ -47,7 +47,7 @@ let log = "";
 const current = (provider) => [...attempts.values()].findLast((attempt) => attempt.provider === provider);
 const publish = () => served.get("auth").publish("worker_login_changed");
 const handlers = {
-  owner_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uixUrl: null, inspectorUrl: null }),
+  owner_status: () => ({ pid: process.pid, startedAt: new Date().toISOString(), nodeVersion: process.version, children: [], mcpUrls: {}, indexUrl: null, uixUrl: null, inspectorUrl: null }),
   account_list: () => ({ accounts: [] }),
   account_login_current: () => ({ login: botAttempt }),
   worker_account_list: () => ({ accounts }),

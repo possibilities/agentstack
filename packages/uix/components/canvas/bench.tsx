@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { benchBounds, clamp, settleWindows, snapExtent, snapLocal, windowLimits, compensateLeft, fitBounds, preserveViewedWindow, raiseWindow, reconcileBench, restoreBenchCamera, viewedWindow, windowHeight, type BenchLayout, type Camera, type SavedBench } from "@/lib/stack/geometry";
+import { benchBounds, clamp, settleWindows, snapExtent, snapLocal, windowLimits, fitBounds, preserveViewedWindow, raiseWindow, reconcileBench, restoreBenchCamera, viewedWindow, windowHeight, type BenchLayout, type Camera, type SavedBench } from "@/lib/stack/geometry";
 import { homeOf, spaces, type SpaceId } from "@/lib/stack/spaces";
 import { nodeKey, type NodeRef } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
@@ -32,8 +32,8 @@ type Gesture =
 export type BenchControls = { fit(): void; tidy(): void; goToSpace(space: SpaceId): void; goToNode(ref: NodeRef): void; zoom(factor: number): void };
 const storageKey = "agentstack.uix.bench.v1";
 
-export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
-  space: SpaceId; left: number; blocked: boolean; onControls(controls: BenchControls | null): void; onScale(scale: number): void; onArrive(ref: NodeRef): void;
+export function Bench({ space, blocked, onControls, onScale, onArrive }: {
+  space: SpaceId; blocked: boolean; onControls(controls: BenchControls | null): void; onScale(scale: number): void; onArrive(ref: NodeRef): void;
 }) {
   const state = useStack();
   const regions = spaces.map((s) => ({ ...s, defs: spaceViews[s.id].windows(state) }));
@@ -133,7 +133,7 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
     const restored = { signature, ...reconcileBench(structure, saved.layout) };
     setArrangement(restored);
     current.current.packed = restored;
-    setCamera(restoreBenchCamera(saved, space, restored, viewportSize(), left));
+    setCamera(restoreBenchCamera(saved, space, restored, viewportSize()));
     setReady(true);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -143,23 +143,15 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
     setCamera((value) => preserveViewedWindow(value, arrangement, packed, viewportSize()));
   }, [arrangement, packed, signature, viewportSize]);
 
-  const previousLeft = useRef(left);
-  useLayoutEffect(() => {
-    if (previousLeft.current === left) return;
-    const before = previousLeft.current;
-    previousLeft.current = left;
-    setAnimating(false);
-    setCamera((value) => compensateLeft(value, before, left));
-  }, [left]);
   useEffect(() => {
     if (!ready) return;
     const timer = setTimeout(() => {
       const anchor = viewedWindow(packed, camera, viewportSize());
       // Camera x is stored in screen coordinates; its logical space prevents cross-space restores.
-      try { localStorage.setItem(storageKey, JSON.stringify({ space, layout, anchor, camera: { ...camera, x: camera.x + left } })); } catch { /* optional persistence */ }
+      try { localStorage.setItem(storageKey, JSON.stringify({ space, layout, anchor, camera })); } catch { /* optional persistence */ }
     }, 250);
     return () => clearTimeout(timer);
-  }, [ready, space, layout, camera, left, packed, viewportSize]);
+  }, [ready, space, layout, camera, packed, viewportSize]);
   useEffect(() => { onScale(camera.k); }, [camera.k, onScale]);
   useEffect(() => () => { clearTimeout(animationTimer.current); clearTimeout(landingTimer.current); clearTimeout(settleTimer.current); dragCleanup.current?.(); }, []);
 
@@ -337,7 +329,7 @@ export function Bench({ space, left, blocked, onControls, onScale, onArrive }: {
   };
   return (
     <PlacementContext value={placement}>
-      <main ref={viewport} data-canvas="workbench" tabIndex={0} aria-label="Open bench" aria-describedby="bench-gestures" className={cn("canvas-dots fixed inset-y-0 right-[var(--sheet)] left-[var(--system)] touch-none overflow-hidden overscroll-none outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring", dragging ? "cursor-grabbing" : "cursor-grab")}
+      <main ref={viewport} data-canvas="workbench" tabIndex={0} aria-label="Open bench" aria-describedby="bench-gestures" className={cn("canvas-dots fixed inset-y-0 right-[var(--sheet)] left-0 touch-none overflow-hidden overscroll-none outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring", dragging ? "cursor-grabbing" : "cursor-grab")}
         style={{ backgroundSize: `${22 * camera.k}px ${22 * camera.k}px`, backgroundPosition: `${camera.x}px ${camera.y}px` }}
         onPointerDown={(event) => {
           if ((event.button !== 0 && event.button !== 1) || (event.target as Element).closest("[data-window],[data-chrome]")) return;

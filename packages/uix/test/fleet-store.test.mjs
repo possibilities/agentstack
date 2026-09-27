@@ -56,7 +56,7 @@ test("Fleet snapshots reconnect, retain failed reads, deduplicate catalogs and p
       socket.onmessage?.({ data: JSON.stringify({ method: "events/changed", params: { topic } }) });
   }
   globalThis.WebSocket = Socket;
-  const store = new StackStore({ owner: resource(null), accounts: resource([]), workerAccounts: resource([]),
+  const store = new StackStore({ owner: resource(null), resources: resource(null), accounts: resource([]), workerAccounts: resource([]),
     workerRuntimes: resource([]), workerSessions: resource([]), login: resource(null), workerLogins: resource([]),
     bots: resource([]), botDefaults: resource({}), voice: resource(null), catalog: resource([]), usage: resource(null),
     endpoints: Object.fromEntries(["auth", "workers", "bots", "usage"].map((name) => [name, `ws://localhost/${name}`])) });
@@ -132,7 +132,7 @@ function harness({ accounts = [], bots = [] } = {}) {
     close() { this.readyState = 3; sockets.delete(this); this.onclose?.(); }
   }
   globalThis.WebSocket = Socket;
-  const store = new StackStore({ owner: resource(null), accounts: resource([]), workerAccounts: resource([]),
+  const store = new StackStore({ owner: resource(null), resources: resource(null), accounts: resource([]), workerAccounts: resource([]),
     workerRuntimes: resource([]), workerSessions: resource([]), login: resource(null), workerLogins: resource([]),
     bots: resource(bots), botDefaults: resource({}), voice: resource(null), catalog: resource([]), usage: resource(null),
     endpoints: Object.fromEntries(["auth", "workers", "bots", "usage"].map((name) => [name, `ws://localhost/${name}`])) });

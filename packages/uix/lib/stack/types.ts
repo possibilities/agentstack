@@ -194,15 +194,169 @@ export type OwnerChild = {
   exitCode: number | null;
   signal: string | null;
   error: string | null;
+  startedAt: string | null;
+  exitedAt: string | null;
 };
 
 export type OwnerStatus = {
   pid: number;
+  startedAt: string;
+  nodeVersion: string;
   indexUrl: string | null;
   uixUrl: string | null;
   inspectorUrl: string | null;
   mcpUrls: Record<string, string>;
   children: OwnerChild[];
+};
+
+/** Mirror of the owner resource API's wire shapes (packages/owner resources schema). */
+export type ResourceMetrics = {
+  processCount: number;
+  rssBytes: number | null;
+  virtualBytes: number | null;
+  cpuTimeMs: number | null;
+  cpuPercent: number | null;
+  cpuMeasuredProcessCount: number;
+  threads: number | null;
+};
+export type ResourceScopeKind = "total" | "component" | "bot" | "account" | "runtime" | "process" | "subtree";
+export type ResourceScope = {
+  id: string;
+  kind: ResourceScopeKind;
+  name: string;
+  component: string | null;
+  botId: string | null;
+  accountId: string | null;
+  runtimeInstance: string | null;
+  provider: string | null;
+  shared: boolean;
+  metrics: ResourceMetrics;
+};
+export type ResourceProcess = {
+  id: string;
+  subtreeId: string;
+  pid: number;
+  ppid: number;
+  birth: string;
+  name: string;
+  parentId: string | null;
+  ancestryParentId: string | null;
+  ownership: "root" | "descendant" | "retained";
+  component: string;
+  botId: string | null;
+  accountId: string | null;
+  runtimeInstance: string | null;
+  provider: string | null;
+  attribution: "component" | "current" | "retained";
+  attributedAt: string | null;
+  cpuIntervalMs: number | null;
+  cpuStatus: "measured" | "warmup" | "reset";
+  self: ResourceMetrics;
+  subtree: ResourceMetrics;
+};
+export type ResourceHost = {
+  platform: string;
+  logicalCpuCount: number;
+  hostname: string;
+  arch: string;
+  release: string;
+  cpuModel: string | null;
+  uptimeSeconds: number | null;
+  totalMemoryBytes: number | null;
+  freeMemoryBytes: number | null;
+  loadAverage: [number, number, number] | null;
+};
+export type DomainStatus = {
+  source: "bots" | "workers";
+  capturedAt: string | null;
+  error: "source_unavailable" | "invalid_source" | null;
+  state: "current" | "stale" | "unavailable" | "not_attached";
+  unmatched: number;
+};
+export type ResourceCoverage = {
+  mode: "owner_tree" | "self_only";
+  observedHostProcesses: number;
+  ownedProcesses: number;
+  unreadableProcesses: number;
+  vanishedDuringCollection: number;
+  retainedProcesses: number;
+  excludedCollectorProcesses: number;
+  domains: DomainStatus[];
+};
+export type ResourceError = "unsupported_platform" | "collection_failed" | "collection_timeout" | "process_limit" | "owner_missing" | "process_capacity";
+export type ResourceObservation = {
+  snapshotId: string | null;
+  capturedAt: string | null;
+  ageMs: number | null;
+  freshness: "fresh" | "stale" | "unavailable";
+  lastAttemptAt: string | null;
+  error: ResourceError | null;
+  source: "darwin_ps" | "linux_proc" | "unsupported";
+  intervalMs: number;
+  staleAfterMs: number;
+  collectionDurationMs: number | null;
+  coverage: ResourceCoverage | null;
+};
+export type ResourceRetention = {
+  maxSamples: number;
+  maxProcessRecords: number;
+  retainedSamples: number;
+  oldestAttemptAt: string | null;
+  newestAttemptAt: string | null;
+  droppedSamples: number;
+};
+export type ResourceCapabilities = {
+  rssBytes: boolean;
+  virtualBytes: boolean;
+  cpuTimeMs: boolean;
+  cpuPercent: boolean;
+  threads: boolean;
+  diskIoBytes: false;
+  openFileDescriptors: false;
+  networkBytes: false;
+  gpu: false;
+  perSessionAllocation: false;
+};
+export type OwnerRuntime = {
+  pid: number;
+  nodeVersion: string;
+  uptimeSeconds: number | null;
+  heapUsedBytes: number;
+  heapTotalBytes: number;
+  externalBytes: number;
+  arrayBuffersBytes: number;
+  eventLoopUtilization: number | null;
+};
+export type ResourceHistoryPoint = {
+  attemptId: string;
+  attemptedAt: string;
+  snapshotId: string | null;
+  capturedAt: string | null;
+  state: "measured" | "absent" | "gap";
+  error: ResourceError | null;
+  metrics: ResourceMetrics | null;
+  host: ResourceHost | null;
+  coverage: ResourceCoverage | null;
+};
+/** `owner_resource_history` wire page. */
+export type ResourceHistoryPage = {
+  scopeId: string;
+  intervalMs: number;
+  retention: ResourceRetention;
+  truncated: boolean;
+  points: ResourceHistoryPoint[];
+};
+/** `owner_resources` flattened to what the bench needs: every scope plus the paged process list of `total`. */
+export type OwnerResources = {
+  observation: ResourceObservation;
+  host: ResourceHost | null;
+  capabilities: ResourceCapabilities;
+  retention: ResourceRetention;
+  runtime: OwnerRuntime | null;
+  scopes: ResourceScope[];
+  processes: ResourceProcess[];
+  /** Total processes in the selected scope before paging. */
+  processTotal: number;
 };
 
 export type VoiceCall = {
@@ -244,6 +398,7 @@ export type Resource<T> = { data: T | null; error: string | null; at: number | n
 
 export type Snapshot = {
   owner: Resource<OwnerStatus>;
+  resources: Resource<OwnerResources>;
   accounts: Resource<Account[]>;
   workerAccounts: Resource<WorkerAccount[]>;
   workerRuntimes: Resource<WorkerRuntime[]>;
@@ -271,6 +426,8 @@ export type StackEvent = {
 export type NodeRef =
   | { kind: "owner" }
   | { kind: "child"; id: string }
+  | { kind: "resource"; id: string }
+  | { kind: "process"; id: string }
   | { kind: "account"; id: string }
   | { kind: "worker-account"; id: string }
   | { kind: "worker-catalog"; id: string }

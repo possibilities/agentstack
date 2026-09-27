@@ -1,0 +1,185 @@
+import assert from "node:assert/strict";
+import { createServer, type Server } from "node:http";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { BrowserSystem } from "../src/system.js";
+import { Backend, backendSession } from "../src/backend.js";
+import { handleProvider } from "../src/provider.js";
+import { prepareBrowserConfig } from "../src/config.js";
+
+type Item = Record<string, unknown>;
+async function fixture(options: { failInstanceCreate?: boolean } = {}) {
+  const dir = await mkdtemp(join(tmpdir(), "agentstack-browser-") );
+  const root = join(dir, "local-hypeman");
+  await mkdir(join(root, "bin"), { recursive: true, mode: 0o700 });
+  await writeFile(join(root, "bin", "hypeman-api"), "fixture", { mode: 0o700 });
+  await writeFile(join(root, "token"), "test-token\n", { mode: 0o600 });
+  await writeFile(join(root, "config.yaml"), JSON.stringify({ port: "4975", network: { subnet_cidr: "192.168.64.0/24" } }));
+  let instances: Item[] = [];
+  let volumes: Item[] = [];
+  const server: Server = createServer(async (req, res) => {
+    try {
+      if (req.headers.authorization !== "Bearer test-token") { res.writeHead(403).end(); return; }
+      let body = "";
+      for await (const part of req) body += part;
+      const value = body ? JSON.parse(body) as Item : {};
+      let output: unknown;
+      const path = req.url ?? "";
+      if (req.method === "GET" && path === "/instances") output = instances;
+      else if (req.method === "GET" && path === "/volumes") output = volumes;
+      else if (req.method === "GET" && path === "/resources") output = { disk: { available: 100 * 1024 ** 3 } };
+      else if (req.method === "GET" && path.startsWith("/images/")) output = { status: "ready" };
+      else if (req.method === "POST" && path === "/volumes") {
+        volumes.push({ id: "volume-1", ...value }); output = volumes.at(-1);
+      } else if (req.method === "POST" && path === "/instances") {
+        if (options.failInstanceCreate) { res.writeHead(503).end(); return; }
+        instances.push({ id: "instance-1", ...value, state: "Running", network: { ip: "192.168.64.2" } }); output = instances.at(-1);
+      } else if (req.method === "GET" && path.startsWith("/instances/")) output = instances.find((item) => item.name === decodeURIComponent(path.slice(11)));
+      else if (req.method === "DELETE" && path.startsWith("/instances/")) { instances = instances.filter((item) => item.id !== decodeURIComponent(path.slice(11))); output = {}; }
+      else if (req.method === "DELETE" && path.startsWith("/volumes/")) { volumes = volumes.filter((item) => item.id !== decodeURIComponent(path.slice(9))); output = {}; }
+      else { res.writeHead(404).end(); return; }
+      if (output === undefined) { res.writeHead(404).end(); return; }
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(output));
+    } catch { res.writeHead(500).end(); }
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("fixture did not bind");
+  await writeFile(join(root, "connection.json"), JSON.stringify({ baseUrl: `http://127.0.0.1:${address.port}`, tokenFile: join(root, "token") }));
+  const env: NodeJS.ProcessEnv = { ...process.env, AGENTSTACK_STATE_DIR: dir, HOME: dir };
+  const system = new BrowserSystem(env);
+  await system.start();
+  return { dir, root, env, system, counts: () => ({ instances: instances.length, volumes: volumes.length }),
+    async close() { await system.close(); await new Promise<void>((resolve) => server.close(() => resolve())); await rm(dir, { recursive: true, force: true }); } };
+}
+
+test("local Hypeman detection, selection and durable update policy are read independently of Artbird", async () => {
+  const s = await fixture();
+  try {
+    assert.equal((await s.system.detectHypeman()).some((entry) => entry.root === s.root), false);
+    assert.equal((await s.system.setHypemanLocation(s.root)).find((entry) => entry.root === s.root)?.running, true);
+    assert.equal((await s.system.detectHypeman()).find((entry) => entry.root === s.root)?.selected, false);
+    await s.system.enableHypeman(s.root);
+    assert.equal(s.system.selectedHypemanRoot(), s.root);
+    assert.equal((await s.system.setUpdatePolicy("automatic")).policy, "automatic");
+    const persisted = JSON.parse(await readFile(join(s.dir, "browser", "system.json"), "utf8")) as { policy: string; hypemanRoot: string };
+    assert.equal(persisted.policy, "automatic");
+    assert.equal(persisted.hypemanRoot, s.root);
+    await assert.rejects(s.system.enableHypeman("http://artbird:4973"), /selected Hypeman root/);
+  } finally { await s.close(); }
+});
+
+test("an incomplete launch retains its lease and can be reconciled without a provider receipt", async () => {
+  const s = await fixture({ failInstanceCreate: true });
+  const backend = new Backend(s.system, async () => undefined);
+  try {
+    await s.system.setHypemanLocation(s.root);
+    await s.system.enableHypeman(s.root);
+    await assert.rejects(backend.launch("task-failed"), /HTTP 503/);
+    assert.deepEqual(s.counts(), { instances: 0, volumes: 1 });
+    const [reserved] = await backend.list();
+    assert.equal(reserved?.target, null);
+    await assert.rejects(backend.reconcile(reserved!.session, "b".repeat(32)), /no matching/);
+    assert.deepEqual(s.counts(), { instances: 0, volumes: 1 });
+    await backend.reconcile(reserved!.session, reserved!.lease);
+    assert.deepEqual(s.counts(), { instances: 0, volumes: 0 });
+    assert.deepEqual(await backend.list(), []);
+  } finally { await backend.closeContext(); await s.close(); }
+});
+
+test("disposable launch and exact close use only the selected local Hypeman API", async () => {
+  const s = await fixture();
+  const backend = new Backend(s.system, async () => undefined);
+  try {
+    await s.system.setHypemanLocation(s.root);
+    await s.system.enableHypeman(s.root);
+    const first = await backend.launch("task-a");
+    assert.equal(first.cleanup.session, backendSession("task-a"));
+    assert.equal(first.cleanup.backend, "local");
+    assert.deepEqual(s.counts(), { instances: 1, volumes: 1 });
+    assert.deepEqual((await backend.launch("task-a")).cleanup, first.cleanup);
+    assert.equal((await backend.list())[0]?.persistent, false);
+    await assert.rejects(backend.close({ ...first.cleanup, lease: "b".repeat(32) }), /stale or mismatched/);
+    assert.deepEqual(s.counts(), { instances: 1, volumes: 1 });
+    await backend.close(first.cleanup);
+    assert.deepEqual(s.counts(), { instances: 0, volumes: 0 });
+    assert.deepEqual(await backend.list(), []);
+    await backend.close(first.cleanup);
+  } finally { await backend.closeContext(); await s.close(); }
+});
+
+test("provider protocol forwards only the exact browser lifecycle calls", async () => {
+  const s = await fixture();
+  try {
+    const calls: string[] = [];
+    const call = (async (_path: string, _method: string, input: { name: string; arguments: Record<string, unknown> }) => {
+      calls.push(input.name);
+      if (input.name === "browser_status") return { provider: "hypeman", mode: "disposable", sessions: 0 };
+      if (input.name === "browser_session_launch") return { cdpUrl: "http://127.0.0.1:9999", cleanup: { session: backendSession("task"), lease: "a".repeat(32), backend: "local", browserTarget: "target", browserProfile: "profile" } };
+      return { closed: true };
+    }) as typeof import("@agentstack/api").socketCall;
+    const protocol = "agent-browser.plugin.v1";
+    const manifest = await handleProvider(JSON.stringify({ protocol, type: "plugin.manifest", capability: "plugin.manifest", request: {} }), s.env, call);
+    assert.deepEqual((manifest.manifest as { capabilities: string[] }).capabilities, ["browser.provider"]);
+    const opened = await handleProvider(JSON.stringify({ protocol, type: "browser.launch", capability: "browser.provider", request: { session: "task" } }), s.env, call);
+    assert.equal(opened.success, true);
+    const cleanup = (opened.browser as { cleanup: unknown }).cleanup;
+    const closed = await handleProvider(JSON.stringify({ protocol, type: "browser.close", capability: "browser.provider", request: cleanup }), s.env, call);
+    assert.equal(closed.success, true);
+    assert.deepEqual(calls, ["browser_status", "browser_session_launch", "browser_status", "browser_session_close"]);
+    const refused = await handleProvider(JSON.stringify({ protocol, type: "browser.launch", capability: "browser.provider", request: { session: "task" } }), s.env,
+      (async () => ({ provider: "agentbrowse" })) as typeof import("@agentstack/api").socketCall);
+    assert.equal(refused.success, false);
+  } finally { await s.close(); }
+});
+
+test("owner's private agent-browser config leaves global settings alone", async () => {
+  const s = await fixture();
+  try {
+    const path = prepareBrowserConfig(s.env);
+    const config = JSON.parse(await readFile(path, "utf8")) as { provider: string; plugins: Array<{ command: string; args: string[] }> };
+    assert.equal(config.provider, "agentstack");
+    assert.equal(config.plugins[0]?.command, process.execPath);
+    assert.match(config.plugins[0]?.args[0] ?? "", /packages\/browser\/dist\/src\/provider\.js$/);
+  } finally { await s.close(); }
+});
+
+test("manual release observation requires exact acceptance; automatic checks only upgrade", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentstack-browser-updates-"));
+  const bin = join(dir, "bin");
+  await mkdir(bin, { recursive: true });
+  const npm = `#!/bin/sh
+if [ "$1" = view ]; then printf '"%s"\\n' "$TEST_LATEST"; exit 0; fi
+[ "$1" = install ] || exit 11
+shift
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --prefix ]; then shift; root="$1"; fi
+  case "$1" in agent-browser@*) version="\${1#agent-browser@}";; esac
+  shift
+done
+package="$root/node_modules/agent-browser"
+mkdir -p "$package/bin"
+printf '{"name":"agent-browser","version":"%s"}\\n' "$version" >"$package/package.json"
+printf '#!/bin/sh\\nprintf "agent-browser %s\\\\n"\\n' "$version" >"$package/bin/agent-browser-darwin-arm64"
+`;
+  await writeFile(join(bin, "npm"), npm, { mode: 0o755 });
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: dir, AGENTSTACK_STATE_DIR: dir, PATH: `${bin}:/usr/bin:/bin`, TEST_LATEST: "0.39.0" };
+  const system = new BrowserSystem(env);
+  try {
+    await system.start();
+    assert.equal((await system.checkUpdates()).pending, "0.39.0");
+    assert.equal((await system.browserStatus()).installed, false);
+    await assert.rejects(system.acceptUpdate("0.39.1"), /not the current observed/);
+    assert.equal((await system.acceptUpdate("0.39.0")).version, "0.39.0");
+    assert.equal((await system.browserStatus()).pending, null);
+    env.TEST_LATEST = "0.38.1";
+    await system.setUpdatePolicy("automatic");
+    const observed = await system.checkUpdates();
+    assert.equal(observed.version, "0.39.0");
+    assert.equal(observed.pending, null);
+    assert.equal((await system.uninstallBrowser()).installed, false);
+    assert.equal((await system.browserStatus()).policy, "automatic");
+  } finally { await system.close(); await rm(dir, { recursive: true, force: true }); }
+});

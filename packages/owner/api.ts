@@ -11,6 +11,8 @@ const childStatusSchema = z.object({
   exitCode: z.number().int().nullable(),
   signal: z.string().nullable(),
   error: z.string().nullable().describe("Spawn failure message, if any."),
+  startedAt: z.iso.datetime().nullable().describe("Time the child's spawn event fired; null if it never spawned."),
+  exitedAt: z.iso.datetime().nullable().describe("Time the child exited or its spawn failed; null while running."),
 });
 
 export type OwnerContext = {
@@ -20,10 +22,12 @@ export type OwnerContext = {
 
 export const ownerStatus = operation({
   name: "owner_status",
-  description: "Read the owner process, its local URLs, and each required child's status: pid, running, exit code, signal, and spawn error.",
+  description: "Read the owner process, its start time and runtime, its local URLs, and each required child's status: pid, running, start/exit times, exit code, signal, and spawn error.",
   input: z.strictObject({}),
   output: z.object({
     pid: z.number().int().describe("Owner process id."),
+    startedAt: z.iso.datetime().describe("Time the owner process started."),
+    nodeVersion: z.string().describe("Node.js version string of the owner process."),
     indexUrl: z.string().nullable().describe("Loopback UI entry URL; / redirects to the /x canvas while the owner runs it."),
     uixUrl: z.string().nullable().describe("Loopback /x canvas URL while the owner runs it."),
     inspectorUrl: z.string().nullable().describe("Loopback Inspector URL while the owner runs it."),

@@ -57,7 +57,7 @@ let websocket, next, browser;
 let log = "";
 const mutations = new Set(["bot_start", "bot_stop", "bot_assign", "bot_remove"]);
 const handlers = {
-  owner_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uixUrl: null, inspectorUrl: null }),
+  owner_status: () => ({ pid: process.pid, startedAt: new Date().toISOString(), nodeVersion: process.version, children: [], mcpUrls: {}, indexUrl: null, uixUrl: null, inspectorUrl: null }),
   account_list: () => ({ accounts: botAccounts }), worker_account_list: () => ({ accounts: workerAccounts }),
   account_login_current: () => ({ login: null }), worker_account_login_current: () => ({ logins: [] }),
   bot_list: () => ({ bots }), bot_defaults_get: () => defaults, voice_status: () => ({ call: activeCall }),

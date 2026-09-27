@@ -15,6 +15,10 @@ export type ChildStatus = {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
   error: string | null;
+  /** ISO time the child's spawn event fired; null if it never spawned. */
+  startedAt: string | null;
+  /** ISO time the child exited or its spawn failed; null while running. */
+  exitedAt: string | null;
 };
 
 export type RunningOwner = {
@@ -29,6 +33,8 @@ export function startOwner(children: OwnedChild[], env: NodeJS.ProcessEnv = proc
   const running = children.map((child) => ({
     child,
     error: null as string | null,
+    startedAt: null as string | null,
+    exitedAt: null as string | null,
     proc: spawn(child.command, child.args, {
       cwd: child.cwd,
       env: { ...env, ...child.env },
@@ -47,6 +53,8 @@ export function startOwner(children: OwnedChild[], env: NodeJS.ProcessEnv = proc
       exitCode: item.proc.exitCode,
       signal: item.proc.signalCode,
       error: item.error,
+      startedAt: item.startedAt,
+      exitedAt: item.exitedAt,
     }));
   let last = JSON.stringify(statuses());
   const notify = () => {
@@ -57,13 +65,18 @@ export function startOwner(children: OwnedChild[], env: NodeJS.ProcessEnv = proc
   };
 
   for (const item of running) {
-    item.proc.once("spawn", notify);
+    item.proc.once("spawn", () => {
+      item.startedAt = new Date().toISOString();
+      notify();
+    });
     item.proc.once("error", (error) => {
       item.error = error.message;
+      item.exitedAt ??= new Date().toISOString();
       console.error(`${item.child.name}: ${error.message}`);
       notify();
     });
     item.proc.once("exit", () => {
+      item.exitedAt ??= new Date().toISOString();
       // A child that exits must not leave its descendants behind.
       try {
         signalGroup(item.proc, "SIGTERM");

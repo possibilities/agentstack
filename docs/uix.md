@@ -1,15 +1,16 @@
 # UIX open bench
 
-The UI entry `/` redirects to `/x`, one continuous bench. Fleet is its initial Canvas space. System
-and API reference are global tools attached to the viewport, so opening them
-does not navigate away from the current composition. See the rationale in
-[ADR 0058](adr/0058-open-bench-and-global-tools.md).
+The UI entry `/` redirects to `/x`, one continuous bench. Fleet is its initial Canvas space. API
+reference is a global tool attached to the viewport, so opening it does not
+navigate away from the current composition. System is a fourth space; see
+[ADR 0058](adr/0058-open-bench-and-global-tools.md) and
+[ADR 0077](adr/0077-system-space.md).
 
 Fleet retains the Usage and Models windows, Bot lifecycle controls and
 full Bot tools dialog from [ADR 0056](adr/0056-fleet-usage-catalogs-and-bot-controls.md).
 One mounted Bot actions provider retains forms and upload state alongside the
 store, auth and voice providers. The former index's process and local URL details
-live in the System dock; MCP Inspector is linked only while its child is running
+live in the System space; MCP Inspector is linked only while its child is running
 ([ADR 0057](adr/0057-canvas-as-ui-home.md)).
 
 ## Adding a Fleet window
@@ -32,9 +33,9 @@ Keep window implementation separate from bench layout:
 3. If it introduces a node kind, add that record reference in
    `packages/uix/lib/stack/types.ts` and give it a canvas destination in
    `packages/uix/lib/stack/spaces.ts`. Keep node key parsing and routing tests
-   in step. A global System or reference destination is not a Canvas space.
-   `homeOf` returns a discriminated destination with `kind: "space"`,
-   `kind: "system"` or `kind: "reference"`; only the first has a space/window.
+   in step. A reference destination is not a Canvas space. `homeOf` returns a
+   discriminated destination with `kind: "space"` or `kind: "reference"`;
+   only the first has a space/window.
 4. Read live data through the shared store; subscribe and snapshot according to
    the Package API's invalidation contract. Window mounting must not own a
    separate long-lived connection or call.
@@ -52,14 +53,14 @@ packing space footprints. Manual movement keeps the current space origins fixed.
 Repacking preserves the viewed window's screen position. A saved camera applies
 only to its logical space; an explicit link to another space fits that region.
 
-## Reference and System destinations
+## Reference destinations
 
 `/x/fleet?reference=overview` opens the integrated reference. Package and
-operation targets use encoded node keys in `reference`; `system=open` opens
-System, and an owner/child node key reveals a specific System record. `focus`
+operation targets use encoded node keys in `reference`; an owner, child,
+resource or process node key in `focus` reveals its System space window. `focus`
 reveals a canvas card; `inspect` selects a record. The navigation helpers own
 destination serialization and parsing; callers should not assemble links
-independently. The shell also writes `surface=bench|left|right` to retain the
+independently. The shell also writes `surface=bench|right` to retain the
 active narrow-screen surface through history and reload. Revealing a card on
 mobile hides the docks while retaining their content and inspected record.
 

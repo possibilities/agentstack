@@ -85,7 +85,7 @@ test("package notices keep bot membership and worker accounts live", async () =>
 
   globalThis.WebSocket = FakeWebSocket;
   const snapshot = {
-    owner: resource(null), accounts: resource([]), workerAccounts: resource([]), workerRuntimes: resource([]),
+    owner: resource(null), resources: resource(null), accounts: resource([]), workerAccounts: resource([]), workerRuntimes: resource([]),
     login: resource(null), workerLogins: resource([]), bots: resource([]), voice: resource(null), catalog: resource(null),
     endpoints: { bots: "ws://localhost/bots", auth: "ws://localhost/auth" },
   };
@@ -184,7 +184,7 @@ test("worker sign-in attempts merge, resolve, and dismiss", async () => {
 
   globalThis.WebSocket = FakeWebSocket;
   const snapshot = {
-    owner: resource(null), accounts: resource([]), workerAccounts: resource([]), workerRuntimes: resource([]),
+    owner: resource(null), resources: resource(null), accounts: resource([]), workerAccounts: resource([]), workerRuntimes: resource([]),
     login: resource(null), workerLogins: resource([]), bots: resource([]), voice: resource(null), catalog: resource(null),
     endpoints: { auth: "ws://localhost/auth" },
   };

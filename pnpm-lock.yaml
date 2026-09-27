@@ -291,6 +291,22 @@ importers:
         specifier: npm:typescript@^5.9.3
         version: typescript@5.9.3
 
+  packages/browser:
+    dependencies:
+      '@agentstack/api':
+        specifier: workspace:*
+        version: link:../api
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.2
+        version: 26.6.2
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   packages/chrome: {}
 
   packages/content:
@@ -348,6 +364,9 @@ importers:
       '@agentstack/brain':
         specifier: workspace:*
         version: link:../brain
+      '@agentstack/browser':
+        specifier: workspace:*
+        version: link:../browser
       '@agentstack/content':
         specifier: workspace:*
         version: link:../content

@@ -1,6 +1,6 @@
 export { api, ownerStatus, ownerResources, ownerResourceHistory, topics, type OwnerContext, type OwnerTopic } from "../api.js";
 export { ownerResourcesInput, ownerResourcesOutput, ownerResourceHistoryInput, ownerResourceHistoryOutput,
-  type ResourceMetrics, type ResourceScope, type ResourceProcess, type ResourceHost, type ResourceCoverage,
+  type ResourceMetrics, type ResourceScope, type ResourceProcess, type ResourceHost, type ResourceCoverage, type OwnerRuntime,
   type ResourcesInput, type ResourcesOutput, type HistoryInput, type HistoryOutput } from "./resources/schema.js";
 export { apiChild, authChild, brainChild, rolesChild, usageChild, inferChild, contentChild } from "./children.js";
 export { botsChild } from "./bots.js";

@@ -10,6 +10,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { fieldsOf, findOperation, operationTitle, recordFields, recordOperations, type Field } from "@/lib/stack/catalog";
 import { accountLabels, clockTime, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
+import { scopeTarget } from "@/lib/stack/resources";
 import type { StackState } from "@/lib/stack/store";
 import { nodeKey, type Account, type Bot, type Login, type NodeRef, type OperationDoc, type StackEvent, type WorkerAccount } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
@@ -45,6 +46,8 @@ function resolve(ref: NodeRef, state: StackState): View | null {
   const labels = accountLabels(state.accounts.data);
   const workerLabels = workerAccountLabels(state.workerAccounts.data);
   const ownerFields = () => new Map(fieldsOf(findOperation(catalog, "owner", "owner_status")?.outputSchema).map((field) => [field.name, field]));
+  const resourceItemFields = (list: string) =>
+    new Map(fieldsOf(findOperation(catalog, "owner", "owner_resources")?.outputSchema).find((field) => field.name === list)?.children.map((field) => [field.name, field]) ?? []);
   switch (ref.kind) {
     case "owner": {
       const owner = state.owner.data;
@@ -59,9 +62,38 @@ function resolve(ref: NodeRef, state: StackState): View | null {
       const child = state.owner.data?.children.find((item) => item.name === ref.id);
       if (!child) return null;
       const known = catalog?.some((doc) => doc.name === child.name);
+      const scopeId = `component:${encodeURIComponent(child.name)}`;
+      const related: View["related"] = known ? [{ ref: { kind: "package", id: child.name }, label: `${child.name} Package API` }] : [];
+      if (state.resources.data?.scopes.some((scope) => scope.id === scopeId)) related.push({ ref: { kind: "resource", id: scopeId }, label: "Component resources" });
       return {
         eyebrow: "Owned child", accent: "owner", title: child.name, record: child, fields: new Map(ownerFields().get("children")?.children.map((field) => [field.name, field])),
-        related: known ? [{ ref: { kind: "package", id: child.name }, label: `${child.name} Package API` }] : [],
+        related,
+      };
+    }
+    case "resource": {
+      const scope = state.resources.data?.scopes.find((item) => item.id === ref.id);
+      if (!scope) return null;
+      const target = scopeTarget(scope);
+      const targetLabel = target ? target.kind === "owner" ? "Owner" : target.kind === "child" ? `${target.id} child` : target.kind === "bot" ? target.id : target.kind === "worker-account" ? `${workerLabels.get(target.id) ?? shortId(target.id)} Worker account` : target.kind === "account" ? `${labels.get(target.id) ?? shortId(target.id)} account` : "Process" : null;
+      return {
+        eyebrow: `${scope.kind} scope`, accent: "owner", title: scope.name, record: { ...scope }, fields: resourceItemFields("scopes"),
+        related: target ? [{ ref: target, label: targetLabel! }] : [],
+        events: state.events.filter((event) => event.pkg === "owner"),
+      };
+    }
+    case "process": {
+      const process = state.resources.data?.processes.find((item) => item.id === ref.id);
+      if (!process) return null;
+      const related: View["related"] = [];
+      if (process.parentId && state.resources.data?.processes.some((item) => item.id === process.parentId)) related.push({ ref: { kind: "process", id: process.parentId }, label: "Parent process" });
+      if (process.component === "owner") related.push({ ref: { kind: "owner" }, label: "Owner" });
+      else if (state.owner.data?.children.some((child) => child.name === process.component)) related.push({ ref: { kind: "child", id: process.component }, label: `${process.component} child` });
+      if (process.botId) related.push({ ref: { kind: "bot", id: process.botId }, label: process.botId });
+      const scopeId = `component:${encodeURIComponent(process.component)}`;
+      if (state.resources.data?.scopes.some((scope) => scope.id === scopeId)) related.push({ ref: { kind: "resource", id: scopeId }, label: "Component resources" });
+      return {
+        eyebrow: `Process · ${process.component}`, accent: "owner", title: `${process.name} · pid ${process.pid}`, record: { ...process }, fields: resourceItemFields("processes"),
+        related,
       };
     }
     case "account": {
@@ -162,7 +194,7 @@ const workerControls = new Set(["worker_account_set_enabled", "worker_account_re
 
 function referencePackage(ref: NodeRef): string {
   if (ref.kind === "bot") return "bots";
-  if (ref.kind === "owner" || ref.kind === "child") return "owner";
+  if (ref.kind === "owner" || ref.kind === "child" || ref.kind === "resource" || ref.kind === "process") return "owner";
   if (ref.kind === "worker-catalog") return "workers";
   if (ref.kind === "usage" || ref.kind === "usage-account" || ref.kind === "grok-bot-usage") return "usage";
   return "auth";
@@ -350,10 +382,10 @@ export function Inspector({ hidden = false, onGone }: { hidden?: boolean; onGone
               <h2 ref={heading} data-inspector-heading tabIndex={-1} className="truncate text-lg leading-tight font-semibold tracking-tight outline-none">{view?.title ?? ("id" in shown ? shown.id : shown.kind)}</h2>
             </div>
             <Tooltip>
-              <TooltipTrigger render={<Button variant="ghost" size="icon-sm" className="ml-auto" aria-label={shown.kind === "owner" || shown.kind === "child" ? "Reveal in System" : "Show on bench"} onClick={() => goTo(shown)} />}>
+              <TooltipTrigger render={<Button variant="ghost" size="icon-sm" className="ml-auto" aria-label="Show on bench" onClick={() => goTo(shown)} />}>
                 <LocateFixedIcon />
               </TooltipTrigger>
-              <TooltipContent side="bottom">{shown.kind === "owner" || shown.kind === "child" ? "Reveal in System" : "Show on bench"}</TooltipContent>
+              <TooltipContent side="bottom">Show on bench</TooltipContent>
             </Tooltip>
             <Button variant="ghost" size="icon-sm" aria-label="Close inspector" onClick={() => select(null)}><XIcon /></Button>
           </header>
