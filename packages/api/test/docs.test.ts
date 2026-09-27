@@ -124,7 +124,10 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(botsMcp.endpoint, "http://127.0.0.1:8743/mcp/bots");
     const botsWebSocket = bots.transports.find((transport) => transport.type === "websocket") as TransportDoc;
     assert.equal(botsWebSocket.subscriptions, true);
-    assert.equal(botsWebSocket.endpoint, "ws://127.0.0.1:8744/websocket/bots");
+    assert.equal(botsWebSocket.endpoint, "ws://127.0.0.1:8744/websocket");
+    assert.deepEqual(new Set([...found.values()].flatMap((server) => server.transports
+      .filter((transport) => transport.type === "websocket")
+      .map((transport) => transport.endpoint))), new Set([botsWebSocket.endpoint]));
 
     const auth = found.get("auth") as PackageDoc;
     const roles = found.get("roles") as PackageDoc;
@@ -174,7 +177,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok(brain.transports.every((transport) => transport.supported));
     assert.equal(brain.transports.find((transport) => transport.type === "socket")?.endpoint, join(stateDir, "sockets", "brain.sock"));
     assert.equal(brain.transports.find((transport) => transport.type === "mcp")?.endpoint, "http://127.0.0.1:8743/mcp/brain");
-    assert.equal(brain.transports.find((transport) => transport.type === "websocket")?.endpoint, "ws://127.0.0.1:8744/websocket/brain");
+    assert.equal(brain.transports.find((transport) => transport.type === "websocket")?.endpoint, "ws://127.0.0.1:8744/websocket");
     assert.equal(existsSync(join(stateDir, "brain")), false, "read-only discovery must not initialize Brain storage");
     assert.deepEqual(Object.keys(workers.events).sort(), ["worker_changed", "worker_progress", "workers_changed"]);
     assert.equal(workers.eventScope?.required, false);

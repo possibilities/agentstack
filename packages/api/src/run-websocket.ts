@@ -16,7 +16,7 @@ export async function runWebSocket(env: NodeJS.ProcessEnv = process.env): Promis
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
   }
-  for (const [name, url] of Object.entries(served.urls)) console.error(`${name} WebSocket: ${url}`);
+  console.error(`WebSocket: ${served.url}`);
   let closing = false;
   const shutdown = () => {
     if (closing) return;

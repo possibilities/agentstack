@@ -84,6 +84,58 @@ test("one WebSocket routes operations and scoped subscriptions to socket owners"
   }
 });
 
+test("one package-addressed connection calls and watches multiple Package APIs independently", async () => {
+  const setup = await fixture();
+  const betaDir = join(setup.root, "packages", "beta");
+  await mkdir(betaDir);
+  await writeFile(join(betaDir, "api.yaml"), "name: beta\ndescription: Beta.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n  operations: [ping]\n");
+  const beta = await serveSocket({
+    info: { name: "beta", description: "Beta.", transportDescription: "Socket.", path: socketPath("beta", setup.env) },
+    context: {},
+    operations: [
+      operation({ name: "ping", description: "Ping.", input: z.strictObject({}), output: z.object({ ok: z.boolean() }), async call() { return { ok: true }; } }),
+      operation({ name: "hidden", description: "Hidden.", input: z.strictObject({}), output: z.object({ ok: z.boolean() }), async call() { return { ok: true }; } }),
+    ],
+    events: { topics: { changed: "A change." } },
+  });
+  const ws = await connect(setup.served.url);
+  try {
+    ws.send(JSON.stringify({ id: 1, method: "tools/list", params: { package: "beta" } }));
+    assert.deepEqual((await nextMessage(ws)).result.tools.map((tool: { name: string }) => tool.name), ["ping"]);
+    ws.send(JSON.stringify({ id: 2, method: "tools/call", params: { package: "demo", name: "greet", arguments: { name: "Ada" } } }));
+    assert.deepEqual(await nextMessage(ws), { id: 2, result: { greeting: "Hello Ada" } });
+    ws.send(JSON.stringify({ id: 3, method: "tools/call", params: { package: "beta", name: "ping", arguments: {} } }));
+    assert.deepEqual(await nextMessage(ws), { id: 3, result: { ok: true } });
+    ws.send(JSON.stringify({ id: 4, method: "tools/call", params: { package: "beta", name: "hidden", arguments: {} } }));
+    assert.match((await nextMessage(ws)).error?.message ?? "", /not available over websocket/);
+    ws.send(JSON.stringify({ id: 5, method: "tools/call", params: { package: "absent", name: "ping", arguments: {} } }));
+    assert.match((await nextMessage(ws)).error?.message ?? "", /package absent is not available/);
+    ws.send(JSON.stringify({ id: 6, method: "tools/call", params: { name: "ping", arguments: {} } }));
+    assert.match((await nextMessage(ws)).error?.message ?? "", /not available over websocket/);
+    ws.send(JSON.stringify({ id: 11, method: "tools/call", params: { package: "beta", name: "ping", arguments: {}, resultFormat: "mcp" } }));
+    assert.match((await nextMessage(ws)).error?.message ?? "", /MCP result presentation is not available/);
+    ws.send(JSON.stringify({ id: 7, method: "events/subscribe", params: { package: "demo", subscription: "bot", topics: ["changed"], scope: "bot-1" } }));
+    assert.deepEqual(await nextMessage(ws), { id: 7, result: { package: "demo", subscription: "bot", topics: ["changed"], scope: "bot-1" } });
+    ws.send(JSON.stringify({ id: 8, method: "events/subscribe", params: { package: "beta", subscription: "beta", topics: ["changed"] } }));
+    assert.deepEqual(await nextMessage(ws), { id: 8, result: { package: "beta", subscription: "beta", topics: ["changed"] } });
+    ws.send(JSON.stringify({ id: 9, method: "events/subscribe", params: { package: "beta", subscription: "bot", topics: ["changed"] } }));
+    assert.match((await nextMessage(ws)).error?.message ?? "", /another package/);
+    const demoNotice = nextMessage(ws);
+    setup.socket.publish?.("changed", "bot-1");
+    assert.deepEqual(await demoNotice, { method: "events/changed", params: { package: "demo", subscription: "bot", topic: "changed" } });
+    const betaNotice = nextMessage(ws);
+    beta.publish?.("changed");
+    assert.deepEqual(await betaNotice, { method: "events/changed", params: { package: "beta", subscription: "beta", topic: "changed" } });
+    ws.send(JSON.stringify({ id: 10, method: "events/unsubscribe", params: { package: "beta", subscription: "beta" } }));
+    assert.deepEqual(await nextMessage(ws), { id: 10, result: { subscription: "beta" } });
+    beta.publish?.("changed");
+    await assert.rejects(nextMessage(ws, 100), /no frame/);
+    const disconnected = nextMessage(ws);
+    await setup.socket.close();
+    assert.deepEqual(await disconnected, { method: "events/disconnected", params: { package: "demo", subscription: "bot" } });
+  } finally { ws.close(); await beta.close(); await setup.close(); }
+});
+
 test("WebSocket restricts host, origin, paths, frames and cleans up on close", async () => {
   const setup = await fixture();
   const ws = await connect(setup.url);
@@ -143,6 +195,7 @@ test("a lost socket subscription tells the WebSocket client to resnapshot after 
 test("WebSocket admits current configuration while existing connections keep working", async () => {
   const setup = await fixture();
   const existing = await connect(setup.url);
+  const aggregate = await connect(setup.served.url);
   const demoConfig = "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n";
   const demoFile = join(setup.root, "packages", "demo", "api.yaml");
   let betaSocket: Awaited<ReturnType<typeof serveSocket>> | undefined;
@@ -168,9 +221,16 @@ test("WebSocket admits current configuration while existing connections keep wor
     });
     const betaUrl = setup.url.replace("/demo", "/beta");
     assert.deepEqual(Object.keys(setup.served.urls), ["demo"]); // Printed URLs describe startup, not subsequent configuration.
+    aggregate.send(JSON.stringify({ id: 1, method: "tools/call", params: { package: "beta", name: "ping", arguments: {} } }));
+    assert.match((await nextMessage(aggregate)).error?.message ?? "", /not available over websocket/);
     beta = await connect(betaUrl);
     beta.send(JSON.stringify({ id: 2, method: "tools/call", params: { name: "ping", arguments: {} } }));
     assert.deepEqual(await nextMessage(beta), { id: 2, result: { ok: true } });
+    const freshAggregate = await connect(setup.served.url);
+    try {
+      freshAggregate.send(JSON.stringify({ id: 3, method: "tools/call", params: { package: "beta", name: "ping", arguments: {} } }));
+      assert.deepEqual(await nextMessage(freshAggregate), { id: 3, result: { ok: true } });
+    } finally { freshAggregate.close(); }
     await writeFile(betaFile, "name: beta\ndescription: Beta.\nsocket:\n  description: Socket.\n");
     await assert.rejects(connect(betaUrl), /404|Unexpected server response/);
     beta.send(JSON.stringify({ id: 3, method: "tools/call", params: { name: "ping", arguments: {} } }));
@@ -181,7 +241,7 @@ test("WebSocket admits current configuration while existing connections keep wor
     await writeFile(demoFile, demoConfig);
     restored = await connect(setup.url);
   } finally {
-    existing.close(); beta?.close(); restored?.close();
+    existing.close(); aggregate.close(); beta?.close(); restored?.close();
     await betaSocket?.close();
     await setup.close();
   }

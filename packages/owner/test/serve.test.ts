@@ -89,24 +89,27 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       await client.close();
     }
 
-    for (let i = 0; i < 200 && !/owner WebSocket: (ws:\/\/\S+)/.test(stderr); i += 1) {
+    for (let i = 0; i < 200 && !/WebSocket: (ws:\/\/\S+)/.test(stderr); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    const wsUrl = /owner WebSocket: (ws:\/\/\S+)/.exec(stderr)?.[1];
+    const wsUrl = /WebSocket: (ws:\/\/\S+)/.exec(stderr)?.[1];
     assert.ok(wsUrl, stderr);
-    for (const name of socketNames) assert.match(stderr, new RegExp(`${name} WebSocket: ws://127\\.0\\.0\\.1:\\d+/websocket/${name}`));
+    assert.match(wsUrl, /^ws:\/\/127\.0\.0\.1:\d+\/websocket$/);
     const ws = websocket = new WebSocket(wsUrl);
     await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = () => reject(new Error("WebSocket did not open")); });
     const frame = () => new Promise<any>((resolve) => { ws.onmessage = (event) => resolve(JSON.parse(String(event.data))); });
     const call = frame();
-    ws.send(JSON.stringify({ id: 1, method: "tools/call", params: { name: "owner_status", arguments: {} } }));
+    ws.send(JSON.stringify({ id: 1, method: "tools/call", params: { package: "owner", name: "owner_status", arguments: {} } }));
     assert.equal((await call).result.pid, child.pid);
     const subscribed = frame();
-    ws.send(JSON.stringify({ id: 2, method: "events/subscribe", params: { topics: ["pids_changed"] } }));
-    assert.deepEqual(await subscribed, { id: 2, result: { topics: ["pids_changed"] } });
+    ws.send(JSON.stringify({ id: 2, method: "events/subscribe", params: { package: "owner", subscription: "status", topics: ["pids_changed"] } }));
+    assert.deepEqual(await subscribed, { id: 2, result: { package: "owner", subscription: "status", topics: ["pids_changed"] } });
     const historyCall = frame();
-    ws.send(JSON.stringify({ id: 3, method: "tools/call", params: { name: "owner_resource_history", arguments: {} } }));
+    ws.send(JSON.stringify({ id: 3, method: "tools/call", params: { package: "owner", name: "owner_resource_history", arguments: {} } }));
     assert.ok(ownerResourceHistoryOutput.parse((await historyCall).result).points.length > 0);
+    const crossPackage = frame();
+    ws.send(JSON.stringify({ id: 4, method: "tools/list", params: { package: "api" } }));
+    assert.ok((await crossPackage).result.tools.some((tool: { name: string }) => tool.name === "docs_snapshot"));
 
     let servers: Response | undefined;
     for (let i = 0; i < 200; i += 1) {

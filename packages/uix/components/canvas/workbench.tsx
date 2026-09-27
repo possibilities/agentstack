@@ -12,7 +12,7 @@ import { homeOf, spaceAttention, spaceHref, spaces, spaceTitle, type SpaceId } f
 import { nodeKey, type NodeRef, type Snapshot } from "@/lib/stack/types";
 import { AuthActionsProvider } from "./auth-actions";
 import { BotActionsProvider } from "./bot-actions";
-import { Dock, useDockSizes } from "./dock";
+import { Dock, useDockSizes, useInspectorPin } from "./dock";
 import { Inspector } from "./inspector";
 import { Palette, type PaletteAction } from "./palette";
 import { StackProvider, useStack, WorkbenchContext, type WorkbenchValue } from "./provider";
@@ -43,13 +43,18 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
   const [screenWidth, setScreenWidth] = useState(1200);
   const [sizes, setSizes] = useDockSizes();
   const [expanded, setExpanded] = useState(false);
+  const [pinned, setPinned] = useInspectorPin();
+  const [contracted, setContracted] = useState(false);
   const [surface, setSurface] = useState<BenchSurface>(() => activeSurface(undefined, openDocks(initialLocation)));
   const surfaceRef = useRef(surface);
   const benchFocusFrame = useRef<number | undefined>(undefined);
   const rightOpen = Boolean(location.reference || location.inspect);
+  // Contraction retains the inspection and hides the dock; reference mode and overlay surfaces are exempt.
+  const collapsed = contracted && !pinned && Boolean(location.inspect) && !location.reference;
   const { overlay, rightVisible, rightWidth, rightMax, right } = dockGeometry({
     screenWidth, ...openDocks(location), surface,
     rightWidth: location.reference ? sizes.reference : sizes.inspector, expanded: expanded && Boolean(location.reference),
+    contracted: collapsed,
   });
 
   useLayoutEffect(() => {
@@ -96,6 +101,7 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
     if (`${window.location.pathname}${window.location.search}` !== href) window.history.pushState(null, "", href);
     locationRef.current = next; setLocation(next);
     surfaceRef.current = nextSurface; setSurface(nextSurface);
+    if (nextSurface === "right") setContracted(false);
     document.title = `AgentStack · ${next.reference && nextSurface === "right" ? "API reference" : spaceTitle(next.space)}`;
   }, []);
   const setSpace = useCallback((space: SpaceId) => {
@@ -180,6 +186,33 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
     return () => window.removeEventListener("keydown", key);
   }, [paletteOpen, rightVisible, closeRight, setSpace]);
 
+  const pinInspector = useCallback((value: boolean) => { setPinned(value); setContracted(false); }, [setPinned]);
+  // An unpinned inspector contracts on bench or chrome interaction. The dock itself and portaled popups are not "outside".
+  useEffect(() => {
+    if (!(rightVisible && !overlay && !pinned && location.inspect && !location.reference)) return;
+    const isOutside = (target: EventTarget | null): target is Element =>
+      target instanceof Element && !target.closest('[data-dock="right"]') &&
+      Boolean(target.closest('[data-canvas="workbench"],[data-chrome]') || target === document.body || target === document.documentElement);
+    // Click, not pointerdown: the capture listener and a card's own onClick → select() → write() → setContracted(false)
+    // batch within one discrete event, so inspecting another card swaps content without the dock flashing closed.
+    const contract = (event: Event) => { if (isOutside(event.target)) setContracted(true); };
+    const key = (event: KeyboardEvent) => {
+      if (!isOutside(event.target)) return;
+      if (["Shift", "Control", "Alt", "Meta", "CapsLock", "Fn"].includes(event.key)) return;
+      // Activation keys defer to the click they produce, which keeps the batching above.
+      if ((event.key === "Enter" || event.key === " ") && (event.target as Element).closest('button,a[href],[role="button"],[role="menuitem"]')) return;
+      setContracted(true);
+    };
+    window.addEventListener("click", contract, { capture: true });
+    window.addEventListener("wheel", contract, { capture: true, passive: true });
+    window.addEventListener("keydown", key, { capture: true });
+    return () => {
+      window.removeEventListener("click", contract, { capture: true });
+      window.removeEventListener("wheel", contract, { capture: true });
+      window.removeEventListener("keydown", key, { capture: true });
+    };
+  }, [rightVisible, overlay, pinned, location.inspect, location.reference]);
+
   const actions: PaletteAction[] = useMemo(() => [
     { id: "reference", label: "Open API reference", icon: BookOpenIcon, run: openReference },
     ...(location.inspect ? [{ id: "inspector", label: "Return to inspector", icon: PanelRightIcon, run: openInspector }] : []),
@@ -188,11 +221,11 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
       { id: "tidy", label: "Reset local window positions", shortcut: "T", icon: LayoutDashboardIcon, run: controls.tidy },
     ] : []),
   ], [controls, location.inspect, openReference, openInspector]);
-  const workbench: WorkbenchValue = useMemo(() => ({ space: location.space, setSpace, selected: location.inspect, hovered, select, hover, goTo, flash }), [location.space, location.inspect, setSpace, hovered, select, goTo, flash]);
+  const workbench: WorkbenchValue = useMemo(() => ({ space: location.space, setSpace, selected: collapsed ? null : location.inspect, hovered, select, hover, goTo, flash }), [location.space, location.inspect, collapsed, setSpace, hovered, select, goTo, flash]);
   return <div className="contents" style={{ "--sheet": `${right}px` } as React.CSSProperties}>
     <WorkbenchContext value={workbench}><AuthActionsProvider><VoiceProvider><BotActionsProvider><RoleActionsProvider>
       <Bench space={location.space} blocked={paletteOpen} onControls={reportControls} onScale={setScale} onArrive={flashNow} />
-      <TopBar space={location.space} setSpace={setSpace} compact={screenWidth - right < 440} reference={Boolean(location.reference) && rightVisible} inspectorAvailable={overlay && Boolean(location.inspect) && !rightVisible} openInspector={openInspector} toggleReference={Boolean(location.reference) && rightVisible ? closeRight : openReference} openPalette={() => setPaletteOpen(true)} fit={() => controls?.fit()} />
+      <TopBar space={location.space} setSpace={setSpace} compact={screenWidth - right < 440} reference={Boolean(location.reference) && rightVisible} inspectorAvailable={Boolean(location.inspect) && !rightVisible} openInspector={openInspector} toggleReference={Boolean(location.reference) && rightVisible ? closeRight : openReference} openPalette={() => setPaletteOpen(true)} fit={() => controls?.fit()} />
       <div data-chrome className="fixed bottom-4 z-30 flex -translate-x-1/2 items-center gap-1 rounded-xl border bg-card/95 p-1 shadow-sm" style={{ left: "calc((100% - var(--sheet))/2)" }}>
         <Tool label="Zoom out" onClick={() => controls?.zoom(1 / 1.2)}><MinusIcon /></Tool>
         <Button variant="ghost" size="sm" aria-label="Actual size" className="w-14 tabular-nums" onClick={() => controls?.zoom(1 / scale)}>{Math.round(scale * 100)}%</Button>
@@ -203,7 +236,7 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
       </div>
       <Dock side="right" label={location.reference ? "API reference" : "Inspector"} open={rightVisible} overlay={overlay} width={rightWidth} min={dockMinimum.right} max={rightMax}
         onResize={(width) => { setExpanded(false); setSizes((s) => ({ ...s, [location.reference ? "reference" : "inspector"]: width })); }} onClose={closeRight} returnFocus={inspectorReturn} restoreFocusOnHide={!rightOpen && (!overlay || surface === "bench")}>
-        <Inspector hidden={Boolean(location.reference)} onGone={dropInspect} />
+        <Inspector hidden={Boolean(location.reference)} onGone={dropInspect} pinned={pinned} onPinnedChange={overlay ? undefined : pinInspector} />
         {location.reference ? <Reference target={location.reference} onOverview={referenceOverview} onClose={closeRight} hasInspection={Boolean(location.inspect)} expanded={expanded} onExpand={() => setExpanded((value) => !value)} /> : null}
       </Dock>
       <Palette open={paletteOpen} onOpenChange={setPaletteOpen} actions={actions} />

@@ -48,7 +48,7 @@ test("package notices keep bot membership and worker accounts live", async () =>
     static CONNECTING = 0;
     static OPEN = 1;
     readyState = FakeWebSocket.CONNECTING;
-    subscription = null;
+    subscriptions = new Map();
 
     constructor(url) {
       this.url = url;
@@ -58,10 +58,11 @@ test("package notices keep bot membership and worker accounts live", async () =>
 
     send(raw) {
       const { id, method, params } = JSON.parse(raw);
-      if (method === "events/subscribe") this.subscription = params;
+      if (method === "events/subscribe") this.subscriptions.set(params.subscription, params);
+      if (method === "events/unsubscribe") this.subscriptions.delete(params.subscription);
       let result, error;
       try {
-        result = method === "events/subscribe" ? params : results[params.name]?.(params.arguments);
+        result = method.startsWith("events/") ? params : results[params.name]?.(params.arguments);
       } catch (cause) {
         error = { message: cause instanceof Error ? cause.message : String(cause) };
       }
@@ -77,9 +78,11 @@ test("package notices keep bot membership and worker accounts live", async () =>
 
   function publish(pkg, topic, scope) {
     for (const socket of sockets) {
-      if (!socket.url.endsWith(`/${pkg}`) || !socket.subscription?.topics.includes(topic)) continue;
-      if (socket.subscription.scope && socket.subscription.scope !== scope) continue;
-      socket.onmessage?.({ data: JSON.stringify({ method: "events/changed", params: { topic } }) });
+      for (const subscription of socket.subscriptions.values()) {
+        if (subscription.package !== pkg || !subscription.topics.includes(topic)) continue;
+        if (subscription.scope && subscription.scope !== scope) continue;
+        socket.onmessage?.({ data: JSON.stringify({ method: "events/changed", params: { package: pkg, subscription: subscription.subscription, topic } }) });
+      }
     }
   }
 
@@ -87,14 +90,15 @@ test("package notices keep bot membership and worker accounts live", async () =>
   const snapshot = {
     owner: resource(null), resources: resource(null), accounts: resource([]), workerAccounts: resource([]), workerRuntimes: resource([]),
     login: resource(null), workerLogins: resource([]), bots: resource([]), voice: resource(null), catalog: resource(null),
-    endpoints: { bots: "ws://localhost/bots", auth: "ws://localhost/auth" },
+    endpoints: { bots: "ws://localhost/websocket", auth: "ws://localhost/websocket" },
   };
   const store = new StackStore(snapshot);
   let indexStore;
   try {
     store.start();
     await until(store, () => store.getState().bots.at > 1 && [...sockets].some((socket) =>
-      socket.url.endsWith("/bots") && !socket.subscription?.scope && socket.subscription?.topics.includes("bots_changed")));
+      [...socket.subscriptions.values()].some((subscription) => subscription.package === "bots" && !subscription.scope && subscription.topics.includes("bots_changed"))));
+    assert.equal(sockets.size, 1, "package channels share a single socket");
 
     bots = [bot("bot-1")];
     publish("bots", "bots_changed", "bot-1");
@@ -113,7 +117,8 @@ test("package notices keep bot membership and worker accounts live", async () =>
     await until(store, () => store.getState().workerAccounts.data?.[0]?.id === "worker-1");
 
     // A reconnect snapshots membership even when a change occurred while offline.
-    [...sockets].find((socket) => socket.url.endsWith("/bots") && !socket.subscription?.scope).close();
+    assert.equal(sockets.size, 1, "scoped subscriptions also share the socket");
+    [...sockets][0].close();
     bots = [bot("bot-2"), bot("bot-3")];
     await until(store, () => store.getState().bots.data?.some((item) => item.id === "bot-3") &&
       store.getState().scoped["bot-3"]?.status === "open");
@@ -122,7 +127,7 @@ test("package notices keep bot membership and worker accounts live", async () =>
     indexStore = new StackStore(snapshot);
     indexStore.start({ packages: ["owner", "bots"], scopedBots: false });
     await until(indexStore, () => indexStore.getState().bots.data?.length === 2);
-    assert.equal(sockets.size, 1, "the index needs only its package-level bot connection");
+    assert.equal(sockets.size, 1, "the index needs one shared connection");
     assert.deepEqual(indexStore.getState().scoped, {});
     bots = [bot("bot-3")];
     publish("bots", "bots_changed", "bot-2");
@@ -155,7 +160,7 @@ test("worker sign-in attempts merge, resolve, and dismiss", async () => {
     static CONNECTING = 0;
     static OPEN = 1;
     readyState = FakeWebSocket.CONNECTING;
-    subscription = null;
+    subscriptions = new Map();
     constructor(url) {
       this.url = url;
       sockets.add(this);
@@ -163,10 +168,11 @@ test("worker sign-in attempts merge, resolve, and dismiss", async () => {
     }
     send(raw) {
       const { id, method, params } = JSON.parse(raw);
-      if (method === "events/subscribe") this.subscription = params;
+      if (method === "events/subscribe") this.subscriptions.set(params.subscription, params);
+      if (method === "events/unsubscribe") this.subscriptions.delete(params.subscription);
       let result, error;
       try {
-        result = method === "events/subscribe" ? params : results[params.name]?.(params.arguments);
+        result = method.startsWith("events/") ? params : results[params.name]?.(params.arguments);
       } catch (cause) {
         error = { message: cause instanceof Error ? cause.message : String(cause) };
       }
@@ -177,8 +183,8 @@ test("worker sign-in attempts merge, resolve, and dismiss", async () => {
 
   function publish(pkg, topic) {
     for (const socket of sockets) {
-      if (socket.url.endsWith(`/${pkg}`) && socket.subscription?.topics.includes(topic))
-        socket.onmessage?.({ data: JSON.stringify({ method: "events/changed", params: { topic } }) });
+      for (const subscription of socket.subscriptions.values()) if (subscription.package === pkg && subscription.topics.includes(topic))
+        socket.onmessage?.({ data: JSON.stringify({ method: "events/changed", params: { package: pkg, subscription: subscription.subscription, topic } }) });
     }
   }
 
@@ -186,12 +192,12 @@ test("worker sign-in attempts merge, resolve, and dismiss", async () => {
   const snapshot = {
     owner: resource(null), resources: resource(null), accounts: resource([]), workerAccounts: resource([]), workerRuntimes: resource([]),
     login: resource(null), workerLogins: resource([]), bots: resource([]), voice: resource(null), catalog: resource(null),
-    endpoints: { auth: "ws://localhost/auth" },
+    endpoints: { auth: "ws://localhost/websocket" },
   };
   const store = new StackStore(snapshot);
   try {
     store.start();
-    await until(store, () => [...sockets].some((socket) => socket.url.endsWith("/auth") && socket.subscription?.topics.includes("worker_login_changed")));
+    await until(store, () => [...sockets].some((socket) => [...socket.subscriptions.values()].some((subscription) => subscription.package === "auth" && subscription.topics.includes("worker_login_changed"))));
 
     const started = await store.call("auth", "worker_account_login_start", { provider: "codex" });
     assert.equal(started.id, "wlog-1");

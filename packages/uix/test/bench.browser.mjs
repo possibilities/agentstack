@@ -18,19 +18,21 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const stateDir = await mkdtemp(join(tmpdir(), "opencode/agentstack-bench-"));
 const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_WEBSOCKET_PORT: "0", NEXT_TELEMETRY_DISABLED: "1" };
 const pass = { parse: (value) => value };
+// Fixed far-past timestamps keep SSR and hydration rendering the same coarse relative text.
+const fixtureAt = "2020-06-01T12:00:00.000Z";
 const op = (name, result) => ({ name, description: name, input: pass, output: pass, async call() { return result; } });
 const bots = Array.from({ length: 8 }, (_, i) => ({ id: `bot-${i + 1}`, pid: 100 + i, cwd: "/fixture/project", state: "running", account: "account-1", runningAccount: "account-1", mainThreadId: `thread-${i}`, url: null, recoveryIssue: null, roleRevision: 1, settings: { model: "fixture", reasoningEffort: "medium", sandboxMode: "read-only", approvalPolicy: "never" } }));
 const doc = (name, operation) => ({ name, packageName: `@agentstack/${name}`, description: `${name} fixture description`, events: { changed: "Fixture changed" }, eventScope: { required: true, description: "A current Bot ID", example: "bot-1" }, transports: [{ type: "socket", supported: true, subscriptions: true, endpoint: socketPath(name, env), description: "Fixture Unix socket" }], operations: [{ name: operation, title: "Read fixture", description: "Read current fixture state", annotations: { readOnlyHint: true, destructiveHint: false }, inputSchema: { type: "object", properties: { id: { type: "string", description: "Current ID", minLength: 1 } }, required: ["id"], additionalProperties: false }, outputSchema: { oneOf: [{ type: "object", properties: { value: { type: "string" } } }, { type: "null" }], $defs: { complete: { type: "number" } } } }] });
 const catalog = [doc("owner", "owner_status"), doc("bots", "bot_status"), doc("auth", "account_list")];
 const resourcesFixture = {
-  observation: { snapshotId: "snap-1", capturedAt: new Date().toISOString(), ageMs: 400, freshness: "fresh", lastAttemptAt: new Date().toISOString(), error: null,
+  observation: { snapshotId: "snap-1", capturedAt: fixtureAt, ageMs: 400, freshness: "fresh", lastAttemptAt: fixtureAt, error: null,
     source: "darwin_ps", intervalMs: 5_000, staleAfterMs: 14_000, collectionDurationMs: 18,
     coverage: { mode: "owner_tree", observedHostProcesses: 512, ownedProcesses: 3, unreadableProcesses: 0, vanishedDuringCollection: 0, retainedProcesses: 0, excludedCollectorProcesses: 1, domains: [] } },
   host: { platform: "darwin", logicalCpuCount: 8, hostname: "fixture-host", arch: "arm64", release: "24.5.0", cpuModel: "Apple M4", uptimeSeconds: 86_400,
     totalMemoryBytes: 16_000_000_000, freeMemoryBytes: 2_000_000_000, loadAverage: [1.5, 1.2, 1.1] },
   capabilities: { rssBytes: true, virtualBytes: true, cpuTimeMs: true, cpuPercent: true, threads: false,
     diskIoBytes: false, openFileDescriptors: false, networkBytes: false, gpu: false, perSessionAllocation: false },
-  retention: { maxSamples: 120, maxProcessRecords: 50_000, retainedSamples: 1, oldestAttemptAt: new Date().toISOString(), newestAttemptAt: new Date().toISOString(), droppedSamples: 0 },
+  retention: { maxSamples: 120, maxProcessRecords: 50_000, retainedSamples: 1, oldestAttemptAt: fixtureAt, newestAttemptAt: fixtureAt, droppedSamples: 0 },
   runtime: { pid: 123, nodeVersion: process.version, uptimeSeconds: 60, heapUsedBytes: 24_000_000, heapTotalBytes: 40_000_000, externalBytes: 2_000_000, arrayBuffersBytes: 100_000, eventLoopUtilization: null },
   scope: null,
   scopes: [{ id: "total", kind: "total", name: "AgentStack", component: null, botId: null, accountId: null, runtimeInstance: null, provider: null, shared: true,
@@ -43,20 +45,20 @@ const resourcesFixture = {
   page: { offset: 0, limit: 100, total: 1, nextOffset: null },
 };
 const historyFixture = { scopeId: "total", intervalMs: 5_000, truncated: false, retention: resourcesFixture.retention,
-  points: [{ attemptId: "a1", attemptedAt: new Date().toISOString(), snapshotId: "snap-1", capturedAt: new Date().toISOString(), state: "measured", error: null,
+  points: [{ attemptId: "a1", attemptedAt: fixtureAt, snapshotId: "snap-1", capturedAt: fixtureAt, state: "measured", error: null,
     metrics: resourcesFixture.scopes[0].metrics, host: resourcesFixture.host, coverage: resourcesFixture.observation.coverage }] };
 const definitions = {
   owner: [
-    op("owner_status", { pid: 123, startedAt: new Date(Date.now() - 60_000).toISOString(), nodeVersion: process.version, indexUrl: "http://127.0.0.1:1", uixUrl: null, inspectorUrl: null, mcpUrls: { bots: "http://127.0.0.1:2/mcp/bots" },
-      children: [{ name: "api", pid: 124, running: true, exitCode: null, signal: null, error: null, startedAt: new Date(Date.now() - 50_000).toISOString(), exitedAt: null },
-        { name: "fixture-stopped", pid: null, running: false, exitCode: 1, signal: null, error: "Fixture stopped", startedAt: null, exitedAt: new Date(Date.now() - 40_000).toISOString() }] }),
+    op("owner_status", { pid: 123, startedAt: fixtureAt, nodeVersion: process.version, indexUrl: "http://127.0.0.1:1", uixUrl: null, inspectorUrl: null, mcpUrls: { bots: "http://127.0.0.1:2/mcp/bots" },
+      children: [{ name: "api", pid: 124, running: true, exitCode: null, signal: null, error: null, startedAt: fixtureAt, exitedAt: null },
+        { name: "fixture-stopped", pid: null, running: false, exitCode: 1, signal: null, error: "Fixture stopped", startedAt: null, exitedAt: fixtureAt }] }),
     op("owner_resources", resourcesFixture),
     op("owner_resource_history", historyFixture),
   ],
   auth: [op("account_list", { accounts: [{ id: "account-1", enabled: true, removing: false, linkedAccounts: [] }] }), op("account_login_current", { login: null }), op("worker_account_list", { accounts: [] }), op("worker_account_login_current", { logins: [] })],
   bots: [op("bot_list", { bots }), op("bot_defaults_get", bots[0].settings), op("voice_status", { call: null })],
   workers: [op("worker_runtime_list", { runtimes: [] }), op("worker_list", { workers: [] })],
-  usage: [op("usage_snapshot", { atMs: Date.now(), inventoryAtMs: null, inventoryError: null, accounts: [], grokBot: { observedAtMs: null, lastAttemptAtMs: null, fresh: false, error: "not_observed", usage: null } })],
+  usage: [op("usage_snapshot", { atMs: Date.parse(fixtureAt), inventoryAtMs: null, inventoryError: null, accounts: [], grokBot: { observedAtMs: null, lastAttemptAtMs: null, fresh: false, error: "not_observed", usage: null } })],
   api: [op("docs_snapshot", { packages: catalog })],
 };
 let next, browser;
@@ -89,7 +91,7 @@ try {
   await page.getByRole("main", { name: "Open bench" }).waitFor();
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
   assert.deepEqual(await page.locator("[data-window]").evaluateAll((nodes) => nodes.map((node) => node.dataset.window).sort()),
-    ["accounts", "activity", "bots", "host", "model-catalogs", "owner", "packages", "processes", "resources", "sampling", "usage"]);
+    ["accounts", "activity", "bots", "call-speech", "chat", "host", "inference", "model-catalogs", "owner", "packages", "processes", "resources", "role-editor", "role-instructions", "role-preview", "sampling", "usage"]);
   assert.equal(await page.getByRole("button", { name: "Grid", exact: true }).count(), 0);
   const point = () => page.locator('[data-window="bots"]').evaluate((el) => ({ x: el.getBoundingClientRect().x, y: el.getBoundingClientRect().y }));
   const samePoint = (a, b) => { assert.ok(Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) < 1, `${JSON.stringify(a)} != ${JSON.stringify(b)}`); };
@@ -132,7 +134,64 @@ try {
   assert.ok(new URL(page.url()).pathname.endsWith("/x/fleet"));
   await page.getByRole("button", { name: "Inspect bot bot-1", exact: true }).click();
   await page.getByRole("button", { name: /^Spaces/ }).click(); await page.getByRole("menuitem", { name: /^Fleet/ }).click();
+  // Chrome interaction contracts the unpinned inspector; the retained inspection is one press away.
+  await page.getByRole("button", { name: "Return to inspector", exact: true }).click();
   assert.equal(await page.getByRole("heading", { name: "bot-1", exact: true }).count(), 1);
+  await page.getByRole("button", { name: "Close inspector", exact: true }).click();
+
+  // Unpinned by default, the inspector contracts on bench input without dropping the inspection.
+  const benchPoint = () => page.evaluate(() => {
+    for (const y of [940, 500, 200]) for (const x of [60, 1500, 800]) {
+      const el = document.elementFromPoint(x, y);
+      if (el && el.closest('[data-canvas="workbench"]') && !el.closest("[data-window],[data-chrome]")) return { x, y };
+    }
+    return null;
+  });
+  const clickBench = async () => {
+    const spot = await benchPoint();
+    if (spot) await page.mouse.click(spot.x, spot.y);
+    else await page.locator('[data-canvas="workbench"]').dispatchEvent("click");
+  };
+  await page.getByRole("button", { name: "Inspect bot bot-1", exact: true }).click();
+  await page.getByRole("heading", { name: "bot-1", exact: true }).waitFor();
+  await clickBench();
+  await page.locator('[data-dock="right"]').waitFor({ state: "hidden" });
+  assert.equal(new URL(page.url()).searchParams.get("inspect"), "bot:bot-1");
+  await page.getByRole("button", { name: "Return to inspector", exact: true }).click();
+  await page.getByRole("heading", { name: "bot-1", exact: true }).waitFor();
+  // Keyboard input on the bench contracts too; so does wheel panning.
+  await page.locator('[data-canvas="workbench"]').focus();
+  await page.keyboard.press("ArrowDown");
+  await page.locator('[data-dock="right"]').waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: "Return to inspector", exact: true }).click();
+  const wheelSpot = await benchPoint();
+  if (wheelSpot) { await page.mouse.move(wheelSpot.x, wheelSpot.y); await page.mouse.wheel(0, 60); }
+  else await page.locator('[data-canvas="workbench"]').dispatchEvent("wheel");
+  await page.locator('[data-dock="right"]').waitFor({ state: "hidden" });
+  // Interacting inside the inspector — even a control that hands focus to the bench — keeps it open.
+  await page.getByRole("button", { name: "Return to inspector", exact: true }).click();
+  await page.getByRole("button", { name: "Show on bench", exact: true }).click();
+  await page.getByRole("heading", { name: "bot-1", exact: true }).waitFor();
+  // Inspecting another record swaps contents without hiding the dock.
+  await page.getByRole("button", { name: "Inspect bot bot-2", exact: true }).click();
+  await page.getByRole("heading", { name: "bot-2", exact: true }).waitFor();
+  // A contracted record's name re-expands the dock instead of deselecting.
+  await clickBench();
+  await page.locator('[data-dock="right"]').waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: "Inspect bot bot-2", exact: true }).click();
+  await page.getByRole("heading", { name: "bot-2", exact: true }).waitFor();
+  // Pinned, the inspector survives bench interaction — and reloads.
+  await page.getByRole("button", { name: "Pin inspector", exact: true }).click();
+  assert.equal(await page.getByRole("button", { name: "Pin inspector", exact: true }).getAttribute("aria-pressed"), "true");
+  await clickBench();
+  await page.waitForTimeout(300);
+  assert.equal(await page.getByRole("heading", { name: "bot-2", exact: true }).count(), 1);
+  await page.reload();
+  await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
+  await page.waitForFunction(() => document.querySelector('[aria-label="Pin inspector"]')?.getAttribute("aria-pressed") === "true");
+  await page.getByRole("heading", { name: "bot-2", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Pin inspector", exact: true }).click();
+  assert.equal(await page.getByRole("button", { name: "Pin inspector", exact: true }).getAttribute("aria-pressed"), "false");
   await page.getByRole("button", { name: "Close inspector", exact: true }).click();
   const bench = page.getByRole("main", { name: "Open bench" });
   await bench.focus();
@@ -261,7 +320,7 @@ try {
   await page.waitForFunction(() => document.activeElement?.matches('[data-canvas="workbench"]'));
   await expectFront("bots");
   assert.deepEqual(issues, []);
-  console.log("PASS: headless desktop/mobile navigation, joint dock sizing/expanded reading, camera compensation, keyboard resize/Escape/focus return, retained mobile inspection/reference, keyboard/navigation stacking, inspector scroll restoration, schemas, search, history, deep links, manual placement reload; no page errors.");
+  console.log("PASS: headless desktop/mobile navigation, joint dock sizing/expanded reading, camera compensation, keyboard resize/Escape/focus return, retained mobile inspection/reference, keyboard/navigation stacking, inspector scroll restoration, unpinned contraction on click/wheel/key input, re-expand and pin persistence across reload, schemas, search, history, deep links, manual placement reload; no page errors.");
   console.log(`Screenshots: ${evidence}`);
 } catch (error) {
   console.error(output);

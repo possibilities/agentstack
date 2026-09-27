@@ -43,7 +43,7 @@ try {
   roles = await serveApi({ name: "roles", transport: "socket", env, root });
   websocket = await serveWebSocket({ env, root, port: 0 });
   const doc = (name, api) => ({ name, packageName: `@agentstack/${name}`, description: `${name} fixture`, events: api?.events?.topics ?? {}, eventScope: null,
-    transports: [{ type: "websocket", description: "Isolated fixture", supported: true, subscriptions: true, endpoint: websocket.urls[name] }],
+    transports: [{ type: "websocket", description: "Isolated fixture", supported: true, subscriptions: true, endpoint: websocket.url }],
     operations: (api?.operations ?? []).map((operation) => ({ name: operation.name, title: operation.annotations?.title ?? null, description: operation.description,
       annotations: operation.annotations ?? {}, inputSchema: publishedJsonSchema(operation.input), outputSchema: publishedJsonSchema(operation.output) })) });
   const catalog = [doc("roles", rolesApi), doc("bots", botsApi), doc("owner"), doc("api")];

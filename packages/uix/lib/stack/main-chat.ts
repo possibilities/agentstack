@@ -127,7 +127,7 @@ export class MainChatFeed {
     const endpoint = this.store.getState().endpoints.bots;
     if (!endpoint) return this.set({ status: "error", error: "bots WebSocket is not configured" });
     const generation = this.generation;
-    const channel = new Channel(endpoint, {
+    const channel = new Channel(endpoint, "bots", {
       onOpen: () => { if (generation === this.generation) this.snapshot(); },
       onNotice: (topic) => {
         if (generation !== this.generation) return;

@@ -30,7 +30,7 @@ export function websocketEndpoints(catalog: PackageDoc[] | null): Record<string,
   } catch {
     return {};
   }
-  return port === 0 ? {} : Object.fromEntries(knownPackages.map((name) => [name, `ws://127.0.0.1:${port}/websocket/${name}`]));
+  return port === 0 ? {} : Object.fromEntries(knownPackages.map((name) => [name, `ws://127.0.0.1:${port}/websocket`]));
 }
 
 export async function loadSnapshot(): Promise<Snapshot> {

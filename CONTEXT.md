@@ -16,7 +16,7 @@ An explicitly named agent-browser session routed through the internal `browser` 
 
 ## Transport
 
-A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are the local control transports. `mcp` exposes operations over loopback HTTP through the running socket Package APIs and, under the owner, offers generated agent-facing event tools. `websocket` exposes operations and event subscriptions over a shared loopback listener, forwarding to those same socket Package APIs. An optional `http` Transport declares explicit JSON or static routes on separate owner-lifecycle listeners; it does not make other Package API operations remotely available. MCP and WebSocket may select a positive list of operations independently, while existing unrestricted declarations retain all socket operations.
+A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are the local control transports. `mcp` exposes operations over loopback HTTP through the running socket Package APIs and, under the owner, offers generated agent-facing event tools. `websocket` exposes operations and event subscriptions over one shared loopback listener and one package-addressed client connection, forwarding to those same socket Package APIs; each subscription has its own identifier and optional scope. An optional `http` Transport declares explicit JSON or static routes on separate owner-lifecycle listeners; it does not make other Package API operations remotely available. MCP and WebSocket may select a positive list of operations independently, while existing unrestricted declarations retain all socket operations.
 
 _Avoid_: protocol, binding
 

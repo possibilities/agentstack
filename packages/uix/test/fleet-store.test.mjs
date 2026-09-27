@@ -40,26 +40,27 @@ test("Fleet snapshots reconnect, retain failed reads, deduplicate catalogs and p
     static CONNECTING = 0;
     static OPEN = 1;
     readyState = 0;
-    subscription = null;
+    subscriptions = new Map();
     constructor(url) { this.url = url; sockets.add(this); queueMicrotask(() => { this.readyState = 1; this.onopen?.(); }); }
     send(raw) {
       const { id, method, params } = JSON.parse(raw);
-      if (method === "events/subscribe") this.subscription = params;
+      if (method === "events/subscribe") this.subscriptions.set(params.subscription, params);
+      else if (method === "events/unsubscribe") this.subscriptions.delete(params.subscription);
       else calls.push(params);
-      void Promise.resolve().then(() => method === "events/subscribe" ? params : results[params.name](params.arguments))
+      void Promise.resolve().then(() => method.startsWith("events/") ? params : results[params.name](params.arguments))
         .then((result) => this.onmessage?.({ data: JSON.stringify({ id, result }) }), (error) => this.onmessage?.({ data: JSON.stringify({ id, error: { message: error.message } }) }));
     }
     close() { this.readyState = 3; sockets.delete(this); this.onclose?.(); }
   }
   function publish(pkg, topic) {
-    for (const socket of sockets) if (socket.url.endsWith(`/${pkg}`) && socket.subscription?.topics.includes(topic))
-      socket.onmessage?.({ data: JSON.stringify({ method: "events/changed", params: { topic } }) });
+    for (const socket of sockets) for (const subscription of socket.subscriptions.values()) if (subscription.package === pkg && subscription.topics.includes(topic))
+      socket.onmessage?.({ data: JSON.stringify({ method: "events/changed", params: { package: pkg, subscription: subscription.subscription, topic } }) });
   }
   globalThis.WebSocket = Socket;
   const store = new StackStore({ owner: resource(null), resources: resource(null), accounts: resource([]), workerAccounts: resource([]),
     workerRuntimes: resource([]), workerSessions: resource([]), login: resource(null), workerLogins: resource([]),
     bots: resource([]), botDefaults: resource({}), voice: resource(null), catalog: resource([]), usage: resource(null),
-    endpoints: Object.fromEntries(["auth", "workers", "bots", "usage"].map((name) => [name, `ws://localhost/${name}`])) });
+    endpoints: Object.fromEntries(["auth", "workers", "bots", "usage"].map((name) => [name, "ws://localhost/websocket"])) });
   try {
     store.start({ scopedBots: false });
     await until(store, () => store.getState().usage.data && store.getState().workerCatalogs[account.id]?.data && !store.getState().catalogPending[account.id]);
@@ -74,7 +75,8 @@ test("Fleet snapshots reconnect, retain failed reads, deduplicate catalogs and p
     assert.equal(store.getState().usage.data.atMs, 2, "last-good usage survives a transport failure");
     usageError = false;
     usage = { ...usage, atMs: 3 };
-    [...sockets].find((socket) => socket.url.endsWith("/usage")).close();
+    assert.equal(sockets.size, 1, "all package channels share a connection");
+    [...sockets][0].close();
     await until(store, () => store.getState().usage.data.atMs === 3 && store.getState().usage.error === null);
 
     let release;
@@ -89,7 +91,7 @@ test("Fleet snapshots reconnect, retain failed reads, deduplicate catalogs and p
     release({ accountId: account.id, models: [], stale: false });
     await first;
     assert.equal(store.getState().workerCatalogs[account.id], undefined, "a late reply cannot resurrect a disabled catalog");
-    assert.equal(catalogCalls, 2);
+    assert.equal(catalogCalls, 3, "reconnecting the shared socket also resnapshots Worker catalogs");
 
     const readsBefore = calls.filter((call) => call.name === "bot_list").length;
     await assert.rejects(store.call("bots", "bot_start", { account: "bot-account" }), /connection closed/);
@@ -120,13 +122,14 @@ function harness({ accounts = [], bots = [] } = {}) {
     static CONNECTING = 0;
     static OPEN = 1;
     readyState = 0;
-    subscription = null;
+    subscriptions = new Map();
     constructor(url) { this.url = url; sockets.add(this); queueMicrotask(() => { this.readyState = 1; this.onopen?.(); }); }
     send(raw) {
       const { id, method, params } = JSON.parse(raw);
-      if (method === "events/subscribe") this.subscription = params;
+      if (method === "events/subscribe") this.subscriptions.set(params.subscription, params);
+      else if (method === "events/unsubscribe") this.subscriptions.delete(params.subscription);
       else calls.push(params);
-      void Promise.resolve().then(() => method === "events/subscribe" ? params : handlers[params.name](params.arguments))
+      void Promise.resolve().then(() => method.startsWith("events/") ? params : handlers[params.name](params.arguments))
         .then((result) => this.onmessage?.({ data: JSON.stringify({ id, result }) }), (error) => this.onmessage?.({ data: JSON.stringify({ id, error: { message: error.message } }) }));
     }
     close() { this.readyState = 3; sockets.delete(this); this.onclose?.(); }
@@ -135,10 +138,10 @@ function harness({ accounts = [], bots = [] } = {}) {
   const store = new StackStore({ owner: resource(null), resources: resource(null), accounts: resource([]), workerAccounts: resource([]),
     workerRuntimes: resource([]), workerSessions: resource([]), login: resource(null), workerLogins: resource([]),
     bots: resource(bots), botDefaults: resource({}), voice: resource(null), catalog: resource([]), usage: resource(null),
-    endpoints: Object.fromEntries(["auth", "workers", "bots", "usage"].map((name) => [name, `ws://localhost/${name}`])) });
+    endpoints: Object.fromEntries(["auth", "workers", "bots", "usage"].map((name) => [name, "ws://localhost/websocket"])) });
   const publish = (pkg, topic, scope) => {
-    for (const socket of sockets) if (socket.url.endsWith(`/${pkg}`) && socket.subscription?.topics.includes(topic) && (!socket.subscription.scope || socket.subscription.scope === scope))
-      socket.onmessage?.({ data: JSON.stringify({ method: "events/changed", params: { topic } }) });
+    for (const socket of sockets) for (const subscription of socket.subscriptions.values()) if (subscription.package === pkg && subscription.topics.includes(topic) && (!subscription.scope || subscription.scope === scope))
+      socket.onmessage?.({ data: JSON.stringify({ method: "events/changed", params: { package: pkg, subscription: subscription.subscription, topic } }) });
   };
   return { store, sockets, calls, handlers, publish, close() { store.stop(); globalThis.WebSocket = original; } };
 }
@@ -288,16 +291,19 @@ test("per-Bot invalidations survive activity eviction and both kinds of scoped r
     for (let i = 0; i < 260; i++) publish("usage", "usage_changed");
     assert.equal(store.getState().events.some((event) => event.scope === "bot-1"), false);
     assert.equal(store.getState().botInvalidations["bot-1"], initial["bot-1"] + 1, "eviction cannot make a stale result current");
-    const socket = [...sockets].find((item) => item.subscription?.scope === "bot-1");
+    assert.equal(sockets.size, 1, "Bot scopes and package reads use the same connection");
+    const socket = [...sockets][0];
     socket.close();
     assert.equal(store.getState().botInvalidations["bot-1"], initial["bot-1"] + 2, "disconnect immediately invalidates old snapshots");
     await until(store, () => store.getState().scoped["bot-1"]?.status === "open");
-    const reopened = [...sockets].find((item) => item.subscription?.scope === "bot-1");
+    const reopened = [...sockets][0];
     assert.notEqual(reopened, socket);
     const generation = store.getState().botInvalidations["bot-1"];
     assert.ok(generation > initial["bot-1"] + 2);
-    reopened.onmessage({ data: JSON.stringify({ method: "events/disconnected" }) });
+    const otherGeneration = store.getState().botInvalidations["bot-2"];
+    const subscription = [...reopened.subscriptions.values()].find((item) => item.scope === "bot-1");
+    reopened.onmessage({ data: JSON.stringify({ method: "events/disconnected", params: { package: "bots", subscription: subscription.subscription } }) });
     await until(store, () => store.getState().botInvalidations["bot-1"] > generation);
-    assert.equal(store.getState().botInvalidations["bot-2"], initial["bot-2"], "other Bots are unaffected by this scope's reconnect");
+    assert.equal(store.getState().botInvalidations["bot-2"], otherGeneration, "other Bots are unaffected by this scope's reconnect");
   } finally { h.close(); }
 });

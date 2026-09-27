@@ -80,3 +80,21 @@ export function useDockSizes() {
   }, [loaded, sizes]);
   return [sizes, setSizes] as const;
 }
+
+/** The inspector's pin preference: unpinned (the default) contracts on outside interaction. */
+export function useInspectorPin() {
+  const [pinned, setPinned] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("agentstack.uix.inspector.v1") ?? "{}");
+      if (typeof saved.pinned === "boolean") setPinned(saved.pinned);
+    } catch { /* Unavailable storage never blocks the bench. */ }
+    setLoaded(true);
+  }, []);
+  useEffect(() => {
+    if (!loaded) return;
+    try { localStorage.setItem("agentstack.uix.inspector.v1", JSON.stringify({ pinned })); } catch { /* optional persistence */ }
+  }, [loaded, pinned]);
+  return [pinned, setPinned] as const;
+}

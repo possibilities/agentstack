@@ -3,7 +3,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { listPackages, socketPath, websocketPort, workspaceRoot } from "./workspace.js";
 import { socketCall, socketSubscribe, type SocketSubscription } from "./socket.js";
 
-export type ServedWebSocket = { urls: Record<string, string>; close(): Promise<void> };
+export type ServedWebSocket = { url: string; urls: Record<string, string>; close(): Promise<void> };
 
 // Match the socket's bounded JSON allowance for escaped inline content.
 const maxPayload = 4_000_000;
@@ -31,24 +31,23 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
   if (names.size === 0) throw new Error("no Package APIs configure websocket");
 
   const clients = new Set<WebSocket>();
-  const admittedOperations = new WeakMap<WebSocket, readonly string[] | undefined>();
+  const admitted = new WeakMap<WebSocket, { name?: string; operations: Map<string, readonly string[] | undefined> }>();
   const wss = new WebSocketServer({ noServer: true, maxPayload });
   let closing: Promise<void> | undefined;
   wss.on("connection", (client, request) => {
-    const allowedOperations = admittedOperations.get(client);
+    const access = admitted.get(client);
     clients.add(client);
-    const name = /^\/websocket\/([a-z][a-z0-9-]{0,31})$/.exec(request.url ?? "")?.[1];
-    if (!name) { client.terminate(); return; }
+    if (!access) { client.terminate(); return; }
     const controller = new AbortController();
-    let subscription: SocketSubscription | undefined;
-    let subscriptions = Promise.resolve();
+    const subscriptions = new Map<string, { name: string; current?: SocketSubscription; chain: Promise<void>; tasks: number }>();
     let stopped = false;
     const stop = () => {
       if (stopped) return;
       stopped = true;
       clients.delete(client);
       controller.abort();
-      void subscription?.close();
+      for (const entry of subscriptions.values()) void entry.current?.close();
+      subscriptions.clear();
     };
     client.on("close", stop);
     client.on("error", stop);
@@ -66,48 +65,87 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
       const id = message.id ?? null;
       const respond = (result: unknown) => send(client, { id, result });
       const fail = (error: unknown) => send(client, { id, error: { message: error instanceof Error ? error.message : String(error) } });
-      if (message.method === "events/subscribe") {
-        subscriptions = subscriptions.then(async () => {
+      const params = message.params as Record<string, unknown> | undefined;
+      const name = access.name ?? params?.package;
+      if (typeof name !== "string" || !access.operations.has(name)) {
+        fail(new Error(`package ${String(name)} is not available over websocket`));
+        return;
+      }
+      if (message.method === "events/subscribe" || (access.name === undefined && message.method === "events/unsubscribe")) {
+        if (message.method === "events/subscribe" && (!params || !Array.isArray(params.topics) || params.topics.length > 256
+          || (params.scope !== undefined && typeof params.scope !== "string"))) {
+          fail(new Error("invalid event subscription"));
+          return;
+        }
+        const topics = params?.topics as string[];
+        const scope = params?.scope as string | undefined;
+        const key = access.name ?? params?.subscription;
+        if (typeof key !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/.test(key)) {
+          fail(new Error("invalid subscription id"));
+          return;
+        }
+        let entry = subscriptions.get(key);
+        if (entry && entry.name !== name) { fail(new Error("subscription belongs to another package")); return; }
+        if (!entry && message.method === "events/subscribe") {
+          if (subscriptions.size >= 256) { fail(new Error("too many subscriptions")); return; }
+          entry = { name, chain: Promise.resolve(), tasks: 0 };
+          subscriptions.set(key, entry);
+        }
+        if (!entry) { respond({ subscription: key }); return; }
+        // Free the identifier now: a subscribe queued behind this unsubscribe
+        // must create a new entry, not resurrect an entry already being removed.
+        if (message.method === "events/unsubscribe") subscriptions.delete(key);
+        const selected = entry;
+        selected.tasks++;
+        selected.chain = selected.chain.catch(() => undefined).then(async () => {
           if (stopped) return;
-          const params = message.params as { topics?: unknown; scope?: unknown } | undefined;
-          if (!params || !Array.isArray(params.topics) || params.topics.length > 256
-            || (params.scope !== undefined && typeof params.scope !== "string")) {
-            throw new Error("invalid event subscription");
+          if (message.method === "events/unsubscribe") {
+            const previous = selected.current;
+            selected.current = undefined;
+            await previous?.close();
+            respond({ subscription: key });
+            return;
           }
           // The socket may deliver a notice in the same read as its acknowledgement.
           // Keep the WebSocket acknowledgement ahead of those notices.
           let acknowledged = false;
           const pending: string[] = [];
-          const notice = (topic: string) => send(client, { method: "events/changed", params: { topic } });
-          const next = await socketSubscribe(socketPath(name, env), params.topics, (topic) => {
+          const envelope = access.name ? {} : { package: name, subscription: key };
+          const notice = (topic: string) => send(client, { method: "events/changed", params: { ...envelope, topic } });
+          const next = await socketSubscribe(socketPath(name, env), topics, (topic) => {
             if (acknowledged) notice(topic);
             else pending.push(topic);
-          }, { scope: params.scope as string | undefined, signal: controller.signal });
+          }, { scope, signal: controller.signal });
           if (stopped) { await next.close(); return; }
-          const previous = subscription;
-          subscription = next;
+          const previous = selected.current;
+          selected.current = next;
           await previous?.close();
-          respond({ topics: [...next.topics], ...(next.scope === undefined ? {} : { scope: next.scope }) });
+          respond({ ...envelope, topics: [...next.topics], ...(next.scope === undefined ? {} : { scope: next.scope }) });
           acknowledged = true;
           for (const topic of pending) notice(topic);
           void next.closed.then(() => {
-            if (!stopped && subscription === next) {
-              subscription = undefined;
-              send(client, { method: "events/disconnected", params: {} });
+            if (!stopped && selected.current === next) {
+              selected.current = undefined;
+              send(client, { method: "events/disconnected", params: envelope });
             }
           });
-        }).catch(fail);
+        }).catch(fail).finally(() => {
+          selected.tasks--;
+          if (selected.tasks === 0 && !selected.current && subscriptions.get(key) === selected) subscriptions.delete(key);
+        });
       } else if (message.method === "tools/list" || message.method === "tools/call") {
-        const operation = message.method === "tools/call" ? (message.params as { name?: unknown } | undefined)?.name : undefined;
+        const operation = message.method === "tools/call" ? params?.name : undefined;
         const timeoutMs = typeof operation === "string" ? forwardTimeouts.get(`${name}/${operation}`) : undefined;
         void (async () => {
           if (message.method === "tools/call") {
+            const allowedOperations = access.operations.get(name);
             if (typeof operation !== "string" || (allowedOperations && !allowedOperations.includes(operation)))
               throw new Error(`operation ${String(operation)} is not available over websocket`);
             if (message.params && typeof message.params === "object" && "resultFormat" in message.params)
               throw new Error("MCP result presentation is not available over websocket");
           }
           const result = await socketCall(socketPath(name, env), message.method as "tools/list" | "tools/call", message.params, { signal: controller.signal, timeoutMs });
+          const allowedOperations = access.operations.get(name);
           if (message.method === "tools/list" && allowedOperations) {
             const listed = result as { tools: Array<{ name: string }> };
             return { ...listed, tools: listed.tools.filter((tool) => allowedOperations.includes(tool.name)) };
@@ -123,8 +161,9 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
   const http = createServer((_req, res) => res.writeHead(404).end());
   http.on("upgrade", (request, socket, head) => {
     const address = http.address();
-    const name = /^\/websocket\/([a-z][a-z0-9-]{0,31})$/.exec(request.url ?? "")?.[1];
-    if (!name) { socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.destroy(); return; }
+    const path = request.url ?? "";
+    const name = /^\/websocket\/([a-z][a-z0-9-]{0,31})$/.exec(path)?.[1];
+    if (path !== "/websocket" && !name) { socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.destroy(); return; }
     if (!address || typeof address === "string" || ![`127.0.0.1:${address.port}`, `localhost:${address.port}`].includes(request.headers.host ?? "")
       || !originAllowed(request.headers.origin, env.AGENTSTACK_WEBSOCKET_ORIGIN)) {
       socket.write("HTTP/1.1 403 Forbidden\r\n\r\n"); socket.destroy(); return;
@@ -139,11 +178,13 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
         return;
       }
       if (closing || socket.destroyed) { socket.destroy(); return; }
-      const admission = configured.find((item) => item.config.name === name)?.config.websocket;
-      if (!admission) { socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.destroy(); return; }
+      const operations = new Map(configured.filter((item) => item.config.websocket)
+        .map((item) => [item.config.name, item.config.websocket?.operations] as const));
+      if (name && !operations.has(name)) { socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.destroy(); return; }
+      if (!name && operations.size === 0) { socket.write("HTTP/1.1 503 Service Unavailable\r\n\r\n"); socket.destroy(); return; }
       try {
         wss.handleUpgrade(request, socket, head, (client) => {
-          admittedOperations.set(client, admission.operations);
+          admitted.set(client, { name, operations: name ? new Map([[name, operations.get(name)]]) : operations });
           wss.emit("connection", client, request);
         });
       } catch (error) {
@@ -159,6 +200,7 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
   const address = http.address();
   if (!address || typeof address === "string") throw new Error("WebSocket server has no TCP address");
   return {
+    url: `ws://127.0.0.1:${address.port}/websocket`,
     urls: Object.fromEntries([...names].map((name) => [name, `ws://127.0.0.1:${address.port}/websocket/${name}`])),
     close() {
       closing ??= (async () => {
