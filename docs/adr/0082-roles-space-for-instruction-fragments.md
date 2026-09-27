@@ -1,6 +1,6 @@
-# 78. A Roles space for managing instruction fragments
+# 82. A Roles space for managing instruction fragments
 
-Status: accepted, 2026-09-26. Adds a fourth Canvas space to the open bench of
+Status: accepted, 2026-09-26. Adds a fifth Canvas space to the open bench of
 [ADR 0058](0058-open-bench-and-global-tools.md). Gives the single Role of
 [ADR 0030](0030-single-role-package.md) its first editing UI, and extends its
 fragment operations from [ADR 0027](0027-default-capabilities-bundle.md). Role
@@ -10,10 +10,11 @@ remain API-only for now.
 
 ## Decision
 
-**Roles** (`/x/roles`, key 4) is where people manage the Role. Its first scope is
+**Roles** (`/x/roles`, key 5) is where people manage the Role. Its first scope is
 the instruction system: Categories and Fragments, their order, enabled states,
-human-only titles and descriptions, and the text Bots receive. Four spaces now
-pack as a square. The space has three windows:
+human-only titles and descriptions, and the text Bots receive. It joins Fleet,
+Accounts, Lab and System ([ADR 0079](0079-system-space.md)) in the shared packing.
+The space has three windows:
 
 - **Instructions** (`role-instructions`) outlines categories and their fragments
   in render order. Each row shows why it does or does not render (off, empty, or

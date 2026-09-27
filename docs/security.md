@@ -35,7 +35,7 @@ account's Codex allowance. `infer` has a WebSocket but no MCP Transport, so Bots
 cannot reach it ([ADR 0074](adr/0074-lab-inference-over-websocket.md)). Its
 request ledger, `<state>/infer/traces.sqlite` (mode `0600`), keeps each request's
 instructions, input and output for every local caller of `infer_request_get`, but
-never credentials ([ADR 0076](adr/0076-infer-request-ledger-api.md)). The UI
+never credentials ([ADR 0081](adr/0081-infer-request-ledger-api.md)). The UI
 shares the local-user trust boundary and is not an authentication boundary.
 
 ## Research and device sharing

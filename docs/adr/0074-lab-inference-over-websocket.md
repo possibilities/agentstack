@@ -2,7 +2,7 @@
 
 Status: accepted, 2026-09-26. Amends [ADR 0052](0052-private-experimental-inference.md)'s
 socket-only Transport. The window's page-local runs and long WebSocket calls are
-superseded by [ADR 0076](0076-infer-request-ledger-api.md). Adds a second experiment to the Lab space of
+superseded by [ADR 0081](0081-infer-request-ledger-api.md). Adds a second experiment to the Lab space of
 [ADR 0073](0073-lab-space-and-call-speech.md).
 
 ## Decision

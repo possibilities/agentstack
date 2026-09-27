@@ -4,17 +4,19 @@ The UI entry `/` redirects to `/x`, one continuous bench. Fleet is its initial C
 reference is a global tool attached to the viewport, so opening it does not
 navigate away from the current composition. System is a fourth space; see
 [ADR 0058](adr/0058-open-bench-and-global-tools.md) and
-[ADR 0077](adr/0077-system-space.md).
+[ADR 0079](adr/0079-system-space.md).
 
-Fleet retains the Usage and Models windows, Bot lifecycle controls and
-full Bot tools dialog from [ADR 0056](adr/0056-fleet-usage-catalogs-and-bot-controls.md).
+Fleet retains Bot lifecycle controls and the full Bot tools dialog from
+[ADR 0056](adr/0056-fleet-usage-catalogs-and-bot-controls.md), alongside main-thread
+Chat windows ([ADR 0080](adr/0080-fleet-chat-windows.md)). Usage and Models live
+in Accounts ([ADR 0069](adr/0069-accounts-space.md)).
 One mounted Bot actions provider retains forms and upload state alongside the
 store, auth and voice providers. The former index's process and local URL details
 live in the System space; MCP Inspector is linked only while its child is running
 ([ADR 0057](adr/0057-canvas-as-ui-home.md)).
 
-Roles (`/x/roles`) manages the Role's instruction Categories and Fragments
-([ADR 0078](adr/0078-roles-space-for-instruction-fragments.md)). One mounted Role
+Roles (`/x/roles`, shortcut 5) is the fifth space and manages the Role's instruction Categories and Fragments
+([ADR 0082](adr/0082-roles-space-for-instruction-fragments.md)). One mounted Role
 actions provider owns the editor's target, page-local text drafts and
 revision-checked writes, so the Instructions, Editor and Preview windows, the
 inspector and the palette all edit through it.
@@ -43,8 +45,9 @@ Keep window implementation separate from bench layout:
    discriminated destination with `kind: "space"` or `kind: "reference"`;
    only the first has a space/window.
 4. Read live data through the shared store; subscribe and snapshot according to
-   the Package API's invalidation contract. Window mounting must not own a
-   separate long-lived connection or call.
+   the Package API's invalidation contract. Chat windows use a shared per-Bot
+   feed for high-frequency transcript notices (ADR 0080), not a connection per
+   window. Window mounting must not own a separate long-lived connection or call.
 5. Use `goTo` for deliberate navigation and `select` for explicit inspection.
    A card's visible name is its inspection control. Actions and form inputs do
    not pan or inspect as a side effect.

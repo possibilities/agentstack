@@ -1,4 +1,4 @@
-# 76. Fleet chat windows follow each Bot's main thread
+# 80. Fleet chat windows follow each Bot's main thread
 
 Status: accepted, 2026-09-26. Adds windows to the Fleet space of the open bench
 ([ADR 0058](0058-open-bench-and-global-tools.md)) and extends the Bots API's

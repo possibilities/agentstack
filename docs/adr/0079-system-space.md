@@ -1,4 +1,4 @@
-# 77. System becomes a fourth space, showing owner resources
+# 79. System becomes a fourth space, showing owner resources
 
 Status: accepted, 2026-09-26. Supersedes the left System dock of
 [ADR 0058](0058-open-bench-and-global-tools.md) and the System toggle of

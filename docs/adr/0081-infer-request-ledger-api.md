@@ -1,4 +1,4 @@
-# 76. The inference request ledger as API, with asynchronous admission
+# 81. The inference request ledger as API, with asynchronous admission
 
 Status: accepted, 2026-09-26. Extends the durable dispatch records of
 [ADR 0075](0075-headless-conversation-attention.md) and amends
