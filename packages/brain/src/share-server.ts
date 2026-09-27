@@ -111,10 +111,40 @@ export const shareAdmit = operation({
   },
 });
 
+const shareRequestBody = z.looseObject({
+  version: z.literal(SHARE_CONTRACT_VERSION).nullish().describe("Defaults to version 1; other versions are rejected."),
+  client: z.enum(["chrome-extension", "android-share"]),
+  url: z.string().max(4_096).nullish().describe("Optional HTTP(S) URL. Supply url or text; url takes precedence."),
+  text: z.string().max(100_000).nullish().describe("Optional free text; the first embedded URL is extracted when url is absent."),
+  title: z.string().max(500).nullish(),
+  tags: z.array(z.string()).max(32).nullish(),
+  collections: z.array(z.string()).max(32).nullish().describe("Defaults to saved-links if omitted or empty."),
+  idempotency_key: z.string().max(200).nullish().describe("Optional client key; replay of the same intent returns duplicate."),
+}).describe("JSON body, at most 1 MiB. Supply at least one non-empty url or text; strings are trimmed and tags normalized.");
+
+const shareQuery = z.looseObject({
+  job_ids: z.string().optional().describe(`Comma-separated positive job IDs (at most ${SHARE_MAX_STATE_IDS}, deduplicated); omitted means an empty answer.`),
+});
+
+const shareMeta = z.object({ db_path: z.string(), read_only: z.literal(false), generated_at: z.string() });
+const shareSuccess = (command: string, data: z.ZodType) => z.object({
+  schema_version: z.literal(1), ok: z.literal(true), command: z.literal(command), data, meta: shareMeta,
+});
+const shareError = (command: string) => z.object({
+  schema_version: z.literal(1), ok: z.literal(false), command: z.literal(command),
+  error: z.object({ code: z.string(), message: z.string(), recovery: z.string().optional() }),
+});
+
 export const shareRoutes = [
-  { method: "GET", path: "/v1/health", operation: shareHealth },
-  { method: "GET", path: "/v1/shares", operation: shareStates },
-  { method: "POST", path: "/v1/share", operation: shareAdmit },
+  { method: "GET", path: "/v1/health", description: "Authenticated ingress health and contract version.",
+    format: "application/json", operation: shareHealth,
+    response: shareSuccess("share /v1/health", shareHealth.output), error: shareError("share /v1/health") },
+  { method: "GET", path: "/v1/shares", description: "Read bounded job states; IDs are not bound to a specific client.",
+    format: "application/json", operation: shareStates, query: shareQuery,
+    response: shareSuccess("share /v1/shares", shareStates.output), error: shareError("share /v1/shares") },
+  { method: "POST", path: "/v1/share", description: "Admit one device share durably; a duplicate is also HTTP 200. Admission is not indexing completion.",
+    format: "application/json", operation: shareAdmit, request: shareRequestBody,
+    response: shareSuccess("share /v1/share", shareAdmit.output), error: shareError("share /v1/share") },
 ] as const;
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };

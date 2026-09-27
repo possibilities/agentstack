@@ -17,8 +17,10 @@ const transportDocSchema = z.object({
   subscriptions: z.boolean().describe("The transport delivers event change notices."),
   endpoint: z.string().nullable().describe("Socket path or HTTP URL when the transport has a fixed address."),
   operations: z.array(z.string()).describe("Operations available through this transport; HTTP uses explicit routes instead."),
-  routes: z.array(z.object({ surface: z.string(), kind: z.enum(["json", "static"]), method: z.string(), path: z.string(), operation: z.string().nullable(),
-    inputSchema: jsonSchemaRecord.nullable(), outputSchema: jsonSchemaRecord.nullable() }))
+  routes: z.array(z.object({ surface: z.string(), surfaceDescription: z.string(), kind: z.enum(["json", "static"]), authentication: z.enum(["bearer", "none"]),
+    method: z.string(), path: z.string(), description: z.string(), format: z.string(), operation: z.string().nullable(),
+    inputSchema: jsonSchemaRecord.nullable(), querySchema: jsonSchemaRecord.nullable(),
+    outputSchema: jsonSchemaRecord.nullable(), errorSchema: jsonSchemaRecord.nullable() }))
     .describe("Explicit HTTP routes, including static paths and HTTP-only typed operations."),
 });
 

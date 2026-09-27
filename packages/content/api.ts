@@ -269,18 +269,21 @@ export function contentNetworkConfig(env: NodeJS.ProcessEnv): { host: string; do
 }
 
 const documentRoutes = [
-  { method: "GET/HEAD", path: "/" }, { method: "GET/HEAD", path: "/d/*" },
-  { method: "GET/HEAD", path: "/a/*" }, { method: "GET/HEAD", path: "/c/*" },
+  { method: "GET/HEAD", path: "/", format: "text/html; charset=utf-8", description: "List rendered vault documents." },
+  { method: "GET/HEAD", path: "/d/*", format: "text/html; charset=utf-8", description: "Render a vault document by slug." },
+  { method: "GET/HEAD", path: "/a/*", format: "302 redirect", description: "Redirect a cited artifact path to the separate artifact origin." },
+  { method: "GET/HEAD", path: "/c/*", format: "302 redirect", description: "Redirect a collection item path to the separate artifact origin." },
 ] as const;
 const artifactRoutes = [
-  { method: "GET/HEAD", path: "/a/*" }, { method: "GET/HEAD", path: "/c/*" },
-  { method: "GET/HEAD", path: "/" },
+  { method: "GET/HEAD", path: "/a/*", format: "artifact media type", description: "Serve published artifact bytes or a static site at its versioned or latest path." },
+  { method: "GET/HEAD", path: "/c/*", format: "item media type", description: "Serve a content item by stable ID; legacy collection paths redirect." },
+  { method: "GET/HEAD", path: "/", format: "302 redirect", description: "Redirect to the document origin." },
 ] as const;
 
 export const api: PackageApi<ContentContext> = {
   http: [
-    { name: "documents", kind: "static", routes: documentRoutes },
-    { name: "artifacts", kind: "static", routes: artifactRoutes },
+    { name: "documents", kind: "static", authentication: "none", description: "Read-only rendered documents; a separate origin keeps published scripts isolated.", routes: documentRoutes },
+    { name: "artifacts", kind: "static", authentication: "none", description: "Read-only published bytes and collection items on the artifact origin.", routes: artifactRoutes },
   ],
   operations: [
     operation({

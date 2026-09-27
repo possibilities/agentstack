@@ -13,7 +13,12 @@ export type CatalogTransport = {
   subscriptions: boolean;
   endpoint: string | null;
   operations: string[];
-  routes: Array<{ surface: string; kind: "json" | "static"; method: string; path: string; operation: string | null; inputSchema: Record<string, unknown> | null; outputSchema: Record<string, unknown> | null }>;
+  routes: Array<{
+    surface: string; surfaceDescription: string; kind: "json" | "static"; authentication: "bearer" | "none";
+    method: string; path: string; description: string; format: string; operation: string | null;
+    inputSchema: Record<string, unknown> | null; querySchema: Record<string, unknown> | null;
+    outputSchema: Record<string, unknown> | null; errorSchema: Record<string, unknown> | null;
+  }>;
 };
 
 export type CatalogOperation = {
@@ -75,9 +80,13 @@ export async function loadCatalog(env: NodeJS.ProcessEnv = process.env, from = i
           return {
             type: "http", description: transport.description, supported: true, subscriptions: false, endpoint: null,
             operations: [], routes: api.http.flatMap((surface) => surface.routes.map((route) => ({
-              surface: surface.name, kind: surface.kind, method: route.method, path: route.path, operation: route.operation?.name ?? null,
-              inputSchema: route.operation ? publishedJsonSchema(route.operation.input) : null,
-              outputSchema: route.operation ? publishedJsonSchema(route.operation.output) : null,
+              surface: surface.name, surfaceDescription: surface.description, kind: surface.kind, authentication: surface.authentication,
+              method: route.method, path: route.path, description: route.description, format: route.format,
+              operation: route.operation?.name ?? null,
+              inputSchema: route.request ? publishedJsonSchema(route.request) : null,
+              querySchema: route.query ? publishedJsonSchema(route.query) : null,
+              outputSchema: route.response ? publishedJsonSchema(route.response) : null,
+              errorSchema: route.error ? publishedJsonSchema(route.error) : null,
             }))),
           };
         }

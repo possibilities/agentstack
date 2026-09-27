@@ -50,7 +50,20 @@ export type PackageApi<Ctx, Topic extends string = string> = {
   http?: readonly {
     name: string;
     kind: "json" | "static";
-    routes: readonly { method: string; path: string; operation?: AnyOperation<any> }[];
+    authentication: "bearer" | "none";
+    description: string;
+    routes: readonly {
+      method: string;
+      path: string;
+      description: string;
+      format: string;
+      operation?: AnyOperation<any>;
+      /** HTTP wire schemas, not the operation's normalized internal schemas. */
+      request?: z.ZodType;
+      query?: z.ZodType;
+      response?: z.ZodType;
+      error?: z.ZodType;
+    }[];
   }[];
   createContext(env: NodeJS.ProcessEnv): Promise<Ctx>;
   /**

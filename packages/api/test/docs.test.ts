@@ -7,7 +7,10 @@ import test from "node:test";
 import { docsSnapshot, serveApi, socketCall } from "../src/index.js";
 
 type TransportDoc = { type: string; description: string; supported: boolean; subscriptions: boolean; endpoint: string | null;
-  operations: string[]; routes: Array<{ surface: string; kind: "json" | "static"; method: string; path: string; operation: string | null; inputSchema: Record<string, unknown> | null; outputSchema: Record<string, unknown> | null }> };
+  operations: string[]; routes: Array<{ surface: string; surfaceDescription: string; kind: "json" | "static"; authentication: "bearer" | "none";
+    method: string; path: string; description: string; format: string; operation: string | null;
+    inputSchema: Record<string, unknown> | null; querySchema: Record<string, unknown> | null;
+    outputSchema: Record<string, unknown> | null; errorSchema: Record<string, unknown> | null }> };
 type OperationDoc = { name: string; title: string | null; description: string; annotations: Record<string, unknown>; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown> };
 type PackageDoc = { name: string; description: string; packageName: string; operations: OperationDoc[]; events: Record<string, string>; eventScope: { description: string; example: string; required: boolean } | null; transports: TransportDoc[] };
 
@@ -56,10 +59,21 @@ test("the api package serves structured documents for every workspace package", 
       ["share", "json", "GET", "/v1/health", "share_health"], ["share", "json", "GET", "/v1/shares", "share_states"],
       ["share", "json", "POST", "/v1/share", "share_admit"],
     ]);
-    assert.ok(brainHttp.routes.every((route) => route.inputSchema && route.outputSchema));
+    assert.ok(brainHttp.routes.every((route) => route.authentication === "bearer" && route.format === "application/json" && route.outputSchema && route.errorSchema));
+    const admitRoute = brainHttp.routes.find((route) => route.operation === "share_admit")!;
+    assert.deepEqual(admitRoute.inputSchema?.required, ["client"]);
+    assert.ok(admitRoute.inputSchema?.properties && "idempotency_key" in (admitRoute.inputSchema.properties as object));
+    assert.ok(!("idempotencyKey" in (admitRoute.inputSchema?.properties as object)));
+    assert.ok(admitRoute.outputSchema?.properties && "meta" in (admitRoute.outputSchema.properties as object));
+    assert.ok(admitRoute.outputSchema?.properties && "data" in (admitRoute.outputSchema.properties as object));
+    assert.ok(admitRoute.errorSchema?.properties && "error" in (admitRoute.errorSchema.properties as object));
+    const statesRoute = brainHttp.routes.find((route) => route.operation === "share_states")!;
+    assert.ok(statesRoute.querySchema?.properties && "job_ids" in (statesRoute.querySchema.properties as object));
+    assert.equal(statesRoute.inputSchema, null, "GET has no JSON request body");
+    assert.equal(brainHttp.routes.find((route) => route.operation === "share_health")!.inputSchema, null);
     assert.ok(!found.get("brain")!.operations.some((operation) => operation.name === "share_admit"));
     const contentHttp = found.get("content")!.transports.find((transport) => transport.type === "http")!;
-    assert.ok(contentHttp.routes.some((route) => route.surface === "artifacts" && route.path === "/a/*" && route.operation === null));
+    assert.ok(contentHttp.routes.some((route) => route.surface === "artifacts" && route.path === "/a/*" && route.operation === null && route.format === "artifact media type" && route.authentication === "none" && route.outputSchema === null));
 
     const bots = found.get("bots") as PackageDoc;
     assert.deepEqual(Object.keys(bots.events).sort(), ["bots_changed", "chat_queue_changed", "chats_changed", "defaults_changed", "threads_changed", "voice_changed"]);

@@ -181,7 +181,8 @@ export async function closeBrainContext(ctx: BrainContext): Promise<void> {
 }
 
 export const api: PackageApi<BrainContext> = {
-  http: [{ name: "share", kind: "json", routes: shareRoutes }],
+  http: [{ name: "share", kind: "json", authentication: "bearer",
+    description: "Versioned device ingress; all data routes require Authorization: Bearer <token>. OPTIONS preflight is unauthenticated.", routes: shareRoutes }],
   operations: [
     operation({
       name: "brain_status", description: "Read isolated Brain state paths, share ingress address, and ingestion worker health. The token is never returned by this read-only operation.",

@@ -8,7 +8,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/in
 import { Separator } from "@/components/ui/separator";
 import { annotationBadges, operationTitle, typeLabel } from "@/lib/stack/catalog";
 import { emptyLocation, locationHref, type ReferenceTarget } from "@/lib/stack/navigation";
-import { requestExample, subscriptionExample, transportInstructions } from "@/lib/stack/reference";
+import { inputTemplate, requestExample, subscriptionExample, transportInstructions } from "@/lib/stack/reference";
 import { nodeKey, type JsonSchema, type NodeRef, type OperationDoc, type PackageDoc, type TransportDoc } from "@/lib/stack/types";
 import { CopyButton, Time } from "./primitives";
 import { useStack, useWorkbench } from "./provider";
@@ -58,8 +58,37 @@ function Transport({ transport }: { transport: TransportDoc }) {
   return <div className="group/row flex min-w-0 flex-col gap-1 border-l pl-3">
     <div className="flex flex-wrap items-center gap-2"><h4 className="font-mono text-sm font-medium">{transport.type}</h4><Badge variant={transport.supported ? "secondary" : "outline"}>{transport.supported ? "supported" : "unsupported"}</Badge>{transport.subscriptions ? <Badge variant="outline">subscriptions</Badge> : null}</div>
     <p className="text-xs leading-relaxed text-muted-foreground">{transport.description}</p>
+    {transport.type !== "http" ? <p className="text-xs text-muted-foreground">{transport.operations?.length ?? "All"} control operations{transport.operations?.length === 0 ? " selected" : " available"}.</p> : <p className="text-xs text-muted-foreground">Only the routes below are served; local control operations are not exposed through HTTP.</p>}
     {transport.endpoint ? <div className="flex items-start gap-2"><code className="min-w-0 break-all text-xs">{transport.endpoint}</code><CopyButton value={transport.endpoint} label={`${transport.type} endpoint`} className="shrink-0 opacity-100" /></div> : <p className="text-xs text-muted-foreground">No endpoint advertised.</p>}
   </div>;
+}
+
+function HttpRoutes({ transport }: { transport: TransportDoc }) {
+  const routes = transport.routes ?? [];
+  const surfaces = [...new Set(routes.map((route) => route.surface))];
+  return <section className="flex min-w-0 flex-col gap-4" aria-label="HTTP routes">
+    <h4 className="text-sm font-semibold">HTTP routes and wire formats</h4>
+    <p className="text-xs leading-relaxed text-muted-foreground">Routes are declared, not a live listener check. The Package API owns access policy; HTTP does not inherit socket operations or authentication.</p>
+    {surfaces.map((surface) => {
+      const selected = routes.filter((route) => route.surface === surface);
+      const first = selected[0]!;
+      return <div key={surface} className="flex min-w-0 flex-col gap-3 border-l pl-3">
+        <div className="flex flex-wrap items-center gap-2"><h5 className="font-mono text-sm font-medium">{surface}</h5><Badge variant="outline">{first.kind}</Badge><Badge variant="outline">{first.authentication === "bearer" ? "Bearer token required" : "No authentication"}</Badge></div>
+        <p className="text-xs leading-relaxed text-muted-foreground">{first.surfaceDescription}</p>
+        {selected.map((route) => <details key={`${route.method}:${route.path}`} className="min-w-0 rounded-lg border p-3">
+          <summary className="cursor-pointer rounded-sm font-mono text-xs font-medium focus-visible:outline-2 focus-visible:outline-ring">{route.method} {route.path}</summary>
+          <div className="flex min-w-0 flex-col gap-4 pt-3">
+            <p className="text-xs leading-relaxed text-muted-foreground">{route.description}</p>
+            <p className="text-xs text-muted-foreground">Response format: <code>{route.format}</code>{route.operation ? <> · HTTP-only operation: <code>{route.operation}</code></> : null}</p>
+            {route.querySchema ? <Schema title="Query parameters" schema={route.querySchema} /> : null}
+            {route.inputSchema ? <><Schema title="HTTP request body" schema={route.inputSchema} /><p className="text-xs text-muted-foreground">Required fields only; placeholders are not valid values.</p><Code value={inputTemplate(route.inputSchema)} label={`${route.method} ${route.path} JSON body template`} /></> : null}
+            {route.outputSchema ? <Schema title="HTTP success response" schema={route.outputSchema} /> : null}
+            {route.errorSchema ? <Schema title="HTTP error response" schema={route.errorSchema} /> : null}
+          </div>
+        </details>)}
+      </div>;
+    })}
+  </section>;
 }
 
 function Operation({ doc, operation }: { doc: PackageDoc; operation: OperationDoc }) {
@@ -85,6 +114,7 @@ function Package({ doc }: { doc: PackageDoc }) {
     <header className="flex flex-col gap-2"><p className="break-all font-mono text-xs text-muted-foreground">{doc.packageName}</p><h3 className="text-2xl font-semibold tracking-tight">{doc.name}</h3><p className="text-sm leading-relaxed text-muted-foreground">{doc.description}</p><p className="text-xs text-muted-foreground">{doc.operations.length} operations · {Object.keys(doc.events).length} events</p></header>
     <section className="flex flex-col gap-3"><h4 className="text-sm font-semibold">Transports</h4>{doc.transports.map((transport) => <Transport key={transport.type} transport={transport} />)}{!doc.transports.length ? <p className="text-xs text-muted-foreground">No transports configured.</p> : null}</section>
     <Separator />
+    {doc.transports.filter((transport) => transport.type === "http" && transport.routes?.length).map((transport) => <div key={transport.type} className="flex min-w-0 flex-col gap-6"><HttpRoutes transport={transport} /><Separator /></div>)}
     <section className="flex min-w-0 flex-col gap-3"><h4 className="text-sm font-semibold">Events and subscriptions</h4><p className="text-xs leading-relaxed text-muted-foreground">Notices carry a topic only; re-read state after (re)subscribing. Counts are this session’s.</p>
       {Object.entries(doc.events).map(([topic, description]) => <div key={topic} className="flex flex-col gap-1 border-l pl-3"><div className="flex items-baseline justify-between gap-2"><code className="break-all text-xs">{topic}</code><span className="text-xs text-muted-foreground tabular-nums">{events.filter((event) => event.pkg === doc.name && event.topic === topic).length} notices</span></div><p className="text-xs leading-relaxed text-muted-foreground">{description}</p></div>)}
       {!Object.keys(doc.events).length ? <p className="text-xs text-muted-foreground">No declared events.</p> : null}
@@ -119,7 +149,7 @@ export function Reference({ target, onOverview, onClose, hasInspection, expanded
   const name = target === "overview" ? null : target.kind === "package" ? target.id : target.pkg;
   const doc = docs.find((d) => d.name === name);
   const operation = target !== "overview" && target.kind === "operation" ? doc?.operations.find((op) => op.name === target.id) : null;
-  const matches = docs.map((d) => ({ doc: d, packageMatch: `${d.name} ${d.packageName} ${d.description}`.toLowerCase().includes(search), operations: d.operations.filter((op) => `${d.name} ${op.name} ${operationTitle(op)} ${op.description}`.toLowerCase().includes(search)) })).filter((d) => d.packageMatch || d.operations.length);
+  const matches = docs.map((d) => ({ doc: d, packageMatch: `${d.name} ${d.packageName} ${d.description} ${d.transports.flatMap((transport) => transport.routes?.map((route) => `${route.surface} ${route.method} ${route.path} ${route.operation ?? ""} ${route.description}`) ?? []).join(" ")}`.toLowerCase().includes(search), operations: d.operations.filter((op) => `${d.name} ${op.name} ${operationTitle(op)} ${op.description}`.toLowerCase().includes(search)) })).filter((d) => d.packageMatch || d.operations.length);
   return <div className="flex min-h-0 flex-1 flex-col" data-reference>
     <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
       <BookOpenIcon aria-hidden className="size-4 shrink-0 text-pkg-api" />
