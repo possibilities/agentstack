@@ -1,9 +1,8 @@
-import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { socketCall, socketPath } from "@agentstack/api";
 import { brainEnvironment, brainStateRoot } from "./paths.js";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { findExecutable } from "./executable.js";
 
 /**
  * Operator notification.
@@ -11,56 +10,35 @@ import { findExecutable } from "./executable.js";
  * AgentStack Brain acknowledges a submission at Admission, long before extraction and
  * indexing decide whether it succeeded. When a job reaches a stranded terminal
  * state there is no request left to fail and no reader watching the ledger, so
- * the ingress that accepted the link owes the operator an out-of-band signal.
+ * the ingress that accepted the link records a durable notification.
  *
  * Delivery is best-effort by design: the ingestion outcome is the product and a
- * notification only carries it. A missing notifier is never an error.
+ * notification only carries it. An unavailable notify Package API is never an
+ * ingestion error.
  */
 
-export interface NotifySignal {
+interface NotifySignal {
+  id: string;
   title: string;
   message: string;
-  group?: string;
-  /** Command to run in a terminal when the notification is clicked. */
-  terminal?: string;
+  source: string;
 }
 
-const DOCTOR_NOTIFY_GROUP = "io.arthack.agentstack.brain.doctor";
+const DOCTOR_SOURCE = "agentstack.brain.doctor";
 
 export function defaultNotifyStatePath(home?: string): string {
   return join(brainStateRoot(brainEnvironment(), home), "doctor-notify.json");
 }
 
-/**
- * Post a notification through terminal-notifier.
- *
- * -ignoreDnD gets the signal through do-not-disturb, and -execute carries the
- * click-through command so the notification is actionable rather than only
- * informative. Returns the notifier used, or null when it is not installed.
- */
-export function notifyOperator(signal: NotifySignal): string | null {
-  const notifier = findExecutable("terminal-notifier");
-  if (notifier === null) return null;
-  const args = [
-    "-title",
-    signal.title,
-    "-message",
-    signal.message,
-    "-ignoreDnD",
-  ];
-  if (signal.group !== undefined) args.push("-group", signal.group);
-  if (signal.terminal !== undefined) args.push("-execute", signal.terminal);
-  runQuietly(notifier, args);
-  return notifier;
+function noticeId(path: string, previous: NotifyState | null, stranded: number): string {
+  // A lost socket response may follow a committed send. Derive the same UUID
+  // until the baseline advances, then use a new ID for the next increase.
+  const hex = createHash("sha256").update(JSON.stringify([path, previous?.notified_at ?? null, stranded])).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
-function runQuietly(command: string, args: string[]): void {
-  try {
-    spawnSync(command, args, { stdio: "ignore", timeout: 10_000 });
-  } catch {
-    // The caller's outcome is the product; a notification only carries it.
-  }
-}
+const sendNotice = (signal: NotifySignal): Promise<unknown> =>
+  socketCall(socketPath("notify", brainEnvironment()), "tools/call", { name: "notification_send", arguments: signal }, { timeoutMs: 3_000 });
 
 interface NotifyState {
   stranded: number;
@@ -95,7 +73,7 @@ function writeState(path: string, state: NotifyState): void {
 
 export interface StrandedNotifyResult {
   notified: boolean;
-  reason: "unchanged" | "increased" | "cleared" | "no_notifier";
+  reason: "unchanged" | "increased" | "cleared" | "notify_unavailable";
   stranded: number;
   previous: number | null;
 }
@@ -109,10 +87,10 @@ export interface StrandedNotifyResult {
  * not. Recovery to zero resets the baseline silently so the next failure
  * notifies again.
  */
-export function notifyStranded(
+export async function notifyStranded(
   stranded: number,
-  options: { statePath?: string; now?: Date } = {},
-): StrandedNotifyResult {
+  options: { statePath?: string; now?: Date; send?: (signal: NotifySignal) => Promise<unknown> } = {},
+): Promise<StrandedNotifyResult> {
   const path = options.statePath ?? defaultNotifyStatePath();
   const now = options.now ?? new Date();
   const previousState = readState(path);
@@ -127,20 +105,18 @@ export function notifyStranded(
   if (previous !== null && stranded <= previous)
     return { notified: false, reason: "unchanged", stranded, previous };
 
-  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-  const command = `${quote(process.execPath)} ${quote(fileURLToPath(new URL("./cli.js", import.meta.url)))} --db ${quote(join(brainStateRoot(), "research.db"))}`;
-  const delivered = notifyOperator({
-    title: "AgentStack Brain ingestion stranded",
-    message:
-      stranded === 1
-        ? "1 submitted link never became searchable."
-        : `${stranded} submitted links never became searchable.`,
-    group: DOCTOR_NOTIFY_GROUP,
-    terminal:
-      `${command} jobs list --state blocked; ${command} jobs list --state failed`,
-  });
-  if (delivered === null)
-    return { notified: false, reason: "no_notifier", stranded, previous };
+  const id = noticeId(path, previousState, stranded);
+  try {
+    const result = await (options.send ?? sendNotice)({
+      id,
+      title: "AgentStack Brain ingestion stranded",
+      message: stranded === 1 ? "1 submitted link never became searchable." : `${stranded} submitted links never became searchable.`,
+      source: DOCTOR_SOURCE,
+    });
+    if (!result || typeof result !== "object" || (result as { id?: unknown }).id !== id) throw new Error("notify did not confirm the notification ID");
+  } catch {
+    return { notified: false, reason: "notify_unavailable", stranded, previous };
+  }
 
   writeState(path, { stranded, notified_at: now.toISOString() });
   return { notified: true, reason: "increased", stranded, previous };

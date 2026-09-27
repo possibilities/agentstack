@@ -1511,7 +1511,8 @@ command can make. Pass it only when the body is genuinely required.`,
       guidance: `The checks themselves use a structurally read-only connection and never
 mutate the ledger; triage stays an explicit operator act. This command
 declares mutates: true only because --notify writes notification state and
-posts through terminal-notifier. Without --notify it changes nothing.
+sends a durable record to the local notify Package API. It does not display a
+banner or attach a click action. Without --notify it changes nothing.
 
 Reports safe status and count data for SQLite integrity, schema, Artifact
 references, leases, stranded ingestion, Agentscrape availability, and the
@@ -1535,7 +1536,7 @@ question is not a defect.`,
           name: "--notify",
           type: "boolean",
           description:
-            'Post an operator notification when the stranded count rises above the last notified value, and report what it did under "notification". A steady backlog stays silent and a missing notifier is not an error.',
+            'Persist an internal notification when the stranded count rises above the last notified value, and report what it did under "notification". A steady backlog stays silent and an unavailable notify Package API is not an ingestion error.',
           default: false,
         },
       ],
