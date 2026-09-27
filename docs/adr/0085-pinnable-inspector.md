@@ -1,4 +1,4 @@
-# 83. Pinnable inspector dock
+# 85. Pinnable inspector dock
 
 Status: accepted, 2026-09-26. Refines [ADR 0045](0045-canvas-links-and-inspector-sheet.md) and [ADR 0058](0058-open-bench-and-global-tools.md).
 
