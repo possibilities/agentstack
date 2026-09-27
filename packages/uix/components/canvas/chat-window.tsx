@@ -10,6 +10,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { primaryChat } from "@/lib/stack/chat-windows";
 import { shortId } from "@/lib/stack/derive";
 import { holdMainChat, type MainChatFeed, type MainChatView } from "@/lib/stack/main-chat";
+import { markdownBlocks } from "@/lib/stack/markdown-blocks";
 import type { ChatActivity, ChatEntry, ChatTurnEnd } from "@/lib/stack/transcript";
 import { cn } from "@/lib/utils";
 import { StatusDot } from "./primitives";
@@ -89,7 +90,7 @@ function BotSwitcher({ windowId, botId }: { windowId: string; botId: string | nu
           {bots.data?.length ? (
             <DropdownMenuRadioGroup value={botId ?? ""} onValueChange={(value) => chats.setBot(windowId, value || null)}>
               {bots.data.map((bot) => (
-                <DropdownMenuRadioItem key={bot.id} value={bot.id} className="font-mono">
+                <DropdownMenuRadioItem key={bot.id} value={bot.id} closeOnClick className="font-mono">
                   <StatusDot tone={bot.recoveryIssue ? "warning" : bot.state === "running" ? "success" : "muted"} />
                   {bot.id}
                   <span className="ml-auto pl-3 text-[0.7rem] text-muted-foreground">{bot.mainThreadId ? shortId(bot.mainThreadId) : "no thread"}</span>
@@ -245,33 +246,6 @@ const markdownComponents: Components = {
   a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
   table: ({ node: _node, ...props }) => <div className="chat-table"><table {...props} /></div>,
 };
-
-/**
- * Top-level blocks split at blank lines outside fences and indented
- * continuations. While text streams only the last block changes, so earlier
- * blocks keep their parsed output.
- */
-export function markdownBlocks(text: string): string[] {
-  const lines = text.split("\n");
-  const blocks: string[] = [];
-  let current: string[] = [];
-  let fence: string | null = null;
-  lines.forEach((line, index) => {
-    const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
-    if (fence) {
-      if (marker && marker[0] === fence[0] && marker.length >= fence.length && !line.trim().slice(marker.length).trim()) fence = null;
-    } else if (marker) fence = marker;
-    const next = lines.slice(index + 1).find((value) => value.trim());
-    if (!fence && !line.trim() && current.length && (next === undefined || !/^\s/.test(next))) {
-      blocks.push(current.join("\n"));
-      current = [];
-      return;
-    }
-    if (current.length || line.trim()) current.push(line);
-  });
-  if (current.length) blocks.push(current.join("\n"));
-  return blocks;
-}
 
 const Block = memo(function Block({ source }: { source: string }) {
   return <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{source}</ReactMarkdown>;

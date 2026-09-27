@@ -183,11 +183,12 @@ export class MainChatFeed {
     const generation = this.generation;
     const result = await this.call<MainChatLive>("chat_main_live", this.live ? { after: this.live } : {});
     if (generation !== this.generation || result.threadId !== this.current.threadId) return;
-    // An older owner has no incremental reads: every reply is a full snapshot.
+    // An older owner has no incremental reads and rejects `after`: every reply is a full snapshot.
+    const incremental = typeof result.reset === "boolean";
     const reset = result.reset ?? true;
     const now = Date.now();
     const rows = result.items.flatMap((entry) => liveRow(entry, now) ?? []);
-    this.live = result.instance ? { instance: result.instance, revision: result.revision } : null;
+    this.live = result.instance && incremental ? { instance: result.instance, revision: result.revision } : null;
     const ended = this.activeTurnId !== null && result.activeTurnId !== this.activeTurnId;
     this.activeTurnId = result.activeTurnId;
     this.activeTurnStartedAt = result.activeTurnStartedAt ?? this.activeTurnStartedAt ?? (result.activeTurnId ? now : null);
