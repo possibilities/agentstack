@@ -3,6 +3,12 @@ set -eu
 script=$(realpath "$0")
 root=$(CDPATH= cd -- "$(dirname -- "$script")/.." && pwd)
 cli="$root/packages/owner/dist/src/cli.js"
+# Help is read-only: it never builds, and says so when there is nothing built to ask.
+case "${1:-}" in
+  -h|--help|help)
+    if [ ! -f "$cli" ]; then echo "agentstack is not built; run: (cd $root && pnpm build)" >&2; exit 1; fi
+    exec node "$cli" --help ;;
+esac
 if [ ! -f "$cli" ] || [ -n "$(find "$root/packages" -path '*/src/*.ts' -newer "$cli" -print -quit)" ]; then
   (cd "$root" && pnpm exec turbo build)
 fi
