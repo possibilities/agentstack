@@ -19,6 +19,7 @@
 
 Fleet also has chat windows following each Bot's main thread ([ADR 0076](docs/adr/0076-fleet-chat-windows.md)).
 Lab inference uses the durable request ledger and asynchronous admission ([ADR 0076](docs/adr/0076-infer-request-ledger-api.md)).
+Roles is a fifth space for editing the Role's Categories and Fragments ([ADR 0078](docs/adr/0078-roles-space-for-instruction-fragments.md)); Role skills, MCP servers and trusted projects remain API-only.
 
 - **Always maintain it.** When you change a Package API's operations, output fields, events, scopes, or transports, update the UI in the same change so it still compiles and still shows the truth: `lib/stack/types.ts`, the store's reads and subscriptions, and the affected cards and inspector views. Renamed, removed, or re-typed data must never silently break or go stale in the UI. Run `pnpm --filter @agentstack/uix typecheck`.
 - **Never extend it implicitly.** Do not add new spaces, windows, cards, views, controls, mutating actions, interaction patterns, or UI dependencies as a side effect of other work. When new UI is requested, put it in its appropriate space and give any new node kind a destination in `lib/stack/spaces.ts` so links and focus reach it. New UI is added only when the human explicitly asks for it. The inspector already renders every record field generically, so new fields on existing records need no new UI.

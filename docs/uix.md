@@ -13,6 +13,12 @@ store, auth and voice providers. The former index's process and local URL detail
 live in the System space; MCP Inspector is linked only while its child is running
 ([ADR 0057](adr/0057-canvas-as-ui-home.md)).
 
+Roles (`/x/roles`) manages the Role's instruction Categories and Fragments
+([ADR 0078](adr/0078-roles-space-for-instruction-fragments.md)). One mounted Role
+actions provider owns the editor's target, page-local text drafts and
+revision-checked writes, so the Instructions, Editor and Preview windows, the
+inspector and the palette all edit through it.
+
 ## Adding a Fleet window
 
 Keep window implementation separate from bench layout:
@@ -91,7 +97,15 @@ PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
   node packages/uix/test/bench.browser.mjs
 ```
 
-The check uses disposable sockets, a fixture snapshot and its own `next start`
+The Roles space has its own check, which serves the real Roles API against a
+disposable state directory:
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  node packages/uix/test/roles-browser-check.mjs
+```
+
+The bench check uses disposable sockets, a fixture snapshot and its own `next start`
 process. `CHROME_EXECUTABLE` overrides the default macOS Chrome path;
 `NEXT_MODE=dev` selects development verification instead. Screenshots are written
 under `packages/uix/.next/bench-evidence`.

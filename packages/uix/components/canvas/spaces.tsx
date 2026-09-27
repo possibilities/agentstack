@@ -1,6 +1,6 @@
 "use client";
 
-import { BotIcon, ChartLineIcon, CpuIcon, FlaskConicalIcon, KeyRoundIcon, GaugeIcon, ListTreeIcon, MegaphoneIcon, PackageIcon, RadioIcon, ScanLineIcon, ServerIcon, SparklesIcon, SquareTerminalIcon } from "lucide-react";
+import { BotIcon, ChartLineIcon, CpuIcon, FilePenLineIcon, FileTextIcon, FlaskConicalIcon, KeyRoundIcon, GaugeIcon, ListTreeIcon, MegaphoneIcon, PackageIcon, RadioIcon, ScanLineIcon, ScrollTextIcon, ServerIcon, SparklesIcon, SquareTerminalIcon, UserCogIcon } from "lucide-react";
 import type { ChatWindows } from "@/lib/stack/chat-windows";
 import type { SpaceId } from "@/lib/stack/spaces";
 import type { StackState } from "@/lib/stack/store";
@@ -13,6 +13,9 @@ import { InferenceWindow } from "./inference-window";
 import { HostWindow, ProcessesWindow, ResourcesWindow, SamplingWindow } from "./resource-windows";
 import { ActivityWindow, OwnerWindow, PackagesWindow } from "./system-windows";
 import { ChatWindow } from "./chat-window";
+import { RoleEditorWindow } from "./role-editor";
+import { RoleInstructionsWindow } from "./role-instructions";
+import { RolePreviewWindow } from "./role-preview";
 
 export type WindowDef = {
   /** Globally unique across spaces; also used by Window and node destinations. */
@@ -72,6 +75,15 @@ export const spaceViews: Record<SpaceId, {
       { id: "processes", title: "Processes", icon: ListTreeIcon, accent: "owner", width: 560, height: 760, column: 2, element: <ProcessesWindow /> },
       { id: "sampling", title: "Sampling", icon: ScanLineIcon, accent: "owner", width: 400, height: 560, column: 3, element: <SamplingWindow /> },
       { id: "activity", title: "Activity", icon: RadioIcon, accent: "events", width: 400, height: 460, column: 3, element: <ActivityWindow /> },
+    ],
+  },
+  roles: {
+    icon: UserCogIcon,
+    accent: "roles",
+    windows: () => [
+      { id: "role-instructions", title: "Instructions", icon: ScrollTextIcon, accent: "roles", width: 440, height: 720, column: 0, element: <RoleInstructionsWindow /> },
+      { id: "role-editor", title: "Editor", icon: FilePenLineIcon, accent: "roles", width: 520, height: 760, column: 1, element: <RoleEditorWindow /> },
+      { id: "role-preview", title: "Preview", icon: FileTextIcon, accent: "roles", width: 460, height: 720, column: 2, element: <RolePreviewWindow /> },
     ],
   },
 };

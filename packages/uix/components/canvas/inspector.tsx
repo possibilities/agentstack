@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowRightIcon, BookOpenIcon, CircleCheckIcon, CopyIcon, LocateFixedIcon, LockIcon, PhoneIcon, PhoneOffIcon, RefreshCwIcon, Trash2Icon, XIcon } from "lucide-react";
+import { ArrowRightIcon, BookOpenIcon, CircleCheckIcon, CopyIcon, LocateFixedIcon, LockIcon, PencilIcon, PhoneIcon, PhoneOffIcon, RefreshCwIcon, Trash2Icon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,8 +11,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { fieldsOf, findOperation, operationTitle, recordFields, recordOperations, type Field } from "@/lib/stack/catalog";
 import { accountLabels, clockTime, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
 import { scopeTarget } from "@/lib/stack/resources";
+import { findCategory, findFragment } from "@/lib/stack/roles";
 import type { StackState } from "@/lib/stack/store";
-import { nodeKey, type Account, type Bot, type Login, type NodeRef, type OperationDoc, type StackEvent, type WorkerAccount } from "@/lib/stack/types";
+import { nodeKey, type Account, type Bot, type Login, type NodeRef, type OperationDoc, type PackageDoc, type StackEvent, type WorkerAccount } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
 import { CopyButton, Orb } from "./primitives";
@@ -21,6 +22,7 @@ import { CatalogRefresh, CatalogStatus } from "./catalog-window";
 import { RecordTree } from "./record-tree";
 import { ObservationStatus } from "./usage-window";
 import { useOperation, useStack, useWorkbench } from "./provider";
+import { useRoleActions } from "./role-actions";
 import { useVoice } from "./voice";
 import { accentBg, accentText, type Accent } from "./window";
 import { OperationBadges, RecoveryWarning } from "./windows";
@@ -183,6 +185,30 @@ function resolve(ref: NodeRef, state: StackState): View | null {
     }
     case "chat":
       return null; // A chat window is a view onto a Bot, not a record.
+    case "category": {
+      const found = findCategory(state.role.data, ref.id);
+      if (!found) return null;
+      const { category } = found;
+      return {
+        eyebrow: "Instruction category", accent: "roles", title: category.title,
+        record: { ...category, fragments: category.fragments.map((fragment) => fragment.title) }, fields: roleFields(catalog).category,
+        related: category.fragments.map((fragment) => ({ ref: { kind: "fragment", id: fragment.id } as NodeRef, label: fragment.title })),
+        operations: { pkg: "roles", list: recordOperations(catalog, "roles").filter((operation) => operation.name.startsWith("category_")) },
+        controls: <RoleRecordControls target={{ kind: "category", id: category.id }} />,
+        events: state.events.filter((event) => event.pkg === "roles"),
+      };
+    }
+    case "fragment": {
+      const found = findFragment(state.role.data, ref.id);
+      if (!found) return null;
+      return {
+        eyebrow: "Instruction fragment", accent: "roles", title: found.fragment.title, record: found.fragment, fields: roleFields(catalog).fragment,
+        related: [{ ref: { kind: "category", id: found.category.id }, label: `${found.category.title} · category` }],
+        operations: { pkg: "roles", list: recordOperations(catalog, "roles").filter((operation) => operation.name.startsWith("fragment_")) },
+        controls: <RoleRecordControls target={{ kind: "fragment", id: found.fragment.id }} />,
+        events: state.events.filter((event) => event.pkg === "roles"),
+      };
+    }
     case "package":
     case "operation":
       return null; // Reference destinations are rendered in the shared dock's reading mode.
@@ -194,9 +220,28 @@ const loginControls = new Set(["account_login_cancel", "account_login_status"]);
 const workerControls = new Set(["worker_account_set_enabled", "worker_account_remove",
   "worker_account_login_start", "worker_account_login_status", "worker_account_login_current", "worker_account_login_submit", "worker_account_login_cancel"]);
 
+/** Field notes for Role records, which nest inside role_snapshot's categories. */
+function roleFields(catalog: PackageDoc[] | null): { category: Map<string, Field>; fragment: Map<string, Field> } {
+  const categories = fieldsOf(findOperation(catalog, "roles", "role_snapshot")?.outputSchema).find((field) => field.name === "categories")?.children ?? [];
+  const fragments = categories.find((field) => field.name === "fragments")?.children ?? [];
+  return { category: new Map(categories.map((field) => [field.name, field])), fragment: new Map(fragments.map((field) => [field.name, field])) };
+}
+
+/** Editing lives in the Roles space; the inspector hands off to it. */
+function RoleRecordControls({ target }: { target: { kind: "category" | "fragment"; id: string } }) {
+  const actions = useRoleActions();
+  const { goTo } = useWorkbench();
+  return (
+    <Button size="sm" variant="outline" className="w-fit" onClick={() => { actions.open(target); goTo(target); }}>
+      <PencilIcon data-icon="inline-start" />Edit in Roles
+    </Button>
+  );
+}
+
 function referencePackage(ref: NodeRef): string {
   if (ref.kind === "bot") return "bots";
   if (ref.kind === "owner" || ref.kind === "child" || ref.kind === "resource" || ref.kind === "process") return "owner";
+  if (ref.kind === "category" || ref.kind === "fragment") return "roles";
   if (ref.kind === "worker-catalog") return "workers";
   if (ref.kind === "usage" || ref.kind === "usage-account" || ref.kind === "grok-bot-usage") return "usage";
   return "auth";

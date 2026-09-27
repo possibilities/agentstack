@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpenIcon, BotIcon, CircleCheckIcon, CpuIcon, MicIcon, MicOffIcon, PhoneIcon, PhoneOffIcon, RefreshCwIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
+import { BookOpenIcon, BotIcon, CircleCheckIcon, CpuIcon, FilePlusIcon, FolderIcon, FolderPlusIcon, MicIcon, MicOffIcon, PhoneIcon, PhoneOffIcon, RefreshCwIcon, ScrollTextIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
 import { operationTitle } from "@/lib/stack/catalog";
 import { accountLabels, addableWorkerProviders, pairedWorker, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
@@ -8,6 +8,7 @@ import { spaces } from "@/lib/stack/spaces";
 import type { Account, NodeRef, WorkerAccount } from "@/lib/stack/types";
 import { useAuthActions } from "./auth-actions";
 import { useBotActions } from "./bot-actions";
+import { useRoleActions, type RoleTarget } from "./role-actions";
 import { Orb, StatusDot } from "./primitives";
 import { useStack, useWorkbench } from "./provider";
 import { spaceViews } from "./spaces";
@@ -16,7 +17,8 @@ import { useVoice } from "./voice";
 export type PaletteAction = { id: string; label: string; shortcut?: string; icon: React.ComponentType; run(): void };
 
 export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpenChange(open: boolean): void; actions: PaletteAction[] }) {
-  const { bots, accounts, workerAccounts, owner, catalog, attempt } = useStack();
+  const { bots, accounts, workerAccounts, owner, catalog, attempt, role } = useStack();
+  const roleActions = useRoleActions();
   const auth = useAuthActions();
   const botActions = useBotActions();
   const voice = useVoice();
@@ -31,6 +33,12 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
     onOpenChange(false);
     run();
   };
+  /** Open a Role record or draft in the editor and bring the Roles space into view. */
+  const edit = (target: RoleTarget, ref?: NodeRef) => {
+    onOpenChange(false);
+    roleActions.open(target);
+    if (ref) goTo(ref); else setSpace("roles");
+  };
   const removable = (account: Account) => !account.removing;
   const workerRemovable = (account: WorkerAccount) => !account.removing;
   const addWorker = (provider: WorkerAccount["provider"]) => {
@@ -38,7 +46,7 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
   };
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange} title="Jump to" description="Find a bot, account, process, or operation." className="sm:max-w-lg">
+    <CommandDialog open={open} onOpenChange={onOpenChange} title="Jump to" description="Find a bot, account, instruction, process, or operation." className="sm:max-w-lg">
       <Command loop>
         <CommandInput placeholder="Jump to a bot, account, operation…" />
         <CommandList className="max-h-96">
@@ -76,6 +84,27 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
               ))}
             </CommandGroup>
           ) : null}
+          <CommandGroup heading="Roles">
+            <CommandItem value="role new instruction category" disabled={!role.data} onSelect={() => edit({ kind: "new-category" })}><FolderPlusIcon />New category</CommandItem>
+            {role.data?.categories.length ? (
+              <CommandItem value="role new instruction fragment" onSelect={() => edit({ kind: "new-fragment", categoryId: role.data!.categories[0].id, enabled: true })}><FilePlusIcon />New fragment</CommandItem>
+            ) : null}
+            {role.data?.categories.flatMap((category) => [
+              <CommandItem key={category.id} value={`role category ${category.title} ${category.description}`} onSelect={() => edit({ kind: "category", id: category.id }, { kind: "category", id: category.id })}>
+                <FolderIcon />
+                <span>{category.title}</span>
+                <CommandShortcut className="tracking-normal">{category.enabled ? `${category.fragments.length} fragments` : "off"}</CommandShortcut>
+              </CommandItem>,
+              ...category.fragments.map((fragment) => (
+                <CommandItem key={fragment.id} value={`role fragment ${fragment.title} ${category.title} ${fragment.description}`} onSelect={() => edit({ kind: "fragment", id: fragment.id }, { kind: "fragment", id: fragment.id })}>
+                  <ScrollTextIcon />
+                  <span>{fragment.title}</span>
+                  <span className="text-xs text-muted-foreground">{category.title}</span>
+                  <CommandShortcut className="tracking-normal">{fragment.enabled && category.enabled ? "" : "off"}</CommandShortcut>
+                </CommandItem>
+              )),
+            ])}
+          </CommandGroup>
           {accounts.data?.length || workerAccounts.data?.length ? (
             <CommandGroup heading="Accounts">
               {(accounts.data ?? []).map((account) => (

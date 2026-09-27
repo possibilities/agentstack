@@ -17,6 +17,7 @@ import { Inspector } from "./inspector";
 import { Palette, type PaletteAction } from "./palette";
 import { StackProvider, useStack, WorkbenchContext, type WorkbenchValue } from "./provider";
 import { Reference } from "./reference";
+import { RoleActionsProvider } from "./role-actions";
 import { Bench, type BenchControls } from "./bench";
 import { CallLauncher, VoiceProvider } from "./voice";
 
@@ -189,7 +190,7 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
   ], [controls, location.inspect, openReference, openInspector]);
   const workbench: WorkbenchValue = useMemo(() => ({ space: location.space, setSpace, selected: location.inspect, hovered, select, hover, goTo, flash }), [location.space, location.inspect, setSpace, hovered, select, goTo, flash]);
   return <div className="contents" style={{ "--sheet": `${right}px` } as React.CSSProperties}>
-    <WorkbenchContext value={workbench}><AuthActionsProvider><VoiceProvider><BotActionsProvider>
+    <WorkbenchContext value={workbench}><AuthActionsProvider><VoiceProvider><BotActionsProvider><RoleActionsProvider>
       <Bench space={location.space} blocked={paletteOpen} onControls={reportControls} onScale={setScale} onArrive={flashNow} />
       <TopBar space={location.space} setSpace={setSpace} compact={screenWidth - right < 440} reference={Boolean(location.reference) && rightVisible} inspectorAvailable={overlay && Boolean(location.inspect) && !rightVisible} openInspector={openInspector} toggleReference={Boolean(location.reference) && rightVisible ? closeRight : openReference} openPalette={() => setPaletteOpen(true)} fit={() => controls?.fit()} />
       <div data-chrome className="fixed bottom-4 z-30 flex -translate-x-1/2 items-center gap-1 rounded-xl border bg-card/95 p-1 shadow-sm" style={{ left: "calc((100% - var(--sheet))/2)" }}>
@@ -206,7 +207,7 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
         {location.reference ? <Reference target={location.reference} onOverview={referenceOverview} onClose={closeRight} hasInspection={Boolean(location.inspect)} expanded={expanded} onExpand={() => setExpanded((value) => !value)} /> : null}
       </Dock>
       <Palette open={paletteOpen} onOpenChange={setPaletteOpen} actions={actions} />
-    </BotActionsProvider></VoiceProvider></AuthActionsProvider></WorkbenchContext>
+    </RoleActionsProvider></BotActionsProvider></VoiceProvider></AuthActionsProvider></WorkbenchContext>
   </div>;
 }
 

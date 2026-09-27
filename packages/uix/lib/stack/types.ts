@@ -410,6 +410,18 @@ export type ChatMessagePage = { cursor: ChatMessageCursor; reset: boolean; hasMo
   textChars: number; timestamp: string | null; phase: string | null;
 }> };
 
+/** A Role Fragment: an ordered developer-instruction body. Title and description are for people and never render. */
+export type RoleFragment = { id: string; categoryId: string; title: string; description: string; body: string; enabled: boolean;
+  createdAt: number | null; updatedAt: number | null };
+export type RoleCategory = { id: string; title: string; description: string; enabled: boolean; fragments: RoleFragment[];
+  createdAt: number | null; updatedAt: number | null };
+/** `role_snapshot`. Skills, MCP servers and trusted projects share the revision but have no Roles UI yet. */
+export type RoleSnapshot = { revision: number; categories: RoleCategory[];
+  skills: Array<Record<string, unknown>>; mcpServers: Array<Record<string, unknown>>; trustedProjects: Array<Record<string, unknown>> };
+/** `role_preview`: the exact SYSTEM_APPEND.md text for the next launch, with each fragment's [start, end) span. */
+export type RolePreview = { revision: number; rendered: string; bytes: number; limitBytes: number;
+  segments: Array<{ categoryId: string; fragmentId: string; start: number; end: number }> };
+
 export type Resource<T> = { data: T | null; error: string | null; at: number | null };
 
 export type Snapshot = {
@@ -425,6 +437,8 @@ export type Snapshot = {
   bots: Resource<Bot[]>;
   botDefaults: Resource<BotSettings>;
   voice: Resource<VoiceCall | null>;
+  role: Resource<RoleSnapshot>;
+  rolePreview: Resource<RolePreview>;
   catalog: Resource<PackageDoc[]>;
   endpoints: Record<string, string>;
 };
@@ -454,6 +468,8 @@ export type NodeRef =
   | { kind: "bot"; id: string }
   /** A chat window on the bench, by window ID; it has no inspectable record. */
   | { kind: "chat"; id: string }
+  | { kind: "category"; id: string }
+  | { kind: "fragment"; id: string }
   | { kind: "package"; id: string }
   | { kind: "operation"; id: string; pkg: string };
 

@@ -162,6 +162,8 @@ A named physical region of related windows on UIX's shared open bench, addressed
 
 _Avoid_: page, tab, workspace (a Bot's working directory)
 
+Roles is the fifth Canvas space, managing the Role's instruction Categories and Fragments.
+
 ## Open bench
 
 UIX's continuous canvas containing all Canvas spaces under one camera. Record relationships do not determine space placement. API reference and record inspection are global tools attached to the viewport; their destinations need not name a canvas card.

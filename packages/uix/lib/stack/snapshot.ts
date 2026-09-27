@@ -1,7 +1,7 @@
 import { socketCall, socketPath, websocketPort } from "@agentstack/api";
 import { loadCatalog } from "./catalog";
 import { loadResources } from "./resources";
-import type { Account, Bot, BotSettings, Login, OwnerStatus, PackageDoc, Resource, Snapshot, UsageSnapshot, VoiceCall, WorkerAccount, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
+import type { Account, Bot, BotSettings, Login, OwnerStatus, PackageDoc, Resource, RolePreview, RoleSnapshot, Snapshot, UsageSnapshot, VoiceCall, WorkerAccount, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
 
 const knownPackages = ["api", "attention", "auth", "bots", "brain", "content", "infer", "roles", "owner", "usage", "workers"];
 
@@ -34,7 +34,7 @@ export function websocketEndpoints(catalog: PackageDoc[] | null): Record<string,
 }
 
 export async function loadSnapshot(): Promise<Snapshot> {
-  const [owner, resources, accounts, workerAccounts, workerRuntimes, workerSessions, login, workerLogins, bots, botDefaults, voice, catalog, usage] = await Promise.all([
+  const [owner, resources, accounts, workerAccounts, workerRuntimes, workerSessions, login, workerLogins, bots, botDefaults, voice, role, rolePreview, catalog, usage] = await Promise.all([
     resource(() => call<OwnerStatus>("owner", "owner_status")),
     resource(() => loadResources((name, args) => call<never>("owner", name, args))),
     resource(async () => (await call<{ accounts: Account[] }>("auth", "account_list")).accounts),
@@ -46,8 +46,10 @@ export async function loadSnapshot(): Promise<Snapshot> {
     resource(async () => (await call<{ bots: Bot[] }>("bots", "bot_list")).bots),
     resource(() => call<BotSettings>("bots", "bot_defaults_get")),
     resource(async () => (await call<{ call: VoiceCall | null }>("bots", "voice_status")).call),
+    resource(() => call<RoleSnapshot>("roles", "role_snapshot")),
+    resource(() => call<RolePreview>("roles", "role_preview")),
     resource(() => loadCatalog((name, args) => call("api", name, args))),
     resource(() => call<UsageSnapshot>("usage", "usage_snapshot")),
   ]);
-  return { owner, resources, accounts, workerAccounts, workerRuntimes, workerSessions, login, workerLogins, bots, botDefaults, voice, catalog, usage, endpoints: websocketEndpoints(catalog.data) };
+  return { owner, resources, accounts, workerAccounts, workerRuntimes, workerSessions, login, workerLogins, bots, botDefaults, voice, role, rolePreview, catalog, usage, endpoints: websocketEndpoints(catalog.data) };
 }
