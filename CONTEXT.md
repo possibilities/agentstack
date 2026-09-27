@@ -80,6 +80,10 @@ The single Codex thread ID retained by a Bot. A fresh Bot has no main thread unt
 
 A Codex app-server thread in an AgentStack-owned Bot's sanctioned main-thread lineage. Historical search and raw records belong to the Bot's history, while live turns, items and interactions come from its owned app-server. Other top-level threads and Worker sessions are not chats. _Avoid_: session, Worker thread
 
+## Chat window
+
+A Fleet window that follows one Bot's main thread: human and assistant text, streamed live, with the turn's activity in a status line. The primary chat window always exists and switches between Bots; additional chat windows keep their own Bot until closed. The arrangement is browser-local. _Avoid_: chat tab, transcript pane
+
 ## Bot subagent
 
 A Codex child thread whose parent chain reaches a Bot's sanctioned main thread. Subagents can themselves have children; a thread's identity and parentage do not establish that it is currently loaded or working. Native task or child-session evidence belongs to its Worker and is not a Bot subagent. _Avoid_: Worker, arbitrary thread on the Bot socket
