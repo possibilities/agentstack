@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowRightIcon, BookOpenIcon, CircleCheckIcon, CopyIcon, LocateFixedIcon, LockIcon, PencilIcon, PhoneIcon, PhoneOffIcon, RefreshCwIcon, Trash2Icon, XIcon } from "lucide-react";
+import { ArrowRightIcon, BookOpenIcon, CircleCheckIcon, CopyIcon, LocateFixedIcon, LockIcon, PencilIcon, PhoneIcon, PhoneOffIcon, PinIcon, PinOffIcon, RefreshCwIcon, Trash2Icon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -389,7 +389,7 @@ function Block({ title, aside, children }: { title: string; aside?: React.ReactN
   );
 }
 
-export function Inspector({ hidden = false, onGone }: { hidden?: boolean; onGone: (ref: NodeRef) => void }) {
+export function Inspector({ hidden = false, onGone, pinned, onPinnedChange }: { hidden?: boolean; onGone: (ref: NodeRef) => void; pinned?: boolean; onPinnedChange?(pinned: boolean): void }) {
   const { selected, select, goTo } = useWorkbench();
   const state = useStack();
   // Keep the last selection mounted through the slide-out so the sheet never blanks.
@@ -434,6 +434,14 @@ export function Inspector({ hidden = false, onGone }: { hidden?: boolean; onGone
               </TooltipTrigger>
               <TooltipContent side="bottom">Show on bench</TooltipContent>
             </Tooltip>
+            {onPinnedChange ? (
+              <Tooltip>
+                <TooltipTrigger render={<Button variant="ghost" size="icon-sm" className="aria-pressed:bg-muted" aria-label="Pin inspector" aria-pressed={pinned} onClick={() => onPinnedChange(!pinned)} />}>
+                  {pinned ? <PinOffIcon /> : <PinIcon />}
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{pinned ? "Unpin inspector" : "Pin inspector"}</TooltipContent>
+              </Tooltip>
+            ) : null}
             <Button variant="ghost" size="icon-sm" aria-label="Close inspector" onClick={() => select(null)}><XIcon /></Button>
           </header>
           <div data-scroll className="flex flex-1 flex-col gap-6 overflow-y-auto overscroll-contain px-4 py-4">

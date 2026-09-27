@@ -230,12 +230,12 @@ export function activeSurface(value: unknown, docks: OpenDocks): BenchSurface {
 
 export const dockMinimum = { right: 320, bench: 240 };
 
-/** Joint allocation: an open dock may not consume the bench's usable minimum. */
-export function dockGeometry({ screenWidth, rightOpen, surface, rightWidth, expanded = false }: OpenDocks & {
-  screenWidth: number; surface: BenchSurface; rightWidth: number; expanded?: boolean;
+/** Joint allocation: an open dock may not consume the bench's usable minimum. A contracted dock hides on desktop; overlay surfaces still decide. */
+export function dockGeometry({ screenWidth, rightOpen, surface, rightWidth, expanded = false, contracted = false }: OpenDocks & {
+  screenWidth: number; surface: BenchSurface; rightWidth: number; expanded?: boolean; contracted?: boolean;
 }) {
   const overlay = screenWidth < 900 || screenWidth < dockMinimum.bench + (rightOpen ? dockMinimum.right : 0);
-  const rightVisible = rightOpen && (!overlay || surface === "right");
+  const rightVisible = rightOpen && (overlay ? surface === "right" : !contracted);
   const rightMax = Math.max(dockMinimum.right, screenWidth - dockMinimum.bench);
   const width = clamp(expanded ? rightMax : rightWidth, dockMinimum.right, rightMax);
   return { overlay, rightVisible, rightWidth: width, rightMax, right: !overlay && rightVisible ? width : 0 };

@@ -162,6 +162,14 @@ test("right dock sizing reserves a usable bench after viewport shrink and expand
   const closed = dockGeometry({ ...options, screenWidth: 900, rightOpen: false });
   assert.equal(closed.rightVisible, false);
   assert.equal(closed.right, 0);
+  // Contraction hides the right dock on desktop but never overrides the overlay surface choice.
+  const contracted = dockGeometry({ ...options, screenWidth: 1600, contracted: true });
+  assert.equal(contracted.overlay, false);
+  assert.equal(contracted.rightVisible, false);
+  assert.equal(contracted.right, 0);
+  assert.equal(contracted.rightWidth, 1200);
+  assert.equal(dockGeometry({ ...options, screenWidth: 500, contracted: true, surface: "right" }).rightVisible, true);
+  assert.equal(dockGeometry({ ...options, screenWidth: 500, contracted: true, surface: "bench" }).rightVisible, false);
 });
 
 test("mobile spatial navigation reveals the bench while retaining every dock destination", () => {
