@@ -784,19 +784,17 @@ export function doctor(
   // for an operator. That is an undecided question, not a broken ingestion, and
   // conflating the two would report breakage that does not exist.
   const disposition = jobDispositions(cache);
-  const triageCommands = [
-    disposition.blocked_after_failure > 0
-      ? "node packages/brain/dist/src/cli.js jobs list --state blocked"
-      : null,
-    disposition.failed > 0 ? "node packages/brain/dist/src/cli.js jobs list --state failed" : null,
-  ].filter((command): command is string => command !== null);
+  const triageStates = [
+    disposition.blocked_after_failure > 0 ? "blocked" : null,
+    disposition.failed > 0 ? "failed" : null,
+  ].filter((state): state is string => state !== null);
   checks.push({
     name: "stranded_ingestion",
     status: disposition.stranded === 0 ? "ok" : "failed",
     detail:
       disposition.stranded === 0
         ? "No stranded ingestion jobs"
-        : `${disposition.stranded} stranded ingestion jobs (${disposition.blocked_after_failure} blocked, ${disposition.failed} failed); triage with ${triageCommands.join(" and ")}, then inspect with node packages/brain/dist/src/cli.js jobs show <id> --json`,
+        : `${disposition.stranded} stranded ingestion jobs (${disposition.blocked_after_failure} blocked, ${disposition.failed} failed); use Brain jobs_list for ${triageStates.join(" and ")} jobs, then jobs_show with the job ID`,
   });
   checks.push({
     name: "admission_review",
@@ -806,14 +804,10 @@ export function doctor(
         ? "No jobs awaiting admission review"
         : `${disposition.awaiting_review} jobs withheld at admission awaiting an operator decision`,
   });
-  const agentscrape = findExecutable("agentscrape");
   checks.push({
-    name: "agentscrape",
-    status: agentscrape === null ? "failed" : "ok",
-    detail:
-      agentscrape === null
-        ? "Agentscrape executable not found"
-        : "Agentscrape executable found",
+    name: "scrape",
+    status: "ok",
+    detail: "AgentStack Scrape engine is bundled; optional provider capabilities are reported by scrape_status",
   });
   checks.push(...extra);
   return {

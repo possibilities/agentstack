@@ -22,26 +22,26 @@ test("one HTTP process exposes each configured Package API and forwards operatio
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-mcp-"));
   const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0" };
   const seen: string[] = [];
-  const sockets = await Promise.all(["auth", "bots", "brain", "content", "notify", "roles", "owner", "usage", "workers"].map((name) => serveSocket({
+  const sockets = await Promise.all(["auth", "bots", "brain", "content", "notify", "roles", "owner", "scrape", "usage", "workers"].map((name) => serveSocket({
     info: { name, description: `${name}.`, transportDescription: "Socket.", path: socketPath(name, env) },
     context: {},
     operations: [name === "auth" ? operation({
       name: "account_list", description: "List accounts.", input: z.strictObject({}), output: z.object({ accounts: z.array(z.unknown()) }),
       async call() { seen.push("account_list"); return { accounts: [] }; },
     }) : operation({
-      name: "ping", description: "Ping.", input: z.object({}), output: z.object({ ok: z.boolean() }),
+      name: name === "scrape" ? "scrape_fetch" : "ping", description: "Ping.", input: z.object({}), output: z.object({ ok: z.boolean() }),
       async call() { return { ok: true }; },
     })],
   })));
   const served = await serveMcp({ env });
   try {
-    assert.deepEqual(Object.keys(served.urls), ["auth", "bots", "brain", "content", "notify", "owner", "roles", "usage", "workers"]);
+    assert.deepEqual(Object.keys(served.urls), ["auth", "bots", "brain", "content", "notify", "owner", "roles", "scrape", "usage", "workers"]);
     for (const [name, url] of Object.entries(served.urls)) {
       const client = new Client({ name: "test", version: "1.0.0" });
       await client.connect(new StreamableHTTPClientTransport(new URL(url)));
       try {
         const tools = (await client.listTools()).tools;
-        assert.deepEqual(tools.map((tool) => tool.name), [name === "auth" ? "account_list" : "ping"]);
+        assert.deepEqual(tools.map((tool) => tool.name), [name === "auth" ? "account_list" : name === "scrape" ? "scrape_fetch" : "ping"]);
         assert.ok(tools.every((tool) => tool.inputSchema.type === "object" && tool.outputSchema?.type === "object"));
         if (name === "auth") {
           assert.ok(tools.some((tool) => tool.name === "account_list"));

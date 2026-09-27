@@ -8,7 +8,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { serveApi, socketCall, socketSubscribe } from "@agentstack/api";
-import { apiChild, attentionChild, authChild, brainChild, browserChild, contentChild, inferChild, notifyChild, rolesChild, workersChild, websocketChild } from "../src/children.js";
+import { apiChild, attentionChild, authChild, brainChild, browserChild, contentChild, inferChild, notifyChild, rolesChild, scrapeChild, workersChild, websocketChild } from "../src/children.js";
 import { inspectorChild, inspectorPort } from "../src/inspector.js";
 import { botsChild } from "../src/bots.js";
 import { startOwner } from "../src/owner.js";
@@ -112,12 +112,12 @@ test("shutdown drains a dependent child before stopping its dependency", async (
 });
 
 test("the owner starts the required socket children", () => {
-  for (const child of [apiChild(), attentionChild(), authChild(), rolesChild(), botsChild(), workersChild(), inferChild(), notifyChild(), contentChild(), brainChild(), browserChild()]) {
+  for (const child of [apiChild(), attentionChild(), authChild(), rolesChild(), botsChild(), workersChild(), inferChild(), notifyChild(), contentChild(), brainChild(), browserChild(), scrapeChild()]) {
     assert.equal(child.command, process.execPath);
     assert.deepEqual(child.args.slice(1), [child.name, "socket"]);
     assert.equal(existsSync(child.args[0] ?? ""), true);
   }
-  assert.deepEqual([apiChild(), attentionChild(), authChild(), rolesChild(), botsChild(), workersChild(), inferChild(), notifyChild(), contentChild(), brainChild(), browserChild()].map((child) => child.name), ["api", "attention", "auth", "roles", "bots", "workers", "infer", "notify", "content", "brain", "browser"]);
+  assert.deepEqual([apiChild(), attentionChild(), authChild(), rolesChild(), botsChild(), workersChild(), inferChild(), notifyChild(), contentChild(), brainChild(), browserChild(), scrapeChild()].map((child) => child.name), ["api", "attention", "auth", "roles", "bots", "workers", "infer", "notify", "content", "brain", "browser", "scrape"]);
   assert.deepEqual(botsChild(43123).env, { AGENTSTACK_OWNER_MCP_PORT: "43123" });
   const websocket = websocketChild();
   assert.equal(websocket.command, process.execPath);

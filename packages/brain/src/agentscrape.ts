@@ -1,7 +1,7 @@
-import { spawn, spawnSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { findExecutable } from "./executable.js";
-import { brainSignal } from "./paths.js";
+import { fetchMarkdown as scrapeFetchMarkdown, fetchLinks as scrapeFetchLinks, structuredJson } from "@agentstack/scrape/engine";
+import { discoverFeed, discoverFeedLive } from "@agentstack/scrape/feed";
 import { sanitizeExternalError } from "./sanitize.js";
 import { codePointLength } from "./text.js";
 import type {
@@ -25,7 +25,6 @@ const AGENTSCRAPE_RETRY_MAX_MS = 30_000;
 const AGENTSCRAPE_RETRY_ENV_MIN_MS = 100;
 const AGENTSCRAPE_RETRY_CONFIG_MAX_MS = 3_600_000;
 const AGENTSCRAPE_TIMEOUT_MAX_MS = 600_000;
-const AGENTSCRAPE_TERMINATION_GRACE_MS = 250;
 const AGENTSCRAPE_EXTRACTION_SCHEMA_VERSION = "1" as const;
 // A link list is a normal page, not a pathological one: two awesome-list
 // submissions were rejected permanently at 257 relations against a limit of
@@ -251,71 +250,6 @@ export class AgentscrapeExtractionError extends Error {
   }
 }
 
-type CancellationSignal = "SIGHUP" | "SIGINT" | "SIGTERM";
-
-type ProviderTerminator = () => void | Promise<void>;
-
-const activeProviderTerminators = new Set<ProviderTerminator>();
-let parentCancellationStarted = false;
-const CANCELLATION_EXIT_CODES: Record<CancellationSignal, number> = {
-  SIGHUP: 129,
-  SIGINT: 130,
-  SIGTERM: 143,
-};
-
-async function exitForCancellation(signal: CancellationSignal): Promise<void> {
-  if (parentCancellationStarted) return;
-  parentCancellationStarted = true;
-  await Promise.allSettled(
-    [...activeProviderTerminators].map(async (terminate) => terminate()),
-  );
-  process.exit(CANCELLATION_EXIT_CODES[signal]);
-}
-
-const cancellationHandlers: Record<CancellationSignal, () => void> = {
-  SIGHUP: () => {
-    void exitForCancellation("SIGHUP");
-  },
-  SIGINT: () => {
-    void exitForCancellation("SIGINT");
-  },
-  SIGTERM: () => {
-    void exitForCancellation("SIGTERM");
-  },
-};
-
-function registerProviderTerminator(terminate: ProviderTerminator): () => void {
-  if (activeProviderTerminators.size === 0) {
-    for (const signal of Object.keys(
-      cancellationHandlers,
-    ) as CancellationSignal[]) {
-      process.once(signal, cancellationHandlers[signal]);
-    }
-  }
-  activeProviderTerminators.add(terminate);
-  return () => {
-    activeProviderTerminators.delete(terminate);
-    if (activeProviderTerminators.size === 0) {
-      for (const signal of Object.keys(
-        cancellationHandlers,
-      ) as CancellationSignal[]) {
-        process.removeListener(signal, cancellationHandlers[signal]);
-      }
-    }
-  };
-}
-
-interface CommandResult {
-  stdout: string;
-  stderr: string;
-  status: number | null;
-  signal: NodeJS.Signals | null;
-  spawnError?: unknown;
-  timedOut: boolean;
-  outputExceeded: boolean;
-  aborted: boolean;
-}
-
 class AttemptFailure extends Error {
   constructor(
     message: string,
@@ -440,192 +374,6 @@ function retrySettings(options: AgentscrapeRetryOptions | undefined): {
   };
 }
 
-function runCommand(
-  executable: string,
-  args: string[],
-  timeoutMs: number,
-  maxOutputBytes: number,
-  abortSignal?: AbortSignal,
-): Promise<CommandResult> {
-  const managedSignal = brainSignal();
-  if (managedSignal) abortSignal = abortSignal ? AbortSignal.any([abortSignal, managedSignal]) : managedSignal;
-  return new Promise((resolve, reject) => {
-    const useProcessGroup = process.platform !== "win32";
-    let child: ReturnType<typeof spawn>;
-    try {
-      child = spawn(executable, args, {
-        detached: useProcessGroup,
-        shell: false,
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      });
-    } catch (error) {
-      reject(error);
-      return;
-    }
-
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    let totalBytes = 0;
-    let timedOut = false;
-    let outputExceeded = false;
-    let aborted = false;
-    let spawnError: unknown;
-    let terminationStarted = false;
-    let escalationTimer: ReturnType<typeof setTimeout> | undefined;
-    let markChildClosed = (): void => {};
-    const childClosed = new Promise<void>((resolveClosed) => {
-      markChildClosed = resolveClosed;
-    });
-
-    const signalAttempt = (signal: NodeJS.Signals): void => {
-      if (useProcessGroup && child.pid !== undefined) {
-        let groupSignaled = false;
-        try {
-          process.kill(-child.pid, signal);
-          groupSignaled = true;
-        } catch {
-          // The group may not have existed yet; the POSIX fallback retries it.
-        }
-        // Bun has intermittently failed to deliver negative-PID group signals
-        // on both hosted Linux and Darwin despite reporting success. A POSIX
-        // shell kill reaches the same process-group contract through the OS.
-        const nativeKill = spawnSync(
-          "/bin/sh",
-          [
-            "-c",
-            'kill -s "$1" -- "-$2"',
-            "agentstack-brain-group-kill",
-            signal.slice(3),
-            String(child.pid),
-          ],
-          { stdio: "ignore" },
-        );
-        if (nativeKill.status === 0 || groupSignaled) return;
-      }
-      try {
-        child.kill(signal);
-      } catch {
-        // The attempt has already exited.
-      }
-    };
-    const terminateOnParentExit = async (): Promise<void> => {
-      signalAttempt("SIGKILL");
-      const retry = setInterval(() => signalAttempt("SIGKILL"), 25);
-      try {
-        await childClosed;
-      } finally {
-        clearInterval(retry);
-        signalAttempt("SIGKILL");
-      }
-    };
-    // The owner closes the Package API on process signals. A provider must not
-    // exit that process ahead of socket, registration and SQLite cleanup.
-    const unregisterProviderTerminator = managedSignal
-      ? () => {}
-      : registerProviderTerminator(terminateOnParentExit);
-    if (!managedSignal) process.once("exit", terminateOnParentExit);
-
-    const terminateAttempt = (): void => {
-      if (terminationStarted) return;
-      terminationStarted = true;
-      signalAttempt("SIGTERM");
-      escalationTimer = setTimeout(
-        () => signalAttempt("SIGKILL"),
-        AGENTSCRAPE_TERMINATION_GRACE_MS,
-      );
-    };
-    const abortAttempt = (): void => {
-      aborted = true;
-      terminateAttempt();
-    };
-    abortSignal?.addEventListener("abort", abortAttempt, { once: true });
-    if (abortSignal?.aborted) abortAttempt();
-    const collect = (destination: Buffer[], chunk: Buffer | string): void => {
-      if (outputExceeded) return;
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      totalBytes += buffer.byteLength;
-      if (totalBytes > maxOutputBytes) {
-        outputExceeded = true;
-        terminateAttempt();
-        return;
-      }
-      destination.push(buffer);
-    };
-    child.stdout?.on("data", (chunk) => collect(stdout, chunk));
-    child.stderr?.on("data", (chunk) => collect(stderr, chunk));
-    child.on("error", (error) => {
-      spawnError = error;
-    });
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      terminateAttempt();
-    }, timeoutMs);
-
-    child.on("close", (status, signal) => {
-      clearTimeout(timer);
-      unregisterProviderTerminator();
-      if (!managedSignal) process.removeListener("exit", terminateOnParentExit);
-      abortSignal?.removeEventListener("abort", abortAttempt);
-      if (escalationTimer !== undefined) {
-        clearTimeout(escalationTimer);
-        // The direct process may exit while descendants still hold no pipes.
-        signalAttempt("SIGKILL");
-      }
-      markChildClosed();
-      resolve({
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
-        status,
-        signal,
-        ...(spawnError === undefined ? {} : { spawnError }),
-        timedOut,
-        outputExceeded,
-        aborted,
-      });
-    });
-  });
-}
-
-const PERMANENT_FAILURE_PATTERNS = [
-  /\b(?:auth(?:entication|orization)?|login|credentials?)\s+(?:is\s+)?required\b/i,
-  /\b(?:unauthorized|forbidden)\b/i,
-  /\b(?:authentication|authorization)\s+(?:failed|denied)\b/i,
-  /\binvalid\s+(?:api[-_ ]?key|credentials?|token)\b/i,
-  /\b(?:400|401|403|404|410|413|415|422)\b/,
-  /\b(?:invalid|unknown|unsupported|missing|bad)\s+(?:preset|input|url|argument|option|request)\b/i,
-  /\b(?:preset|input|url|argument|option)\s+(?:is\s+)?invalid\b/i,
-  /\b(?:content|document|response|payload|markdown).{0,40}(?:too large|exceeds|unsupported|empty|not found)\b/i,
-  /\b(?:unsupported content|content not found|cannot extract|extraction failed)\b/i,
-];
-
-const TRANSIENT_FAILURE_PATTERNS = [
-  /\bupstream down\b/i,
-  /\bfailed to acquire browser from browserctl\b/i,
-  /\b(?:agent-browser|browser(?:ctl)?).{0,60}\btimed out\b/i,
-  /\b(?:agentscrape|browserctl|agent-browser|executable|binary|command).{0,60}\b(?:not found|missing)\b/i,
-  /\bno such file or directory\b/i,
-  /\b(?:ECONNREFUSED|ECONNRESET|EHOSTUNREACH|ENETUNREACH|ETIMEDOUT)\b/i,
-  /\bconnection\s+(?:was\s+)?(?:refused|reset|unreachable|timed out)\b/i,
-  /\b(?:network|host)\s+(?:is\s+)?unreachable\b/i,
-  /\bsocket hang up\b/i,
-  /\b(?:backend|browser|upstream|provider|service|daemon).{0,60}\b(?:unavailable|down|offline|not running|unreachable|refused|reset)\b/i,
-  /\b(?:failed|unable) to connect\b/i,
-];
-
-function transientCommandFailure(detail: string): boolean {
-  if (PERMANENT_FAILURE_PATTERNS.some((pattern) => pattern.test(detail))) {
-    return false;
-  }
-  return TRANSIENT_FAILURE_PATTERNS.some((pattern) => pattern.test(detail));
-}
-
-function commandErrorDetail(result: CommandResult): string {
-  if (result.stderr.trim()) return result.stderr;
-  return `agentscrape exited ${result.status ?? "without status"}`;
-}
-
 function providerFailure(detail: unknown, transient: boolean): AttemptFailure {
   const sanitized = sanitizeExternalError(detail);
   return new AttemptFailure(
@@ -640,56 +388,24 @@ async function scrapeAttempt(
   maxOutputBytes: number,
   limits: { bytes: number; codePoints: number },
 ): Promise<ScrapedLink> {
-  const executable = findExecutable("agentscrape");
-  if (!executable) {
-    throw providerFailure("agentscrape is not installed on PATH", true);
-  }
-  const args = ["fetch-markdown", "--markdown", requestedUrl];
-
-  let result: CommandResult;
+  let markdown: string;
   try {
-    result = await runCommand(executable, args, timeoutMs, maxOutputBytes);
+    const result = await scrapeFetchMarkdown(requestedUrl, {
+      allowPrivateNetwork: true,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if ("status" in result) throw new Error("unexpected extraction envelope");
+    markdown = result.markdown;
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException | undefined)?.code;
-    throw providerFailure(error, code === "ENOENT");
+    throw providerFailure(error, /upstream|not found|timed out/i.test(String(error)));
   }
-  if (result.outputExceeded) {
-    throw providerFailure(
-      `command output exceeds max_output_bytes (${maxOutputBytes})`,
-      false,
-    );
-  }
-  if (result.timedOut) {
-    throw providerFailure(`command timed out after ${timeoutMs}ms`, true);
-  }
-  if (result.spawnError) {
-    const code = (result.spawnError as NodeJS.ErrnoException).code;
-    throw providerFailure(result.spawnError, code === "ENOENT");
-  }
-  if (result.signal) {
-    throw providerFailure(`command terminated by ${result.signal}`, false);
-  }
-  if (result.status !== 0) {
-    const detail = commandErrorDetail(result).replaceAll(requestedUrl, "[URL]");
-    throw providerFailure(detail, transientCommandFailure(detail));
-  }
-  if (!result.stdout.trim()) {
-    throw providerFailure("agentscrape returned empty markdown", false);
-  }
-
-  try {
-    enforceMarkdownCap(result.stdout, limits);
-  } catch (error) {
-    throw providerFailure(error, false);
-  }
-  return {
-    success: true,
-    url: requestedUrl,
-    requested_url: requestedUrl,
-    markdown: result.stdout,
-    content: result.stdout,
-    size_chars: codePointLength(result.stdout),
-  };
+  if (!markdown.trim()) throw providerFailure("scrape returned empty markdown", false);
+  if (Buffer.byteLength(markdown) > maxOutputBytes)
+    throw providerFailure(`output exceeds max_output_bytes (${maxOutputBytes})`, false);
+  try { enforceMarkdownCap(markdown, limits); }
+  catch (error) { throw providerFailure(error, false); }
+  return { success: true, url: requestedUrl, requested_url: requestedUrl,
+    markdown, content: markdown, size_chars: codePointLength(markdown) };
 }
 
 /** Invoke the sole URL-extraction provider, retrying only availability failures. */
@@ -1292,97 +1008,22 @@ export async function extractWithAgentscrape(
       "cancellation",
     );
   }
-  const executable = findExecutable("agentscrape");
-  if (executable === null) {
-    throw new AgentscrapeExtractionError(
-      "agentscrape extraction infrastructure is unavailable",
-      "infra",
-      "infrastructure",
-    );
-  }
-  const args = [
-    "fetch-markdown",
-    requestedUrl,
-    "--envelope",
-    // Browser-backed live routes deny egress without explicit consent. Operator
-    // admission of a URL for ingestion is that consent, so the worker grants it.
-    "--allow-private-network",
-    "--max-content-bytes",
-    String(maxContentBytes),
-    "--max-relations",
-    String(maxRelations),
-  ];
-
-  let result: CommandResult;
-  try {
-    result = await runCommand(
-      executable,
-      args,
-      timeoutMs,
-      maxOutputBytes,
-      options.signal,
-    );
-  } catch (error) {
-    throw new AgentscrapeExtractionError(
-      `agentscrape extraction infrastructure failed: ${sanitizeExternalError(error)}`,
-      "infra",
-      "infrastructure",
-    );
-  }
-  if (result.aborted) {
-    throw new AgentscrapeExtractionError(
-      "agentscrape extraction was cancelled",
-      "cancelled",
-      "cancellation",
-    );
-  }
-  if (result.outputExceeded) {
-    return protocolDefect("extraction command output exceeded its bound");
-  }
-  if (result.timedOut) {
-    throw new AgentscrapeExtractionError(
-      `agentscrape extraction timed out after ${timeoutMs}ms`,
-      "item_transient",
-      "item",
-    );
-  }
-  if (result.spawnError !== undefined) {
-    throw new AgentscrapeExtractionError(
-      `agentscrape extraction infrastructure failed: ${sanitizeExternalError(result.spawnError)}`,
-      "infra",
-      "infrastructure",
-    );
-  }
-  if (result.signal !== null) {
-    const cancelled = new Set(["SIGHUP", "SIGINT", "SIGTERM"]).has(
-      result.signal,
-    );
-    throw new AgentscrapeExtractionError(
-      `agentscrape extraction terminated by ${result.signal}`,
-      cancelled ? "cancelled" : "infra",
-      cancelled ? "cancellation" : "infrastructure",
-    );
-  }
-
+  // Admission of a URL to Brain authorizes browser-backed extraction. The
+  // Scrape package enforces its own fail-closed preset and network policies.
   let decoded: unknown;
   try {
-    decoded = JSON.parse(result.stdout) as unknown;
-  } catch {
-    return protocolDefect("extraction command returned malformed JSON");
+    decoded = await scrapeFetchMarkdown(requestedUrl, {
+      envelope: true, allowPrivateNetwork: true,
+      maxContentBytes, maxRelations,
+      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    throw new AgentscrapeExtractionError(
+      `scrape extraction failed: ${sanitizeExternalError(error)}`, "infra", "infrastructure",
+    );
   }
-  const envelope = validateExtractionEnvelope(decoded, requestedUrl, {
-    maxContentBytes,
-    maxRelations,
-  });
-  if (envelope.status === "success") {
-    if (result.status !== 0) {
-      return protocolDefect("successful extraction exited nonzero");
-    }
-    return envelope;
-  }
-  if (result.status === 0) {
-    return protocolDefect("failed extraction exited successfully");
-  }
+  const envelope = validateExtractionEnvelope(decoded, requestedUrl, { maxContentBytes, maxRelations });
+  if (envelope.status === "success") return envelope;
   return envelopeFailure(envelope.failure);
 }
 
@@ -1930,231 +1571,58 @@ function discoveryCommandFailure(
   );
 }
 
-async function runDiscoveryCommand(
-  args: string[],
-  timeoutMs: number,
-  signal: AbortSignal | undefined,
-): Promise<CommandResult> {
-  if (signal?.aborted) {
-    throw new AgentscrapeDiscoveryError(
-      "agentscrape discovery was cancelled",
-      "cancelled",
-      "cancellation",
-    );
-  }
-  const executable = findExecutable("agentscrape");
-  if (executable === null) {
-    throw new AgentscrapeDiscoveryError(
-      "agentscrape discovery infrastructure is unavailable",
-      "infra",
-      "infrastructure",
-    );
-  }
-  let result: CommandResult;
-  try {
-    result = await runCommand(
-      executable,
-      args,
-      timeoutMs,
-      AGENTSCRAPE_OUTPUT_MAX_BYTES,
-      signal,
-    );
-  } catch (error) {
-    throw new AgentscrapeDiscoveryError(
-      `agentscrape discovery infrastructure failed: ${sanitizeExternalError(error)}`,
-      "infra",
-      "infrastructure",
-    );
-  }
-  if (result.aborted) {
-    throw new AgentscrapeDiscoveryError(
-      "agentscrape discovery was cancelled",
-      "cancelled",
-      "cancellation",
-    );
-  }
-  if (result.outputExceeded) {
-    return discoveryProtocol("discovery command output exceeded its bound");
-  }
-  if (result.timedOut) {
-    throw new AgentscrapeDiscoveryError(
-      `agentscrape discovery timed out after ${timeoutMs}ms`,
-      "item_transient",
-      "infrastructure",
-    );
-  }
-  if (result.spawnError !== undefined) {
-    throw new AgentscrapeDiscoveryError(
-      `agentscrape discovery infrastructure failed: ${sanitizeExternalError(result.spawnError)}`,
-      "infra",
-      "infrastructure",
-    );
-  }
-  if (result.signal !== null) {
-    const cancelled = new Set(["SIGHUP", "SIGINT", "SIGTERM"]).has(
-      result.signal,
-    );
-    throw new AgentscrapeDiscoveryError(
-      `agentscrape discovery terminated by ${result.signal}`,
-      cancelled ? "cancelled" : "infra",
-      cancelled ? "cancellation" : "infrastructure",
-    );
-  }
-  return result;
-}
-
-async function assertLiveFeedCapability(
-  timeoutMs: number,
-  signal: AbortSignal | undefined,
-): Promise<void> {
-  const result = await runDiscoveryCommand(
-    ["discover-feed", "--help"],
-    Math.min(timeoutMs, 5_000),
-    signal,
-  );
-  if (
-    result.status !== 0 ||
-    !/^Usage:\s+agentscrape\s+discover-feed\s+\[FILE\]\s+--source-url\s+URL\b/m.test(
-      result.stdout,
-    )
-  ) {
-    throw new AgentscrapeDiscoveryError(
-      "installed agentscrape lacks live discover-feed capability",
-      "auth_config",
-      "auth_config",
-    );
-  }
-}
-
 export async function discoverFeedWithAgentscrape(
   request: FeedDiscoveryRequest,
 ): Promise<FeedDiscoveryEnvelope> {
   const sourceUrl = normalizedWebUrl(request.sourceUrl);
-  const timeoutMs = positiveInteger(
-    request.timeoutMs ?? AGENTSCRAPE_DEFAULT_TIMEOUT_MS,
-    "agentscrape feed discovery timeout",
-    300_000,
-  );
-  const maxPages = positiveInteger(request.maxPages, "feed page limit", 100);
-  const maxItems = positiveInteger(request.maxItems, "feed item limit", 10_000);
-  if (request.recordedInputFile === undefined) {
-    await assertLiveFeedCapability(timeoutMs, request.signal);
-  }
-  const args = ["discover-feed"];
-  if (request.recordedInputFile !== undefined) {
-    args.push(request.recordedInputFile);
-  }
-  args.push(
-    "--source-url",
-    sourceUrl,
-    "--source-kind",
-    request.sourceKind ?? "auto",
-    "--max-response-bytes",
-    String(request.maxResponseBytes ?? 2_000_000),
-    "--max-pages",
-    String(maxPages),
-    "--max-items",
-    String(maxItems),
-    "--timeout-seconds",
-    String(Math.max(0.001, timeoutMs / 1_000)),
-    "--format",
-    "json",
-  );
-  const validators =
-    request.recordedInputFile === undefined
-      ? request.validators
-      : request.recordedValidators === undefined
-        ? undefined
-        : {
-            etag: request.recordedValidators.etag ?? null,
-            lastModified: request.recordedValidators.lastModified ?? null,
-          };
-  if (validators?.etag != null) {
-    args.push("--etag", validators.etag);
-  }
-  if (validators?.lastModified != null) {
-    args.push("--last-modified", validators.lastModified);
-  }
-  if (
-    request.recordedInputFile === undefined &&
-    request.validatorUrl !== undefined &&
-    (validators?.etag != null || validators?.lastModified != null)
-  ) {
-    args.push("--validator-url", normalizedWebUrl(request.validatorUrl));
-  }
-  if (request.since !== undefined) args.push("--since", request.since);
-  const result = await runDiscoveryCommand(args, timeoutMs, request.signal);
+  const timeoutMs = positiveInteger(request.timeoutMs ?? AGENTSCRAPE_DEFAULT_TIMEOUT_MS,
+    "scrape feed discovery timeout", 300_000);
+  const options = {
+    sourceUrl, sourceKind: request.sourceKind ?? "auto", since: request.since,
+    maxResponseBytes: request.maxResponseBytes ?? 2_000_000,
+    maxPages: request.maxPages, maxItems: request.maxItems,
+    timeoutSeconds: Math.max(0.001, timeoutMs / 1_000), signal: request.signal,
+  };
   let decoded: unknown;
   try {
-    decoded = JSON.parse(result.stdout) as unknown;
-  } catch {
-    if (result.status !== 0) {
-      throw discoveryCommandFailure(
-        result.stderr,
-        "agentscrape feed discovery",
-      );
+    if (request.recordedInputFile !== undefined) {
+      decoded = discoverFeed({ url: sourceUrl,
+        content: await readFile(request.recordedInputFile, "utf8"),
+        validators: request.recordedValidators ? {
+          etag: request.recordedValidators.etag ?? null,
+          last_modified: request.recordedValidators.lastModified ?? null,
+        } : undefined }, options);
+    } else {
+      decoded = await discoverFeedLive({ ...options,
+        etag: request.validators?.etag ?? undefined,
+        lastModified: request.validators?.lastModified ?? undefined,
+        validatorUrl: request.validatorUrl });
     }
-    return discoveryProtocol("feed discovery command returned malformed JSON");
+  } catch (error) {
+    throw discoveryCommandFailure(String(error), "scrape feed discovery");
   }
-  const envelope = validateFeedDiscoveryEnvelope(decoded, sourceUrl, {
-    maxItems,
-    maxPages,
+  return validateFeedDiscoveryEnvelope(decoded, sourceUrl, {
+    maxItems: request.maxItems, maxPages: request.maxPages,
   });
-  if ((envelope.status === "failure") !== (result.status !== 0)) {
-    return discoveryProtocol(
-      "feed discovery status disagrees with command exit",
-    );
-  }
-  return envelope;
 }
 
 export async function discoverXTimelineWithAgentscrape(
   request: XTimelineDiscoveryRequest,
 ): Promise<XTimelineDiscoveryEnvelope> {
   const url = normalizedWebUrl(request.url);
-  const timeoutMs = positiveInteger(
-    request.timeoutMs ?? AGENTSCRAPE_DEFAULT_TIMEOUT_MS,
-    "agentscrape X discovery timeout",
-    AGENTSCRAPE_TIMEOUT_MAX_MS,
-  );
-  const limit = positiveInteger(request.limit, "X timeline item limit", 10_000);
-  const maxScrolls = positiveInteger(
-    request.maxScrolls,
-    "X timeline scroll limit",
-    100,
-  );
-  const args = [
-    "fetch-links",
-    url,
-    "--preset",
-    "x-timeline",
-    "--limit",
-    String(limit),
-    "--max-scrolls",
-    String(maxScrolls),
-    "--json",
-  ];
-  if (request.sinceId !== undefined) {
-    if (!/^\d+$/.test(request.sinceId)) {
-      return discoveryProtocol("X since_id is invalid");
-    }
-    args.push("--since-id", request.sinceId);
-  }
-  if (request.includeReplies === true) args.push("--include-replies");
-  if (request.includeReposts === true) args.push("--include-reposts");
-  const result = await runDiscoveryCommand(args, timeoutMs, request.signal);
-  if (result.status !== 0) {
-    throw discoveryCommandFailure(result.stderr, "agentscrape X discovery");
-  }
-  let decoded: unknown;
+  let result: unknown;
   try {
-    decoded = JSON.parse(result.stdout) as unknown;
-  } catch {
-    return discoveryProtocol("X discovery command returned malformed JSON");
+    const links = await scrapeFetchLinks(url, {
+      preset: "x-timeline", limit: request.limit, maxScrolls: request.maxScrolls,
+      sinceId: request.sinceId, includeReplies: request.includeReplies,
+      includeReposts: request.includeReposts, allowPrivateNetwork: true,
+      signal: request.signal,
+    });
+    result = structuredJson(links);
+  } catch (error) {
+    throw discoveryCommandFailure(String(error), "scrape X discovery");
   }
-  return validateXTimelineDiscoveryEnvelope(decoded, request.handle, {
-    maxItems: limit,
-  });
+  return validateXTimelineDiscoveryEnvelope(result, request.handle, { maxItems: request.limit });
 }
 
 export const sourceDiscoveryWithAgentscrape: SourceDiscoveryProvider = {

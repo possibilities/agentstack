@@ -35,7 +35,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.deepEqual(
       docs.packages.map((item) => item.name),
-       ["api", "attention", "auth", "bots", "brain", "browser", "content", "infer", "notify", "owner", "roles", "usage", "workers"],
+        ["api", "attention", "auth", "bots", "brain", "browser", "content", "infer", "notify", "owner", "roles", "scrape", "usage", "workers"],
     );
     assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@agentstack/${item.name}`));
 
@@ -83,6 +83,12 @@ test("the api package serves structured documents for every workspace package", 
         "hypeman_detect", "hypeman_location_set", "hypeman_enable", "hypeman_install", "hypeman_uninstall"].sort());
     assert.deepEqual(Object.keys(browser.events), ["browser_system_changed", "browser_sessions_changed"]);
     assert.deepEqual(Object.keys(browser.operations.find((operation) => operation.name === "browser_session_launch")?.inputSchema.properties ?? {}), ["session"]);
+    const scrape = found.get("scrape") as PackageDoc;
+    assert.deepEqual(scrape.transports.map((transport) => transport.type), ["socket", "mcp", "websocket"]);
+    assert.ok(Object.keys(scrape.operations.find((operation) => operation.name === "scrape_fetch")?.outputSchema.properties ?? {}).includes("failure"));
+    const exposed = scrape.transports.find((transport) => transport.type === "mcp")!.operations;
+    assert.ok(exposed.includes("scrape_fetch") && exposed.includes("scrape_presets_list"));
+    assert.ok(!exposed.includes("scrape_queue_submit") && !exposed.includes("scrape_corpus_capture") && !exposed.includes("scrape_session_close") && !exposed.includes("scrape_fetch_file") && !exposed.includes("scrape_convert_html_directory"));
 
     const bots = found.get("bots") as PackageDoc;
     assert.deepEqual(Object.keys(bots.events).sort(), ["bots_changed", "chat_live_changed", "chat_queue_changed", "chats_changed", "defaults_changed", "threads_changed", "voice_changed"]);

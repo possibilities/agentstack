@@ -2,8 +2,6 @@ import { afterEach, test } from "node:test";
 import { expect } from "expect";
 import { createHash } from "node:crypto";
 import {
-  chmodSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -16,23 +14,25 @@ import {
   RECOVERY_JOB_PREFIX,
   RECOVERY_ONLINE_JOB_PREFIX,
 } from "../src/admission.js";
-import { AgentscrapeExtractionError } from "../src/agentscrape.js";
+import { AgentscrapeExtractionError, validateExtractionEnvelope } from "../src/agentscrape.js";
+import type { ExtractionSuccess } from "../src/types.js";
 import { ArtifactStore } from "../src/artifacts.js";
 import { RECOVERY_ONLINE_SCOPE_KIND, ResearchStore } from "../src/store.js";
 import { type JobMaterializer, runWorker } from "../src/worker.js";
 
 const roots: string[] = [];
-const originalPath = process.env.PATH;
 const T0 = new Date("2026-06-01T00:00:00.000Z");
+function verifiedExtraction(payload: unknown, url: string): ExtractionSuccess {
+  const value = validateExtractionEnvelope(payload, url);
+  if (value.status !== "success") throw new Error("expected a successful extraction fixture");
+  return value;
+}
 
 function at(milliseconds: number): Date {
   return new Date(T0.getTime() + milliseconds);
 }
 
 afterEach(() => {
-  process.env.PATH = originalPath;
-  delete process.env.COUNT_FILE;
-  delete process.env.ARGV_FILE;
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
 });
@@ -242,24 +242,6 @@ function extractionEnvelope(url: string, content: string): string {
   });
 }
 
-function installExtractionCommand(root: string, envelope: string): void {
-  const bin = join(root, "bin");
-  mkdirSync(bin);
-  const executable = join(bin, "agentscrape");
-  writeFileSync(
-    executable,
-    `#!/bin/sh
-printf x >> "$COUNT_FILE"
-printf '%s\\n' "$@" > "$ARGV_FILE"
-printf '%s' '${envelope.replaceAll("'", `'\\''`)}'
-`,
-  );
-  chmodSync(executable, 0o755);
-  process.env.PATH = `${bin}:${originalPath}`;
-  process.env.COUNT_FILE = join(root, "count");
-  process.env.ARGV_FILE = join(root, "argv");
-}
-
 const materialize: JobMaterializer = (job) => [
   {
     sourceType: "text",
@@ -279,13 +261,14 @@ test("queued URL extraction promotes and commits through fenced completion", asy
   });
   const requested = "https://example.test/private?token=%5BREDACTED%5D";
   const content = "# Queued URL\n\nDurable body";
-  installExtractionCommand(root, extractionEnvelope(requested, content));
+  const extract = async () => verifiedExtraction(JSON.parse(extractionEnvelope(requested, content)), requested);
 
   const result = await runWorker(store, {
     once: true,
     workerId: "url-worker",
     now: () => T0,
     artifactStore: artifacts,
+    extract,
     installSignalHandlers: false,
   });
 
@@ -323,12 +306,6 @@ test("queued URL extraction promotes and commits through fenced completion", asy
       raw_metadata: expect.stringContaining('"name":"agentscrape"'),
     },
   ]);
-  expect(readFileSync(process.env.ARGV_FILE ?? "", "utf8")).toContain(
-    "--envelope\n",
-  );
-  expect(readFileSync(process.env.ARGV_FILE ?? "", "utf8")).not.toContain(
-    "--markdown",
-  );
   store.close();
 });
 
@@ -358,13 +335,14 @@ test("URL worker persists parser-derived X thread classification", async () => {
     content_item_count: 2,
     source_id: "123",
   };
-  installExtractionCommand(root, JSON.stringify(payload));
+  const extract = async () => verifiedExtraction(payload, url);
 
   const result = await runWorker(store, {
     once: true,
     workerId: "classified-worker",
     now: () => T0,
     artifactStore: artifacts,
+    extract,
     installSignalHandlers: false,
   });
 
@@ -390,13 +368,9 @@ test("retry after index failure reuses the promoted URL Artifact", async () => {
     now: T0,
   });
   const content = "# Reusable\n\nExtract once";
-  installExtractionCommand(
-    root,
-    extractionEnvelope(
-      "https://example.test/private?token=%5BREDACTED%5D",
-      content,
-    ),
-  );
+  const requested = "https://example.test/private?token=%5BREDACTED%5D";
+  let extractions = 0;
+  const extract = async () => { extractions += 1; return verifiedExtraction(JSON.parse(extractionEnvelope(requested, content)), requested); };
   const upsert = store.upsertDocument.bind(store);
   let indexAvailable = false;
   store.upsertDocument = ((input) => {
@@ -412,10 +386,11 @@ test("retry after index failure reuses the promoted URL Artifact", async () => {
     workerId: "first-index-attempt",
     now: () => T0,
     artifactStore: artifacts,
+    extract,
     policy,
     installSignalHandlers: false,
   });
-  expect(readFileSync(process.env.COUNT_FILE ?? "", "utf8")).toBe("x");
+  expect(extractions).toBe(1);
   expect(
     store.db.query("SELECT state FROM jobs WHERE id=?").get(queued.job.id),
   ).toEqual({ state: "retry_wait" });
@@ -442,11 +417,12 @@ test("retry after index failure reuses the promoted URL Artifact", async () => {
     workerId: "second-index-attempt",
     now: () => at(1000),
     artifactStore: artifacts,
+    extract,
     policy,
     installSignalHandlers: false,
   });
   expect(retried).toMatchObject({ claimed: 1, completed: 1 });
-  expect(readFileSync(process.env.COUNT_FILE ?? "", "utf8")).toBe("x");
+  expect(extractions).toBe(1);
   expect(
     store.db
       .query("SELECT state, attempt_count FROM jobs WHERE id=?")
