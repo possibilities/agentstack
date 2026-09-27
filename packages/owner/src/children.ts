@@ -56,6 +56,11 @@ export function attentionChild(): OwnedChild {
   return { name: "attention", command: process.execPath,
     args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "attention", "socket"] };
 }
+export function notificationsChild(): OwnedChild {
+  const apiPackage = require.resolve("@agentstack/api/package.json");
+  return { name: "notifications", command: process.execPath,
+    args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "notifications", "socket"] };
+}
 export function contentChild(): OwnedChild {
   const apiPackage = require.resolve("@agentstack/api/package.json");
   return {

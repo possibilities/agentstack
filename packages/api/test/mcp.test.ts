@@ -5,10 +5,14 @@ import { join } from "node:path";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import WebSocket from "ws";
 import { z } from "zod";
 import { operation } from "../src/operation.js";
 import { serveMcp } from "../src/mcp.js";
-import { serveSocket } from "../src/socket.js";
+import { serveSocket, socketCall } from "../src/socket.js";
+import { serveApi } from "../src/serve.js";
+import { serveWebSocket } from "../src/websocket.js";
 import { mcpPort, socketPath } from "../src/workspace.js";
 import { botMcpUrl, workerMcpUrl, parseWorkerMcpIdentity } from "../src/bot-mcp-identity.js";
 import type { InvocationContext } from "../src/operation.js";
@@ -18,7 +22,7 @@ test("one HTTP process exposes each configured Package API and forwards operatio
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-mcp-"));
   const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0" };
   const seen: string[] = [];
-  const sockets = await Promise.all(["auth", "bots", "brain", "content", "roles", "owner", "usage", "workers"].map((name) => serveSocket({
+  const sockets = await Promise.all(["auth", "bots", "brain", "content", "notifications", "roles", "owner", "usage", "workers"].map((name) => serveSocket({
     info: { name, description: `${name}.`, transportDescription: "Socket.", path: socketPath(name, env) },
     context: {},
     operations: [name === "auth" ? operation({
@@ -31,7 +35,7 @@ test("one HTTP process exposes each configured Package API and forwards operatio
   })));
   const served = await serveMcp({ env });
   try {
-    assert.deepEqual(Object.keys(served.urls), ["auth", "bots", "brain", "content", "owner", "roles", "usage", "workers"]);
+    assert.deepEqual(Object.keys(served.urls), ["auth", "bots", "brain", "content", "notifications", "owner", "roles", "usage", "workers"]);
     for (const [name, url] of Object.entries(served.urls)) {
       const client = new Client({ name: "test", version: "1.0.0" });
       await client.connect(new StreamableHTTPClientTransport(new URL(url)));
@@ -43,6 +47,7 @@ test("one HTTP process exposes each configured Package API and forwards operatio
           assert.ok(tools.some((tool) => tool.name === "account_list"));
           const result = await client.callTool({ name: "account_list", arguments: {} });
           assert.deepEqual(result.structuredContent, { accounts: [] });
+          assert.deepEqual(result.content, [{ type: "text", text: '{"accounts":[]}' }]);
           assert.deepEqual(seen, ["account_list"]);
           const error = await client.callTool({ name: "account_list", arguments: { unknown: true } });
           assert.equal(error.isError, true);
@@ -78,6 +83,129 @@ test("one HTTP process exposes each configured Package API and forwards operatio
     await served.close();
     await Promise.all(sockets.map((socket) => socket.close()));
     await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("any Package API can present native MCP media without changing its socket or WebSocket JSON", { timeout: 30_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-mcp-media-"));
+  const dir = join(root, "packages", "demo");
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nmcp:\n  description: MCP.\nwebsocket:\n  description: WebSocket.\n");
+  const env = { ...process.env, AGENTSTACK_STATE_DIR: root };
+  const bytes = Buffer.from("sample audio\0");
+  const payload = { mimeType: "audio/wav", base64: bytes.toString("base64") };
+  let calls = 0;
+  const socket = await serveSocket({ info: { name: "demo", description: "Demo.", transportDescription: "Socket.", path: socketPath("demo", env) }, context: {},
+    operations: [operation({ name: "media", description: "Read media.", input: z.strictObject({}), output: z.object({ mimeType: z.string(), base64: z.string() }),
+      async call() { calls++; return payload; },
+      mcpContent(_ctx, _input, output) { return [{ type: "audio", mimeType: output.mimeType, data: output.base64 }]; },
+    })] });
+  const mcp = await serveMcp({ root, env, port: 0 });
+  const websocket = await serveWebSocket({ root, env, port: 0 });
+  const client = new Client({ name: "test", version: "1" });
+  let ws: WebSocket | undefined;
+  try {
+    await assert.rejects(socketCall(socket.path, "tools/call", { name: "media", arguments: {}, resultFormat: "unknown" }), /unknown result format/);
+    assert.equal(calls, 0);
+    assert.deepEqual(await socketCall(socket.path, "tools/call", { name: "media", arguments: {} }), payload);
+    await client.connect(new StreamableHTTPClientTransport(new URL(mcp.urls.demo!)));
+    const result = await client.callTool({ name: "media", arguments: {} });
+    assert.deepEqual(result.structuredContent, payload);
+    assert.deepEqual(result.content, [{ type: "audio", mimeType: payload.mimeType, data: payload.base64 }]);
+    ws = await new Promise<WebSocket>((resolve, reject) => {
+      const conn = new WebSocket(websocket.urls.demo!);
+      conn.once("open", () => resolve(conn)); conn.once("error", reject);
+    });
+    const frame = new Promise<unknown>((resolve, reject) => {
+      ws!.once("message", (raw) => { try { resolve(JSON.parse(String(raw))); } catch (error) { reject(error); } });
+      ws!.once("error", reject);
+    });
+    ws.send(JSON.stringify({ id: 7, method: "tools/call", params: { name: "media", arguments: {} } }));
+    assert.deepEqual(await frame, { id: 7, result: payload });
+    const denied = new Promise<any>((resolve) => ws!.once("message", (raw) => resolve(JSON.parse(String(raw)))));
+    ws.send(JSON.stringify({ id: 8, method: "tools/call", params: { name: "media", arguments: {}, resultFormat: "mcp" } }));
+    assert.match((await denied).error.message, /not available over websocket/);
+    assert.equal(calls, 3, "one call per transport; MCP presentation must not execute the operation twice");
+  } finally {
+    ws?.terminate(); await client.close(); await websocket.close(); await mcp.close(); await socket.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("content items keep portable JSON on socket and WebSocket and gain native MCP blocks", { timeout: 30_000 }, async () => {
+  const state = await mkdtemp(join(tmpdir(), "agentstack-content-media-"));
+  const env = { ...process.env, AGENTSTACK_STATE_DIR: state, AGENTSTACK_CONTENT_PORT: "0", AGENTSTACK_CONTENT_ARTIFACT_PORT: "0" };
+  const content = await serveApi({ name: "content", transport: "socket", env });
+  const mcp = await serveMcp({ env, port: 0 });
+  const websocket = await serveWebSocket({ env, port: 0 });
+  const client = new Client({ name: "test", version: "1" });
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(mcp.urls.content!)));
+    for (const [kind, name, mediaType, bytes] of [
+      ["document", "note.md", "text/markdown", Buffer.from("# Note")],
+      ["image", "pic.png", "image/png", Buffer.from("89504e470d0a1a0a", "hex")],
+      ["file", "archive.zip", "application/zip", Buffer.from("file\0bytes")],
+    ] as const) {
+      const put = { name, kind, mediaType, ...(kind === "document" ? { content: bytes.toString("utf8") } : { base64: bytes.toString("base64") }) };
+      const item = await socketCall(content.socketPath!, "tools/call", { name: "item_put", arguments: put }) as { id: string; url: string };
+      const arguments_ = { id: item.id, includeData: true };
+      const json = await socketCall(content.socketPath!, "tools/call", { name: "item_get", arguments: arguments_ });
+      const result = await client.callTool({ name: "item_get", arguments: arguments_ }) as CallToolResult;
+      assert.deepEqual(result.structuredContent, json);
+      assert.equal(result.content?.[0]?.type, "text");
+      assert.equal(JSON.stringify(result.content?.[0]).includes(bytes.toString("base64")), false, "summary should not duplicate binary data");
+      const block = result.content?.[1];
+      if (kind === "image") assert.deepEqual(block, { type: "image", data: bytes.toString("base64"), mimeType: mediaType });
+      else {
+        assert.equal(block?.type, "resource");
+        if (block?.type === "resource") {
+          assert.equal(block.resource.mimeType, mediaType);
+          assert.match(block.resource.uri, new RegExp(`/c/${item.id}$`));
+          if (kind === "document") assert.equal("text" in block.resource && block.resource.text, bytes.toString("utf8"));
+          else assert.equal("blob" in block.resource && block.resource.blob, bytes.toString("base64"));
+        }
+      }
+      const withoutData = await client.callTool({ name: "item_get", arguments: { id: item.id } }) as CallToolResult;
+      assert.equal(withoutData.content?.[1]?.type, "resource_link");
+      const link = withoutData.content?.[1];
+      if (link?.type === "resource_link") assert.deepEqual(Buffer.from(await (await fetch(link.uri)).arrayBuffer()), bytes);
+    }
+    // Chunk reads remain ordinary JSON, including through MCP. No media type can
+    // be inferred safely from a byte range, and staged content stays bounded.
+    const ordinary = await client.callTool({ name: "content_status", arguments: {} });
+    assert.deepEqual(ordinary.content, [{ type: "text", text: JSON.stringify(ordinary.structuredContent) }]);
+    const escaped = "\0".repeat(256 * 1024);
+    const longDoc = await socketCall(content.socketPath!, "tools/call", { name: "item_put", arguments: {
+      name: "escaped.txt", kind: "document", mediaType: "text/plain", content: escaped,
+    } }) as { id: string };
+    const large = await client.callTool({ name: "item_get", arguments: { id: longDoc.id, includeData: true } }) as CallToolResult;
+    assert.equal((large.structuredContent as { content: string }).content, escaped);
+    assert.equal(large.content[1]?.type, "resource");
+    if (large.content[1]?.type === "resource") assert.equal("text" in large.content[1].resource && large.content[1].resource.text, escaped);
+    const ws = new WebSocket(websocket.urls.content!);
+    try {
+      await new Promise<void>((resolve, reject) => { ws.once("open", () => resolve()); ws.once("error", reject); });
+      const image = await socketCall(content.socketPath!, "tools/call", { name: "item_list", arguments: {} }) as { items: Array<{ id: string; kind: string }> };
+      const id = image.items.find((item) => item.kind === "image")!.id;
+      const frame = new Promise<any>((resolve) => ws.once("message", (raw) => resolve(JSON.parse(String(raw)))));
+      ws.send(JSON.stringify({ id: 1, method: "tools/call", params: { name: "item_get", arguments: { id, includeData: true } } }));
+      assert.deepEqual((await frame).result, await socketCall(content.socketPath!, "tools/call", { name: "item_get", arguments: { id, includeData: true } }));
+      const largeFrame = new Promise<any>((resolve) => ws.once("message", (raw) => resolve(JSON.parse(String(raw)))));
+      ws.send(JSON.stringify({ id: 2, method: "tools/call", params: { name: "item_get", arguments: { id: longDoc.id, includeData: true } } }));
+      assert.equal((await largeFrame).result.content, escaped);
+      const upload = new Promise<any>((resolve) => ws.once("message", (raw) => resolve(JSON.parse(String(raw)))));
+      ws.send(JSON.stringify({ id: 3, method: "tools/call", params: { name: "item_put", arguments: {
+        name: "via-websocket.txt", kind: "document", mediaType: "text/plain", content: escaped,
+      } } }));
+      const uploaded = await upload;
+      assert.equal(uploaded.id, 3);
+      assert.equal((await socketCall(content.socketPath!, "tools/call", { name: "item_get", arguments: {
+        id: uploaded.result.id, includeData: true,
+      } }) as { content: string }).content, escaped);
+    } finally { ws.terminate(); }
+  } finally {
+    await client.close(); await websocket.close(); await mcp.close(); await content.close();
+    await rm(state, { recursive: true, force: true });
   }
 });
 

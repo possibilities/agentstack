@@ -27,6 +27,7 @@
     "@agentstack/browser": "workspace:*",
     "@agentstack/brain": "workspace:*",
     "@agentstack/infer": "workspace:*",
+    "@agentstack/notifications": "workspace:*",
     "@agentstack/uix": "workspace:*",
     "@agentstack/usage": "workspace:*",
     "@agentstack/workers": "workspace:*",

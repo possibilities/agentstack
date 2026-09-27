@@ -4,6 +4,7 @@ export {
   type Annotations,
   type AnyOperation,
   type InvocationContext,
+  type McpContent,
   type PackageApi,
   type PackageEvents,
 } from "./operation.js";

@@ -5,12 +5,12 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { accountLabels, relativeTime, shortId, untilTime, usageRows, workerAccountLabels } from "@/lib/stack/derive";
+import { accountLabels, providerTitle, relativeTime, shortId, untilTime, usageRows, workerAccountLabels, workerProviders } from "@/lib/stack/derive";
 import { nodeKey, type NodeRef, type UsageAccount, type UsageObservation, type UsageSnapshot, type UsageSubscription } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { Empty, headroomTone, Meter, NodeCard, NodeTitle, Orb, StatusDot, Time } from "./primitives";
 import { useNow, useStack, useStore } from "./provider";
-import { Window } from "./window";
+import { Section, Window } from "./window";
 
 /**
  * A gauge's group is the set of windows that gate the same quota: an exhausted
@@ -229,7 +229,7 @@ function UsageCard({ node, names, observation, summary, orbs, samples, subscript
       {/* At most one info line: notes truncate (full text on hover) before a stale age or the subscription end gives way. */}
       {notes || stale.length || subscription ? (
         <p className="flex min-w-0 items-baseline gap-2 text-[0.68rem] text-muted-foreground">
-          <span className="min-w-0 truncate" title={notes || undefined}>{notes}</span>
+          {notes ? <span className="min-w-0 truncate" title={notes}>{notes}</span> : null}
           {stale.length ? (
             <span className="shrink-0 text-foreground/80">updated {stale.map((sample, index) => (
               <span key={sample.label ?? ""}>{index ? " · " : ""}{sample.label ? `${sample.label} ` : ""}<Time at={sample.at} /></span>
@@ -257,6 +257,13 @@ export function UsageWindow() {
   // Grok Bot folds into the card of the only Grok Worker login; otherwise it stands alone.
   const grokAccounts = usage.data?.accounts.filter((account) => account.provider === "grok") ?? [];
   const grokHost = grokBot?.usage && grokAccounts.length === 1 ? rows.find((row) => row[0] === grokAccounts[0]) ?? null : null;
+  // Mirror Accounts' provider sections, including accounts without a measurement.
+  const groups = workerProviders.map((provider) => ({
+    provider,
+    rows: rows.filter((row) => row[0].provider === provider),
+    waiting: waiting.filter((account) => account.provider === provider),
+    separateBot: provider === "grok" && grokBot && !grokHost ? grokBot : null,
+  })).filter((group) => group.rows.length || group.waiting.length || group.separateBot);
   return (
     <Window id="usage" title="Usage" subtitle="usage" icon={GaugeIcon} accent="owner" node={{ kind: "usage" }} empty={!usage.data || !rows.length && !waiting.length && !grokBot}
       count={usage.data ? usage.data.accounts.length + (usage.data.grokBot ? 1 : 0) : undefined} status={status.usage} endpoint={endpoints.usage} updatedAt={usage.at} error={usage.error}
@@ -270,39 +277,45 @@ export function UsageWindow() {
       }>
       {usage.data?.inventoryError ? <Alert variant="destructive"><AlertDescription>Inventory {usage.data.inventoryError.replace("_", " ")} · <Time at={usage.data.inventoryAtMs} /></AlertDescription></Alert> : null}
       {usage.data ? (
-        <div className="flex flex-col gap-2">
-          {rows.map((row) => {
-            const bot = row === grokHost ? grokBot : null;
-            return (
-              <UsageCard key={`${row[0].scope}:${row[0].id}`} node={nodeOf(row[0])} observation={bot ? worstObservation(row[0], bot) : row[0]}
-                summary={bot?.usage ? withGrokBot(summarize(row[0])!, bot.usage) : summarize(row[0])!}
-                samples={[{ label: null, at: row[0].observedAtMs }, ...bot ? [{ label: "bot", at: bot.observedAtMs }] : []]}
-                subscription={row[0].subscription}
-                orbs={row.map((account) => account.id)} names={row.map((account) => ({ node: nodeOf(account), label: label(account) }))} />
-            );
-          })}
-          {grokBot?.usage && !grokHost ? (
-            <UsageCard node={grokBotNode} observation={grokBot} summary={grokBotSummary(grokBot.usage, "period")} orbs={[]}
-              samples={[{ label: null, at: grokBot.observedAtMs }]} subscription={null}
-              names={[{ node: grokBotNode, label: "Grok Bot" }]} />
-          ) : null}
-          {waiting.length || (grokBot && !grokBot.usage) ? (
-            <div className="flex flex-wrap items-center gap-1 px-0.5 pt-1">
-              <span className="mr-1 text-[0.68rem] text-muted-foreground">Not observed</span>
-              {waiting.map((account) => (
-                <span key={`${account.scope}:${account.id}`} data-node={nodeKey(nodeOf(account))} title={account.error ?? (!account.ready ? "Needs sign-in" : !account.enabled ? "Disabled" : "Waiting")}
-                  className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem]">
-                  <Orb id={account.id} size="sm" className="size-2.5" />
-                  <NodeTitle node={nodeOf(account)} label={`${label(account)} usage`}>{label(account)}</NodeTitle>
-                </span>
-              ))}
-              {grokBot && !grokBot.usage ? (
-                <span data-node={nodeKey(grokBotNode)} title={grokBot.error ?? "Waiting"} className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem]">
-                  <NodeTitle node={grokBotNode} label="Grok Bot usage">Grok Bot</NodeTitle>
-                </span>
-              ) : null}
-            </div>
-          ) : null}
+        <div className="flex flex-col gap-3">
+          {groups.map(({ provider, rows: providerRows, waiting: providerWaiting, separateBot }) => (
+            <Section key={provider} title={providerTitle(provider)}>
+              <div className="flex flex-col gap-2">
+                {providerRows.map((row) => {
+                  const bot = row === grokHost ? grokBot : null;
+                  return (
+                    <UsageCard key={`${row[0].scope}:${row[0].id}`} node={nodeOf(row[0])} observation={bot ? worstObservation(row[0], bot) : row[0]}
+                      summary={bot?.usage ? withGrokBot(summarize(row[0])!, bot.usage) : summarize(row[0])!}
+                      samples={[{ label: null, at: row[0].observedAtMs }, ...bot ? [{ label: "bot", at: bot.observedAtMs }] : []]}
+                      subscription={row[0].subscription}
+                      orbs={row.map((account) => account.id)} names={row.map((account) => ({ node: nodeOf(account), label: label(account) }))} />
+                  );
+                })}
+                {separateBot?.usage ? (
+                  <UsageCard node={grokBotNode} observation={separateBot} summary={grokBotSummary(separateBot.usage, "period")} orbs={[]}
+                    samples={[{ label: null, at: separateBot.observedAtMs }]} subscription={null}
+                    names={[{ node: grokBotNode, label: "Grok Bot" }]} />
+                ) : null}
+                {providerWaiting.length || (separateBot && !separateBot.usage) ? (
+                  <div className="flex flex-wrap items-center gap-1 px-0.5 pt-1">
+                    <span className="mr-1 text-[0.68rem] text-muted-foreground">Not observed</span>
+                    {providerWaiting.map((account) => (
+                      <span key={`${account.scope}:${account.id}`} data-node={nodeKey(nodeOf(account))} title={account.error ?? (!account.ready ? "Needs sign-in" : !account.enabled ? "Disabled" : "Waiting")}
+                        className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem]">
+                        <Orb id={account.id} size="sm" className="size-2.5" />
+                        <NodeTitle node={nodeOf(account)} label={`${label(account)} usage`}>{label(account)}</NodeTitle>
+                      </span>
+                    ))}
+                    {separateBot && !separateBot.usage ? (
+                      <span data-node={nodeKey(grokBotNode)} title={separateBot.error ?? "Waiting"} className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem]">
+                        <NodeTitle node={grokBotNode} label="Grok Bot usage">Grok Bot</NodeTitle>
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            </Section>
+          ))}
           {!rows.length && !waiting.length && !grokBot ? <Empty icon={GaugeIcon} title="No accounts" /> : null}
         </div>
       ) : (

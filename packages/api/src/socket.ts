@@ -2,6 +2,7 @@ import { chmod, lstat, mkdir, rm } from "node:fs/promises";
 import { createServer, connect, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import { z } from "zod";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { AnyOperation, InvocationContext } from "./operation.js";
 import { publishedJsonSchema } from "./schema.js";
 
@@ -23,8 +24,10 @@ export type ServedSocket = {
   close(): Promise<void>;
 };
 
-const maxLine = 1_000_000;
-const maxClientBuffer = 1_000_000;
+// A 256 KiB text item can expand sixfold under JSON escaping; an MCP result
+// carries both the typed output and its native content block over this socket.
+const maxLine = 4_000_000;
+const maxClientBuffer = 4_000_000;
 const maxTopics = 256;
 
 export async function serveSocket<Ctx>(options: {
@@ -508,7 +511,8 @@ async function callTool<Ctx>(
   params: unknown,
   options: { context: Ctx; operations: readonly AnyOperation<Ctx>[] },
 ): Promise<unknown> {
-  const record = params && typeof params === "object" ? (params as { name?: unknown; arguments?: unknown; invocation?: unknown }) : {};
+  const record = params && typeof params === "object" ? (params as { name?: unknown; arguments?: unknown; invocation?: unknown; resultFormat?: unknown }) : {};
+  if (record.resultFormat !== undefined && record.resultFormat !== "mcp") throw new Error("unknown result format");
   if (typeof record.name !== "string") throw new Error("missing operation name");
   const operation = options.operations.find((item) => item.name === record.name);
   if (!operation) throw new Error(`unknown operation: ${record.name}`);
@@ -519,7 +523,14 @@ async function callTool<Ctx>(
     workerId: z.string().nullable().optional(), workerInstance: z.string().nullable().optional(),
   }).parse(record.invocation) as InvocationContext;
   const output = await operation.call(options.context, input, invocation);
-  return operation.output.parse(output);
+  const result = operation.output.parse(output);
+  if (record.resultFormat === undefined) return result;
+  // Project once, at the context owner, after validating the public output.
+  // The MCP listener has no access to the package's operation definitions.
+  const content = operation.mcpContent
+    ? await operation.mcpContent(options.context, input, result)
+    : [{ type: "text" as const, text: JSON.stringify(result) }];
+  return CallToolResultSchema.parse({ structuredContent: result, content });
 }
 
 function write(socket: Socket, message: unknown): void {
