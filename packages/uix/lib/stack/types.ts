@@ -375,16 +375,31 @@ export type InferEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max
 /** One picker-visible model from `infer_models`; discovery runs no inference. */
 export type InferModel = { id: string; defaultEffort: InferEffort; supportedEfforts: InferEffort[] };
 
-export type InferModels = { models: InferModel[]; observedAt: string };
+/** Cached `infer_model_list` discovery for one Bot account; reading it never starts discovery. */
+export type InferModelObservation = { accountId: string; models: InferModel[] | null; observedAt: string | null; discovering: boolean; error: string | null };
 
-/** `infer_complete` returns only after a successful terminal response. */
-export type InferCompletion = {
+/** `failed` is definite; `unknown` may have been charged. */
+export type InferRequestState = "running" | "completed" | "failed" | "unknown";
+
+type InferRequestFields = {
   requestId: string;
+  accountId: string;
   model: string;
+  effort: InferEffort;
+  maxOutputTokens: number;
+  state: InferRequestState;
+  error: string | null;
   reportedModel: string | null;
-  text: string;
-  usage: { inputTokens: number | null; outputTokens: number | null; totalTokens: number | null; reasoningTokens: number | null };
+  usage: { inputTokens: number | null; outputTokens: number | null; totalTokens: number | null; reasoningTokens: number | null } | null;
+  createdAt: string;
+  finishedAt: string | null;
 };
+
+/** One row of the durable `infer_request_list` ledger, with previews instead of bodies. */
+export type InferRequestSummary = InferRequestFields & { inputPreview: string; textPreview: string | null; textChars: number | null };
+
+/** `infer_request_get`: the full ledger record. */
+export type InferRequest = InferRequestFields & { instructions: string; input: string; text: string | null };
 
 /** Headless attention defaults; API reference exposes these before dedicated controls exist. */
 export type AttentionDefaults = { model: string; reasoningEffort: InferEffort; accountId: string | null; revision: number };

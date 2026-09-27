@@ -1,6 +1,6 @@
 name: infer
-description: Bounded, non-agentic Codex subscription inference for an explicitly selected enabled Bot account. The direct backend transport is experimental and may change.
+description: Bounded, non-agentic Codex subscription inference for an explicitly selected enabled Bot account, with a durable request ledger. The direct backend transport is experimental and may change.
 socket:
-  description: Private local model discovery and one-shot inference; no Codex threads, turns or tools are created.
+  description: Private local model discovery, waiting or admitted inference requests, the durable request ledger, traces and change events; no Codex threads, turns or tools are created.
 websocket:
-  description: Loopback WebSocket for the UIX Lab's model discovery and one-shot inference, forwarded to the infer socket. There is deliberately no MCP transport.
+  description: Loopback WebSocket for the UIX Lab's model discovery, request admission, ledger reads and change events, forwarded to the infer socket. There is deliberately no MCP transport.

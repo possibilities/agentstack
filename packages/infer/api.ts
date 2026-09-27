@@ -1,6 +1,6 @@
 import { operation, stateDir, type PackageApi } from "@agentstack/api";
 import { InferService } from "./src/service.js";
-import { completeInput, completeOutput, modelsInput, modelsOutput } from "./src/schema.js";
+import { completeInput, completeOutput, discoverInput, getInput, listInput, listOutput, modelListInput, modelListOutput, modelObservation, modelsInput, modelsOutput, requestRecord, startInput } from "./src/schema.js";
 import { InferTraces } from "./src/traces.js";
 import { z } from "zod";
 
@@ -26,8 +26,49 @@ export const inferTraceRead = operation({
   annotations: { title: "Read inference trace", readOnlyHint: true },
   async call(ctx: InferContext, input) { if (!ctx.service.traces) throw new Error("tracing unavailable"); return ctx.service.traces.read(input.requestId,input.offset,input.limit,input.revision); },
 });
-export const api: PackageApi<InferContext> = {
-  operations: [inferModels, inferComplete, inferTraceRead],
+export const inferModelList = operation({
+  name: "infer_model_list",
+  description: "Read cached model discovery for Bot accounts: models and efforts, observation time, the last discovery error, and whether discovery is running. Never starts discovery or inference. infer_models, infer_discover and each request's own fresh check refresh it.",
+  input: modelListInput, output: modelListOutput,
+  annotations: { title: "Read cached inference models", readOnlyHint: true },
+  async call(ctx: InferContext, input) { return { accounts: ctx.service.modelList(input.accountId) }; },
+});
+export const inferDiscover = operation({
+  name: "infer_discover",
+  description: "Start discovering an enabled Bot account's models in the background through an isolated app-server model/list, and return at once. No thread, turn or inference. Coalesces with a discovery already running; read infer_model_list after infer_changed.",
+  input: discoverInput, output: modelObservation,
+  annotations: { title: "Discover inference models", readOnlyHint: false, idempotentHint: true },
+  async call(ctx: InferContext, input) { return ctx.service.refreshModels(input.accountId); },
+});
+export const inferStart = operation({
+  name: "infer_start",
+  description: "Admit the same request as infer_complete into the durable ledger and return its running record at once, instead of waiting. The requestId is required; resending identical input returns the recorded run and never dispatches twice. Read infer_request_get after infer_changed for the outcome.",
+  input: startInput, output: requestRecord,
+  annotations: { title: "Start one inference", readOnlyHint: false, idempotentHint: true, openWorldHint: true },
+  async call(ctx: InferContext, input) { return ctx.service.start(input); },
+});
+export const inferRequestList = operation({
+  name: "infer_request_list",
+  description: "Page the durable inference request ledger, newest first, with state, outcome code, usage and short previews. It includes requests from infer_complete and infer_start. Read infer_request_get for full input and output, or infer_trace_read for dispatch evidence.",
+  input: listInput, output: listOutput,
+  annotations: { title: "List inference requests", readOnlyHint: true },
+  async call(ctx: InferContext, input) { return ctx.service.list(input.limit, input.before); },
+});
+export const inferRequestGet = operation({
+  name: "infer_request_get",
+  description: "Read one inference request from the durable ledger with its full instructions, input, output text, usage, reported model and outcome.",
+  input: getInput, output: requestRecord,
+  annotations: { title: "Read inference request", readOnlyHint: true },
+  async call(ctx: InferContext, input) { return ctx.service.get(input.requestId); },
+});
+export const topics = { infer_changed: "An inference request or cached model discovery changed. Re-read infer_request_list, infer_model_list, or the request you follow." } as const;
+export const api: PackageApi<InferContext, keyof typeof topics> = {
+  operations: [inferModels, inferModelList, inferDiscover, inferComplete, inferStart, inferRequestList, inferRequestGet, inferTraceRead],
+  events: { topics, start(ctx, publish) {
+    ctx.service.onChange = () => publish("infer_changed");
+    return () => { ctx.service.onChange = undefined; };
+  } },
   async createContext(env) { const dir = stateDir(env); return { service: new InferService(dir, undefined, undefined, undefined, new InferTraces(dir)) }; },
-  async closeContext(ctx) { ctx.service.traces?.close(); },
+  prepareCloseContext(ctx) { ctx.service.prepareClose(); },
+  async closeContext(ctx) { await ctx.service.close(); },
 };

@@ -1,7 +1,7 @@
 import { loadCatalog } from "./catalog";
 import { Channel } from "./channel";
 import { loadResources, mergeHistory } from "./resources";
-import type { Account, Bot, BotSettings, ChannelStatus, Login, OwnerResources, OwnerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
+import type { Account, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, OwnerResources, OwnerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
 
 export type StackState = Snapshot & {
   /** Main channel status by Package API name. */
@@ -19,6 +19,10 @@ export type StackState = Snapshot & {
   resourceHistory: Record<string, Resource<ResourceHistoryPoint[]>>;
   /** Monotonic invalidation generations, independent of the bounded activity log. */
   botInvalidations: Record<string, number>;
+  /** Newest page of the durable inference request ledger. */
+  inferRequests: Resource<InferRequestSummary[]>;
+  /** Cached model discovery per Bot account; reading it starts no discovery. */
+  inferModels: Resource<InferModelObservation[]>;
 };
 
 export type StackConnections = { packages?: readonly string[]; scopedBots?: boolean };
@@ -33,7 +37,9 @@ function isWorkerLoginState(value: unknown): value is WorkerLogin {
   return typeof value === "object" && value !== null && "status" in value && "account" in value && "provider" in value && "needsCode" in value;
 }
 
-type ResourceKey = "owner" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "catalog" | "usage";
+type ResourceKey = "owner" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "catalog" | "usage" | "inferRequests" | "inferModels";
+
+const inferPage = 20;
 
 const maxEvents = 250;
 
@@ -59,6 +65,7 @@ export class StackStore {
       ...snapshot, status: {}, scoped: {}, events: [], attempt: snapshot.login.data,
       workerAttempts: Object.fromEntries((snapshot.workerLogins.data ?? []).map((login) => [login.account, login])),
       workerCatalogs: {}, catalogPending: {}, resourceHistory: {}, botInvalidations: {},
+      inferRequests: { data: null, error: null, at: null }, inferModels: { data: null, error: null, at: null },
     };
     for (const account of snapshot.workerAccounts.data ?? []) if (this.catalogAccountAvailable(account.id)) this.catalogAvailable.add(account.id);
   }
@@ -113,8 +120,10 @@ export class StackStore {
       this.refresh("workerRuntimes"); this.refresh("workerSessions"); this.reconcileCatalogs(true);
     }, ["workers_changed"]);
     open("usage", () => this.refresh("usage"), () => this.refresh("usage"), ["usage_changed"]);
-    // Calls only: discovery starts an app-server and inference spends allowance, so neither runs on open.
-    open("infer", () => {});
+    // Reads only: discovery (infer_discover) and requests (infer_start) are explicit actions.
+    open("infer", () => { this.refresh("inferRequests"); this.refresh("inferModels"); }, () => {
+      this.refresh("inferRequests"); this.refresh("inferModels");
+    }, ["infer_changed"]);
     open("api", () => this.refresh("catalog"));
     this.reconcileScoped();
   }
@@ -150,6 +159,12 @@ export class StackStore {
     }
     if (pkg === "bots" && (name === "voice_dial" || name === "voice_hangup")) this.refresh("voice");
     return result;
+  };
+
+  /** Explicit infer actions. The ledger and model cache are re-read after each attempt, since a lost acknowledgement may still have admitted it. */
+  infer = <T>(name: "infer_start" | "infer_discover", args: Record<string, unknown>): Promise<T> => {
+    const refresh = () => this.refresh(name === "infer_start" ? "inferRequests" : "inferModels");
+    return this.call<T>("infer", name, args).finally(refresh);
   };
 
   dismissAttempt = (): void => this.set({ attempt: null });
@@ -319,6 +334,8 @@ export class StackStore {
       case "voice": return call<{ call: VoiceCall | null }>("bots", "voice_status").then((result) => result.call);
       case "usage": return call<UsageSnapshot>("usage", "usage_snapshot");
       case "catalog": return loadCatalog((name, args) => call<never>("api", name, args)) as Promise<PackageDoc[]>;
+      case "inferRequests": return call<{ requests: InferRequestSummary[] }>("infer", "infer_request_list", { limit: inferPage }).then((result) => result.requests);
+      case "inferModels": return call<{ accounts: InferModelObservation[] }>("infer", "infer_model_list", {}).then((result) => result.accounts);
     }
   }
 

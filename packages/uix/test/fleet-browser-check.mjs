@@ -50,6 +50,13 @@ const chunkWritten = Promise.withResolvers();
 const releaseChunk = Promise.withResolvers();
 let chatReadGate;
 let inferOutcome = "completed";
+let inferAck = "ok";
+let inferObservation = null;
+const inferLedger = [];
+const inferGates = [];
+const inferModelsFixture = [{ id: "gpt-fixture", defaultEffort: "medium", supportedEfforts: ["low", "medium", "high"] }, { id: "gpt-fixture-mini", defaultEffort: "low", supportedEfforts: ["minimal", "low"] }];
+const inferChanged = () => served.get("infer").publish("infer_changed");
+const inferSummary = ({ instructions: _, input, text, ...fields }) => ({ ...fields, inputPreview: input.slice(0, 160), textPreview: text?.slice(0, 160) ?? null, textChars: text?.length ?? null });
 const activeCall = { sessionId: id(30), botId: "bot-1", threadId: id(10), phase: "connected" };
 const passthrough = { parse: (value) => value };
 const served = new Map();
@@ -81,13 +88,34 @@ const handlers = {
     return receipt;
   },
   chat_upload_finish: ({ botId, id }) => uploads.finish(botId, id),
-  infer_models: () => ({ observedAt: new Date().toISOString(), models: [
-    { id: "gpt-fixture", defaultEffort: "medium", supportedEfforts: ["low", "medium", "high"] },
-    { id: "gpt-fixture-mini", defaultEffort: "low", supportedEfforts: ["minimal", "low"] }] }),
-  infer_complete: ({ model }) => {
-    if (inferOutcome === "unknown") throw new Error(`infer_outcome_unknown:${id(41)}`);
-    return { requestId: id(40), model, text: "Hello from the fixture", usage: { inputTokens: 21, outputTokens: 5, totalTokens: 26, reasoningTokens: 0 } };
+  infer_model_list: () => ({ accounts: inferObservation ? [inferObservation] : [] }),
+  infer_discover: ({ accountId }) => {
+    inferObservation = { accountId, models: null, observedAt: null, discovering: true, error: null };
+    setTimeout(() => { inferObservation = { accountId, models: inferModelsFixture, observedAt: new Date().toISOString(), discovering: false, error: null }; inferChanged(); }, 50);
+    queueMicrotask(inferChanged);
+    return inferObservation;
   },
+  infer_start: (input) => {
+    if (inferAck === "lost-before-admit") { inferAck = "ok"; throw new Error("connection closed"); }
+    const existing = inferLedger.find((record) => record.requestId === input.requestId);
+    if (existing) return existing;
+    const record = { requestId: input.requestId, accountId: input.accountId, model: input.model, effort: input.effort, maxOutputTokens: input.maxOutputTokens,
+      state: "running", error: null, reportedModel: null, usage: null, createdAt: new Date().toISOString(), finishedAt: null, instructions: input.instructions, input: input.input, text: null };
+    inferLedger.push(record);
+    const outcome = inferOutcome, gate = Promise.withResolvers();
+    inferGates.push(gate);
+    void gate.promise.then(() => {
+      Object.assign(record, outcome === "completed" ? { state: "completed", text: "Hello from the fixture", reportedModel: input.model, usage: { inputTokens: 21, outputTokens: 5, totalTokens: 26, reasoningTokens: 0 } }
+        : { state: "unknown", error: `infer_outcome_unknown:${input.requestId}` }, { finishedAt: new Date().toISOString() });
+      inferChanged();
+    });
+    // A lost acknowledgement loses its notice too; the store's re-read must find the admission.
+    if (inferAck === "lost-after-admit") { inferAck = "ok"; throw new Error("connection closed"); }
+    queueMicrotask(inferChanged);
+    return record;
+  },
+  infer_request_list: () => ({ requests: inferLedger.toReversed().map(inferSummary), nextBefore: null }),
+  infer_request_get: ({ requestId }) => { const record = inferLedger.find((item) => item.requestId === requestId); if (!record) throw new Error("unknown_request"); return record; },
 };
 function operations(names, api) {
   return names.map((name) => ({ name, description: name, input: api?.operations.find((operation) => operation.name === name)?.input ?? passthrough, output: passthrough,
@@ -101,8 +129,8 @@ try {
     operations: api.operations.map((operation) => ({ name: operation.name, title: operation.annotations?.title ?? null, description: operation.description, annotations: operation.annotations ?? {}, inputSchema: publishedJsonSchema(operation.input), outputSchema: publishedJsonSchema(operation.output) })) }));
   for (const name of ["auth", "owner", "api"]) catalog.push({ name, packageName: `@agentstack/${name}`, description: "Fixture", events: {}, eventScope: null, operations: [], transports: [{ type: "websocket", endpoint: websocket.urls[name], supported: true, subscriptions: true, description: "Fixture" }] });
   handlers.docs_snapshot = () => ({ packages: catalog });
-  const definitions = { owner: ["owner_status"], auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"], bots: Object.keys(handlers).filter((name) => /^(bot_|voice_|chat_)/.test(name)), usage: ["usage_snapshot"], workers: ["worker_list", "worker_runtime_list", "worker_catalog"], infer: ["infer_models", "infer_complete"], api: ["docs_snapshot"] };
-  const topics = { owner: { pids_changed: "Fixture" }, auth: Object.fromEntries(["accounts_changed", "worker_accounts_changed", "login_changed", "worker_login_changed"].map((name) => [name, "Fixture"])), bots: botsApi.events.topics, workers: workersApi.events.topics, usage: usageApi.events.topics, infer: {}, api: {} };
+  const definitions = { owner: ["owner_status"], auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"], bots: Object.keys(handlers).filter((name) => /^(bot_|voice_|chat_)/.test(name)), usage: ["usage_snapshot"], workers: ["worker_list", "worker_runtime_list", "worker_catalog"], infer: ["infer_model_list", "infer_discover", "infer_start", "infer_request_list", "infer_request_get"], api: ["docs_snapshot"] };
+  const topics = { owner: { pids_changed: "Fixture" }, auth: Object.fromEntries(["accounts_changed", "worker_accounts_changed", "login_changed", "worker_login_changed"].map((name) => [name, "Fixture"])), bots: botsApi.events.topics, workers: workersApi.events.topics, usage: usageApi.events.topics, infer: inferApi.events.topics, api: {} };
   for (const [name, names] of Object.entries(definitions)) served.set(name, await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {}, operations: operations(names, { bots: botsApi, infer: inferApi }[name]), events: { topics: topics[name], scope: name === "bots" ? { valid: () => true, description: "Fixture", example: "bot-1" } : undefined } }));
   const nextPort = await port();
   next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "start", "--hostname", "127.0.0.1", "--port", String(nextPort)], { cwd: uix, env, stdio: ["ignore", "pipe", "pipe"] });
@@ -280,35 +308,55 @@ try {
   Object.assign(activeCall, previous);
   served.get("bots").publish("voice_changed");
   await speech.getByText("Enter to send · Shift+Enter for a new line", { exact: true }).waitFor();
-  // The Lab's Inference window discovers models only once an account is chosen, then spends once per Run.
+  // The Lab's Inference window reads infer's ledger; discovery and requests are explicit actions.
   const inference = page.locator('[data-window="inference"]');
-  const discoveries = () => calls.filter((call) => call.name === "infer_models");
-  const completions = () => calls.filter((call) => call.name === "infer_complete");
-  assert.equal(discoveries().length, 0, "loading the bench discovers no models");
+  const named = (name) => calls.filter((call) => call.name === name);
+  const rowFor = (requestId) => inference.getByRole("listitem").filter({ hasText: `request ${requestId}` });
+  assert.equal(named("infer_discover").length + named("infer_start").length, 0, "loading the bench discovers and spends nothing");
   const run = inference.getByRole("button", { name: "Run", exact: true });
   assert.equal(await run.isDisabled(), true, "nothing runs before an account is chosen");
   await inference.getByLabel("Account", { exact: true }).selectOption({ label: "codex-bot-account-1" });
   await inference.getByText("2 models · observed", { exact: false }).waitFor();
-  assert.deepEqual(discoveries().map((call) => call.input), [{ accountId: id(1) }]);
+  assert.deepEqual(named("infer_discover").map((call) => call.input), [{ accountId: id(1) }]);
   assert.equal(await inference.getByLabel("Model", { exact: true }).inputValue(), "gpt-fixture");
   assert.equal(await inference.getByLabel("Effort", { exact: true }).inputValue(), "medium");
   await inference.getByLabel("Effort", { exact: true }).selectOption("high");
-  await inference.getByLabel("Max tokens", { exact: true }).fill("64");
+  await inference.getByLabel("Token threshold", { exact: true }).fill("64");
   await inference.getByLabel("Prompt", { exact: true }).fill("  Say hello  ");
   await inference.getByLabel("Prompt", { exact: true }).press("Meta+Enter");
-  await inference.getByText("Hello from the fixture", { exact: true }).waitFor();
-  assert.deepEqual(completions().map((call) => call.input), [{ accountId: id(1), model: "gpt-fixture", effort: "high", instructions: "Answer concisely.", input: "Say hello", maxOutputTokens: 64 }]);
-  await inference.getByText("gpt-fixture · high · 21 in · 5 out", { exact: false }).waitFor();
+  // Admission returns a running record; the account stays busy until the ledger records its outcome.
+  await inference.getByText("A request is running on this account", { exact: true }).waitFor();
+  const first = named("infer_start")[0].input;
+  assert.match(first.requestId, /^[0-9a-f-]{36}$/);
+  assert.deepEqual({ ...first, requestId: null }, { requestId: null, accountId: id(1), model: "gpt-fixture", effort: "high", instructions: "Answer concisely.", input: "Say hello", maxOutputTokens: 64 });
+  inferGates.shift().resolve();
+  await rowFor(first.requestId).locator("p", { hasText: "Hello from the fixture" }).waitFor();
+  await rowFor(first.requestId).getByText("21 in · 5 out", { exact: false }).waitFor();
   // A model without the chosen effort falls back to its own default.
   await inference.getByLabel("Model", { exact: true }).selectOption("gpt-fixture-mini");
   assert.equal(await inference.getByLabel("Effort", { exact: true }).inputValue(), "low");
-  // An interrupted request is reported with its ID as possibly charged and is never retried.
+  // A lost acknowledgement after admission reconciles from the ledger; no resend is offered.
+  inferAck = "lost-after-admit";
   inferOutcome = "unknown";
   await run.click();
-  await inference.getByRole("alert").getByText(`request ${id(41)}`, { exact: true }).waitFor();
-  await inference.getByText("may have been charged and was not retried", { exact: false }).waitFor();
-  assert.equal(completions().length, 2);
-  assert.equal(discoveries().length, 1, "switching models or running does not rediscover");
+  const second = named("infer_start").at(-1).input.requestId;
+  await rowFor(second).getByText("Running", { exact: true }).waitFor();
+  assert.equal(await inference.getByRole("button", { name: "Resend", exact: true }).count(), 0, "the ledger confirms the admission");
+  inferGates.shift().resolve();
+  await rowFor(second).getByText("Outcome unknown", { exact: true }).waitFor();
+  await rowFor(second).getByText("may have been charged and was not retried", { exact: false }).waitFor();
+  // An unconfirmed admission is resent with the same request ID and starts once.
+  inferAck = "lost-before-admit";
+  inferOutcome = "completed";
+  await inference.getByLabel("Prompt", { exact: true }).fill("Say goodbye");
+  await run.click();
+  await inference.getByRole("button", { name: "Resend", exact: true }).click();
+  const [lost, resent] = named("infer_start").slice(-2).map((call) => call.input.requestId);
+  assert.equal(lost, resent, "a resend reuses the request ID");
+  await rowFor(resent).getByText("Running", { exact: true }).waitFor();
+  assert.equal(inferLedger.length, 3);
+  inferGates.shift().resolve();
+  await rowFor(resent).getByText("Completed", { exact: true }).waitFor();
   await page.screenshot({ path: join(evidence, "lab-inference.png"), animations: "disabled" });
   await page.emulateMedia({ colorScheme: "dark" });
   await page.screenshot({ path: join(evidence, "lab-inference-dark.png"), animations: "disabled" });
@@ -426,7 +474,7 @@ try {
   assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 391, "mobile dialog fits the viewport");
   await page.screenshot({ path: join(evidence, "create-mobile.png"), animations: "disabled" });
   assert.deepEqual(errors, [], "browser has no uncaught application errors");
-  console.log(JSON.stringify({ ok: true, evidence, assertions: "live discovery defaults, catalog tabs/filter/refresh, usage meters/inspection, create validation/payload, stop/assign/restart/remove/defaults, scoped history/speech, Lab call speech, Lab inference discovery/run/unknown outcome, stopped queue admission, interrupted upload reopening/resume, light/dark/mobile", actions: calls.filter((call) => mutations.has(call.name)) }, null, 2));
+  console.log(JSON.stringify({ ok: true, evidence, assertions: "live discovery defaults, catalog tabs/filter/refresh, usage meters/inspection, create validation/payload, stop/assign/restart/remove/defaults, scoped history/speech, Lab call speech, Lab inference discovery/ledger/unknown outcome/idempotent resend, stopped queue admission, interrupted upload reopening/resume, light/dark/mobile", actions: calls.filter((call) => mutations.has(call.name)) }, null, 2));
 } catch (error) {
   const page = browser?.contexts()[0]?.pages()[0];
   if (page) await page.screenshot({ path: join(evidence, "failure.png"), animations: "disabled" }).catch(() => undefined);

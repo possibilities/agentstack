@@ -209,12 +209,21 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(usage.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
 
     const infer = found.get("infer") as PackageDoc;
-    assert.deepEqual(infer.operations.map((operation) => operation.name), ["infer_models", "infer_complete", "infer_trace_read"]);
-    assert.deepEqual(Object.keys(infer.operations[0]?.outputSchema.properties ?? {}).sort(), ["models", "observedAt"]);
-    assert.deepEqual(Object.keys(infer.operations[1]?.inputSchema.properties ?? {}).sort(), ["accountId", "effort", "input", "instructions", "maxOutputTokens", "model", "requestId"]);
-    assert.equal(infer.operations[1]?.annotations.readOnlyHint, false);
+    const inferOperation = (name: string) => infer.operations.find((operation) => operation.name === name)!;
+    assert.deepEqual(infer.operations.map((operation) => operation.name),
+      ["infer_models", "infer_model_list", "infer_discover", "infer_complete", "infer_start", "infer_request_list", "infer_request_get", "infer_trace_read"]);
+    assert.deepEqual(Object.keys(infer.events), ["infer_changed"]);
+    assert.deepEqual(Object.keys(inferOperation("infer_models").outputSchema.properties ?? {}).sort(), ["models", "observedAt"]);
+    assert.deepEqual(Object.keys(inferOperation("infer_complete").inputSchema.properties ?? {}).sort(), ["accountId", "effort", "input", "instructions", "maxOutputTokens", "model", "requestId"]);
+    assert.equal(inferOperation("infer_complete").annotations.readOnlyHint, false);
+    // infer_start takes the same input with a required request ID and returns the ledger record while it runs.
+    assert.ok((inferOperation("infer_start").inputSchema.required as string[] | undefined)?.includes("requestId"));
+    assert.equal(inferOperation("infer_start").annotations.idempotentHint, true);
+    assert.ok(Object.keys(inferOperation("infer_start").outputSchema.properties ?? {}).includes("state"));
+    for (const name of ["infer_model_list", "infer_request_list", "infer_request_get"]) assert.equal(inferOperation(name).annotations.readOnlyHint, true);
     // The UIX Lab reaches inference over the loopback WebSocket; agents get no MCP route to spend allowance.
     assert.deepEqual(infer.transports.map((transport) => transport.type), ["socket", "websocket"]);
+    assert.equal(infer.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
     assert.equal(infer.transports[0]?.endpoint, join(stateDir, "sockets", "infer.sock"));
     const attention = found.get("attention") as PackageDoc;
     assert.deepEqual(attention.transports.map((transport) => transport.type), ["socket", "websocket"]);

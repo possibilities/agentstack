@@ -183,30 +183,40 @@ export function splitArgs(line: string): string[] | null {
   return args;
 }
 
-const inferFailures: Record<string, string> = {
-  infer_busy: "This account already has an inference running. Wait for it before running again.",
+const inferErrors: Record<string, string> = {
+  // Admission refusals: nothing started.
+  infer_busy: "This account already has a request running. Wait for it to finish.",
+  infer_closing: "Inference is shutting down. Try again once it restarts.",
+  infer_request_conflict: "That request ID was already used for different input.",
+  // Failed requests: definite.
   account_unavailable: "The account is disabled, removed or being removed. Choose another.",
   credentials_unavailable: "The account's Codex sign-in is unavailable. Sign it in again from Accounts.",
   catalog_unavailable: "Model discovery failed. Try discovering again.",
   model_unavailable: "The account no longer offers that model and effort. Discover models again.",
+  cancelled: "Cancelled by shutdown before anything was sent.",
   codex_sign_in_required: "Codex rejected the sign-in. Sign the account in again from Accounts.",
   codex_access_denied: "Codex denied this account access to direct inference.",
   codex_rate_limited: "Codex is rate limiting this account. Wait before running again.",
+  // Unknown outcomes: may have been charged, never retried.
+  infer_interrupted: "Inference restarted while this request was running. It may have been charged and was not retried.",
 };
+const inferRefusals = new Set(["infer_busy", "infer_closing", "infer_request_conflict"]);
+
+/** Explains an `infer` outcome or refusal code from the request ledger or an admission call. */
+export function inferErrorText(code: string): string {
+  const status = /^infer_http_error:(\d{3})$/.exec(code);
+  if (status) return `The Codex backend answered HTTP ${status[1]}.`;
+  if (/^infer_output_budget_exceeded:/.test(code)) return "Generation completed above the token threshold, so it was charged. The output is kept in the request's trace; the threshold is not a spending cap.";
+  if (/^infer_outcome_unknown:/.test(code)) return "The request was interrupted after it may have been sent. It may have been charged and was not retried.";
+  return inferErrors[code] ?? code;
+}
 
 /**
- * Explains an `infer_*` failure. `unknown` marks a request that may have reached
- * the backend and been charged — an interrupted response or a lost connection —
- * so it must be reported, never retried automatically.
+ * Explains a failed `infer_start` call. A deliberate refusal started nothing.
+ * Anything else — a lost connection or bridge timeout — leaves admission
+ * unconfirmed, and resending the same request ID is safe: it cannot dispatch twice.
  */
-export function inferenceFailure(message: string): { text: string; unknown: boolean; requestId: string | null; code: string } {
-  const budget = /^infer_output_budget_exceeded:([0-9a-f-]{36})$/.exec(message);
-  if (budget) return { text: "Generation completed above the token threshold. The output and usage are retained in the inference trace; the threshold is not a spending cap.", unknown: false, requestId: budget[1], code: message };
-  const outcome = /^infer_outcome_unknown:([0-9a-f-]{36})$/.exec(message);
-  if (outcome) return { text: "The response was interrupted, so the outcome is unknown. It may have been charged and was not retried.", unknown: true, requestId: outcome[1], code: message };
-  if (message === "connection closed" || message.startsWith("socket call timed out") || message === "socket call aborted")
-    return { text: "The connection ended before a response, so the outcome is unknown. It may have been charged and was not retried.", unknown: true, requestId: null, code: message };
-  const status = /^infer_http_error:(\d{3})$/.exec(message);
-  if (status) return { text: `The Codex backend answered HTTP ${status[1]}.`, unknown: false, requestId: null, code: message };
-  return { text: inferFailures[message] ?? message, unknown: false, requestId: null, code: message };
+export function inferAdmission(message: string): { text: string; uncertain: boolean } {
+  if (inferRefusals.has(message)) return { text: inferErrorText(message), uncertain: false };
+  return { text: `The request may not have started (${message}). Resending uses the same request ID, so it cannot start twice.`, uncertain: true };
 }

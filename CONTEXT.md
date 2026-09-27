@@ -72,6 +72,12 @@ One admitted prompt on an existing Worker, dispatched through its native backend
 
 Transport-supplied Worker ID and exact native runtime instance from a private signed MCP URL. The owner checks both against the durable Worker and live account backend before admitting tools; the URL exposes read-only Package API operations and cannot subscribe a Bot thread. It is a same-user correlation and stale-runtime fence, not an OS sandbox. _Avoid_: Bot identity, operator authority
 
+## Inference request
+
+One non-agentic `infer` request on an explicitly chosen Bot account, recorded as a run in `infer`'s durable request ledger whether it came from `infer_complete` or `infer_start`. It finishes exactly once as `completed`, `failed` (definite) or `unknown` (may have been charged). Its request ID makes resending safe: it never dispatches twice, and nothing is retried automatically.
+
+_Avoid_: turn, completion, job
+
 ## Main thread
 
 The single Codex thread ID retained by a Bot. A fresh Bot has no main thread until the first persistent root thread created by a connected UI has a durable turn; later Bot launches resume that ID. Only this root and its descendants belong to AgentStack's view of the Bot. Other Codex top-level threads on the same socket are ignored.

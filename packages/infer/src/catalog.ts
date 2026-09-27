@@ -10,7 +10,8 @@ const asObject = (value: unknown): Record<string, unknown> | null => value && ty
 
 /** An isolated, short-lived app-server is used only for model/list. It never starts a thread or turn. */
 export async function discoverModels(stateDir: string, auth: string,
-  binary = join(homedir(), ".local/libexec/codexnk/codex")): Promise<Model[]> {
+  binary = join(homedir(), ".local/libexec/codexnk/codex"), signal?: AbortSignal): Promise<Model[]> {
+  if (signal?.aborted) throw new Error("catalog_unavailable");
   const root = await mkdtemp(join(stateDir, ".infer-catalog-"));
   const identity = join(root, "identity"), capabilities = join(root, "capabilities"), history = join(root, "history"), runtime = join(root, "runtime");
   let child: ReturnType<typeof spawn> | undefined;
@@ -26,10 +27,13 @@ export async function discoverModels(stateDir: string, auth: string,
     return await new Promise<Model[]>((resolve, reject) => {
       let done = false, buffer = "", pages = 0, rows: Model[] = [];
       const timer = setTimeout(() => finish(new Error("catalog_unavailable")), 20_000);
+      const abort = () => finish(new Error("catalog_unavailable"));
+      signal?.addEventListener("abort", abort, { once: true });
       const finish = (error?: Error) => {
         if (done) return;
         done = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", abort);
         error ? reject(error) : resolve(rows);
       };
       const send = (value: unknown) => proc.stdin?.write(`${JSON.stringify(value)}\n`);

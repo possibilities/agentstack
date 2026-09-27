@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { discoverModels } from "./catalog.js";
-import { type CompleteInput, type CompleteOutput, type Model } from "./schema.js";
+import type { CompleteInput, CompleteOutput, Model, ModelObservation, RequestRecord, StartInput } from "./schema.js";
 import type { InferTraces } from "./traces.js";
 
 type Credentials = { access: string; nativeId: string; auth: string };
-type Discover = (stateDir: string, auth: string) => Promise<Model[]>;
+type Discover = (stateDir: string, auth: string, signal?: AbortSignal) => Promise<Model[]>;
 const object = (value: unknown): Record<string, unknown> | null => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 const count = (value: unknown): number | null => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 
@@ -97,19 +97,65 @@ export async function readCompletion(response: Response, requestId: string, mode
   finally { reader.releaseLock(); }
 }
 
+/**
+ * Runs inference requests into the durable ledger (`traces`). `complete` waits
+ * for the outcome; `start` admits the same kind of request and returns while it
+ * runs. Model discovery is cached per account in memory, refreshed on demand or
+ * by a request's own fresh discovery. `onChange` fires for every request or
+ * observation change.
+ */
 export class InferService {
+  onChange?: () => void;
   private readonly inFlight = new Set<string>();
-  constructor(readonly stateDir: string, private readonly discover: Discover = discoverModels,
+  private readonly running = new Map<string, { controller: AbortController; task: Promise<unknown> }>();
+  private readonly observations = new Map<string, ModelObservation>();
+  private readonly discoveries = new Map<string, { controller: AbortController; task: Promise<void> }>();
+  private closing = false;
+  constructor(readonly stateDir: string, private readonly discover: Discover = (dir, auth, signal) => discoverModels(dir, auth, undefined, signal),
     private readonly fetcher: typeof fetch = fetch, private readonly credentials: typeof readCredentials = readCredentials,
     readonly traces?: InferTraces) {}
 
+  /** Discovers now and waits; also refreshes the cached observation. */
   async models(accountId: string): Promise<{ models: Model[]; observedAt: string }> {
     const { auth } = await this.credentials(this.stateDir, accountId);
-    try { return { models: await this.discover(this.stateDir, auth), observedAt: new Date().toISOString() }; }
-    catch { throw new Error("catalog_unavailable"); }
+    try {
+      const observed = { models: await this.discover(this.stateDir, auth), observedAt: new Date().toISOString() };
+      this.observe(accountId, { ...observed, error: null });
+      return observed;
+    } catch {
+      this.observe(accountId, { error: "catalog_unavailable" });
+      throw new Error("catalog_unavailable");
+    }
+  }
+
+  modelList(accountId?: string): ModelObservation[] {
+    return [...this.observations.values()].filter((row) => !accountId || row.accountId === accountId);
+  }
+
+  /** Starts a background discovery, coalescing with one already running. An unusable account is refused and forgotten. */
+  async refreshModels(accountId: string): Promise<ModelObservation> {
+    if (this.closing) throw new Error("infer_closing");
+    let auth: string;
+    try { ({ auth } = await this.credentials(this.stateDir, accountId)); }
+    catch (error) {
+      if (this.observations.delete(accountId)) this.changed();
+      throw error;
+    }
+    if (this.closing) throw new Error("infer_closing");
+    if (!this.discoveries.has(accountId)) {
+      const controller = new AbortController();
+      this.observe(accountId, { discovering: true });
+      const task = this.discover(this.stateDir, auth, controller.signal)
+        .then((models) => this.observe(accountId, { models, observedAt: new Date().toISOString(), discovering: false, error: null }),
+          () => this.observe(accountId, { discovering: false, error: "catalog_unavailable" }))
+        .finally(() => this.discoveries.delete(accountId));
+      this.discoveries.set(accountId, { controller, task });
+    }
+    return this.observations.get(accountId)!;
   }
 
   async complete(input: CompleteInput): Promise<CompleteOutput> {
+    if (this.closing) throw new Error("infer_closing");
     // One request per account at a time; callers must not flood shared Codex allowance.
     if (this.inFlight.has(input.accountId) || this.inFlight.size >= 2) throw new Error("infer_busy");
     this.inFlight.add(input.accountId);
@@ -117,24 +163,87 @@ export class InferService {
     try {
       const previous = this.traces?.reserve(requestId, input);
       if (previous) return previous;
-      try {
-        const result = await this.completeOnce(input, requestId);
-        this.traces?.finish(requestId, result, null);
-        return result;
-      } catch (error) {
-        this.traces?.finish(requestId, null, error instanceof Error ? error.message : "infer_error");
-        throw error;
-      }
+      this.changed();
+      return await this.dispatch(input, requestId);
     }
     finally { this.inFlight.delete(input.accountId); }
   }
 
-  private async completeOnce(input: CompleteInput, requestId: string): Promise<CompleteOutput> {
+  /**
+   * Admits one request into the ledger and returns its running record before any
+   * backend work. An identical resend returns the recorded run; it never dispatches twice.
+   */
+  async start(input: StartInput): Promise<RequestRecord> {
+    const traces = this.ledger();
+    const existing = traces.find(input.requestId, input);
+    if (existing) return existing;
+    if (this.closing) throw new Error("infer_closing");
+    if (this.inFlight.has(input.accountId) || this.inFlight.size >= 2) throw new Error("infer_busy");
+    this.inFlight.add(input.accountId);
+    traces.reserve(input.requestId, input);
+    this.changed();
+    void this.dispatch(input, input.requestId).catch(() => {}).finally(() => this.inFlight.delete(input.accountId));
+    return traces.get(input.requestId)!;
+  }
+
+  list(limit: number, before?: number) { return this.ledger().list(limit, before); }
+
+  get(requestId: string): RequestRecord {
+    const record = this.ledger().get(requestId);
+    if (!record) throw new Error("unknown_request");
+    return record;
+  }
+
+  /** Refuses new work and cancels in-flight discovery and requests; one cancelled after it may have been sent is unknown. */
+  prepareClose(): void {
+    this.closing = true;
+    for (const { controller } of [...this.running.values(), ...this.discoveries.values()]) controller.abort();
+  }
+
+  async close(): Promise<void> {
+    this.prepareClose();
+    await Promise.allSettled([...this.running.values(), ...this.discoveries.values()].map(({ task }) => task));
+    this.traces?.close();
+  }
+
+  private ledger(): InferTraces {
+    if (!this.traces) throw new Error("ledger_unavailable");
+    return this.traces;
+  }
+
+  /** Runs one reserved request to its single recorded outcome. */
+  private dispatch(input: CompleteInput, requestId: string): Promise<CompleteOutput> {
+    const controller = new AbortController();
+    const task = this.completeOnce(input, requestId, controller.signal).then((result) => {
+      this.traces?.finish(requestId, result, null);
+      return result;
+    }, (error: unknown) => {
+      this.traces?.finish(requestId, null, error instanceof Error ? error.message : "infer_error");
+      throw error;
+    }).finally(() => {
+      this.running.delete(requestId);
+      this.changed();
+    });
+    this.running.set(requestId, { controller, task });
+    return task;
+  }
+
+  private observe(accountId: string, patch: Partial<Omit<ModelObservation, "accountId">>): void {
+    const current = this.observations.get(accountId) ?? { accountId, models: null, observedAt: null, discovering: false, error: null };
+    this.observations.set(accountId, { ...current, ...patch });
+    this.changed();
+  }
+
+  private changed(): void { this.onChange?.(); }
+
+  private async completeOnce(input: CompleteInput, requestId: string, signal: AbortSignal): Promise<CompleteOutput> {
     const credentials = await this.credentials(this.stateDir, input.accountId);
     let models: Model[];
-    try { models = await this.discover(this.stateDir, credentials.auth); }
-    catch { throw new Error("catalog_unavailable"); }
+    try { models = await this.discover(this.stateDir, credentials.auth, signal); }
+    catch { throw new Error(signal.aborted ? "cancelled" : "catalog_unavailable"); }
+    this.observe(input.accountId, { models, observedAt: new Date().toISOString(), error: null });
     if (!models.some((row) => row.id === input.model && row.supportedEfforts.includes(input.effort))) throw new Error("model_unavailable");
+    if (signal.aborted) throw new Error("cancelled");
     this.traces?.event(requestId, "catalog", { models });
     const body = { model: input.model, instructions: input.instructions,
       input: [{ role: "user", content: [{ type: "input_text", text: input.input }] }],
@@ -143,7 +252,7 @@ export class InferService {
     let response: Response;
     try {
       response = await this.fetcher("https://chatgpt.com/backend-api/codex/responses", {
-        method: "POST", redirect: "manual", signal: AbortSignal.timeout(30_000),
+        method: "POST", redirect: "manual", signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
         headers: { Authorization: `Bearer ${credentials.access}`, "chatgpt-account-id": credentials.nativeId,
           "Content-Type": "application/json", Accept: "text/event-stream", originator: "codex_cli_rs", session_id: requestId },
         body: JSON.stringify(body),
