@@ -42,15 +42,16 @@ type Gesture =
   | { id: string; kind: "move"; x: number; y: number; free: boolean }
   | { id: string; kind: "resize"; width?: number; height?: number; fit: number | null; grooved: boolean; free: boolean };
 
-export type BenchControls = { fit(): void; tidy(): void; goToSpace(space: SpaceId): void; goToNode(ref: NodeRef): void; zoom(factor: number): void };
-const storageKey = "agentstack.uix.bench.v1";
+export type BenchControls = { space: SpaceId; fit(): void; tidy(): void; goToNode(ref: NodeRef): void; zoom(factor: number): void };
+const legacyStorageKey = "agentstack.uix.bench.v1";
 
 export function Bench({ space, blocked, onControls, onScale, onArrive }: {
   space: SpaceId; blocked: boolean; onControls(controls: BenchControls | null): void; onScale(scale: number): void; onArrive(ref: NodeRef): void;
 }) {
   const state = useStack();
   const { windows: chats } = useChatWindows();
-  const regions = spaces.map((s) => ({ ...s, defs: spaceViews[s.id].windows(state, chats) }));
+  const storageKey = `agentstack.uix.bench.v2.${space}`;
+  const regions = spaces.filter((s) => s.id === space).map((s) => ({ ...s, defs: spaceViews[s.id].windows(state, chats) }));
   const signature = JSON.stringify(regions.map((s) => ({ id: s.id, defs: s.defs.map(({ id, width, height, column, fixed }) => ({ id, width, height, column, fixed })) })));
   // Content refreshes cannot affect footprint or layout. Only registration geometry can.
   const structure = useMemo(() => regions.map((region) => ({
@@ -59,6 +60,7 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
   const [arrangement, setArrangement] = useState(() => ({ signature, ...reconcileBench(structure) }));
   // The saved layout also holds windows registered after restore, such as reopened chat windows.
   const saved = useRef<Partial<BenchLayout>>({});
+  const persistOnHide = useRef<(() => void) | null>(null);
   // Supply new registrations during their first render, then commit before paint.
   // Dragging changes only the local layout; it never derives new region origins.
   const packed = useMemo(() => arrangement.signature === signature ? arrangement : {
@@ -118,10 +120,6 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
     clearTimeout(animationTimer.current);
     animationTimer.current = setTimeout(() => setAnimating(false), 360);
   }, []);
-  const goToSpace = useCallback((id: SpaceId) => {
-    const el = viewport.current;
-    if (el) animate(fitBounds(worldBounds(id), el.clientWidth, el.clientHeight, 0.65));
-  }, [animate, worldBounds]);
   const fit = useCallback(() => {
     const el = viewport.current;
     if (el) animate(fitBounds(worldBounds(), el.clientWidth, el.clientHeight));
@@ -141,9 +139,11 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
   }, [setLayout]);
 
   useLayoutEffect(() => {
+    // Activity resumes effects when revisiting a bench; retain its in-memory view.
+    if (ready) return;
     let stored: SavedBench = {};
     try {
-      const value = JSON.parse(localStorage.getItem(storageKey) ?? "{}");
+      const value = JSON.parse(localStorage.getItem(storageKey) ?? localStorage.getItem(legacyStorageKey) ?? "{}");
       if (value && typeof value === "object") stored = value;
     } catch { /* optional persistence */ }
     saved.current = stored.layout && typeof stored.layout === "object" ? stored.layout : {};
@@ -152,7 +152,7 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
     current.current.packed = restored;
     setCamera(restoreBenchCamera(stored, space, restored, viewportSize()));
     setReady(true);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ready, storageKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useLayoutEffect(() => {
     if (arrangement.signature === signature) return;
@@ -162,15 +162,23 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
 
   useEffect(() => {
     if (!ready) return;
-    const timer = setTimeout(() => {
-      const anchor = viewedWindow(packed, camera, viewportSize());
+    const size = viewportSize();
+    const persist = () => {
+      const anchor = viewedWindow(packed, camera, size);
       // Camera x is stored in screen coordinates; its logical space prevents cross-space restores.
       try { localStorage.setItem(storageKey, JSON.stringify({ space, layout, anchor, camera })); } catch { /* optional persistence */ }
-    }, 250);
+    };
+    persistOnHide.current = persist;
+    const timer = setTimeout(persist, 250);
     return () => clearTimeout(timer);
-  }, [ready, space, layout, camera, packed, viewportSize]);
+  }, [ready, space, storageKey, layout, camera, packed, viewportSize]);
+  // Flush on Activity hide, without synchronously writing on every pan/resize frame.
+  useEffect(() => () => { persistOnHide.current?.(); }, []);
   useEffect(() => { onScale(camera.k); }, [camera.k, onScale]);
-  useEffect(() => () => { clearTimeout(animationTimer.current); clearTimeout(landingTimer.current); clearTimeout(settleTimer.current); dragCleanup.current?.(); }, []);
+  useEffect(() => {
+    setAnimating(false); setSettling(null); setGesture(null); setDragging(false);
+    return () => { clearTimeout(animationTimer.current); clearTimeout(landingTimer.current); clearTimeout(settleTimer.current); dragCleanup.current?.(); };
+  }, []);
 
   const zoomAt = useCallback((factor: number, clientX?: number, clientY?: number) => {
     const rect = viewport.current?.getBoundingClientRect();
@@ -184,7 +192,7 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
   }, []);
   const goToNode = useCallback((ref: NodeRef) => {
     const home = homeOf(ref);
-    if (home.kind !== "space") return;
+    if (home.kind !== "space" || home.space !== space) return;
     setLayout((value) => ({ ...value, collapsed: { ...value.collapsed, [home.window]: false } }));
     clearTimeout(landingTimer.current);
     landingTimer.current = setTimeout(() => {
@@ -211,12 +219,12 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
       animate({ k, x: root.clientWidth / 2 - (x + rect.width / scale / 2) * k, y: rect.height / scale * k > root.clientHeight - 148 ? 84 - y * k : (root.clientHeight + 76) / 2 - (y + rect.height / scale / 2) * k });
       onArrive(ref);
     }, 0);
-  }, [animate, bringToFront, onArrive, setLayout, world]);
+  }, [animate, bringToFront, onArrive, setLayout, space, world]);
   useEffect(() => {
     if (!ready || !world) return;
-    onControls({ fit, tidy, goToSpace, goToNode, zoom: zoomAt });
+    onControls({ space, fit, tidy, goToNode, zoom: zoomAt });
     return () => onControls(null);
-  }, [ready, world, fit, tidy, goToSpace, goToNode, zoomAt, onControls]);
+  }, [ready, world, space, fit, tidy, goToNode, zoomAt, onControls]);
   useEffect(() => {
     const el = viewport.current;
     if (!el) return;
@@ -347,7 +355,7 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
   };
   return (
     <PlacementContext value={placement}>
-      <main ref={viewport} data-canvas="workbench" tabIndex={0} aria-label="Open bench" aria-describedby="bench-gestures" className={cn("canvas-dots fixed inset-y-0 right-[var(--sheet)] left-0 touch-none overflow-hidden overscroll-none outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring", dragging ? "cursor-grabbing" : "cursor-grab")}
+      <main ref={viewport} data-canvas="workbench" data-space={space} tabIndex={0} aria-label="Open bench" aria-describedby={`bench-gestures-${space}`} className={cn("canvas-dots fixed inset-y-0 right-[var(--sheet)] left-0 touch-none overflow-hidden overscroll-none outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring", dragging ? "cursor-grabbing" : "cursor-grab")}
         style={{ backgroundSize: `${22 * camera.k}px ${22 * camera.k}px`, backgroundPosition: `${camera.x}px ${camera.y}px` }}
         onPointerDown={(event) => {
           if ((event.button !== 0 && event.button !== 1) || (event.target as Element).closest("[data-window],[data-chrome]")) return;
@@ -356,7 +364,7 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
           drag(event, (x, y) => setCamera({ ...start, x: start.x + x, y: start.y + y }));
         }}>
         <h1 className="sr-only">AgentStack open bench</h1>
-        <p id="bench-gestures" className="sr-only">Drag empty space, scroll, or use arrow keys to pan. Pinch or use plus and minus to zoom. Drag a window edge to resize it; windows snap to the dot grid unless Option is held. F fits the bench; T resets window positions. Select a card name to inspect it. Command K opens navigation.</p>
+        <p id={`bench-gestures-${space}`} className="sr-only">Drag empty space, scroll, or use arrow keys to pan. Pinch or use plus and minus to zoom. Drag a window edge to resize it; windows snap to the dot grid unless Option is held. F fits the bench; T resets window positions. Select a card name to inspect it. Command K opens navigation.</p>
         <div ref={setWorld} className={cn("absolute top-0 left-0 origin-top-left", !ready && "invisible", animating && "transition-transform duration-300 ease-out motion-reduce:transition-none", dragging && "select-none")}
           style={{ transform: `translate3d(${camera.x}px,${camera.y}px,0) scale(${camera.k})` }}>
           <Lines world={world} scale={camera.k} version={settled} animating={animating || dragging || settling !== null} subtle={false} />

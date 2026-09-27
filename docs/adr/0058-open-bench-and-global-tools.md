@@ -1,6 +1,8 @@
 # 58. One open bench with global System and API tools
 
-Status: accepted, 2026-09-25. Supersedes the independent canvases and System/API
+Status: accepted, 2026-09-25. Shared-world placement and camera superseded by
+[ADR 0088](0088-isolated-space-benches.md), 2026-09-26; global tools remain.
+Supersedes the independent canvases and System/API
 spaces in [ADR 0042](0042-canvas-spaces.md), the space-change inspection rule in
 [ADR 0045](0045-canvas-links-and-inspector-sheet.md), grid mode from
 [ADR 0024](0024-live-canvas-workbench.md), and the standalone reference in

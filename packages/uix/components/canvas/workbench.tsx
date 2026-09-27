@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Activity, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BookOpenIcon, ChevronDownIcon, LayersIcon, LayoutDashboardIcon, MinusIcon, PanelRightIcon, PlusIcon, ScanIcon, SearchIcon } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
@@ -81,16 +81,16 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
   const focusBench = useCallback(() => {
     if (benchFocusFrame.current !== undefined) cancelAnimationFrame(benchFocusFrame.current);
     benchFocusFrame.current = requestAnimationFrame(() => {
-      document.querySelector<HTMLElement>("[data-canvas=workbench]")?.focus({ preventScroll: true });
+      document.querySelector<HTMLElement>(`[data-canvas=workbench][data-space="${locationRef.current.space}"]`)?.focus({ preventScroll: true });
       benchFocusFrame.current = undefined;
     });
   }, []);
   const reportControls = useCallback((next: BenchControls | null) => {
     controlsRef.current = next; setControls(next);
-    if (next && pending.current) {
+    if (next && pending.current?.space === next.space) {
       const target = pending.current; pending.current = null;
       if (target.ref) next.goToNode(target.ref);
-      // Default load restores the saved camera; only explicit navigation fits a region.
+      // Space-only navigation restores that bench's independent camera.
     }
   }, []);
   const write = useCallback((next: BenchLocation, requestedSurface: BenchSurface = surfaceRef.current) => {
@@ -105,8 +105,8 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
     document.title = `AgentStack · ${next.reference && nextSurface === "right" ? "API reference" : spaceTitle(next.space)}`;
   }, []);
   const setSpace = useCallback((space: SpaceId) => {
+    pending.current = null;
     write({ ...locationRef.current, space, focus: null }, "bench");
-    controlsRef.current?.goToSpace(space);
     focusBench();
   }, [focusBench, write]);
   const goTo = useCallback((ref: NodeRef) => {
@@ -115,7 +115,7 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
     if (home.kind === "reference" && !locationRef.current.reference && !locationRef.current.inspect) inspectorReturn.current = document.activeElement as HTMLElement;
     write(navigateTo(locationRef.current, ref), home.kind === "space" ? "bench" : "right");
     if (home.kind === "space") {
-      if (controlsRef.current) controlsRef.current.goToNode(ref);
+      if (controlsRef.current?.space === home.space) controlsRef.current.goToNode(ref);
       else pending.current = { space: home.space, ref };
       focusBench();
     }
@@ -163,8 +163,8 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
       document.title = `AgentStack · ${next.reference && nextSurface === "right" ? "API reference" : spaceTitle(next.space)}`;
       // Dock/inspection history must never move the camera.
       if (nodeKeyOrNull(next.focus) !== nodeKeyOrNull(previous.focus) || next.space !== previous.space) {
-        if (next.focus) controlsRef.current?.goToNode(next.focus);
-        else controlsRef.current?.goToSpace(next.space);
+        if (next.focus && controlsRef.current?.space === next.space) controlsRef.current.goToNode(next.focus);
+        else pending.current = { space: next.space, ref: next.focus };
       }
       if (nextSurface === "bench") focusBench();
     };
@@ -224,7 +224,13 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
   const workbench: WorkbenchValue = useMemo(() => ({ space: location.space, setSpace, selected: collapsed ? null : location.inspect, hovered, select, hover, goTo, flash }), [location.space, location.inspect, collapsed, setSpace, hovered, select, goTo, flash]);
   return <div className="contents" style={{ "--sheet": `${right}px` } as React.CSSProperties}>
     <WorkbenchContext value={workbench}><AuthActionsProvider><VoiceProvider><BotActionsProvider><RoleActionsProvider>
-      <Bench space={location.space} blocked={paletteOpen} onControls={reportControls} onScale={setScale} onArrive={flashNow} />
+      {spaces.map(({ id }) => <div key={id} hidden={id !== location.space} inert={id !== location.space}>
+        <Activity mode={id === location.space ? "visible" : "hidden"}>
+          <div className={id === location.space ? "bench-enter" : undefined}>
+            <Bench space={id} blocked={paletteOpen} onControls={reportControls} onScale={setScale} onArrive={flashNow} />
+          </div>
+        </Activity>
+      </div>)}
       <TopBar space={location.space} setSpace={setSpace} compact={screenWidth - right < 440} reference={Boolean(location.reference) && rightVisible} inspectorAvailable={Boolean(location.inspect) && !rightVisible} openInspector={openInspector} toggleReference={Boolean(location.reference) && rightVisible ? closeRight : openReference} openPalette={() => setPaletteOpen(true)} fit={() => controls?.fit()} />
       <div data-chrome className="fixed bottom-4 z-30 flex -translate-x-1/2 items-center gap-1 rounded-xl border bg-card/95 p-1 shadow-sm" style={{ left: "calc((100% - var(--sheet))/2)" }}>
         <Tool label="Zoom out" onClick={() => controls?.zoom(1 / 1.2)}><MinusIcon /></Tool>
@@ -250,7 +256,7 @@ function Tool({ label, onClick, children }: { label: string; onClick(): void; ch
   return <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label={label} onClick={onClick} />}>{children}</TooltipTrigger><TooltipContent>{label}</TooltipContent></Tooltip>;
 }
 
-/** Places and tools are separate: the Spaces menu moves the camera; API reference opens the right dock. */
+/** Places and tools are separate: the Spaces menu switches benches; API reference opens the right dock. */
 function TopBar({ space, setSpace, compact, reference, inspectorAvailable, openInspector, toggleReference, openPalette, fit }: {
   space: SpaceId; setSpace(space: SpaceId): void; compact: boolean; reference: boolean; inspectorAvailable: boolean; openInspector(): void; toggleReference(): void; openPalette(): void; fit(): void;
 }) {

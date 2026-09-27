@@ -90,8 +90,7 @@ try {
   await page.goto(`${origin}/x`);
   await page.getByRole("main", { name: "Open bench" }).waitFor();
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
-  assert.deepEqual(await page.locator("[data-window]").evaluateAll((nodes) => nodes.map((node) => node.dataset.window).sort()),
-    ["accounts", "activity", "bots", "call-speech", "chat", "host", "inference", "model-catalogs", "owner", "packages", "processes", "resources", "role-editor", "role-instructions", "role-preview", "sampling", "usage"]);
+  assert.deepEqual(await page.locator("[data-window]:visible").evaluateAll((nodes) => nodes.map((node) => node.dataset.window).sort()), ["bots", "chat"]);
   assert.equal(await page.getByRole("button", { name: "Grid", exact: true }).count(), 0);
   const point = () => page.locator('[data-window="bots"]').evaluate((el) => ({ x: el.getBoundingClientRect().x, y: el.getBoundingClientRect().y }));
   const samePoint = (a, b) => { assert.ok(Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) < 1, `${JSON.stringify(a)} != ${JSON.stringify(b)}`); };
@@ -124,14 +123,27 @@ try {
   assert.equal(await page.getByRole("heading", { name: "bot-1", exact: true }).count(), 1);
   await page.getByRole("button", { name: "Close inspector", exact: true }).click();
   assert.equal(await page.getByRole("button", { name: "Inspect bot bot-1", exact: true }).evaluate((el) => el === document.activeElement), true);
-  // System is a space now: the menu moves the camera there and back.
+  // Switching benches retains independent cameras and exposes only the selected space.
   await page.getByRole("button", { name: /^Spaces/ }).click();
   await page.getByRole("menuitem", { name: /^System/ }).click();
   await page.locator('[data-window="owner"]').waitFor({ state: "visible" });
   assert.ok(new URL(page.url()).pathname.endsWith("/x/system"));
   assert.ok(await page.locator('[data-window="sampling"]').isVisible());
+  assert.equal(await page.locator('[data-window="bots"]').isVisible(), false);
+  const systemPoint = await page.locator('[data-window="owner"]').boundingBox();
+  await page.getByRole("main", { name: "Open bench" }).focus();
+  await page.keyboard.press("ArrowRight");
+  const systemPanned = await page.locator('[data-window="owner"]').boundingBox();
+  assert.equal(Math.round(systemPanned.x - systemPoint.x), -64);
   await page.goBack();
   assert.ok(new URL(page.url()).pathname.endsWith("/x/fleet"));
+  await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
+  samePoint(initial, await point());
+  await page.goForward();
+  await page.locator('[data-window="owner"]').waitFor({ state: "visible" });
+  samePoint(systemPanned, await page.locator('[data-window="owner"]').boundingBox());
+  await page.goBack();
+  await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
   await page.getByRole("button", { name: "Inspect bot bot-1", exact: true }).click();
   await page.getByRole("button", { name: /^Spaces/ }).click(); await page.getByRole("menuitem", { name: /^Fleet/ }).click();
   // Chrome interaction contracts the unpinned inspector; the retained inspection is one press away.
@@ -150,7 +162,7 @@ try {
   const clickBench = async () => {
     const spot = await benchPoint();
     if (spot) await page.mouse.click(spot.x, spot.y);
-    else await page.locator('[data-canvas="workbench"]').dispatchEvent("click");
+    else await page.getByRole("main", { name: "Open bench" }).dispatchEvent("click");
   };
   await page.getByRole("button", { name: "Inspect bot bot-1", exact: true }).click();
   await page.getByRole("heading", { name: "bot-1", exact: true }).waitFor();
@@ -160,13 +172,13 @@ try {
   await page.getByRole("button", { name: "Return to inspector", exact: true }).click();
   await page.getByRole("heading", { name: "bot-1", exact: true }).waitFor();
   // Keyboard input on the bench contracts too; so does wheel panning.
-  await page.locator('[data-canvas="workbench"]').focus();
+  await page.getByRole("main", { name: "Open bench" }).focus();
   await page.keyboard.press("ArrowDown");
   await page.locator('[data-dock="right"]').waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "Return to inspector", exact: true }).click();
   const wheelSpot = await benchPoint();
   if (wheelSpot) { await page.mouse.move(wheelSpot.x, wheelSpot.y); await page.mouse.wheel(0, 60); }
-  else await page.locator('[data-canvas="workbench"]').dispatchEvent("wheel");
+  else await page.getByRole("main", { name: "Open bench" }).dispatchEvent("wheel");
   await page.locator('[data-dock="right"]').waitFor({ state: "hidden" });
   // Interacting inside the inspector — even a control that hands focus to the bench — keeps it open.
   await page.getByRole("button", { name: "Return to inspector", exact: true }).click();
@@ -227,7 +239,7 @@ try {
   await page.keyboard.up("Alt");
   const afterDrag = await point();
   assert.ok(Math.abs(afterDrag.x - beforeDrag.x - 50) < 1 && Math.abs(afterDrag.y - beforeDrag.y - 40) < 1, `drag ${JSON.stringify(beforeDrag)} -> ${JSON.stringify(afterDrag)}`);
-  await page.waitForFunction(() => JSON.parse(localStorage.getItem("agentstack.uix.bench.v1") ?? "{}").layout?.manual?.bots === true);
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("agentstack.uix.bench.v2.fleet") ?? "{}").layout?.manual?.bots === true);
   await page.reload();
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
   samePoint(afterDrag, await point());
@@ -294,33 +306,92 @@ try {
   // Reproduce physically overlapping windows without adding temporary production spaces.
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.evaluate(() => {
-    const saved = JSON.parse(localStorage.getItem("agentstack.uix.bench.v1"));
+    const saved = JSON.parse(localStorage.getItem("agentstack.uix.bench.v2.fleet"));
     saved.space = "another-logical-space"; // forces Fleet's direct URL to fit, rather than reuse this camera
-    saved.layout.positions.accounts = { x: 0, y: 0 };
+    saved.layout.positions.chat = { x: 0, y: 0 };
     saved.layout.positions.bots = { x: 0, y: 0 };
-    saved.layout.manual.accounts = true;
+    saved.layout.manual.chat = true;
     saved.layout.manual.bots = true;
-    saved.layout.order = [...saved.layout.order.filter((id) => id !== "accounts" && id !== "bots"), "accounts", "bots"];
-    localStorage.setItem("agentstack.uix.bench.v1", JSON.stringify(saved));
+    saved.layout.order = ["chat", "bots"];
+    localStorage.setItem("agentstack.uix.bench.v2.fleet", JSON.stringify(saved));
   });
   await page.goto(`${origin}/x/fleet`);
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
   const expectFront = async (id) => page.waitForFunction((target) => {
-    const windows = [...document.querySelectorAll("[data-window]")];
+    const windows = [...document.querySelectorAll('[data-space="fleet"] [data-window]')];
     const front = windows.find((el) => el.dataset.window === target);
     return front && windows.every((el) => el === front || Number(el.style.zIndex) < Number(front.style.zIndex));
   }, id);
   await expectFront("bots");
-  await page.getByRole("button", { name: "Inspect account codex-bot-account-1", exact: true }).focus();
-  await expectFront("accounts");
+  await page.locator('[data-window="chat"] button').first().focus();
+  await expectFront("chat");
   await page.keyboard.press("Meta+k");
   await page.getByRole("combobox").fill("bot-1");
   await page.getByRole("option").filter({ hasText: "bot-1" }).first().click();
   await page.getByRole("dialog", { name: "Jump to", exact: true }).waitFor({ state: "hidden" });
   await page.waitForFunction(() => document.activeElement?.matches('[data-canvas="workbench"]'));
   await expectFront("bots");
+  // Every space is a closed visual/focus boundary, even at minimum zoom and after panning.
+  const expectedWindows = {
+    Fleet: ["bots", "chat"], Accounts: ["accounts", "model-catalogs", "usage"],
+    Lab: ["call-speech", "inference"],
+    System: ["activity", "host", "owner", "packages", "processes", "resources", "sampling"],
+    Roles: ["role-editor", "role-instructions", "role-preview"],
+  };
+  const switchSpace = async (title) => {
+    await page.getByRole("button", { name: /^Spaces/ }).click();
+    await page.getByRole("menuitem", { name: new RegExp(`^${title}`) }).click();
+    await page.locator(`[data-space="${title.toLowerCase()}"]`).waitFor({ state: "visible" });
+  };
+  for (const [title, ids] of Object.entries(expectedWindows)) {
+    await switchSpace(title);
+    const bench = page.getByRole("main", { name: "Open bench" });
+    await bench.focus();
+    for (let i = 0; i < 7; i++) await page.keyboard.press("-");
+    await page.keyboard.press("Shift+ArrowRight");
+    assert.deepEqual(await page.locator("[data-window]:visible").evaluateAll((nodes) => nodes.map((n) => n.dataset.window).sort()), ids);
+    assert.equal(await page.getByRole("main", { name: "Open bench" }).count(), 1);
+    await page.locator('[hidden] [data-window] button').first().evaluate((el) => el.focus());
+    assert.equal(await bench.evaluate((el) => document.activeElement === el), true, "hidden controls cannot take focus");
+    await page.keyboard.press("f");
+  }
+  await switchSpace("Lab");
+  await page.getByPlaceholder("Ask something").fill("Keep this unsent draft across benches");
+  await switchSpace("Fleet");
+  await page.getByRole("button", { name: "Collapse Bots", exact: true }).click();
+  await switchSpace("Lab");
+  assert.equal(await page.getByPlaceholder("Ask something").inputValue(), "Keep this unsent draft across benches");
+  await switchSpace("Fleet");
+  assert.equal(await page.getByRole("button", { name: "Expand Bots", exact: true }).count(), 1);
+  assert.equal(await page.locator('.bench-enter').evaluate((el) => getComputedStyle(el).animationName), "none");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.getByRole("main", { name: "Open bench" }).evaluate((el) => {
+    for (const key of ["2", "3", "4", "5"]) el.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+  });
+  await page.locator('[data-space="roles"]').waitFor({ state: "visible" });
+  assert.equal(new URL(page.url()).pathname, "/x/roles");
+  assert.equal(await page.locator('.bench-enter').evaluate((el) => getComputedStyle(el).animationDuration), "0.15s");
+  await page.waitForTimeout(200);
+  assert.deepEqual(await page.locator("[data-window]:visible").evaluateAll((nodes) => nodes.map((n) => n.dataset.window).sort()), expectedWindows.Roles);
+  await page.screenshot({ path: join(evidence, "isolated-roles-bench.png") });
+  // Upgrade a shared-world save without discarding manual layout or its viewed anchor.
+  await page.evaluate(() => {
+    for (const key of Object.keys(localStorage)) if (key.startsWith("agentstack.uix.bench.v2.")) localStorage.removeItem(key);
+    localStorage.setItem("agentstack.uix.bench.v1", JSON.stringify({
+      space: "fleet", camera: { x: 100, y: 200, k: 0.8 }, anchor: { id: "bots", point: { x: 1000, y: 1000 } },
+      layout: { positions: { bots: { x: 123, y: 234 }, accounts: { x: 66, y: 88 } }, manual: { bots: true, accounts: true },
+        collapsed: { accounts: true }, sizes: { bots: { width: 500 } }, order: ["bots", "accounts"] },
+    }));
+  });
+  await page.goto(`${origin}/x/fleet`);
+  await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
+  samePoint({ x: 900, y: 1000 }, await point());
+  await switchSpace("Accounts");
+  assert.equal(await page.getByRole("button", { name: "Expand Accounts", exact: true }).count(), 1);
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("agentstack.uix.bench.v2.accounts") ?? "{}").layout?.manual?.accounts === true);
+  assert.deepEqual(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("agentstack.uix.bench.v2.accounts")).layout.positions).sort()), expectedWindows.Accounts);
   assert.deepEqual(issues, []);
-  console.log("PASS: headless desktop/mobile navigation, joint dock sizing/expanded reading, camera compensation, keyboard resize/Escape/focus return, retained mobile inspection/reference, keyboard/navigation stacking, inspector scroll restoration, unpinned contraction on click/wheel/key input, re-expand and pin persistence across reload, schemas, search, history, deep links, manual placement reload; no page errors.");
+  console.log("PASS: isolated spaces at minimum zoom/pan, independent cameras/history, hidden focus exclusion, retained draft/collapse state, reduced motion and rapid navigation, legacy layout migration; desktop/mobile navigation, joint dock sizing/expanded reading, keyboard resize/Escape/focus return, retained inspection/reference, stacking, inspector scroll, pin persistence, schemas, search, deep links and manual placement reload; no page errors.");
   console.log(`Screenshots: ${evidence}`);
 } catch (error) {
   console.error(output);
