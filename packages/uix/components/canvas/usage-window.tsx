@@ -200,7 +200,7 @@ function UsageCard({ node, names, observation, summary, orbs, samples, subscript
         {summary.plan ? <span className="shrink-0 rounded-md bg-muted px-1.5 py-px text-[0.65rem] font-medium text-muted-foreground capitalize">{summary.plan}</span> : null}
         <span className={cn("ml-auto shrink-0 text-base leading-none font-semibold tracking-tight tabular-nums",
           tone === "destructive" ? "text-destructive" : tone === "warning" ? "text-warning" : "text-foreground")}>
-          {summary.limited ? "Limit" : headline === null ? "—" : <>{pct(headline)}<span className="ml-0.5 text-[0.65rem] font-medium text-muted-foreground">remaining</span></>}
+          {summary.limited ? "Limit" : headline === null ? "—" : pct(headline)}
         </span>
       </div>
       {summary.gauges.length ? (
@@ -215,8 +215,8 @@ function UsageCard({ node, names, observation, summary, orbs, samples, subscript
               ) : <span className="truncate">{gauge.label}</span>}
               <Meter value={gauge.remaining} className={cn(blocker && "opacity-35")}
                 label={`${names[0].label} ${gauge.label} remaining${blocker ? `, unavailable until ${blocker.label} resets` : ""}`} />
-              <span className={cn("min-w-14 text-right whitespace-nowrap tabular-nums", blocker && "opacity-35")}>
-                {gauge.remaining === null ? "—" : <><span className="text-foreground/80">{pct(gauge.remaining)}</span> remaining</>}
+              <span className={cn("min-w-10 text-right whitespace-nowrap tabular-nums", blocker && "opacity-35")}>
+                {gauge.remaining === null ? "—" : <span className="text-foreground/80">{pct(gauge.remaining)}</span>}
               </span>
               <span className="min-w-12 whitespace-nowrap text-right tabular-nums" title={gauge.resetsAt ?? undefined}>
                 {gauge.resetsAt ? untilTime(Date.parse(gauge.resetsAt), now) : "—"}
