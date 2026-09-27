@@ -72,6 +72,9 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(statesRoute.inputSchema, null, "GET has no JSON request body");
     assert.equal(brainHttp.routes.find((route) => route.operation === "share_health")!.inputSchema, null);
     assert.ok(!found.get("brain")!.operations.some((operation) => operation.name === "share_admit"));
+    const doctor = found.get("brain")!.operations.find((operation) => operation.name === "doctor")!;
+    assert.ok(doctor.description.includes("notify Package API"));
+    assert.ok((doctor.outputSchema.properties as Record<string, unknown>).notification);
     const contentHttp = found.get("content")!.transports.find((transport) => transport.type === "http")!;
     assert.ok(contentHttp.routes.some((route) => route.surface === "artifacts" && route.path === "/a/*" && route.operation === null && route.format === "artifact media type" && route.authentication === "none" && route.outputSchema === null));
     const browser = found.get("browser") as PackageDoc;
