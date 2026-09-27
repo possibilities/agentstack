@@ -28,6 +28,7 @@ const money = (value: number) => value.toLocaleString(undefined, { style: "curre
 const pct = (value: number) => `${Math.round(value)}%`;
 const freshWindow = 5 * 60_000;
 const grokBotNode: NodeRef = { kind: "grok-bot-usage" };
+const grokAuthRecovery = "Grok Worker usage was rejected. If it persists, use Sign in again in Accounts.";
 /** An exhausted window is a limit, like Codex's own limit flag. */
 const exhausted = (gauges: Gauge[]) => gauges.some((gauge) => gauge.remaining === 0);
 /** The exhausted sibling that makes a gauge's remaining headroom unusable, if any. */
@@ -166,7 +167,7 @@ function SubscriptionEnd({ subscription, now }: { subscription: UsageSubscriptio
   );
 }
 
-function UsageCard({ node, names, observation, summary, orbs, samples, subscription }: {
+function UsageCard({ node, names, observation, summary, orbs, samples, subscription, recovery }: {
   node: NodeRef;
   names: Array<{ node: NodeRef; label: string }>;
   observation: UsageObservation;
@@ -174,6 +175,7 @@ function UsageCard({ node, names, observation, summary, orbs, samples, subscript
   orbs: string[];
   samples: Sample[];
   subscription: UsageSubscription | null;
+  recovery?: string;
 }) {
   const now = useNow(60_000);
   const headline = summary.gauges.reduce<number | null>((low, gauge) => gauge.remaining === null ? low : low === null ? gauge.remaining : Math.min(low, gauge.remaining), null);
@@ -238,6 +240,7 @@ function UsageCard({ node, names, observation, summary, orbs, samples, subscript
           {subscription ? <span className="ml-auto shrink-0"><SubscriptionEnd subscription={subscription} now={now} /></span> : null}
         </p>
       ) : null}
+      {recovery ? <p className="text-[0.68rem] text-warning">{recovery}</p> : null}
     </NodeCard>
   );
 }
@@ -272,7 +275,7 @@ export function UsageWindow() {
           <TooltipTrigger render={<Button variant="ghost" size="icon-xs" aria-label="Re-read usage" disabled={status.usage !== "open"} onClick={store.reloadUsage} />}>
             <RefreshCwIcon />
           </TooltipTrigger>
-          <TooltipContent side="bottom">Re-read</TooltipContent>
+          <TooltipContent side="bottom">Re-read snapshot; does not retry collection or renew sign-ins</TooltipContent>
         </Tooltip>
       }>
       {usage.data?.inventoryError ? <Alert variant="destructive"><AlertDescription>Inventory {usage.data.inventoryError.replace("_", " ")} · <Time at={usage.data.inventoryAtMs} /></AlertDescription></Alert> : null}
@@ -288,6 +291,8 @@ export function UsageWindow() {
                       summary={bot?.usage ? withGrokBot(summarize(row[0])!, bot.usage) : summarize(row[0])!}
                       samples={[{ label: null, at: row[0].observedAtMs }, ...bot ? [{ label: "bot", at: bot.observedAtMs }] : []]}
                       subscription={row[0].subscription}
+                      recovery={row[0].scope === "worker" && row[0].provider === "grok" && row[0].error === "auth_unavailable"
+                        ? grokAuthRecovery : undefined}
                       orbs={row.map((account) => account.id)} names={row.map((account) => ({ node: nodeOf(account), label: label(account) }))} />
                   );
                 })}
@@ -300,7 +305,9 @@ export function UsageWindow() {
                   <div className="flex flex-wrap items-center gap-1 px-0.5 pt-1">
                     <span className="mr-1 text-[0.68rem] text-muted-foreground">Not observed</span>
                     {providerWaiting.map((account) => (
-                      <span key={`${account.scope}:${account.id}`} data-node={nodeKey(nodeOf(account))} title={account.error ?? (!account.ready ? "Needs sign-in" : !account.enabled ? "Disabled" : "Waiting")}
+                      <span key={`${account.scope}:${account.id}`} data-node={nodeKey(nodeOf(account))} title={account.scope === "worker" && account.provider === "grok" && account.error === "auth_unavailable"
+                        ? grokAuthRecovery
+                        : account.error ?? (!account.ready ? "Needs sign-in" : !account.enabled ? "Disabled" : "Waiting")}
                         className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem]">
                         <Orb id={account.id} size="sm" className="size-2.5" />
                         <NodeTitle node={nodeOf(account)} label={`${label(account)} usage`}>{label(account)}</NodeTitle>
