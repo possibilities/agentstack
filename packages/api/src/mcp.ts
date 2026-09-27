@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { CallToolRequestSchema, ListToolsRequestSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult, type Tool } from "@modelcontextprotocol/sdk/types.js";
 import { socketCall } from "./socket.js";
 import { listPackages, mcpPort, socketPath, workspaceRoot } from "./workspace.js";
 import { botInstance, parseBotMcpIdentity, parseWorkerMcpIdentity } from "./bot-mcp-identity.js";
@@ -147,9 +147,10 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
           name: params.name,
           arguments: params.arguments ?? {},
           invocation,
+          resultFormat: "mcp",
         }, { signal: extra.signal, timeoutMs: params.name === "account_remove" ? 300_000 : params.name === "voice_dial" && name === "bots" ? 75_000 : 60_000 });
         if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("operation returned a non-object result");
-        return resultOf(result as Record<string, unknown>);
+        return result as CallToolResult;
       } catch (error) {
         return { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }] };
       }

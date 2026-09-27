@@ -1,4 +1,7 @@
 import type { z } from "zod";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+
+export type McpContent = CallToolResult["content"];
 
 export type Annotations = {
   title?: string;
@@ -28,6 +31,9 @@ export type AnyOperation<Ctx> = {
   output: z.ZodType;
   annotations?: Annotations;
   call(ctx: Ctx, input: any, invocation?: InvocationContext): Promise<any>;
+  /** Optional MCP presentation of the validated output. Ordinary socket calls
+   * and WebSocket callers still receive the operation's declared JSON output. */
+  mcpContent?(ctx: Ctx, input: any, output: any): McpContent | Promise<McpContent>;
 };
 
 export type PackageEvents<Ctx, Topic extends string = string> = {
@@ -96,6 +102,7 @@ export function operation<Ctx, InputSchema extends z.ZodType, OutputSchema exten
   output: OutputSchema;
   annotations?: Annotations;
   call(ctx: Ctx, input: z.infer<InputSchema>, invocation?: InvocationContext): Promise<z.infer<OutputSchema>>;
+  mcpContent?(ctx: Ctx, input: z.infer<InputSchema>, output: z.infer<OutputSchema>): McpContent | Promise<McpContent>;
 }): {
   name: string;
   description: string;
@@ -103,6 +110,7 @@ export function operation<Ctx, InputSchema extends z.ZodType, OutputSchema exten
   output: OutputSchema;
   annotations?: Annotations;
   call(ctx: Ctx, input: z.infer<InputSchema>, invocation?: InvocationContext): Promise<z.infer<OutputSchema>>;
+  mcpContent?(ctx: Ctx, input: z.infer<InputSchema>, output: z.infer<OutputSchema>): McpContent | Promise<McpContent>;
 } {
   if (!namePattern.test(op.name)) throw new Error(`invalid operation name: ${op.name}`);
   const description = op.description.trim();

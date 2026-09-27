@@ -5,8 +5,9 @@ import { socketCall, socketSubscribe, type SocketSubscription } from "./socket.j
 
 export type ServedWebSocket = { urls: Record<string, string>; close(): Promise<void> };
 
-const maxPayload = 1_000_000;
-const maxClientBuffer = 1_000_000;
+// Match the socket's bounded JSON allowance for escaped inline content.
+const maxPayload = 4_000_000;
+const maxClientBuffer = 4_000_000;
 /**
  * Operations whose own bounds exceed the default forwarding timeout. Timing out
  * first would report a failure while the operation continues; for inference that
@@ -103,6 +104,8 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
           if (message.method === "tools/call") {
             if (typeof operation !== "string" || (allowedOperations && !allowedOperations.includes(operation)))
               throw new Error(`operation ${String(operation)} is not available over websocket`);
+            if (message.params && typeof message.params === "object" && "resultFormat" in message.params)
+              throw new Error("MCP result presentation is not available over websocket");
           }
           const result = await socketCall(socketPath(name, env), message.method as "tools/list" | "tools/call", message.params, { signal: controller.signal, timeoutMs });
           if (message.method === "tools/list" && allowedOperations) {

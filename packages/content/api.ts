@@ -144,13 +144,25 @@ const collectionOperations = [
       const total = ctx.collections.countItems(input.collection);
       return { items, total, nextOffset: input.offset + items.length < total ? input.offset + items.length : null };
     } }),
-  operation({ name: "item_get", description: "Read an item by stable ID, independent of collection, and optionally its body. Binary content up to 256 KiB is returned as base64; larger items use the static URL path.",
+  operation({ name: "item_get", description: "Read an item by stable ID, independent of collection, and optionally its body. Binary content up to 256 KiB is returned as base64; larger items use the static URL path. MCP also presents included content as native text, image or resource blocks.",
     input: itemKey.extend({ includeData: z.boolean().default(false) }), output: itemSchema.extend({ content: z.string().nullable(), base64: z.string().nullable() }),
     annotations: { title: "Read collection item", readOnlyHint: true }, async call(ctx: ContentContext, input) {
       const item = ctx.collections.item(input.id);
       const bytes = input.includeData && item.bytes <= MAX_INLINE_BYTES ? ctx.collections.bytes(item) : null;
       return { ...item, content: bytes && item.kind === "document" ? bytes.toString("utf8") : null,
         base64: bytes && item.kind !== "document" ? bytes.toString("base64") : null };
+    },
+    mcpContent(ctx, _input, item) {
+      const { content, base64, ...metadata } = item;
+      const uri = new URL(item.url, ctx.server.artifactUrl).href;
+      const summary = { type: "text" as const, text: JSON.stringify(metadata) };
+      if (item.kind === "document" && content !== null)
+        return [summary, { type: "resource" as const, resource: { uri, mimeType: item.mediaType, text: content } }];
+      if (item.kind === "image" && base64 !== null)
+        return [summary, { type: "image" as const, data: base64, mimeType: item.mediaType }];
+      if (item.kind === "file" && base64 !== null)
+        return [summary, { type: "resource" as const, resource: { uri, mimeType: item.mediaType, blob: base64 } }];
+      return [summary, { type: "resource_link" as const, uri, name: item.name, mimeType: item.mediaType, size: item.bytes }];
     } }),
   operation({ name: "item_move", description: "Put an item in a collection or set collection to null to ungroup it. The stable ID and URL do not change; expectedRevision fences concurrent edits.",
     input: itemKey.extend({ collection: z.string().nullable(), expectedRevision }), output: itemSchema,
