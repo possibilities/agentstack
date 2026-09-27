@@ -22,10 +22,25 @@ test("the roles Package API serves fragment CRUD and invalidates subscribers", a
       expectedRevision: 1, categoryId: created.categories[0]!.id, title: "Rule", description: "Human-only", body: "Follow this rule.",
     } }) as { revision: number };
     assert.equal(added.revision, 2);
-    const preview = await socketCall(path, "tools/call", { name: "role_preview", arguments: {} }) as { revision: number; rendered: string };
+    const preview = await socketCall(path, "tools/call", { name: "role_preview", arguments: {} }) as {
+      revision: number; rendered: string; bytes: number; limitBytes: number; segments: Array<{ fragmentId: string; start: number; end: number }>;
+    };
     assert.equal(preview.rendered, "Follow this rule.");
     assert.equal(preview.revision, 2);
-    assert.deepEqual(notices, ["role_changed", "role_changed"]);
+    assert.equal(preview.bytes, 17);
+    assert.equal(preview.limitBytes, 262_144);
+    assert.deepEqual(preview.segments.map(({ start, end }) => [start, end]), [[0, 17]]);
+    const second = await socketCall(path, "tools/call", { name: "category_create", arguments: { expectedRevision: 2, title: "Second" } }) as {
+      revision: number; categories: Array<{ id: string; fragments: Array<{ id: string }> }>;
+    };
+    const fragmentId = second.categories[0]!.fragments[0]!.id;
+    const moved = await socketCall(path, "tools/call", { name: "fragment_move", arguments: { expectedRevision: 3, id: fragmentId, categoryId: second.categories[1]!.id, index: 0 } }) as {
+      revision: number; categories: Array<{ fragments: Array<{ id: string; categoryId: string; updatedAt: number | null }> }>;
+    };
+    assert.equal(moved.revision, 4);
+    assert.deepEqual(moved.categories.map((category) => category.fragments.map((fragment) => fragment.id)), [[], [fragmentId]]);
+    assert.equal(typeof moved.categories[1]!.fragments[0]!.updatedAt, "number");
+    assert.deepEqual(notices, ["role_changed", "role_changed", "role_changed", "role_changed"]);
   } finally {
     await subscription.close();
     await served.close();

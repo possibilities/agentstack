@@ -4,8 +4,10 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { mcpRecord, skillRecord, trustedProjectRecord, type RoleMcpServer, type Skill, type TrustedProject } from "./resources.js";
 
-export type Fragment = { id: string; categoryId: string; title: string; description: string; body: string; enabled: boolean };
-export type Category = { id: string; title: string; description: string; enabled: boolean; fragments: Fragment[] };
+/** Unix milliseconds; null on records written before the store kept timestamps. */
+type Stamps = { createdAt: number | null; updatedAt: number | null };
+export type Fragment = { id: string; categoryId: string; title: string; description: string; body: string; enabled: boolean } & Stamps;
+export type Category = { id: string; title: string; description: string; enabled: boolean; fragments: Fragment[] } & Stamps;
 export type RoleSnapshot = { revision: number; categories: Category[]; skills: Skill[]; mcpServers: RoleMcpServer[]; trustedProjects: TrustedProject[] };
 
 function canonicalProjectRoot(path: string): string {
@@ -13,13 +15,29 @@ function canonicalProjectRoot(path: string): string {
   return realpathSync(path);
 }
 
-export function renderInstructions(snapshot: RoleSnapshot): string {
-  const bodies = snapshot.categories.flatMap((category) => category.enabled
-    ? category.fragments.filter((fragment) => fragment.enabled && fragment.body.trim()).map((fragment) => fragment.body)
-    : []);
-  const rendered = bodies.join("\n\n");
-  if (Buffer.byteLength(rendered) > 262_144) throw new Error("rendered instructions exceed 262144 bytes");
-  return rendered;
+export const instructionLimitBytes = 262_144;
+/** Where one fragment's body sits in the rendered text, as string (UTF-16) offsets. */
+export type RenderedSegment = { categoryId: string; fragmentId: string; start: number; end: number };
+
+/** The rendered developer instructions and each contributing fragment's span; blank-line separators belong to no segment. */
+export function renderSegments(snapshot: Pick<RoleSnapshot, "categories">): { rendered: string; segments: RenderedSegment[] } {
+  const segments: RenderedSegment[] = [];
+  let rendered = "";
+  for (const category of snapshot.categories) {
+    if (!category.enabled) continue;
+    for (const fragment of category.fragments) {
+      if (!fragment.enabled || !fragment.body.trim()) continue;
+      if (rendered) rendered += "\n\n";
+      segments.push({ categoryId: category.id, fragmentId: fragment.id, start: rendered.length, end: rendered.length + fragment.body.length });
+      rendered += fragment.body;
+    }
+  }
+  if (Buffer.byteLength(rendered) > instructionLimitBytes) throw new Error(`rendered instructions exceed ${instructionLimitBytes} bytes`);
+  return { rendered, segments };
+}
+
+export function renderInstructions(snapshot: Pick<RoleSnapshot, "categories">): string {
+  return renderSegments(snapshot).rendered;
 }
 
 export class RoleStore {
@@ -49,12 +67,12 @@ export class RoleStore {
       INSERT OR IGNORE INTO revision VALUES (1, 0);
       CREATE TABLE IF NOT EXISTS categories (
         id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL, enabled INTEGER NOT NULL,
-        position INTEGER NOT NULL
+        position INTEGER NOT NULL, created_at INTEGER, updated_at INTEGER
       );
       CREATE TABLE IF NOT EXISTS fragments (
         id TEXT PRIMARY KEY, category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
         title TEXT NOT NULL, description TEXT NOT NULL, body TEXT NOT NULL, enabled INTEGER NOT NULL,
-        position INTEGER NOT NULL
+        position INTEGER NOT NULL, created_at INTEGER, updated_at INTEGER
       );
       CREATE TABLE IF NOT EXISTS skills (
         id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, description TEXT NOT NULL,
@@ -69,6 +87,11 @@ export class RoleStore {
         enabled INTEGER NOT NULL, position INTEGER NOT NULL
       );
     `);
+    // Databases from before timestamps gain nullable columns; their existing rows stay unknown.
+    for (const table of ["categories", "fragments"]) {
+      const columns = new Set((this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((column) => column.name));
+      for (const column of ["created_at", "updated_at"]) if (!columns.has(column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} INTEGER`);
+    }
   }
 
   close(): void { this.db.close(); }
@@ -84,14 +107,18 @@ export class RoleStore {
 
   private readSnapshot(): RoleSnapshot {
     const revision = this.revision();
-    const rows = this.db.prepare("SELECT id, title, description, enabled FROM categories ORDER BY position, id").all() as Array<Omit<Category, "fragments" | "enabled"> & { enabled: number }>;
-    const fragments = this.db.prepare("SELECT id, category_id, title, description, body, enabled FROM fragments ORDER BY category_id, position, id").all() as Array<{
-      id: string; category_id: string; title: string; description: string; body: string; enabled: number;
+    const rows = this.db.prepare("SELECT id, title, description, enabled, created_at, updated_at FROM categories ORDER BY position, id").all() as Array<{
+      id: string; title: string; description: string; enabled: number; created_at: number | null; updated_at: number | null;
     }>;
-    const categories = rows.map((row): Category => ({ ...row, enabled: Boolean(row.enabled), fragments: [] }));
+    const fragments = this.db.prepare("SELECT id, category_id, title, description, body, enabled, created_at, updated_at FROM fragments ORDER BY category_id, position, id").all() as Array<{
+      id: string; category_id: string; title: string; description: string; body: string; enabled: number; created_at: number | null; updated_at: number | null;
+    }>;
+    const categories = rows.map(({ enabled, created_at, updated_at, ...row }): Category => ({
+      ...row, enabled: Boolean(enabled), fragments: [], createdAt: created_at, updatedAt: updated_at,
+    }));
     const byId = new Map(categories.map((category) => [category.id, category]));
-    for (const { category_id, enabled, ...fragment } of fragments) {
-      byId.get(category_id)?.fragments.push({ ...fragment, categoryId: category_id, enabled: Boolean(enabled) });
+    for (const { category_id, enabled, created_at, updated_at, ...fragment } of fragments) {
+      byId.get(category_id)?.fragments.push({ ...fragment, categoryId: category_id, enabled: Boolean(enabled), createdAt: created_at, updatedAt: updated_at });
     }
     const skills = (this.db.prepare("SELECT id, name, description, body, files_json, enabled FROM skills ORDER BY position, id").all() as Array<{
       id: string; name: string; description: string; body: string; files_json: string; enabled: number;
@@ -108,15 +135,17 @@ export class RoleStore {
   createCategory(expectedRevision: number, title: string, description = "", enabled = true): RoleSnapshot {
     return this.change(expectedRevision, () => {
       const position = this.count("categories");
-      this.db.prepare("INSERT INTO categories VALUES (?, ?, ?, ?, ?)").run(randomUUID(), title, description, Number(enabled), position);
+      const now = Date.now();
+      this.db.prepare("INSERT INTO categories (id, title, description, enabled, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(randomUUID(), title, description, Number(enabled), position, now, now);
     });
   }
 
   updateCategory(expectedRevision: number, id: string, fields: { title?: string; description?: string; enabled?: boolean }): RoleSnapshot {
     return this.change(expectedRevision, () => {
       const existing = this.category(id);
-      this.db.prepare("UPDATE categories SET title = ?, description = ?, enabled = ? WHERE id = ?")
-        .run(fields.title ?? existing.title, fields.description ?? existing.description, Number(fields.enabled ?? existing.enabled), id);
+      this.db.prepare("UPDATE categories SET title = ?, description = ?, enabled = ?, updated_at = ? WHERE id = ?")
+        .run(fields.title ?? existing.title, fields.description ?? existing.description, Number(fields.enabled ?? existing.enabled), Date.now(), id);
     });
   }
 
@@ -134,12 +163,17 @@ export class RoleStore {
     return this.change(expectedRevision, () => this.reorder("categories", ids));
   }
 
-  createFragment(expectedRevision: number, categoryId: string, title: string, body: string, description = "", enabled = true): RoleSnapshot {
+  /** Appends by default; `index` inserts at that zero-based position in the category. */
+  createFragment(expectedRevision: number, categoryId: string, title: string, body: string, description = "", enabled = true, index?: number): RoleSnapshot {
     return this.change(expectedRevision, () => {
       this.category(categoryId);
-      const position = this.count("fragments", categoryId);
-      this.db.prepare("INSERT INTO fragments VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(randomUUID(), categoryId, title, description, body, Number(enabled), position);
+      const siblings = this.ids("fragments", categoryId);
+      if (index !== undefined) this.insertionIndex(index, siblings.length);
+      const id = randomUUID();
+      const now = Date.now();
+      this.db.prepare("INSERT INTO fragments (id, category_id, title, description, body, enabled, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(id, categoryId, title, description, body, Number(enabled), siblings.length, now, now);
+      if (index !== undefined) this.place("fragments", [...siblings.slice(0, index), id, ...siblings.slice(index)]);
     });
   }
 
@@ -149,9 +183,9 @@ export class RoleStore {
       const categoryId = fields.categoryId ?? existing.categoryId;
       if (categoryId !== existing.categoryId) this.category(categoryId);
       const position = categoryId === existing.categoryId ? existing.position : this.count("fragments", categoryId);
-      this.db.prepare("UPDATE fragments SET category_id = ?, title = ?, description = ?, body = ?, enabled = ?, position = ? WHERE id = ?")
+      this.db.prepare("UPDATE fragments SET category_id = ?, title = ?, description = ?, body = ?, enabled = ?, position = ?, updated_at = ? WHERE id = ?")
         .run(categoryId, fields.title ?? existing.title, fields.description ?? existing.description, fields.body ?? existing.body,
-          Number(fields.enabled ?? existing.enabled), position, id);
+          Number(fields.enabled ?? existing.enabled), position, Date.now(), id);
       if (categoryId !== existing.categoryId) this.reindex("fragments", existing.categoryId);
     });
   }
@@ -166,6 +200,21 @@ export class RoleStore {
 
   reorderFragments(expectedRevision: number, categoryId: string, ids: string[]): RoleSnapshot {
     return this.change(expectedRevision, () => { this.category(categoryId); this.reorder("fragments", ids, categoryId); });
+  }
+
+  /** Atomically place a fragment at a zero-based index of a category, which may be its own. Changing category counts as an update. */
+  moveFragment(expectedRevision: number, id: string, categoryId: string, index: number): RoleSnapshot {
+    return this.change(expectedRevision, () => {
+      const existing = this.fragment(id);
+      this.category(categoryId);
+      const siblings = this.ids("fragments", categoryId).filter((item) => item !== id);
+      this.insertionIndex(index, siblings.length);
+      if (categoryId !== existing.categoryId) {
+        this.db.prepare("UPDATE fragments SET category_id = ?, updated_at = ? WHERE id = ?").run(categoryId, Date.now(), id);
+        this.reindex("fragments", existing.categoryId);
+      }
+      this.place("fragments", [...siblings.slice(0, index), id, ...siblings.slice(index)]);
+    });
   }
 
   createSkill(expectedRevision: number, name: string, description: string, body: string, files: Skill["files"] = [], enabled = true): RoleSnapshot {
@@ -267,7 +316,7 @@ export class RoleStore {
     if (!row) throw new Error(`unknown category: ${id}`);
     return { ...row, enabled: Boolean(row.enabled) };
   }
-  private fragment(id: string): Fragment & { position: number } {
+  private fragment(id: string): Omit<Fragment, "createdAt" | "updatedAt"> & { position: number } {
     const row = this.db.prepare("SELECT category_id, title, description, body, enabled, position FROM fragments WHERE id = ?").get(id) as {
       category_id: string; title: string; description: string; body: string; enabled: number; position: number;
     } | undefined;
@@ -302,12 +351,18 @@ export class RoleStore {
       .all(...(categoryId ? [categoryId] : [])) as Array<{ id: string }>).map((row) => row.id);
   }
   private reindex(table: "categories" | "fragments" | "skills" | "role_mcp_servers" | "trusted_projects", categoryId?: string): void {
-    this.ids(table, categoryId).forEach((id, index) => this.db.prepare(`UPDATE ${table} SET position = ? WHERE id = ?`).run(index, id));
+    this.place(table, this.ids(table, categoryId));
   }
   private reorder(table: "categories" | "fragments" | "skills" | "role_mcp_servers" | "trusted_projects", ids: string[], categoryId?: string): void {
     const current = this.ids(table, categoryId);
     if (ids.length !== current.length || new Set(ids).size !== ids.length || ids.some((id) => !current.includes(id)))
       throw new Error(`reorder must contain every ${categoryId ? "fragment in the category" : table === "skills" ? "skill" : table === "role_mcp_servers" ? "MCP server" : table === "trusted_projects" ? "trusted project" : "category"} exactly once`);
+    this.place(table, ids);
+  }
+  private place(table: "categories" | "fragments" | "skills" | "role_mcp_servers" | "trusted_projects", ids: string[]): void {
     ids.forEach((id, index) => this.db.prepare(`UPDATE ${table} SET position = ? WHERE id = ?`).run(index, id));
+  }
+  private insertionIndex(index: number, length: number): void {
+    if (!Number.isInteger(index) || index < 0 || index > length) throw new Error(`index must be between 0 and ${length}`);
   }
 }

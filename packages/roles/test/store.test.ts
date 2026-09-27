@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { botMcpUrl } from "@agentstack/api";
-import { RoleStore, renderInstructions } from "../src/store.js";
+import { DatabaseSync } from "node:sqlite";
+import { RoleStore, renderInstructions, renderSegments } from "../src/store.js";
 import { materializeRole, removeRole } from "../src/bundle.js";
 
 test("categories and fragments are durable, ordered, and rendered without human metadata", async () => {
@@ -42,6 +43,82 @@ test("categories and fragments are durable, ordered, and rendered without human 
     state = store.deleteCategory(state.revision, tools);
     assert.equal(state.categories.length, 1);
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("fragments move atomically, insert at an index, and keep human timestamps", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-role-move-"));
+  const store = new RoleStore(root);
+  try {
+    const before = Date.now();
+    let state = store.createCategory(0, "One");
+    state = store.createCategory(state.revision, "Two");
+    const [one, two] = state.categories.map((category) => category.id) as [string, string];
+    state = store.createFragment(state.revision, one, "A", "Alpha");
+    state = store.createFragment(state.revision, one, "C", "Gamma");
+    state = store.createFragment(state.revision, one, "B", "Beta", "", true, 1);
+    assert.deepEqual(state.categories[0]!.fragments.map((fragment) => fragment.title), ["A", "B", "C"]);
+    assert.throws(() => store.createFragment(state.revision, one, "Far", "x", "", true, 4), /index must be between 0 and 3/);
+    const [a, b, c] = state.categories[0]!.fragments as [typeof state.categories[0]["fragments"][0], typeof state.categories[0]["fragments"][0], typeof state.categories[0]["fragments"][0]];
+    assert.ok(a.createdAt! >= before && a.updatedAt === a.createdAt && state.categories[0]!.createdAt! >= before);
+    // Within a category only order changes; the fragment's own fields and timestamp stay.
+    state = store.moveFragment(state.revision, c.id, one, 0);
+    assert.deepEqual(state.categories[0]!.fragments.map((fragment) => fragment.title), ["C", "A", "B"]);
+    assert.equal(state.categories[0]!.fragments[0]!.updatedAt, c.updatedAt);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    state = store.moveFragment(state.revision, a.id, two, 0);
+    assert.deepEqual(state.categories.map((category) => category.fragments.map((fragment) => fragment.title)), [["C", "B"], ["A"]]);
+    const moved = state.categories[1]!.fragments[0]!;
+    assert.equal(moved.categoryId, two);
+    assert.ok(moved.updatedAt! > a.updatedAt!);
+    assert.throws(() => store.moveFragment(state.revision, b.id, two, 2), /index must be between 0 and 1/);
+    state = store.moveFragment(state.revision, b.id, two, 1);
+    assert.equal(renderInstructions(state), "Gamma\n\nAlpha\n\nBeta");
+    // The source category keeps a dense order after fragments leave it.
+    state = store.createFragment(state.revision, one, "D", "Delta", "", true, 1);
+    assert.deepEqual(state.categories[0]!.fragments.map((fragment) => fragment.title), ["C", "D"]);
+    const category = state.categories[1]!;
+    state = store.updateCategory(state.revision, two, { description: "edited" });
+    assert.ok(state.categories[1]!.updatedAt! >= category.updatedAt!);
+  } finally { store.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("rendered segments locate each contributing body and skip disabled or blank fragments", () => {
+  const fragment = (id: string, body: string, enabled = true) => ({ id, categoryId: "c", title: id, description: "", body, enabled, createdAt: null, updatedAt: null });
+  const { rendered, segments } = renderSegments({ categories: [
+    { id: "c1", title: "On", description: "", enabled: true, createdAt: null, updatedAt: null, fragments: [fragment("f1", "First"), fragment("f2", "  "), fragment("f3", "Off", false), fragment("f4", "Sé\ncond")] },
+    { id: "c2", title: "Off", description: "", enabled: false, createdAt: null, updatedAt: null, fragments: [fragment("f5", "Hidden")] },
+  ] });
+  assert.equal(rendered, "First\n\nSé\ncond");
+  assert.deepEqual(segments, [{ categoryId: "c1", fragmentId: "f1", start: 0, end: 5 }, { categoryId: "c1", fragmentId: "f4", start: 7, end: 14 }]);
+  for (const segment of segments) assert.equal(rendered.slice(segment.start, segment.end), segment.fragmentId === "f1" ? "First" : "Sé\ncond");
+});
+
+test("a database from before timestamps keeps its records with unknown times", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-role-stamps-"));
+  try {
+    const db = new DatabaseSync(join(root, "roles.sqlite"));
+    db.exec(`
+      CREATE TABLE revision (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), value INTEGER NOT NULL);
+      INSERT INTO revision VALUES (1, 4);
+      CREATE TABLE categories (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL, enabled INTEGER NOT NULL, position INTEGER NOT NULL);
+      CREATE TABLE fragments (id TEXT PRIMARY KEY, category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
+        title TEXT NOT NULL, description TEXT NOT NULL, body TEXT NOT NULL, enabled INTEGER NOT NULL, position INTEGER NOT NULL);
+      INSERT INTO categories VALUES ('00000000-0000-4000-8000-000000000001', 'Old', '', 1, 0);
+      INSERT INTO fragments VALUES ('00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', 'Kept', '', 'Keep me.', 1, 0);
+    `);
+    db.close();
+    const store = new RoleStore(root);
+    try {
+      let state = store.snapshot();
+      assert.equal(state.revision, 4);
+      assert.deepEqual(state.categories[0]!.fragments[0], { id: "00000000-0000-4000-8000-000000000002", categoryId: "00000000-0000-4000-8000-000000000001",
+        title: "Kept", description: "", body: "Keep me.", enabled: true, createdAt: null, updatedAt: null });
+      state = store.createFragment(state.revision, state.categories[0]!.id, "New", "Fresh.");
+      assert.equal(state.categories[0]!.fragments[0]!.createdAt, null);
+      assert.equal(typeof state.categories[0]!.fragments[1]!.createdAt, "number");
+      assert.equal(renderInstructions(state), "Keep me.\n\nFresh.");
+    } finally { store.close(); }
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("a role snapshots instructions and MCP configuration without argv content", async () => {

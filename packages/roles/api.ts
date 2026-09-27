@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { configuredMcpPackages, operation, workspaceRoot, type PackageApi } from "@agentstack/api";
-import { RoleStore, renderInstructions } from "./src/store.js";
+import { RoleStore, instructionLimitBytes, renderSegments } from "./src/store.js";
 import { mcpDefinition, mcpRecord, projectPath, resourceName, resourceDescription, skillBody, skillFiles, skillRecord, trustedProjectRecord } from "./src/resources.js";
 
 const id = z.uuid().describe("Stable Role record ID.");
@@ -10,10 +10,16 @@ const revision = z.number().int().nonnegative().describe("Expected role revision
 const title = z.string().trim().min(1).max(200);
 const description = z.string().max(4_000);
 const body = z.string().max(262_144).describe("Verbatim developer instruction body; metadata never renders.");
-const fragment = z.strictObject({ id, categoryId: id, title, description, body, enabled: z.boolean() });
-const category = z.strictObject({ id, title, description, enabled: z.boolean(), fragments: z.array(fragment) });
+const stamp = z.number().int().nullable().describe("Unix milliseconds; null for records written before timestamps were kept.");
+const stamps = { createdAt: stamp, updatedAt: stamp.describe("Unix milliseconds of the last change to this record's own fields; reordering does not count. Null for older records.") };
+const fragment = z.strictObject({ id, categoryId: id, title, description, body, enabled: z.boolean(), ...stamps });
+const category = z.strictObject({ id, title, description, enabled: z.boolean(), fragments: z.array(fragment), ...stamps });
+const index = z.number().int().nonnegative().describe("Zero-based position within the category.");
 const snapshot = z.strictObject({ revision, categories: z.array(category), skills: z.array(skillRecord), mcpServers: z.array(mcpRecord), trustedProjects: z.array(trustedProjectRecord) });
-const preview = z.strictObject({ revision, rendered: z.string() });
+const segment = z.strictObject({ categoryId: id, fragmentId: id,
+  start: z.number().int().nonnegative(), end: z.number().int().nonnegative() }).describe("One rendered fragment body as [start, end) string offsets; separators belong to no segment.");
+const preview = z.strictObject({ revision, rendered: z.string(), segments: z.array(segment),
+  bytes: z.number().int().nonnegative().describe("UTF-8 size of rendered."), limitBytes: z.number().int().positive().describe("Largest rendered size an edit may produce.") });
 const write = z.strictObject({ expectedRevision: revision });
 
 export type RolesContext = { store: RoleStore; changed?: () => void };
@@ -31,7 +37,11 @@ export const roleSnapshot = operation({
 export const rolePreview = operation({
   name: "role_preview", description: "Preview the exact developer instruction text from the role for the next bot launch; descriptions and titles are excluded.",
   input: z.strictObject({}), output: preview, annotations: { title: "Preview role", readOnlyHint: true },
-  async call(ctx: RolesContext) { const value = ctx.store.snapshot(); return { revision: value.revision, rendered: renderInstructions(value) }; },
+  async call(ctx: RolesContext) {
+    const value = ctx.store.snapshot();
+    const { rendered, segments } = renderSegments(value);
+    return { revision: value.revision, rendered, segments, bytes: Buffer.byteLength(rendered), limitBytes: instructionLimitBytes };
+  },
 });
 export const categoryCreate = operation({
   name: "category_create", description: "Create an ordered category at the end of the role. Pass the current revision.",
@@ -56,10 +66,10 @@ export const categoryReorder = operation({
   async call(ctx: RolesContext, { ids, expectedRevision }) { return changed(ctx, ctx.store.reorderCategories(expectedRevision, ids)); },
 });
 export const fragmentCreate = operation({
-  name: "fragment_create", description: "Create a fragment at the end of a category. Only enabled bodies in enabled categories render.",
-  input: write.extend({ categoryId: id, title, body, description: description.optional(), enabled: z.boolean().optional() }), output: snapshot,
+  name: "fragment_create", description: "Create a fragment at the end of a category, or at index. Only enabled bodies in enabled categories render.",
+  input: write.extend({ categoryId: id, title, body, description: description.optional(), enabled: z.boolean().optional(), index: index.optional() }), output: snapshot,
   annotations: { title: "Create instruction fragment" },
-  async call(ctx: RolesContext, input) { return changed(ctx, ctx.store.createFragment(input.expectedRevision, input.categoryId, input.title, input.body, input.description, input.enabled)); },
+  async call(ctx: RolesContext, input) { return changed(ctx, ctx.store.createFragment(input.expectedRevision, input.categoryId, input.title, input.body, input.description, input.enabled, input.index)); },
 });
 export const fragmentUpdate = operation({
   name: "fragment_update", description: "Update content or metadata, enable/disable, or move to another category (appended there). Reorder separately if needed.",
@@ -76,6 +86,12 @@ export const fragmentReorder = operation({
   name: "fragment_reorder", description: "Atomically replace one category's fragment order with an exact permutation of its fragment IDs.",
   input: write.extend({ categoryId: id, ids: z.array(id) }), output: snapshot, annotations: { title: "Reorder instruction fragments" },
   async call(ctx: RolesContext, { categoryId, ids, expectedRevision }) { return changed(ctx, ctx.store.reorderFragments(expectedRevision, categoryId, ids)); },
+});
+
+export const fragmentMove = operation({
+  name: "fragment_move", description: "Atomically place a fragment at a zero-based index of a category, its own or another. Index counts the destination's other fragments.",
+  input: write.extend({ id, categoryId: id, index }), output: snapshot, annotations: { title: "Move instruction fragment" },
+  async call(ctx: RolesContext, { id, categoryId, index, expectedRevision }) { return changed(ctx, ctx.store.moveFragment(expectedRevision, id, categoryId, index)); },
 });
 
 export const skillCreate = operation({
@@ -157,7 +173,7 @@ export const topics = { role_changed: "The role was edited. Read role_snapshot a
 
 export const api: PackageApi<RolesContext, keyof typeof topics> = {
   operations: [roleSnapshot, rolePreview, categoryCreate, categoryUpdate, categoryDelete, categoryReorder,
-    fragmentCreate, fragmentUpdate, fragmentDelete, fragmentReorder, skillCreate, skillUpdate, skillDelete, skillReorder,
+    fragmentCreate, fragmentUpdate, fragmentDelete, fragmentReorder, fragmentMove, skillCreate, skillUpdate, skillDelete, skillReorder,
     mcpServerCreate, mcpServerUpdate, mcpServerDelete, mcpServerReorder,
     projectCreate, projectUpdate, projectDelete, projectReorder],
   events: {

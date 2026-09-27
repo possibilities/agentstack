@@ -14,8 +14,8 @@ import { claimWorktree, removeWorktree } from "../src/worktree.js";
 import { api as workersApi } from "../api.js";
 import { writeV2Credential } from "./v2-credential-fixture.js";
 
-const role: RoleSnapshot = { revision: 7, categories: [{ id: randomUUID(), title: "Guidance", description: "", enabled: true,
-  fragments: [{ id: randomUUID(), categoryId: randomUUID(), title: "Brief", description: "", body: "Check your work.", enabled: true }] }],
+const role: RoleSnapshot = { revision: 7, categories: [{ id: randomUUID(), title: "Guidance", description: "", enabled: true, createdAt: null, updatedAt: null,
+  fragments: [{ id: randomUUID(), categoryId: randomUUID(), title: "Brief", description: "", body: "Check your work.", enabled: true, createdAt: null, updatedAt: null }] }],
   skills: [{ id: randomUUID(), name: "review", description: "Review changes", body: "Review the diff.", files: [], enabled: true }],
   mcpServers: [{ id: randomUUID(), name: "fixture-mcp", description: "", enabled: true,
     definition: { type: "stdio", command: process.execPath, args: ["--version"], env: { TEST_SECRET: "fixture-secret" } } }], trustedProjects: [] };

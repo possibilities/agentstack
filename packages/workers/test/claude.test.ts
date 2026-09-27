@@ -100,8 +100,8 @@ function sdkFixture() {
   return { factory, calls };
 }
 
-const role: RoleSnapshot = { revision: 3, categories: [{ id: randomUUID(), title: "Role", description: "", enabled: true,
-  fragments: [{ id: randomUUID(), categoryId: randomUUID(), title: "Instruction", description: "", body: "Check your work.", enabled: true }] }],
+const role: RoleSnapshot = { revision: 3, categories: [{ id: randomUUID(), title: "Role", description: "", enabled: true, createdAt: null, updatedAt: null,
+  fragments: [{ id: randomUUID(), categoryId: randomUUID(), title: "Instruction", description: "", body: "Check your work.", enabled: true, createdAt: null, updatedAt: null }] }],
 skills: [{ id: randomUUID(), name: "fixture", description: "Fixture skill", body: "Review carefully", enabled: true, files: [] }],
 mcpServers: [{ id: randomUUID(), name: "external", description: "", enabled: true,
   definition: { type: "http", url: "https://fixture.invalid/mcp", httpHeaders: { Authorization: "Bearer fixture-bearer-token" } } }], trustedProjects: [] };
