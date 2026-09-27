@@ -97,7 +97,7 @@ export async function loadCatalog(env: NodeJS.ProcessEnv = process.env, from = i
         const base = { type: transport.type, description: transport.description, supported: true, operations, routes: [] };
         if (transport.type === "socket") return { ...base, subscriptions: api.events !== undefined, endpoint: socketPath(item.config.name, env) };
         if (transport.type === "websocket") return { ...base, subscriptions: api.events !== undefined,
-          endpoint: wsPort === 0 ? null : `ws://127.0.0.1:${wsPort}/websocket/${item.config.name}` };
+          endpoint: wsPort === 0 ? null : `ws://127.0.0.1:${wsPort}/websocket` };
         return { ...base, subscriptions: false, endpoint: port === 0 ? null : `http://127.0.0.1:${port}/mcp/${item.config.name}` };
       }),
     });

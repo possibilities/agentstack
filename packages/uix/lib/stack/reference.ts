@@ -7,20 +7,20 @@ export function inputTemplate(schema: JsonSchema): unknown {
   return `<replace: ${typeLabel(schema)}>`;
 }
 
-export function requestExample(operation: OperationDoc, transport: TransportDoc): string | null {
+export function requestExample(operation: OperationDoc, transport: TransportDoc, pkg: string): string | null {
   if (!transport.supported || !["socket", "websocket", "mcp"].includes(transport.type) || (transport.operations && !transport.operations.includes(operation.name))) return null;
-  const request = { ...(transport.type === "mcp" ? { jsonrpc: "2.0" } : {}), id: 1, method: "tools/call", params: { name: operation.name, arguments: inputTemplate(operation.inputSchema) } };
+  const request = { ...(transport.type === "mcp" ? { jsonrpc: "2.0" } : {}), id: 1, method: "tools/call", params: { ...(transport.type === "websocket" ? { package: pkg } : {}), name: operation.name, arguments: inputTemplate(operation.inputSchema) } };
   return JSON.stringify(request, null, 2);
 }
 
 export function subscriptionExample(doc: PackageDoc, transport: TransportDoc): string | null {
   if (!transport.supported || !transport.subscriptions || !["socket", "websocket"].includes(transport.type) || !Object.keys(doc.events).length) return null;
-  return JSON.stringify({ id: 2, method: "events/subscribe", params: { topics: Object.keys(doc.events), ...(doc.eventScope ? { scope: "<replace: subscription scope>" } : {}) } }, null, 2);
+  return JSON.stringify({ id: 2, method: "events/subscribe", params: { ...(transport.type === "websocket" ? { package: doc.name, subscription: "<replace: subscription id>" } : {}), topics: Object.keys(doc.events), ...(doc.eventScope ? { scope: "<replace: subscription scope>" } : {}) } }, null, 2);
 }
 
 export function transportInstructions(type: string): string {
   if (type === "socket") return "Send compact JSON followed by a newline on this package's Unix socket. Keep the connection open for subscriptions.";
-  if (type === "websocket") return "Send JSON as a text frame on this package's WebSocket connection.";
+  if (type === "websocket") return "Send JSON as a text frame on the shared WebSocket connection. Address each Package API with params.package; use distinct subscription IDs for independent event watches.";
   if (type === "mcp") return "Use an initialized MCP client and call this tool. This JSON-RPC body is illustrative; the client manages HTTP session, initialization and headers. It is not a standalone HTTP request.";
   return "Consult this transport's description for its request format.";
 }

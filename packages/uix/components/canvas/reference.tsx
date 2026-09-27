@@ -100,10 +100,10 @@ function Operation({ doc, operation }: { doc: PackageDoc; operation: OperationDo
     <Schema title="Input" schema={operation.inputSchema} /><Separator /><Schema title="Output" schema={operation.outputSchema} /><Separator />
     <section className="flex min-w-0 flex-col gap-4"><h4 className="text-sm font-semibold">Request templates</h4><p className="text-xs leading-relaxed text-muted-foreground">Fill each &lt;replace: …&gt; placeholder. Shows required fields only; templates are not validated.</p>
       {doc.transports.map((transport) => {
-        const example = requestExample(operation, transport);
+        const example = requestExample(operation, transport, doc.name);
         return example ? <div key={transport.type} className="flex min-w-0 flex-col gap-2"><Transport transport={transport} /><p className="text-xs leading-relaxed text-muted-foreground">{transportInstructions(transport.type)}</p><Code value={example} label={`${transport.type} request template`} /></div> : null;
       })}
-      {!doc.transports.some((t) => requestExample(operation, t)) ? <p className="text-xs text-muted-foreground">No request transport.</p> : null}
+      {!doc.transports.some((t) => requestExample(operation, t, doc.name)) ? <p className="text-xs text-muted-foreground">No request transport.</p> : null}
     </section>
   </article>;
 }

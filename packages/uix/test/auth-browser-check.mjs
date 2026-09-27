@@ -90,7 +90,7 @@ try {
     bots: ["bot_list", "bot_defaults_get", "voice_status"], workers: ["worker_list", "worker_runtime_list"], usage: ["usage_snapshot"], api: ["docs_snapshot"] };
   const topics = { auth: Object.fromEntries(["accounts_changed", "worker_accounts_changed", "login_changed", "worker_login_changed"].map((name) => [name, "Fixture"])) };
   handlers.docs_snapshot = () => ({ packages: Object.keys(definitions).map((name) => ({ name, packageName: `@agentstack/${name}`, description: "Auth fixture", events: topics[name] ?? {}, eventScope: null, operations: [],
-    transports: [{ type: "websocket", endpoint: websocket.urls[name], supported: true, subscriptions: true, description: "Isolated fixture" }] })) });
+    transports: [{ type: "websocket", endpoint: websocket.url, supported: true, subscriptions: true, description: "Isolated fixture" }] })) });
   for (const [name, names] of Object.entries(definitions)) {
     served.set(name, await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {},
       operations: names.map((name) => ({ name, description: name, input: passthrough, output: passthrough, async call(_, input) { calls.push({ name, input }); return handlers[name](input); } })),

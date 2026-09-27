@@ -90,7 +90,7 @@ export class StackStore {
       const url = endpoints[pkg];
       if (!url) return;
       const silent = new Set(options?.silent ?? []);
-      const channel = new Channel(url, {
+      const channel = new Channel(url, pkg, {
         onStatus: (status) => this.set({ status: { ...this.state.status, [pkg]: status } }),
         onOpen,
         onNotice: (topic) => {
@@ -421,7 +421,7 @@ export class StackStore {
     for (const [id, { pkg, topics }] of wanted) {
       if (this.scopedChannels.has(id)) continue;
       this.set({ scoped: { ...this.state.scoped, [id]: { pkg, status: "idle" } } });
-      const channel = new Channel(endpoints[pkg], {
+      const channel = new Channel(endpoints[pkg], pkg, {
         onStatus: (status) => {
           if (this.scopedChannels.get(id) !== channel) return;
           this.set({ scoped: { ...this.state.scoped, [id]: { pkg, status } } });
