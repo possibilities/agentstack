@@ -1,4 +1,4 @@
-# 85. Name the durable notification Package API `notify`
+# 87. Name the durable notification Package API `notify`
 
 Status: accepted, 2026-09-26. Amends the package name and event topic in
 [ADR 0083](0083-durable-notifications-api.md); its notification record and
