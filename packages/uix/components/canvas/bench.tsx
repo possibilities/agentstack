@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { benchBounds, clamp, settleWindows, snapExtent, snapLocal, windowLimits, fitBounds, preserveViewedWindow, raiseWindow, reconcileBench, restoreBenchCamera, viewedWindow, windowHeight, type BenchLayout, type Camera, type SavedBench } from "@/lib/stack/geometry";
+import { benchBounds, clamp, settleWindows, snapLocal, snapSize, windowLimits, fitBounds, preserveViewedWindow, raiseWindow, reconcileBench, restoreBenchCamera, viewedWindow, windowHeight, type BenchLayout, type Camera, type SavedBench } from "@/lib/stack/geometry";
 import { homeOf, spaces, type SpaceId } from "@/lib/stack/spaces";
 import { nodeKey, type NodeRef } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
@@ -301,7 +301,6 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
         const frame = elements.current.get(id);
         const start = { width: frame?.offsetWidth ?? def.width, height: frame?.offsetHeight ?? def.height ?? windowHeight };
         const k = camera.k;
-        const world = { x: point.x + origin.x, y: point.y + origin.y + push };
         let moved = false;
         drag(event, (x, y, free) => {
           moved = true;
@@ -314,10 +313,10 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
           setGesture({ id, kind: "resize", width, height, fit, grooved, free });
           setLayout((value) => {
             const next = { ...value.sizes[id] };
-            if (width !== undefined) next.width = Math.round(clamp(free ? width : snapExtent(world.x, width), windowLimits.minWidth, windowLimits.maxWidth));
+            if (width !== undefined) next.width = free ? Math.round(clamp(width, windowLimits.minWidth, windowLimits.maxWidth)) : snapSize(width, windowLimits.minWidth, windowLimits.maxWidth);
             // Released in the groove, the window keeps no height and goes on fitting its content.
             if (grooved) delete next.height;
-            else if (height !== undefined) next.height = Math.round(clamp(free ? height : snapExtent(world.y, height), windowLimits.minHeight, windowLimits.maxHeight));
+            else if (height !== undefined) next.height = free ? Math.round(clamp(height, windowLimits.minHeight, windowLimits.maxHeight)) : snapSize(height, windowLimits.minHeight, windowLimits.maxHeight);
             const sizes = { ...value.sizes };
             if (next.width === undefined && next.height === undefined) delete sizes[id];
             else sizes[id] = next;

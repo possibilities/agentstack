@@ -23,8 +23,8 @@ export const gridSize = 22;
 export const snap = (value: number, grid = gridSize) => Math.round(value / grid) * grid;
 /** A local coordinate whose world position (origin + local) lands on the grid. */
 export const snapLocal = (local: number, origin: number, grid = gridSize) => snap(origin + local, grid) - origin;
-/** An extent whose far edge (start + extent) lands on the grid. */
-export const snapExtent = (start: number, extent: number, grid = gridSize) => snap(start + extent, grid) - start;
+/** A window extent in whole grid cells, kept within limits rounded inward to cells. */
+export const snapSize = (extent: number, min: number, max: number, grid = gridSize) => clamp(snap(extent, grid), Math.ceil(min / grid) * grid, Math.floor(max / grid) * grid);
 export const windowLimits = { minWidth: 280, maxWidth: 960, minHeight: 160, maxHeight: 2000 };
 export const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const validExtent = (value: unknown, min: number, max: number) => typeof value === "number" && Number.isFinite(value) ? clamp(Math.round(value), min, max) : undefined;
@@ -54,9 +54,9 @@ export function localLayout(defs: WindowGeometry[]): { positions: Record<string,
     let y = 0;
     for (const def of members) {
       positions[def.id] = { x, y };
-      y += (def.height ?? windowHeight) + 24;
+      y += (def.height ?? windowHeight) + 22;
     }
-    x += Math.max(...members.map((d) => d.width)) + 72;
+    x += Math.max(...members.map((d) => d.width)) + 66;
   }
   return { positions, bounds: boundsOf(defs.map((d) => ({ ...positions[d.id], width: d.width, height: d.height ?? windowHeight }))) };
 }
@@ -80,7 +80,7 @@ export function packSpaces(spaces: { id: string; bounds: Bounds }[], gap = 240):
   groups.forEach((group, row) => {
     let x = -(group.reduce((sum, s) => sum + s.bounds.width, 0) + gap * (group.length - 1)) / 2;
     for (const space of group) {
-      origins[space.id] = { x: x - space.bounds.x, y: y + (heights[row] - space.bounds.height) / 2 - space.bounds.y };
+      origins[space.id] = { x: snap(x - space.bounds.x), y: snap(y + (heights[row] - space.bounds.height) / 2 - space.bounds.y) };
       x += space.bounds.width + gap;
     }
     y += heights[row] + gap;
@@ -96,12 +96,13 @@ export function reconcileBench(spaces: SpaceGeometry[], previous: Partial<BenchL
   const manual: Record<string, boolean> = {};
   const collapsed: Record<string, boolean> = {};
   const sizes: Record<string, WindowSize> = {};
-  // Human-set sizes are manual extents: they take part in packing like manual positions.
+  // Registered extents are whole cells; human-set sizes are manual extents that take part in packing like manual positions.
   const sized = spaces.map((space) => ({ ...space, windows: space.windows.map((def) => {
+    const snapped = { ...def, width: snapSize(def.width, windowLimits.minWidth, windowLimits.maxWidth), ...(def.height !== undefined ? { height: snapSize(def.height, windowLimits.minHeight, windowLimits.maxHeight) } : null) };
     const size = validSize(previous?.sizes?.[def.id]);
-    if (!size) return def;
+    if (!size) return snapped;
     sizes[def.id] = size;
-    return { ...def, width: size.width ?? def.width, height: size.height ?? def.height };
+    return { ...snapped, width: size.width ?? snapped.width, height: size.height ?? snapped.height };
   }) }));
   const regions = sized.map((space) => {
     const defaults = localLayout(space.windows).positions;

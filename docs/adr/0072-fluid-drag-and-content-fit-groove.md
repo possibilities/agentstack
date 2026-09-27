@@ -1,6 +1,6 @@
 # 72. Fluid window gestures and a content-fit groove
 
-Status: accepted, 2026-09-26; amended 2026-09-26 (see Amendment). Amends the grid snapping of
+Status: accepted, 2026-09-26; amended 2026-09-26 (see Amendment); amended by [ADR 0089](0089-window-sizes-in-grid-cells.md). Amends the grid snapping of
 [ADR 0060](0060-resizable-windows-and-compact-fleet.md); builds on content
 height from [ADR 0070](0070-windows-grow-with-content.md).
 

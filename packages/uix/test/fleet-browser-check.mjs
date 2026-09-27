@@ -152,7 +152,8 @@ try {
     await page.getByRole("option", { name, exact: typeof name === "string" }).first().click();
     await page.getByRole("dialog", { name: "Jump to", exact: true }).waitFor({ state: "hidden" });
   };
-  await page.getByText("Native model one", { exact: true }).first().waitFor();
+  // The Models window's bench is hidden until Accounts is visited; mounted still proves the catalog read arrived.
+  await page.getByText("Native model one", { exact: true }).first().waitFor({ state: "attached" });
   await page.screenshot({ path: join(evidence, "fleet-light.png"), fullPage: true, animations: "disabled" });
   // Bot and account cards link across the Fleet and Accounts spaces; the Spaces menu follows.
   await page.locator('[data-node="bot:bot-1"]').getByRole("link", { name: /codex-bot-account-1/ }).click();
@@ -383,6 +384,10 @@ try {
   await models.getByRole("button", { name: "Refresh catalog" }).waitFor();
   assert.ok(calls.some((call) => call.name === "worker_catalog" && call.input.refresh === true && call.input.accountId === id(5)));
   await models.getByText("1 native ID", { exact: true }).waitFor();
+  const onGrid = (value) => Math.abs(Math.round(value / 22) * 22 - value) < 0.5;
+  const frame = () => models.evaluate((el) => ({ left: parseFloat(el.style.left), top: parseFloat(el.style.top), width: parseFloat(el.style.width) }));
+  const initial = await frame();
+  assert.ok(onGrid(initial.left) && onGrid(initial.top), "a default window lands on the grid");
   const before = await models.boundingBox();
   const grip = models.locator('[title="Resize Models"]').first();
   const edge = await grip.boundingBox();
@@ -391,9 +396,9 @@ try {
   await page.mouse.move(edge.x + 80, edge.y + edge.height / 2, { steps: 4 });
   await page.mouse.up();
   assert.ok((await models.boundingBox()).width > before.width + 40, "dragging a window edge widens it");
-  const onGrid = (value) => Math.abs(Math.round(value / 22) * 22 - value) < 0.5;
-  const frame = () => models.evaluate((el) => ({ left: parseFloat(el.style.left), top: parseFloat(el.style.top), width: parseFloat(el.style.width) }));
-  assert.ok(onGrid((await frame()).left + (await frame()).width), "a resized right edge snaps to the grid");
+  const resized = await frame();
+  assert.ok(onGrid(resized.left + resized.width), "a resized right edge snaps to the grid");
+  assert.ok(onGrid(resized.width), "a snapped resize is a whole number of cells");
   const header = await models.locator("header").boundingBox();
   await page.mouse.move(header.x + 40, header.y + header.height / 2);
   await page.mouse.down();

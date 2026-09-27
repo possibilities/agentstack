@@ -7,21 +7,21 @@ import test from "node:test";
 registerHooks({ resolve(specifier, context, next) {
   return next(context.parentURL?.includes("/lib/stack/") && specifier.startsWith("./") && !extname(specifier) ? `${specifier}.ts` : specifier, context);
 } });
-const { snap, snapLocal, snapExtent, gridSize, validSize, packSpaces, localLayout, boundsOf, preserveAnchor, fitBounds, reconcileBench, settleWindows, windowPoint, benchBounds, viewedWindow, preserveViewedWindow, restoreBenchCamera, raiseWindow, activeSurface, dockGeometry, dockMinimum } = await import("../lib/stack/geometry.ts");
+const { snap, snapLocal, snapSize, gridSize, validSize, packSpaces, localLayout, boundsOf, preserveAnchor, fitBounds, reconcileBench, settleWindows, windowPoint, benchBounds, viewedWindow, preserveViewedWindow, restoreBenchCamera, raiseWindow, activeSurface, dockGeometry, dockMinimum } = await import("../lib/stack/geometry.ts");
 const { emptyLocation, navigateTo, parseLocation, locationHref } = await import("../lib/stack/navigation.ts");
 const { inputTemplate, requestExample, subscriptionExample } = await import("../lib/stack/reference.ts");
 
 const region = (id, width = 100, height = 80, x = 0, y = 0) => ({ id, bounds: { x, y, width, height } });
 test("one, two, three and four regions form centered, side-by-side, triangular and square arrangements", () => {
-  assert.deepEqual(packSpaces([region("a")]), { a: { x: -50, y: -40 } });
+  assert.deepEqual(packSpaces([region("a")]), { a: { x: -44, y: -44 } });
   const pair = packSpaces([region("a"), region("b")], 20);
   assert.equal(pair.a.y, pair.b.y);
-  assert.equal(pair.b.x - pair.a.x, 120);
+  assert.equal(pair.b.x - pair.a.x, 110);
   const triangle = packSpaces([region("a"), region("b"), region("c")], 20);
-  assert.equal(triangle.a.x + 50, 0);
+  assert.ok(Math.abs(triangle.a.x + 50) <= gridSize / 2, "a lone region stays centered within a snap");
   assert.ok(triangle.a.y < triangle.b.y);
   assert.equal(triangle.b.y, triangle.c.y);
-  assert.equal(triangle.b.x + triangle.c.x + 100, 0);
+  assert.ok(Math.abs(triangle.b.x + triangle.c.x + 100) <= gridSize / 2, "a balanced row stays centered within a snap");
   const square = packSpaces([region("a"), region("b"), region("c"), region("d")], 20);
   assert.equal(square.a.y, square.b.y);
   assert.equal(square.c.y, square.d.y);
@@ -38,8 +38,8 @@ test("heterogeneous negative-origin footprints remain deterministic, centered an
     assert.deepEqual(spaces, before);
     const rectangles = spaces.map((s) => ({ ...s.bounds, x: packed[s.id].x + s.bounds.x, y: packed[s.id].y + s.bounds.y }));
     const bounds = boundsOf(rectangles);
-    assert.equal(bounds.x + bounds.width / 2, 0);
-    assert.equal(bounds.y + bounds.height / 2, 0);
+    assert.ok(Math.abs(bounds.x + bounds.width / 2) <= gridSize / 2, `centered within a snap at ${count}`);
+    assert.ok(Math.abs(bounds.y + bounds.height / 2) <= gridSize / 2, `centered within a snap at ${count}`);
     for (let i = 0; i < count; i++) for (let j = i + 1; j < count; j++) {
       const a = rectangles[i], b = rectangles[j];
       assert.ok(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y, `${i} overlaps ${j}`);
@@ -51,9 +51,9 @@ test("heterogeneous negative-origin footprints remain deterministic, centered an
 test("local structure uses stable explicit bounds, not record count or connection state", () => {
   const defs = [{ id: "a", column: 0, width: 300, height: 200 }, { id: "b", column: 0, width: 400, height: 100 }, { id: "c", column: 1, width: 180, height: 500 }];
   const a = localLayout(defs);
-  assert.equal(a.positions.b.y, 224);
-  assert.equal(a.positions.c.x, 472);
-  assert.equal(a.bounds.width, 652);
+  assert.equal(a.positions.b.y, 222);
+  assert.equal(a.positions.c.x, 466);
+  assert.equal(a.bounds.width, 646);
   assert.equal(a.bounds.height, 500);
   assert.deepEqual(localLayout(defs.map((d) => ({ ...d, records: [1, 2, 3], connected: true }))), a);
 });
@@ -92,7 +92,7 @@ test("restore and structural packing reserve the effective manual extents before
   const structural = reconcileBench(syntheticSpaces, fleetOnly.layout);
   const restored = reconcileBench(syntheticSpaces, saved);
   assert.deepEqual(structural, restored);
-  assert.deepEqual(structural.geometry.regions[0].bounds, { x: -900, y: -800, width: 3600, height: 1100 });
+  assert.deepEqual(structural.geometry.regions[0].bounds, { x: -900, y: -800, width: 3596, height: 1098 });
   assert.deepEqual(structural.layout.positions.bots, saved.positions.bots);
   assert.deepEqual(structural.layout.positions.tasks, { x: 0, y: 0 });
   assert.equal(structural.layout.manual.tasks, undefined);
@@ -103,12 +103,12 @@ test("restore and structural packing reserve the effective manual extents before
   const footprints = structural.geometry.regions.map((region) => ({ ...region.bounds, x: structural.geometry.origins[region.id].x + region.bounds.x, y: structural.geometry.origins[region.id].y + region.bounds.y }));
   for (let i = 0; i < footprints.length; i++) for (let j = i + 1; j < footprints.length; j++) {
     const a = footprints[i], b = footprints[j];
-    assert.ok(a.x + a.width + 240 <= b.x || b.x + b.width + 240 <= a.x || a.y + a.height + 240 <= b.y || b.y + b.height + 240 <= a.y, `manual footprint ${i} overlaps neighbor ${j}`);
+    assert.ok(a.x + a.width + 240 - gridSize <= b.x || b.x + b.width + 240 - gridSize <= a.x || a.y + a.height + 240 - gridSize <= b.y || b.y + b.height + 240 - gridSize <= a.y, `manual footprint ${i} overlaps neighbor ${j}`);
   }
   // Pointer updates can retain frozen origins, then the next structural boundary uses their latest positions.
   const dragged = { ...fleetOnly, layout: { ...fleetOnly.layout, positions: { ...fleetOnly.layout.positions, bots: { x: 6000, y: -900 } } } };
   assert.equal(dragged.geometry, fleetOnly.geometry);
-  assert.equal(reconcileBench(syntheticSpaces, dragged.layout).geometry.regions[0].bounds.width, 7300);
+  assert.equal(reconcileBench(syntheticSpaces, dragged.layout).geometry.regions[0].bounds.width, 7296);
 });
 
 test("repacking and tidy preserve the viewed retained window, including a changed default local position", () => {
@@ -271,7 +271,7 @@ test("human-set window sizes are clamped manual extents that packing reserves", 
   const packed = reconcileBench(spaces, { sizes: { a: { width: 600.4 }, gone: { width: 500 } } });
   assert.deepEqual(packed.layout.sizes, { a: { width: 600 } });
   assert.equal(packed.geometry.windows.find((def) => def.id === "a").width, 600);
-  assert.equal(packed.layout.positions.b.x, 600 + 72, "tidy columns start after the resized width");
+  assert.equal(packed.layout.positions.b.x, 600 + 66, "tidy columns start after the resized width");
   assert.deepEqual(reconcileBench(spaces, { ...packed.layout, manual: {}, positions: {} }).layout.sizes, packed.layout.sizes, "tidy keeps sizes");
 });
 
@@ -283,7 +283,30 @@ test("snapping lands world positions and far edges on the dot grid", () => {
   const origin = -305.5;
   const local = snapLocal(417, origin);
   assert.equal((origin + local) % gridSize, 0);
-  assert.equal(snapExtent(110, 301), 308, "right edge at 418 = 19 × 22");
+  assert.equal(snapSize(301, 280, 960), 308);
+  assert.equal(snapSize(270, 280, 960), 286, "the minimum rounds up to 13 cells");
+  assert.equal(snapSize(990, 280, 960), 946, "the maximum rounds down to 43 cells");
+  for (const extent of [308, 286, 946]) assert.equal(extent % gridSize, 0);
+});
+
+test("registered default extents snap to cells, so default windows land on the grid", () => {
+  const spaces = [{ id: "fleet", windows: [
+    { id: "a", width: 420, height: 620, column: 0 },
+    { id: "b", width: 380, column: 0 },
+    { id: "c", width: 420, height: 620, column: 1 },
+  ] }];
+  const packed = reconcileBench(spaces);
+  const a = packed.geometry.windows.find((def) => def.id === "a");
+  const b = packed.geometry.windows.find((def) => def.id === "b");
+  assert.equal(a.width, 418);
+  assert.equal(a.height, 616);
+  assert.equal(b.width, 374);
+  assert.equal(b.height, undefined);
+  for (const def of packed.geometry.windows) {
+    const point = windowPoint(packed, def.id);
+    assert.ok(point.x % gridSize === 0, `${def.id} left is on the grid`);
+    assert.ok(point.y % gridSize === 0, `${def.id} top is on the grid`);
+  }
 });
 
 test("content growth pushes the windows below it out of the way and releases them when it shrinks", () => {
@@ -296,8 +319,8 @@ test("content growth pushes the windows below it out of the way and releases the
   const onGrid = (local) => (origin.y + local) % gridSize === 0;
   // Within its footprint, or unmeasured, nothing moves.
   assert.deepEqual(settleWindows(packed, {}), { a: 0, b: 0, c: 0, side: 0 });
-  assert.deepEqual(settleWindows(packed, { a: 120, b: 200, c: 200, side: 900 }), { a: 0, b: 0, c: 0, side: 0 });
-  // A grows 200px past its footprint: B clears it on the grid and C cascades; the other column stays.
+  assert.deepEqual(settleWindows(packed, { a: 120, b: 190, c: 190, side: 900 }), { a: 0, b: 0, c: 0, side: 0 });
+  // A grows past its footprint: B clears it on the grid and C cascades; the other column stays.
   const grown = settleWindows(packed, { a: 500, b: 200, c: 200, side: 200 });
   const b = packed.layout.positions.b.y + grown.b;
   assert.ok(b >= packed.layout.positions.a.y + 500 + 24 && b < packed.layout.positions.a.y + 500 + 24 + gridSize && onGrid(b));
