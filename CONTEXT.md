@@ -6,6 +6,10 @@ Typed operations a workspace package exports so agentstack can serve them. Descr
 
 _Avoid_: MCP server, endpoint, route
 
+## Browser task
+
+An explicitly named agent-browser session routed through the internal `browser` Package API to a disposable Hypeman profile and Kernel target. The provider's durable receipt fences close to the exact target and lease; the session name does not prove Bot or Worker ownership. Page operations belong to agent-browser, not the Package API. No saved profile or human handoff is implied.
+
 ## Transport
 
 A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are the names. `mcp` exposes operations over loopback HTTP through the running socket Package APIs and, under the owner, offers generated agent-facing event tools. `websocket` exposes operations and event subscriptions over a shared loopback listener, forwarding to those same socket Package APIs.

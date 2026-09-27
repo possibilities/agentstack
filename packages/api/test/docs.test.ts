@@ -31,7 +31,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.deepEqual(
       docs.packages.map((item) => item.name),
-      ["api", "attention", "auth", "bots", "brain", "content", "infer", "owner", "roles", "usage", "workers"],
+      ["api", "attention", "auth", "bots", "brain", "browser", "content", "infer", "owner", "roles", "usage", "workers"],
     );
     assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@agentstack/${item.name}`));
 
@@ -48,6 +48,16 @@ test("the api package serves structured documents for every workspace package", 
     assert.deepEqual(snapshot.packages, [...found.values()]);
     const responseLength = JSON.stringify({ id: 1, result: snapshot }).length + 1;
     assert.ok(responseLength < 750_000, `discovery snapshot exceeds the socket response budget: ${responseLength} characters`);
+
+    const browser = found.get("browser") as PackageDoc;
+    assert.deepEqual(browser.transports.map((transport) => transport.type), ["socket", "websocket"]);
+    assert.deepEqual(browser.operations.map((operation) => operation.name).sort(),
+      ["browser_status", "browser_session_launch", "browser_session_get", "browser_session_list", "browser_session_close", "browser_session_reconcile",
+        "agent_browser_status", "agent_browser_detect", "agent_browser_check_updates", "agent_browser_update_policy_set",
+        "agent_browser_install", "agent_browser_update_accept", "agent_browser_uninstall",
+        "hypeman_detect", "hypeman_location_set", "hypeman_enable", "hypeman_install", "hypeman_uninstall"].sort());
+    assert.deepEqual(Object.keys(browser.events), ["browser_system_changed", "browser_sessions_changed"]);
+    assert.deepEqual(Object.keys(browser.operations.find((operation) => operation.name === "browser_session_launch")?.inputSchema.properties ?? {}), ["session"]);
 
     const bots = found.get("bots") as PackageDoc;
     assert.deepEqual(Object.keys(bots.events).sort(), ["bots_changed", "chat_queue_changed", "chats_changed", "defaults_changed", "threads_changed", "voice_changed"]);

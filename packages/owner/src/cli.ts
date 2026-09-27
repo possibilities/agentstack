@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { mcpPort, runApi, runMcp, runWebSocket, serveApi, serveMcp, socketCall, socketPath, websocketPort } from "@agentstack/api";
+import { prepareBrowserConfig } from "@agentstack/browser";
 import { contentNetworkConfig } from "@agentstack/content";
 import { lookup } from "node:dns/promises";
 import { connect } from "node:net";
-import { apiChild, attentionChild, authChild, brainChild, contentChild, inferChild, rolesChild, usageChild, workersChild, websocketChild } from "./children.js";
+import { apiChild, attentionChild, authChild, brainChild, browserChild, contentChild, inferChild, rolesChild, usageChild, workersChild, websocketChild } from "./children.js";
 import { botsChild } from "./bots.js";
 import { createMcpEventSubscriptions } from "./mcp-delivery.js";
 import { serveInspectorCatalog } from "./inspector-catalog.js";
@@ -104,6 +105,15 @@ for (const [transport, port, setting, host] of listeners) {
   }
 }
 
+// Publish a private, explicit provider config. Do not switch running or new
+// Bot/Worker browser traffic until the upstream close semantics are corrected.
+// AGENTSTACK_BROWSER_PROVIDER=agentstack is an operator opt-in for test owners.
+try {
+  const browserConfig = prepareBrowserConfig(process.env);
+  if (process.env.AGENTSTACK_BROWSER_PROVIDER === "agentstack") process.env.AGENT_BROWSER_CONFIG = browserConfig;
+}
+catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); }
+
 let events: Awaited<ReturnType<typeof serveApi>>;
 try {
   events = await startWithOwnerSocketRecovery(socketPath("owner"), () => serveApi({ name: "owner", transport: "socket", env: process.env }));
@@ -147,14 +157,14 @@ const shutdown = () => {
     process.exit(childFailed || failed ? 1 : 0);
   });
 };
-owner = startOwner([apiChild(), authChild(), rolesChild(), botsChild(mcp.port), workersChild(), usageChild(), inferChild(), attentionChild(), contentChild(), brainChild(), websocketChild(), inspectorChild(catalog.path, inspectorListenPort), uixChild(uixListenPort)], process.env, () => {
+owner = startOwner([apiChild(), authChild(), rolesChild(), browserChild(), botsChild(mcp.port), workersChild(), usageChild(), inferChild(), attentionChild(), contentChild(), brainChild(), websocketChild(), inspectorChild(catalog.path, inspectorListenPort), uixChild(uixListenPort)], process.env, () => {
   statusSource.notify();
   if (!closing && owner.children().some((child) => !child.running)) {
     childFailed = true;
     console.error("a required child stopped; shutting down agentstack");
     shutdown();
   }
-}, [["attention"], ["infer"], ["auth"], ["workers"], ["bots"], ["usage"], ["brain"], ["content"], ["roles"], ["api"]]);
+}, [["attention"], ["infer"], ["auth"], ["workers"], ["bots"], ["usage"], ["brain"], ["browser"], ["content"], ["roles"], ["api"]]);
 statusSource.attach(owner);
 subscriptions.resume();
 const indexUrl = `http://127.0.0.1:${uixListenPort}/`;
