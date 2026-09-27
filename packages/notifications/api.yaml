@@ -1,0 +1,8 @@
+name: notifications
+description: Durable internal notifications with stable IDs, independent acknowledgment and dismissal, filtered history, and change notices. No presentation or actions.
+socket:
+  description: Local notification creation, editing, lifecycle, and history.
+mcp:
+  description: Agent-facing notification creation and history over the owner's loopback MCP listener.
+websocket:
+  description: Loopback notification API and payload-free invalidation notices for future clients.

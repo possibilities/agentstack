@@ -1,5 +1,9 @@
 # Context
 
+## Notification
+
+A durable AgentStack-owned message with a stable ID and revision. Its text may be edited by ID; acknowledgment and dismissal are independent timestamps, and neither removes its history. Future transient presentation is separate from storage. _Avoid_: operating-system notification, action request, grouped replacement key
+
 ## Package API
 
 Typed operations a workspace package exports so agentstack can serve them. Descriptions and schemas are written for selection, in the same spirit as an MCP tool or a skill.

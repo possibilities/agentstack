@@ -35,7 +35,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.deepEqual(
       docs.packages.map((item) => item.name),
-      ["api", "attention", "auth", "bots", "brain", "browser", "content", "infer", "owner", "roles", "usage", "workers"],
+       ["api", "attention", "auth", "bots", "brain", "browser", "content", "infer", "notifications", "owner", "roles", "usage", "workers"],
     );
     assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@agentstack/${item.name}`));
 
@@ -230,6 +230,15 @@ test("the api package serves structured documents for every workspace package", 
     assert.deepEqual(Object.keys(attention.events), ["attention_changed"]);
     assert.ok(attention.operations.some((operation) => operation.name === "attention_replay"));
     assert.deepEqual(Object.keys(attention.operations.find((operation) => operation.name === "attention_defaults_get")!.outputSchema.properties ?? {}).sort(), ["accountId", "model", "reasoningEffort", "revision"]);
+
+    const notifications = found.get("notifications") as PackageDoc;
+    assert.deepEqual(notifications.operations.map((operation) => operation.name),
+      ["notification_send", "notification_get", "notification_list", "notification_update", "notification_acknowledge", "notification_dismiss", "notification_dismiss_all"]);
+    assert.deepEqual(Object.keys(notifications.events), ["notifications_changed"]);
+    assert.deepEqual(notifications.transports.map((transport) => transport.type), ["socket", "mcp", "websocket"]);
+    assert.ok((notifications.operations.find((operation) => operation.name === "notification_update")!.inputSchema.required as string[]).includes("expectedRevision"));
+    assert.ok(JSON.stringify(notifications.operations.find((operation) => operation.name === "notification_list")!.outputSchema).includes("acknowledgedAt"));
+    assert.ok(JSON.stringify(notifications.operations.find((operation) => operation.name === "notification_list")!.outputSchema).includes("dismissedAt"));
 
     assert.deepEqual(bots.eventScope, {
       description: "Optional bot ID. Scoped subscriptions receive changes only for that bot; omit scope to receive global voice, defaults, and bot notices.",

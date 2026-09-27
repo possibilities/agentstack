@@ -350,6 +350,22 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  packages/notifications:
+    dependencies:
+      '@agentstack/api':
+        specifier: workspace:*
+        version: link:../api
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.2
+        version: 26.6.2
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   packages/owner:
     dependencies:
       '@agentstack/api':
@@ -373,6 +389,9 @@ importers:
       '@agentstack/infer':
         specifier: workspace:*
         version: link:../infer
+      '@agentstack/notifications':
+        specifier: workspace:*
+        version: link:../notifications
       '@agentstack/uix':
         specifier: workspace:*
         version: link:../uix
