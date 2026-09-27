@@ -5,7 +5,7 @@ its enabled state, defaults and source checkpoints survive owner restarts.
 
 ## Configuration and activation
 
-Call Package API operations through the private socket or `/websocket/attention`:
+Call Package API operations through the private socket or the shared `/websocket` connection with `params.package: "attention"` (the examples below are operation name and arguments, not complete WebSocket frames):
 
 ```json
 {"name":"attention_defaults_set","arguments":{"model":"gpt-5.6-luna","reasoningEffort":"low","accountId":null}}

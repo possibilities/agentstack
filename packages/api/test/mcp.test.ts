@@ -113,17 +113,17 @@ test("any Package API can present native MCP media without changing its socket o
     assert.deepEqual(result.structuredContent, payload);
     assert.deepEqual(result.content, [{ type: "audio", mimeType: payload.mimeType, data: payload.base64 }]);
     ws = await new Promise<WebSocket>((resolve, reject) => {
-      const conn = new WebSocket(websocket.urls.demo!);
+      const conn = new WebSocket(websocket.url);
       conn.once("open", () => resolve(conn)); conn.once("error", reject);
     });
     const frame = new Promise<unknown>((resolve, reject) => {
       ws!.once("message", (raw) => { try { resolve(JSON.parse(String(raw))); } catch (error) { reject(error); } });
       ws!.once("error", reject);
     });
-    ws.send(JSON.stringify({ id: 7, method: "tools/call", params: { name: "media", arguments: {} } }));
+    ws.send(JSON.stringify({ id: 7, method: "tools/call", params: { package: "demo", name: "media", arguments: {} } }));
     assert.deepEqual(await frame, { id: 7, result: payload });
     const denied = new Promise<any>((resolve) => ws!.once("message", (raw) => resolve(JSON.parse(String(raw)))));
-    ws.send(JSON.stringify({ id: 8, method: "tools/call", params: { name: "media", arguments: {}, resultFormat: "mcp" } }));
+    ws.send(JSON.stringify({ id: 8, method: "tools/call", params: { package: "demo", name: "media", arguments: {}, resultFormat: "mcp" } }));
     assert.match((await denied).error.message, /not available over websocket/);
     assert.equal(calls, 3, "one call per transport; MCP presentation must not execute the operation twice");
   } finally {
@@ -182,19 +182,19 @@ test("content items keep portable JSON on socket and WebSocket and gain native M
     assert.equal((large.structuredContent as { content: string }).content, escaped);
     assert.equal(large.content[1]?.type, "resource");
     if (large.content[1]?.type === "resource") assert.equal("text" in large.content[1].resource && large.content[1].resource.text, escaped);
-    const ws = new WebSocket(websocket.urls.content!);
+    const ws = new WebSocket(websocket.url);
     try {
       await new Promise<void>((resolve, reject) => { ws.once("open", () => resolve()); ws.once("error", reject); });
       const image = await socketCall(content.socketPath!, "tools/call", { name: "item_list", arguments: {} }) as { items: Array<{ id: string; kind: string }> };
       const id = image.items.find((item) => item.kind === "image")!.id;
       const frame = new Promise<any>((resolve) => ws.once("message", (raw) => resolve(JSON.parse(String(raw)))));
-      ws.send(JSON.stringify({ id: 1, method: "tools/call", params: { name: "item_get", arguments: { id, includeData: true } } }));
+      ws.send(JSON.stringify({ id: 1, method: "tools/call", params: { package: "content", name: "item_get", arguments: { id, includeData: true } } }));
       assert.deepEqual((await frame).result, await socketCall(content.socketPath!, "tools/call", { name: "item_get", arguments: { id, includeData: true } }));
       const largeFrame = new Promise<any>((resolve) => ws.once("message", (raw) => resolve(JSON.parse(String(raw)))));
-      ws.send(JSON.stringify({ id: 2, method: "tools/call", params: { name: "item_get", arguments: { id: longDoc.id, includeData: true } } }));
+      ws.send(JSON.stringify({ id: 2, method: "tools/call", params: { package: "content", name: "item_get", arguments: { id: longDoc.id, includeData: true } } }));
       assert.equal((await largeFrame).result.content, escaped);
       const upload = new Promise<any>((resolve) => ws.once("message", (raw) => resolve(JSON.parse(String(raw)))));
-      ws.send(JSON.stringify({ id: 3, method: "tools/call", params: { name: "item_put", arguments: {
+      ws.send(JSON.stringify({ id: 3, method: "tools/call", params: { package: "content", name: "item_put", arguments: {
         name: "via-websocket.txt", kind: "document", mediaType: "text/plain", content: escaped,
       } } }));
       const uploaded = await upload;

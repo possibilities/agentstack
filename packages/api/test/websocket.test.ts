@@ -47,7 +47,7 @@ async function fixture() {
     events: { topics: { changed: "A change." }, scope: { description: "Bot ID", example: "bot-1", required: true, valid: (ctx, scope) => scope === ctx.allowed } },
   });
   const served = await serveWebSocket({ root, env });
-  return { root, env, socket, served, url: served.urls.demo!, async close() { await served.close(); await socket.close(); await rm(root, { recursive: true, force: true }); } };
+  return { root, env, socket, served, url: served.url, async close() { await served.close(); await socket.close(); await rm(root, { recursive: true, force: true }); } };
 }
 
 test("one WebSocket routes operations and scoped subscriptions to socket owners", async () => {
@@ -55,29 +55,29 @@ test("one WebSocket routes operations and scoped subscriptions to socket owners"
   const ws = await connect(setup.url);
   const other = await connect(setup.url);
   try {
-    assert.match(setup.url, /^ws:\/\/127\.0\.0\.1:\d+\/websocket\/demo$/);
-    ws.send(JSON.stringify({ id: 1, method: "tools/list" }));
+    assert.match(setup.url, /^ws:\/\/127\.0\.0\.1:\d+\/websocket$/);
+    ws.send(JSON.stringify({ id: 1, method: "tools/list", params: { package: "demo" } }));
     assert.deepEqual((await nextMessage(ws)).result.tools.map((tool: { name: string }) => tool.name), ["greet"]);
-    ws.send(JSON.stringify({ id: 2, method: "tools/call", params: { name: "greet", arguments: { name: "Ada" } } }));
+    ws.send(JSON.stringify({ id: 2, method: "tools/call", params: { package: "demo", name: "greet", arguments: { name: "Ada" } } }));
     assert.deepEqual(await nextMessage(ws), { id: 2, result: { greeting: "Hello Ada" } });
-    ws.send(JSON.stringify({ id: 3, method: "tools/call", params: { name: "greet", arguments: { bad: true } } }));
+    ws.send(JSON.stringify({ id: 3, method: "tools/call", params: { package: "demo", name: "greet", arguments: { bad: true } } }));
     assert.match((await nextMessage(ws)).error?.message ?? "", /name|unrecognized/i);
-    ws.send(JSON.stringify({ id: 4, method: "events/subscribe", params: { topics: ["changed"], scope: "bad" } }));
+    ws.send(JSON.stringify({ id: 4, method: "events/subscribe", params: { package: "demo", subscription: "watch", topics: ["changed"], scope: "bad" } }));
     assert.match((await nextMessage(ws)).error?.message ?? "", /invalid event scope/);
-    ws.send(JSON.stringify({ id: 5, method: "events/subscribe", params: { topics: ["changed"] } }));
+    ws.send(JSON.stringify({ id: 5, method: "events/subscribe", params: { package: "demo", subscription: "watch", topics: ["changed"] } }));
     assert.match((await nextMessage(ws)).error?.message ?? "", /needs a scope/);
-    ws.send(JSON.stringify({ id: 6, method: "events/subscribe", params: { topics: ["changed"], scope: "bot-1" } }));
-    assert.deepEqual(await nextMessage(ws), { id: 6, result: { topics: ["changed"], scope: "bot-1" } });
-    ws.send(JSON.stringify({ id: 7, method: "events/subscribe", params: { topics: ["changed"], scope: "bad" } }));
+    ws.send(JSON.stringify({ id: 6, method: "events/subscribe", params: { package: "demo", subscription: "watch", topics: ["changed"], scope: "bot-1" } }));
+    assert.deepEqual(await nextMessage(ws), { id: 6, result: { package: "demo", subscription: "watch", topics: ["changed"], scope: "bot-1" } });
+    ws.send(JSON.stringify({ id: 7, method: "events/subscribe", params: { package: "demo", subscription: "watch", topics: ["changed"], scope: "bad" } }));
     assert.match((await nextMessage(ws)).error?.message ?? "", /invalid event scope/);
     setup.socket.publish?.("changed", "bot-other");
     await assert.rejects(nextMessage(ws, 100), /no frame/);
     const notice = nextMessage(ws);
     setup.socket.publish?.("changed", "bot-1");
-    assert.deepEqual(await notice, { method: "events/changed", params: { topic: "changed" } });
+    assert.deepEqual(await notice, { method: "events/changed", params: { package: "demo", subscription: "watch", topic: "changed" } });
     const secondNotice = nextMessage(ws);
     setup.socket.publish?.("changed", "bot-1");
-    assert.deepEqual(await secondNotice, { method: "events/changed", params: { topic: "changed" } });
+    assert.deepEqual(await secondNotice, { method: "events/changed", params: { package: "demo", subscription: "watch", topic: "changed" } });
     await assert.rejects(nextMessage(other, 100), /no frame/);
   } finally {
     ws.close(); other.close(); await setup.close();
@@ -98,7 +98,7 @@ test("one package-addressed connection calls and watches multiple Package APIs i
     ],
     events: { topics: { changed: "A change." } },
   });
-  const ws = await connect(setup.served.url);
+  const ws = await connect(setup.url);
   try {
     ws.send(JSON.stringify({ id: 1, method: "tools/list", params: { package: "beta" } }));
     assert.deepEqual((await nextMessage(ws)).result.tools.map((tool: { name: string }) => tool.name), ["ping"]);
@@ -140,13 +140,18 @@ test("WebSocket restricts host, origin, paths, frames and cleans up on close", a
   const setup = await fixture();
   const ws = await connect(setup.url);
   try {
-    await assert.rejects(connect(setup.url.replace("/demo", "/absent")), /404|Unexpected server response/);
+    await assert.rejects(connect(`${setup.url}/demo`), /404|Unexpected server response/);
+    await assert.rejects(connect(`${setup.url}/absent`), /404|Unexpected server response/);
     await assert.rejects(connect(setup.url, "https://evil.example"), /403|Unexpected server response/);
     await assert.rejects(connect(setup.url, undefined, { Host: "evil.example" }), /403|Unexpected server response/);
     ws.send("not json");
     assert.match((await nextMessage(ws)).error?.message ?? "", /invalid json/);
-    ws.send(JSON.stringify({ id: 2, method: "unknown" }));
+    ws.send(JSON.stringify({ id: 2, method: "unknown", params: { package: "demo" } }));
     assert.match((await nextMessage(ws)).error?.message ?? "", /unknown method/);
+    ws.send(JSON.stringify({ id: 3, method: "tools/list" }));
+    assert.match((await nextMessage(ws)).error?.message ?? "", /package undefined is not available/);
+    ws.send(JSON.stringify({ id: 4, method: "events/subscribe", params: { package: "demo", topics: ["changed"], scope: "bot-1" } }));
+    assert.match((await nextMessage(ws)).error?.message ?? "", /invalid subscription id/);
     ws.send(Buffer.from([0, 1]));
     assert.match((await nextMessage(ws)).error?.message ?? "", /binary/);
     const closed = new Promise<void>((resolve) => ws.once("close", () => resolve()));
@@ -166,11 +171,11 @@ test("a WebSocket operation list denies direct calls as well as hiding names", a
     await writeFile(join(setup.root, "packages", "demo", "api.yaml"),
       "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n  operations: []\n");
     restricted = await connect(setup.url);
-    restricted.send(JSON.stringify({ id: 1, method: "tools/list" }));
+    restricted.send(JSON.stringify({ id: 1, method: "tools/list", params: { package: "demo" } }));
     assert.deepEqual((await nextMessage(restricted)).result.tools, []);
-    restricted.send(JSON.stringify({ id: 2, method: "tools/call", params: { name: "greet", arguments: { name: "Ada" } } }));
+    restricted.send(JSON.stringify({ id: 2, method: "tools/call", params: { package: "demo", name: "greet", arguments: { name: "Ada" } } }));
     assert.match((await nextMessage(restricted)).error?.message ?? "", /not available over websocket/);
-    ws.send(JSON.stringify({ id: 3, method: "tools/call", params: { name: "greet", arguments: { name: "Ada" } } }));
+    ws.send(JSON.stringify({ id: 3, method: "tools/call", params: { package: "demo", name: "greet", arguments: { name: "Ada" } } }));
     assert.deepEqual((await nextMessage(ws)).result, { greeting: "Hello Ada" });
   } finally { ws.close(); restricted?.close(); await setup.close(); }
 });
@@ -179,12 +184,12 @@ test("a lost socket subscription tells the WebSocket client to resnapshot after 
   const setup = await fixture();
   const ws = await connect(setup.url);
   try {
-    ws.send(JSON.stringify({ id: 1, method: "events/subscribe", params: { topics: ["changed"], scope: "bot-1" } }));
-    assert.deepEqual(await nextMessage(ws), { id: 1, result: { topics: ["changed"], scope: "bot-1" } });
+    ws.send(JSON.stringify({ id: 1, method: "events/subscribe", params: { package: "demo", subscription: "watch", topics: ["changed"], scope: "bot-1" } }));
+    assert.deepEqual(await nextMessage(ws), { id: 1, result: { package: "demo", subscription: "watch", topics: ["changed"], scope: "bot-1" } });
     const disconnected = nextMessage(ws);
     await setup.socket.close();
-    assert.deepEqual(await disconnected, { method: "events/disconnected", params: {} });
-    ws.send(JSON.stringify({ id: 2, method: "tools/list" }));
+    assert.deepEqual(await disconnected, { method: "events/disconnected", params: { package: "demo", subscription: "watch" } });
+    ws.send(JSON.stringify({ id: 2, method: "tools/list", params: { package: "demo" } }));
     assert.match((await nextMessage(ws)).error?.message ?? "", /ENOENT|connect/);
   } finally {
     ws.close();
@@ -195,20 +200,21 @@ test("a lost socket subscription tells the WebSocket client to resnapshot after 
 test("WebSocket admits current configuration while existing connections keep working", async () => {
   const setup = await fixture();
   const existing = await connect(setup.url);
-  const aggregate = await connect(setup.served.url);
   const demoConfig = "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n";
   const demoFile = join(setup.root, "packages", "demo", "api.yaml");
   let betaSocket: Awaited<ReturnType<typeof serveSocket>> | undefined;
   let beta: WebSocket | undefined;
   let restored: WebSocket | undefined;
   try {
-    existing.send(JSON.stringify({ id: 1, method: "events/subscribe", params: { topics: ["changed"], scope: "bot-1" } }));
-    assert.deepEqual(await nextMessage(existing), { id: 1, result: { topics: ["changed"], scope: "bot-1" } });
+    existing.send(JSON.stringify({ id: 1, method: "events/subscribe", params: { package: "demo", subscription: "watch", topics: ["changed"], scope: "bot-1" } }));
+    assert.deepEqual(await nextMessage(existing), { id: 1, result: { package: "demo", subscription: "watch", topics: ["changed"], scope: "bot-1" } });
     await writeFile(demoFile, "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\n");
-    await assert.rejects(connect(setup.url), /404|Unexpected server response/);
+    await assert.rejects(connect(setup.url), /503|Unexpected server response/);
     const notice = nextMessage(existing);
     setup.socket.publish?.("changed", "bot-1");
-    assert.deepEqual(await notice, { method: "events/changed", params: { topic: "changed" } });
+    assert.deepEqual(await notice, { method: "events/changed", params: { package: "demo", subscription: "watch", topic: "changed" } });
+    existing.send(JSON.stringify({ id: 2, method: "tools/list", params: { package: "demo" } }));
+    assert.deepEqual((await nextMessage(existing)).result.tools.map((tool: { name: string }) => tool.name), ["greet"]);
 
     const betaDir = join(setup.root, "packages", "beta");
     await mkdir(betaDir);
@@ -219,29 +225,22 @@ test("WebSocket admits current configuration while existing connections keep wor
       context: {},
       operations: [operation({ name: "ping", description: "Ping.", input: z.strictObject({}), output: z.object({ ok: z.boolean() }), async call() { return { ok: true }; } })],
     });
-    const betaUrl = setup.url.replace("/demo", "/beta");
-    assert.deepEqual(Object.keys(setup.served.urls), ["demo"]); // Printed URLs describe startup, not subsequent configuration.
-    aggregate.send(JSON.stringify({ id: 1, method: "tools/call", params: { package: "beta", name: "ping", arguments: {} } }));
-    assert.match((await nextMessage(aggregate)).error?.message ?? "", /not available over websocket/);
-    beta = await connect(betaUrl);
-    beta.send(JSON.stringify({ id: 2, method: "tools/call", params: { name: "ping", arguments: {} } }));
-    assert.deepEqual(await nextMessage(beta), { id: 2, result: { ok: true } });
-    const freshAggregate = await connect(setup.served.url);
-    try {
-      freshAggregate.send(JSON.stringify({ id: 3, method: "tools/call", params: { package: "beta", name: "ping", arguments: {} } }));
-      assert.deepEqual(await nextMessage(freshAggregate), { id: 3, result: { ok: true } });
-    } finally { freshAggregate.close(); }
+    existing.send(JSON.stringify({ id: 3, method: "tools/call", params: { package: "beta", name: "ping", arguments: {} } }));
+    assert.match((await nextMessage(existing)).error?.message ?? "", /not available over websocket/);
+    beta = await connect(setup.url);
+    beta.send(JSON.stringify({ id: 4, method: "tools/call", params: { package: "beta", name: "ping", arguments: {} } }));
+    assert.deepEqual(await nextMessage(beta), { id: 4, result: { ok: true } });
     await writeFile(betaFile, "name: beta\ndescription: Beta.\nsocket:\n  description: Socket.\n");
-    await assert.rejects(connect(betaUrl), /404|Unexpected server response/);
-    beta.send(JSON.stringify({ id: 3, method: "tools/call", params: { name: "ping", arguments: {} } }));
-    assert.deepEqual(await nextMessage(beta), { id: 3, result: { ok: true } });
+    await assert.rejects(connect(setup.url), /503|Unexpected server response/);
+    beta.send(JSON.stringify({ id: 5, method: "tools/call", params: { package: "beta", name: "ping", arguments: {} } }));
+    assert.deepEqual(await nextMessage(beta), { id: 5, result: { ok: true } });
 
     await writeFile(demoFile, "name: [broken");
-    await assert.rejects(connect(betaUrl), /503|Unexpected server response/);
+    await assert.rejects(connect(setup.url), /503|Unexpected server response/);
     await writeFile(demoFile, demoConfig);
     restored = await connect(setup.url);
   } finally {
-    existing.close(); aggregate.close(); beta?.close(); restored?.close();
+    existing.close(); beta?.close(); restored?.close();
     await betaSocket?.close();
     await setup.close();
   }
