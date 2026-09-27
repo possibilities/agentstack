@@ -2,7 +2,7 @@
 
 import { Activity, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BookOpenIcon, ChevronDownIcon, LayersIcon, LayoutDashboardIcon, MinusIcon, PanelRightIcon, PlusIcon, ScanIcon, SearchIcon } from "lucide-react";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -272,7 +272,6 @@ function TopBar({ space, setSpace, compact, reference, inspectorAvailable, openI
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="min-w-60">
           <DropdownMenuGroup>
-            <DropdownMenuLabel>Spaces</DropdownMenuLabel>
             {spaces.map((item) => (
               <DropdownMenuItem key={item.id} aria-current={item.id === space ? "location" : undefined} title={attention[item.id].join(" · ") || undefined}
                 render={<a href={spaceHref(item.id)} onClick={(event) => { if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); setSpace(item.id); } }} />}>
