@@ -6,6 +6,8 @@ export type OwnedChild = {
   args: string[];
   cwd?: string;
   env?: Record<string, string>;
+  /** Let a lifecycle owner drain its descendants before signalling the group. */
+  parentFirst?: boolean;
 };
 
 export type ChildStatus = {
@@ -89,14 +91,14 @@ export function startOwner(children: OwnedChild[], env: NodeJS.ProcessEnv = proc
 
   return {
     stop(names) {
-      return halt(running.filter((item) => names.includes(item.child.name)).map((item) => item.proc));
+      return halt(running.filter((item) => names.includes(item.child.name)).map((item) => ({ proc: item.proc, parentFirst: item.child.parentFirst })));
     },
     async close() {
       const staged = new Set(shutdownStages.flat());
       let failure: unknown;
       for (const stage of [...shutdownStages, running.filter((item) => !staged.has(item.child.name)).map((item) => item.child.name)]) {
         try {
-          await halt(running.filter((item) => stage.includes(item.child.name)).map((item) => item.proc));
+          await halt(running.filter((item) => stage.includes(item.child.name)).map((item) => ({ proc: item.proc, parentFirst: item.child.parentFirst })));
         } catch (error) {
           failure ??= error;
         }
@@ -109,8 +111,12 @@ export function startOwner(children: OwnedChild[], env: NodeJS.ProcessEnv = proc
   };
 }
 
-async function halt(procs: ChildProcess[]): Promise<void> {
-  for (const proc of procs) signalGroup(proc, "SIGTERM");
+async function halt(items: Array<{ proc: ChildProcess; parentFirst?: boolean }>): Promise<void> {
+  const procs = items.map((item) => item.proc);
+  for (const { proc, parentFirst } of items) {
+    if (parentFirst && proc.exitCode === null && proc.signalCode === null) proc.kill("SIGTERM");
+    else signalGroup(proc, "SIGTERM");
+  }
   const deadline = Date.now() + haltMs;
   while (Date.now() < deadline && procs.some(groupAlive)) {
     await new Promise((resolve) => setTimeout(resolve, 25));

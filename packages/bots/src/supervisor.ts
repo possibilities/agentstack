@@ -60,6 +60,8 @@ export type RunningChild = {
 export type SupervisorOptions = {
   stateDir: string;
   mcpServers?: (botId: string, endpoint: string) => Promise<Record<string, string>>;
+  browserEnv?: (botId: string, endpoint: string) => NodeJS.ProcessEnv;
+  browserReleased?: (botId: string) => Promise<void>;
   launch?: (spec: LaunchSpec) => RunningChild;
   waitReady?: (url: string, exited: Promise<number | null>, timeoutMs: number) => Promise<void>;
   endpoint?: (id: string) => Promise<string>;
@@ -265,6 +267,7 @@ export class Supervisor {
       this.records.delete(id);
       this.recoveryIssues.delete(id);
       this.notify(id);
+      await this.options.browserReleased?.(id);
       return { id };
     });
   }
@@ -279,6 +282,7 @@ export class Supervisor {
     const cwd = await existingDirectory(input.cwd);
     const codexBin = codexRuntimePath();
     const current = this.records.get(id);
+    if (!current) await this.options.browserReleased?.(id);
     const userArgs = input.args ?? current?.args ?? [];
     validateAppServerArgs(userArgs);
     const settings = input.settings === undefined
@@ -349,6 +353,8 @@ export class Supervisor {
         rolePath = await materializeRole(this.options.stateDir, id, snapshot, mcpServers, cwd);
         if (account) await writeFile(join(identity, "auth.json"), account.auth, { mode: 0o600 });
         const env = { ...process.env };
+        for (const key of Object.keys(env)) if (key.startsWith("AGENT_BROWSER_")) delete env[key];
+        Object.assign(env, this.options.browserEnv?.(id, url));
         for (const key of ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_BASE_URL", "CODEX_HOME", "AGENTUSAGE_AUTH_TOKEN", "AGENTUSAGE_ACCOUNT"]) delete env[key];
         env.TMPDIR = runtimeRoot;
         child = this.launch({

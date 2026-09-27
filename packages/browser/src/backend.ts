@@ -12,7 +12,7 @@ const MAX_SESSIONS = 16;
 const namePattern = /^ast-[a-f0-9]{28}$/;
 const targetSchema = z.strictObject({ name: z.string(), backend: z.literal("local") });
 const nativeSchema = z.strictObject({ instanceName: z.string(), instanceId: z.string(), volumeName: z.string(), volumeId: z.string(), slot: z.number().int().nonnegative().max(999), ip: z.string() });
-const recordSchema = z.strictObject({ version: z.literal(1), session: z.string(), profile: z.string(), persistent: z.literal(false),
+const recordSchema = z.strictObject({ version: z.literal(1), session: z.string(), profile: z.string(), persistent: z.boolean(),
   lease: z.string(), createdAt: z.string(), target: targetSchema.nullable(), native: nativeSchema.nullable(),
 });
 type NativeRecord = z.infer<typeof recordSchema>;
@@ -46,11 +46,15 @@ const tags = (session: string, lease: string, role: string) => ({
 
 export class Backend {
   private queue = Promise.resolve();
+  private draining = false;
   private readonly path: string;
   private readonly relays = new Map<string, { server: Server; port: number; sockets: Set<Duplex> }>();
   onChange?: () => void;
+  onRecover?: (session: string) => Promise<void>;
 
   constructor(private readonly system: BrowserSystem, private readonly testReady?: (port: number) => Promise<void>) { this.path = join(system.root, "sessions.json"); }
+
+  beginShutdown(): void { this.draining = true; }
 
   private serial<T>(fn: () => Promise<T>): Promise<T> {
     const task = this.queue.then(fn, fn);
@@ -154,6 +158,7 @@ export class Backend {
   private async ready(port: number): Promise<void> {
     const deadline = Date.now() + 35_000;
     while (Date.now() < deadline) {
+      if (this.draining) throw new Error("browser is shutting down");
       try {
         const response = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1500) });
         if (response.ok && typeof row(await response.json()).webSocketDebuggerUrl === "string") return;
@@ -174,12 +179,13 @@ export class Backend {
     if (existing && !owned(existing, session, lease, "browser")) throw new Error("browser instance name is occupied by a foreign target");
     const volumes = records(await this.request("GET", "/volumes"));
     let volume = volumes.find((item) => item.name === volumeName);
-    if (volume && !owned(volume, session, lease, "disposable-profile")) throw new Error("browser profile name is occupied by a foreign volume");
+    const profileRole = receipt.persistent ? "durable-profile" : "disposable-profile";
+    if (volume && !owned(volume, session, lease, profileRole)) throw new Error("browser profile name is occupied by a foreign volume");
     if (!volume) {
       const resources = row(await this.request("GET", "/resources"));
       const available = row(resources.disk).available;
       if (typeof available !== "number" || available < 12 * 1024 ** 3) throw new Error("local Hypeman has insufficient disk capacity for a browser target");
-      await this.request("POST", "/volumes", { name: volumeName, size_gb: 2, tags: tags(session, lease, "disposable-profile") });
+      await this.request("POST", "/volumes", { name: volumeName, size_gb: 2, tags: tags(session, lease, profileRole) });
       volume = records(await this.request("GET", "/volumes")).find((item) => item.name === volumeName);
     }
     if (!volume || typeof volume.id !== "string") throw new Error("Hypeman did not retain the new profile volume");
@@ -193,10 +199,10 @@ export class Backend {
         name: instanceName, image: IMAGE, platform: "linux/amd64", size: "3G", vcpus: 2,
         tags: { ...tags(session, lease, "browser"), "dev.agentstack.slot": String(slot) },
         env: { DISPLAY_NUM: "1", HEIGHT: "1080", WIDTH: "1920", RUN_AS_ROOT: "false", CHROMIUM_FLAGS: "--start-fullscreen --disable-infobars",
-          ENABLE_WEBRTC: "true", NEKO_WEBRTC_UDPMUX: String(56000 + slot), NEKO_WEBRTC_NAT1TO1: "127.0.0.1" },
+          ENABLE_WEBRTC: "true", NEKO_WEBRTC_UDPMUX: String(56000 + slot) },
         volumes: [{ volume_id: volume.id, mount_path: "/home/kernel", readonly: false }],
         entrypoint: ["/bin/sh", "-c"],
-        cmd: ["set -e; mkdir -p /home/kernel/user-data; chown kernel:kernel /home/kernel/user-data; rm -f /var/run/supervisor.sock /var/run/supervisord.pid /run/dbus/system_bus_socket /tmp/pulse/native; chown 0:0 /usr/bin/mount /opt/chrome-for-testing/chrome_sandbox; chmod 4755 /opt/chrome-for-testing/chrome_sandbox; ln -sfn chrome_sandbox /opt/chrome-for-testing/chrome-sandbox; export CHROME_DEVEL_SANDBOX=/opt/chrome-for-testing/chrome_sandbox; mountpoint -q /dev/shm || mount -t tmpfs -o mode=1777 tmpfs /dev/shm; exec /wrapper"],
+        cmd: ["set -e; mkdir -p /home/kernel/user-data; chown kernel:kernel /home/kernel/user-data; rm -f /var/run/supervisor.sock /var/run/supervisord.pid /run/dbus/system_bus_socket /tmp/pulse/native; chown 0:0 /usr/bin/mount /opt/chrome-for-testing/chrome_sandbox; chmod 4755 /opt/chrome-for-testing/chrome_sandbox; ln -sfn chrome_sandbox /opt/chrome-for-testing/chrome-sandbox; export CHROME_DEVEL_SANDBOX=/opt/chrome-for-testing/chrome_sandbox; export NEKO_WEBRTC_NAT1TO1=$(hostname -I | awk '{print $1}'); mountpoint -q /dev/shm || mount -t tmpfs -o mode=1777 tmpfs /dev/shm; exec /wrapper"],
         skip_kernel_headers: true,
       });
       instance = row(await this.request("GET", `/instances/${encodeURIComponent(instanceName)}`));
@@ -220,14 +226,15 @@ export class Backend {
     throw new Error("local Hypeman has no free browser slots");
   }
 
-  async launch(session: string): Promise<{ cdpUrl: string; cleanup: Cleanup }> {
+  async launch(session: string, persistent = false): Promise<{ cdpUrl: string; cleanup: Cleanup }> {
     return this.serial(async () => {
+      if (this.draining) throw new Error("browser is shutting down");
       const name = backendSession(session);
       const all = await this.read();
       let current = all.find((item) => item.session === name);
       if (!current) {
         if (all.length >= MAX_SESSIONS) throw new Error("all disposable browser session slots are occupied");
-        current = { version: 1, session: name, profile: name, persistent: false, lease: randomBytes(16).toString("hex"),
+        current = { version: 1, session: name, profile: name, persistent, lease: randomBytes(16).toString("hex"),
           createdAt: new Date().toISOString(), target: null, native: null };
         all.push(current);
         await this.save(all);
@@ -239,9 +246,32 @@ export class Backend {
       }
       const native = current.native;
       if (!native) throw new Error("browser target was not provisioned");
-      const instance = row(await this.request("GET", `/instances/${encodeURIComponent(native.instanceName)}`));
+      let instance = row(await this.request("GET", `/instances/${encodeURIComponent(native.instanceName)}`));
       if (instance.id !== native.instanceId || !owned(instance, name, current.lease, "browser")) throw new Error("browser target changed; refusing to attach to another incarnation");
-      const port = await this.relay(name, native.ip);
+      const volume = records(await this.request("GET", "/volumes")).find((item) => item.id === native.volumeId);
+      if (!volume || volume.name !== native.volumeName || !owned(volume, name, current.lease, current.persistent ? "durable-profile" : "disposable-profile")) throw new Error("browser profile changed; refusing to attach to another volume");
+      if (persistent && instance.state === "Stopped") {
+        await this.onRecover?.(name);
+        await this.request("POST", `/instances/${encodeURIComponent(native.instanceId)}/start`, {});
+        instance = row(await this.request("GET", `/instances/${encodeURIComponent(native.instanceName)}`));
+      }
+      const deadline = Date.now() + 30_000;
+      while (["Initializing", "Starting"].includes(String(instance.state)) && Date.now() < deadline) {
+        await this.onRecover?.(name);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        instance = row(await this.request("GET", `/instances/${encodeURIComponent(native.instanceName)}`));
+      }
+      if (instance.id !== native.instanceId || !owned(instance, name, current.lease, "browser")) throw new Error("browser target changed during restart");
+      if (instance.state !== "Running") throw new Error("browser instance is not running");
+      if (!Array.isArray(instance.volumes) || !instance.volumes.some((mount: unknown) => row(mount).volume_id === native.volumeId && row(mount).mount_path === "/home/kernel" && row(mount).readonly === false)) throw new Error("browser profile mount changed");
+      const ip = row(instance.network).ip;
+      if (typeof ip !== "string") throw new Error("browser instance has no guest address");
+      if (ip !== native.ip) {
+        await this.stopRelay(name);
+        native.ip = ip;
+        await this.save(all);
+      }
+      const port = await this.relay(name, ip);
       await (this.testReady ?? ((value) => this.ready(value)))(port);
       return { cdpUrl: `http://127.0.0.1:${port}`, cleanup: { session: name, lease: current.lease, backend: "local",
         browserTarget: native.instanceName, browserProfile: current.profile } };
@@ -265,7 +295,7 @@ export class Backend {
       }
       const volume = records(await this.request("GET", "/volumes")).find((item) => item.id === current.native!.volumeId);
       if (volume) {
-        if (!owned(volume, current.session, current.lease, "disposable-profile")) throw new Error("refusing to delete a changed or foreign browser profile");
+        if (!owned(volume, current.session, current.lease, current.persistent ? "durable-profile" : "disposable-profile")) throw new Error("refusing to delete a changed or foreign browser profile");
         await this.request("DELETE", `/volumes/${encodeURIComponent(current.native.volumeId)}`);
       }
       await this.stopRelay(current.session);
@@ -293,7 +323,7 @@ export class Backend {
       }
       const volume = records(await this.request("GET", "/volumes")).find((item) => item.name === volumeName);
       if (volume) {
-        if (!owned(volume, session, lease, "disposable-profile") || typeof volume.id !== "string") throw new Error("refusing to reconcile a foreign profile volume");
+        if (!owned(volume, session, lease, current.persistent ? "durable-profile" : "disposable-profile") || typeof volume.id !== "string") throw new Error("refusing to reconcile a foreign profile volume");
         await this.request("DELETE", `/volumes/${encodeURIComponent(volume.id)}`);
       }
       all.splice(index, 1);
@@ -304,6 +334,48 @@ export class Backend {
 
   async status(): Promise<{ provider: "hypeman"; mode: "disposable"; sessions: number }> {
     return { provider: "hypeman", mode: "disposable", sessions: (await this.read()).length };
+  }
+
+  async observation(session: string): Promise<{ url: string; udpPort: number } | null> {
+    const current = (await this.read()).find((item) => item.session === backendSession(session));
+    if (!current?.native) return null;
+    return { url: `http://${current.native.ip}:8080/?readOnly=1`, udpPort: 56000 + current.native.slot };
+  }
+
+  /** Planned shutdown preserves volumes and stops only exact, owned instances. */
+  async suspend(session: string): Promise<void> {
+    await this.queue;
+      const current = (await this.read()).find((item) => item.session === backendSession(session));
+      if (!current?.native || !current.persistent) return;
+      const native = current.native;
+      const instance = row(await this.request("GET", `/instances/${encodeURIComponent(native.instanceName)}`));
+      if (instance.id !== native.instanceId || !owned(instance, current.session, current.lease, "browser")) throw new Error("refusing to stop a changed browser incarnation");
+      const volume = records(await this.request("GET", "/volumes")).find((item) => item.id === native.volumeId);
+      if (!volume || !owned(volume, current.session, current.lease, "durable-profile") || !Array.isArray(instance.volumes) || !instance.volumes.some((mount: unknown) => row(mount).volume_id === native.volumeId && row(mount).mount_path === "/home/kernel" && row(mount).readonly === false)) throw new Error("refusing to stop a browser with a changed profile volume");
+      if (instance.state === "Stopped") return;
+      if (instance.state !== "Running") throw new Error("browser cannot be cleanly stopped in its current state");
+      const ip = row(instance.network).ip;
+      if (typeof ip !== "string" || !(await this.system.guestSubnet())(ip)) throw new Error("invalid guest address at shutdown");
+      await this.stopRelay(current.session);
+      const port = await this.relay(current.session, ip);
+      const response = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(3000) });
+      const url = row(await response.json()).webSocketDebuggerUrl;
+      if (!response.ok || typeof url !== "string") throw new Error("cannot cleanly close Chrome; VM left running");
+      await new Promise<void>((resolve, reject) => {
+        const socket = new WebSocket(url);
+        let sent = false;
+        const timer = setTimeout(() => { socket.close(); reject(new Error("Chrome close timed out; VM left running")); }, 10_000);
+        const done = (error?: Error) => { clearTimeout(timer); socket.close(); error ? reject(error) : resolve(); };
+        socket.onopen = () => { sent = true; socket.send(JSON.stringify({ id: 1, method: "Browser.close" })); };
+        socket.onmessage = (event) => { const message = JSON.parse(String(event.data)); if (message.id === 1) done(message.error ? new Error("Chrome refused clean close") : undefined); };
+        socket.onclose = () => done(sent ? undefined : new Error("Chrome disconnected before close"));
+        socket.onerror = () => done(new Error("Chrome close connection failed"));
+      });
+      // Chrome flushes profile databases during orderly exit. Give its child
+      // processes time to drain before asking Hypeman to stop the guest.
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await this.request("POST", `/instances/${encodeURIComponent(native.instanceId)}/stop`, {});
+      await this.stopRelay(current.session);
   }
 
   async closeContext(): Promise<void> {

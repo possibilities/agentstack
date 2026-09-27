@@ -10,9 +10,13 @@ Typed operations a workspace package exports so agentstack can serve them. Descr
 
 _Avoid_: MCP server, endpoint, route
 
-## Browser task
+## Browser profile
 
-An explicitly named agent-browser session routed through the internal `browser` Package API to a disposable Hypeman profile and Kernel target. The provider's durable receipt fences close to the exact target and lease; the session name does not prove Bot or Worker ownership. Page operations belong to agent-browser, not the Package API. No saved profile or human handoff is implied.
+A durable, empty-at-creation Chrome user-data volume with one owner-supervised Kernel/Hypeman browser while AgentStack runs. Each Bot has an exclusive default; additional profiles may belong exclusively to that Bot or remain unassigned. Deleting a Bot retains its profiles unassigned. Only explicit profile deletion discards their data. Planned owner shutdown closes Chrome before stopping the exact VM; restart retains the volume and refreshes its guest address and CDP relay. _Avoid_: disposable task, shared account profile, sleeping browser
+
+## Browser controller
+
+An agent-browser session in a private Bot-launch namespace, bound to one Browser profile at a time. The private signed launch configuration establishes Bot identity; an arbitrary session name does not. Management selects the profile and queues native reconnect with that controller's commands, invalidating prior refs. Page and tab operations remain in agent-browser. Closing a controller disconnects it without deleting or stopping its profile. Other Bot and controller sessions remain independent. _Avoid_: browser ownership by session name, human handoff, global interaction lock
 
 ## Transport
 

@@ -61,11 +61,14 @@ test("start is idempotent and stop is idempotent", async () => {
   let pids = 20;
   const launched: LaunchSpec[] = [];
   const killed: string[] = [];
+  const browserReleases: string[] = [];
   const children = new Map<number, { resolve: (code: number | null) => void }>();
   try {
     const supervisor = new Supervisor({
       stateDir,
       graceMs: 20,
+      browserReleased: async (id) => { browserReleases.push(id); },
+      browserEnv: (id, endpoint) => ({ AGENT_BROWSER_CONFIG: `${id}:${endpoint}`, AGENT_BROWSER_IDLE_TIMEOUT_MS: "0" }),
       async endpoint() {
         return "ws://127.0.0.1:" + (41000 + launched.length);
       },
@@ -98,6 +101,8 @@ test("start is idempotent and stop is idempotent", async () => {
     assert.equal(first.pid, second.pid);
     assert.equal(first.url, "ws://127.0.0.1:41000");
     assert.equal(launched.length, 1);
+    assert.deepEqual(browserReleases, ["alpha"]);
+    assert.equal(launched[0]?.env.AGENT_BROWSER_CONFIG, "alpha:ws://127.0.0.1:41000");
     assert.equal(launched[0]?.bin, codexRuntimePath());
     assert.deepEqual(launched[0]?.args.slice(0, 3), ["app-server", "--listen", "ws://127.0.0.1:41000"]);
     assert.deepEqual(launched[0]?.args.filter((arg) => arg.startsWith("--") && arg !== "--listen"), ["--enable", "--identity", "--capabilities", "--history-dir"]);
@@ -114,6 +119,12 @@ test("start is idempotent and stop is idempotent", async () => {
     assert.equal(stoppedAgain.mainThreadId, first.mainThreadId);
     assert.deepEqual(killed, ["SIGTERM"]);
     assert.equal(supervisor.list().length, 1);
+    assert.deepEqual(browserReleases, ["alpha"], "stopping retains profile assignment");
+    await supervisor.remove("alpha");
+    assert.deepEqual(browserReleases, ["alpha", "alpha"], "deletion releases profiles immediately");
+    await supervisor.start({ cwd, id: "alpha", account });
+    assert.deepEqual(browserReleases, ["alpha", "alpha", "alpha"], "ID reuse fences old assignment even after an interrupted delete");
+    await supervisor.stop("alpha");
   } finally {
     await rm(stateDir, { recursive: true, force: true });
     await rm(cwd, { recursive: true, force: true });

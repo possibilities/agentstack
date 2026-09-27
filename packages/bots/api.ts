@@ -3,7 +3,8 @@ import { chmod, lstat, mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod";
 import { chatMessagePage, messageCursor } from "./src/chat-messages.js";
-import { operation, workspaceRoot, type PackageApi } from "@agentstack/api";
+import { operation, workspaceRoot, botInstance, socketCall, socketPath, type PackageApi } from "@agentstack/api";
+import { prepareBotBrowserConfig, browserNamespace } from "@agentstack/browser";
 import { BotLedger } from "./src/ledger.js";
 import { ownerMcpUrls } from "./src/owner-mcp.js";
 import { stateDir } from "./src/paths.js";
@@ -535,7 +536,12 @@ export const api: PackageApi<BotsContext, BotsTopic> = {
     const store = new StateStore(dir);
     const root = resolve(join(dir, "bots"));
     const ledger = new BotLedger(root);
-    const supervisor = new Supervisor({ stateDir: dir, store, mcpServers: ownerMcpPort === undefined ? undefined : (id, endpoint) => ownerMcpUrls(workspaceRoot(import.meta.dirname), Number(ownerMcpPort), id, endpoint, env) });
+    const supervisor = new Supervisor({ stateDir: dir, store,
+      browserEnv: (id, endpoint) => ({ AGENTSTACK_STATE_DIR: dir, AGENT_BROWSER_CONFIG: prepareBotBrowserConfig(env, id, endpoint), AGENT_BROWSER_NAMESPACE: browserNamespace(env, id, botInstance(endpoint)), AGENT_BROWSER_IDLE_TIMEOUT_MS: "0" }),
+      browserReleased: ownerMcpPort === undefined ? undefined : async (botId) => {
+        await socketCall(socketPath("browser", env), "tools/call", { name: "browser_bot_release", arguments: { botId } }, { timeoutMs: 65_000 });
+      },
+      mcpServers: ownerMcpPort === undefined ? undefined : (id, endpoint) => ownerMcpUrls(workspaceRoot(import.meta.dirname), Number(ownerMcpPort), id, endpoint, env) });
     await supervisor.load();
     await supervisor.reap();
     await supervisor.resumeAll();

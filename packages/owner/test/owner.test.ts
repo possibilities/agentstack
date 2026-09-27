@@ -40,6 +40,19 @@ test("the owner signals descendants in its process group", { skip: process.platf
   }
 });
 
+test("browser lifecycle parent drains before its Hypeman-like descendant is signalled", { skip: process.platform === "win32" }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentstack-browser-drain-"));
+  const ready = join(dir, "ready"), drained = join(dir, "drained"), stopped = join(dir, "stopped");
+  const helper = `const fs=require("node:fs"); process.on("SIGTERM",()=>{fs.writeFileSync(${JSON.stringify(stopped)},fs.existsSync(${JSON.stringify(drained)})?"after":"before");process.exit(0)});fs.writeFileSync(${JSON.stringify(ready)},"ready");setInterval(()=>{},1000);`;
+  const parent = `const child=require("node:child_process").spawn(process.execPath,["-e",${JSON.stringify(helper)}],{stdio:"ignore"});process.on("SIGTERM",()=>{setTimeout(()=>{require("node:fs").writeFileSync(${JSON.stringify(drained)},"flushed");child.kill("SIGTERM");child.once("exit",()=>process.exit(0));},100)});setInterval(()=>{},1000);`;
+  const owner = startOwner([{ name: "browser", command: process.execPath, args: ["-e", parent], parentFirst: true }]);
+  try {
+    await waitFor(() => existsSync(ready), 5_000); await owner.close();
+    assert.equal(await readFile(stopped, "utf8"), "after");
+    assert.equal(browserChild().parentFirst, true);
+  } finally { await owner.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test("the UI guardian closes its listener when the owner disappears", { skip: process.platform === "win32" }, async () => {
   const dir = await mkdtemp(join(tmpdir(), "agentstack-uix-guardian-"));
   const ready = join(dir, "ready.json");

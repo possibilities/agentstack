@@ -8,6 +8,8 @@ import { BrowserSystem } from "../src/system.js";
 import { Backend, backendSession } from "../src/backend.js";
 import { handleProvider } from "../src/provider.js";
 import { prepareBrowserConfig } from "../src/config.js";
+import { Profiles } from "../src/profiles.js";
+import { botMcpUrl } from "@agentstack/api";
 
 type Item = Record<string, unknown>;
 async function fixture(options: { failInstanceCreate?: boolean } = {}) {
@@ -32,10 +34,14 @@ async function fixture(options: { failInstanceCreate?: boolean } = {}) {
       else if (req.method === "GET" && path === "/resources") output = { disk: { available: 100 * 1024 ** 3 } };
       else if (req.method === "GET" && path.startsWith("/images/")) output = { status: "ready" };
       else if (req.method === "POST" && path === "/volumes") {
-        volumes.push({ id: "volume-1", ...value }); output = volumes.at(-1);
+        volumes.push({ id: `volume-${volumes.length + 1}`, ...value }); output = volumes.at(-1);
       } else if (req.method === "POST" && path === "/instances") {
         if (options.failInstanceCreate) { res.writeHead(503).end(); return; }
-        instances.push({ id: "instance-1", ...value, state: "Running", network: { ip: "192.168.64.2" } }); output = instances.at(-1);
+        instances.push({ id: `instance-${instances.length + 1}`, ...value, state: "Running", network: { ip: "192.168.64.2" } }); output = instances.at(-1);
+      } else if (req.method === "POST" && path.endsWith("/start")) {
+        assert.equal(body, "{}");
+        const item = instances.find((item) => path === `/instances/${String(item.id)}/start`)!;
+        item.state = "Running"; item.network = { ip: "192.168.64.3" }; output = item;
       } else if (req.method === "GET" && path.startsWith("/instances/")) output = instances.find((item) => item.name === decodeURIComponent(path.slice(11)));
       else if (req.method === "DELETE" && path.startsWith("/instances/")) { instances = instances.filter((item) => item.id !== decodeURIComponent(path.slice(11))); output = {}; }
       else if (req.method === "DELETE" && path.startsWith("/volumes/")) { volumes = volumes.filter((item) => item.id !== decodeURIComponent(path.slice(9))); output = {}; }
@@ -52,6 +58,7 @@ async function fixture(options: { failInstanceCreate?: boolean } = {}) {
   const system = new BrowserSystem(env);
   await system.start();
   return { dir, root, env, system, counts: () => ({ instances: instances.length, volumes: volumes.length }),
+    instances: () => instances, volumes: () => volumes,
     async close() { await system.close(); await new Promise<void>((resolve) => server.close(() => resolve())); await rm(dir, { recursive: true, force: true }); } };
 }
 
@@ -71,6 +78,52 @@ test("local Hypeman detection, selection and durable update policy are read inde
   } finally { await s.close(); }
 });
 
+test("durable restart refreshes the relay and fences both native instance and profile volume", async () => {
+  const s = await fixture(); const backend = new Backend(s.system, async () => undefined);
+  try {
+    await s.system.setHypemanLocation(s.root); await s.system.enableHypeman(s.root);
+    const a = await backend.launch("durable", true);
+    s.instances()[0]!.state = "Stopped";
+    const b = await backend.launch("durable", true);
+    assert.notEqual(b.cdpUrl, a.cdpUrl);
+    assert.deepEqual(b.cleanup, a.cleanup);
+    assert.equal((await backend.observation("durable"))?.url, "http://192.168.64.3:8080/?readOnly=1");
+    s.instances()[0]!.id = "foreign";
+    await assert.rejects(backend.launch("durable", true), /another incarnation/);
+    await assert.rejects(backend.close(a.cleanup), /foreign browser target/);
+    s.instances()[0]!.id = "instance-1";
+    s.volumes()[0]!.id = "foreign";
+    await assert.rejects(backend.launch("durable", true), /another volume/);
+    s.volumes()[0]!.id = "volume-1";
+    await backend.close(a.cleanup);
+  } finally { await backend.closeContext(); await s.close(); }
+});
+
+test("Bot defaults are exclusive, proof-fenced, retained on deletion, and not deleted by controller close", async () => {
+  const s = await fixture(); const backend = new Backend(s.system, async () => undefined);
+  let bots = [{ id: "bot-a", url: "unix:///private/test-a", state: "running", recoveryIssue: null }];
+  const profiles = new Profiles(backend, s.system, s.env, async () => bots);
+  try {
+    await s.system.setHypemanLocation(s.root); await s.system.enableHypeman(s.root); await profiles.start(false);
+    await profiles.tick();
+    const a = profiles.list()[0]!;
+    assert.equal(a.botId, "bot-a"); assert.equal(a.default, true); assert.equal(a.state, "ready");
+    await profiles.tick(); assert.equal(profiles.list().length, 1);
+    const identity = botMcpUrl("http://127.0.0.1/browser", "bot-a", bots[0]!.url, s.env);
+    const launch = await profiles.launch(identity, "arbitrary-name");
+    await profiles.disconnected(launch.cleanup.controller, launch.cleanup.revision);
+    assert.deepEqual(s.counts(), { instances: 1, volumes: 1 });
+    await assert.rejects(profiles.remove(a.id), /default profile/);
+    await assert.rejects(profiles.launch(botMcpUrl("http://127.0.0.1/browser", "bot-a", "unix:///stale", s.env), "bot-a"), /verified live Bot/);
+    bots = [];
+    await profiles.releaseBot("bot-a");
+    await profiles.tick();
+    assert.equal(profiles.list()[0]!.botId, null); assert.equal(profiles.list()[0]!.default, false);
+    assert.equal(profiles.list()[0]!.state, "ready"); assert.deepEqual(s.counts(), { instances: 1, volumes: 1 });
+    await profiles.remove(a.id); assert.deepEqual(s.counts(), { instances: 0, volumes: 0 });
+  } finally { await profiles.close(); await backend.closeContext(); await s.close(); }
+});
+
 test("an incomplete launch retains its lease and can be reconciled without a provider receipt", async () => {
   const s = await fixture({ failInstanceCreate: true });
   const backend = new Backend(s.system, async () => undefined);
@@ -87,6 +140,27 @@ test("an incomplete launch retains its lease and can be reconciled without a pro
     assert.deepEqual(s.counts(), { instances: 0, volumes: 0 });
     assert.deepEqual(await backend.list(), []);
   } finally { await backend.closeContext(); await s.close(); }
+});
+
+test("failed controller selection reports unknown and fences uncertain profile deletion", async () => {
+  const s = await fixture(); const backend = new Backend(s.system, async () => undefined);
+  const bot = { id: "bot-a", url: "unix:///test-bot", state: "running", recoveryIssue: null };
+  const profiles = new Profiles(backend, s.system, s.env, async () => [bot]);
+  try {
+    await s.system.setHypemanLocation(s.root); await s.system.enableHypeman(s.root); await profiles.start(false); await profiles.tick();
+    const extra = await profiles.create(bot.id, "extra"); await profiles.ensure(extra.id);
+    const binding = await profiles.select(bot.id, "default", extra.id);
+    assert.equal(binding.state, "unknown"); assert.equal(binding.actualProfileId, null); assert.equal(binding.targetId, null);
+    assert.match(binding.error!, /not installed/);
+    await assert.rejects(profiles.remove(extra.id), /uncertain binding/);
+    const identity = botMcpUrl("http://127.0.0.1/browser", bot.id, bot.url, s.env);
+    const receipt = (await profiles.launch(identity, "default")).cleanup;
+    await profiles.disconnected(receipt.controller, receipt.revision - 1);
+    assert.equal(profiles.bindings()[0]!.state, "unknown", "a stale close cannot clear the new selection");
+    await profiles.disconnected(receipt.controller, receipt.revision);
+    await profiles.releaseBot(bot.id);
+    for (const profile of profiles.list()) await profiles.remove(profile.id);
+  } finally { await profiles.close(); await backend.closeContext(); await s.close(); }
 });
 
 test("disposable launch and exact close use only the selected local Hypeman API", async () => {
@@ -117,18 +191,21 @@ test("provider protocol forwards only the exact browser lifecycle calls", async 
     const call = (async (_path: string, _method: string, input: { name: string; arguments: Record<string, unknown> }) => {
       calls.push(input.name);
       if (input.name === "browser_status") return { provider: "hypeman", mode: "disposable", sessions: 0 };
-      if (input.name === "browser_session_launch") return { cdpUrl: "http://127.0.0.1:9999", cleanup: { session: backendSession("task"), lease: "a".repeat(32), backend: "local", browserTarget: "target", browserProfile: "profile" } };
+      if (input.name === "browser_controller_launch") return { cdpUrl: "http://127.0.0.1:9999", cleanup: { controller: "controller", revision: 0 } };
       return { closed: true };
     }) as typeof import("@agentstack/api").socketCall;
     const protocol = "agent-browser.plugin.v1";
     const manifest = await handleProvider(JSON.stringify({ protocol, type: "plugin.manifest", capability: "plugin.manifest", request: {} }), s.env, call);
     assert.deepEqual((manifest.manifest as { capabilities: string[] }).capabilities, ["browser.provider"]);
-    const opened = await handleProvider(JSON.stringify({ protocol, type: "browser.launch", capability: "browser.provider", request: { session: "task" } }), s.env, call);
+    const opened = await handleProvider(JSON.stringify({ protocol, type: "browser.launch", capability: "browser.provider", request: { session: "task" } }), s.env, call, "private-launch-proof");
     assert.equal(opened.success, true);
     const cleanup = (opened.browser as { cleanup: unknown }).cleanup;
     const closed = await handleProvider(JSON.stringify({ protocol, type: "browser.close", capability: "browser.provider", request: cleanup }), s.env, call);
     assert.equal(closed.success, true);
-    assert.deepEqual(calls, ["browser_status", "browser_session_launch", "browser_status", "browser_session_close"]);
+    assert.deepEqual(calls, ["browser_status", "browser_controller_launch", "browser_controller_close"]);
+    assert.equal((await handleProvider(JSON.stringify({ protocol, type: "browser.close", capability: "browser.provider", request: cleanup }), s.env,
+      (async () => { throw new Error("owner socket closed"); }) as typeof import("@agentstack/api").socketCall)).success, true);
+    assert.equal((await handleProvider(JSON.stringify({ protocol, type: "browser.launch", capability: "browser.provider", request: { session: "bot-1" } }), s.env, call)).success, false);
     const refused = await handleProvider(JSON.stringify({ protocol, type: "browser.launch", capability: "browser.provider", request: { session: "task" } }), s.env,
       (async () => ({ provider: "agentbrowse" })) as typeof import("@agentstack/api").socketCall);
     assert.equal(refused.success, false);

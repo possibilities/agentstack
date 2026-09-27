@@ -237,6 +237,9 @@ importers:
       '@agentstack/auth':
         specifier: workspace:*
         version: link:../auth
+      '@agentstack/browser':
+        specifier: workspace:*
+        version: link:../browser
       '@agentstack/roles':
         specifier: workspace:*
         version: link:../roles
