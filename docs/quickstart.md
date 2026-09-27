@@ -1,6 +1,6 @@
 # Quickstart
 
-AgentStack runs local Codex Bots and account-bound ACP Workers under one process owner. It requires Node 24 or newer, pnpm 12.5.1, and the sibling `~/code/codexnk` workshop checkout for setup. Setup installs the pinned GitHub release through that workshop's verified installer; no `codex` command on PATH is required.
+AgentStack runs local Codex Bots and account-bound ACP Workers under one process owner. It requires Node 24 or newer, pnpm 12.5.1, and the `~/workshops/codexnk` Workshop checkout for setup. Setup installs the pinned GitHub release through that Workshop's verified installer; no `codex` command on PATH is required.
 
 From the repository root:
 

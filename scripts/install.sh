@@ -2,9 +2,9 @@
 set -euo pipefail
 
 repo_root=$(cd -P -- "$(dirname -- "$0")/.." && pwd)
-code_root="${AGENTSTACK_CODE_ROOT:-$HOME/code}"
+workshops_root="${AGENTSTACK_WORKSHOPS_ROOT:-$HOME/workshops}"
 bin_dir="${AGENTSTACK_INSTALL_BIN_DIR:-$HOME/.local/bin}"
-runtime_installer="$code_root/codexnk/scripts/install.sh"
+runtime_installer="$workshops_root/codexnk/scripts/install.sh"
 # Exact reviewed runtime dependency; keep AgentStart's shared consumer pin aligned.
 release_tag=codexnk-v0.1.4
 integration_sha=f2905ff011ff8fda607e91dfdd8f13b6083b1642
@@ -21,7 +21,7 @@ case "$mode" in
 esac
 [ "$(id -u)" -ne 0 ] || { printf 'Run as the target user, not root.\n' >&2; exit 1; }
 [ -x "$runtime_installer" ] || {
-    printf 'Required codexnk installer is missing: %s. Check out codexnk beside AgentStack.\n' "$runtime_installer" >&2
+    printf 'Required codexnk installer is missing: %s. Check out codexnk under the Workshops root.\n' "$runtime_installer" >&2
     exit 1
 }
 target="$bin_dir/agentstack"

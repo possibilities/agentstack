@@ -11,9 +11,9 @@ const installer = join(root, "scripts/install.sh");
 
 async function fixture(run) {
   const home = await mkdtemp(join(tmpdir(), "agentstack-install-"));
-  const code = join(home, "code");
+  const workshops = join(home, "workshops");
   const bin = join(home, "tools");
-  const owner = join(code, "codexnk/scripts/install.sh");
+  const owner = join(workshops, "codexnk/scripts/install.sh");
   await mkdir(dirname(owner), { recursive: true });
   await mkdir(bin);
   await writeFile(owner, `#!/bin/bash
@@ -28,7 +28,7 @@ printf '#!/bin/sh\\nexit 0\\n' > "$runtime"
 chmod +x "$runtime"
 `, { mode: 0o755 });
   await writeFile(join(bin, "pnpm"), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$HOME/build-calls"\n', { mode: 0o755 });
-  const env = { ...process.env, HOME: home, PATH: `${bin}:/usr/bin:/bin`, AGENTSTACK_CODE_ROOT: code, AGENTSTACK_INSTALL_BIN_DIR: join(home, ".local/bin") };
+  const env = { ...process.env, HOME: home, PATH: `${bin}:/usr/bin:/bin`, AGENTSTACK_WORKSHOPS_ROOT: workshops, AGENTSTACK_INSTALL_BIN_DIR: join(home, ".local/bin") };
   delete env.CODEXNK_INSTALL_ROOT;
   const invoke = (mode = "--install", extra = {}) => spawnSync("/bin/bash", [installer, mode], { env: { ...env, ...extra }, encoding: "utf8" });
   try { await run({ home, owner, invoke }); }
@@ -46,7 +46,12 @@ test("setup provisions the exact release before building and is repeatable", () 
 
 test("plan is read-only and missing runtime owner fails clearly", () => fixture(async ({ owner, invoke }) => {
   await rm(owner);
-  assert.equal(invoke("--check").status, 0);
+  const plan = invoke("--check");
+  assert.equal(plan.status, 0);
+  assert.match(plan.stdout, /workshops\/codexnk\/scripts\/install\.sh/);
+  const defaultPlan = invoke("--check", { AGENTSTACK_WORKSHOPS_ROOT: "" });
+  assert.equal(defaultPlan.status, 0);
+  assert.match(defaultPlan.stdout, /workshops\/codexnk\/scripts\/install\.sh/);
   const result = invoke();
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Required codexnk installer is missing/);
