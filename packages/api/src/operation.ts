@@ -44,6 +44,14 @@ export type PackageEvents<Ctx, Topic extends string = string> = {
 export type PackageApi<Ctx, Topic extends string = string> = {
   operations: readonly AnyOperation<Ctx>[];
   events?: PackageEvents<Ctx, Topic>;
+  /** Non-control HTTP origins owned by this package context. Routes are an
+   * explicit positive selection; declaring HTTP never exports operations from
+   * the local socket/MCP/WebSocket control surface. */
+  http?: readonly {
+    name: string;
+    kind: "json" | "static";
+    routes: readonly { method: string; path: string; operation?: AnyOperation<any> }[];
+  }[];
   createContext(env: NodeJS.ProcessEnv): Promise<Ctx>;
   /**
    * Stop admission and signal cancellation after events stop, before socket

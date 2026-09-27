@@ -25,6 +25,8 @@ export type TransportDoc = {
   supported: boolean;
   subscriptions: boolean;
   endpoint: string | null;
+  operations: string[];
+  routes: { surface: string; kind: "json" | "static"; method: string; path: string; operation: string | null; inputSchema: JsonSchema | null; outputSchema: JsonSchema | null }[];
 };
 
 export type PackageDoc = {

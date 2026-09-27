@@ -268,7 +268,20 @@ export function contentNetworkConfig(env: NodeJS.ProcessEnv): { host: string; do
   return { host, ...(documentOrigin ? { documentOrigin, artifactOrigin } : {}) };
 }
 
+const documentRoutes = [
+  { method: "GET/HEAD", path: "/" }, { method: "GET/HEAD", path: "/d/*" },
+  { method: "GET/HEAD", path: "/a/*" }, { method: "GET/HEAD", path: "/c/*" },
+] as const;
+const artifactRoutes = [
+  { method: "GET/HEAD", path: "/a/*" }, { method: "GET/HEAD", path: "/c/*" },
+  { method: "GET/HEAD", path: "/" },
+] as const;
+
 export const api: PackageApi<ContentContext> = {
+  http: [
+    { name: "documents", kind: "static", routes: documentRoutes },
+    { name: "artifacts", kind: "static", routes: artifactRoutes },
+  ],
   operations: [
     operation({
       name: "content_status", description: "Read portable route templates for documents, sites and items. Item IDs and paths do not depend on a host, port, collection or filesystem location.",
@@ -315,7 +328,9 @@ export const api: PackageApi<ContentContext> = {
       const artifactPort = port(env, env.AGENTSTACK_CONTENT_ARTIFACT_PORT === undefined ? "AGENTSTACK_WIKI_ARTIFACT_PORT" : "AGENTSTACK_CONTENT_ARTIFACT_PORT", DEFAULT_ARTIFACT_PORT);
       if (documentPort !== 0 && documentPort === artifactPort) throw new Error("content document and artifact ports must differ");
       const server = await startServer({ vaultRoot, casRoot: store.casRoot, index, store, collections,
-        port: documentPort, artifactPort, ...contentNetworkConfig(env) });
+        port: documentPort, artifactPort, ...contentNetworkConfig(env), routes: {
+          documents: documentRoutes, artifacts: artifactRoutes,
+        } });
       return { command, server, index, store, collections };
     } catch (error) { collections?.close(); store?.close(); index.close(); throw error; }
   },

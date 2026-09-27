@@ -8,7 +8,7 @@ export function inputTemplate(schema: JsonSchema): unknown {
 }
 
 export function requestExample(operation: OperationDoc, transport: TransportDoc): string | null {
-  if (!transport.supported || !["socket", "websocket", "mcp"].includes(transport.type)) return null;
+  if (!transport.supported || !["socket", "websocket", "mcp"].includes(transport.type) || (transport.operations && !transport.operations.includes(operation.name))) return null;
   const request = { ...(transport.type === "mcp" ? { jsonrpc: "2.0" } : {}), id: 1, method: "tools/call", params: { name: operation.name, arguments: inputTemplate(operation.inputSchema) } };
   return JSON.stringify(request, null, 2);
 }

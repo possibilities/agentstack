@@ -12,6 +12,8 @@ export type CatalogTransport = {
   supported: boolean;
   subscriptions: boolean;
   endpoint: string | null;
+  operations: string[];
+  routes: Array<{ surface: string; kind: "json" | "static"; method: string; path: string; operation: string | null; inputSchema: Record<string, unknown> | null; outputSchema: Record<string, unknown> | null }>;
 };
 
 export type CatalogOperation = {
@@ -45,6 +47,8 @@ export async function loadCatalog(env: NodeJS.ProcessEnv = process.env, from = i
   const servers: CatalogServer[] = [];
   for (const item of packages) {
     const api = await loadPackageApi(item.dir);
+    if (Boolean(item.config.http) !== Boolean(api.http?.length))
+      throw new Error(`${item.config.name} HTTP manifest and Package API surfaces disagree`);
     const manifest = JSON.parse(await readFile(join(item.dir, "package.json"), "utf8")) as { name?: string };
     const events = api.events ? packageEventTopics(item.config.name, api.events) : {};
     servers.push({
@@ -65,31 +69,28 @@ export async function loadCatalog(env: NodeJS.ProcessEnv = process.env, from = i
         example: api.events.scope.example,
         required: api.events.scope.required ?? false,
       } : null,
-      transports: configuredTransports(item.config).map((transport) =>
-        transport.type === "socket"
-          ? {
-              type: transport.type,
-              description: transport.description,
-              supported: true,
-              subscriptions: api.events !== undefined,
-              endpoint: socketPath(item.config.name, env),
-            }
-          : transport.type === "websocket"
-            ? {
-                type: transport.type,
-                description: transport.description,
-                supported: true,
-                subscriptions: api.events !== undefined,
-                endpoint: wsPort === 0 ? null : `ws://127.0.0.1:${wsPort}/websocket/${item.config.name}`,
-              }
-            : {
-                type: transport.type,
-                description: transport.description,
-                supported: true,
-                subscriptions: false,
-                endpoint: port === 0 ? null : `http://127.0.0.1:${port}/mcp/${item.config.name}`,
-              },
-      ),
+      transports: configuredTransports(item.config).map((transport) => {
+        if (transport.type === "http") {
+          if (!api.http?.length) throw new Error(`${item.config.name} configures http without declared HTTP surfaces`);
+          return {
+            type: "http", description: transport.description, supported: true, subscriptions: false, endpoint: null,
+            operations: [], routes: api.http.flatMap((surface) => surface.routes.map((route) => ({
+              surface: surface.name, kind: surface.kind, method: route.method, path: route.path, operation: route.operation?.name ?? null,
+              inputSchema: route.operation ? publishedJsonSchema(route.operation.input) : null,
+              outputSchema: route.operation ? publishedJsonSchema(route.operation.output) : null,
+            }))),
+          };
+        }
+        const allowed = transport.type === "socket" ? undefined : item.config[transport.type]?.operations;
+        if (allowed?.some((name) => !api.operations.some((op) => op.name === name)))
+          throw new Error(`${item.config.name} ${transport.type} selects an unknown operation`);
+        const operations = api.operations.map((op) => op.name).filter((name) => !allowed || allowed.includes(name));
+        const base = { type: transport.type, description: transport.description, supported: true, operations, routes: [] };
+        if (transport.type === "socket") return { ...base, subscriptions: api.events !== undefined, endpoint: socketPath(item.config.name, env) };
+        if (transport.type === "websocket") return { ...base, subscriptions: api.events !== undefined,
+          endpoint: wsPort === 0 ? null : `ws://127.0.0.1:${wsPort}/websocket/${item.config.name}` };
+        return { ...base, subscriptions: false, endpoint: port === 0 ? null : `http://127.0.0.1:${port}/mcp/${item.config.name}` };
+      }),
     });
   }
   return { servers };

@@ -57,8 +57,11 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
     const target = new URL(request.url ?? "/", "http://127.0.0.1");
     const name = target.origin === "http://127.0.0.1" ? /^\/mcp\/([a-z][a-z0-9-]{0,31})$/.exec(target.pathname)?.[1] : undefined;
     let definition: { name: string; description: string } | undefined;
+    let allowedOperations: readonly string[] | undefined;
     try {
-      definition = (await configuredMcpPackages(root)).find((item) => item.name === name);
+      const configured = (await listPackages(root)).find((item) => item.config.name === name && item.config.mcp);
+      definition = configured ? { name: configured.config.name, description: configured.config.description } : undefined;
+      allowedOperations = configured?.config.mcp?.operations;
     } catch (error) {
       console.error(error);
       response.writeHead(503).end();
@@ -96,9 +99,9 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
     mcp.setRequestHandler(ListToolsRequestSchema, async () => {
       if (workerIdentity) await verifiedWorker(workerIdentity.workerId, workerIdentity.instance, env);
       const listed = await socketCall(socketPath(name, env), "tools/list") as { tools: Tool[]; events?: { topics: Record<string, string> } | null };
-      const extra = !workerIdentity && options.subscriptions && listed.events && Object.keys(listed.events.topics).length ? subscriptionTools : [];
+      const extra = !workerIdentity && allowedOperations === undefined && options.subscriptions && listed.events && Object.keys(listed.events.topics).length ? subscriptionTools : [];
       if (extra.some((tool) => listed.tools.some((item) => item.name === tool.name))) throw new Error(`${name} has an operation reserved for MCP event subscriptions`);
-      return { tools: [...listed.tools.filter((tool) => !workerIdentity || tool.annotations?.readOnlyHint).map((tool) => ({ ...tool, title: tool.annotations?.title })), ...extra] };
+      return { tools: [...listed.tools.filter((tool) => (allowedOperations === undefined || allowedOperations.includes(tool.name)) && (!workerIdentity || tool.annotations?.readOnlyHint)).map((tool) => ({ ...tool, title: tool.annotations?.title })), ...extra] };
     });
     mcp.setRequestHandler(CallToolRequestSchema, async ({ params }, extra) => {
       try {
@@ -128,6 +131,7 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
           threadId, sessionId: identifier(ids.sessionId),
           workerId: workerIdentity?.workerId ?? null, workerInstance: workerIdentity?.instance ?? null,
         };
+        if (params.name.startsWith("events_") && allowedOperations !== undefined) throw new Error("event subscriptions are unavailable on an operation-restricted MCP transport");
         if (params.name.startsWith("events_") && options.subscriptions) {
           const service = options.subscriptions;
           let result: object;
@@ -138,6 +142,7 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
           else throw new Error(`unknown event tool: ${params.name}`);
           return resultOf(result);
         }
+        if (allowedOperations !== undefined && !allowedOperations.includes(params.name)) throw new Error(`operation ${params.name} is not available over mcp`);
         const result = await socketCall(socketPath(name, env), "tools/call", {
           name: params.name,
           arguments: params.arguments ?? {},

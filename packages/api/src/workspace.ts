@@ -79,5 +79,6 @@ export function assertTransport(name: string, config: PackageConfig, transport: 
   if (!config[transport]) throw new Error(`${name} does not configure ${transport}`);
   if (transport === "mcp") throw new Error("mcp is served together for all configured Package APIs; run agentstack mcp");
   if (transport === "websocket") throw new Error("websocket is served together for all configured Package APIs; run agentstack websocket");
+  if (transport === "http") throw new Error("http is served by the owning Package API's declared listeners; run agentstack api <package> socket");
   return transport;
 }

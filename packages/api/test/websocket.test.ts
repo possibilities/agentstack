@@ -106,6 +106,23 @@ test("WebSocket restricts host, origin, paths, frames and cleans up on close", a
   }
 });
 
+test("a WebSocket operation list denies direct calls as well as hiding names", async () => {
+  const setup = await fixture();
+  const ws = await connect(setup.url);
+  let restricted: WebSocket | undefined;
+  try {
+    await writeFile(join(setup.root, "packages", "demo", "api.yaml"),
+      "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n  operations: []\n");
+    restricted = await connect(setup.url);
+    restricted.send(JSON.stringify({ id: 1, method: "tools/list" }));
+    assert.deepEqual((await nextMessage(restricted)).result.tools, []);
+    restricted.send(JSON.stringify({ id: 2, method: "tools/call", params: { name: "greet", arguments: { name: "Ada" } } }));
+    assert.match((await nextMessage(restricted)).error?.message ?? "", /not available over websocket/);
+    ws.send(JSON.stringify({ id: 3, method: "tools/call", params: { name: "greet", arguments: { name: "Ada" } } }));
+    assert.deepEqual((await nextMessage(ws)).result, { greeting: "Hello Ada" });
+  } finally { ws.close(); restricted?.close(); await setup.close(); }
+});
+
 test("a lost socket subscription tells the WebSocket client to resnapshot after reconnecting", async () => {
   const setup = await fixture();
   const ws = await connect(setup.url);

@@ -3,6 +3,9 @@
 The share ingress is one endpoint shared by every device client. It is served by
 the owner-managed `brain` Package API under
 [ADR 0059](adr/0059-isolated-brain-and-platform-clients.md).
+Its HTTP-only typed operations and explicit route selection are declared alongside
+the Package API in `packages/brain/api.ts` and `packages/brain/src/share-server.ts`;
+the common HTTP listener implementation lives in `packages/api/src/http.ts`.
 
 ```text
 POST http://<agentstack-host>:8877/v1/share

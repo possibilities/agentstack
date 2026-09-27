@@ -6,7 +6,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { docsSnapshot, serveApi, socketCall } from "../src/index.js";
 
-type TransportDoc = { type: string; description: string; supported: boolean; subscriptions: boolean; endpoint: string | null };
+type TransportDoc = { type: string; description: string; supported: boolean; subscriptions: boolean; endpoint: string | null;
+  operations: string[]; routes: Array<{ surface: string; kind: "json" | "static"; method: string; path: string; operation: string | null; inputSchema: Record<string, unknown> | null; outputSchema: Record<string, unknown> | null }> };
 type OperationDoc = { name: string; title: string | null; description: string; annotations: Record<string, unknown>; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown> };
 type PackageDoc = { name: string; description: string; packageName: string; operations: OperationDoc[]; events: Record<string, string>; eventScope: { description: string; example: string; required: boolean } | null; transports: TransportDoc[] };
 
@@ -48,6 +49,17 @@ test("the api package serves structured documents for every workspace package", 
     assert.deepEqual(snapshot.packages, [...found.values()]);
     const responseLength = JSON.stringify({ id: 1, result: snapshot }).length + 1;
     assert.ok(responseLength < 750_000, `discovery snapshot exceeds the socket response budget: ${responseLength} characters`);
+
+    const brainHttp = found.get("brain")!.transports.find((transport) => transport.type === "http")!;
+    assert.deepEqual(brainHttp.operations, []);
+    assert.deepEqual(brainHttp.routes.map(({ surface, kind, method, path, operation }) => [surface, kind, method, path, operation]), [
+      ["share", "json", "GET", "/v1/health", "share_health"], ["share", "json", "GET", "/v1/shares", "share_states"],
+      ["share", "json", "POST", "/v1/share", "share_admit"],
+    ]);
+    assert.ok(brainHttp.routes.every((route) => route.inputSchema && route.outputSchema));
+    assert.ok(!found.get("brain")!.operations.some((operation) => operation.name === "share_admit"));
+    const contentHttp = found.get("content")!.transports.find((transport) => transport.type === "http")!;
+    assert.ok(contentHttp.routes.some((route) => route.surface === "artifacts" && route.path === "/a/*" && route.operation === null));
 
     const bots = found.get("bots") as PackageDoc;
     assert.deepEqual(Object.keys(bots.events).sort(), ["bots_changed", "chat_queue_changed", "chats_changed", "defaults_changed", "threads_changed", "voice_changed"]);
@@ -135,7 +147,7 @@ test("the api package serves structured documents for every workspace package", 
     const brain = found.get("brain") as PackageDoc;
     assert.ok(brain.operations.length > 0);
     assert.ok(brain.operations.every((operation) => operation.description && operation.inputSchema.type === "object" && operation.outputSchema.type === "object"));
-    assert.deepEqual(brain.transports.map((transport) => transport.type).sort(), ["mcp", "socket", "websocket"]);
+    assert.deepEqual(brain.transports.map((transport) => transport.type).sort(), ["http", "mcp", "socket", "websocket"]);
     assert.ok(brain.transports.every((transport) => transport.supported));
     assert.equal(brain.transports.find((transport) => transport.type === "socket")?.endpoint, join(stateDir, "sockets", "brain.sock"));
     assert.equal(brain.transports.find((transport) => transport.type === "mcp")?.endpoint, "http://127.0.0.1:8743/mcp/brain");

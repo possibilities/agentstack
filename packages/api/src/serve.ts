@@ -24,6 +24,8 @@ export async function serveApi(options: {
   const located = await findPackage(root, options.name);
   const transport = assertTransport(options.name, located.config, options.transport);
   const api = await loadPackageApi(located.dir);
+  if (Boolean(located.config.http) !== Boolean(api.http?.length))
+    throw new Error(`${options.name} HTTP manifest and Package API surfaces disagree`);
   const eventTopics = api.events ? packageEventTopics(options.name, api.events) : undefined;
   let socket: ServedSocket | undefined;
   let stopEvents: (() => void) | void = undefined;

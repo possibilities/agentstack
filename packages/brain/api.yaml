@@ -6,3 +6,5 @@ mcp:
   description: HTTP MCP operations forwarded to the Brain socket.
 websocket:
   description: Loopback WebSocket operations forwarded to the Brain socket.
+http:
+  description: Authenticated versioned JSON routes for device shares on a separate listener; only the declared share operations are available.

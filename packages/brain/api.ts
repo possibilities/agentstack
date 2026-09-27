@@ -12,6 +12,7 @@ import { assertDefaultDatabaseTargetSafe, brainStateRoot, withBrainEnvironment }
 import { generateShareToken, readShareToken, writeShareToken, SHARE_DEFAULT_HOST, SHARE_DEFAULT_PORT } from "./src/share.js";
 import { clearIngressRegistration, probeShareIngress, writeIngressRegistration } from "./src/share-liveness.js";
 import { startShareServer, type RunningShareServer } from "./src/share-server.js";
+import { shareRoutes } from "./src/share-server.js";
 import { ResearchStore } from "./src/store.js";
 import { runWorker, type WorkerOptions, type WorkerResult } from "./src/worker.js";
 
@@ -180,6 +181,7 @@ export async function closeBrainContext(ctx: BrainContext): Promise<void> {
 }
 
 export const api: PackageApi<BrainContext> = {
+  http: [{ name: "share", kind: "json", routes: shareRoutes }],
   operations: [
     operation({
       name: "brain_status", description: "Read isolated Brain state paths, share ingress address, and ingestion worker health. The token is never returned by this read-only operation.",

@@ -6,3 +6,5 @@ mcp:
   description: HTTP MCP operations forwarded to the content socket.
 websocket:
   description: Loopback WebSocket for content operations forwarded to the content socket.
+http:
+  description: Separate read-only document and artifact origins for static content; no control operations are available.

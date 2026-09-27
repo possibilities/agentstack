@@ -30,9 +30,11 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
   if (names.size === 0) throw new Error("no Package APIs configure websocket");
 
   const clients = new Set<WebSocket>();
+  const admittedOperations = new WeakMap<WebSocket, readonly string[] | undefined>();
   const wss = new WebSocketServer({ noServer: true, maxPayload });
   let closing: Promise<void> | undefined;
   wss.on("connection", (client, request) => {
+    const allowedOperations = admittedOperations.get(client);
     clients.add(client);
     const name = /^\/websocket\/([a-z][a-z0-9-]{0,31})$/.exec(request.url ?? "")?.[1];
     if (!name) { client.terminate(); return; }
@@ -97,7 +99,18 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
       } else if (message.method === "tools/list" || message.method === "tools/call") {
         const operation = message.method === "tools/call" ? (message.params as { name?: unknown } | undefined)?.name : undefined;
         const timeoutMs = typeof operation === "string" ? forwardTimeouts.get(`${name}/${operation}`) : undefined;
-        void socketCall(socketPath(name, env), message.method, message.params, { signal: controller.signal, timeoutMs }).then(respond, fail);
+        void (async () => {
+          if (message.method === "tools/call") {
+            if (typeof operation !== "string" || (allowedOperations && !allowedOperations.includes(operation)))
+              throw new Error(`operation ${String(operation)} is not available over websocket`);
+          }
+          const result = await socketCall(socketPath(name, env), message.method as "tools/list" | "tools/call", message.params, { signal: controller.signal, timeoutMs });
+          if (message.method === "tools/list" && allowedOperations) {
+            const listed = result as { tools: Array<{ name: string }> };
+            return { ...listed, tools: listed.tools.filter((tool) => allowedOperations.includes(tool.name)) };
+          }
+          return result;
+        })().then(respond, fail);
       } else {
         fail(new Error(`unknown method: ${String(message.method)}`));
       }
@@ -114,18 +127,22 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
       socket.write("HTTP/1.1 403 Forbidden\r\n\r\n"); socket.destroy(); return;
     }
     void (async () => {
-      let current: Set<string>;
+      let configured: Awaited<ReturnType<typeof listPackages>>;
       try {
-        current = await configuredWebSocketNames(root);
+        configured = await listPackages(root);
       } catch (error) {
         console.error(`WebSocket configuration unavailable: ${error instanceof Error ? error.message : String(error)}`);
         if (!socket.destroyed) { socket.write("HTTP/1.1 503 Service Unavailable\r\n\r\n"); socket.destroy(); }
         return;
       }
       if (closing || socket.destroyed) { socket.destroy(); return; }
-      if (!current.has(name)) { socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.destroy(); return; }
+      const admission = configured.find((item) => item.config.name === name)?.config.websocket;
+      if (!admission) { socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.destroy(); return; }
       try {
-        wss.handleUpgrade(request, socket, head, (client) => wss.emit("connection", client, request));
+        wss.handleUpgrade(request, socket, head, (client) => {
+          admittedOperations.set(client, admission.operations);
+          wss.emit("connection", client, request);
+        });
       } catch (error) {
         console.error("WebSocket upgrade failed:", error);
         socket.destroy();

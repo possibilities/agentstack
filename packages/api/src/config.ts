@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { parse } from "yaml";
 import { z } from "zod";
 
-export const transportTypes = ["socket", "mcp", "websocket"] as const;
+export const transportTypes = ["socket", "mcp", "websocket", "http"] as const;
 export type TransportType = (typeof transportTypes)[number];
 
 const blurb = z
@@ -15,20 +15,29 @@ const blurb = z
 const transportSchema = z
   .object({
     description: blurb,
+    operations: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)).optional(),
   })
   .strict();
+
+const httpSchema = z.object({
+  description: blurb,
+}).strict();
 
 const configSchema = z
   .object({
     name: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/),
     description: blurb,
-    socket: transportSchema.optional(),
+    socket: httpSchema.optional(),
     mcp: transportSchema.optional(),
     websocket: transportSchema.optional(),
+    http: httpSchema.optional(),
   })
   .strict()
   .refine((config) => transportTypes.some((type) => config[type] !== undefined), {
     message: "at least one transport is required",
+  })
+  .refine((config) => !config.http || config.socket, {
+    message: "http requires a socket owner for the Package API context",
   });
 
 export type TransportConfig = z.infer<typeof transportSchema>;

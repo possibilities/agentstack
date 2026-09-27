@@ -81,6 +81,28 @@ test("one HTTP process exposes each configured Package API and forwards operatio
   }
 });
 
+test("MCP allowlists hide and reject direct calls to excluded socket operations", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-mcp-allow-"));
+  const env = { ...process.env, AGENTSTACK_STATE_DIR: root };
+  const dir = join(root, "packages", "demo");
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nmcp:\n  description: Selected tools.\n  operations: [read]\n");
+  let called = false;
+  const socket = await serveSocket({ info: { name: "demo", description: "Demo.", transportDescription: "Socket.", path: socketPath("demo", env) }, context: {},
+    operations: ["read", "secret"].map((name) => operation({ name, description: `${name}.`, input: z.strictObject({}), output: z.object({ ok: z.boolean() }),
+      async call() { called = true; return { ok: true }; } })) });
+  const served = await serveMcp({ root, env, port: 0 });
+  const client = new Client({ name: "test", version: "1" });
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(served.urls.demo!)));
+    assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), ["read"]);
+    const denied = await client.callTool({ name: "secret", arguments: {} });
+    assert.equal(denied.isError, true);
+    assert.equal(called, false);
+    assert.equal((await client.callTool({ name: "read", arguments: {} })).isError, undefined);
+  } finally { await client.close(); await served.close(); await socket.close(); await rm(root, { recursive: true, force: true }); }
+});
+
 test("a bot-bound MCP URL forwards verified bot and Codex thread context without changing tool inputs", { timeout: 30_000 }, async () => {
   const root = await mkdtemp("/tmp/as-mcp-b-");
   const env = { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_MCP_PORT: "0" };

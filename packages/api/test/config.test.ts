@@ -34,8 +34,16 @@ test("a package API loads from the built sibling api.ts without an index", async
 });
 
 test("config rejects unknown transports and empty blurbs", () => {
-  assert.throws(() => parseConfig("name: demo\ndescription: Demo.\nhttp: {}\n"), /http/);
+  assert.throws(() => parseConfig("name: demo\ndescription: Demo.\nhttp:\n  description: Share.\n"), /socket owner/);
+  assert.throws(() => parseConfig("name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nhttp:\n  description: Share.\n  operations: [secret]\n"), /http/);
   assert.throws(() => parseConfig("name: demo\ndescription: '  '\nsocket:\n  description: Demo socket.\n"), /description/);
+});
+
+test("MCP and WebSocket select operations by explicit positive lists", () => {
+  const config = parseConfig("name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nmcp:\n  description: Restricted MCP.\n  operations: [read]\nwebsocket:\n  description: Restricted WebSocket.\n  operations: []\n");
+  assert.deepEqual(config.mcp?.operations, ["read"]);
+  assert.deepEqual(config.websocket?.operations, []);
+  assert.throws(() => parseConfig("name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\n  operations: [read]\n"), /operations/);
 });
 
 test("WebSocket uses Package API events rather than transport-specific pubsub", () => {

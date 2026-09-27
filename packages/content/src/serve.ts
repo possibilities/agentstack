@@ -3,7 +3,7 @@
 
 import type { Dirent, Stats } from "node:fs";
 import { createReadStream, lstatSync, readdirSync } from "node:fs";
-import { createServer, type Server } from "node:http";
+import { serveHttp } from "@agentstack/api";
 import { join, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import type { ArtifactRow, ArtifactStore } from "./artifacts.js";
@@ -34,6 +34,7 @@ export interface ServeOptions {
   host: string;
   documentOrigin?: string;
   artifactOrigin?: string;
+  routes?: { documents: readonly { path: string }[]; artifacts: readonly { path: string }[] };
 }
 
 export interface RunningServer {
@@ -86,20 +87,19 @@ export async function startServer(options: ServeOptions): Promise<RunningServer>
   let documentOrigin = "";
   let artifactOrigin = "";
 
-  const artifactServer = await listen(options.artifactPort, options.host, (request) =>
+  const artifactServer = await listen(options.artifactPort, options.host, options.routes?.artifacts, (request) =>
     routeArtifacts(request, options, () => documentOrigin));
-  let documentServer: Server;
+  let documentServer: Awaited<ReturnType<typeof serveHttp>>;
   try {
-    documentServer = await listen(options.port, options.host, (request) =>
+    documentServer = await listen(options.port, options.host, options.routes?.documents, (request) =>
       routeDocuments(request, options, () => artifactOrigin));
   } catch (error) {
-    await close(artifactServer);
+    await artifactServer.close();
     throw error;
   }
 
-  // Only undefined for a unix-socket server; we always bind a TCP port.
-  const port = (documentServer.address() as { port: number }).port;
-  const artifactPort = (artifactServer.address() as { port: number }).port;
+  const port = documentServer.port;
+  const artifactPort = artifactServer.port;
   documentOrigin = options.documentOrigin ?? origin(port, options.host);
   artifactOrigin = options.artifactOrigin ?? origin(artifactPort, options.host);
 
@@ -108,33 +108,15 @@ export async function startServer(options: ServeOptions): Promise<RunningServer>
     artifactPort,
     url: documentOrigin,
     artifactUrl: artifactOrigin,
-    stop: async () => { await Promise.all([close(documentServer), close(artifactServer)]); },
+    stop: async () => { await Promise.all([documentServer.close(), artifactServer.close()]); },
   };
 }
 
-function listen(port: number, host: string, route: (request: Request) => Promise<Response>): Promise<Server> {
-  const server = createServer(async (incoming, outgoing) => {
-    try {
-      const response = await route(new Request(`http://${host}:${port}${incoming.url ?? "/"}`, { method: incoming.method }));
-      outgoing.writeHead(response.status, Object.fromEntries(response.headers));
-      if (response.body) {
-        Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0])
-          .on("error", () => outgoing.destroy())
-          .pipe(outgoing);
-      } else outgoing.end();
-    } catch (error) {
-      console.error("content serve:", error);
-      outgoing.writeHead(500).end();
-    }
-  });
-  return new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, host, () => { server.off("error", reject); resolve(server); });
-  });
-}
-
-function close(server: Server): Promise<void> {
-  return new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+function listen(port: number, host: string, routes: readonly { path: string }[] | undefined, route: (request: Request) => Promise<Response>) {
+  return serveHttp({ port, host, routes, handle: route, onError: (error) => {
+    console.error("content serve:", error);
+    return new Response(null, { status: 500 });
+  } });
 }
 
 async function routeDocuments(

@@ -1,6 +1,7 @@
 import { admitSubmission } from "./admission.js";
-import { createServer, type Server } from "node:http";
-import { Readable } from "node:stream";
+import type { Server } from "node:http";
+import { operation, serveHttp } from "@agentstack/api";
+import { z } from "zod";
 import { ArtifactStore } from "./artifacts.js";
 import { CliError } from "./errors.js";
 import { shareJobStates } from "./jobs.js";
@@ -13,6 +14,7 @@ import {
   SHARE_DEFAULT_HOST,
   SHARE_DEFAULT_PORT,
   SHARE_MAX_BODY_BYTES,
+  SHARE_MAX_STATE_IDS,
   tokenMatches,
 } from "./share.js";
 import { shareUrlFor } from "./share-liveness.js";
@@ -54,6 +56,66 @@ export interface ShareIngestData {
   collections: string[];
   tags: string[];
 }
+
+const normalizedShare = z.object({
+  version: z.literal(SHARE_CONTRACT_VERSION), client: z.enum(["chrome-extension", "android-share"]),
+  url: z.string().optional(), text: z.string().optional(), title: z.string().optional(),
+  tags: z.array(z.string()), collections: z.array(z.string()), idempotencyKey: z.string().optional(),
+});
+const shareData = z.object({
+  version: z.literal(SHARE_CONTRACT_VERSION), client: z.enum(["chrome-extension", "android-share"]),
+  status: z.enum(["queued", "duplicate"]), job_id: z.number().int(), idempotency_key: z.string(),
+  intent_hash: z.string(), state: z.string(), resolved_kind: z.enum(["url", "text"]),
+  resolved_url: z.string().nullable(), extracted_from_text: z.boolean(),
+  collections: z.array(z.string()), tags: z.array(z.string()),
+});
+
+/** Explicit HTTP-only operations. They are not in Brain's socket/MCP/WebSocket
+ * operation list, and a route must name one to expose it to device clients. */
+export const shareHealth = operation({
+  name: "share_health", description: "Check authenticated device-share ingress health and contract version.",
+  input: z.strictObject({}), output: z.object({ version: z.literal(SHARE_CONTRACT_VERSION), ok: z.literal(true) }),
+  annotations: { readOnlyHint: true },
+  async call() { return { version: SHARE_CONTRACT_VERSION, ok: true } as const; },
+});
+
+export const shareStates = operation({
+  name: "share_states", description: "Read bounded job states for IDs retained by a device share client.",
+  input: z.strictObject({ ids: z.array(z.number().int().positive()).max(SHARE_MAX_STATE_IDS) }),
+  output: z.object({ version: z.literal(SHARE_CONTRACT_VERSION), shares: z.array(z.object({
+    job_id: z.number().int(), state: z.enum(["queued", "running", "retry_wait", "blocked", "failed", "completed", "excluded", "cancelled"]),
+    failure_class: z.string().nullable(), document_id: z.number().int().nullable(),
+  })) }),
+  annotations: { readOnlyHint: true },
+  async call(ctx: ShareServerOptions, { ids }) { return { version: SHARE_CONTRACT_VERSION, shares: shareJobStates(ctx.store, ids) }; },
+});
+
+export const shareAdmit = operation({
+  name: "share_admit", description: "Resolve and durably admit one authenticated device share; admission does not imply indexing completion.",
+  input: normalizedShare, output: shareData,
+  async call(ctx: ShareServerOptions, parsed) {
+    const resolved = resolveShare(parsed);
+    const admitted = admitSubmission(ctx.store, {
+      version: 1, source: resolved.source, kind: resolved.kind, ingress: resolved.ingress,
+      collections: resolved.collections, tags: resolved.tags,
+      ...(resolved.title === undefined ? {} : { title: resolved.title }),
+      ...(resolved.idempotencyKey === undefined ? {} : { idempotencyKey: resolved.idempotencyKey }),
+    }, { artifactStore: ctx.artifactStore ?? new ArtifactStore() });
+    return {
+      version: SHARE_CONTRACT_VERSION, client: resolved.ingress, status: admitted.status,
+      job_id: admitted.job_id, idempotency_key: admitted.idempotency_key, intent_hash: admitted.intent_hash,
+      state: admitted.state, resolved_kind: resolved.kind,
+      resolved_url: resolved.kind === "url" ? resolved.source : null,
+      extracted_from_text: resolved.extractedFromText, collections: resolved.collections, tags: resolved.tags,
+    };
+  },
+});
+
+export const shareRoutes = [
+  { method: "GET", path: "/v1/health", operation: shareHealth },
+  { method: "GET", path: "/v1/shares", operation: shareStates },
+  { method: "POST", path: "/v1/share", operation: shareAdmit },
+] as const;
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
 
@@ -218,101 +280,30 @@ export function createShareHandler(
         });
       }
 
+      if (!shareRoutes.some((route) => route.path === path)) throw new CliError("not_found", `unknown share endpoint ${path}`);
+      if (!shareRoutes.some((route) => route.path === path && route.method === request.method))
+        throw new CliError("method_not_allowed", `${request.method} is not allowed on ${path}`);
+
       if (path === "/v1/health") {
-        if (request.method !== "GET") {
-          throw new CliError(
-            "method_not_allowed",
-            `${request.method} is not allowed on ${path}`,
-          );
-        }
-        return settle(
-          jsonResponse(
-            okBody(
-              command,
-              { version: SHARE_CONTRACT_VERSION, ok: true },
-              dbPath,
-            ),
-            200,
-            origin,
-          ),
-          "health",
-        );
+        const data = shareHealth.output.parse(await shareHealth.call(options, shareHealth.input.parse({})));
+        return settle(jsonResponse(okBody(command, data, dbPath), 200, origin), "health");
       }
 
       // What became of the shares this client already sent. Read-only, and
       // bounded to ids the client received from its own acknowledgements.
       if (path === "/v1/shares") {
-        if (request.method !== "GET") {
-          throw new CliError(
-            "method_not_allowed",
-            `${request.method} is not allowed on ${path}`,
-          );
-        }
         const ids = parseShareStateIds(url.searchParams.get("job_ids"));
-        const states = shareJobStates(store, ids);
-        return settle(
-          jsonResponse(
-            okBody(
-              command,
-              { version: SHARE_CONTRACT_VERSION, shares: states },
-              dbPath,
-            ),
-            200,
-            origin,
-          ),
-          "states",
-        );
+        const data = shareStates.output.parse(await shareStates.call(options, shareStates.input.parse({ ids })));
+        return settle(jsonResponse(okBody(command, data, dbPath), 200, origin), "states");
       }
 
-      if (path !== "/v1/share") {
-        throw new CliError("not_found", `unknown share endpoint ${path}`);
-      }
-      if (request.method !== "POST") {
-        throw new CliError(
-          "method_not_allowed",
-          `${request.method} is not allowed on ${path}`,
-        );
-      }
-
-      const parsed = parseShareRequest(
-        await readJsonBody(request, maxBodyBytes),
-      );
-      const resolved = resolveShare(parsed);
-      const admitted = admitSubmission(
-        store,
-        {
-          version: 1,
-          source: resolved.source,
-          kind: resolved.kind,
-          ingress: resolved.ingress,
-          collections: resolved.collections,
-          tags: resolved.tags,
-          ...(resolved.title === undefined ? {} : { title: resolved.title }),
-          ...(resolved.idempotencyKey === undefined
-            ? {}
-            : { idempotencyKey: resolved.idempotencyKey }),
-        },
-        { artifactStore },
-      );
-
-      const data: ShareIngestData = {
-        version: SHARE_CONTRACT_VERSION,
-        client: resolved.ingress,
-        status: admitted.status,
-        job_id: admitted.job_id,
-        idempotency_key: admitted.idempotency_key,
-        intent_hash: admitted.intent_hash,
-        state: admitted.state,
-        resolved_kind: resolved.kind,
-        resolved_url: resolved.kind === "url" ? resolved.source : null,
-        extracted_from_text: resolved.extractedFromText,
-        collections: resolved.collections,
-        tags: resolved.tags,
-      };
+      if (path !== "/v1/share") throw new CliError("not_found", `unknown share endpoint ${path}`);
+      const parsed = parseShareRequest(await readJsonBody(request, maxBodyBytes));
+      const data: ShareIngestData = shareAdmit.output.parse(await shareAdmit.call({ ...options, artifactStore }, shareAdmit.input.parse(parsed)));
       return settle(
         jsonResponse(okBody(command, data, dbPath), 200, origin),
-        admitted.status,
-        admitted.job_id,
+        data.status,
+        data.job_id,
       );
     } catch (error) {
       const cliError =
@@ -348,34 +339,13 @@ export async function startShareServer(
 ): Promise<RunningShareServer> {
   const hostname = options.host ?? SHARE_DEFAULT_HOST;
   const port = options.port ?? SHARE_DEFAULT_PORT;
-  const handler = createShareHandler(options);
-  const server = createServer(async (incoming, outgoing) => {
-    try {
-      const headers = new Headers();
-      for (const [key, value] of Object.entries(incoming.headers)) {
-        if (value !== undefined) headers.set(key, Array.isArray(value) ? value.join(", ") : value);
-      }
-      const hasBody = incoming.method !== "GET" && incoming.method !== "HEAD";
-      const request = new Request(`${shareUrlFor(hostname, port)}${incoming.url ?? "/"}`, {
-        method: incoming.method, headers,
-        ...(hasBody ? { body: Readable.toWeb(incoming) as ReadableStream<Uint8Array>, duplex: "half" } : {}),
-      });
-      const response = await handler(request);
-      outgoing.writeHead(response.status, Object.fromEntries(response.headers));
-      // Reject unauthenticated bodies without draining an unbounded stream.
-      if (!incoming.complete) outgoing.once("finish", () => incoming.destroy());
-      outgoing.end(Buffer.from(await response.arrayBuffer()));
-    } catch {
-      if (!outgoing.headersSent) outgoing.writeHead(500, JSON_HEADERS);
-      outgoing.end(JSON.stringify({ schema_version: 1, ok: false, command: "share", error: { code: "share_failed", message: "share ingestion failed" } }));
-    }
-  });
-  server.requestTimeout = 30_000;
-  server.headersTimeout = 10_000;
+  let served: Awaited<ReturnType<typeof serveHttp>>;
   try {
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(port, hostname, () => { server.off("error", reject); resolve(); });
+    served = await serveHttp({ host: hostname, port, handle: createShareHandler(options), requestTimeout: 30_000, headersTimeout: 10_000,
+      forceCloseConnections: true,
+      onError: () => new Response(JSON.stringify({ schema_version: 1, ok: false, command: "share", error: { code: "share_failed", message: "share ingestion failed" } }), {
+        status: 500, headers: JSON_HEADERS,
+      }),
     });
   } catch (error) {
     throw new CliError(
@@ -387,14 +357,10 @@ export async function startShareServer(
       },
     );
   }
-  const actualPort = (server.address() as { port: number }).port;
   return {
-    server,
-    port: actualPort,
-    url: shareUrlFor(hostname, actualPort),
-    stop: () => new Promise<void>((resolve, reject) => {
-      server.close((error) => error ? reject(error) : resolve());
-      server.closeAllConnections();
-    }),
+    server: served.server,
+    port: served.port,
+    url: shareUrlFor(hostname, served.port),
+    stop: served.close,
   };
 }

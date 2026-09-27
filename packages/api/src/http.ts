@@ -1,0 +1,69 @@
+import { createServer, type Server } from "node:http";
+import { Readable } from "node:stream";
+
+/** One owner-local HTTP origin. Packages supply the route policy and response,
+ * while the API package owns the HTTP listener, streaming and shutdown. */
+export async function serveHttp(options: {
+  host: string;
+  port: number;
+  handle(request: Request): Response | Promise<Response>;
+  /** Optional positive route selection for read-only static origins. A package
+   * still owns rendering and redirects within these selected paths. */
+  routes?: readonly { path: string }[];
+  onError?: (error: unknown) => Response;
+  requestTimeout?: number;
+  headersTimeout?: number;
+  forceCloseConnections?: boolean;
+}): Promise<{ server: Server; port: number; close(): Promise<void> }> {
+  const server = createServer(async (incoming, outgoing) => {
+    try {
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(incoming.headers)) {
+        if (value !== undefined) headers.set(key, Array.isArray(value) ? value.join(", ") : value);
+      }
+      const method = incoming.method ?? "GET";
+      const address = server.address();
+      const port = address && typeof address !== "string" ? address.port : options.port;
+      const host = options.host.includes(":") ? `[${options.host}]` : options.host;
+      const request = new Request(`http://${host}:${port}${incoming.url ?? "/"}`, {
+        method, headers,
+        ...(["GET", "HEAD"].includes(method) ? {} : { body: Readable.toWeb(incoming) as ReadableStream<Uint8Array>, duplex: "half" }),
+      });
+      const pathname = new URL(request.url).pathname;
+      const response = options.routes && ["GET", "HEAD"].includes(method) && !options.routes.some(({ path }) =>
+        path.endsWith("/*") ? pathname.startsWith(path.slice(0, -1)) : pathname === path)
+        ? new Response(null, { status: 404 }) : await options.handle(request);
+      outgoing.writeHead(response.status, Object.fromEntries(response.headers));
+      if (!incoming.complete) outgoing.once("finish", () => incoming.destroy());
+      if (response.body && method !== "HEAD") {
+        Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0])
+          .on("error", () => outgoing.destroy())
+          .pipe(outgoing);
+      } else outgoing.end();
+    } catch (error) {
+      if (!outgoing.headersSent && options.onError) {
+        const response = options.onError(error);
+        outgoing.writeHead(response.status, Object.fromEntries(response.headers));
+        outgoing.end(Buffer.from(await response.arrayBuffer()));
+      } else if (!outgoing.headersSent) outgoing.writeHead(500).end();
+      else outgoing.destroy();
+    }
+  });
+  if (options.requestTimeout !== undefined) server.requestTimeout = options.requestTimeout;
+  if (options.headersTimeout !== undefined) server.headersTimeout = options.headersTimeout;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(options.port, options.host, () => { server.off("error", reject); resolve(); });
+    });
+  } catch (error) { server.close(); throw error; }
+  const address = server.address();
+  if (!address || typeof address === "string") { server.close(); throw new Error("HTTP listener has no TCP address"); }
+  return {
+    server, port: address.port,
+    close: () => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+      if (options.forceCloseConnections) server.closeAllConnections();
+    }),
+  };
+}
