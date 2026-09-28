@@ -299,6 +299,9 @@ importers:
       '@agentstack/api':
         specifier: workspace:*
         version: link:../api
+      ws:
+        specifier: ^8.18.3
+        version: 8.21.3
       zod:
         specifier: ^4.6.5
         version: 4.6.5
@@ -306,6 +309,9 @@ importers:
       '@types/node':
         specifier: ^26.6.2
         version: 26.6.2
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
       typescript:
         specifier: ^7.0.2
         version: 7.0.2

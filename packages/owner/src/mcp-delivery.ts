@@ -37,6 +37,13 @@ async function rebindTarget(botId: string, threadId: string, env: NodeJS.Process
 
 /** Worker subscriptions may read only the originating Bot thread's exact Worker. */
 export async function authorizeWorkerRead(subscription: EventSubscription, env: NodeJS.ProcessEnv): Promise<void> {
+  if (subscription.pkg === "browser") {
+    const args = subscription.readArguments;
+    if (subscription.topic !== "browser_handoffs_changed" || subscription.scope !== null || subscription.readOperation !== "browser_handoff_completion" ||
+      Object.keys(args).length !== 3 || args.botId !== subscription.botId || args.threadId !== subscription.threadId || typeof args.requestId !== "string")
+      throw new Error("browser wakeup requires the originating Chat's exact handoff completion projection");
+    return;
+  }
   if (subscription.pkg !== "workers") return;
   const args = subscription.readArguments;
   if (subscription.topic !== "worker_changed" || !subscription.scope || subscription.readOperation !== "worker_status" ||

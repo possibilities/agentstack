@@ -84,15 +84,72 @@ A missing recorded VM also stays failed with a specific retained-volume error.
 Exact-volume VM reconstruction and guest process remediation need an intentional
 operator recovery workflow; they are not implemented automatic recovery paths.
 
-Observation URLs address the selected host's local guest subnet on port 8080
-with Neko's `readOnly=1` presentation. Neko follows the visible tab. The guest
-advertises its current address for ICE on every boot, not the viewer's loopback.
+Observation URLs address an owner-managed loopback gateway. Neko follows the
+visible tab. The guest advertises its current address for ICE on every boot,
+not the viewer's loopback.
 The integration probe decoded 1920×1080 VP8 video at 25 fps over WebRTC after
 this correction. The returned `verified` flag remains false for an individual
 runtime because supervision does not attach a video receiver to every profile;
-callers must observe delivery on their own connection. Read-only presentation
-is not an authentication boundary. This is an
-observation substrate, not a human-control handoff or background-tab preview.
+callers must observe delivery on their own connection. The gateway restricts
+observer signaling and Neko requires explicit host ownership for input; the
+`readOnly=1` presentation alone is not the control boundary. These guarantees
+cover managed connections, not arbitrary same-user access to guest network ports.
+
+## Human handoff
+
+A handoff holds the entire profile, including all tabs and existing managed
+controllers. Other profiles remain usable. Human actions use the local operator
+socket or WebSocket API; they are not exposed through agent MCP.
+
+The requesting Chat first chooses a UUID and subscribes through the browser
+MCP connection's generated `events_subscribe` operation:
+
+```json
+{
+  "topic": "browser_handoffs_changed",
+  "readOperation": "browser_handoff_completion",
+  "readArguments": {
+    "botId": "bot-1",
+    "threadId": "the-originating-chat-id",
+    "requestId": "the-chosen-uuid"
+  }
+}
+```
+
+Then call `browser_handoff_request` with the same `requestId`, a `profileId`,
+optional `targetId`, and a message explaining what the human should do. Bot and
+Chat ownership are verified from invocation context. Subscribe before requesting
+so an immediate human response cannot be missed. Inspect the subscription's
+initial value: an already-completed result is returned there, not deferred to a
+future event. Unsubscribe after processing the terminal result.
+
+- `preparing`: new managed automation is blocked; accepted CDP work is draining.
+- `awaiting_human`: drain completed; the browser waits for the human.
+- `human_controlling`: `browser_handoff_take` issued an interactive connection.
+- `returning`: human input is being revoked and agent controller refs invalidated.
+- `resolved`: the durable outcome is `completed`, `skipped`, or `cancelled`.
+
+`browser_handoff_get` and `browser_handoff_list` expose state, revision and issues.
+Operator take/finish and agent cancel require `id`, `expectedRevision`, and an
+action `requestId`. Retry the identical action after a lost response; do not mint
+a new request ID to retry uncertain work. `browser_handoff_finish` accepts
+`outcome: "completed" | "skipped"` and an optional `note`, including directly
+from `awaiting_human`. The originating Chat can cancel only before human take.
+
+Closing the viewer or losing a connection never returns control. An unresolved
+handoff remains held across owner restart. If the owner lost track of accepted
+CDP work before confirming drain, the hold remains with an issue; this release
+does not provide a force-release operation. A missing starting tab is reported
+explicitly. Human completion is a report, not proof the requested task succeeded.
+
+The completion read stays `{ "result": null }` throughout pending states. A
+resolved result changes that value and uses the ordinary MCP subscription
+delivery to start a turn on the originating sanctioned Chat. There is no separate
+handoff continuation queue. Existing reconnect semantics still apply. After
+handback, reconnect and take a fresh snapshot before interacting or assessing
+the human's result.
+
+No handoff cards, banners or human viewer controls are added in this change.
 
 ## Isolated verification
 

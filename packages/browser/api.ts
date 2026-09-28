@@ -3,8 +3,52 @@ import { operation, type PackageApi } from "@agentstack/api";
 import { Backend, cleanupSchema } from "./src/backend.js";
 import { BrowserSystem } from "./src/system.js";
 import { Profiles, profileSchema, bindingSchema } from "./src/profiles.js";
+import { handoffSchema, handoffRequestSchema, handoffActionSchema, completionInput } from "./src/handoff.js";
 
 export type BrowserContext = { backend: Backend; system: BrowserSystem; profiles: Profiles };
+export const browserHandoffRequest = operation({
+  name: "browser_handoff_request", description: "Hold the entire own browser profile for human help. Origin is the invoking sanctioned Chat. Subscribe first to browser_handoffs_changed using browser_handoff_completion with this requestId, botId and threadId; inspect the subscribe initial value. Admission immediately fences managed automation; awaiting_human means CDP drained. A pending issue never grants human input.",
+  input: handoffRequestSchema, output: handoffSchema,
+  annotations: { title: "Request browser handoff", idempotentHint: true },
+  async call(ctx: BrowserContext, input, invocation) { return ctx.profiles.requestHandoff(input, invocation); },
+});
+export const browserHandoffList = operation({
+  name: "browser_handoff_list", description: "List durable browser handoffs. Verified Bot callers see only their own Bot; local operators see all. Runtime issues are separate from human outcomes.",
+  input: z.strictObject({}), output: z.strictObject({ handoffs: z.array(handoffSchema) }), annotations: { title: "List browser handoffs", readOnlyHint: true },
+  async call(ctx: BrowserContext, _input, invocation) { return { handoffs: ctx.profiles.handoffs(await ctx.profiles.caller(invocation)) }; },
+});
+export const browserHandoffGet = operation({
+  name: "browser_handoff_get", description: "Read one own Bot handoff, including pending issues and its revision. Local operators can inspect any handoff. Completion is a human report; reconnect and take a fresh browser snapshot to verify it.",
+  input: z.strictObject({ id: z.uuid() }), output: z.strictObject({ handoff: handoffSchema.nullable() }), annotations: { title: "Read browser handoff", readOnlyHint: true },
+  async call(ctx: BrowserContext, input, invocation) { return { handoff: ctx.profiles.handoffs(await ctx.profiles.caller(invocation)).find((h) => h.id === input.id) ?? null }; },
+});
+export const browserHandoffCompletion = operation({
+  name: "browser_handoff_completion", description: "Stable completion-only projection for existing MCP event subscriptions. Returns null before request admission and throughout all pending states; resolved returns the durable human result. Subscribe before requesting using the same requestId. Bot/thread arguments must match the invoking Chat; a result in the subscribe initial value is already completed work to inspect, not a future wakeup.",
+  input: completionInput, output: z.strictObject({ result: handoffSchema.nullable() }), annotations: { title: "Read browser handback", readOnlyHint: true },
+  async call(ctx: BrowserContext, input, invocation) {
+    if (invocation) {
+      const caller = await ctx.profiles.origin(invocation);
+      if (caller.botId !== input.botId || caller.threadId !== input.threadId) throw new Error("completion read belongs to another Chat");
+    }
+    return { result: ctx.profiles.handoffs(null).find((h) => h.botId === input.botId && h.threadId === input.threadId && h.requestId === input.requestId && h.state === "resolved") ?? null };
+  },
+});
+const handoffActionOutput = z.strictObject({ handoff: handoffSchema, controlUrl: z.string().nullable() });
+export const browserHandoffTake = operation({
+  name: "browser_handoff_take", description: "Local human operator takes an awaiting handoff. Issues a server-enforced managed Neko input grant. expectedRevision rejects stale input; retry the same requestId and identical arguments after an uncertain response. Closing the viewer never resolves a handoff.",
+  input: handoffActionSchema, output: handoffActionOutput, annotations: { title: "Take browser control", idempotentHint: true },
+  async call(ctx: BrowserContext, input, invocation) { return ctx.profiles.actHandoff("take", input, invocation); },
+});
+export const browserHandoffFinish = operation({
+  name: "browser_handoff_finish", description: "Local human operator reports completed or skipped, optionally with a note, from awaiting_human or human_controlling. Return revokes input sessions and invalidates agent refs before resolution. Pending returning issues keep automation fenced; retry the exact action to recover. Completed is a report, not automated verification.",
+  input: handoffActionSchema.extend({ outcome: z.enum(["completed", "skipped"]), note: z.string().max(4000).optional() }), output: handoffActionOutput, annotations: { title: "Finish browser handoff", idempotentHint: true },
+  async call(ctx: BrowserContext, input, invocation) { return ctx.profiles.actHandoff("finish", input, invocation); },
+});
+export const browserHandoffCancel = operation({
+  name: "browser_handoff_cancel", description: "Originating sanctioned Chat cancels its own handoff only before human take. Managed automation resumes only after proven drain, input revocation and controller disconnect. Cancellation cannot discard an unknown pending CDP operation.",
+  input: handoffActionSchema, output: handoffActionOutput, annotations: { title: "Cancel browser handoff", idempotentHint: true },
+  async call(ctx: BrowserContext, input, invocation) { return ctx.profiles.actHandoff("cancel", input, invocation); },
+});
 const sessionInput = z.strictObject({ session: z.string().min(1).max(128).regex(/^[^\x00-\x1f\x7f]+$/) });
 const sessionOutput = z.strictObject({
   session: z.string(), profile: z.string(), lease: z.string(), persistent: z.boolean(),
@@ -195,12 +239,14 @@ export const hypemanUninstall = operation({
   async call(ctx: BrowserContext, input) { return { installations: await ctx.system.uninstallHypeman(input.discardData) }; },
 });
 export const topics = {
+  browser_handoffs_changed: "A browser handoff changed. For Chat wakeups subscribe with browser_handoff_completion and the originating botId, threadId and requestId; its stable pending value suppresses intermediate turns.",
   browser_profiles_changed: "Durable browser profiles, health observations or controller bindings changed. Re-read browser_profile_list and browser_controller_list.",
   browser_system_changed: "Installation, update observation, update policy or selected local Hypeman root changed. Re-read agent_browser_status and hypeman_detect.",
   browser_sessions_changed: "A disposable browser reservation changed. Re-read browser_session_list; this does not prove a daemon is still driving it.",
 } as const;
 export const api: PackageApi<BrowserContext, keyof typeof topics> = {
   operations: [browserStatus, browserProfileList, browserProfileCreate, browserProfileDelete, browserControllerList, browserControllerSelect, browserControllerLaunch, browserControllerClose, browserBotRelease,
+    browserHandoffRequest, browserHandoffGet, browserHandoffList, browserHandoffCompletion, browserHandoffTake, browserHandoffFinish, browserHandoffCancel,
     browserSessionGet, browserSessionList, browserSessionClose, browserSessionReconcile,
     browserToolStatus, browserToolDetect, browserToolCheck, browserToolPolicy, browserToolInstall, browserToolAccept, browserToolUninstall,
     hypemanDetect, hypemanLocationSet, hypemanEnable, hypemanInstall, hypemanUninstall],
@@ -208,7 +254,8 @@ export const api: PackageApi<BrowserContext, keyof typeof topics> = {
     ctx.system.onChange = () => publish("browser_system_changed");
     ctx.backend.onChange = () => publish("browser_sessions_changed");
     ctx.profiles.onChange = () => publish("browser_profiles_changed");
-    return () => { ctx.system.onChange = undefined; ctx.backend.onChange = undefined; ctx.profiles.onChange = undefined; };
+    ctx.profiles.onHandoffChange = () => publish("browser_handoffs_changed");
+    return () => { ctx.system.onChange = undefined; ctx.backend.onChange = undefined; ctx.profiles.onChange = undefined; ctx.profiles.onHandoffChange = undefined; };
   } },
   async createContext(env) { const system = new BrowserSystem(env); await system.start(); const backend = new Backend(system); const profiles = new Profiles(backend, system, env); await profiles.start(); return { backend, system, profiles }; },
   prepareCloseContext(ctx) { ctx.profiles.prepareClose(); },

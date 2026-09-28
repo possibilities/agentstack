@@ -4,12 +4,19 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import { BrowserSystem } from "../src/system.js";
 import { Backend, backendSession } from "../src/backend.js";
 import { handleProvider } from "../src/provider.js";
 import { prepareBrowserConfig } from "../src/config.js";
 import { Profiles } from "../src/profiles.js";
-import { botMcpUrl, botInstance, type InvocationContext } from "@agentstack/api";
+import type { ManagedGate } from "../src/gate.js";
+const fakeGate = (cdp: string, neko: string): ManagedGate => ({
+  cdpUrl: cdp, observationUrl: neko, async start() {}, async close() {}, hold() {}, async drain() {}, resume() {}, unknownDrain() {},
+  async grantHuman() { return neko + "/human"; }, async revokeHuman() {},
+});
+import { botMcpUrl, botInstance, serveSocket, socketPath, operation, type InvocationContext } from "@agentstack/api";
 import { browserProfileList, browserProfileCreate, browserProfileDelete, browserControllerList, browserControllerSelect } from "../api.js";
 
 type Item = Record<string, unknown>;
@@ -122,7 +129,7 @@ test("persistent CDP failure retains a Running instance and volume rather than f
 test("Bot defaults are exclusive, proof-fenced, retained on deletion, and not deleted by controller close", async () => {
   const s = await fixture(); const backend = new Backend(s.system, async () => undefined);
   let bots = [{ id: "bot-a", url: "unix:///private/test-a", state: "running", recoveryIssue: null }];
-  const profiles = new Profiles(backend, s.system, s.env, async () => bots);
+  const profiles = new Profiles(backend, s.system, s.env, async () => bots, fakeGate);
   try {
     await s.system.setHypemanLocation(s.root); await s.system.enableHypeman(s.root); await profiles.start(false);
     await profiles.tick();
@@ -165,7 +172,7 @@ test("an incomplete launch retains its lease and can be reconciled without a pro
 test("failed controller selection reports unknown and fences uncertain profile deletion", async () => {
   const s = await fixture(); const backend = new Backend(s.system, async () => undefined);
   const bot = { id: "bot-a", url: "unix:///test-bot", state: "running", recoveryIssue: null };
-  const profiles = new Profiles(backend, s.system, s.env, async () => [bot]);
+  const profiles = new Profiles(backend, s.system, s.env, async () => [bot], fakeGate);
   try {
     await s.system.setHypemanLocation(s.root); await s.system.enableHypeman(s.root); await profiles.start(false); await profiles.tick();
     const extra = await profiles.create(bot.id, "extra"); await profiles.ensure(extra.id);
@@ -186,7 +193,7 @@ test("failed controller selection reports unknown and fences uncertain profile d
 test("MCP management scopes reads and every mutation to a verified live Bot launch", async () => {
   const s = await fixture(); const backend = new Backend(s.system, async () => undefined);
   const bots = ["a", "b"].map((id) => ({ id, url: `unix:///bot-${id}`, state: "running", recoveryIssue: null as string | null }));
-  const profiles = new Profiles(backend, s.system, s.env, async () => bots);
+  const profiles = new Profiles(backend, s.system, s.env, async () => bots, fakeGate);
   const ctx = { backend, system: s.system, profiles };
   const invocation: InvocationContext = { transport: "mcp", botId: "a", instance: botInstance(bots[0]!.url), threadId: "main", sessionId: null };
   const receipts: Array<{ controller: string; revision: number }> = [];
@@ -229,6 +236,173 @@ test("MCP management scopes reads and every mutation to a verified live Bot laun
     for (const bot of bots) await profiles.releaseBot(bot.id);
     for (const profile of profiles.list()) await profiles.remove(profile.id);
     await profiles.close(); await backend.closeContext(); await s.close();
+  }
+});
+
+test("handoff admission, human revisions, retry-safe return, cancellation and restart stay profile scoped", async () => {
+  const s = await fixture(); const backend = new Backend(s.system, async () => undefined);
+  const bot = { id: "a", url: "unix:///bot-a", state: "running", recoveryIssue: null };
+  const invocation: InvocationContext = { transport: "mcp", botId: bot.id, instance: botInstance(bot.url), threadId: "main", sessionId: null };
+  const server = await serveSocket({ info: { name: "bots", description: "fixture", transportDescription: "fixture", path: socketPath("bots", s.env) }, context: {}, operations: [operation({
+    name: "chat_thread_read", description: "Sanctioned thread fixture.", input: z.object({ botId: z.string(), threadId: z.string() }), output: z.object({ thread: z.object({ id: z.string() }) }),
+    async call(_ctx, input) { if (input.botId !== "a" || !["main", "child"].includes(input.threadId)) throw new Error("outside sanctioned lineage"); return { thread: { id: input.threadId } }; },
+  })] });
+  let blocked = false; let held = false; let revoked = 0; let granted = 0; let failResume = false;
+  const makeGate = (cdp: string, neko: string): ManagedGate => ({ ...fakeGate(cdp, neko), hold() { held = true; }, resume() { if (failResume) throw new Error("resume failed"); held = false; },
+    async drain() { if (blocked) throw new Error("drain pending"); }, async revokeHuman() { revoked++; }, async grantHuman() { granted++; return "http://human/grant"; } });
+  let profiles = new Profiles(backend, s.system, s.env, async () => [bot], makeGate);
+  try {
+    await s.system.setHypemanLocation(s.root); await s.system.enableHypeman(s.root); await profiles.start(false);
+    const own = await profiles.create("a", "own", true); await profiles.ensure(own.id);
+    const extra = await profiles.create("a", "other"); await profiles.ensure(extra.id);
+    const input = { profileId: own.id, requestId: randomUUID(), message: "Sign in" };
+    await assert.rejects(profiles.requestHandoff(input, { ...invocation, threadId: "foreign" }), /sanctioned/);
+    blocked = true;
+    let h = await profiles.requestHandoff(input, invocation);
+    assert.equal(h.state, "preparing"); assert.match(h.issue!, /drain pending/); assert.equal(held, true);
+    await assert.rejects(profiles.select("a", "later", own.id), /held/);
+    await assert.rejects(profiles.requestHandoff({ ...input, requestId: randomUUID() }, invocation), /unresolved/);
+    await assert.rejects(profiles.actHandoff("take", { id: h.id, expectedRevision: h.revision, requestId: randomUUID() }), /not awaiting/);
+    blocked = false;
+    h = await profiles.requestHandoff(input, invocation); assert.equal(h.state, "awaiting_human");
+    assert.equal((await profiles.requestHandoff(input, invocation)).id, h.id);
+    await assert.rejects(profiles.requestHandoff({ ...input, message: "different" }, invocation), /conflicts/);
+    await assert.rejects(profiles.actHandoff("take", { id: h.id, expectedRevision: h.revision - 1, requestId: randomUUID() }), /stale/);
+    const take = { id: h.id, expectedRevision: h.revision, requestId: randomUUID() };
+    await assert.rejects(profiles.actHandoff("take", take, invocation), /local operator/);
+    const taken = await profiles.actHandoff("take", take); h = taken.handoff;
+    assert.equal(h.state, "human_controlling"); assert.ok(taken.controlUrl); assert.equal(granted, 1);
+    await profiles.actHandoff("take", take); assert.equal(granted, 1);
+    await assert.rejects(profiles.actHandoff("cancel", { id: h.id, expectedRevision: h.revision, requestId: randomUUID() }, invocation), /before human take/);
+    const finish = { id: h.id, expectedRevision: h.revision, requestId: randomUUID(), outcome: "completed" as const, note: "Signed in" };
+    const published: string[] = [];
+    profiles.onHandoffChange = () => { published.push(profiles.handoffs(null).find((row) => row.id === h.id)!.state); };
+    failResume = true;
+    h = (await profiles.actHandoff("finish", finish)).handoff;
+    assert.equal(h.state, "returning"); assert.equal(h.resolvedAt, null); assert.equal(held, true);
+    assert.match(h.issue!, /resume failed/); assert.ok(!published.includes("resolved"));
+    failResume = false;
+    const path = join(s.system.root, "profiles.json");
+    const saved = await readFile(path, "utf8");
+    await rm(path); await mkdir(path);
+    await assert.rejects(profiles.actHandoff("finish", finish));
+    assert.equal(profiles.handoffs(null).find((row) => row.id === h.id)!.state, "returning");
+    assert.equal(held, true); assert.ok(!published.includes("resolved"));
+    await rm(path, { recursive: true }); await writeFile(path, saved);
+    h = (await profiles.actHandoff("finish", finish)).handoff;
+    assert.equal(h.state, "resolved"); assert.equal(h.outcome, "completed"); assert.equal(held, false); assert.ok(revoked >= 2);
+    assert.deepEqual((await profiles.actHandoff("finish", finish)).handoff, h);
+    assert.equal(published.filter((state) => state === "resolved").length, 1);
+    profiles.onHandoffChange = undefined;
+    await assert.rejects(profiles.actHandoff("finish", { ...finish, note: "changed" }), /conflicts/);
+    h = await profiles.requestHandoff({ ...input, requestId: randomUUID() }, invocation);
+    h = (await profiles.actHandoff("finish", { id: h.id, expectedRevision: h.revision, requestId: randomUUID(), outcome: "skipped" })).handoff;
+    assert.equal(h.outcome, "skipped");
+    h = await profiles.requestHandoff({ ...input, requestId: randomUUID() }, invocation);
+    await assert.rejects(profiles.actHandoff("cancel", { id: h.id, expectedRevision: h.revision, requestId: randomUUID() }, { ...invocation, threadId: "child" }), /another Chat/);
+    h = (await profiles.actHandoff("cancel", { id: h.id, expectedRevision: h.revision, requestId: randomUUID() }, invocation)).handoff;
+    assert.equal(h.outcome, "cancelled");
+    h = await profiles.requestHandoff({ ...input, requestId: randomUUID() }, invocation);
+    // An independent controller can still select another profile. No installed
+    // daemon exists in this fixture, so its honest outcome is unknown.
+    assert.equal((await profiles.select("a", "other", extra.id)).state, "unknown");
+    const proof = botMcpUrl("http://127.0.0.1/browser", "a", bot.url, s.env);
+    await assert.rejects(profiles.launch(proof, "new-controller"), /held|not ready/);
+    // Crash-style reconstruction: no close() and no implicit resolution.
+    profiles = new Profiles(backend, s.system, s.env, async () => [bot], makeGate);
+    await profiles.start(false); await profiles.ensure(own.id);
+    const restored = profiles.handoffs(null).find((row) => row.id === h.id)!;
+    assert.equal(restored.state, "awaiting_human"); assert.match(restored.issue!, /Owner restarted/);
+    await assert.rejects(profiles.select("a", "later", own.id), /held/);
+    await assert.rejects(profiles.remove(own.id), /unresolved/);
+  } finally {
+    // Native resource cleanup is exact and independent of the test handoff.
+    for (const r of await backend.list()) if (r.target) await backend.close({ session: r.session, lease: r.lease, browserProfile: r.profile, browserTarget: r.target.name, backend: "local" });
+    await backend.closeContext(); await server.close(); await s.close();
+  }
+});
+
+test("handoff replacement revokes grants, preserves unknown drain, and activates the requested target only after drain", async () => {
+  const s = await fixture(); const backend = new Backend(s.system, async () => undefined);
+  const bot = { id: "a", url: "unix:///bot-a", state: "running", recoveryIssue: null };
+  const invocation: InvocationContext = { transport: "mcp", botId: bot.id, instance: botInstance(bot.url), threadId: "main", sessionId: null };
+  const server = await serveSocket({ info: { name: "bots", description: "fixture", transportDescription: "fixture", path: socketPath("bots", s.env) }, context: {}, operations: [operation({
+    name: "chat_thread_read", description: "Fixture.", input: z.object({ botId: z.string(), threadId: z.string() }), output: z.object({ thread: z.object({ id: z.string() }) }),
+    async call(_ctx, input) { return { thread: { id: input.threadId } }; },
+  })] });
+  const events: string[] = [];
+  const cdp = createServer((req, res) => {
+    if (req.url?.endsWith("/json/list")) res.end(JSON.stringify([{ id: "requested-tab" }]));
+    else if (req.url?.endsWith("/json/activate/requested-tab")) { events.push("activate"); res.end("Target activated"); }
+    else res.writeHead(404).end();
+  });
+  await new Promise<void>((resolve) => cdp.listen(0, "127.0.0.1", resolve));
+  const address = cdp.address(); assert.ok(address && typeof address !== "string");
+  let generation = 1; let blocked = false; let grants = 0; let originReads = 0; let verified: (() => void) | null = null;
+  const launch = backend.launch.bind(backend);
+  backend.launch = async (...args) => ({ ...await launch(...args), cdpUrl: `http://127.0.0.1:${address.port}/${generation}` });
+  const profiles = new Profiles(backend, s.system, s.env, async () => { if (++originReads === 3) verified?.(); return [bot]; }, (url, neko) => {
+    const epoch = generation; let unknown = false;
+    return { ...fakeGate(url, neko),
+      unknownDrain() { unknown = true; },
+      async drain() { events.push("drain"); if (blocked || unknown) throw new Error("drain unknown"); },
+      async revokeHuman() { events.push(`revoke:${epoch}`); },
+      async grantHuman() { grants++; events.push("grant"); return `http://human/${epoch}`; },
+    };
+  });
+  try {
+    await s.system.setHypemanLocation(s.root); await s.system.enableHypeman(s.root); await profiles.start(false);
+    const profile = await profiles.create(bot.id, "handoff"); await profiles.ensure(profile.id);
+    const removed = await profiles.create(bot.id, "deletion race"); await profiles.ensure(removed.id);
+    const get = backend.get.bind(backend);
+    let deletionEntered!: () => void; let continueDeletion!: () => void;
+    const entered = new Promise<void>((resolve) => { deletionEntered = resolve; });
+    const proceed = new Promise<void>((resolve) => { continueDeletion = resolve; });
+    backend.get = async (resource) => { if (resource === `profile:${removed.id}`) { deletionEntered(); await proceed; } return get(resource); };
+    const deletion = profiles.remove(removed.id); await entered;
+    originReads = 0;
+    const checked = new Promise<void>((resolve) => { verified = resolve; });
+    const racing = profiles.requestHandoff({ profileId: removed.id, requestId: randomUUID(), message: "Too late" }, invocation);
+    const refused = assert.rejects(racing, /does not belong/);
+    // origin() performs two Bot reads; the third occurs inside the lifecycle
+    // lock. Let origin finish, then release deletion without waiting for it.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    continueDeletion(); await deletion; await checked; await refused;
+    backend.get = get; verified = null;
+    assert.ok(!profiles.handoffs(null).some((h) => h.profileId === removed.id));
+    const other = await profiles.create(bot.id, "request collision"); await profiles.ensure(other.id);
+    const sameRequest = randomUUID();
+    const requests = await Promise.allSettled([profile.id, other.id].map((profileId) => profiles.requestHandoff({ profileId, requestId: sameRequest, message: "Same request" }, invocation)));
+    assert.equal(requests.filter((r) => r.status === "fulfilled").length, 1);
+    assert.match(String((requests.find((r) => r.status === "rejected") as PromiseRejectedResult).reason), /conflicts/);
+    const admitted = profiles.handoffs(null).find((h) => h.requestId === sameRequest)!;
+    await profiles.actHandoff("cancel", { id: admitted.id, expectedRevision: admitted.revision, requestId: randomUUID() }, invocation);
+    let h = await profiles.requestHandoff({ profileId: profile.id, targetId: "requested-tab", message: "Help", requestId: randomUUID() }, invocation);
+    events.length = 0;
+    const take = { id: h.id, expectedRevision: h.revision, requestId: randomUUID() };
+    assert.equal((await profiles.actHandoff("take", take)).controlUrl, "http://human/1");
+    assert.deepEqual(events, ["drain", "revoke:1", "activate", "grant"]);
+    generation++;
+    await profiles.ensure(profile.id);
+    assert.ok(events.includes("revoke:1"));
+    assert.equal((await profiles.actHandoff("take", take)).controlUrl, "http://human/2", "retry replaces the revoked URL");
+    assert.equal(grants, 2);
+    h = profiles.handoffs(null).find((row) => row.id === h.id)!;
+    await profiles.actHandoff("finish", { id: h.id, expectedRevision: h.revision, requestId: randomUUID(), outcome: "completed" });
+    blocked = true;
+    const request = { profileId: profile.id, message: "Unknown work", requestId: randomUUID() };
+    h = await profiles.requestHandoff(request, invocation); assert.equal(h.quiesced, false);
+    generation++; blocked = false;
+    await profiles.ensure(profile.id);
+    h = await profiles.requestHandoff(request, invocation);
+    assert.equal(h.state, "preparing"); assert.match(h.issue!, /drain unknown/);
+    h = (await profiles.actHandoff("cancel", { id: h.id, expectedRevision: h.revision, requestId: randomUUID() }, invocation)).handoff;
+    assert.equal(h.state, "returning"); assert.match(h.issue!, /drain unknown/);
+    await profiles.releaseBot(bot.id);
+    await assert.rejects(profiles.actHandoff("cancel", { id: h.id, expectedRevision: h.revision, requestId: randomUUID() }, invocation), /another Chat or Bot launch/);
+  } finally {
+    for (const r of await backend.list()) if (r.target) await backend.close({ session: r.session, lease: r.lease, browserProfile: r.profile, browserTarget: r.target.name, backend: "local" });
+    await backend.closeContext(); await server.close(); await new Promise<void>((resolve) => cdp.close(() => resolve())); await s.close();
   }
 });
 

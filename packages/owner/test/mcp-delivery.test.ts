@@ -77,6 +77,13 @@ test("event values start a turn only on a loaded descendant of the Bot's sanctio
     events: { topics: { worker_changed: "Worker changed." }, scope: { description: "Worker ID.", example: workerId, required: false, valid: (_ctx, id) => id === workerId } },
   });
   const subscriptions = createMcpEventSubscriptions(env);
+  let handback: unknown = null;
+  const browser = await serveSocket({
+    info: { name: "browser", description: "Browser.", transportDescription: "Socket.", path: socketPath("browser", env) }, context: {},
+    operations: [operation({ name: "browser_handoff_completion", description: "Completion only.", input: z.object({ botId: z.string(), threadId: z.string(), requestId: z.string() }), output: z.any(), annotations: { readOnlyHint: true },
+      async call(_ctx, input, caller) { assert.equal(caller?.botId, input.botId); assert.equal(caller?.threadId, input.threadId); assert.equal(caller?.instance, botInstance(endpoint)); return { result: handback }; } })],
+    events: { topics: { browser_handoffs_changed: "Handoff invalidation." } },
+  });
   const target: EventTarget = { botId: "bot-1", instance: botInstance(endpoint), threadId: "child" };
   const invocation: InvocationContext = { transport: "mcp", ...target, sessionId: "session-1" };
   try {
@@ -113,8 +120,22 @@ test("event values start a turn only on a loaded descendant of the Bot's sanctio
     for (let i = 0; i < 100 && subscriptions.status(invocation).subscriptions.find((item) => item.id === workerSub.subscription.id)?.state !== "error"; i++) await pause(10);
     assert.equal(subscriptions.status(invocation).subscriptions.find((item) => item.id === workerSub.subscription.id)?.state, "error");
     assert.equal(turns.length, 2, "a Worker ownership change must not wake the previous Bot thread");
+    const handoffChoice = { topic: "browser_handoffs_changed", readOperation: "browser_handoff_completion", readArguments: { botId: "bot-1", threadId: "child", requestId: workerId } };
+    await assert.rejects(subscriptions.subscribe("browser", { ...handoffChoice, readArguments: { ...handoffChoice.readArguments, threadId: "main" } }, invocation), /originating Chat/);
+    const subscribed = await subscriptions.subscribe("browser", handoffChoice, invocation);
+    assert.deepEqual(subscribed.value, { result: null }, "subscribe before handoff admission has a stable empty initial value");
+    for (const _phase of ["preparing", "awaiting_human", "human_controlling", "returning"]) { browser.publish?.("browser_handoffs_changed"); await pause(20); }
+    assert.equal(turns.length, 2, "intermediate handoff states do not wake the Chat");
+    handback = { state: "resolved", outcome: "completed", note: "Signed in" }; browser.publish?.("browser_handoffs_changed");
+    await until(() => turns.length === 3);
+    assert.equal(turns[2]?.threadId, "child"); assert.match(turns[2]?.input[0]?.text ?? "", /"outcome":"completed"/);
+    await until(() => typeof subscriptions.status(invocation).subscriptions.find((s) => s.id === subscribed.subscription.id)?.lastDeliveredAt === "number");
+    const completedBeforeSubscribe = await subscriptions.subscribe("browser", { ...handoffChoice, readArguments: { ...handoffChoice.readArguments, requestId: "22222222-2222-4222-8222-222222222222" } }, invocation);
+    assert.deepEqual(completedBeforeSubscribe.value, { result: handback }, "a completion before subscribe is returned initially, never lost awaiting a future notice");
+    assert.equal(turns.length, 3);
   } finally {
     await subscriptions.close();
+    await browser.close();
     await workers.close();
     await sample.close();
     await bots.close();

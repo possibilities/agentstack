@@ -1,4 +1,4 @@
-# 90. Give Bots durable profiles and independent browser controllers
+# 91. Give Bots durable profiles and independent browser controllers
 
 Status: accepted, 2026-09-27. Supersedes [ADR 0076](0076-internal-disposable-browser-lifecycle.md); extends [ADR 0014](0014-recovery-and-shutdown-order.md).
 

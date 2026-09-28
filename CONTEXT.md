@@ -18,6 +18,10 @@ A durable, empty-at-creation Chrome user-data volume with one owner-supervised K
 
 An agent-browser session in a private Bot-launch namespace, bound to one Browser profile at a time. The private signed launch configuration establishes Bot identity; an arbitrary session name does not. Management selects the profile and queues native reconnect with that controller's commands, invalidating prior refs. Page and tab operations remain in agent-browser. Closing a controller disconnects it without deleting or stopping its profile. Other Bot and controller sessions remain independent. _Avoid_: browser ownership by session name, human handoff, global interaction lock
 
+## Browser handoff
+
+A durable request from a verified Bot Chat for human help with an entire Browser profile, including all its tabs and managed controllers. One unresolved handoff holds managed automation until drain is confirmed, human input is revoked, and controller refs are invalidated on return. Human completion or skip is a report that the agent verifies with a fresh snapshot; disconnect and timeout never resolve it. The originating Chat watches its completion-only read through the existing MCP event subscription service. _Avoid_: tab lease, advisory pause, continuation queue, `readOnly=1` as enforcement
+
 ## Transport
 
 A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are the local control transports. `mcp` exposes operations over loopback HTTP through the running socket Package APIs and, under the owner, offers generated agent-facing event tools. `websocket` exposes operations and event subscriptions over one shared loopback listener and one package-addressed client connection, forwarding to those same socket Package APIs; each subscription has its own identifier and optional scope. An optional `http` Transport declares explicit JSON or static routes on separate owner-lifecycle listeners; it does not make other Package API operations remotely available. MCP and WebSocket may select a positive list of operations independently, while existing unrestricted declarations retain all socket operations.

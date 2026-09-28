@@ -10,9 +10,19 @@ mcp:
     - browser_profile_delete
     - browser_controller_list
     - browser_controller_select
+    - browser_handoff_request
+    - browser_handoff_get
+    - browser_handoff_list
+    - browser_handoff_completion
+    - browser_handoff_cancel
 websocket:
   description: Loopback management operations and change notices for future operator clients.
   operations:
+    - browser_handoff_get
+    - browser_handoff_list
+    - browser_handoff_completion
+    - browser_handoff_take
+    - browser_handoff_finish
     - browser_status
     - browser_profile_list
     - browser_profile_create

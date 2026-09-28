@@ -194,7 +194,9 @@ export class McpEventSubscriptions {
     return (async () => {
       preventThreadFeedback(state.pkg, state.topic, state.scope, state.botId);
       await this.authorizeRead?.(state);
-      return socketCall(socketPath(state.pkg, this.env), "tools/call", { name: state.readOperation, arguments: state.readArguments }, { timeoutMs: 10_000 });
+      return socketCall(socketPath(state.pkg, this.env), "tools/call", { name: state.readOperation, arguments: state.readArguments,
+        ...(state.pkg === "browser" ? { invocation: { transport: "mcp", botId: state.botId, instance: state.instance, threadId: state.threadId, sessionId: null } } : {}),
+      }, { timeoutMs: 10_000 });
     })();
   }
 
