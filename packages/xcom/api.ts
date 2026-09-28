@@ -15,6 +15,7 @@ const filters = z.strictObject({
   archivedFrom: isoDay.optional().describe("Inclusive first-archived date (UTC), not post creation date."),
   archivedTo: isoDay.optional().describe("Inclusive first-archived date (UTC)."),
   hasArticle: z.boolean().optional().describe("Limit to posts with a fetched full article body, or without one. For article-only search this is implicit."),
+  articleState: z.enum(["fetched", "unfetched", "none"]).optional().describe("Fetched full article, advertised article with body still missing, or post without an article. Do not combine with hasArticle."),
 });
 const pagination = z.strictObject({ limit: z.number().int().min(1).max(50).default(10), offset: z.number().int().min(0).max(1_000_000).default(0) });
 const searchInput = filters.extend({
@@ -32,19 +33,23 @@ function checkFilters(input: Filters): void {
   if (input.dateFrom && input.dateTo && input.dateFrom > input.dateTo) throw new Error("dateFrom is later than dateTo");
   if (input.archivedFrom && input.archivedTo && input.archivedFrom > input.archivedTo) throw new Error("archivedFrom is later than archivedTo");
   if (input.author?.replace(/^@/, "").trim() === "") throw new Error("author handle cannot be empty");
+  if (input.articleState && input.hasArticle !== undefined) throw new Error("select articleState or hasArticle, not both");
 }
 
 export const api: PackageApi<XcomContext> = {
   operations: [
     operation({ name: "xcom_status", description: "Inspect archive counts, active sync, last head/backfill stop reasons and saved cursors. Coverage is best-effort, not a complete following graph or proof of every post in the two-month window.",
-      input: z.strictObject({}), output: z.object({ database: z.string(), auto_sync: z.boolean(), tweets: z.number(), articles: z.number(), users: z.number(),
+      input: z.strictObject({}), output: z.object({ database: z.string(), auto_sync: z.boolean(), tweets: z.number(), articles: z.number(),
+        unfetched_articles: z.number(), unavailable_articles: z.number(), users: z.number(),
         sync: z.object({ running: z.boolean(), mode: z.enum(["head", "backfill", "articles"]).nullable(), started_at: z.string().nullable(),
           last_finished_at: z.string().nullable(), last_error: z.string().nullable(), pages: z.number(), new_posts: z.number(), new_articles: z.number() }),
         head: z.object({ started_at: z.string().nullable(), cursor: z.string().nullable(), pages: z.number(), last_start: z.string().nullable(), stop_reason: z.string().nullable() }),
         backfill: z.object({ started_at: z.string().nullable(), cursor: z.string().nullable(), pages: z.number(), last_start: z.string().nullable(), stop_reason: z.string().nullable() }) }), annotations: read,
       async call(ctx) {
         const scan = ctx.store.scan(1), head = ctx.store.scan(2);
+        const articleCounts = ctx.store.articleCounts();
         return { database: ctx.store.path, auto_sync: ctx.autoSync, tweets: ctx.store.count("tweets"), articles: ctx.store.count("articles"), users: ctx.store.count("users"),
+          unfetched_articles: articleCounts.unfetched, unavailable_articles: articleCounts.unavailable,
           sync: { ...ctx.sync.state },
           head: { started_at: head?.started_at ?? null, cursor: head?.cursor ?? null, pages: head?.pages ?? 0,
             last_start: ctx.store.meta("last_head_start"), stop_reason: ctx.store.meta("last_head_stop_reason") },
@@ -92,6 +97,12 @@ export const api: PackageApi<XcomContext> = {
         author_handle: z.string().nullable(), created_at: z.string().nullable(), archived_at: z.string(), source_uri: z.string(),
         content: z.string().nullable(), article_title: z.string().nullable() })), next_offset: z.number().nullable() }), annotations: read,
       async call(ctx, { limit, offset, ...selected }) { checkFilters(selected); return ctx.store.list(selected, limit, offset); } }),
+    operation({ name: "xcom_articles_pending", description: "Page archived posts advertising X Articles whose full bodies have not been fetched, with author/date filters and last unavailable attempt. This is a research coverage view, not proof the article is still accessible; use xcom_articles_sync to retry eligible bodies.",
+      input: filters.omit({ hasArticle: true, articleState: true }).extend(pagination.shape),
+      output: z.object({ results: z.array(z.object({ tweet_id: z.string(), author_id: z.string().nullable(),
+        author_handle: z.string().nullable(), created_at: z.string().nullable(), archived_at: z.string(), title: z.string(),
+        attempted_at: z.string().nullable(), error: z.string().nullable(), source_uri: z.string() })), next_offset: z.number().nullable() }), annotations: read,
+      async call(ctx, { limit, offset, ...selected }) { checkFilters(selected); return ctx.store.articlesPending(selected, limit, offset); } }),
     operation({ name: "xcom_get", description: "Read one archived tweet by stable ID, including original feed JSON and the full X Article body/JSON when fetched. This never fetches from X; absent IDs fail rather than creating records.",
       input: z.strictObject({ tweetId: z.string().min(1).max(100) }), output: z.object({ tweet_id: z.string(), source_uri: z.string(),
         author_handle: z.string().nullable(), created_at: z.string().nullable(), content: z.string().nullable(), payload: z.unknown(),

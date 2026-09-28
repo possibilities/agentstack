@@ -7,7 +7,8 @@ export type Post = Record<string, unknown> & { id: string };
 export type Scan = { id: number; started_at: string; cutoff: string; mode: string; cursor: string | null;
   visited: string; pages: number; known_streak: number; old_streak: number };
 export type Filters = { author?: string; authorId?: string; dateFrom?: string; dateTo?: string;
-  archivedFrom?: string; archivedTo?: string; hasArticle?: boolean };
+  archivedFrom?: string; archivedTo?: string; hasArticle?: boolean;
+  articleState?: "fetched" | "unfetched" | "none" };
 export type Scope = "all" | "tweets" | "articles";
 export type Hit = { tweet_id: string; kind: "tweet" | "article"; author_id: string | null;
   author_handle: string | null; created_at: string | null; archived_at: string;
@@ -227,6 +228,28 @@ export class ArchiveStore {
       ORDER BY tried.attempted_at IS NOT NULL, t.created_at DESC, tried.attempted_at, t.id DESC LIMIT ?`)
       .all(new Date(now.getTime() - 24 * 3_600_000).toISOString(), limit) as { id: string }[]).map(row => row.id);
   }
+  articleCounts(): { unfetched: number; unavailable: number } {
+    return this.db.prepare(`SELECT
+      count(*) AS unfetched, count(tried.tweet_id) AS unavailable
+      FROM tweets t LEFT JOIN articles a ON a.tweet_id=t.id
+      LEFT JOIN article_attempts tried ON tried.tweet_id=t.id
+      WHERE a.tweet_id IS NULL AND json_type(t.payload_json, '$.articleTitle')='text'`)
+      .get() as { unfetched: number; unavailable: number };
+  }
+  articlesPending(filters: Filters, limit: number, offset: number) {
+    const { where, args } = predicates({ ...filters, articleState: undefined, hasArticle: undefined });
+    const rows = this.db.prepare(`SELECT t.id AS tweet_id, t.author_id, t.author_handle, t.created_at,
+      t.archived_at, json_extract(t.payload_json, '$.articleTitle') AS title,
+      tried.attempted_at, tried.error, 'https://x.com/i/status/' || t.id AS source_uri
+      FROM tweets t LEFT JOIN articles a ON a.tweet_id=t.id
+      LEFT JOIN article_attempts tried ON tried.tweet_id=t.id
+      WHERE a.tweet_id IS NULL AND json_type(t.payload_json, '$.articleTitle')='text' ${where}
+      ORDER BY t.created_at DESC, t.id DESC LIMIT ? OFFSET ?`).all(...args, limit + 1, offset) as Array<{
+        tweet_id: string; author_id: string | null; author_handle: string | null;
+        created_at: string | null; archived_at: string; title: string;
+        attempted_at: string | null; error: string | null; source_uri: string }>;
+    return { results: rows.slice(0, limit), next_offset: rows.length > limit ? offset + limit : null };
+  }
   saveArticle(id: string, post: Post, now: Date): void {
     const title = post.articleTitle, text = post.articleText;
     if (String(post.id) !== id || typeof title !== "string" || typeof text !== "string" || !text.trim())
@@ -314,6 +337,9 @@ function predicates(filters: Filters): { where: string; args: string[] } {
   if (filters.archivedFrom) { parts.push("t.archived_at >= ?"); args.push(filters.archivedFrom); }
   if (filters.archivedTo) { parts.push("substr(t.archived_at, 1, 10) <= ?"); args.push(filters.archivedTo); }
   if (filters.hasArticle !== undefined) parts.push(filters.hasArticle ? "a.tweet_id IS NOT NULL" : "a.tweet_id IS NULL");
+  if (filters.articleState === "fetched") parts.push("a.tweet_id IS NOT NULL");
+  if (filters.articleState === "unfetched") parts.push("a.tweet_id IS NULL AND json_type(t.payload_json, '$.articleTitle')='text'");
+  if (filters.articleState === "none") parts.push("a.tweet_id IS NULL AND json_type(t.payload_json, '$.articleTitle') IS NULL");
   return { where: parts.map(part => `AND ${part}`).join(" "), args };
 }
 

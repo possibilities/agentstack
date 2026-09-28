@@ -69,6 +69,7 @@ test("the api package serves structured documents for every workspace package", 
       xcom.operations.map(op => op.name).filter(name => name !== "xcom_reindex"));
     assert.ok(Object.hasOwn(xcom.operations.find(op => op.name === "xcom_search")?.inputSchema.properties ?? {}, "scope"));
     assert.ok(Object.hasOwn(xcom.operations.find(op => op.name === "xcom_users")?.outputSchema.properties ?? {}, "results"));
+    assert.ok(xcom.transports.find(t => t.type === "mcp")!.operations.includes("xcom_articles_pending"));
     const responseLength = JSON.stringify({ id: 1, result: snapshot }).length + 1;
     // Proc and authenticated UIX add schemas; retain a large margin below the four-million-byte frame limit.
     assert.ok(responseLength < 900_000, `discovery snapshot exceeds the socket response budget: ${responseLength} characters`);

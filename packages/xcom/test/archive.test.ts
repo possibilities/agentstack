@@ -30,7 +30,12 @@ test("full articles have a separate FTS projection, rich filters, user observati
     const head = store.begin(2, now, twoMonthsAgo(now));
     store.savePage(head, [post("100", "database tutorial", undefined, { articleTitle: "Long Read" }),
       post("200", "database update", "2026-09-26T12:00:00Z", { author: { id: "8", screenName: "other", name: "Other" } })], null, now);
+    assert.equal((await call(store, "xcom_articles_pending", { authorId: "7" })).results[0].title, "Long Read");
+    assert.equal((await call(store, "xcom_search", { query: "database", articleState: "unfetched" })).results.length, 1);
+    assert.equal((await call(store, "xcom_search", { query: "database", articleState: "none" })).results.length, 1);
     store.saveArticle("100", { id: "100", articleTitle: "Vector systems", articleText: "Neural retrieval through dense representations" }, now);
+    assert.equal((await call(store, "xcom_articles_pending", {})).results.length, 0);
+    assert.equal((await call(store, "xcom_search", { query: "database", articleState: "fetched" })).results.length, 1);
     assert.equal(store.count("tweets_fts"), 2);
     assert.equal(store.count("users"), 2);
     const tweet = await call(store, "xcom_search", { query: "database", scope: "tweets", authorId: "7", dateFrom: "2026-09-01" });
@@ -52,7 +57,13 @@ test("full articles have a separate FTS projection, rich filters, user observati
     store.db.prepare("DELETE FROM articles WHERE tweet_id=?").run("100");
     assert.equal((await call(store, "xcom_search", { query: "corpus", scope: "articles" })).results.length, 0);
     assert.equal((await call(store, "xcom_search", { query: "database", scope: "tweets" })).results.length, 2);
+    assert.equal((await call(store, "xcom_articles_pending", {})).results.length, 1);
+    assert.equal(store.articleCounts().unfetched, 1);
+    store.articleMissing("100", "not_found", now);
+    assert.equal((await call(store, "xcom_articles_pending", {})).results[0].error, "not_found");
+    assert.equal(store.pendingArticles(10, now).length, 0);
     await assert.rejects(call(store, "xcom_search", { query: "database", dateFrom: "2026-09-30", dateTo: "2026-09-01" }), /later/);
+    await assert.rejects(call(store, "xcom_list", { hasArticle: true, articleState: "fetched" }), /not both/);
   });
 });
 
