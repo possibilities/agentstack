@@ -34,11 +34,42 @@ mcp:
     - recovery_online
     - recovery_execute
     - doctor
-  events: all
-  description: HTTP MCP operations forwarded to the Brain socket.
+  events: []
+  description: HTTP MCP operations forwarded to the Brain socket. Change notices are not offered to agents.
 websocket:
-  operations: *public_operations
+  operations:
+    - brain_status
+    - jobs_reveal
+    - stats
+    - search
+    - context
+    - get
+    - tags
+    - submit
+    - delete
+    - retag
+    - jobs_list
+    - jobs_show
+    - jobs_run
+    - jobs_stats
+    - jobs_retry
+    - jobs_cancel
+    - jobs_exclude
+    - sources_list
+    - sources_show
+    - sources_status
+    - sources_apply
+    - sources_sync
+    - sources_pause
+    - sources_resume
+    - backup_create
+    - backup_verify
+    - recovery_import
+    - recovery_online
+    - recovery_execute
+    - doctor
+    - share_read_states
   events: all
-  description: Loopback WebSocket operations forwarded to the Brain socket.
+  description: Loopback WebSocket operations forwarded to the Brain socket, with ledger, source and index change notices for the UIX Brain space.
 http:
   description: Authenticated versioned JSON routes for device shares on a separate listener; only the declared share operations are available.

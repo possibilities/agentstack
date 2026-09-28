@@ -9,6 +9,8 @@ import { scrapeCallError } from "./scrape";
 import type { ScrapeCanaryRun, ScrapePreset, ScrapeQueue, ScrapeReplay, ScrapeStatus } from "./types";
 import type { AgentBrowserInstallation, AgentBrowserStatus, BrowserController, BrowserHandoff, BrowserProfile, BrowserStatus, BrowserToolchain, HypemanInstallation } from "./types";
 import type { Account, AttentionItem, AttentionMessage, AttentionPage, AttentionRun, AttentionStatus, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, OwnerResources, OwnerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RoleLaunchPreview, RolePreview, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerListItem, WorkerLogin, WorkerRuntime, WorkerStatus } from "./types";
+import { brainCallError, jobViews, mergeJobs, submissionLabel, terminalStates, type BrainJobView, type CallError } from "./brain";
+import type { BrainAdmission, BrainJob, BrainJobRecord, BrainJobStats, BrainShareState, BrainSource, BrainStats, BrainStatus, BrainTag } from "./types";
 
 export type StackState = Snapshot & {
   access: Resource<AccessSnapshot>;
@@ -79,7 +81,29 @@ export type StackState = Snapshot & {
   browserControllers: Resource<BrowserController[]>;
   browserHandoffs: Resource<BrowserHandoff[]>;
   browserToolchain: Resource<BrowserToolchain>;
+  brainStatus: Resource<BrainStatus>;
+  brainStats: Resource<BrainStats>;
+  brainTags: Resource<BrainTag[]>;
+  brainJobStats: Resource<BrainJobStats>;
+  /** The Jobs window's tab and optional Run; `brainJobs.data` says which one its list answers. */
+  brainJobView: { view: BrainJobView; run: number | null };
+  brainJobs: Resource<{ view: BrainJobView; run: number | null; jobs: BrainJob[] }>;
+  /** Diagnostics for jobs someone opened, re-read on each ledger notice. */
+  brainJobRecords: Record<number, Resource<BrainJobRecord>>;
+  brainSources: Resource<BrainSource[]>;
+  /** Bumped on each index_changed notice; the Search and Reader windows compare against it. */
+  brainIndexGeneration: number;
+  /** The document the Reader shows, and the chunk that led there. `seq` distinguishes repeated requests. */
+  brainReader: { seq: number; documentId: number; chunk: { chunk_id: number; start_char: number; end_char: number } | null } | null;
+  /** A query another surface asked Search to run. */
+  brainQuery: { seq: number; query: string } | null;
+  /** Latest known summary per `research-document:<id>` key, from searches, stats and the Reader. */
+  brainDocumentRecords: Record<string, Record<string, unknown>>;
+  /** Submissions made from this page. Labels exist only here: job reads never return submitted content. */
+  brainSubmissions: BrainSubmission[];
 };
+
+export type BrainSubmission = { key: string; label: string; kind: "url" | "text"; at: number; pending: boolean; admission: BrainAdmission | null; error: CallError | null; share: BrainShareState | null };
 
 /** A check this page started. `error` is set when the call itself failed; `uncertain` when it may still be running. */
 export type ScrapeCheck<T> = { startedAt: number; finishedAt: number | null; args: Record<string, unknown>; result: T | null; error: string | null; uncertain: boolean };
@@ -107,7 +131,8 @@ const itemPage = 100;
 export const contentDocumentLimit = 200;
 
 type ResourceKey = ContentKey | "access" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "role" | "rolePreview" | "roleLaunch" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts" | "signalStatus" | "scrapeStatus" | "scrapePresets" | "scrapeCanaries" | "scrapeQueue"
-  | "browserProfiles" | "browserControllers" | "browserHandoffs" | "browserToolchain";
+  | "browserProfiles" | "browserControllers" | "browserHandoffs" | "browserToolchain"
+  | "brainStatus" | "brainStats" | "brainTags" | "brainJobStats" | "brainJobs" | "brainSources";
 
 /** Which reads each browse write can change; each is re-read afterwards, since a lost acknowledgement may still have acted. */
 function browseReads(name: string): ResourceKey[] {
@@ -115,10 +140,13 @@ function browseReads(name: string): ResourceKey[] {
   if (name.startsWith("browser_profile_")) return ["browserProfiles", "browserToolchain"];
   return ["browserToolchain"];
 }
-
 const inferPage = 20;
 /** Jobs the Queue window lists; counts cover every job. */
 export const scrapeQueueLimit = 200;
+/** Jobs read per ledger state for the Jobs window. */
+export const brainJobLimit = 200;
+/** share_read_states' maximum ID count. */
+const brainShareIds = 50;
 /** notification_list's maximum page size. */
 const notifyPage = 25;
 
@@ -187,6 +215,10 @@ export class StackStore {
       scrapeChecks: { canary: null, replay: null }, scrapeCompose: null,
       browserProfiles: { data: null, error: null, at: null }, browserControllers: { data: null, error: null, at: null },
       browserHandoffs: { data: null, error: null, at: null }, browserToolchain: { data: null, error: null, at: null },
+      brainStatus: { data: null, error: null, at: null }, brainStats: { data: null, error: null, at: null }, brainTags: { data: null, error: null, at: null },
+      brainJobStats: { data: null, error: null, at: null }, brainJobView: { view: "attention", run: null }, brainJobs: { data: null, error: null, at: null },
+      brainJobRecords: {}, brainSources: { data: null, error: null, at: null }, brainIndexGeneration: 0, brainReader: null, brainQuery: null,
+      brainDocumentRecords: {}, brainSubmissions: [],
     };
     this.serverState = this.state;
     for (const account of snapshot.workerAccounts.data ?? []) if (this.catalogAccountAvailable(account.id)) this.catalogAvailable.add(account.id);
@@ -268,6 +300,13 @@ export class StackStore {
       if (topic === "browser_profiles_changed") { this.refresh("browserProfiles"); this.refresh("browserControllers"); }
       if (topic === "browser_system_changed") this.refresh("browserToolchain");
     }, ["browser_handoffs_changed", "browser_profiles_changed", "browser_system_changed"]);
+    // Brain's notices are invalidations only. Ledger notices follow every job transition while
+    // ingestion runs, so they stay out of the activity log.
+    open("brain", () => { this.refreshBrainLedger(); this.refresh("brainSources"); this.invalidateBrainIndex(); }, (topic) => {
+      if (topic === "jobs_changed") this.refreshBrainLedger();
+      if (topic === "sources_changed") this.refresh("brainSources");
+      if (topic === "index_changed") this.invalidateBrainIndex();
+    }, ["jobs_changed", "sources_changed", "index_changed"], { silent: ["jobs_changed"] });
     this.reconcileScoped();
     for (const id of this.workerWatchers.keys()) this.openWorkerChannel(id);
   }
@@ -376,6 +415,121 @@ export class StackStore {
       if (current()) set({ startedAt, finishedAt: Date.now(), args, result: null, error: failure.text, uncertain: failure.uncertain });
     }
   };
+
+  private refreshBrainLedger(): void {
+    this.refresh("brainStatus"); this.refresh("brainJobStats"); this.refresh("brainJobs");
+    for (const id of Object.keys(this.state.brainJobRecords)) void this.loadBrainJob(Number(id));
+    void this.refreshBrainSubmissions();
+  }
+
+  private invalidateBrainIndex(): void {
+    this.refresh("brainStats"); this.refresh("brainTags");
+    this.set({ brainIndexGeneration: this.state.brainIndexGeneration + 1 });
+  }
+
+  setBrainJobView = (view: BrainJobView, run: number | null = null): void => {
+    this.set({ brainJobView: { view, run } });
+    this.refresh("brainJobs");
+  };
+
+  /** Read one job's sanitized diagnostics; it is then re-read on every ledger notice. At most 20 are kept. */
+  loadBrainJob = async (id: number): Promise<void> => {
+    try {
+      const data = await this.call<BrainJobRecord>("brain", "jobs_show", { "job-id": id });
+      const kept = Object.entries(this.state.brainJobRecords).filter(([key]) => Number(key) !== id).slice(-19);
+      this.set({ brainJobRecords: { ...Object.fromEntries(kept), [id]: { data, error: null, at: Date.now() } } });
+    } catch (error) {
+      const previous = this.state.brainJobRecords[id];
+      this.set({ brainJobRecords: { ...this.state.brainJobRecords, [id]: { data: previous?.data ?? null, error: error instanceof Error ? error.message : String(error), at: Date.now() } } });
+    }
+  };
+
+  /**
+   * Retry, cancel or exclude one job. Each appends a transition with this reason; the ledger is
+   * re-read either way, since a lost acknowledgement may still have applied it.
+   */
+  brainJobAction = <T>(action: "retry" | "cancel" | "exclude", id: number, reason: string): Promise<T> =>
+    this.call<T>("brain", `jobs_${action}`, { "job-id": id, reason: reason.trim() || undefined, actor: "uix" }).finally(() => this.refreshBrainLedger());
+
+  /** Pause or resume a Research source with a reason recorded on its audit evidence. */
+  brainSourceAction = <T>(action: "pause" | "resume", id: string, reason: string): Promise<T> =>
+    this.call<T>("brain", `sources_${action}`, { "source-id": id, reason: reason.trim() || undefined, actor: "uix" }).finally(() => this.refresh("brainSources"));
+
+  /** Admit discovery Runs for one source or every due one, or report what would be admitted. */
+  brainSync = <T>(args: { sourceId?: string; due?: boolean; dryRun?: boolean }): Promise<T> =>
+    this.call<T>("brain", "sources_sync", { "source-id": args.sourceId, due: args.due || undefined, "dry-run": args.dryRun || undefined })
+      .finally(() => { this.refresh("brainSources"); this.refreshBrainLedger(); });
+
+  /** Delete one Research document permanently. The index is re-read either way. */
+  brainDelete = <T>(documentId: number): Promise<T> =>
+    this.call<T>("brain", "delete", { "document-id": documentId, confirm: "delete" }).finally(() => {
+      if (this.state.brainReader?.documentId === documentId) this.set({ brainReader: null });
+      this.invalidateBrainIndex(); this.refreshBrainLedger();
+    });
+
+  /** Show a document in the Reader, optionally at the chunk that led there. */
+  openBrainDocument = (documentId: number, chunk: { chunk_id: number; start_char: number; end_char: number } | null = null): void => {
+    this.set({ brainReader: { seq: (this.state.brainReader?.seq ?? 0) + 1, documentId, chunk } });
+  };
+
+  /** Ask the Search window to run a query. */
+  searchBrain = (query: string): void => {
+    this.set({ brainQuery: { seq: (this.state.brainQuery?.seq ?? 0) + 1, query } });
+  };
+
+  /** Keep a document summary for the inspector; bodies are never kept here. */
+  rememberBrainDocuments = (records: Array<Record<string, unknown> & { document_id: number }>): void => {
+    if (!records.length) return;
+    const next = { ...this.state.brainDocumentRecords };
+    for (const { content: _content, snippet: _snippet, ...record } of records) next[`research-document:${record.document_id}`] = { ...next[`research-document:${record.document_id}`], ...record };
+    this.set({ brainDocumentRecords: next });
+  };
+
+  /**
+   * Admit a URL or text. The idempotency key belongs to the draft, so a repeated or lost request
+   * resolves to the same job instead of a second one. Nothing is resent automatically.
+   */
+  brainSubmit = async (draft: { key: string; source: string; kind: "url" | "text"; title: string; tags: string[]; collection: string; notes: string }): Promise<BrainSubmission> => {
+    const entry: BrainSubmission = { key: draft.key, label: submissionLabel(draft.source, draft.kind, draft.title), kind: draft.kind, at: Date.now(), pending: true, admission: null, error: null, share: null };
+    const put = (next: BrainSubmission) => this.set({ brainSubmissions: [next, ...this.state.brainSubmissions.filter((item) => item.key !== next.key)].slice(0, 50) });
+    put(entry);
+    try {
+      const admission = await this.call<BrainAdmission>("brain", "submit", {
+        source: draft.source, kind: draft.kind, ingress: "uix", "idempotency-key": draft.key,
+        title: draft.title.trim() || undefined, tag: draft.tags.length ? draft.tags : undefined,
+        collection: draft.collection.trim() ? [draft.collection.trim()] : undefined, notes: draft.notes.trim() || undefined,
+      });
+      const done = { ...entry, pending: false, admission };
+      put(done);
+      void this.refreshBrainSubmissions();
+      return done;
+    } catch (error) {
+      const failed = { ...entry, pending: false, error: brainCallError(error) };
+      put(failed);
+      this.refreshBrainLedger();
+      return failed;
+    } finally {
+      this.refresh("brainJobStats"); this.refresh("brainJobs");
+    }
+  };
+
+  dismissBrainSubmission = (key: string): void => {
+    this.set({ brainSubmissions: this.state.brainSubmissions.filter((item) => item.key !== key) });
+  };
+
+  /** Follow this page's admitted jobs until they reach a terminal state. */
+  private async refreshBrainSubmissions(): Promise<void> {
+    const ids = [...new Set(this.state.brainSubmissions.flatMap((item) => item.admission && item.admission.status !== "already_indexed" && !(item.share && terminalStates.has(item.share.state)) ? [item.admission.job_id] : []))].slice(0, brainShareIds);
+    if (!ids.length) return;
+    try {
+      const { shares } = await this.call<{ shares: BrainShareState[] }>("brain", "share_read_states", { ids });
+      const byJob = new Map(shares.map((share) => [share.job_id, share]));
+      this.set({ brainSubmissions: this.state.brainSubmissions.map((item) => {
+        const share = item.admission && item.admission.status !== "already_indexed" ? byJob.get(item.admission.job_id) : undefined;
+        return share ? { ...item, share } : item;
+      }) });
+    } catch { /* the next ledger notice reads again */ }
+  }
 
   /** Explicit infer actions. The ledger and model cache are re-read after each attempt, since a lost acknowledgement may still have admitted it. */
   infer = <T>(name: "infer_start" | "infer_discover", args: Record<string, unknown>): Promise<T> => {
@@ -778,6 +932,8 @@ export class StackStore {
         if (key === "notifications" && next.data) this.upsertNotifications((next.data as NotificationPages).entries);
         const changeSeq = key === "signalStatus" ? this.state.signalStatus.data?.changeSeq : undefined;
         // A Library scope change while a page read was in flight: read again for the new scope.
+        // Jobs for a tab the window has since left are dropped; the follow-up read serves the new one.
+        if (key === "brainJobs" && next.data && ((next.data as StackState["brainJobs"]["data"])!.view !== this.state.brainJobView.view || (next.data as StackState["brainJobs"]["data"])!.run !== this.state.brainJobView.run)) { this.dirty.add(key); return; }
         if (key === "contentItems" && next.data && scopeKey((next.data as ContentItemPage).scope) !== scopeKey(this.itemScope)) { this.dirty.add(key); return; }
         this.set({ [key]: next } as Partial<StackState>);
         if (key === "signalStatus" && next.data && (next.data as AttentionStatus).changeSeq !== changeSeq) this.bumpSignal();
@@ -787,6 +943,7 @@ export class StackStore {
         // Trusted project matches depend on where Bots run.
         if (key === "bots" && botCwds(this.state.bots.data) !== cwds) this.refresh("roleLaunch");
         if (key === "workerAccounts") this.reconcileCatalogs(true);
+        if (key === "brainStats" && next.data) this.rememberBrainDocuments((next.data as BrainStats).recent);
       })
       .finally(() => {
         this.inflight.delete(key);
@@ -843,6 +1000,17 @@ export class StackStore {
         call<{ installations: AgentBrowserInstallation[] }>("browse", "agent_browser_detect"),
         call<{ installations: HypemanInstallation[] }>("browse", "hypeman_detect"),
       ]).then(([status, agentBrowser, detected, hypeman]) => ({ status, agentBrowser, detected: detected.installations, hypeman: hypeman.installations }));
+      case "brainStatus": return call<BrainStatus>("brain", "brain_status");
+      case "brainStats": return call<BrainStats>("brain", "stats", { "top-tags": 40, recent: 8 });
+      case "brainTags": return call<{ tags: BrainTag[] }>("brain", "tags", { limit: 500 }).then((result) => result.tags);
+      case "brainJobStats": return call<BrainJobStats>("brain", "jobs_stats");
+      case "brainSources": return call<{ sources: BrainSource[] }>("brain", "sources_status").then((result) => result.sources);
+      case "brainJobs": {
+        const { view, run } = this.state.brainJobView;
+        const states = jobViews[view].states;
+        const read = (state?: string) => call<{ jobs: BrainJob[] }>("brain", "jobs_list", { state, run: run ?? undefined, limit: brainJobLimit }).then((result) => result.jobs);
+        return (states ? Promise.all(states.map(read)) : read().then((jobs) => [jobs])).then((lists) => ({ view, run, jobs: mergeJobs(lists) }));
+      }
     }
   }
 

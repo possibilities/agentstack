@@ -57,7 +57,8 @@ test("the api package serves structured documents for every workspace package", 
     for (const [pkg, internal] of [["roles", ["role_launch_snapshot"]], ["brain", ["share_receive", "share_read_states"]]] as const) {
       const doc = found.get(pkg)!;
       for (const transport of doc.transports.filter((entry) => entry.type === "mcp" || entry.type === "websocket")) {
-        const omitted = [...internal, ...(pkg === "roles" && transport.type === "mcp" ? ["role_editor_snapshot", "role_launch_preview"] : [])];
+        const omitted = [...internal.filter((name) => !(pkg === "brain" && transport.type === "websocket" && name === "share_read_states")),
+          ...(pkg === "roles" && transport.type === "mcp" ? ["role_editor_snapshot", "role_launch_preview"] : [])];
         assert.deepEqual([...transport.operations].sort(), doc.operations.map((op) => op.name).filter((name) => !omitted.includes(name)).sort());
       }
     }

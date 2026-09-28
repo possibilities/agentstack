@@ -448,6 +448,37 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         operations: { pkg: "browse", list: browseOperations(catalog, ["browser_controller_list"]) },
       };
     }
+    case "research-document": {
+      const record = state.brainDocumentRecords[nodeKey(ref)];
+      if (!record) return null;
+      return {
+        eyebrow: `Research document · ${String(record.content_kind ?? record.source_type ?? "")}`, accent: "brain", title: String(record.title ?? record.source_uri ?? `Document ${ref.id}`), record,
+        fields: brainFields(catalog, "get"),
+        operations: { pkg: "brain", list: brainOperations(catalog, ["get", "context", "delete"]) },
+        body: <BrainHandOff label="Open in Reader" run={(store) => store.openBrainDocument(Number(ref.id))} target={ref} />,
+      };
+    }
+    case "ingestion-job": {
+      const id = Number(ref.id);
+      const record = state.brainJobRecords[id]?.data ?? state.brainJobs.data?.jobs.find((job) => job.id === id);
+      if (!record) return null;
+      return {
+        eyebrow: `Ingestion job · ${record.state.replace("_", " ")}`, accent: "brain", title: `Job ${record.id}`, record,
+        fields: brainFields(catalog, "jobs_show"),
+        operations: { pkg: "brain", list: brainOperations(catalog, ["jobs_show", "jobs_retry", "jobs_cancel", "jobs_exclude", "jobs_reveal"]) },
+        events: state.events.filter((event) => event.pkg === "brain"),
+      };
+    }
+    case "research-source": {
+      const source = state.brainSources.data?.find((item) => item.id === ref.id);
+      if (!source) return null;
+      return {
+        eyebrow: `Research source · ${source.kind}`, accent: "brain", title: source.display_name, record: source,
+        fields: new Map((fieldsOf(findOperation(catalog, "brain", "sources_status")?.outputSchema).find((field) => field.name === "sources")?.children ?? []).map((field) => [field.name, field])),
+        operations: { pkg: "brain", list: brainOperations(catalog, ["sources_show", "sources_sync", "sources_pause", "sources_resume"]) },
+        events: state.events.filter((event) => event.pkg === "brain"),
+      };
+    }
     case "package":
     case "operation":
       return null; // Reference destinations are rendered in the shared dock's reading mode.
@@ -461,6 +492,25 @@ function browseOperations(catalog: PackageDoc[] | null, names: string[]): Operat
 /** Field notes for one entry of a browse list output. */
 function browseFields(catalog: PackageDoc[] | null, operation: string, list: string): Map<string, Field> {
   return new Map((fieldsOf(findOperation(catalog, "browse", operation)?.outputSchema).find((field) => field.name === list)?.children ?? []).map((field) => [field.name, field]));
+}
+
+function brainOperations(catalog: PackageDoc[] | null, names: string[]): OperationDoc[] {
+  return catalog?.find((doc) => doc.name === "brain")?.operations.filter((operation) => names.includes(operation.name)) ?? [];
+}
+
+function brainFields(catalog: PackageDoc[] | null, operation: string): Map<string, Field> {
+  return new Map(fieldsOf(findOperation(catalog, "brain", operation)?.outputSchema).map((field) => [field.name, field]));
+}
+
+/** Brain records are read and changed in their own windows; the inspector hands over to them. */
+function BrainHandOff({ label, run, target }: { label: string; run(store: ReturnType<typeof useStore>): void; target: NodeRef }) {
+  const store = useStore();
+  const { goTo } = useWorkbench();
+  return (
+    <Button type="button" size="sm" variant="outline" className="self-start" onClick={() => { run(store); goTo(target); }}>
+      <ArrowRightIcon data-icon="inline-start" />{label}
+    </Button>
+  );
 }
 
 function scrapeOperations(catalog: PackageDoc[] | null, names: string[]): OperationDoc[] {
@@ -562,6 +612,7 @@ function referencePackage(ref: NodeRef): string {
   if (ref.kind === "usage" || ref.kind === "usage-account" || ref.kind === "grok-bot-usage") return "usage";
   if (ref.kind === "preset" || ref.kind === "scrape-job") return "scrape";
   if (ref.kind === "browser-profile" || ref.kind === "browser-handoff" || ref.kind === "browser-controller" || ref.kind === "browser-viewer") return "browse";
+  if (ref.kind === "research-document" || ref.kind === "ingestion-job" || ref.kind === "research-source") return "brain";
   if (ref.kind === "signal" || ref.kind === "attention-item" || ref.kind === "attention-message" || ref.kind === "attention-run") return "signal";
   return "auth";
 }

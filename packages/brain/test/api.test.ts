@@ -235,3 +235,41 @@ test("closing Brain cancels active extraction and waiting admission without losi
     } finally { cache.close(); }
   } finally { await closeBrainContext(ctx); rmSync(root, { recursive: true, force: true }); }
 });
+
+test("change notices follow ledger, source and index commits without carrying values", async () => {
+  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-events-"));
+  const ctx = await createBrainContext({ HOME: root, AGENTSTACK_STATE_DIR: root, AGENTSTACK_BRAIN_SHARE_PORT: "0" }, { pollMs: 5 });
+  const seen: string[] = [];
+  const stop = await api.events!.start(ctx, (topic, scope) => { assert.equal(scope, undefined); seen.push(topic); });
+  const waitFor = async (topic: string) => {
+    for (let n = 0; n < 300 && !seen.includes(topic); n++) await sleep(10);
+    assert.ok(seen.includes(topic), `${topic} in ${seen.join(",")}`);
+  };
+  try {
+    assert.deepEqual(Object.keys(api.events!.topics).sort(), ["index_changed", "jobs_changed", "sources_changed"]);
+    await sleep(50);
+    assert.deepEqual(seen, [] as string[], "an idle database publishes nothing");
+    const admitted = await call(ctx, "submit", { source: "-Nebula notes from the operator", kind: "text", "idempotency-key": "events" });
+    assert.ok(seen.includes("jobs_changed"), "a mutating operation is announced before it returns");
+    for (let n = 0; n < 300 && (await call(ctx, "jobs_show", { "job-id": admitted.job_id })).state !== "completed"; n++) await sleep(10);
+    await waitFor("index_changed");
+    assert.equal(seen.includes("sources_changed"), false);
+    const manifest = join(root, "sources.json");
+    writeFileSync(manifest, JSON.stringify({ schema_version: 1, sources: [{ id: "fixture", version: 1, kind: "blog_feed", display_name: "Fixture", enabled: false, payload: { feed_url: "https://example.test/feed" }, schedule: { cadence_seconds: 3600 }, limits: { max_items_per_run: 10, max_pages_per_run: 1 }, collections: [], sensitivity: "public", credential_refs: [] }] }));
+    await call(ctx, "sources_apply", { manifest });
+    await waitFor("sources_changed");
+    seen.length = 0;
+    await call(ctx, "retag", { "dry-run": true });
+    await call(ctx, "search", { query: "Nebula" });
+    await sleep(50);
+    assert.deepEqual(seen, [] as string[], "reads and dry runs publish nothing");
+    // A commit from an unrelated connection, like an external CLI, is still observed.
+    const external = new ResearchStore(join(root, "brain", "research.db"));
+    try { external.db.exec("UPDATE sources SET updated_at = '2999-01-01T00:00:00.000Z'"); } finally { external.close(); }
+    await waitFor("sources_changed");
+  } finally {
+    if (typeof stop === "function") stop();
+    await closeBrainContext(ctx);
+    rmSync(root, { recursive: true, force: true });
+  }
+});

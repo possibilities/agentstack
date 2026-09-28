@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { StatusDot, Time } from "./primitives";
 import { useWorkbench } from "./provider";
 
-export type Accent = "owner" | "auth" | "bots" | "api" | "events" | "roles" | "notify" | "content" | "worker" | "scrape" | "browse";
+export type Accent = "owner" | "auth" | "bots" | "api" | "events" | "roles" | "notify" | "content" | "worker" | "scrape" | "browse" | "brain";
 
 export const accentTile: Record<Accent, string> = {
   owner: "bg-pkg-owner/15 text-pkg-owner",
@@ -22,6 +22,7 @@ export const accentTile: Record<Accent, string> = {
   worker: "bg-pkg-worker/15 text-pkg-worker",
   scrape: "bg-pkg-scrape/15 text-pkg-scrape",
   browse: "bg-pkg-browse/15 text-pkg-browse",
+  brain: "bg-pkg-brain/15 text-pkg-brain",
 };
 
 export const accentText: Record<Accent, string> = {
@@ -36,6 +37,7 @@ export const accentText: Record<Accent, string> = {
   worker: "text-pkg-worker",
   scrape: "text-pkg-scrape",
   browse: "text-pkg-browse",
+  brain: "text-pkg-brain",
 };
 
 export const accentBg: Record<Accent, string> = {
@@ -50,6 +52,7 @@ export const accentBg: Record<Accent, string> = {
   worker: "bg-pkg-worker",
   scrape: "bg-pkg-scrape",
   browse: "bg-pkg-browse",
+  brain: "bg-pkg-brain",
 };
 
 export function accentOf(pkg: string): Accent {

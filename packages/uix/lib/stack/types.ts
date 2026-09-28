@@ -621,6 +621,70 @@ export type AgentBrowserStatus = {
 export type AgentBrowserInstallation = { location: string; version: string | null; source: "agentstack" | "agentstart" };
 export type HypemanInstallation = { root: string; installed: boolean; selected: boolean; source: "agentstack" | "legacy" | "custom"; running: boolean; issue: string | null };
 export type BrowserToolchain = { status: BrowserStatus; agentBrowser: AgentBrowserStatus; detected: AgentBrowserInstallation[]; hypeman: HypemanInstallation[] };
+export type BrainJobState = "queued" | "running" | "retry_wait" | "blocked" | "failed" | "completed" | "excluded" | "cancelled";
+export type BrainSensitivity = "public" | "normal" | "sensitive" | "private";
+export type BrainContentKind = "post" | "thread" | "article";
+/** `brain_status`: isolated paths and ingestion worker health. The share token is never returned. */
+export type BrainStatus = { stateRoot: string; database: string; artifactStore: string; shareUrl: string; shareTokenFile: null; worker: "running" | "stopped" | "failed"; health: string | null };
+export type BrainStats = {
+  db_path: string; db_size_bytes: number; document_count: number; chunk_count: number; total_chars: number;
+  by_source_type: Array<{ source_type: string; count: number }>; top_tags: Array<{ tag: string; count: number }>;
+  recent: Array<{ document_id: number; title: string | null; source_uri: string; source_type: string; updated_at: string }>;
+  relation_count: number; failed_relation_count: number;
+};
+export type BrainTag = { tag: string; count: number };
+/** Search and context filters, spelled as the operations' own input properties. */
+export type BrainFilters = { tag?: string; "source-type"?: string; "content-kind"?: BrainContentKind; collection?: string; sensitivity?: BrainSensitivity; "date-from"?: string; "date-to"?: string };
+export type BrainRelationSummary = { relation_id: number; direction: "outbound" | "inbound"; relation_type: string; status: string; linked_document_id: number; linked_resource_id: number | null;
+  linked_title: string | null; linked_resource_kind: string; linked_sensitivity: BrainSensitivity };
+type BrainHitBase = { document_id: number; resource_id: number | null; resource_kind: string; sensitivity: BrainSensitivity; collections: string[]; sources: Array<{ source_type: string; identifier: string }>;
+  relations: BrainRelationSummary[]; chunk_id: number; chunk_index: number; title: string | null; source_uri: string; source_type: string; content_kind: BrainContentKind | null;
+  content_item_count: number | null; tags: string[]; start_char: number; end_char: number; score: number };
+/** One ranked chunk from `search`. Scores are FTS5 ranks: lower is better. */
+export type BrainHit = BrainHitBase & { updated_at: string; snippet: string };
+export type BrainSearch = { query: string; normalized_query: string; mode: "any" | "all" | "raw"; limit: number; offset: number; filters: BrainFilters; results: BrainHit[]; next_offset: number | null };
+/** `context`: bounded, citation-ready chunk content. */
+export type BrainContextHit = BrainHitBase & { citation: string; content: string; truncated: boolean };
+export type BrainContext = { query: string; filters: BrainFilters; limit: number; max_chars: number; returned_chars: number; truncated: boolean; hits: BrainContextHit[] };
+export type BrainLink = { id: number; from_document_id: number; to_document_id: number | null; relation_type: string; discovered_url: string | null; resolved_url: string | null; status: string;
+  error: string | null; created_at: string; updated_at: string };
+/** A Research document from `get`. Content may be head/tail truncated; `truncation` says by how much. */
+export type BrainDocument = {
+  document_id: number; title: string | null; source_uri: string; source_type: string; content_kind: BrainContentKind | null; content_item_count: number | null; tags: string[];
+  notes: string | null; size_chars: number; content_hash: string; created_at: string; updated_at: string; content: string; outbound_links: BrainLink[]; inbound_links: BrainLink[];
+  truncation: { requested_char_limit: number | null; returned_chars: number; omitted_chars: number };
+};
+export type BrainChunk = { chunk_id: number; document_id: number; chunk_index: number; start_char: number; end_char: number; content: string };
+/** A content-safe Ingestion job: no intent, URL, title or body. */
+export type BrainJob = { id: number; kind: string; state: BrainJobState; sensitivity: string; resource_id: number | null; source_id: number | null; run_id: number | null;
+  attempt_count: number; item_retry_count: number; run_at: string; failure_class: string | null; created_at: string; updated_at: string };
+export type BrainAttempt = { id: number; job_id: number; attempt_number: number; state: "failed" | "cancelled" | "leased" | "succeeded" | "stale"; lease_expires_at: string; heartbeat_at: string;
+  started_at: string; finished_at: string | null; failure_class: string | null; failure_summary: string | null };
+export type BrainTransition = { id: number; job_id: number; attempt_id: number | null; from_state: BrainJobState | null; to_state: BrainJobState; created_at: string };
+/** `jobs_show`: bounded, sanitized diagnostics with URLs redacted. */
+export type BrainJobRecord = BrainJob & { failure_summary: string | null; attempts: BrainAttempt[]; transitions: BrainTransition[] };
+/** `jobs_reveal`: submitted intent and captured bodies. Reading it appends an audit record. */
+export type BrainRevealedJob = BrainJobRecord & { intent: unknown; artifacts: Array<{ content_digest: string; media_type: string; byte_size: number; body: string }> };
+export type BrainJobStats = { total: number; by_state: Record<BrainJobState, number>; runnable_due: number; active_leases: number; stale_leases: number; oldest_runnable_at: string | null };
+export type BrainRunState = "pending" | "failed" | "completed" | "cancelled" | "active" | "completed_with_review";
+/** One Research source from `sources_status`: its definition, health, latest Run and checkpoint. */
+export type BrainSource = {
+  id: string; database_id: number; version: number; kind: string; display_name: string; enabled: boolean; paused: boolean; executable: boolean;
+  schedule: { cadence_seconds: number } | null; sensitivity: BrainSensitivity; collections: string[]; limits: { max_items_per_run: number; max_pages_per_run: number } | null;
+  credential_reference_count: number; created_at: string; updated_at: string; due: boolean; payload: Record<string, unknown>; pause_reason: string | null;
+  health: { state: "warning" | "never" | "healthy" | "unhealthy"; detail: string | null; last_evaluated_at: string | null; last_success_at: string | null; next_due_at: string | null };
+  checkpoint: { present: boolean; run_id: number | null; committed_at: string | null };
+  latest_run: { id: number; state: BrainRunState; outcome: "failed" | "cancelled" | "success" | "partial" | null; warnings: number; counts: { discovered: number; admitted: number; suppressed: number };
+    created_at: string; finished_at: string | null } | null;
+};
+/** `submit`: admission proves a durable job exists, never that indexing finished. */
+export type BrainAdmission =
+  | { version: 1; status: "queued" | "duplicate"; job_id: number; idempotency_key: string; intent_hash: string; state: BrainJobState; wait_status?: "terminal" | "timeout" }
+  | { version: 1; status: "already_indexed"; document_id: number; resource_key: string };
+export type BrainSyncAdmission = { source_id: string; source_database_id: number; status: "queued" | "duplicate" | "would_queue" | "not_due" | "disabled" | "paused" | "unsupported";
+  run_id: number | null; job_id: number | null; scheduled_for: string | null; dry_run: boolean };
+/** `share_read_states`: a job's state and, once indexed, its document. */
+export type BrainShareState = { job_id: number; state: BrainJobState; failure_class: string | null; document_id: number | null };
 
 export type Snapshot = {
   owner: Resource<OwnerStatus>;
@@ -688,6 +752,8 @@ export type NodeRef =
   | { kind: "preset" | "scrape-job"; id: string }
   /** Browse records: a profile and a handoff by ID, a controller by `botId/instance/session`, and a viewer window by window ID. */
   | { kind: "browser-profile" | "browser-handoff" | "browser-controller" | "browser-viewer"; id: string }
+  /** Brain records by their numeric document or job ID, and a Research source by its definition ID. */
+  | { kind: "research-document" | "ingestion-job" | "research-source"; id: string }
   | { kind: "package"; id: string }
   | { kind: "operation"; id: string; pkg: string }
   /** Content records: a Vault document by slug, a collection by slug, an item by stable ID, an Artifact by name. */

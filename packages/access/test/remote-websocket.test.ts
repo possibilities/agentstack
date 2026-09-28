@@ -139,3 +139,41 @@ test("remote control sessions receive only Scrape's read-only operations; fetchi
     ws?.terminate(); await remote.close(); await backend.close(); store.close(); rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("remote UIX cannot read arbitrary Brain share job IDs even with control scope", async () => {
+  const root = mkdtempSync(join(tmpdir(), "agentstack-remote-brain-"));
+  const store = new AccessStore(root);
+  const env = { AGENTSTACK_STATE_DIR: root };
+  const directory = join(root, "packages", "brain"); mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, "api.yaml"), "name: brain\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: [jobs_show, share_read_states]\n  events: []\n  description: WebSocket.\n");
+  let shareReads = 0;
+  const ok = z.object({ ok: z.boolean() });
+  const backend = await serveSocket({ info: { name: "brain", description: "Demo.", transportDescription: "Socket.", path: socketPath("brain", env) }, context: {},
+    operations: [
+      operation({ name: "jobs_show", description: "Read.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { return { ok: true }; } }),
+      operation({ name: "share_read_states", description: "Trusted local read.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { shareReads++; return { ok: true }; } }),
+    ], events: { topics: {} } });
+  const key = join(root, "key.pem"), cert = join(root, "cert.pem");
+  execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "1", "-subj", "/CN=localhost"], { stdio: "ignore" });
+  const port = await freePort();
+  const remote = await startRemoteUix({ store, env, host: "127.0.0.1", port, root, verify: async () => {} }, { key: readFileSync(key), cert: readFileSync(cert) });
+  const secret = randomBytes(32).toString("base64url");
+  const pairing = store.pair({ requestId: randomUUID(), label: "browser", kind: "browser", scopes: ["uix:view", "uix:control"], redemptionSecret: secret });
+  store.approve(pairing.id, pairing.code, true, ["uix:view", "uix:control"]);
+  const issued = store.startUix(store.redeem(pairing.id, secret).refreshToken, randomUUID());
+  let ws: WebSocket | undefined;
+  const send = async (method: string, params: Record<string, unknown>) => {
+    const response = frame(ws!);
+    ws!.send(JSON.stringify({ id: 1, method, params: { package: "brain", ...params } }));
+    return response;
+  };
+  try {
+    ws = await open(`wss://127.0.0.1:${port}/websocket`, `https://127.0.0.1:${port}`, `__Host-agentstack_uix=${issued.accessToken}`);
+    assert.deepEqual((await send("tools/list", {})).result.tools.map((tool: { name: string }) => tool.name), ["jobs_show"]);
+    assert.equal((await send("tools/call", { name: "jobs_show", arguments: {} })).result.ok, true);
+    assert.match((await send("tools/call", { name: "share_read_states", arguments: {} })).error.message, /not available/);
+    assert.equal(shareReads, 0);
+  } finally {
+    ws?.terminate(); await remote.close(); await backend.close(); store.close(); rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -11,6 +11,10 @@ import { ArrowRightLeftIcon, FolderInputIcon, GlobeIcon, ListChecksIcon, RssIcon
 import { ExtractWindow } from "./scrape-extract";
 import { ConvertWindow, FeedsWindow } from "./scrape-feeds";
 import { ChecksWindow, PresetsWindow, QueueWindow, StatusWindow } from "./scrape-operator";
+import { BookOpenTextIcon, BrainIcon, ImportIcon, SatelliteDishIcon, SearchIcon } from "lucide-react";
+import { ReaderWindow, SearchWindow } from "./brain-search";
+import { IngestWindow } from "./brain-ingest";
+import { JobsWindow, SourcesWindow } from "./brain-ledger";
 import type { SpaceId } from "@/lib/stack/spaces";
 import type { StackState } from "@/lib/stack/store";
 import { type Accent } from "./window";
@@ -175,6 +179,17 @@ export const spaceViews: Record<SpaceId, {
       { id: "browse-profiles", title: "Profiles", icon: HardDriveIcon, accent: "browse", width: 420, height: 460, column: viewers.length + 1, element: <ProfilesWindow /> },
       { id: "browse-controllers", title: "Controllers", icon: CableIcon, accent: "browse", width: 420, height: 320, column: viewers.length + 1, element: <ControllersWindow /> },
       { id: "browse-toolchain", title: "Toolchain", icon: WrenchIcon, accent: "browse", width: 420, height: 720, column: viewers.length + 2, element: <ToolchainWindow /> },
+    ],
+  },
+  brain: {
+    icon: BrainIcon,
+    accent: "brain",
+    windows: () => [
+      { id: "brain-search", title: "Search", icon: SearchIcon, accent: "brain", width: 520, height: 780, column: 0, fixed: true, element: <SearchWindow /> },
+      { id: "brain-reader", title: "Reader", icon: BookOpenTextIcon, accent: "brain", width: 580, height: 780, column: 1, fixed: true, element: <ReaderWindow /> },
+      { id: "brain-ingest", title: "Ingest", icon: ImportIcon, accent: "brain", width: 400, height: 560, column: 2, element: <IngestWindow /> },
+      { id: "brain-jobs", title: "Jobs", icon: ListChecksIcon, accent: "brain", width: 480, height: 780, column: 3, fixed: true, element: <JobsWindow /> },
+      { id: "brain-sources", title: "Sources", icon: SatelliteDishIcon, accent: "brain", width: 460, height: 640, column: 4, element: <SourcesWindow /> },
     ],
   },
 };
