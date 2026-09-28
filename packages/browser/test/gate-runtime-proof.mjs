@@ -45,8 +45,8 @@ try {
   const a=profiles.list()[0];const b=process.env.PROOF_INPUT_ONLY ? null : await profiles.create(bot.id,'Secondary');if(b)await profiles.ensure(b.id);
   if(a.state==='failed'&&a.error?.includes('within 35 seconds')) {record('slow guest startup',a.error);await sleep(90000);record('same guest readiness retry',await profiles.ensure(a.id));}
   assert.equal((await profiles.select(bot.id,'default',a.id)).state,'connected');
-  await ab('open','http://127.0.0.1:9222/json/version');
-  await ab('eval',`document.body.innerHTML='<input id="proof" autofocus><button>Old ref</button>';document.querySelector('input').focus();window.__inputEvents=[];for(const type of ['keydown','keyup','mousedown','mouseup'])document.addEventListener(type,e=>window.__inputEvents.push({type,key:e.key,trusted:e.isTrusted}))`);
+  await ab('open','about:blank');
+  await ab('eval',`document.title='GATE-INPUT-PROOF';window.__marker='stable-proof';document.body.innerHTML='<input id="proof" autofocus><button>Old ref</button>';document.querySelector('input').focus();window.__inputEvents=[];for(const type of ['keydown','keyup','mousedown','mouseup'])document.addEventListener(type,e=>window.__inputEvents.push({type,key:e.key,trusted:e.isTrusted}))`);
   await ab('snapshot','-i');
   assert.equal((await profiles.select(bot.id,'parallel',a.id)).state,'connected');
   const waiting=ab('eval','new Promise(r=>setTimeout(()=>r("drained"),1800))').catch(e=>({error:e.stdout??e.message}));await sleep(400);
@@ -61,7 +61,7 @@ try {
   const resource=await backend.get('profile:'+a.id);
   const nativeA=JSON.parse(await readFile(root+'/browser/sessions.json','utf8')).find(r=>r.session===resource.session).native;
   const guestExec=async(command,args=[])=>{const response=await fetch(`http://${nativeA.ip}:10001/process/exec`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({command,args,timeout_sec:10}),signal:AbortSignal.timeout(15000)});const result=await response.json();return {...result,stdout:Buffer.from(result.stdout_b64??'','base64').toString(),stderr:Buffer.from(result.stderr_b64??'','base64').toString()};};
-  record('guest input environment',await guestExec('/bin/sh',['-c',`command -v xdotool; command -v xinput; ps -eo pid,args | grep -E 'neko serve|Xorg|chrome.*remote-debugging'; for p in $(pgrep -x neko); do tr '\\0' '\\n' </proc/$p/environ | grep -E '^(DISPLAY|NEKO_DESKTOP)='; done; DISPLAY=:1 xdotool getwindowfocus getwindowname; DISPLAY=:1 xinput list`]));
+  record('native window focus',await guestExec('/bin/sh',['-c','DISPLAY=:1 timeout -k 1 5 xdotool search --name GATE-INPUT-PROOF windowactivate --sync']));
   const observation=profiles.list().find(p=>p.id===a.id).observation.url;
   await viewer('--init-script',instrument,'open',observation);await sleep(7000);
   record('observation receiver',await viewer('eval','({text:document.body.innerText,peers:window.__pcs.map(p=>p.connectionState),dc:window.__dc.map(d=>d.readyState),videos:[...document.querySelectorAll("video")].map(v=>v.getVideoPlaybackQuality().totalVideoFrames)})'));
@@ -81,28 +81,25 @@ try {
   record('Neko host',await(await fetch(nekoOrigin+'/api/room/control',{headers:{authorization:'Bearer '+admin.token}})).json());
   record('Neko sessions',await(await fetch(nekoOrigin+'/api/sessions',{headers:{authorization:'Bearer '+admin.token}})).json());
   await viewer('screenshot',root+'/human.png');
-  record('input packet sent',await viewer('eval',key));await sleep(300);
+  record('input packet sent',await viewer('eval',key));await sleep(1000);
   record('human typed',await inspect());
-  if((await inspect()).data.result==='') {
-    const geometry=(await cmd('inspect',empty,['--cdp',raw.cdpUrl,'eval','(()=>{const r=document.querySelector("input").getBoundingClientRect();return {x:screenX+r.x+20,y:screenY+outerHeight-innerHeight+r.y+10};})()'])).data.result;
-    record('native focus click',await viewer('eval',`(()=>{const c=window.$client;c.sendData('mousemove',${JSON.stringify(geometry)});c.sendData('mousedown',{key:1});c.sendData('mouseup',{key:1});return ${JSON.stringify(geometry)};})()`));
-    await sleep(300);record('input after native focus',await viewer('eval',key));await sleep(300);record('human typed after native focus',await inspect());
-  }
-  if((await inspect()).data.result==='') {record('modern input sent',await viewer('eval',modernKey));await sleep(300);record('modern input result',await inspect());}
-  record('guest input events',await cmd('inspect',empty,['--cdp',raw.cdpUrl,'eval','window.__inputEvents']));
-  if((await inspect()).data.result==='') {
-    record('native X keyboard positive control',await guestExec('/bin/sh',['-c','DISPLAY=:1 xdotool getwindowfocus getwindowname; DISPLAY=:1 xdotool key b']));await sleep(300);record('native X keyboard result',await inspect());
-  }
   assert.equal((await inspect()).data.result,'a');
+  record('native X keyboard after human input',await guestExec('/bin/sh',['-c','DISPLAY=:1 timeout -k 1 5 xdotool key b']));await sleep(1000);
+  assert.equal((await inspect()).data.result,'ab');
+  const events=(await cmd('inspect',empty,['--cdp',raw.cdpUrl,'eval','({marker:window.__marker,events:window.__inputEvents})'])).data.result;record('trusted input events',events);
+  assert.equal(events.marker,'stable-proof');for(const key of ['a','b'])assert.ok(events.events.some(e=>e.type==='keydown'&&e.key===key&&e.trusted));
   record('observer refusal validated by human positive control',true);
   const oldUrl=taken.controlUrl;
-  h=(await profiles.actHandoff('finish',{id:h.id,expectedRevision:h.revision,requestId:randomUUID(),outcome:'completed',note:'Typed a'})).handoff;
+   h=(await profiles.actHandoff('finish',{id:h.id,expectedRevision:h.revision,requestId:randomUUID(),outcome:'completed',note:'Typed a; native X control added b'})).handoff;
   assert.equal(h.state,'resolved');assert.equal((await fetch(oldUrl)).status,403);
   await sleep(300);
   const revoked=await viewer('eval','({peers:window.__pcs.map(p=>p.connectionState),channels:window.__dc.map(d=>d.readyState)})');
   record('human grant revoked',revoked);assert.ok(revoked.data.result.channels.every(s=>s==='closed'));assert.ok(revoked.data.result.peers.every(s=>s==='closed'));
+  const staleInput=await viewer('eval',`window.__dc.map(d=>{try{d.send(new Uint8Array([3,8,0,97,0,0,0,0,0,0,0]));return 'sent';}catch(e){return e.name;}})`);
+  record('revoked channels refuse input',staleInput);assert.ok(staleInput.data.result.length>0);assert.ok(staleInput.data.result.every(e=>e==='InvalidStateError'));
   await assert.rejects(ab('click','@e1'),e=>/Unknown ref|not found|snapshot/i.test(e.stdout??e.message));
-  record('fresh snapshot after return',await ab('snapshot','-i'));assert.equal((await ab('eval','document.querySelector("input").value')).data.result,'a');
+  record('fresh snapshot after return',await ab('snapshot','-i'));assert.equal((await ab('eval','document.querySelector("input").value')).data.result,'ab');
+  await ab('fill','@e1','resumed');assert.equal((await ab('eval','document.querySelector("input").value')).data.result,'resumed');record('resumed automation with fresh ref',true);
   record('completed',h);
 } catch(error) {record('failure',{message:error.message,stdout:error.stdout,stack:error.stack});process.exitCode=1;}
 finally {

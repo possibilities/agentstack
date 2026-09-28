@@ -52,6 +52,12 @@ human grants have different unguessable URLs; input grants are returned only by
 the operator action and never by Bot reads or completion. Static assets and an
 explicit signaling allowlist are exposed, not Neko's general admin API. Observer
 signaling cannot acquire host or change clipboard, keyboard, or room settings.
+Human viewers also use the image's configured keyboard layout: the gateway
+does not forward `control/keyboard`, which changes guest-global XKB settings.
+The bundled viewer sends that message automatically on host acquisition. In
+isolated runtime checks, allowing it stalled native input; suppressing it restored
+trusted key delivery and the complete handoff/return flow. This is a managed
+protocol restriction, not an upstream root-cause diagnosis or carried patch.
 
 WebRTC input does not pass through this gateway. Therefore the server sets and
 verifies Neko `implicit_hosting=false`; only the explicitly granted human may

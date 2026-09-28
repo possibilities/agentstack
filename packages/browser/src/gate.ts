@@ -105,7 +105,10 @@ export class BrowserGate {
             } else {
               if (!this.viewAllowed(token)) { finish(); return; }
               const allowed = new Set(["client/heartbeat", "signal/offer", "signal/answer", "signal/candidate", "screen/resolution", "screen/configurations"]);
-              if (token === this.human) for (const event of ["control/request", "admin/control", "control/release", "control/clipboard", "control/keyboard"]) allowed.add(event);
+              // Use the image's configured keyboard layout. The legacy viewer
+              // automatically sends control/keyboard on host acquisition; that
+              // mutates guest-global XKB settings, not ordinary key input.
+              if (token === this.human) for (const event of ["control/request", "admin/control", "control/release", "control/clipboard"]) allowed.add(event);
               if (!allowed.has(frame.event)) return;
               if (token === this.human && frame.event === "control/request") { upstream.send(JSON.stringify({ event: "admin/control" })); return; }
             }

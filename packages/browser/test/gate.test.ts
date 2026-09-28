@@ -63,6 +63,9 @@ test("managed gate drains accepted CDP, rejects new work on existing and new con
     const human = await open(grant.replace("http:", "ws:") + "ws", true);
     const host = once(human, "message"); human.send(JSON.stringify({ event: "admin/control" })); await host;
     assert.equal(received.some((f) => f.event === "admin/control"), true);
+    human.send(JSON.stringify({ event: "control/keyboard", layout: "us" }));
+    const keyboardFence = once(human, "message"); human.send(JSON.stringify({ event: "client/heartbeat" })); await keyboardFence;
+    assert.equal(received.some((f) => f.event === "control/keyboard"), false);
     await gate.revokeHuman();
     assert.equal(sessions.length, 1); assert.equal((await fetch(grant)).status, 403);
     gate.resume(); assert.equal((await fetch(gate.cdpUrl + "/json/version")).status, 200);

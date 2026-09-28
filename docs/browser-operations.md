@@ -100,6 +100,8 @@ cover managed connections, not arbitrary same-user access to guest network ports
 A handoff holds the entire profile, including all tabs and existing managed
 controllers. Other profiles remain usable. Human actions use the local operator
 socket or WebSocket API; they are not exposed through agent MCP.
+The viewer uses the image's configured keyboard layout. Runtime keyboard-layout
+changes are not forwarded; ordinary key input uses Neko's data channel.
 
 The requesting Chat first chooses a UUID and subscribes through the browser
 MCP connection's generated `events_subscribe` operation:
