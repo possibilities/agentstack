@@ -215,7 +215,7 @@ function UsageCard({ node, names, observation, summary, orbs, samples, subscript
               {gauge.inspect ? (
                 <span data-node={nodeKey(gauge.inspect.node)} className="truncate"><NodeTitle node={gauge.inspect.node} label={gauge.inspect.label}>{gauge.label}</NodeTitle></span>
               ) : <span className="truncate">{gauge.label}</span>}
-              <Meter value={gauge.remaining} className={cn(blocker && "opacity-35")}
+              <Meter value={gauge.remaining} className={cn("h-3", blocker && "opacity-35")}
                 label={`${names[0].label} ${gauge.label} remaining${blocker ? `, unavailable until ${blocker.label} resets` : ""}`} />
               <span className={cn("min-w-10 text-right whitespace-nowrap tabular-nums", blocker && "opacity-35")}>
                 {gauge.remaining === null ? "—" : <span className="text-foreground/80">{pct(gauge.remaining)}</span>}
