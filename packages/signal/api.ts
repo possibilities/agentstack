@@ -10,7 +10,7 @@ const chunk=z.strictObject({offset:z.number().int().nonnegative().default(0),lim
 const chunkOutput=z.strictObject({text:z.string(),nextOffset:z.number().int(),totalChars:z.number().int(),revision:z.string()});
 const slice=(text:string,offset:number,limit:number,expected?:string)=>{const revision=digest(text);if(expected&&expected!==revision)throw new Error("attention_export_changed");return {text:text.slice(offset,offset+limit),nextOffset:Math.min(text.length,offset+limit),totalChars:text.length,revision};};
 const read={readOnlyHint:true} as const;
-export const api:PackageApi<Context,"attention_changed">={
+export const api:PackageApi<Context,"signal_changed">={
   operations:[
     operation({name:"attention_defaults_get",description:"Read revisioned system inference defaults: model, reasoningEffort and nullable Codex Bot account assignment. Defaults to gpt-5.6-luna/low; null uses the first available enabled account.",input:z.strictObject({}),output:settings.extend({revision:z.number().int()}),annotations:read,
       async call(ctx:Context){return ctx.service.store.defaults();}}),
@@ -36,14 +36,14 @@ export const api:PackageApi<Context,"attention_changed">={
       async call(ctx:Context,{hash,offset,limit,revision}){return slice(ctx.service.store.text(hash),offset,limit,revision);}}),
     operation({name:"attention_event_read",description:"Read one complete durable event as JSON chunks, including bodies omitted from attention_changes pages.",input:chunk.extend({seq:z.number().int().positive()}),output:chunkOutput,annotations:read,
       async call(ctx:Context,{seq,offset,limit,revision}){const row=ctx.service.store.db.prepare("SELECT * FROM events WHERE seq=?").get(seq);if(!row)throw new Error("unknown attention event");return slice(JSON.stringify({...row,body:JSON.parse(String(row.body))}),offset,limit,revision);}}),
-    operation({name:"attention_changes",description:"Read the durable sequence of source, processing and state-transition observations. The attention_changed event is only an invalidation; this operation supplies resumable evidence.",input:page,output:eventPageSchema,annotations:read,
+    operation({name:"attention_changes",description:"Read the durable sequence of source, processing and state-transition observations. The signal_changed event is only an invalidation; this operation supplies resumable evidence.",input:page,output:eventPageSchema,annotations:read,
       async call(ctx:Context,{after,limit}){return eventPageSchema.parse(ctx.service.store.page("events",after,limit));}}),
     operation({name:"attention_feedback",description:"Record explicitly attributed correction, label or outcome evidence for evaluation. Feedback is distinct from model predictions and implicit behavior; it does not silently resolve requests or retrain the model.",input:z.strictObject({id:z.uuid(),messageId:z.string(),runId:z.string().optional(),kind:z.enum(["correction","label","outcome","behavior"]),author:z.string().min(1).max(200),body:z.string().min(1).max(32_000)}),output:z.strictObject({id:z.uuid()}),annotations:{idempotentHint:true},
       async call(ctx:Context,input){ctx.service.store.message(input.messageId);if(input.runId&&ctx.service.store.run(input.runId).body.messageId!==input.messageId)throw new Error("feedback run does not belong to message");const result=ctx.service.store.feedback(input.id,input);ctx.service.onChange?.();return result;}}),
     operation({name:"attention_replay",description:"Explicitly evaluate one prior run using its exact frozen input/context and current model/effort defaults and prompt. Uses allowance when processing is enabled; appends a run without replacing live attention. Stable requestId deduplicates admission.",input:z.strictObject({runId:z.string(),requestId:z.uuid()}),output:z.strictObject({jobIds:z.array(z.string())}),annotations:{idempotentHint:true},
       async call(ctx:Context,{runId,requestId}){return ctx.service.store.replay(runId,requestId);}}),
   ],
-  events:{topics:{attention_changed:"Attention inputs, interpretations, processing state or configuration changed. Re-read relevant snapshots or attention_changes."},start(ctx,publish){ctx.service.onChange=()=>publish("attention_changed");return()=>{ctx.service.onChange=undefined;};}},
+  events:{topics:{signal_changed:"Attention inputs, interpretations, processing state or configuration changed. Re-read relevant snapshots or attention_changes."},start(ctx,publish){ctx.service.onChange=()=>publish("signal_changed");return()=>{ctx.service.onChange=undefined;};}},
   async createContext(env){const service=new AttentionService(stateDir(env),env);service.start();return {service};},
   async closeContext(ctx){await ctx.service.close();},
 };

@@ -90,7 +90,7 @@ export function spaceAttention(state: Pick<StackState, "status" | "owner" | "res
   if (state.attempt?.status === "failed") attention.accounts.push("Sign-in failed");
   if (state.status.bots === "closed") attention.fleet.push("bots reconnecting");
   if (state.status.roles === "closed") attention.roles.push("roles reconnecting");
-  for (const name of ["auth", "usage", "workers"] as const) if (state.status[name] === "closed") attention.accounts.push(`${name} reconnecting`);
+  for (const name of ["auth", "usage", "worker"] as const) if (state.status[name] === "closed") attention.accounts.push(`${name} reconnecting`);
   for (const child of state.owner.data?.children ?? []) if (!child.running) attention.system.push(`${child.name} stopped`);
   if (state.status.owner === "closed") attention.system.push("owner reconnecting");
   if (state.owner.error) attention.system.push(`Owner status: ${state.owner.error}`);

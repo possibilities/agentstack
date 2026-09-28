@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { DomainStatus } from "./schema.js";
 
 export type DomainLabel = {
-  pid: number; component: "bots" | "workers"; botId: string | null;
+  pid: number; component: "bots" | "worker"; botId: string | null;
   accountId: string | null; runtimeInstance: string | null; provider: string;
 };
 export type DomainReading = { labels: DomainLabel[]; statuses: DomainStatus[] };
@@ -22,7 +22,7 @@ const runtimeList = z.object({ runtimes: z.array(z.object({
 export function createDomainReader(env: NodeJS.ProcessEnv): DomainReader {
   const lastGood = new Map<string, string>();
   return async (attached, signal) => {
-    const results = await Promise.all((["bots", "workers"] as const).map(async (source) => {
+    const results = await Promise.all((["bots", "worker"] as const).map(async (source) => {
       const status: DomainStatus = { source, capturedAt: lastGood.get(source) ?? null, error: null, state: "not_attached", unmatched: 0 };
       if (!attached) return { status, labels: [] as DomainLabel[] };
       try {

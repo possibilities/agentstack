@@ -41,7 +41,7 @@ const modernKey=`(()=>{const d=window.__dc.find(d=>d!==window.$client._channel&&
 try {
   await system.start();await system.setHypemanLocation(process.env.HYPEMAN_ROOT);await system.enableHypeman(process.env.HYPEMAN_ROOT);
   binary=(await system.browserStatus()).location;await profiles.start(false);await profiles.tick();
-  service=await serveSocket({info:{name:'browser',description:'fixture',transportDescription:'fixture',path:socketPath('browser',env)},context:{system,backend,profiles},operations:api.operations});
+  service=await serveSocket({info:{name:'browse',description:'fixture',transportDescription:'fixture',path:socketPath('browse',env)},context:{system,backend,profiles},operations:api.operations});
   const a=profiles.list()[0];const b=process.env.PROOF_INPUT_ONLY ? null : await profiles.create(bot.id,'Secondary');if(b)await profiles.ensure(b.id);
   if(a.state==='failed'&&a.error?.includes('within 35 seconds')) {record('slow guest startup',a.error);await sleep(90000);record('same guest readiness retry',await profiles.ensure(a.id));}
   assert.equal((await profiles.select(bot.id,'default',a.id)).state,'connected');

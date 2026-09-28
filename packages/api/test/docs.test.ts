@@ -35,7 +35,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.deepEqual(
       docs.packages.map((item) => item.name),
-       ["access", "api", "attention", "auth", "bots", "brain", "browser", "content", "infer", "notify", "owner", "roles", "scrape", "usage", "workers"],
+       ["access", "api", "auth", "bots", "brain", "browse", "content", "infer", "notify", "owner", "roles", "scrape", "signal", "usage", "worker"],
     );
     assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@agentstack/${item.name}`));
 
@@ -84,7 +84,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok((doctor.outputSchema.properties as Record<string, unknown>).notification);
     const contentHttp = found.get("content")!.transports.find((transport) => transport.type === "http")!;
     assert.ok(contentHttp.routes.some((route) => route.surface === "artifacts" && route.path === "/a/*" && route.operation === null && route.format === "artifact media type" && route.authentication === "none" && route.outputSchema === null));
-    const browser = found.get("browser") as PackageDoc;
+    const browser = found.get("browse") as PackageDoc;
     assert.deepEqual(browser.transports.map((transport) => transport.type), ["socket", "mcp", "websocket"]);
     assert.deepEqual(browser.transports.find((transport) => transport.type === "mcp")!.operations.sort(),
       ["browser_profile_list", "browser_profile_create", "browser_profile_delete", "browser_controller_list", "browser_controller_select", "browser_handoff_request", "browser_handoff_get", "browser_handoff_list", "browser_handoff_completion", "browser_handoff_cancel"].sort());
@@ -180,7 +180,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok(JSON.stringify(prepareWorker.inputSchema).includes('"claude"'));
     assert.ok(JSON.stringify(loginWorker.inputSchema).includes('"claude"'));
     assert.ok(JSON.stringify(workerAccount.outputSchema).includes('"claude"'));
-    const workers = found.get("workers") as PackageDoc;
+    const workers = found.get("worker") as PackageDoc;
     const content = found.get("content") as PackageDoc;
     assert.ok(content.operations.some((op) => op.name === "artifact_publish"));
     assert.ok(content.operations.some((op) => op.name === "content_status"));
@@ -248,9 +248,9 @@ test("the api package serves structured documents for every workspace package", 
     assert.deepEqual(infer.transports.map((transport) => transport.type), ["socket", "websocket"]);
     assert.equal(infer.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
     assert.equal(infer.transports[0]?.endpoint, join(stateDir, "sockets", "infer.sock"));
-    const attention = found.get("attention") as PackageDoc;
+    const attention = found.get("signal") as PackageDoc;
     assert.deepEqual(attention.transports.map((transport) => transport.type), ["socket", "websocket"]);
-    assert.deepEqual(Object.keys(attention.events), ["attention_changed"]);
+    assert.deepEqual(Object.keys(attention.events), ["signal_changed"]);
     assert.ok(attention.operations.some((operation) => operation.name === "attention_replay"));
     assert.deepEqual(Object.keys(attention.operations.find((operation) => operation.name === "attention_defaults_get")!.outputSchema.properties ?? {}).sort(), ["accountId", "model", "reasoningEffort", "revision"]);
 

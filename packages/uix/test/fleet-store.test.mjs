@@ -60,7 +60,7 @@ test("Fleet snapshots reconnect, retain failed reads, deduplicate catalogs and p
   const store = new StackStore({ owner: resource(null), resources: resource(null), accounts: resource([]), workerAccounts: resource([]),
     workerRuntimes: resource([]), workerSessions: resource([]), login: resource(null), workerLogins: resource([]),
     bots: resource([]), botDefaults: resource({}), voice: resource(null), catalog: resource([]), usage: resource(null),
-    endpoints: Object.fromEntries(["auth", "workers", "bots", "usage"].map((name) => [name, "ws://localhost/websocket"])) });
+    endpoints: Object.fromEntries(["auth", "worker", "bots", "usage"].map((name) => [name, "ws://localhost/websocket"])) });
   try {
     store.start({ scopedBots: false });
     await until(store, () => store.getState().usage.data && store.getState().workerCatalogs[account.id]?.data && !store.getState().catalogPending[account.id]);
@@ -138,7 +138,7 @@ function harness({ accounts = [], bots = [] } = {}) {
   const store = new StackStore({ owner: resource(null), resources: resource(null), accounts: resource([]), workerAccounts: resource([]),
     workerRuntimes: resource([]), workerSessions: resource([]), login: resource(null), workerLogins: resource([]),
     bots: resource(bots), botDefaults: resource({}), voice: resource(null), catalog: resource([]), usage: resource(null),
-    endpoints: Object.fromEntries(["auth", "workers", "bots", "usage"].map((name) => [name, "ws://localhost/websocket"])) });
+    endpoints: Object.fromEntries(["auth", "worker", "bots", "usage"].map((name) => [name, "ws://localhost/websocket"])) });
   const publish = (pkg, topic, scope) => {
     for (const socket of sockets) for (const subscription of socket.subscriptions.values()) if (subscription.package === pkg && subscription.topics.includes(topic) && (!subscription.scope || subscription.scope === scope))
       socket.onmessage?.({ data: JSON.stringify({ method: "events/changed", params: { package: pkg, subscription: subscription.subscription, topic } }) });
@@ -165,7 +165,7 @@ test("catalog disable/re-enable fences the old observation and coalesces dirty n
     handlers.worker_account_list = () => ({ accounts: [account] });
     publish("auth", "worker_accounts_changed");
     await until(store, () => store.getState().workerAccounts.data[0].enabled === true);
-    for (let i = 0; i < 5; i++) publish("workers", "workers_changed");
+    for (let i = 0; i < 5; i++) publish("worker", "workers_changed");
     old.resolve({ accountId: account.id, models: [], stale: false, runtimeVersion: "obsolete" });
     await started.promise;
     assert.equal(store.getState().workerCatalogs[account.id], undefined, "obsolete success must not resurrect the pruned catalog");
@@ -188,7 +188,7 @@ test("catalog discovery's own notice produces a cache-only follow-up and then se
     if (!cached || refresh) {
       discoveries++;
       cached = { accountId, models: [], stale: false, runtimeVersion: `discovery-${discoveries}` };
-      publish("workers", "workers_changed");
+      publish("worker", "workers_changed");
     }
     return cached;
   };

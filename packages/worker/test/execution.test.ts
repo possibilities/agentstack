@@ -171,7 +171,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     const supervisor = new WorkerSupervisor(root, env);
     manager = new WorkerManager(root, supervisor, env);
     manager.onChange = (id) => { if (id) scopedChanges.push(id); };
-    workerSocket = await serveSocket({ info: { name: "workers", description: "Workers", transportDescription: "Socket", path: socketPath("workers", env) },
+    workerSocket = await serveSocket({ info: { name: "worker", description: "Workers", transportDescription: "Socket", path: socketPath("worker", env) },
       context: { supervisor, manager }, operations: workersApi.operations });
     await supervisor.reconcile();
     const catalog = await supervisor.catalog(accountId, true);
@@ -184,31 +184,31 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     assert.equal(failed.turn.phase, "failed"); assert.equal(failed.turn.promptChars, "Retain failed preparation prompt".length);
     assert.equal((await manager.turns(failed.worker.id, undefined, 1)).turns[0]?.prompt, "Retain failed preparation prompt");
     assert.equal(failed.turn.dispatchedAt, null); assert.equal(failed.turn.requestedModel, start.model);
-    const started = await socketCall(socketPath("workers", env), "tools/call", { name: "worker_start", arguments: start }) as Awaited<ReturnType<WorkerManager["start"]>>;
+    const started = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_start", arguments: start }) as Awaited<ReturnType<WorkerManager["start"]>>;
     assert.equal(started.duplicate, false);
     await assert.rejects(manager.start({ ...start, task: "Different task" }), /requestId was reused/);
-    const fromApi = await socketCall(socketPath("workers", env), "tools/call", { name: "worker_status", arguments: { id: started.worker.id } }) as { worker: { id: string } };
+    const fromApi = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_status", arguments: { id: started.worker.id } }) as { worker: { id: string } };
     assert.equal(fromApi.worker.id, started.worker.id);
     assert.equal((await manager.start(start)).worker.id, started.worker.id);
     const id = started.worker.id;
     for (let i = 0; i < 100 && (await manager.status(id)).worker.phase !== "idle"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal((await manager.status(id)).turn?.stopReason, "end_turn");
-    const detail = await socketCall(socketPath("workers", env), "tools/call", { name: "worker_detail", arguments: { id } }) as Awaited<ReturnType<WorkerManager["detail"]>>;
+    const detail = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_detail", arguments: { id } }) as Awaited<ReturnType<WorkerManager["detail"]>>;
     assert.equal(detail.observedSettings?.model, "xai/grok-build");
     assert.equal(detail.observedSettings?.effort, "low");
     assert.ok(detail.metadata.some((entry) => entry.kind === "available_commands_update"));
     assert.ok(detail.metadata.some((entry) => entry.kind === "runtime"));
     assert.equal(detail.subagents.hierarchyAvailable, false);
-    const toolPage = await socketCall(socketPath("workers", env), "tools/call", { name: "worker_tool_list", arguments: { id } }) as Awaited<ReturnType<WorkerManager["tools"]>>;
+    const toolPage = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_tool_list", arguments: { id } }) as Awaited<ReturnType<WorkerManager["tools"]>>;
     assert.equal(toolPage.tools[0]?.title, "Write"); assert.equal(toolPage.tools[0]?.status, "completed");
-    const history = await socketCall(socketPath("workers", env), "tools/call", { name: "worker_record_list", arguments: { id } }) as Awaited<ReturnType<WorkerManager["records"]>>;
+    const history = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_record_list", arguments: { id } }) as Awaited<ReturnType<WorkerManager["records"]>>;
     assert.ok(history.entries.some((entry) => entry.kind === "tool_call_update"));
     assert.equal(JSON.stringify(history).includes("fixture-secret"), false);
     assert.equal(JSON.stringify(history).includes("proof="), false);
-    const turnHistory = await socketCall(socketPath("workers", env), "tools/call", { name: "worker_turn_list", arguments: { id } }) as Awaited<ReturnType<WorkerManager["turns"]>>;
+    const turnHistory = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_turn_list", arguments: { id } }) as Awaited<ReturnType<WorkerManager["turns"]>>;
     assert.equal(turnHistory.turns[0]?.prompt, start.task);
     assert.ok(turnHistory.turns[0]?.dispatchedPromptSeq);
-    const chunk = await socketCall(socketPath("workers", env), "tools/call", { name: "worker_record_read", arguments: { id, seq: turnHistory.turns[0]!.dispatchedPromptSeq! } }) as { data: string };
+    const chunk = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_record_read", arguments: { id, seq: turnHistory.turns[0]!.dispatchedPromptSeq! } }) as { data: string };
     assert.match(chunk.data, /Check your work/);
     assert.ok(scopedChanges.includes(id));
     assert.deepEqual(JSON.parse(await readFile(join(started.worker.cwd!, "mcp-names.json"), "utf8")), ["roles", "fixture-mcp"]);

@@ -169,3 +169,47 @@ test("subscriptions survive owner-process recreation and rebind to the current B
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("saved package selectors migrate without dropping Bot watches or replaying old sockets", { timeout: 10_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "as-renamed-events-"));
+  const env = { AGENTSTACK_STATE_DIR: root };
+  const names = ["signal", "browse", "worker"] as const;
+  const sockets = await Promise.all(names.map((name) => serveSocket({
+    info: { name, description: name, transportDescription: "Socket", path: socketPath(name, env) },
+    context: {}, operations: [operation({ name: "snapshot", description: "Read value.", input: z.strictObject({}), output: z.object({ value: z.string() }),
+      annotations: { readOnlyHint: true }, async call() { return { value: name }; } })],
+    events: { topics: { [name === "signal" ? "signal_changed" : "changed"]: "Refresh snapshot." } },
+  })));
+  let first: McpEventSubscriptions | undefined;
+  let restored: McpEventSubscriptions | undefined;
+  try {
+    first = new McpEventSubscriptions(env, async () => undefined, async () => undefined);
+    const saved = await Promise.all(names.map((name) => first!.subscribe(name,
+      { topic: name === "signal" ? "signal_changed" : "changed", readOperation: "snapshot" }, caller)));
+    await first.close();
+    first = undefined;
+    const db = new DatabaseSync(join(root, "event-subscriptions.sqlite"));
+    try {
+      db.exec(`UPDATE subscriptions SET pkg = CASE pkg WHEN 'signal' THEN 'attention' WHEN 'browse' THEN 'browser' WHEN 'worker' THEN 'workers' END,
+        topic = CASE WHEN pkg = 'signal' THEN 'attention_changed' ELSE topic END`);
+    } finally { db.close(); }
+    const deliveries: EventValue[] = [];
+    restored = new McpEventSubscriptions(env, async () => undefined, async (event) => { deliveries.push(event); });
+    assert.deepEqual(restored.status(caller).subscriptions.map(({ id, pkg, topic }) => ({ id, pkg, topic })),
+      saved.map(({ subscription }, i) => ({ id: subscription.id, pkg: names[i], topic: names[i] === "signal" ? "signal_changed" : "changed" })));
+    restored.resume();
+    await until(() => deliveries.length === names.length);
+    assert.deepEqual(deliveries.map(({ subscription, reason }) => [subscription.pkg, reason]).sort(),
+      names.map((name) => [name, "reconnected"]).sort());
+    await restored.close();
+    restored = undefined;
+    const again = new McpEventSubscriptions(env, async () => undefined, async () => undefined);
+    try { assert.deepEqual(again.status(caller).subscriptions.map((row) => row.pkg), [...names]); }
+    finally { await again.close(); }
+  } finally {
+    await first?.close();
+    await restored?.close();
+    await Promise.all(sockets.map((socket) => socket.close()));
+    await rm(root, { recursive: true, force: true });
+  }
+});

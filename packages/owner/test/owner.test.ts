@@ -8,7 +8,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { serveApi, socketCall, socketSubscribe } from "@agentstack/api";
-import { apiChild, attentionChild, authChild, brainChild, browserChild, contentChild, inferChild, notifyChild, rolesChild, scrapeChild, workersChild, websocketChild } from "../src/children.js";
+import { apiChild, signalChild, authChild, brainChild, browseChild, contentChild, inferChild, notifyChild, rolesChild, scrapeChild, workerChild, websocketChild } from "../src/children.js";
 import { inspectorChild, inspectorPort } from "../src/inspector.js";
 import { botsChild } from "../src/bots.js";
 import { startOwner } from "../src/owner.js";
@@ -45,11 +45,11 @@ test("browser lifecycle parent drains before its Hypeman-like descendant is sign
   const ready = join(dir, "ready"), drained = join(dir, "drained"), stopped = join(dir, "stopped");
   const helper = `const fs=require("node:fs"); process.on("SIGTERM",()=>{fs.writeFileSync(${JSON.stringify(stopped)},fs.existsSync(${JSON.stringify(drained)})?"after":"before");process.exit(0)});fs.writeFileSync(${JSON.stringify(ready)},"ready");setInterval(()=>{},1000);`;
   const parent = `const child=require("node:child_process").spawn(process.execPath,["-e",${JSON.stringify(helper)}],{stdio:"ignore"});process.on("SIGTERM",()=>{setTimeout(()=>{require("node:fs").writeFileSync(${JSON.stringify(drained)},"flushed");child.kill("SIGTERM");child.once("exit",()=>process.exit(0));},100)});setInterval(()=>{},1000);`;
-  const owner = startOwner([{ name: "browser", command: process.execPath, args: ["-e", parent], parentFirst: true }]);
+  const owner = startOwner([{ name: "browse", command: process.execPath, args: ["-e", parent], parentFirst: true }]);
   try {
     await waitFor(() => existsSync(ready), 5_000); await owner.close();
     assert.equal(await readFile(stopped, "utf8"), "after");
-    assert.equal(browserChild().parentFirst, true);
+    assert.equal(browseChild().parentFirst, true);
   } finally { await owner.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -125,12 +125,12 @@ test("shutdown drains a dependent child before stopping its dependency", async (
 });
 
 test("the owner starts the required socket children", () => {
-  for (const child of [apiChild(), attentionChild(), authChild(), rolesChild(), botsChild(), workersChild(), inferChild(), notifyChild(), contentChild(), brainChild(), browserChild(), scrapeChild()]) {
+  for (const child of [apiChild(), signalChild(), authChild(), rolesChild(), botsChild(), workerChild(), inferChild(), notifyChild(), contentChild(), brainChild(), browseChild(), scrapeChild()]) {
     assert.equal(child.command, process.execPath);
     assert.deepEqual(child.args.slice(1), [child.name, "socket"]);
     assert.equal(existsSync(child.args[0] ?? ""), true);
   }
-  assert.deepEqual([apiChild(), attentionChild(), authChild(), rolesChild(), botsChild(), workersChild(), inferChild(), notifyChild(), contentChild(), brainChild(), browserChild(), scrapeChild()].map((child) => child.name), ["api", "attention", "auth", "roles", "bots", "workers", "infer", "notify", "content", "brain", "browser", "scrape"]);
+  assert.deepEqual([apiChild(), signalChild(), authChild(), rolesChild(), botsChild(), workerChild(), inferChild(), notifyChild(), contentChild(), brainChild(), browseChild(), scrapeChild()].map((child) => child.name), ["api", "signal", "auth", "roles", "bots", "worker", "infer", "notify", "content", "brain", "browse", "scrape"]);
   assert.deepEqual(botsChild(43123).env, { AGENTSTACK_OWNER_MCP_PORT: "43123" });
   const websocket = websocketChild();
   assert.equal(websocket.command, process.execPath);

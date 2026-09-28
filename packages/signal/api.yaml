@@ -1,4 +1,4 @@
-name: attention
+name: signal
 description: Headless, forward-observed conversation interpretation and attention. LLM annotations, request resolution, durable source checkpoints, inference traces and evaluation evidence.
 socket:
   description: Local attention configuration, lifecycle, queries, feedback and explicit replay.

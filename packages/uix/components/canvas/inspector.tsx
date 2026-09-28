@@ -183,7 +183,7 @@ function resolve(ref: NodeRef, state: StackState): View | null {
       const resource = state.workerCatalogs[ref.id];
       return { eyebrow: `${providerTitle(account.provider)} Worker catalog`, accent: "bots", title: workerLabels.get(ref.id) ?? shortId(ref.id), record: resource?.data ?? { accountId: ref.id, error: resource?.error ?? "No observed catalog" },
         body: <CatalogStatus id={ref.id} />,
-        controls: <CatalogRefresh ids={[ref.id]} />, related: [{ ref: { kind: "worker-account", id: ref.id }, label: "Worker account" }], events: state.events.filter((event) => event.pkg === "workers") };
+        controls: <CatalogRefresh ids={[ref.id]} />, related: [{ ref: { kind: "worker-account", id: ref.id }, label: "Worker account" }], events: state.events.filter((event) => event.pkg === "worker") };
     }
     case "bot": {
       const bot = state.bots.data?.find((item) => item.id === ref.id);
@@ -259,7 +259,7 @@ function referencePackage(ref: NodeRef): string {
   if (ref.kind === "bot") return "bots";
   if (ref.kind === "owner" || ref.kind === "child" || ref.kind === "resource" || ref.kind === "process") return "owner";
   if (ref.kind === "category" || ref.kind === "fragment") return "roles";
-  if (ref.kind === "worker-catalog") return "workers";
+  if (ref.kind === "worker-catalog") return "worker";
   if (ref.kind === "usage" || ref.kind === "usage-account" || ref.kind === "grok-bot-usage") return "usage";
   return "auth";
 }

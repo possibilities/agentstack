@@ -13,7 +13,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { ownerResourcesOutput, ownerResourceHistoryOutput } from "../src/resources/schema.js";
 
 const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
-const socketNames = ["access", "api", "attention", "auth", "roles", "bots", "brain", "browser", "scrape", "content", "workers", "usage", "infer", "notify", "owner"];
+const socketNames = ["access", "api", "signal", "auth", "roles", "bots", "brain", "browse", "scrape", "content", "worker", "usage", "infer", "notify", "owner"];
 const brainEnv = { AGENTSTACK_BRAIN_SHARE_HOST: "127.0.0.1", AGENTSTACK_BRAIN_SHARE_PORT: "0" };
 
 test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a standalone reference listener, then shuts them down", { timeout: 120_000 }, async () => {
@@ -47,7 +47,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       children: Array<{ name: string; pid: number | null; running: boolean }>;
     };
     assert.equal(status.pid, child.pid);
-    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["access", "api", "attention", "auth", "bots", "brain", "browser", "content", "infer", "inspector", "notify", "roles", "scrape", "uix", "usage", "websocket", "workers"]);
+    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["access", "api", "auth", "bots", "brain", "browse", "content", "infer", "inspector", "notify", "roles", "scrape", "signal", "uix", "usage", "websocket", "worker"]);
     for (let i = 0; i < 200 && status.children.some((entry) => !entry.running); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
       status = (await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} })) as typeof status;
@@ -124,7 +124,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     assert.equal(servers?.status, 200, stderr);
-    assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["auth", "bots", "brain", "browser", "content", "notify", "owner", "roles", "scrape", "usage", "workers"]);
+    assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["auth", "bots", "brain", "browse", "content", "notify", "owner", "roles", "scrape", "usage", "worker"]);
     const inspectorUrl = `http://127.0.0.1:${inspectorPort}/`;
     assert.equal((await fetch(inspectorUrl)).status, 200);
     const catalogDir = (await readdir(stateDir)).find((entry) => entry.startsWith("inspector-"));
@@ -206,7 +206,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       ["owner", ["owner_resources", "owner_resource_history", "resources_changed"]],
       ["bots", ["chat_tree", "chat_tree_detail"]],
       ["brain", ["@agentstack/brain", "brain_status", "search", "submit"]],
-      ["workers", ["worker_record_list", "worker_tool_list", "worker_progress"]],
+      ["worker", ["worker_record_list", "worker_tool_list", "worker_progress"]],
     ] as const) {
       const response = await fetch(new URL(`/x/fleet?reference=package%3A${pkg}`, uixUrl));
       assert.equal(response.status, 200);

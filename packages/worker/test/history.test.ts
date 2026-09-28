@@ -181,7 +181,7 @@ test("actual ACP partial tool updates preserve structured content, metadata and 
     history.update(worker.id, turn.id, "live", { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "PRIVATE THOUGHT" } });
     assert.equal(history.capture(worker.id).records, priorCount);
     const safe = history.append(worker.id, null, "runtime", "response", { reasoning: "PRIVATE THOUGHT", credentials: "SECRET",
-      _meta: { preserved: true, url: "http://127.0.0.1:8743/mcp/workers?worker=id&runtime=id&proof=PRIVATE" } });
+      _meta: { preserved: true, url: "http://127.0.0.1:8743/mcp/worker?worker=id&runtime=id&proof=PRIVATE" } });
     const serialized = JSON.stringify(history.data(worker.id, safe!));
     assert.equal(serialized.includes("PRIVATE"), false); assert.equal(serialized.includes("SECRET"), false);
     assert.match(serialized, /preserved/);

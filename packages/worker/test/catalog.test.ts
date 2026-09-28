@@ -163,7 +163,7 @@ test("operator disable and removal drain the exact account process before deleti
   await chmod(binary, 0o700);
   const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, AGENTSTACK_OPENCODE_BIN: binary };
   const auth = await serveApi({ name: "auth", transport: "socket", env });
-  const workers = await serveApi({ name: "workers", transport: "socket", env });
+  const workers = await serveApi({ name: "worker", transport: "socket", env });
   const call = (name: string, args: object) => socketCall(socketPath("auth", env), "tools/call", { name, arguments: args });
   try {
     const { account } = await call("worker_account_prepare", { provider: "grok" }) as { account: { id: string } };
@@ -174,13 +174,13 @@ test("operator disable and removal drain the exact account process before deleti
     await (await import("node:fs/promises")).mkdir(join(root, "data", "opencode"), { recursive: true });
      await writeV2Credential(join(root, "data", "opencode", "opencode.db"), "xai", JSON.stringify({ type: "oauth", access: "first", refresh: "first" }));
     await call("worker_account_confirm", { id: account.id });
-    const runtimes = async () => (await socketCall(socketPath("workers", env), "tools/call", {
+    const runtimes = async () => (await socketCall(socketPath("worker", env), "tools/call", {
       name: "worker_runtime_list", arguments: {},
     }) as { runtimes: Array<{ id: string }> }).runtimes;
     for (let attempt = 0; attempt < 40 && !(await runtimes()).some((item) => item.id === account.id); attempt++)
       await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal((await runtimes()).length, 1);
-    const catalog = await socketCall(socketPath("workers", env), "tools/call", {
+    const catalog = await socketCall(socketPath("worker", env), "tools/call", {
       name: "worker_catalog", arguments: { accountId: account.id },
     }) as { models: unknown[]; runtimeVersion: string; stale: boolean };
     assert.equal(catalog.models.length, 3);
@@ -208,7 +208,7 @@ test("operator disable and removal drain the exact account process before deleti
     for (let attempt = 0; attempt < 40 && !(await runtimes()).some((item) => item.id === codex.id); attempt++)
       await new Promise((resolve) => setTimeout(resolve, 50));
     assert.deepEqual((await runtimes()).map((item) => item.id), [codex.id]);
-    const codexCatalog = await socketCall(socketPath("workers", env), "tools/call", {
+    const codexCatalog = await socketCall(socketPath("worker", env), "tools/call", {
       name: "worker_catalog", arguments: { accountId: codex.id },
     }) as { models: Array<{ id: string; efforts: string[] }> };
     assert.equal(codexCatalog.models.length, 3, "Codex catalogs omit entries without effort choices");

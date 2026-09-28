@@ -128,7 +128,7 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
   const system = spaceAttention({
     ...quiet,
     owner: { data: { pid: 1, indexUrl: null, uixUrl: null, inspectorUrl: null, mcpUrls: {}, children: [{ name: "content", pid: null, running: false, exitCode: 1, signal: null, error: "crashed" }, { name: "api", pid: 2, running: true, exitCode: null, signal: null, error: null }] }, error: "socket read failed", at: null },
-    resources: { data: { observation: { error: "collection_timeout", coverage: { domains: [{ source: "bots", state: "stale", unmatched: 0, capturedAt: null, error: null }, { source: "workers", state: "current", unmatched: 2, capturedAt: null, error: null }] } } }, error: "sampler read failed", at: null },
+    resources: { data: { observation: { error: "collection_timeout", coverage: { domains: [{ source: "bots", state: "stale", unmatched: 0, capturedAt: null, error: null }, { source: "worker", state: "current", unmatched: 2, capturedAt: null, error: null }] } } }, error: "sampler read failed", at: null },
     status: { owner: "closed" },
   });
   assert.deepEqual(system.system, ["content stopped", "owner reconnecting", "Owner status: socket read failed", "Resources: sampler read failed", "Resource sampling: collection_timeout", "bots attribution stale"]);

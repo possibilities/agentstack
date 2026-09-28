@@ -74,6 +74,12 @@ export class McpEventSubscriptions {
     `);
     const columns = this.db.prepare("PRAGMA table_info(subscriptions)").all() as Array<{ name: string }>;
     if (!columns.some(({ name }) => name === "last_value_hash")) this.db.exec("ALTER TABLE subscriptions ADD COLUMN last_value_hash TEXT");
+    // These are durable Bot watches, not historical provenance. Rebind their
+    // package selectors before reconnecting; the old sockets are no longer served.
+    this.db.exec(`UPDATE subscriptions SET pkg = CASE pkg
+      WHEN 'attention' THEN 'signal' WHEN 'browser' THEN 'browse' WHEN 'workers' THEN 'worker' END,
+      topic = CASE WHEN pkg = 'attention' AND topic = 'attention_changed' THEN 'signal_changed' ELSE topic END
+      WHERE pkg IN ('attention', 'browser', 'workers')`);
     const rows = this.db.prepare("SELECT * FROM subscriptions").all() as Array<{
       id: string; bot_id: string; instance: string; thread_id: string; pkg: string; topic: string; scope: string | null;
       read_operation: string; read_arguments_json: string; last_delivered_at: number | null; last_error: string | null; last_value_hash: string | null;
@@ -195,7 +201,7 @@ export class McpEventSubscriptions {
       preventThreadFeedback(state.pkg, state.topic, state.scope, state.botId);
       await this.authorizeRead?.(state);
       return socketCall(socketPath(state.pkg, this.env), "tools/call", { name: state.readOperation, arguments: state.readArguments,
-        ...(state.pkg === "browser" ? { invocation: { transport: "mcp", botId: state.botId, instance: state.instance, threadId: state.threadId, sessionId: null } } : {}),
+        ...(state.pkg === "browse" ? { invocation: { transport: "mcp", botId: state.botId, instance: state.instance, threadId: state.threadId, sessionId: null } } : {}),
       }, { timeoutMs: 10_000 });
     })();
   }

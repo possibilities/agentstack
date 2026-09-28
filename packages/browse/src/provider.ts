@@ -13,7 +13,7 @@ export async function handleProvider(source: string, env: NodeJS.ProcessEnv = pr
         !input.request || typeof input.request !== "object" || Array.isArray(input.request)) throw new Error("invalid provider request");
     if (input.type === "plugin.manifest") return { protocol, success: true,
       manifest: { name: "agentstack", capabilities: ["browser.provider"], description: "AgentStack durable Bot browsers" } };
-    const socket = socketPath("browser", env);
+    const socket = socketPath("browse", env);
     if (input.type === "browser.close") {
       // Disconnect belongs to agent-browser, not to an available owner socket.
       // This is only a last-observation notice: no browser or profile is released.

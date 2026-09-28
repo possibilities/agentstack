@@ -15,7 +15,7 @@ async function until(check: () => boolean): Promise<void> {
 
 test("Worker UI progress and rich reads cannot become originating-Bot wakeups", async () => {
   const subscription = {
-    id: "subscription", botId: "bot-1", threadId: "child", instance: "instance", pkg: "workers",
+    id: "subscription", botId: "bot-1", threadId: "child", instance: "instance", pkg: "worker",
     topic: "worker_changed", scope: "worker", readOperation: "worker_status", readArguments: { id: "worker" },
     state: "active" as const, lastDeliveredAt: null, lastError: null,
   };
@@ -71,7 +71,7 @@ test("event values start a turn only on a loaded descendant of the Bot's sanctio
   let workerOwner = "bot-1";
   let workerPhase = "running";
   const workers = await serveSocket({
-    info: { name: "workers", description: "Workers.", transportDescription: "Socket.", path: socketPath("workers", env) }, context: {},
+    info: { name: "worker", description: "Workers.", transportDescription: "Socket.", path: socketPath("worker", env) }, context: {},
     operations: [operation({ name: "worker_status", description: "Read Worker.", input: z.strictObject({ id: z.string() }), output: z.any(), annotations: { readOnlyHint: true },
       async call(_ctx, { id }) { assert.equal(id, workerId); return { worker: { id, botId: workerOwner, threadId: "child", phase: workerPhase }, turn: { stopReason: workerPhase === "completed" ? "end_turn" : null }, pending: [] }; } })],
     events: { topics: { worker_changed: "Worker changed." }, scope: { description: "Worker ID.", example: workerId, required: false, valid: (_ctx, id) => id === workerId } },
@@ -79,7 +79,7 @@ test("event values start a turn only on a loaded descendant of the Bot's sanctio
   const subscriptions = createMcpEventSubscriptions(env);
   let handback: unknown = null;
   const browser = await serveSocket({
-    info: { name: "browser", description: "Browser.", transportDescription: "Socket.", path: socketPath("browser", env) }, context: {},
+    info: { name: "browse", description: "Browser.", transportDescription: "Socket.", path: socketPath("browse", env) }, context: {},
     operations: [operation({ name: "browser_handoff_completion", description: "Completion only.", input: z.object({ botId: z.string(), threadId: z.string(), requestId: z.string() }), output: z.any(), annotations: { readOnlyHint: true },
       async call(_ctx, input, caller) { assert.equal(caller?.botId, input.botId); assert.equal(caller?.threadId, input.threadId); assert.equal(caller?.instance, botInstance(endpoint)); return { result: handback }; } })],
     events: { topics: { browser_handoffs_changed: "Handoff invalidation." } },
@@ -104,9 +104,9 @@ test("event values start a turn only on a loaded descendant of the Bot's sanctio
     assert.match(turns[0]?.input[0]?.text ?? "", /Topic: changed/);
     await until(() => typeof subscriptions.status(invocation).subscriptions[0]?.lastDeliveredAt === "number");
     const choice = { topic: "worker_changed", scope: workerId, readOperation: "worker_status", readArguments: { id: workerId } };
-    await assert.rejects(subscriptions.subscribe("workers", { ...choice, readArguments: { id: "other" } }, invocation), /exact worker_changed scope/);
-    await assert.rejects(subscriptions.subscribe("workers", choice, { ...invocation, threadId: "main" }), /not owned by this Bot thread/);
-    const workerSub = await subscriptions.subscribe("workers", choice, invocation);
+    await assert.rejects(subscriptions.subscribe("worker", { ...choice, readArguments: { id: "other" } }, invocation), /exact worker_changed scope/);
+    await assert.rejects(subscriptions.subscribe("worker", choice, { ...invocation, threadId: "main" }), /not owned by this Bot thread/);
+    const workerSub = await subscriptions.subscribe("worker", choice, invocation);
     assert.equal((workerSub.value as { worker: { phase: string } }).worker.phase, "running");
     workerPhase = "completed";
     workers.publish?.("worker_changed", workerId);
@@ -121,8 +121,8 @@ test("event values start a turn only on a loaded descendant of the Bot's sanctio
     assert.equal(subscriptions.status(invocation).subscriptions.find((item) => item.id === workerSub.subscription.id)?.state, "error");
     assert.equal(turns.length, 2, "a Worker ownership change must not wake the previous Bot thread");
     const handoffChoice = { topic: "browser_handoffs_changed", readOperation: "browser_handoff_completion", readArguments: { botId: "bot-1", threadId: "child", requestId: workerId } };
-    await assert.rejects(subscriptions.subscribe("browser", { ...handoffChoice, readArguments: { ...handoffChoice.readArguments, threadId: "main" } }, invocation), /originating Chat/);
-    const subscribed = await subscriptions.subscribe("browser", handoffChoice, invocation);
+    await assert.rejects(subscriptions.subscribe("browse", { ...handoffChoice, readArguments: { ...handoffChoice.readArguments, threadId: "main" } }, invocation), /originating Chat/);
+    const subscribed = await subscriptions.subscribe("browse", handoffChoice, invocation);
     assert.deepEqual(subscribed.value, { result: null }, "subscribe before handoff admission has a stable empty initial value");
     for (const _phase of ["preparing", "awaiting_human", "human_controlling", "returning"]) { browser.publish?.("browser_handoffs_changed"); await pause(20); }
     assert.equal(turns.length, 2, "intermediate handoff states do not wake the Chat");
@@ -130,7 +130,7 @@ test("event values start a turn only on a loaded descendant of the Bot's sanctio
     await until(() => turns.length === 3);
     assert.equal(turns[2]?.threadId, "child"); assert.match(turns[2]?.input[0]?.text ?? "", /"outcome":"completed"/);
     await until(() => typeof subscriptions.status(invocation).subscriptions.find((s) => s.id === subscribed.subscription.id)?.lastDeliveredAt === "number");
-    const completedBeforeSubscribe = await subscriptions.subscribe("browser", { ...handoffChoice, readArguments: { ...handoffChoice.readArguments, requestId: "22222222-2222-4222-8222-222222222222" } }, invocation);
+    const completedBeforeSubscribe = await subscriptions.subscribe("browse", { ...handoffChoice, readArguments: { ...handoffChoice.readArguments, requestId: "22222222-2222-4222-8222-222222222222" } }, invocation);
     assert.deepEqual(completedBeforeSubscribe.value, { result: handback }, "a completion before subscribe is returned initially, never lost awaiting a future notice");
     assert.equal(turns.length, 3);
   } finally {

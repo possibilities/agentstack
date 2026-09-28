@@ -1,6 +1,6 @@
 # Agent trees and conversation observations
 
-The `bots` and `workers` Package APIs provide the read models for a UI of delegated work. Discover their current schemas and transport addresses through `api.docs_snapshot`. The same typed operations are available on the declared socket, MCP, and WebSocket transports.
+The `bots` and `worker` Package APIs provide the read models for a UI of delegated work. Discover their current schemas and transport addresses through `api.docs_snapshot`. The same typed operations are available on the declared socket, MCP, and WebSocket transports.
 
 ## Identity and ownership
 

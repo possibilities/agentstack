@@ -37,8 +37,8 @@ test("the real owner catalog gives Bots a signed browser management connection",
     const env = { AGENTSTACK_STATE_DIR: state };
     const endpoint = "unix:///fixture/browser-bot.sock";
     const urls = await ownerMcpUrls(workspaceRoot(import.meta.dirname), 43123, "bot-1", endpoint, env);
-    assert.ok(urls.browser, "browser management must be discoverable by launched Bots");
-    assert.equal(new URL(urls.browser).pathname, "/mcp/browser");
-    assert.deepEqual(parseBotMcpIdentity(new URL(urls.browser), env), { botId: "bot-1", instance: botInstance(endpoint) });
+    assert.ok(urls.browse, "browser management must be discoverable by launched Bots");
+    assert.equal(new URL(urls.browse).pathname, "/mcp/browse");
+    assert.deepEqual(parseBotMcpIdentity(new URL(urls.browse), env), { botId: "bot-1", instance: botInstance(endpoint) });
   } finally { await rm(state, { recursive: true, force: true }); }
 });

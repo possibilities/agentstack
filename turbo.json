@@ -16,14 +16,14 @@
       "dependsOn": [
         "build",
         "@agentstack/auth#build",
-        "@agentstack/attention#build",
+        "@agentstack/signal#build",
         "@agentstack/infer#build",
         "@agentstack/bots#build",
         "@agentstack/roles#build",
         "@agentstack/owner#build",
-        "@agentstack/workers#build",
+        "@agentstack/worker#build",
         "@agentstack/brain#build",
-        "@agentstack/browser#build",
+        "@agentstack/browse#build",
         "@agentstack/content#build"
       ],
       "cache": false

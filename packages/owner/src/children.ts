@@ -36,11 +36,11 @@ export function rolesChild(): OwnedChild {
     args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "roles", "socket"],
   };
 }
-export function workersChild(): OwnedChild {
+export function workerChild(): OwnedChild {
   const apiPackage = require.resolve("@agentstack/api/package.json");
   return {
-    name: "workers", command: process.execPath,
-    args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "workers", "socket"],
+    name: "worker", command: process.execPath,
+    args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "worker", "socket"],
   };
 }
 export function usageChild(): OwnedChild {
@@ -57,10 +57,10 @@ export function inferChild(): OwnedChild {
     args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "infer", "socket"],
   };
 }
-export function attentionChild(): OwnedChild {
+export function signalChild(): OwnedChild {
   const apiPackage = require.resolve("@agentstack/api/package.json");
-  return { name: "attention", command: process.execPath,
-    args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "attention", "socket"] };
+  return { name: "signal", command: process.execPath,
+    args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "signal", "socket"] };
 }
 export function notifyChild(): OwnedChild {
   const apiPackage = require.resolve("@agentstack/api/package.json");
@@ -88,10 +88,10 @@ export function scrapeChild(): OwnedChild {
     args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "scrape", "socket"],
   };
 }
-export function browserChild(): OwnedChild {
+export function browseChild(): OwnedChild {
   const apiPackage = require.resolve("@agentstack/api/package.json");
-  return { name: "browser", command: process.execPath, parentFirst: true,
-    args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "browser", "socket"] };
+  return { name: "browse", command: process.execPath, parentFirst: true,
+    args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "browse", "socket"] };
 }
 export function websocketChild(): OwnedChild {
   return {

@@ -21,7 +21,7 @@ let inventory=[{id:'bot-proof',url:'unix://'+root+'/fake-bot.sock',state:'runnin
 const bots=await serveSocket({info:{name:'bots',description:'fixture',transportDescription:'fixture',path:socketPath('bots',env)},context:{},operations:[operation({name:'bot_list',description:'fixture',input:z.object({}),output:z.object({bots:z.array(z.unknown())}),async call(){return {bots:inventory};}})]});
 const system = new BrowserSystem(env); await system.start(); await system.setHypemanLocation(process.env.HYPEMAN_ROOT); await system.enableHypeman(process.env.HYPEMAN_ROOT);
 let backend=new Backend(system); let profiles=new Profiles(backend,system,env); await profiles.start(false);
-let service=await serveSocket({info:{name:'browser',description:'fixture',transportDescription:'fixture',path:socketPath('browser',env)},context:{system,backend,profiles},operations:api.operations});
+let service=await serveSocket({info:{name:'browse',description:'fixture',transportDescription:'fixture',path:socketPath('browse',env)},context:{system,backend,profiles},operations:api.operations});
 const bot=inventory[0];const config=prepareBotBrowserConfig(env,bot.id,bot.url);const namespace=browserNamespace(env,bot.id,botInstance(bot.url));
 const binary=(await system.browserStatus()).location;
 const ab=async(...args)=>{const r=await exec(binary,['--config',config,'--namespace',namespace,'--session','default','--idle-timeout','0','--json',...args],{env,timeout:65000,maxBuffer:2000000});return JSON.parse(r.stdout);};
@@ -59,7 +59,7 @@ try {
  record('controller close preserved browser',true);
  await service.close(); await profiles.close(); await backend.closeContext(); record('planned shutdown',true);
  backend=new Backend(system); profiles=new Profiles(backend,system,env); await profiles.start(false);
- service=await serveSocket({info:{name:'browser',description:'fixture',transportDescription:'fixture',path:socketPath('browser',env)},context:{system,backend,profiles},operations:api.operations});
+ service=await serveSocket({info:{name:'browse',description:'fixture',transportDescription:'fixture',path:socketPath('browse',env)},context:{system,backend,profiles},operations:api.operations});
  record('cold restart',await profiles.ensure(a.id)); record('post-restart binding',await profiles.select(bot.id,'default',a.id));
  await ab('open','http://127.0.0.1:9222/json/version'); const data=await ab('eval','({cookie:document.cookie,storage:localStorage.getItem("proof"),lastSecond:localStorage.getItem("lastSecond")})'); record('cold persistence',data);
  assert.match(JSON.stringify(data),/proof=yes/); assert.match(JSON.stringify(data),/"storage":"yes"/);

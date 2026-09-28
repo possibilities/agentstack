@@ -128,7 +128,7 @@ export class StackStore {
     // Existing cards use the global inventory invalidation. Conversation consumers
     // subscribe to worker_progress + worker_changed scoped by Worker ID and resnapshot
     // worker_detail/worker_tool_list or continue immutable worker_record_list pages.
-    open("workers", () => { this.refresh("workerRuntimes"); this.refresh("workerSessions"); this.reconcileCatalogs(true); }, () => {
+    open("worker", () => { this.refresh("workerRuntimes"); this.refresh("workerSessions"); this.reconcileCatalogs(true); }, () => {
       this.refresh("workerRuntimes"); this.refresh("workerSessions"); this.reconcileCatalogs(true);
     }, ["workers_changed"]);
     open("usage", () => this.refresh("usage"), () => this.refresh("usage"), ["usage_changed"]);
@@ -200,10 +200,10 @@ export class StackStore {
       if (refresh && !pending.refresh) this.catalogDirty.set(id, true);
       return pending.promise;
     }
-    if (!this.catalogAccountAvailable(id) || this.main.get("workers")?.status !== "open") return Promise.resolve();
+    if (!this.catalogAccountAvailable(id) || this.main.get("worker")?.status !== "open") return Promise.resolve();
     const generation = this.catalogGeneration.get(id) ?? 0;
     this.set({ catalogPending: { ...this.state.catalogPending, [id]: true } });
-    const run = this.call<WorkerCatalog>("workers", "worker_catalog", { accountId: id, refresh })
+    const run = this.call<WorkerCatalog>("worker", "worker_catalog", { accountId: id, refresh })
       .then((data) => ({ data, error: null, at: Date.now() }), (error: Error) => ({ data: this.state.workerCatalogs[id]?.data ?? null, error: error.message, at: Date.now() }))
       .then((resource) => {
         // Availability now is insufficient: disable/re-enable may have replaced
@@ -213,7 +213,7 @@ export class StackStore {
         this.catalogInflight.delete(id);
         const followup = this.catalogDirty.get(id);
         this.catalogDirty.delete(id);
-        if (followup !== undefined && this.catalogAccountAvailable(id) && this.main.get("workers")?.status === "open") return this.refreshWorkerCatalog(id, followup);
+        if (followup !== undefined && this.catalogAccountAvailable(id) && this.main.get("worker")?.status === "open") return this.refreshWorkerCatalog(id, followup);
         const catalogPending = { ...this.state.catalogPending };
         delete catalogPending[id];
         this.set({ catalogPending });
@@ -350,8 +350,8 @@ export class StackStore {
       case "resources": return loadResources((name, args) => call<never>("owner", name, args)) as Promise<OwnerResources>;
       case "accounts": return call<{ accounts: Account[] }>("auth", "account_list").then((result) => result.accounts);
       case "workerAccounts": return call<{ accounts: WorkerAccount[] }>("auth", "worker_account_list").then((result) => result.accounts);
-      case "workerRuntimes": return call<{ runtimes: WorkerRuntime[] }>("workers", "worker_runtime_list").then((result) => result.runtimes);
-      case "workerSessions": return call<{ workers: WorkerSession[] }>("workers", "worker_list").then((result) => result.workers);
+      case "workerRuntimes": return call<{ runtimes: WorkerRuntime[] }>("worker", "worker_runtime_list").then((result) => result.runtimes);
+      case "workerSessions": return call<{ workers: WorkerSession[] }>("worker", "worker_list").then((result) => result.workers);
       case "login": return call<{ login: Login | null }>("auth", "account_login_current").then((result) => result.login);
       case "workerLogins": return call<{ logins: WorkerLogin[] }>("auth", "worker_account_login_current").then((result) => result.logins);
       case "bots": return call<{ bots: Bot[] }>("bots", "bot_list").then((result) => result.bots);

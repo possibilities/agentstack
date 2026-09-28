@@ -1,8 +1,8 @@
-name: workers
+name: worker
 description: Run durable account-bound Workers through ACP or the native Claude Agent SDK in owned Git worktrees; inspect conversations, turns, tool/task evidence, session metadata and account runtime health.
 socket:
   description: Private socket for Worker lifecycle, bounded structured history, account catalog and runtime operations.
 mcp:
-  description: Bot-facing Worker operations and account-bound catalog, forwarded to the workers socket.
+  description: Bot-facing Worker operations and account-bound catalog, forwarded to the worker socket.
 websocket:
   description: Loopback WebSocket for Worker reads, operations and change notices.

@@ -60,11 +60,11 @@ A stable account ID for an isolated, native sign-in managed through `auth`. Code
 
 ## ACP runtime
 
-An owner-supervised stdio ACP process for one ready Worker account: OpenCode for Grok or Codex, Devin CLI for Devin. Its pipe is private to AgentStack and is not itself a Package API Transport. The `workers` Package API reports health and account-bound capabilities.
+An owner-supervised stdio ACP process for one ready Worker account: OpenCode for Grok or Codex, Devin CLI for Devin. Its pipe is private to AgentStack and is not itself a Package API Transport. The `worker` Package API reports health and account-bound capabilities.
 
 ## Claude runtime
 
-An account-bound Claude Agent SDK backend supervised by the `workers` Package API. It owns native Claude Code sessions under one isolated Worker account, sharing the Worker lifecycle and durable records with ACP Workers. Its private SDK control channel is not a Package API Transport, and an available backend does not imply one shared account process.
+An account-bound Claude Agent SDK backend supervised by the `worker` Package API. It owns native Claude Code sessions under one isolated Worker account, sharing the Worker lifecycle and durable records with ACP Workers. Its private SDK control channel is not a Package API Transport, and an available backend does not imply one shared account process.
 
 _Avoid_: Claude ACP process, Bot, ambient Claude session
 
@@ -140,7 +140,7 @@ An LLM-produced, versioned annotation of newly observed human or assistant conve
 
 ## Attention inference defaults
 
-The headless `attention` Package API's revisioned model, reasoning effort and optional Codex Bot account assignment. Defaults are Luna/low; a null account uses the first available enabled Bot account in inventory order. These defaults affect subsequent interpretations, independently of Bot launch defaults.
+The headless `signal` Package API's revisioned model, reasoning effort and optional Codex Bot account assignment. Defaults are Luna/low; a null account uses the first available enabled Bot account in inventory order. These defaults affect subsequent interpretations, independently of Bot launch defaults.
 
 ## Fragment
 

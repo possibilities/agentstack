@@ -1,6 +1,6 @@
 # Browser operations
 
-The browser Package API owns durable profiles and local Hypeman/Kernel runtimes.
+The browse Package API owns durable profiles and local Hypeman/Kernel runtimes.
 Use agent-browser CLI/MCP for page and tab operations. Each Bot receives an
 exclusive default profile automatically; additional profiles start empty.
 Profiles stay running while AgentStack runs, including those retained unassigned
@@ -155,7 +155,7 @@ No handoff cards, banners or human viewer controls are added in this change.
 
 ## Isolated verification
 
-`pnpm test` uses fixtures, not live VMs. `packages/browser/test/runtime-proof.mjs`
+`pnpm test` uses fixtures, not live VMs. `packages/browse/test/runtime-proof.mjs`
 is an explicit, opt-in integration probe. Run it only with authorization to create
 disposable VMs, a running local `HYPEMAN_ROOT`, and `AGENT_BROWSER_TOOLCHAIN`
 pointing to an installed 0.38.1 toolchain. It creates an isolated state directory,

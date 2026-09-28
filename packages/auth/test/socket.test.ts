@@ -188,7 +188,7 @@ test("each Codex Bot account has one paired Codex Worker, created and removed wi
     drained.push(params.arguments.id);
     socket.end(`${JSON.stringify({ id, result: { structuredContent: {} } })}\n`);
   }));
-  await new Promise<void>((resolve) => workersApi.listen(join(stateDir, "sockets", "workers.sock"), resolve));
+  await new Promise<void>((resolve) => workersApi.listen(join(stateDir, "sockets", "worker.sock"), resolve));
   const served = await serveApi({ name: "auth", transport: "socket", env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir } });
   const request = (name: string, args: Record<string, unknown> = {}) => call(served.socketPath ?? "", name, args);
   type Listed = { accounts: Array<{ id: string; ready?: boolean; linkedAccounts: Array<{ scope: string; id: string }> }> };

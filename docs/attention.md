@@ -5,7 +5,7 @@ its enabled state, defaults and source checkpoints survive owner restarts.
 
 ## Configuration and activation
 
-Call Package API operations through the private socket or the shared `/websocket` connection with `params.package: "attention"` (the examples below are operation name and arguments, not complete WebSocket frames):
+Call Package API operations through the private socket or the shared `/websocket` connection with `params.package: "signal"` (the examples below are operation name and arguments, not complete WebSocket frames):
 
 ```json
 {"name":"attention_defaults_set","arguments":{"model":"gpt-5.6-luna","reasoningEffort":"low","accountId":null}}
@@ -33,7 +33,7 @@ account. An explicit assignment never falls through to another account.
   chunks; their origin and coverage are explicit.
 - `attention_run_list`: all attempts, including invalid output and unknown outcomes.
 - `attention_changes`: resumable processing and state-transition observations.
-- `attention_changed`: payload-free invalidation; re-read the appropriate operation.
+- `signal_changed`: payload-free invalidation; re-read the appropriate operation.
 
 Page with `after` / `nextCursor`; read all pages while `hasMore` is true. An item
 page is a current view, so restart pagination after invalidation when reconciling

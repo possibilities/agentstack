@@ -48,7 +48,7 @@ test("the UI entry redirects to the canvas without losing local links, processes
       inspectorUrl: "http://127.0.0.1:43103/", mcpUrls: { owner: "http://127.0.0.1:43104/mcp/owner" },
       children: [
         { name: "inspector", pid: 9876, running: true, exitCode: null, signal: null, error: null, startedAt: new Date(Date.now() - 50_000).toISOString(), exitedAt: null },
-        { name: "workers", pid: null, running: false, exitCode: 1, signal: null, error: "Fixture spawn failure", startedAt: null, exitedAt: new Date(Date.now() - 40_000).toISOString() },
+        { name: "worker", pid: null, running: false, exitCode: 1, signal: null, error: "Fixture spawn failure", startedAt: null, exitedAt: new Date(Date.now() - 40_000).toISOString() },
       ],
     };
     const metric = (processCount, rssBytes) => ({ processCount, rssBytes, virtualBytes: rssBytes * 3, cpuTimeMs: 2_400, cpuPercent: 4.2, cpuMeasuredProcessCount: processCount, threads: null });
@@ -143,7 +143,7 @@ test("the UI entry redirects to the canvas without losing local links, processes
       readDock("/x/fleet?reference=package%3Abrain", "right"),
     ]);
     assert.match(system, /Filter activity/);
-    for (const value of ["MCP Inspector", "Packages", "inspector", "9876", "workers", "Fixture spawn failure", owner.inspectorUrl, owner.mcpUrls.owner,
+    for (const value of ["MCP Inspector", "Packages", "inspector", "9876", "worker", "Fixture spawn failure", owner.inspectorUrl, owner.mcpUrls.owner,
       "fixture-host", "Apple M4", "Fresh", "owner_tree", "AgentStack", "darwin_ps"]) {
       assert.ok(system.includes(value), `System is missing ${value}`);
     }

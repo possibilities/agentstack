@@ -237,7 +237,7 @@ test("Claude catalog renders SDK evidence and stale/unavailable states without A
   const catalog = (accountId) => ({ accountId, provider: "claude", observedAt: new Date().toISOString(), source: "claude-sdk-supported-models",
     runtimeVersion: "0.3.283", modelConfigId: "model", models: [{ id: "claude-sonnet-fixture", name: "Claude Sonnet fixture", efforts: ["low", "high"], effortConfigId: "effort" }],
     nativeModelIds: [], stale: false, error: null });
-  const state = { status: { workers: "open" }, workerCatalogs: { "claude-a": resource(catalog("claude-a")), "claude-b": resource(catalog("claude-b")) } };
+  const state = { status: { worker: "open" }, workerCatalogs: { "claude-a": resource(catalog("claude-a")), "claude-b": resource(catalog("claude-b")) } };
   const runtimes = accounts.map((item) => ({ id: item.id, provider: "claude", backend: "claude-sdk", processModel: "session", pids: [], state: "running", pid: null, instance: "fixture", error: null }));
   const html = render(CatalogWindow, { accounts, runtimes, state });
   for (const label of ["claude-worker-account-1", "claude-worker-account-2", "claude-worker-account-3"]) assert.match(text(html), new RegExp(label));

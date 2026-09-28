@@ -1,4 +1,4 @@
-name: browser
+name: browse
 description: Durable Bot browser profiles, supervised Kernel runtimes, controller binding and local toolchain management. Page actions remain in agent-browser.
 socket:
   description: Owner-local provider lifecycle and system management; not an agent-facing browser transport.

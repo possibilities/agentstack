@@ -278,7 +278,7 @@ export type ResourceHost = {
   loadAverage: [number, number, number] | null;
 };
 export type DomainStatus = {
-  source: "bots" | "workers";
+  source: "bots" | "worker";
   capturedAt: string | null;
   error: "source_unavailable" | "invalid_source" | null;
   state: "current" | "stale" | "unavailable" | "not_attached";

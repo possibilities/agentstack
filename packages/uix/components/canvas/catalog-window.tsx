@@ -21,7 +21,7 @@ export function CatalogRefresh({ ids, iconOnly = false }: { ids: string[]; iconO
   const { catalogPending, status, workerAccounts } = useStack();
   const store = useStore();
   const pending = ids.some((id) => catalogPending[id]);
-  const disabled = pending || status.workers !== "open" || ids.some((id) => {
+  const disabled = pending || status.worker !== "open" || ids.some((id) => {
     const account = workerAccounts.data?.find((item) => item.id === id);
     return !account?.ready || !account.enabled || account.removing;
   });
@@ -44,7 +44,7 @@ function catalogState({ workerAccounts, workerCatalogs, workerRuntimes, status }
   const account = workerAccounts.data?.find((item) => item.id === id);
   const runtime = workerRuntimes.data?.find((item) => item.id === id);
   const stale = !catalog || catalog.stale || Boolean(catalog.error || resource?.error || workerRuntimes.error) || !account?.ready || !account.enabled || account.removing
-    || status.workers !== "open" || runtime?.state !== "running" || now - Date.parse(catalog.observedAt) >= 30 * 60_000;
+    || status.worker !== "open" || runtime?.state !== "running" || now - Date.parse(catalog.observedAt) >= 30 * 60_000;
   const unavailable = !account ? null : account.removing ? "Removing" : !account.ready ? "Sign in to see models" : !account.enabled ? "Enable to see models" : null;
   return { catalog, stale, error: resource?.error ?? catalog?.error ?? runtime?.error ?? null, unavailable };
 }
@@ -179,8 +179,8 @@ export function CatalogWindow() {
   };
 
   return (
-    <Window id="model-catalogs" title="Models" subtitle="workers" icon={ListTreeIcon} accent="bots" empty={!accounts.length || !active}
-      count={workerAccounts.data?.length} status={status.workers} endpoint={endpoints.workers} updatedAt={workerAccounts.at} error={workerAccounts.error ?? workerRuntimes.error}>
+    <Window id="model-catalogs" title="Models" subtitle="worker" icon={ListTreeIcon} accent="bots" empty={!accounts.length || !active}
+      count={workerAccounts.data?.length} status={status.worker} endpoint={endpoints.worker} updatedAt={workerAccounts.at} error={workerAccounts.error ?? workerRuntimes.error}>
       {accounts.length && active ? (
         <>
           {/* Tabs and the filter stay above the bounded, scrollable catalog list. */}

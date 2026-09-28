@@ -3,7 +3,7 @@ import { mcpPort, runApi, runMcp, runWebSocket, serveApi, serveMcp, socketCall, 
 import { contentNetworkConfig } from "@agentstack/content";
 import { lookup } from "node:dns/promises";
 import { connect } from "node:net";
-import { accessChild, apiChild, attentionChild, authChild, brainChild, browserChild, contentChild, inferChild, notifyChild, rolesChild, scrapeChild, usageChild, workersChild, websocketChild } from "./children.js";
+import { accessChild, apiChild, signalChild, authChild, brainChild, browseChild, contentChild, inferChild, notifyChild, rolesChild, scrapeChild, usageChild, workerChild, websocketChild } from "./children.js";
 import { botsChild } from "./bots.js";
 import { createMcpEventSubscriptions } from "./mcp-delivery.js";
 import { serveInspectorCatalog } from "./inspector-catalog.js";
@@ -150,14 +150,14 @@ const shutdown = () => {
     process.exit(childFailed || failed ? 1 : 0);
   });
 };
-owner = startOwner([apiChild(), accessChild(), authChild(), rolesChild(), browserChild(), botsChild(mcp.port), workersChild(), usageChild(), inferChild(), attentionChild(), notifyChild(), contentChild(), scrapeChild(), brainChild(), websocketChild(), inspectorChild(catalog.path, inspectorListenPort), uixChild(uixListenPort)], process.env, () => {
+owner = startOwner([apiChild(), accessChild(), authChild(), rolesChild(), browseChild(), botsChild(mcp.port), workerChild(), usageChild(), inferChild(), signalChild(), notifyChild(), contentChild(), scrapeChild(), brainChild(), websocketChild(), inspectorChild(catalog.path, inspectorListenPort), uixChild(uixListenPort)], process.env, () => {
   statusSource.notify();
   if (!closing && owner.children().some((child) => !child.running)) {
     childFailed = true;
     console.error("a required child stopped; shutting down agentstack");
     shutdown();
   }
-}, [["access"], ["attention"], ["infer"], ["auth"], ["workers"], ["bots"], ["usage"], ["brain"], ["scrape"], ["browser"], ["content"], ["roles"], ["notify"], ["api"]]);
+}, [["access"], ["signal"], ["infer"], ["auth"], ["worker"], ["bots"], ["usage"], ["brain"], ["scrape"], ["browse"], ["content"], ["roles"], ["notify"], ["api"]]);
 statusSource.attach(owner);
 subscriptions.resume();
 const indexUrl = `http://127.0.0.1:${uixListenPort}/`;

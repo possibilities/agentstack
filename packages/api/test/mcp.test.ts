@@ -22,7 +22,7 @@ test("one HTTP process exposes each configured Package API and forwards operatio
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-mcp-"));
   const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0" };
   const seen: string[] = [];
-  const sockets = await Promise.all(["auth", "bots", "brain", "browser", "content", "notify", "roles", "owner", "scrape", "usage", "workers"].map((name) => serveSocket({
+  const sockets = await Promise.all(["auth", "bots", "brain", "browse", "content", "notify", "roles", "owner", "scrape", "usage", "worker"].map((name) => serveSocket({
     info: { name, description: `${name}.`, transportDescription: "Socket.", path: socketPath(name, env) },
     context: {},
     operations: [name === "auth" ? operation({
@@ -35,13 +35,13 @@ test("one HTTP process exposes each configured Package API and forwards operatio
   })));
   const served = await serveMcp({ env });
   try {
-    assert.deepEqual(Object.keys(served.urls), ["auth", "bots", "brain", "browser", "content", "notify", "owner", "roles", "scrape", "usage", "workers"]);
+    assert.deepEqual(Object.keys(served.urls), ["auth", "bots", "brain", "browse", "content", "notify", "owner", "roles", "scrape", "usage", "worker"]);
     for (const [name, url] of Object.entries(served.urls)) {
       const client = new Client({ name: "test", version: "1.0.0" });
       await client.connect(new StreamableHTTPClientTransport(new URL(url)));
       try {
         const tools = (await client.listTools()).tools;
-        assert.deepEqual(tools.map((tool) => tool.name), name === "browser" ? [] : [name === "auth" ? "account_list" : name === "scrape" ? "scrape_fetch" : "ping"]);
+        assert.deepEqual(tools.map((tool) => tool.name), name === "browse" ? [] : [name === "auth" ? "account_list" : name === "scrape" ? "scrape_fetch" : "ping"]);
         assert.ok(tools.every((tool) => tool.inputSchema.type === "object" && tool.outputSchema?.type === "object"));
         if (name === "auth") {
           assert.ok(tools.some((tool) => tool.name === "account_list"));
@@ -315,7 +315,7 @@ test("a Worker-bound MCP URL exposes only read operations and fences a replaced 
   const accountId = "22222222-2222-4222-8222-222222222222";
   let instance = "33333333-3333-4333-8333-333333333333";
   const seen: Array<InvocationContext | undefined> = [];
-  const workers = await serveSocket({ info: { name: "workers", description: "Workers", transportDescription: "Socket", path: socketPath("workers", env) },
+  const workers = await serveSocket({ info: { name: "worker", description: "Workers", transportDescription: "Socket", path: socketPath("worker", env) },
     context: {}, operations: [
       operation({ name: "worker_status", description: "Status", input: z.strictObject({ id: z.string() }), output: z.any(),
         async call(_ctx, { id }) { assert.equal(id, workerId); return { worker: { accountId, phase: "running", runtimeInstance: instance } }; } }),

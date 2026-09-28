@@ -37,19 +37,19 @@ async function rebindTarget(botId: string, threadId: string, env: NodeJS.Process
 
 /** Worker subscriptions may read only the originating Bot thread's exact Worker. */
 export async function authorizeWorkerRead(subscription: EventSubscription, env: NodeJS.ProcessEnv): Promise<void> {
-  if (subscription.pkg === "browser") {
+  if (subscription.pkg === "browse") {
     const args = subscription.readArguments;
     if (subscription.topic !== "browser_handoffs_changed" || subscription.scope !== null || subscription.readOperation !== "browser_handoff_completion" ||
       Object.keys(args).length !== 3 || args.botId !== subscription.botId || args.threadId !== subscription.threadId || typeof args.requestId !== "string")
       throw new Error("browser wakeup requires the originating Chat's exact handoff completion projection");
     return;
   }
-  if (subscription.pkg !== "workers") return;
+  if (subscription.pkg !== "worker") return;
   const args = subscription.readArguments;
   if (subscription.topic !== "worker_changed" || !subscription.scope || subscription.readOperation !== "worker_status" ||
       Object.keys(args).length !== 1 || args.id !== subscription.scope)
     throw new Error("worker wakeup requires an exact worker_changed scope and worker_status read");
-  const result = await socketCall(socketPath("workers", env), "tools/call", {
+  const result = await socketCall(socketPath("worker", env), "tools/call", {
     name: "worker_status", arguments: { id: subscription.scope },
   }, { timeoutMs: 2_000 }) as { worker: { botId: string; threadId: string } };
   if (result.worker.botId !== subscription.botId || result.worker.threadId !== subscription.threadId)

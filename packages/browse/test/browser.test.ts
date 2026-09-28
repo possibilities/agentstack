@@ -462,7 +462,7 @@ test("owner's private agent-browser config leaves global settings alone", async 
     const config = JSON.parse(await readFile(path, "utf8")) as { provider: string; plugins: Array<{ command: string; args: string[] }> };
     assert.equal(config.provider, "agentstack");
     assert.equal(config.plugins[0]?.command, process.execPath);
-    assert.match(config.plugins[0]?.args[0] ?? "", /packages\/browser\/dist\/src\/provider\.js$/);
+    assert.match(config.plugins[0]?.args[0] ?? "", /packages\/browse\/dist\/src\/provider\.js$/);
   } finally { await s.close(); }
 });
 

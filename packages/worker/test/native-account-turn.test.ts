@@ -47,13 +47,13 @@ test("isolated native Grok and Devin accounts finish Worker turns in owned workt
       async call() { return { mcpUrls }; } })] });
   const supervisor = new WorkerSupervisor(root, env);
   const manager = new WorkerManager(root, supervisor, env);
-  const workers = await serveSocket({ info: { name: "workers", description: "Workers", transportDescription: "Socket", path: socketPath("workers", env) },
+  const workers = await serveSocket({ info: { name: "worker", description: "Workers", transportDescription: "Socket", path: socketPath("worker", env) },
     context: { supervisor, manager }, operations: workersApi.operations });
   const catalogRoot = join(root, "catalog");
-  await mkdir(join(catalogRoot, "packages", "workers"), { recursive: true });
-  await writeFile(join(catalogRoot, "packages", "workers", "api.yaml"), "name: workers\ndescription: Workers.\nmcp:\n  description: Worker MCP.\n");
+  await mkdir(join(catalogRoot, "packages", "worker"), { recursive: true });
+  await writeFile(join(catalogRoot, "packages", "worker", "api.yaml"), "name: worker\ndescription: Workers.\nmcp:\n  description: Worker MCP.\n");
   const mcp = await serveMcp({ root: catalogRoot, env, port: 0 });
-  mcpUrls = { workers: mcp.urls.workers! };
+  mcpUrls = { worker: mcp.urls.worker! };
   try {
     const source = new DatabaseSync(join(homedir(), ".local", "share", "opencode", "opencode.db"), { readOnly: true });
     let value: string | undefined;

@@ -33,10 +33,10 @@ export async function configuredMcpPackages(root: string): Promise<Array<{ name:
 
 async function verifiedWorker(workerId: string, instance: string, env: NodeJS.ProcessEnv): Promise<void> {
   const [status, runtimes] = await Promise.all([
-    socketCall(socketPath("workers", env), "tools/call", { name: "worker_status", arguments: { id: workerId } }, { timeoutMs: 2_000 }) as Promise<{
+    socketCall(socketPath("worker", env), "tools/call", { name: "worker_status", arguments: { id: workerId } }, { timeoutMs: 2_000 }) as Promise<{
       worker: { accountId: string; phase: string; runtimeInstance: string | null };
     }>,
-    socketCall(socketPath("workers", env), "tools/call", { name: "worker_runtime_list", arguments: {} }, { timeoutMs: 2_000 }) as Promise<{
+    socketCall(socketPath("worker", env), "tools/call", { name: "worker_runtime_list", arguments: {} }, { timeoutMs: 2_000 }) as Promise<{
       runtimes: Array<{ id: string; state: string; instance: string | null }>;
     }>,
   ]);

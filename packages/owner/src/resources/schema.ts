@@ -48,7 +48,7 @@ export const resourceHostSchema = z.object({
   loadAverage: z.array(z.number().nonnegative()).length(3).nullable(),
 }).describe("Host-wide OS context, not AgentStack consumption or cgroup capacity. Free memory is not available/reclaimable memory.");
 export const domainStatusSchema = z.object({
-  source: z.enum(["bots", "workers"]), capturedAt: z.string().nullable(),
+  source: z.enum(["bots", "worker"]), capturedAt: z.string().nullable(),
   error: z.enum(["source_unavailable", "invalid_source"]).nullable(),
   state: z.enum(["current", "stale", "unavailable", "not_attached"]),
   unmatched: count.describe("Running records not safely matched within the observed component ancestry."),

@@ -3,7 +3,7 @@ import { loadCatalog } from "./catalog";
 import { loadResources } from "./resources";
 import type { Account, Bot, BotSettings, Login, OwnerStatus, PackageDoc, Resource, RolePreview, RoleSnapshot, Snapshot, UsageSnapshot, VoiceCall, WorkerAccount, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
 
-const knownPackages = ["api", "attention", "auth", "bots", "brain", "content", "infer", "notify", "roles", "owner", "scrape", "usage", "workers"];
+const knownPackages = ["api", "auth", "bots", "brain", "browse", "content", "infer", "notify", "roles", "owner", "scrape", "signal", "usage", "worker"];
 
 function call<T>(pkg: string, name: string, args: Record<string, unknown> = {}): Promise<T> {
   return socketCall(socketPath(pkg), "tools/call", { name, arguments: args }, { timeoutMs: 2_000 }) as Promise<T>;
@@ -39,8 +39,8 @@ export async function loadSnapshot(): Promise<Snapshot> {
     resource(() => loadResources((name, args) => call<never>("owner", name, args))),
     resource(async () => (await call<{ accounts: Account[] }>("auth", "account_list")).accounts),
     resource(async () => (await call<{ accounts: WorkerAccount[] }>("auth", "worker_account_list")).accounts),
-    resource(async () => (await call<{ runtimes: WorkerRuntime[] }>("workers", "worker_runtime_list")).runtimes),
-    resource(async () => (await call<{ workers: WorkerSession[] }>("workers", "worker_list")).workers),
+    resource(async () => (await call<{ runtimes: WorkerRuntime[] }>("worker", "worker_runtime_list")).runtimes),
+    resource(async () => (await call<{ workers: WorkerSession[] }>("worker", "worker_list")).workers),
     resource(async () => (await call<{ login: Login | null }>("auth", "account_login_current")).login),
     resource(async () => (await call<{ logins: WorkerLogin[] }>("auth", "worker_account_login_current")).logins),
     resource(async () => (await call<{ bots: Bot[] }>("bots", "bot_list")).bots),

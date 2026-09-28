@@ -14,7 +14,7 @@ export function browserNamespace(env: NodeJS.ProcessEnv, botId: string, instance
 export function prepareBotBrowserConfig(env: NodeJS.ProcessEnv, botId: string, endpoint: string): string {
   const instance = botInstance(endpoint);
   const namespace = browserNamespace(env, botId, instance);
-  const entry = join(dirname(require.resolve("@agentstack/browser/package.json")), "dist", "src", "provider.js");
+  const entry = join(dirname(require.resolve("@agentstack/browse/package.json")), "dist", "src", "provider.js");
   const path = join(stateDir(env), "browser", "controllers", namespace + ".json");
   const identity = botMcpUrl("http://127.0.0.1/browser-identity", botId, endpoint, env);
   const content = JSON.stringify({ provider: "agentstack", namespace, idleTimeout: "0", plugins: [{ name: "agentstack", command: process.execPath,
@@ -30,7 +30,7 @@ export function prepareBotBrowserConfig(env: NodeJS.ProcessEnv, botId: string, e
 
 /** Generate one private provider config; do not change the global AgentStart config. */
 export function prepareBrowserConfig(env: NodeJS.ProcessEnv): string {
-  const packageJson = require.resolve("@agentstack/browser/package.json");
+  const packageJson = require.resolve("@agentstack/browse/package.json");
   const entry = join(dirname(packageJson), "dist", "src", "provider.js");
   const path = join(stateDir(env), "browser", "agent-browser.json");
   const content = `${JSON.stringify({ provider: "agentstack", plugins: [{

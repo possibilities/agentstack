@@ -17,7 +17,7 @@ import { ownerResourcesOutput, ownerResourceHistoryOutput } from "../src/resourc
 
 const roots: ResourceRoots = { pid: 10, attached: true, children: [
   { name: "bots", pid: 20, running: true, exitCode: null, signal: null, error: null, startedAt: new Date().toISOString(), exitedAt: null },
-  { name: "workers", pid: 30, running: true, exitCode: null, signal: null, error: null, startedAt: new Date().toISOString(), exitedAt: null },
+  { name: "worker", pid: 30, running: true, exitCode: null, signal: null, error: null, startedAt: new Date().toISOString(), exitedAt: null },
 ] };
 function proc(pid: number, ppid: number, cpuTimeMs = 100, birth = "birth-1"): ProcessReading {
   return { pid, ppid, cpuTimeMs, birth, id: processIdentity(pid, birth), name: `p${pid}`, rssBytes: pid * 100, virtualBytes: pid * 1000, threads: 2 };
@@ -32,8 +32,8 @@ function collection(processes = [proc(10, 1)], monotonicMs = performance.now()):
 function domains(): DomainReading {
   return { labels: [
     { pid: 21, component: "bots", botId: "bot-1", accountId: "bot-account", provider: "codex", runtimeInstance: null },
-    { pid: 31, component: "workers", botId: null, accountId: "worker-account", provider: "grok", runtimeInstance: "launch-1" },
-  ], statuses: ["bots", "workers"].map((source) => ({ source: source as "bots" | "workers", capturedAt: new Date().toISOString(), state: "current", error: null, unmatched: 0 })) };
+    { pid: 31, component: "worker", botId: null, accountId: "worker-account", provider: "grok", runtimeInstance: "launch-1" },
+  ], statuses: ["bots", "worker"].map((source) => ({ source: source as "bots" | "worker", capturedAt: new Date().toISOString(), state: "current", error: null, unmatched: 0 })) };
 }
 const tree = () => [proc(10, 1), proc(20, 10), proc(21, 20), proc(22, 21), proc(23, 22), proc(30, 10), proc(31, 30), proc(32, 31), proc(99, 1)];
 
@@ -329,7 +329,7 @@ test("domain readers validate inventories, flag unverified Bots, retain last-goo
 
 test("Claude session process roots share account attribution without fabricating a shared PID", async () => {
   const state = await mkdtemp(join(tmpdir(), "resource-claude-"));
-  const server = await serveSocket({ info: { path: join(state, "sockets", "workers.sock"), name: "workers", description: "test", transportDescription: "test" },
+  const server = await serveSocket({ info: { path: join(state, "sockets", "worker.sock"), name: "worker", description: "test", transportDescription: "test" },
     context: {}, operations: [operation({ name: "worker_runtime_list", description: "Test Worker inventory", input: z.object({}), output: z.unknown(), async call() {
       return { runtimes: [
         { id: "claude-account", provider: "claude", state: "running", instance: "claude-runtime", pid: null, pids: [40, 41] },

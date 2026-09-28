@@ -313,7 +313,7 @@ export const api: PackageApi<AuthContext, AuthTopic> = {
     await chmod(dir, 0o700);
     const store = new AuthStore(dir);
     await pairCodexWorkers(store);
-    return { store, login: new LoginManager(store), workerLogin: new WorkerLoginManager(store, { env }), botsSocket: socketPath("bots", env), workersSocket: socketPath("workers", env), onAccountsChanged: undefined, onWorkerAccountsChanged: undefined };
+    return { store, login: new LoginManager(store), workerLogin: new WorkerLoginManager(store, { env }), botsSocket: socketPath("bots", env), workersSocket: socketPath("worker", env), onAccountsChanged: undefined, onWorkerAccountsChanged: undefined };
   },
   async closeContext(ctx) {
     await ctx.login.close();

@@ -38,8 +38,8 @@ export class Sources {
         for(const chat of chats)await guard(`chat:${bot.id}:${chat.threadId}`,()=>this.chat(bot.id,chat.threadId,chat.parentThreadId,baseline.includes(chat.threadId)));
       });
     });
-    await guard("workers",async()=>{
-      const {workers}=await this.call<{workers:Worker[]}>("workers","worker_list",{});
+    await guard("worker",async()=>{
+      const {workers}=await this.call<{workers:Worker[]}>("worker","worker_list",{});
       if(!this.store.meta<boolean>("baselined")&&!this.store.meta("baseline:workers"))this.store.setMeta("baseline:workers",workers.map(row=>row.id));
       const baseline=this.store.meta<string[]>("baseline:workers")??[];
       for(const worker of workers)await guard(`worker:${worker.id}`,()=>this.worker(worker,baseline.includes(worker.id)));
@@ -88,7 +88,7 @@ export class Sources {
       botId:worker.botId==="_local_operator"?null:worker.botId,text:buffer.text,complete,occurredAt:new Date(buffer.at).toISOString(),
       evidence:{workerId:worker.id,originThreadId:worker.threadId,turnId:buffer.turnId,firstSeq:buffer.firstSeq,lastSeq:buffer.lastSeq,sourceReadSeqs:buffer.sourceReadSeqs??[],completionReadSeq:this.lastReadSeq,boundary:"contiguous_transcript_text",coverage:"owned_worker_transcript; native child conversations not enumerated"}});
     for(let pageNumber=0;pageNumber<1000;pageNumber++){
-      const page=await this.call<{entries:TextEntry[];nextSeq:number;hasMore:boolean}>("workers","worker_read",{id:worker.id,afterSeq:cursor.seq,limit:50});
+      const page=await this.call<{entries:TextEntry[];nextSeq:number;hasMore:boolean}>("worker","worker_read",{id:worker.id,afterSeq:cursor.seq,limit:50});
       this.store.atomic(()=>{
         for(const entry of page.entries){
           if(skip)continue;
