@@ -430,7 +430,7 @@ test("fanout admits exactly 25 children and durably suppresses every excess disc
   store.close();
 });
 
-test("two parents share one child lifecycle while retaining independent provenance and replay is inert", async () => {
+test("two parents share one Resource but retain separate child authority scopes and inert replay", async () => {
   const { store, artifacts } = setup();
   const shared = "https://shared.example/story";
   const parentOne = "https://x.com/person/status/1";
@@ -455,9 +455,9 @@ test("two parents share one child lifecycle while retaining independent provenan
     installSignalHandlers: false,
   });
 
-  expect(calls).toEqual([parentOne, parentTwo, shared]);
+  expect(calls).toEqual([parentOne, parentTwo, shared, shared]);
   expect(store.db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({
-    count: 3,
+    count: 4,
   });
   expect(
     store.db
@@ -493,7 +493,7 @@ test("two parents share one child lifecycle while retaining independent provenan
     installSignalHandlers: false,
   });
   expect(replay).toMatchObject({ claimed: 0, completed: 0 });
-  expect(calls).toEqual([parentOne, parentTwo, shared]);
+  expect(calls).toEqual([parentOne, parentTwo, shared, shared]);
   expect(
     store.db.query("SELECT COUNT(*) AS count FROM observations").get(),
   ).toEqual({ count: 2 });

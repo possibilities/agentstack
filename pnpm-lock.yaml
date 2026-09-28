@@ -308,6 +308,9 @@ importers:
       '@agentstack/api':
         specifier: workspace:*
         version: link:../api
+      '@agentstack/scrape':
+        specifier: workspace:*
+        version: link:../scrape
       ws:
         specifier: ^8.18.3
         version: 8.21.3

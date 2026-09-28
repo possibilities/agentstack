@@ -80,6 +80,7 @@ import {
 import { resolveQueuePaths } from "./queue-paths.js";
 import { sanitizeErrorInPlace } from "./redaction.js";
 import { findExecutable, runProcess } from "./subprocess.js";
+import { currentEgress } from "./egress.js";
 
 // Package API operations, not a second CLI/MCP server, describe this engine.
 export {
@@ -285,7 +286,7 @@ async function pdfToMarkdown(bytes: Uint8Array, signal?: AbortSignal): Promise<s
 async function directFetch(
   url: string,
   options: FetchMarkdownOptions,
-  mode: "markdown" | "pdf" = "markdown",
+  mode: "markdown" | "pdf" | "html" = "markdown",
 ): Promise<ScrapeResult<GenericPage>> {
   const label = mode === "pdf" ? "direct PDF" : "direct Markdown";
   const limit = options.maxContentBytes ?? 1_000_000;
@@ -320,6 +321,7 @@ async function directFetch(
       let response: PinnedHttpResponse;
       let invalidContentEncoding = false;
       let invalidMarkdownMime = false;
+      let responseMode = mode;
       try {
         response = await requestPinnedHttp({
           url: currentUrl,
@@ -337,9 +339,14 @@ async function directFetch(
               pinnedHeaderValues(metadata.pinnedHeaderValues, "content-encoding"),
             );
             const contentType = pinnedHeaderValues(metadata.pinnedHeaderValues, "content-type");
+            if (mode === "html") {
+              if (pdfMimeAdmitted(contentType)) responseMode = "pdf";
+              else if (directMarkdownMimeAdmitted(contentType)) responseMode = "markdown";
+            }
             invalidMarkdownMime =
-              mode === "pdf"
+              responseMode === "pdf"
                 ? !pdfMimeAdmitted(contentType)
+                : responseMode === "html" ? !contentType || contentType.length !== 1 || !/^text\/html(?:\s*;|$)/i.test(contentType[0]!)
                 : !directMarkdownMimeAdmitted(contentType);
             return invalidContentEncoding || invalidMarkdownMime ? "discard" : "read";
           },
@@ -407,7 +414,7 @@ async function directFetch(
         );
       const finalUrl = validateProviderFinalUrl(current) ?? current;
       let markdown: string;
-      if (mode === "pdf") {
+      if (responseMode === "pdf") {
         markdown = await pdfToMarkdown(response.body, options.signal);
       } else {
         try {
@@ -420,6 +427,11 @@ async function directFetch(
         }
       }
       const structured = new GenericPage(finalUrl, markdown);
+      if (responseMode === "html") {
+        const html = markdown;
+        markdown = convertHtmlImpl(html);
+        return { full_html: html, selected_html: html, markdown, structured: new GenericPage(finalUrl, markdown), final_url: finalUrl };
+      }
       return {
         full_html: "",
         selected_html: "",
@@ -473,7 +485,7 @@ function markdownRoute(
 ): MarkdownRoute {
   if (preset) return { kind: "preset", preset };
   if (generic) return { kind: "generic" };
-  if (parseGithubUrl(url)) return { kind: "github" };
+  if (parseGithubUrl(url)) return { kind: currentEgress() ? "generic" : "github" };
   if (new URL(url).pathname.endsWith(".pdf")) return { kind: "pdf" };
   if (new URL(url).pathname.endsWith(".md")) return { kind: "markdown" };
   return { kind: "generic" };
@@ -585,8 +597,10 @@ export async function fetchMarkdown(
             );
           } else if (route.kind === "generic") {
             hint = "generic-page";
-            browserUsed = true;
-            result = await withBrowserSignal(options.signal, () =>
+            // Public/static research remains useful without an enforceable browser provider.
+            result = currentEgress() && !options.selector ? await directFetch(requested, options, "html") : null;
+            browserUsed = !result?.markdown.trim();
+            if (browserUsed) result = await withBrowserSignal(options.signal, () =>
               withBrowserProfile(options.browserProfile, async () =>
                 scrapePage(requested, options.selector, options),
               ),
@@ -597,7 +611,7 @@ export async function fetchMarkdown(
             // rather than reporting nothing for a document that has text. Only
             // an empty result triggers this, and only an application/pdf
             // content-type answers it, so a genuinely empty page stays empty.
-            if (!result.markdown.trim()) {
+            if (!result?.markdown.trim()) {
               try {
                 const asPdf = await directFetch(requested, options, "pdf");
                 if (asPdf.markdown.trim()) {

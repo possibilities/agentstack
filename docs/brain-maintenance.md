@@ -18,6 +18,7 @@ The [port decision](adr/0059-isolated-brain-and-platform-clients.md) establishes
 - Retry creates a new attempt on the same job, preserving earlier attempts and operator dispositions. Infrastructure unavailability, bounded item retries, permanent content failures and authentication/configuration blocks remain distinguishable.
 - Source run success establishes durable discovery and child-job admission, not completion of every child. Checkpoints must never advance past unaccounted observations. Conditional validators and provider cursors remain tied to the exact source identity and definition version.
 - Agentscrape owns all URL network reads, provider parsing and browser/session policy. Brain must not add a fallback network client when that dependency fails.
+- Research defaults to public-only egress. Operator grants bind exact TCP endpoints to a submission root or source version; child job deduplication, extraction-cache reuse and fenced completion must preserve that scope and current revocation state. Admission and recovery authorization never imply a private-network grant. An unenforceable browser fails closed.
 
 ## Device clients
 

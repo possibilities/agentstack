@@ -1,5 +1,6 @@
 import { isIP } from "node:net";
 import { containsJwt, isSecureHttpUrl, isSensitiveName } from "./redaction.js";
+import { currentEgress, privateEndpointAllowed } from "./egress.js";
 
 function sensitiveUrl(url: URL): boolean {
   if (containsJwt(url.href)) return true;
@@ -21,18 +22,22 @@ export function safeUrl(value: string, base?: string): string | null {
     const host = url.hostname.toLowerCase().replace(/\.$/, "");
     const address = host.replace(/^\[|\]$/g, "");
     const ipVersion = isIP(address);
+    const policy = currentEgress()?.policy;
+    const privateSyntaxAllowed = policy && (ipVersion
+      ? privateEndpointAllowed(policy, address, Number(url.port || (url.protocol === "https:" ? 443 : 80)))
+      : policy.privateDestinations.length > 0);
     if (
       !["http:", "https:"].includes(url.protocol) ||
       url.username ||
       url.password ||
       !host ||
-      host === "localhost" ||
+      (!privateSyntaxAllowed && (host === "localhost" ||
       /\.(?:localhost|local|internal|lan|home)$/.test(host) ||
-      (!host.includes(".") && ipVersion === 0)
+      (!host.includes(".") && ipVersion === 0)))
     )
       return null;
     if (
-      ipVersion > 0 &&
+      !privateSyntaxAllowed && ipVersion > 0 &&
       /^(?:0\.|10\.|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|127\.|169\.254\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|::0?$|::1$|f[cd]|fe[89ab])/i.test(
         address,
       )

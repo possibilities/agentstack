@@ -5,6 +5,7 @@ import {
   AgentscrapeBrowserError,
   AgentscrapeCancelledError,
   AgentscrapeError,
+  AgentscrapeNetworkPolicyError,
   AgentscrapeProviderError,
   AgentscrapeTimeoutError,
   AgentscrapeUpstreamDownError,
@@ -204,6 +205,8 @@ export function buildSuccessEnvelope(
 
 export function classifyFailure(error: unknown): [FailureClass, boolean, string] {
   const value = error instanceof Error ? error : new Error(String(error));
+  if (value instanceof AgentscrapeNetworkPolicyError)
+    return ["invalid_request", false, `network_policy:${value.reason}`];
   if (value instanceof EnvelopeBuildError)
     return [value.failureClass, value.retryable, value.message];
   if (value instanceof AgentscrapeAuthError)

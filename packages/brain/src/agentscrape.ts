@@ -1,7 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { fetchMarkdown as scrapeFetchMarkdown, fetchLinks as scrapeFetchLinks, structuredJson } from "@agentstack/scrape/engine";
+import { fetchMarkdown as scrapeFetchMarkdown, fetchLinks as scrapeFetchLinks, structuredJson, AgentscrapeNetworkPolicyError } from "@agentstack/scrape/engine";
 import { discoverFeed, discoverFeedLive } from "@agentstack/scrape/feed";
+import { currentEgress, publicEgress, withEgressPolicy, EgressRefused } from "@agentstack/scrape/network";
+import { brainEnvironment } from "./paths.js";
 import { sanitizeExternalError } from "./sanitize.js";
 import { codePointLength } from "./text.js";
 import type {
@@ -220,6 +222,7 @@ export class AgentscrapeDiscoveryError extends Error {
     readonly outcome:
       | "infrastructure"
       | "rate_limit"
+      | "policy"
       | "auth_config"
       | "permanent"
       | "cancellation"
@@ -388,10 +391,11 @@ async function scrapeAttempt(
   maxOutputBytes: number,
   limits: { bytes: number; codePoints: number },
 ): Promise<ScrapedLink> {
+  if (!currentEgress()) return withEgressPolicy(publicEgress, () => {}, () => scrapeAttempt(requestedUrl, timeoutMs, maxOutputBytes, limits), brainEnvironment());
   let markdown: string;
   try {
     const result = await scrapeFetchMarkdown(requestedUrl, {
-      allowPrivateNetwork: true,
+      allowPrivateNetwork: false,
       signal: AbortSignal.timeout(timeoutMs),
     });
     if ("status" in result) throw new Error("unexpected extraction envelope");
@@ -978,6 +982,7 @@ export async function extractWithAgentscrape(
   inputUrl: string,
   options: ExtractionOptions = {},
 ): Promise<ExtractionSuccess> {
+  if (!currentEgress()) return withEgressPolicy(publicEgress, () => {}, () => extractWithAgentscrape(inputUrl, options), brainEnvironment());
   const requestedUrl = normalizedWebUrl(inputUrl);
   const timeoutMs = positiveInteger(
     options.timeoutMs ?? AGENTSCRAPE_DEFAULT_TIMEOUT_MS,
@@ -1008,18 +1013,18 @@ export async function extractWithAgentscrape(
       "cancellation",
     );
   }
-  // Admission of a URL to Brain authorizes browser-backed extraction. The
-  // Scrape package enforces its own fail-closed preset and network policies.
+  // Admission is not private-network authorization. Scrape receives policy
+  // through the internal execution context, never caller flags.
   let decoded: unknown;
   try {
     decoded = await scrapeFetchMarkdown(requestedUrl, {
-      envelope: true, allowPrivateNetwork: true,
+      envelope: true, allowPrivateNetwork: false,
       maxContentBytes, maxRelations,
       signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     throw new AgentscrapeExtractionError(
-      `scrape extraction failed: ${sanitizeExternalError(error)}`, "infra", "infrastructure",
+      `scrape extraction failed: ${sanitizeExternalError(error)}`, error instanceof EgressRefused ? "permanent" : "infra", error instanceof EgressRefused ? "policy" : "infrastructure",
     );
   }
   const envelope = validateExtractionEnvelope(decoded, requestedUrl, { maxContentBytes, maxRelations });
@@ -1550,6 +1555,8 @@ function discoveryCommandFailure(
   prefix: string,
 ): AgentscrapeDiscoveryError {
   const sanitized = sanitizeExternalError(detail);
+  if (/browser_egress_unverifiable|private_destination|egress_grant_revoked|egress_policy_changed/.test(detail))
+    return new AgentscrapeDiscoveryError(`${prefix} refused by network policy: ${sanitized}`, "permanent", "policy");
   if (/429|rate.?limit|throttl/i.test(detail)) {
     return new AgentscrapeDiscoveryError(
       `${prefix} was rate limited: ${sanitized}`,
@@ -1574,6 +1581,7 @@ function discoveryCommandFailure(
 export async function discoverFeedWithAgentscrape(
   request: FeedDiscoveryRequest,
 ): Promise<FeedDiscoveryEnvelope> {
+  if (!currentEgress()) return withEgressPolicy(publicEgress, () => {}, () => discoverFeedWithAgentscrape(request), brainEnvironment());
   const sourceUrl = normalizedWebUrl(request.sourceUrl);
   const timeoutMs = positiveInteger(request.timeoutMs ?? AGENTSCRAPE_DEFAULT_TIMEOUT_MS,
     "scrape feed discovery timeout", 300_000);
@@ -1609,18 +1617,19 @@ export async function discoverFeedWithAgentscrape(
 export async function discoverXTimelineWithAgentscrape(
   request: XTimelineDiscoveryRequest,
 ): Promise<XTimelineDiscoveryEnvelope> {
+  if (!currentEgress()) return withEgressPolicy(publicEgress, () => {}, () => discoverXTimelineWithAgentscrape(request), brainEnvironment());
   const url = normalizedWebUrl(request.url);
   let result: unknown;
   try {
     const links = await scrapeFetchLinks(url, {
       preset: "x-timeline", limit: request.limit, maxScrolls: request.maxScrolls,
       sinceId: request.sinceId, includeReplies: request.includeReplies,
-      includeReposts: request.includeReposts, allowPrivateNetwork: true,
+      includeReposts: request.includeReposts, allowPrivateNetwork: false,
       signal: request.signal,
     });
     result = structuredJson(links);
   } catch (error) {
-    throw discoveryCommandFailure(String(error), "scrape X discovery");
+    throw discoveryCommandFailure(error instanceof AgentscrapeNetworkPolicyError ? `network_policy:${error.reason}` : String(error), "scrape X discovery");
   }
   return validateXTimelineDiscoveryEnvelope(result, request.handle, { maxItems: request.limit });
 }

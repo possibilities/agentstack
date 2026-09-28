@@ -662,7 +662,9 @@ export type BrainAttempt = { id: number; job_id: number; attempt_number: number;
   started_at: string; finished_at: string | null; failure_class: string | null; failure_summary: string | null };
 export type BrainTransition = { id: number; job_id: number; attempt_id: number | null; from_state: BrainJobState | null; to_state: BrainJobState; created_at: string };
 /** `jobs_show`: bounded, sanitized diagnostics with URLs redacted. */
-export type BrainJobRecord = BrainJob & { failure_summary: string | null; attempts: BrainAttempt[]; transitions: BrainTransition[] };
+export type BrainJobRecord = BrainJob & { failure_summary: string | null; attempts: BrainAttempt[]; transitions: BrainTransition[];
+  /** Present on jobs_show; sensitive jobs_reveal has its own legacy projection. */
+  network_policy?: { scope: { kind: "job"; id: number } | { kind: "source"; id: number; version: number }; grantId: number | null; policy: { privateDestinations: Array<{ address: string; port: number }> } } };
 /** `jobs_reveal`: submitted intent and captured bodies. Reading it appends an audit record. */
 export type BrainRevealedJob = BrainJobRecord & { intent: unknown; artifacts: Array<{ content_digest: string; media_type: string; byte_size: number; body: string }> };
 export type BrainJobStats = { total: number; by_state: Record<BrainJobState, number>; runnable_due: number; active_leases: number; stale_leases: number; oldest_runnable_at: string | null };

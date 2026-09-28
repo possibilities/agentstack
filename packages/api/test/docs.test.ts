@@ -54,7 +54,7 @@ test("the api package serves structured documents for every workspace package", 
       const [pkg, operation] = key.split("/");
       assert.ok(found.get(pkg!)?.operations.some((op) => op.name === operation), `stale timeout: ${key}`);
     }
-    for (const [pkg, internal] of [["roles", ["role_launch_snapshot"]], ["brain", ["share_receive", "share_read_states"]]] as const) {
+    for (const [pkg, internal] of [["roles", ["role_launch_snapshot"]], ["brain", ["share_receive", "share_read_states", "egress_grant_create", "egress_grant_list", "egress_grant_revoke"]]] as const) {
       const doc = found.get(pkg)!;
       for (const transport of doc.transports.filter((entry) => entry.type === "mcp" || entry.type === "websocket")) {
         const omitted = [...internal.filter((name) => !(pkg === "brain" && transport.type === "websocket" && name === "share_read_states")),
@@ -120,6 +120,12 @@ test("the api package serves structured documents for every workspace package", 
     const doctor = found.get("brain")!.operations.find((operation) => operation.name === "doctor")!;
     assert.ok(doctor.description.includes("notify Package API"));
     assert.ok((doctor.outputSchema.properties as Record<string, unknown>).notification);
+    const brainEgress = found.get("brain")!;
+    for (const name of ["egress_grant_create", "egress_grant_revoke", "egress_grant_list"]) {
+      assert.ok(brainEgress.operations.some((op) => op.name === name));
+      assert.ok(brainEgress.transports.filter((transport) => transport.type !== "socket").every((transport) => !transport.operations.includes(name)));
+    }
+    assert.ok(Object.hasOwn(brainEgress.operations.find((op) => op.name === "jobs_show")!.outputSchema.properties ?? {}, "network_policy"));
     const contentHttp = found.get("content")!.transports.find((transport) => transport.type === "http")!;
     assert.ok(contentHttp.routes.some((route) => route.surface === "artifacts" && route.path === "/a/*" && route.operation === null && route.format === "artifact media type" && route.authentication === "none" && route.outputSchema === null));
     const browser = found.get("browse") as PackageDoc;
@@ -127,7 +133,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.deepEqual(browser.transports.find((transport) => transport.type === "mcp")!.operations.sort(),
       ["browser_profile_list", "browser_profile_create", "browser_profile_delete", "browser_controller_list", "browser_controller_select", "browser_handoff_request", "browser_handoff_get", "browser_handoff_list", "browser_handoff_completion", "browser_handoff_cancel"].sort());
     assert.deepEqual(browser.operations.map((operation) => operation.name).sort(),
-      ["browser_status", "browser_session_get", "browser_session_list", "browser_session_close", "browser_session_reconcile",
+      ["browser_status", "browser_session_get", "browser_session_list", "browser_session_close", "browser_session_reconcile", "browser_research_acquire",
         "browser_profile_list", "browser_profile_create", "browser_profile_delete", "browser_controller_list", "browser_controller_select", "browser_controller_launch", "browser_controller_close", "browser_bot_release",
         "browser_handoff_request", "browser_handoff_get", "browser_handoff_list", "browser_handoff_completion", "browser_handoff_cancel", "browser_handoff_take", "browser_handoff_finish",
         "agent_browser_status", "agent_browser_detect", "agent_browser_check_updates", "agent_browser_update_policy_set",

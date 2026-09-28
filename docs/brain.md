@@ -20,11 +20,25 @@ The local Package API is available through the same socket, MCP and WebSocket me
 
 Admission records intent durably before extraction. A successful submission can mean a new job, a duplicate of the same intent, or content already indexed. It does not promise that newly admitted content is searchable yet. Observe the job's state to establish completion; an observer timeout does not cancel it.
 
-The ingestion worker handles local materialization and delegates URL extraction and source discovery to the installed `agentscrape` command. An unavailable dependency leaves the job in an inspectable retry or failure state. Brain does not substitute a second HTTP extractor.
+The ingestion worker handles local materialization and delegates URL extraction and source discovery to the AgentStack-owned Scrape engine. An unavailable dependency leaves the job in an inspectable retry or failure state. Brain does not substitute a second HTTP extractor.
 
 Research reads use read-only database connections. The research store owns migrations, index writes and the ingestion ledger. Jobs retain attempts and transitions; retry appends execution evidence. Ordinary job listings and summaries omit raw intent and artifact bodies. Explicit content inspection and operator dispositions retain their audit records.
 
 Source definitions are versioned policy. Source synchronization admits a durable run; its completion proves discovery and child-job admission, not that every discovered URL has finished indexing. Proc's protected five-minute schedule invokes due checks through Brain's Package API; Brain remains the cadence and checkpoint authority. A fresh installation has no enabled personal sources, so the scheduled check admits nothing until an operator configures and enables one. See [Proc](proc.md) for trigger and outcome semantics.
+
+## Research network policy
+
+Research uses public-only egress by default. HTTP extraction pins approved DNS addresses and checks each redirect. Browser presets use a disposable, network-constrained Browse guest; an unenforceable provider returns `network_policy:browser_egress_unverifiable` rather than borrowing an unrestricted browser. Existing signed-in profiles are not reused. Static HTML, Markdown, PDF and feeds remain available through Scrape's constrained HTTP path.
+
+Private sources require an explicit operator grant over the Brain socket:
+
+```json
+{"name":"egress_grant_create","arguments":{"scope":{"kind":"source","id":7,"version":2},"policy":{"privateDestinations":[{"address":"192.168.1.20","port":443}]}}}
+```
+
+Use `{ "kind":"job", "id":123 }` to grant one submitted URL root instead. Destinations are numeric TCP endpoints, not hostname patterns. Children inherit the root/source scope; source version changes invalidate older grants. `egress_grant_list` inspects grants and `egress_grant_revoke {id}` revokes one. These operations are socket-only and reject agent callers. Adding a grant does not retry an already failed job: inspect it, then explicitly use `jobs_retry` if appropriate. Share fields cannot grant network access.
+
+`jobs_show.network_policy` reports effective authority in the existing inspector. Attempts retain policy evidence. Permanent network refusals do not automatically retry; revocation also prevents active work from committing stale results. There are no dedicated grant controls yet. See [ADR 0112](adr/0112-research-network-egress.md).
 
 ## Configure a device client
 
@@ -49,4 +63,4 @@ Share outboxes are bounded to 200 entries and seven days. Expired, rejected or a
 
 `pnpm test` covers the repository's compiled tests, including Brain and client contract checks. Run `pnpm --filter @agentstack/uix typecheck` for catalog maintenance. Android's platform build additionally requires its documented JDK and Android SDK; a JavaScript workspace test is not evidence that an APK was assembled or run on a device.
 
-The port retains schema-v12 database structures, durable ingestion semantics and the version-1 share protocol where practical. New backup manifests use `agentstack_brain_backup`; older application-specific backup discriminators need a future explicit migration. A database snapshot alone does not include its external research artifact bytes. All active product names, storage defaults and platform identities use AgentStack. External extraction remains a separately installed dependency. Neither the port nor its tests read the previous application's live research store.
+Schema v13 additively extends Brain's own database with network scopes, grants and attempt evidence; migration grants no private access. Durable ingestion semantics and the version-1 share protocol are preserved. New backup manifests use `agentstack_brain_backup`; older application-specific backup discriminators need a future explicit migration. A database snapshot alone does not include its external research artifact bytes. Browser extraction requires the separately configured Browse runtime and agent-browser toolchain. Neither setup nor tests read the previous application's live research store.

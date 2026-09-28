@@ -6,6 +6,8 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { BrowserSystem } from "./system.js";
+import { egressPolicy, type EgressPolicy } from "@agentstack/scrape/network";
+import { researchFirewall, researchPolicyId } from "./research-egress.js";
 
 const IMAGE = "docker.io/onkernel/chromium-headful@sha256:da9ee68cb9d2de0b3c26885ff3bdcf04c944254a36eb127219028ac017ff56f3";
 const MAX_SESSIONS = 16;
@@ -14,6 +16,7 @@ const targetSchema = z.strictObject({ name: z.string(), backend: z.literal("loca
 const nativeSchema = z.strictObject({ instanceName: z.string(), instanceId: z.string(), volumeName: z.string(), volumeId: z.string(), slot: z.number().int().nonnegative().max(999), ip: z.string() });
 const recordSchema = z.strictObject({ version: z.literal(1), session: z.string(), profile: z.string(), persistent: z.boolean(),
   lease: z.string(), createdAt: z.string(), target: targetSchema.nullable(), native: nativeSchema.nullable(),
+  egress: egressPolicy.optional(),
 });
 type NativeRecord = z.infer<typeof recordSchema>;
 export type Receipt = Omit<NativeRecord, "native">;
@@ -204,12 +207,13 @@ export class Backend {
       if (image.status !== "ready") throw new Error("pinned Kernel image is not installed on local Hypeman");
       await this.request("POST", "/instances", {
         name: instanceName, image: IMAGE, platform: "linux/amd64", size: "3G", vcpus: 2,
-        tags: { ...tags(session, lease, "browser"), "dev.agentstack.slot": String(slot) },
-        env: { DISPLAY_NUM: "1", HEIGHT: "1080", WIDTH: "1920", RUN_AS_ROOT: "false", CHROMIUM_FLAGS: "--start-fullscreen --disable-infobars",
-          ENABLE_WEBRTC: "true", NEKO_WEBRTC_UDPMUX: String(56000 + slot) },
+        tags: { ...tags(session, lease, "browser"), "dev.agentstack.slot": String(slot),
+          ...(receipt.egress ? { "dev.agentstack.egress": researchPolicyId(receipt.egress) } : {}) },
+        env: { DISPLAY_NUM: "1", HEIGHT: "1080", WIDTH: "1920", RUN_AS_ROOT: "false", CHROMIUM_FLAGS: `--start-fullscreen --disable-infobars${receipt.egress ? " --disable-quic --force-webrtc-ip-handling-policy=disable_non_proxied_udp" : ""}`,
+          ENABLE_WEBRTC: receipt.egress ? "false" : "true", NEKO_WEBRTC_UDPMUX: String(56000 + slot) },
         volumes: [{ volume_id: volume.id, mount_path: "/home/kernel", readonly: false }],
         entrypoint: ["/bin/sh", "-c"],
-        cmd: ["set -e; mkdir -p /home/kernel/user-data; chown kernel:kernel /home/kernel/user-data; rm -f /var/run/supervisor.sock /var/run/supervisord.pid /run/dbus/system_bus_socket /tmp/pulse/native; chown 0:0 /usr/bin/mount /opt/chrome-for-testing/chrome_sandbox; chmod 4755 /opt/chrome-for-testing/chrome_sandbox; ln -sfn chrome_sandbox /opt/chrome-for-testing/chrome-sandbox; export CHROME_DEVEL_SANDBOX=/opt/chrome-for-testing/chrome_sandbox; export NEKO_WEBRTC_NAT1TO1=$(hostname -I | awk '{print $1}'); mountpoint -q /dev/shm || mount -t tmpfs -o mode=1777 tmpfs /dev/shm; exec /wrapper"],
+        cmd: [`set -e; ${receipt.egress ? `${researchFirewall(receipt.egress)}; printf 'nameserver 1.1.1.1\\n' > /etc/resolv.conf; ( sleep 300; iptables -F OUTPUT; ip6tables -F OUTPUT ) >/dev/null 2>&1 & ` : ""}mkdir -p /home/kernel/user-data; chown kernel:kernel /home/kernel/user-data; rm -f /var/run/supervisor.sock /var/run/supervisord.pid /run/dbus/system_bus_socket /tmp/pulse/native; chown 0:0 /usr/bin/mount /opt/chrome-for-testing/chrome_sandbox; chmod 4755 /opt/chrome-for-testing/chrome_sandbox; ln -sfn chrome_sandbox /opt/chrome-for-testing/chrome-sandbox; export CHROME_DEVEL_SANDBOX=/opt/chrome-for-testing/chrome_sandbox; export NEKO_WEBRTC_NAT1TO1=$(hostname -I | awk '{print $1}'); mountpoint -q /dev/shm || mount -t tmpfs -o mode=1777 tmpfs /dev/shm; exec /wrapper`],
         skip_kernel_headers: true,
       });
       instance = row(await this.request("GET", `/instances/${encodeURIComponent(instanceName)}`));
@@ -233,16 +237,19 @@ export class Backend {
     throw new Error("local Hypeman has no free browser slots");
   }
 
-  async launch(session: string, persistent = false): Promise<{ cdpUrl: string; cleanup: Cleanup }> {
+  async launch(session: string, persistent = false, egress?: EgressPolicy): Promise<{ cdpUrl: string; cleanup: Cleanup }> {
     return this.serial(async () => {
       if (this.draining) throw new Error("browser is shutting down");
       const name = backendSession(session);
       const all = await this.read();
       let current = all.find((item) => item.session === name);
+      if (egress && persistent) throw new Error("research browser must be disposable");
+      if (current && JSON.stringify(current.egress) !== JSON.stringify(egress)) throw new Error("browser egress policy mismatch");
+      if (current?.egress && Date.now() - Date.parse(current.createdAt) >= 240_000) throw new Error("research browser lease expired");
       if (!current) {
         if (all.length >= MAX_SESSIONS) throw new Error("all disposable browser session slots are occupied");
         current = { version: 1, session: name, profile: name, persistent, lease: randomBytes(16).toString("hex"),
-          createdAt: new Date().toISOString(), target: null, native: null };
+          createdAt: new Date().toISOString(), target: null, native: null, ...(egress ? { egress: egressPolicy.parse(egress) } : {}) };
         all.push(current);
         await this.save(all);
       }
@@ -257,6 +264,7 @@ export class Backend {
       if (!observed) throw new Error("recorded browser VM is missing; automatic replacement is disabled and the profile volume receipt is retained for operator recovery");
       let instance = row(observed);
       if (instance.id !== native.instanceId || !owned(instance, name, current.lease, "browser")) throw new Error("browser target changed; refusing to attach to another incarnation");
+      if (current.egress && row(instance.tags)["dev.agentstack.egress"] !== researchPolicyId(current.egress)) throw new Error("browser_egress_unverifiable");
       const volume = records(await this.request("GET", "/volumes")).find((item) => item.id === native.volumeId);
       if (!volume || volume.name !== native.volumeName || !owned(volume, name, current.lease, current.persistent ? "durable-profile" : "disposable-profile")) throw new Error("browser profile changed; refusing to attach to another volume");
       if (persistent && instance.state === "Stopped") {

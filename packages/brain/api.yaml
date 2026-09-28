@@ -1,7 +1,7 @@
 name: brain
 description: Search local research and admit durable ingestion into an isolated AgentStack Brain index. Admission is asynchronous; the owned worker uses the AgentStack Scrape engine for URL extraction and source discovery.
 socket:
-  description: Unix socket for research, ingestion ledger, recurring sources and recovery operations.
+  description: Unix socket for research, ingestion ledger, recurring sources, recovery and operator-only private-destination grants. Grant management is socket-only.
 mcp:
   operations: &public_operations
     - brain_status

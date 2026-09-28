@@ -8,6 +8,7 @@
     ".": { "types": "./dist/api.d.ts", "default": "./dist/api.js" },
     "./engine": { "types": "./dist/src/api.d.ts", "default": "./dist/src/api.js" },
     "./feed": { "types": "./dist/src/feed.d.ts", "default": "./dist/src/feed.js" },
+    "./network": { "types": "./dist/src/egress.d.ts", "default": "./dist/src/egress.js" },
     "./package.json": "./package.json"
   },
   "scripts": {

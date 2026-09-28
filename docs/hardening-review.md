@@ -35,13 +35,13 @@ The owner → package socket → transport gateway architecture is worth keeping
 
 **Implemented:** schema-v2 transactional migration, server-assigned attribution and authority, schedule/execution/run ownership checks, current-exposure resolution, revision-fenced admission, captured execution action/authority, removal tombstones, restart-safe blocked state, and `proc_schedule_reauthorize`. This is coherent API authorization; same-user process execution remains outside an OS sandbox. Dedicated Proc/reauthorization UI is still a separate decision.
 
-### 2. Brain/browser egress — high priority
+### 2. Brain/browser egress — approved and implemented
 
-**Verified:** Brain passes `allowPrivateNetwork: true` for browser extraction. Submitted URLs and discovered source items can reach private destinations. Scrape's browser path throws `browser_egress_unverifiable` without that opt-in (`packages/scrape/src/browser.ts`), so globally changing it to false disables that path without providing public-only extraction.
+**Original finding:** Brain passed `allowPrivateNetwork: true` for browser extraction. Submitted URLs and discovered source items could reach private destinations. Removing that flag alone left browser egress unverifiable.
 
-**Recommended sketch:** default shared submissions and source discovery to public-only destinations; store any private-network grant on an operator-controlled source/submission policy, never infer it from a caller boolean. Enforce browser egress in a proxy or isolated network layer that covers DNS resolution, redirects and subresources. Use the existing pinned-IP HTTP transport for supported public-only fetches. Surface policy refusal as an inspectable ingestion failure, preserving admission and lease fencing.
+**Implemented:** public-only execution contexts; socket-only operator grants for exact TCP IP/port endpoints bound to a submission root or source definition version; schema-v13 grant, attempt and cache evidence; scope-preserving child admission; active revocation and completion fencing; pinned HTTP extraction and redirects; and disposable Browse guests with IPv4/IPv6 OUTPUT filtering before Chrome starts. Research never borrows unrestricted profiles. An incapable provider fails closed. Existing job inspection exposes effective policy and policy denials remain permanent, inspectable ingestion outcomes. See [ADR 0112](adr/0112-research-network-egress.md).
 
-**Decision:** are private/LAN research sources required? That determines whether to implement scoped grants or remove private access entirely. Host checks protect the local HTTP surfaces, but are not a substitute for egress policy.
+**UI follow-up:** dedicated private-grant and revocation controls are not yet present; the existing inspector shows effective job policy. New controls require a separate request.
 
 ### 3. Authenticate ordinary loopback clients
 
@@ -109,8 +109,21 @@ Proposal 1 is implemented on the combined tree through `2b29daa`, retaining the 
 - `pnpm --filter @agentstack/uix typecheck` passed. Proc remains represented by the schema-driven API reference; it has no dedicated store reads, subscriptions or record views to migrate.
 - Builds and lifecycle checks ran in an isolated checkout with disposable state. `git diff --check` is clean.
 
+## Research egress verification — 2026-09-28
+
+Proposal 2 is implemented on the combined tree through `8ea23b1`, preserving the concurrent Xcom and Accounts work. The Xcom ADR is renumbered to 0111 to resolve its collision with the published Proc decision; research egress is ADR 0112.
+
+- Final `pnpm test`: **40/40 Turbo tasks successful; 950 tests passed, 7 skipped, zero failures or cancellations**, including installer tests.
+- Skips are six existing credential/runtime-gated cases and the new real-netfilter test, which requires an isolated Linux network namespace. Live Hypeman enforcement was not exercised on this Mac; portable tests cover fail-closed startup, provider receipts, fresh CDP attachment and refusal to use an unrestricted/pinned session.
+- Real local HTTP fixtures verify public-only refusal, exact IP/port grants, redirects, static extraction, source discovery/inheritance, revocation, queued recovery and lease/cache fencing. Discovery tests verify grants and research acquisition remain socket-only.
+- One earlier full run had an intermittent concurrent-admission child exit. The assertion now preserves child diagnostics; ten focused reruns and the final full run passed. No root cause is claimed.
+- `pnpm --filter @agentstack/uix typecheck` and `git diff --check` passed. Effective policy is visible through existing job inspection; dedicated grant controls remain a separate UI decision.
+- Builds and lifecycle tests used an isolated checkout and disposable state. The running owner's build and runtime were not changed.
+
 ## Deployment
 
 Source changes are not deployment. The running owner has not been restarted and its checkout's `dist`/`.next` have not been rebuilt by this review. Apply a coordinated rebuild and authorized owner restart to use the matching Role/Worker contracts and browser policies. Development browser clients on another port must configure `AGENTSTACK_WEBSOCKET_ORIGIN` explicitly.
 
 Proc authority also requires a coordinated owner rebuild/restart because its scheduled invocation envelope extends the shared socket contract. On that restart, existing unattributed schedules are disabled pending explicit operator reauthorization; the recognized protected Brain source trigger is preserved.
+
+Research egress requires the matching Brain/Scrape/Browse packages. Its additive schema-v13 migration creates no grants. Existing private sources need explicit operator grants, and browser-only/authenticated sources need a capable isolated provider; existing signed-in profiles are not reused. A provider lacking working guest IPv4/IPv6 netfilter fails closed. Live Hypeman enforcement has not been exercised by the macOS verification environment.

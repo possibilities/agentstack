@@ -31,6 +31,9 @@ import {
 import { boundUtf8, redactDiagnostic, redactUrl } from "./redaction.js";
 import { findExecutable, type ProcessResult, runProcess } from "./subprocess.js";
 import { resolveDataHome } from "./queue-paths.js";
+import { currentEgress } from "./egress.js";
+import { closeResearchBrowser, researchBrowser } from "./research-browser.js";
+import { resolveNetworkAddress, NetworkPolicyFault } from "./network-policy.js";
 
 export const AGENT_BROWSER_BIN_ENV = "AGENTSCRAPE_AGENT_BROWSER_BIN";
 export const AGENT_BROWSER_TIMEOUT_ENV = "AGENTSCRAPE_AGENT_BROWSER_TIMEOUT";
@@ -124,7 +127,7 @@ function timeoutMs(override?: number): number {
   return Number.isFinite(raw) && raw > 0 ? raw * 1000 : 30_000;
 }
 function runtimeHome(): string {
-  return process.env.HOME || homedir();
+  return (currentEgress()?.env ?? process.env).HOME || homedir();
 }
 function healthStatePath(home: string): string {
   return join(home, ".local/state/browserctl/check-health-state.yaml");
@@ -382,9 +385,11 @@ export async function withBrowserSession<T>(
 
   // A pinned session is operator-owned unless its supervising process explicitly
   // accepts target cleanup responsibility. The durable profile remains separate.
-  const pinned = pinnedSession();
+  const pinned = currentEgress() ? null : pinnedSession();
   const ownsPinned = pinned !== null && process.env[AGENT_BROWSER_OWN_PINNED_SESSION_ENV] === "1";
-  const scope: BrowserSessionScope = requested
+  const scope: BrowserSessionScope = currentEgress()
+    ? { name: `research-${randomUUID()}`, owned: true, used: false }
+    : requested
     ? { name: requested, owned: false, used: false }
     : pinned !== null
       ? { name: pinned, owned: ownsPinned, used: false }
@@ -394,12 +399,12 @@ export async function withBrowserSession<T>(
   try {
     return await browserContext.run({ ...active, session: scope }, () => fn(scope, owner));
   } finally {
-    if (owner && scope.used) await closeSessionBestEffort(capturedName);
+    await Promise.all([closeResearchBrowser(scope), owner && scope.used ? closeSessionBestEffort(capturedName) : Promise.resolve()]);
   }
 }
 export function findAgentBrowserExecutable(
   home = runtimeHome(),
-  configured = process.env[AGENT_BROWSER_BIN_ENV],
+  configured = (currentEgress()?.env ?? process.env)[AGENT_BROWSER_BIN_ENV],
   executableLookup: (name: string) => string | null = findExecutable,
 ): string | null {
   if (configured) return executableLookup(configured);
@@ -412,7 +417,7 @@ export function findAgentBrowserExecutable(
   );
 }
 function resolveBrowser(home = runtimeHome()): string {
-  const configured = process.env[AGENT_BROWSER_BIN_ENV];
+  const configured = (currentEgress()?.env ?? process.env)[AGENT_BROWSER_BIN_ENV];
   return findAgentBrowserExecutable(home, configured) || configured || "agent-browser";
 }
 function isNetworkFreeBrowserCommand(args: string[]): boolean {
@@ -427,23 +432,30 @@ export async function runAgentBrowser(
   signal?: AbortSignal,
 ): Promise<ProcessResult> {
   const active = context();
-  const selectedSignal = signal ?? active.signal;
+  const egress = currentEgress();
+  egress?.check();
+  const selectedSignal = egress ? AbortSignal.any([egress.signal, ...(signal ?? active.signal ? [signal ?? active.signal!] : [])]) : signal ?? active.signal;
   throwIfAborted(selectedSignal);
-  if (!active.allowPrivateNetwork && !isNetworkFreeBrowserCommand(args))
+  if (!egress && !active.allowPrivateNetwork && !isNetworkFreeBrowserCommand(args))
     throw new AgentscrapeNetworkPolicyError("browser_egress_unverifiable");
-  const selectedSession = resolveBrowserSession(session, active);
+  if (egress && !active.session) throw new AgentscrapeNetworkPolicyError("browser_egress_unverifiable");
+  const selectedSession = resolveBrowserSession(egress ? null : session, active);
   const profile = browserProfile || active.profile;
   const home = runtimeHome();
   const path = healthStatePath(home);
   const browser = resolveBrowser(home);
   const argv = [browser, "--session", selectedSession];
-  if (profile) argv.push("--browserctl-profile", profile);
+  if (egress) {
+    try { argv.push("--cdp", await researchBrowser(active.session!)); }
+    catch { egress.check(); throw new AgentscrapeNetworkPolicyError("browser_egress_unverifiable"); }
+  }
+  else if (profile) argv.push("--browserctl-profile", profile);
   argv.push(...args);
   const key = outageKey(selectedSession, profile, browser, path);
   const now = Date.now();
   pruneOutageCache(now);
   let outage = outageCache.get(key) ?? null;
-  if (!outage) {
+  if (!outage && !egress) {
     outage = knownUpstreamDown(path, now);
     if (outage) setOutage(key, outage, now);
   }
@@ -462,6 +474,7 @@ export async function runAgentBrowser(
     result = await runProcess(argv, {
       timeoutMs: timeoutMs(timeoutOverrideMs),
       maxOutputBytes: AGENT_BROWSER_OUTPUT_MAX_BYTES,
+      ...(egress ? { env: egress.env } : {}),
       ...(selectedSignal ? { signal: selectedSignal } : {}),
     });
   } catch (error) {
@@ -727,8 +740,12 @@ export async function openPage(
 ): Promise<void> {
   const active = context();
   throwIfAborted(active.signal);
-  if (!active.allowPrivateNetwork)
+  if (!active.allowPrivateNetwork && !currentEgress())
     throw new AgentscrapeNetworkPolicyError("browser_egress_unverifiable");
+  if (currentEgress()) {
+    try { await resolveNetworkAddress(new URL(url), { signal: active.signal ?? undefined }); }
+    catch (error) { if (error instanceof NetworkPolicyFault) throw new AgentscrapeNetworkPolicyError("private_destination"); throw error; }
+  }
   await constrainOwnedScrapeSession(session);
   await setMediaMode(media, session);
   const before = await currentUrl(session);
@@ -807,6 +824,7 @@ export async function closeSession(session?: string | null, signal?: AbortSignal
       {
         timeoutMs: 30_000,
         maxOutputBytes: 64_000,
+        ...(currentEgress() ? { env: currentEgress()!.env } : {}),
         ...(signal ? { signal } : {}),
       },
     );

@@ -55,10 +55,17 @@ The local operator socket/WebSocket retain broad management access.
 `browser_controller_launch` and `browser_controller_close` are socket-only
 provider internals. `browser_bot_release` is the owner-local deletion/ID-reuse
 fence, so a removed Bot's ID cannot inherit its old profiles between supervision
-cycles. Legacy `browser_session_*` inspection/cleanup handles only
-old disposable receipts and cannot delete durable profiles. No new disposable
-session launch is exposed. The local UIX Browse space ([ADR 0104](adr/0108-browse-space.md)) answers handoffs, views and manages profiles and runs the toolchain; controller selection stays with Bots;
+cycles. `browser_session_*` inspection/cleanup handles disposable receipts and
+cannot delete durable profiles. `browser_research_acquire` is a socket-only
+Scrape lifecycle seam for fresh research guests; it is not exposed to agents.
+The local UIX Browse space ([ADR 0108](adr/0108-browse-space.md)) answers handoffs, views and manages profiles and runs the toolchain; controller selection stays with Bots;
 the dynamic API reference continues to describe them.
+
+## Constrained research browsers
+
+Brain research uses fresh disposable guests with guest-wide IPv4/IPv6 OUTPUT filtering installed before Chrome starts. Public TCP destinations and exact operator-granted private TCP endpoints are allowed; direct UDP/QUIC/WebRTC, loopback and reserved ranges are denied except explicitly granted endpoints and a fixed DNS resolver. Both `iptables` and `ip6tables` must work in the selected pinned guest image. If enforcement or readiness fails, research reports `network_policy:browser_egress_unverifiable`. No runtime is installed automatically to satisfy the request.
+
+Research receipts retain the egress policy. They cannot be reused as unrestricted sessions or with changed grants. Five-minute guest-side egress expiry bounds abandoned runtimes; normal cleanup closes the exact instance and deletes its disposable volume. A failed launch/cleanup retains the usual inspectable receipt for reconciliation. Research does not reuse Bot or human profiles, cookies or pinned browser sessions. See [ADR 0112](adr/0112-research-network-egress.md).
 
 ## Recovery and shutdown
 

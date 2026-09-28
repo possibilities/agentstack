@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { withEgressPolicy } from "@agentstack/scrape/network";
 import {
   extractWithAgentscrape, scrapeWithAgentscrape, validateExtractionEnvelope,
   discoverFeedWithAgentscrape,
@@ -29,11 +30,13 @@ test("Brain extracts Markdown through the bundled Scrape engine, not a CLI", asy
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("no port");
     const url = `http://127.0.0.1:${address.port}/page.md`;
-    const result = await extractWithAgentscrape(url);
+    await assert.rejects(extractWithAgentscrape(url), /private_destination/);
+    const policy = { privateDestinations: [{ address: "127.0.0.1", port: address.port }] };
+    const result = await withEgressPolicy(policy, () => {}, () => extractWithAgentscrape(url));
     assert.equal(result.status, "success");
     assert.equal(result.artifacts[0]?.content, "# Extracted\n\nBody");
     assert.equal(result.artifacts[0]?.sha256, createHash("sha256").update("# Extracted\n\nBody").digest("hex"));
-    assert.equal((await scrapeWithAgentscrape(url)).markdown, "# Extracted\n\nBody");
+    assert.equal((await withEgressPolicy(policy, () => {}, () => scrapeWithAgentscrape(url))).markdown, "# Extracted\n\nBody");
   } finally { server.closeAllConnections(); await new Promise<void>((resolve) => server.close(() => resolve())); }
 });
 

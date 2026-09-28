@@ -1,5 +1,8 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { brainSignal } from "./paths.js";
+import { withEgressPolicy, EgressRefused } from "@agentstack/scrape/network";
+import { ResearchEgress } from "./egress.js";
+import { SourceRegistry } from "./sources.js";
+import { brainSignal, brainEnvironment } from "./paths.js";
 import { hostname } from "node:os";
 import { type DurableSubmissionIntent, RECOVERY_JOB_PREFIX } from "./admission.js";
 import {
@@ -81,6 +84,7 @@ export interface MaterializerContext {
   artifactStore: ArtifactStore;
   signal: AbortSignal;
   extract: ExtractionProvider;
+  cache?: { valid(): boolean; invalidate(): void; remember(): void };
 }
 
 export type JobMaterializer = (
@@ -503,7 +507,7 @@ const defaultMaterializer: JobMaterializer = async (job, intent, context) => {
       options.max_bytes,
       AGENTSCRAPE_DEFAULT_MARKDOWN_MAX_BYTES,
     );
-    const cached = extractionFromCache(
+    const cached = context.cache && !context.cache.valid() ? null : extractionFromCache(
       context.artifactStore,
       job.id,
       url,
@@ -512,6 +516,7 @@ const defaultMaterializer: JobMaterializer = async (job, intent, context) => {
     let extraction: ExtractionSuccess;
     let record: PromotedUrlExtraction;
     if (cached === null) {
+      context.cache?.invalidate();
       extraction = await context.extract(url, {
         maxContentBytes,
         signal: context.signal,
@@ -534,9 +539,11 @@ const defaultMaterializer: JobMaterializer = async (job, intent, context) => {
         extraction,
         maxContentBytes,
       );
+      context.cache?.remember();
     } else {
       extraction = cached.extraction;
       record = cached.record;
+      context.cache?.remember();
     }
     if (context.signal.aborted) throw abortError();
     return [urlDocument(job, url, extraction, record, intent)];
@@ -578,6 +585,7 @@ const defaultMaterializer: JobMaterializer = async (job, intent, context) => {
 };
 
 function classifyFailure(error: unknown): FailureClass {
+  if (error instanceof EgressRefused) return "permanent";
   if (error instanceof SourceRunDispatchError) return error.failureClass;
   if (error instanceof AgentscrapeDiscoveryError) {
     return error.disposition === "cancelled" ? "permanent" : error.disposition;
@@ -1069,13 +1077,14 @@ export async function runWorker(
       }, heartbeatMs);
       const sourceJob = claim.job.kind === "source_sync";
       try {
+        const network = new ResearchEgress(store).capture(claim.job.id, claim.fencing_token);
         if (sourceJob) {
-          const dispatch = await dispatchSourceRun(store, claim.job, {
+          const dispatch = await withEgressPolicy(network.policy, network.check, () => dispatchSourceRun(store, claim.job, {
             discovery: options.sourceDiscovery ?? options.discovery,
             signal: controller.signal,
             now,
             beforeCheckpointCommit: options.beforeSourceCheckpointCommit,
-          });
+          }), brainEnvironment());
           if (controller.signal.aborted || lostLease) {
             result.fenced += 1;
             continue;
@@ -1085,6 +1094,7 @@ export async function runWorker(
             fencingToken: claim.fencing_token,
             now: completionTime,
             apply: () => {
+              network.check();
               dispatch.commit(completionTime);
             },
           });
@@ -1094,11 +1104,12 @@ export async function runWorker(
         }
 
         const intent = parseIntent(claim.job);
-        const documents = await materialize(claim.job, intent, {
+        const documents = await withEgressPolicy(network.policy, network.check, () => Promise.resolve(materialize(claim.job, intent, {
           artifactStore,
           signal: controller.signal,
           extract,
-        });
+          cache: network.cache,
+        })), brainEnvironment());
         if (controller.signal.aborted || lostLease) {
           result.fenced += 1;
           continue;
@@ -1108,6 +1119,7 @@ export async function runWorker(
           fencingToken: claim.fencing_token,
           now: completionTime,
           apply: () => {
+            network.check();
             applyDocuments(store, claim.job, intent, documents, completionTime);
           },
         });
@@ -1120,6 +1132,13 @@ export async function runWorker(
         if (controller.signal.aborted || lostLease) {
           result.fenced += 1;
           continue;
+        }
+        if (sourceJob && error instanceof EgressRefused && claim.job.run_id !== null) {
+          const message = error.message;
+          error = new SourceRunDispatchError(message, "permanent", (time = new Date()) => new SourceRegistry(store).commitSourceRunWindow({
+            runId: claim.job.run_id!, observations: [], attemptedCursor: null, warnings: [message],
+            disposition: "failed", healthDetail: message, now: time,
+          }));
         }
         if (
           (error instanceof AgentscrapeExtractionError ||
@@ -1150,7 +1169,7 @@ export async function runWorker(
           else result.fenced += 1;
           continue;
         }
-        const failureClass = sourceJob
+        const failureClass = error instanceof EgressRefused ? "permanent" : sourceJob
           ? error instanceof SourceRunDispatchError
             ? error.failureClass
             : "infra"

@@ -60,6 +60,10 @@ function createV11Article(path: string): void {
   db.exec(`
     CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     INSERT INTO meta VALUES ('schema_version', '11');
+    CREATE TABLE jobs (id INTEGER PRIMARY KEY, source_id INTEGER, run_id INTEGER);
+    CREATE TABLE sources (id INTEGER PRIMARY KEY, definition_version INTEGER);
+    CREATE TABLE runs (id INTEGER PRIMARY KEY, source_definition_version INTEGER);
+    CREATE TABLE attempts (id INTEGER PRIMARY KEY);
     CREATE TABLE documents (
       id INTEGER PRIMARY KEY, source_type TEXT NOT NULL, source_uri TEXT NOT NULL,
       title TEXT, tags TEXT NOT NULL DEFAULT '[]', notes TEXT, content TEXT NOT NULL,
@@ -149,7 +153,7 @@ test("writable store migrates v1 additively and preserves IDs and FTS", () => {
   expect(
     db.query("SELECT value FROM meta WHERE key='schema_version'").get(),
   ).toEqual({
-    value: "12",
+    value: "13",
   });
   expect(db.query("SELECT id FROM documents").get()).toEqual({ id: 7 });
   expect(
@@ -188,7 +192,7 @@ test("v12 migration backfills exact Article classification from extraction prove
   expect(
     db.query("SELECT value FROM meta WHERE key='schema_version'").get(),
   ).toEqual({
-    value: "12",
+    value: "13",
   });
   expect(
     db
@@ -399,7 +403,9 @@ test("immediate write transactions serialize concurrent equivalent admissions", 
       stderr: await new Response(process.stderr).text(),
     })),
   );
-  expect(results.map((result) => result.exitCode)).toEqual([0, 0, 0, 0]);
+  for (const result of results) {
+    if (result.exitCode !== 0) throw new Error(`concurrent admission exited ${result.exitCode}: ${result.stderr}\n${result.stdout}`);
+  }
   const statuses = results.map(
     (result) => JSON.parse(result.stdout).data.status,
   );
@@ -422,7 +428,7 @@ test("newer schema versions are rejected", () => {
   const path = tempDb();
   const db = new Database(path);
   db.exec(
-    "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL); INSERT INTO meta VALUES ('schema_version','13')",
+    "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL); INSERT INTO meta VALUES ('schema_version','14')",
   );
   db.close();
   expect(() => new ResearchStore(path)).toThrow("newer than supported");

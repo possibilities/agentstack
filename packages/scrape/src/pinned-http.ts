@@ -2,7 +2,8 @@ import * as http from "node:http";
 import * as https from "node:https";
 import { isIP } from "node:net";
 import type { ResolvedAddress } from "./network-policy.js";
-import { networkHostname } from "./network-policy.js";
+import { networkHostname, isPublicNetworkAddress, NetworkPolicyFault } from "./network-policy.js";
+import { currentEgress, privateEndpointAllowed } from "./egress.js";
 
 export const DEFAULT_MAX_HEADER_BYTES = 16_384;
 
@@ -120,6 +121,12 @@ export function requestPinnedHttp(
   input: PinnedHttpRequestOptions,
   dependencies: PinnedHttpDependencies = {},
 ): Promise<PinnedHttpResponse> {
+  const egress = currentEgress();
+  egress?.check();
+  if (egress && !isPublicNetworkAddress(input.address.address, input.address.family)
+    && !privateEndpointAllowed(egress.policy, input.address.address, Number(input.url.port || (input.url.protocol === "https:" ? 443 : 80))))
+    return Promise.reject(new NetworkPolicyFault("private_destination"));
+  if (egress) input = { ...input, signal: input.signal ? AbortSignal.any([input.signal, egress.signal]) : egress.signal };
   const maxHeaderBytes = input.maxHeaderBytes ?? DEFAULT_MAX_HEADER_BYTES;
   if (
     !["http:", "https:"].includes(input.url.protocol) ||

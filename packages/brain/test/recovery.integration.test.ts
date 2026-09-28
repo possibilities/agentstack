@@ -17,6 +17,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
 import { BACKUP_DATABASE_FILE } from "../src/backup.js";
+import { ResearchStore } from "../src/store.js";
+import { ResearchEgress } from "../src/egress.js";
 
 const REPO = join(import.meta.dirname, "..");
 const roots: string[] = [];
@@ -815,6 +817,16 @@ test("disposable rehearsal drives the frozen generation through the internal Nod
   );
   expect(existsSync(sentinel)).toBe(false);
 
+  // Recovery authorization does not imply private-network authority. Admit first,
+  // then explicitly grant only the disposable loopback fixture to those jobs.
+  expect(runCli(onlineArgs.filter((arg) => arg !== "--execute"), env).exitCode).toBe(0);
+  const grantStore = new ResearchStore(dbPath);
+  try {
+    const jobs = grantStore.db.query("SELECT id FROM jobs WHERE kind='url' AND state='queued'").all() as Array<{ id: number }>;
+    expect(jobs).toHaveLength(2);
+    const egress = new ResearchEgress(grantStore);
+    for (const job of jobs) egress.create(egress.forJob(job.id).scope, { privateDestinations: [{ address: "127.0.0.1", port }] });
+  } finally { grantStore.close(); }
   const online = runCli(onlineArgs, env);
   expect(online.exitCode).toBe(0);
   const onlineData = jsonData(online) as {

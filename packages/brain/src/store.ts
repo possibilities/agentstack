@@ -1,4 +1,5 @@
 import { Database } from "./sqlite.js";
+import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type {
@@ -53,7 +54,7 @@ import type {
   Sensitivity,
 } from "./types.js";
 
-export const RESEARCH_SCHEMA_VERSION = 12;
+export const RESEARCH_SCHEMA_VERSION = 13;
 
 /**
  * Default lease and retry policy. Durations are policy, not identity: callers
@@ -886,6 +887,31 @@ const MIGRATION_V12 = `
 
 const CONTENT_KINDS = new Set<ContentKind>(["post", "thread", "article"]);
 
+const MIGRATION_V13 = `
+  ALTER TABLE jobs ADD COLUMN egress_scope TEXT;
+  UPDATE jobs SET egress_scope=CASE WHEN source_id IS NULL THEN json_object('kind','job','id',id)
+    ELSE json_object('kind','source','id',source_id,'version',COALESCE(
+      (SELECT source_definition_version FROM runs WHERE runs.id=jobs.run_id),
+      (SELECT definition_version FROM sources WHERE sources.id=jobs.source_id),1)) END;
+  CREATE TRIGGER jobs_egress_scope AFTER INSERT ON jobs WHEN NEW.egress_scope IS NULL BEGIN
+    UPDATE jobs SET egress_scope=CASE WHEN NEW.source_id IS NULL THEN json_object('kind','job','id',NEW.id)
+      ELSE json_object('kind','source','id',NEW.source_id,'version',COALESCE(
+        (SELECT source_definition_version FROM runs WHERE runs.id=NEW.run_id),
+        (SELECT definition_version FROM sources WHERE sources.id=NEW.source_id),1)) END WHERE id=NEW.id;
+  END;
+  CREATE TABLE egress_grants (
+    id INTEGER PRIMARY KEY, scope TEXT NOT NULL, policy TEXT NOT NULL,
+    created_at TEXT NOT NULL, revoked_at TEXT
+  );
+  CREATE UNIQUE INDEX egress_grants_active ON egress_grants(scope) WHERE revoked_at IS NULL;
+  CREATE TABLE egress_attempts (
+    attempt_id INTEGER PRIMARY KEY REFERENCES attempts(id), scope TEXT NOT NULL,
+    grant_id INTEGER REFERENCES egress_grants(id), policy TEXT NOT NULL
+  );
+  CREATE TABLE egress_extractions (job_id INTEGER PRIMARY KEY REFERENCES jobs(id), policy_identity TEXT NOT NULL);
+  UPDATE meta SET value='13' WHERE key='schema_version';
+`;
+
 function normalizeContentClassification(
   kind: ContentKind | null | undefined,
   itemCount: number | null | undefined,
@@ -1652,21 +1678,23 @@ export class ResearchStore {
             ) as ResourceRelation,
         );
 
+        const egressScope = (this.db.query("SELECT egress_scope FROM jobs WHERE id=?").get(input.parentJobId) as { egress_scope: string }).egress_scope;
+        const childKey = `${discovery.childIdempotencyKey}:egress:${createHash("sha256").update(egressScope).digest("hex")}`;
         let child = this.db
           .query(
             `SELECT id FROM jobs
-             WHERE resource_id=? AND kind='url'
+             WHERE resource_id=? AND kind='url' AND egress_scope=?
                AND state IN ('queued', 'running', 'retry_wait', 'completed')
              ORDER BY CASE state WHEN 'completed' THEN 0 ELSE 1 END, id
              LIMIT 1`,
           )
-          .get(target.id) as { id: number } | null;
+          .get(target.id, egressScope) as { id: number } | null;
         if (child === null) {
           const existingJob = this.db
             .query(
               "SELECT id, intent, resource_id FROM jobs WHERE idempotency_key=?",
             )
-            .get(discovery.childIdempotencyKey) as {
+            .get(childKey) as {
             id: number;
             intent: string | null;
             resource_id: number | null;
@@ -1683,7 +1711,8 @@ export class ResearchStore {
             );
           }
           child = this.enqueueJob({
-            idempotencyKey: discovery.childIdempotencyKey,
+            idempotencyKey: childKey,
+            egressScope,
             kind: "url",
             intent: discovery.childIntent,
             sensitivity: input.sensitivity,
@@ -2786,6 +2815,7 @@ export class ResearchStore {
     resourceId?: number | null;
     sourceId?: number | null;
     runId?: number | null;
+    egressScope?: string;
     now?: Date;
   }): { job: Job; created: boolean } {
     const idempotencyKey = String(input.idempotencyKey || "").trim();
@@ -2828,6 +2858,7 @@ export class ResearchStore {
             timestamp,
           );
         const jobId = Number(inserted.lastInsertRowid);
+        if (input.egressScope) this.db.query("UPDATE jobs SET egress_scope=? WHERE id=?").run(input.egressScope, jobId);
         this.recordTransition(
           jobId,
           null,
@@ -3863,6 +3894,7 @@ export class ResearchStore {
         if (version < 10) this.db.exec(MIGRATION_V10);
         if (version < 11) this.db.exec(MIGRATION_V11);
         if (version < 12) this.db.exec(MIGRATION_V12);
+        if (version < 13) this.db.exec(MIGRATION_V13);
       })
       .immediate();
   }

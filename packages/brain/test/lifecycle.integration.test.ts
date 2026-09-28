@@ -42,14 +42,19 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
       assert.ok(existsSync(socket) && existsSync(registration), stderr);
       const call = (name: string, input: object = {}): Promise<any> => socketCall(socket, "tools/call", { name, arguments: input });
       const status = await call("brain_status");
-      const waiting = call("submit", { source: `http://127.0.0.1:${address.port}/active.md`, kind: "url", wait: true, "wait-timeout-ms": 60_000 });
+      const input = { source: `http://127.0.0.1:${address.port}/active.md`, kind: "url", "idempotency-key": "lifecycle-granted" };
+      const admission = await call("submit", input);
+      await call("egress_grant_create", { scope: { kind: "job", id: admission.job_id }, policy: { privateDestinations: [{ address: "127.0.0.1", port: address.port }] } });
+      if ((await call("jobs_show", { "job-id": admission.job_id })).state === "failed") await call("jobs_retry", { "job-id": admission.job_id });
+      const waiting = call("submit", { ...input, wait: true, "wait-timeout-ms": 60_000 });
       void waiting.catch(() => {});
       for (let n = 0; n < 400 && !requested; n++) await sleep(10);
       assert.equal(requested, true, stderr);
       const jobs = (await call("jobs_list")).jobs;
       assert.equal(jobs.length, 1);
       const jobId = jobs[0].id;
-      assert.equal((await call("jobs_show", { "job-id": jobId })).state, "running");
+      const running = await call("jobs_show", { "job-id": jobId });
+      assert.equal(running.state, "running");
       assert.equal(child.kill(signal), true);
       const result = await Promise.race([exited, sleep(5000, undefined, { ref: false }).then(() => { throw new Error(`shutdown timed out: ${stderr}`); })]);
       assert.deepEqual(result, { code: 0, signal: null }, stderr);
@@ -64,7 +69,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
       const reopened = new ResearchStore(status.database);
       try {
         reopened.db.transaction(() => {
-          assert.equal(reopened.db.query("SELECT COUNT(*) AS count FROM attempts WHERE job_id=?").get(admitted.job_id).count, 1);
+          assert.equal(reopened.db.query("SELECT COUNT(*) AS count FROM attempts WHERE job_id=?").get(admitted.job_id).count, running.attempt_count);
           assert.equal(reopened.db.query("SELECT COUNT(*) AS count FROM documents").get().count, 0);
         }).immediate();
       } finally { reopened.close(); }

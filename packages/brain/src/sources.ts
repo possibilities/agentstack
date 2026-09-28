@@ -1820,16 +1820,18 @@ export class SourceRegistry {
 
         let admissionJobId: number | null = null;
         if (observation.admission !== null) {
+          const egressScope = JSON.stringify({ kind: "source", id: context.source.id, version: context.run.source_definition_version });
+          const admissionKey = `${observation.admission.idempotencyKey}:egress:${context.source.id}:${context.run.source_definition_version}`;
           let job = observedVersionChanged
             ? null
             : (this.db
                 .query(
                   `SELECT id, resource_id, intent FROM jobs
-                   WHERE resource_id=? AND kind='url'
+                    WHERE resource_id=? AND kind='url' AND egress_scope=?
                    ORDER BY CASE state WHEN 'completed' THEN 0 ELSE 1 END, id ASC
                    LIMIT 1`,
                 )
-                .get(resourceId) as SourceAdmissionJob | null);
+                .get(resourceId, egressScope) as SourceAdmissionJob | null);
           if (
             job === null &&
             !observedVersionChanged &&
@@ -1838,7 +1840,7 @@ export class SourceRegistry {
             job = this.db
               .query(
                 `SELECT id, resource_id, intent FROM jobs
-                 WHERE kind='url' AND intent IS NOT NULL
+                  WHERE kind='url' AND intent IS NOT NULL AND egress_scope=?
                    AND json_extract(
                      CASE WHEN json_valid(intent) THEN intent ELSE NULL END,
                      '$.payload.url.url'
@@ -1846,7 +1848,7 @@ export class SourceRegistry {
                  ORDER BY CASE state WHEN 'completed' THEN 0 ELSE 1 END, id ASC
                  LIMIT 1`,
               )
-              .get(observation.locator) as SourceAdmissionJob | null;
+              .get(egressScope, observation.locator) as SourceAdmissionJob | null;
           }
           if (job === null) {
             job = this.db
@@ -1854,7 +1856,7 @@ export class SourceRegistry {
                 "SELECT id, resource_id, intent FROM jobs WHERE idempotency_key=?",
               )
               .get(
-                observation.admission.idempotencyKey,
+                admissionKey,
               ) as SourceAdmissionJob | null;
             if (
               job !== null &&
@@ -1875,7 +1877,7 @@ export class SourceRegistry {
                    ) VALUES (?, 'url', ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
                 )
                 .run(
-                  observation.admission.idempotencyKey,
+                  admissionKey,
                   observation.admission.intent,
                   resourceId,
                   context.source.id,

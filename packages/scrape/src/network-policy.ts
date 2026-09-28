@@ -1,5 +1,6 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { currentEgress, privateEndpointAllowed } from "./egress.js";
 
 export interface ResolvedAddress {
   address: string;
@@ -178,6 +179,10 @@ export async function resolveNetworkAddress(
   url: URL,
   options: ResolveNetworkAddressOptions = {},
 ): Promise<ResolvedAddress> {
+  const egress = currentEgress();
+  egress?.check();
+  if (egress) options = { ...options, allowPrivateNetwork: false,
+    signal: options.signal ? AbortSignal.any([options.signal, egress.signal]) : egress.signal };
   const hostname = networkHostname(url);
   const literalFamily = isIP(hostname);
   let addresses: readonly ResolvedAddress[];
@@ -209,8 +214,10 @@ export async function resolveNetworkAddress(
   }
   if (
     options.allowPrivateNetwork !== true &&
-    addresses.some((entry) => !isPublicNetworkAddress(entry.address, entry.family))
+    addresses.some((entry) => !isPublicNetworkAddress(entry.address, entry.family)
+      && !(egress && privateEndpointAllowed(egress.policy, entry.address, Number(url.port || (url.protocol === "https:" ? 443 : 80)))))
   )
     throw new NetworkPolicyFault("private_destination");
+  egress?.check();
   return addresses[0]!;
 }

@@ -1,7 +1,9 @@
 import { chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { operation, type PackageApi } from "@agentstack/api";
+import { operation, operatorInvocation, type PackageApi } from "@agentstack/api";
+import { egressPolicy } from "@agentstack/scrape/network";
+import { ResearchEgress, grantScope, grantRecord, jobNetworkPolicy } from "./src/egress.js";
 import { ArtifactStore } from "./src/artifacts.js";
 import { brainTopics, watchBrainChanges, type BrainChanges, type BrainTopic } from "./src/changes.js";
 import { runParsed } from "./src/dispatch.js";
@@ -51,7 +53,7 @@ const outputs: Record<string, z.ZodType> = {
   delete: z.object({ success: z.literal(true), deleted_document_id: z.number(), title: z.string().nullable(), source_uri: z.string(), purged_resources: z.number(), redacted_jobs: z.number(), removed_artifacts: z.array(z.string()) }),
   retag: schemas.RetagResultSchema,
   jobs_list: z.object({ jobs: z.array(schemas.SafeJobSchema) }),
-  jobs_show: schemas.SafeJobRecordSchema,
+  jobs_show: schemas.SafeJobRecordSchema.extend({ network_policy: jobNetworkPolicy }),
   jobs_run: schemas.SafeRunRecordSchema,
   jobs_stats: schemas.JobStatsSchema,
   jobs_retry: schemas.SafeJobSchema,
@@ -119,6 +121,7 @@ const commandOperations = agentTools(undefined, true).filter((tool) => !internal
     }
     // Retagging rewrites FTS rows in place, which no fingerprint sees.
     if (tool.name === "retag" && input["dry-run"] !== true) ctx.changes?.touch("index_changed");
+    if (tool.name === "jobs_show") result = { ...(result as object), network_policy: new ResearchEgress(ctx.store).forJob(Number(input["job-id"])) };
     const field = resultFields[tool.name];
     return field ? { [field]: result } : result;
   },
@@ -199,6 +202,21 @@ export const api: PackageApi<BrainContext, BrainTopic> = {
   http: [{ name: "share", kind: "json", authentication: "bearer",
     description: "Loopback-only internal share listener with ephemeral liveness credential. Devices pair through Access; legacy shared tokens are not accepted.", routes: shareRoutes }],
   operations: [
+    operation({ name: "egress_grant_create", description: "Operator-only socket grant for one URL submission root or exact Research source definition version. Allows only explicit TCP IP/port destinations in addition to public egress. Children inherit the scope; existing sources receive no implicit grants. Revoke an existing grant before changing destinations.",
+      input: z.strictObject({ scope: grantScope, policy: egressPolicy }), output: grantRecord,
+      async call(ctx, input, invocation) {
+        if (!operatorInvocation(invocation)) throw new Error("egress_grants_operator_only");
+        const result = new ResearchEgress(ctx.store).create(input.scope, input.policy); ctx.changes?.touch("jobs_changed"); return result;
+      } }),
+    operation({ name: "egress_grant_revoke", description: "Operator-only socket revocation. Queued work rechecks current authority; active engine requests abort on policy invalidation and stale completions are fenced. Does not erase prior research or automatically retry failed jobs.",
+      input: z.strictObject({ id: z.number().int().positive() }), output: grantRecord,
+      async call(ctx, { id }, invocation) {
+        if (!operatorInvocation(invocation)) throw new Error("egress_grants_operator_only");
+        const result = new ResearchEgress(ctx.store).revoke(id); ctx.changes?.touch("jobs_changed"); return result;
+      } }),
+    operation({ name: "egress_grant_list", description: "Operator-only socket inspection of the latest 200 immutable private-destination grants and revocations. Grants are separately attributed operator policy, never submission fields.",
+      input: z.strictObject({}), output: z.strictObject({ grants: z.array(grantRecord) }), annotations: { readOnlyHint: true },
+      async call(ctx, _input, invocation) { if (!operatorInvocation(invocation)) throw new Error("egress_grants_operator_only"); return { grants: new ResearchEgress(ctx.store).list() }; } }),
     operation({ name: "share_receive", description: "Trusted same-user Access ingress admission. Remote clients cannot call the socket directly; Access records client-bound receipts after this deduplicating admission.",
       input: z.strictObject({ payload: z.unknown() }), output: shareAdmit.output,
       async call(ctx, input) {

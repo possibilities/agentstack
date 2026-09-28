@@ -1,0 +1,29 @@
+# 112. Enforce research network authority at execution and connection boundaries
+
+Status: accepted, 2026-09-28. Implements approved hardening-review proposal 2.
+
+## Decision
+
+Brain submissions, device shares, source discovery and discovered children default to public-only egress. Admission grants no private-network authority. Brain owns durable grants and attempt evidence; Scrape owns network enforcement and extraction; Browse owns the isolated browser runtime. No existing source, profile, credential or external research store is adopted.
+
+An operator may use the socket-only `egress_grant_create`, `egress_grant_list` and `egress_grant_revoke` operations. A grant binds either one URL submission root or one exact Research source ID and definition version to at most 32 numeric TCP IP/port destinations, in addition to public destinations. Numeric endpoints avoid durable hostname/DNS wildcards. Hostnames may resolve to an allowed endpoint, but every returned address must satisfy policy. No share, agent flag, manifest payload or inferred URL changes authority. Replacing a grant requires explicit revocation. A source edit invalidates the previous version's grant. Private grants describe the execution network's addresses: browser loopback refers to the guest, not the host.
+
+Schema v13 adds immutable job scope, grant/revocation records, per-attempt policy snapshots and extraction-cache policy evidence. New child admissions inherit the parent's scope. Cross-root/source pending jobs are separate even when they converge on the same Research resource; job deduplication cannot transfer authority. Each attempt reads current grants, checks again before every engine connection and before fenced completion, and monitors changes during active work. Revocation aborts active engine requests and prevents stale index/checkpoint commits. No grant implicitly retries a failed job. Existing sources and jobs have no grants after migration. Existing local legacy extraction artifacts remain readable without network I/O; subsequent policy-aware cache reuse must match its recorded policy, and private cached extraction cannot bypass revocation.
+
+## HTTP and browser enforcement
+
+Scrape resolves all addresses, validates them against public-address policy and exact exceptions, and pins the selected IP for HTTP connections while retaining the requested HTTP Host and TLS identity. Redirects repeat authorization and resolution; the request boundary independently refuses disallowed pinned addresses. Static HTML, Markdown, PDF and feed discovery use this path. Research GitHub extraction uses the constrained document path rather than an unrestricted `gh`/`git` subprocess. Preset-specific browser extraction remains classified independently; preset mismatch does not authorize a generic fallback.
+
+Research browsers use a new socket-only `browser_research_acquire` operation and fresh disposable profiles. They never attach to an unrestricted Bot/human profile or a pinned signed-in session. The pinned Hypeman guest command installs guest-wide IPv4/IPv6 OUTPUT policy before launching Chrome. Both firewall tools and every installation command must succeed; otherwise Chrome is not started and the engine reports `network_policy:browser_egress_unverifiable`. The receipt binds its policy to the exact native instance and lease. Page commands use explicit CDP attachment to that instance.
+
+The guest policy permits replies to inbound management connections, DNS to a fixed resolver, exact granted TCP endpoints, and public TCP destinations. It rejects private/reserved IPv4 ranges, admits only public global-unicast IPv6 with reserved-range exclusions, and drops remaining traffic. UDP, QUIC, WebRTC and alternative direct-network paths cannot bypass the OUTPUT policy. This covers redirects, frames, subresources and DNS rebinding without relying on browser request interception. Guests independently expire egress after five minutes, bounding abandoned sessions after an owner/engine crash. Normal cleanup deletes only the exact disposable instance and volume; failed cleanup retains receipts for reconciliation. The owner does not install a new runtime or alter existing profiles as a side effect.
+
+## Outcomes and UI
+
+Policy refusal is a non-retryable ingestion failure with a stable `network_policy:<reason>` diagnostic. An unavailable enforcing browser is policy-unavailable, not permission to use the old unrestricted path. Authenticated/browser-only sources may therefore need configuration; existing signed-in profiles are intentionally not borrowed. Admission, source discovery completion and indexing completion retain their separate meanings. Source refusal records failed-run evidence without advancing its checkpoint.
+
+`jobs_show.network_policy` exposes the effective scope, grant ID and destinations. The existing Brain inspector renders it generically and re-reads on grant/source-version changes. No new UI controls are added. Operator grant/revocation controls require a separate UI decision. These policies constrain research network effects, not arbitrary same-UID process execution or a malicious operator controlling the host/guest.
+
+## Verification
+
+Tests exercise real pinned HTTP listeners, exact-port exceptions, redirect denial, mixed DNS answers and rebinding, IPv4/IPv6 classifications, revocation, queued recovery, cache and completion fencing, source inheritance, migration, socket-only grant exposure, and refusal to use unverified/pinned browsers. A shell test proves failed IPv6 firewall installation prevents browser startup. A real netfilter test runs in an isolated Linux network namespace when that facility is available; it is explicitly skipped on macOS. Provider integration fixtures verify receipts and launch configuration, not a live Hypeman installation.

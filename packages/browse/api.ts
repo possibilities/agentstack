@@ -4,8 +4,19 @@ import { Backend, cleanupSchema } from "./src/backend.js";
 import { BrowserSystem } from "./src/system.js";
 import { Profiles, profileSchema, bindingSchema } from "./src/profiles.js";
 import { handoffSchema, handoffRequestSchema, handoffActionSchema, completionInput } from "./src/handoff.js";
+import { egressPolicy } from "@agentstack/scrape/network";
 
 export type BrowserContext = { backend: Backend; system: BrowserSystem; profiles: Profiles };
+export const browserResearchAcquire = operation({
+  name: "browser_research_acquire", description: "Internal Scrape-only socket admission of a disposable research browser. Installs guest-wide public-only egress plus exact TCP IP/port exceptions before Chrome starts. Never reuses unrestricted or signed-in profiles. Missing firewall support fails closed; guest egress expires after five minutes.",
+  input: z.strictObject({ session: z.uuid(), policy: egressPolicy }),
+  output: z.strictObject({ cdpUrl: z.string(), cleanup: cleanupSchema, enforcement: z.literal("guest-output-v1") }),
+  async call(ctx: BrowserContext, { session, policy }, invocation) {
+    if (invocation) throw new Error("research browser requires internal socket authority");
+    try { return { ...await ctx.backend.launch(`research-${session}`, false, policy), enforcement: "guest-output-v1" as const }; }
+    catch { throw new Error("browser_egress_unverifiable"); }
+  },
+});
 export const browserHandoffRequest = operation({
   name: "browser_handoff_request", description: "Hold the entire own browser profile for human help. Origin is the invoking sanctioned Chat. Subscribe first to browser_handoffs_changed using browser_handoff_completion with this requestId, botId and threadId; inspect the subscribe initial value. Admission immediately fences managed automation; awaiting_human means CDP drained. A pending issue never grants human input.",
   input: handoffRequestSchema, output: handoffSchema,
@@ -53,11 +64,13 @@ const sessionInput = z.strictObject({ session: z.string().min(1).max(128).regex(
 const sessionOutput = z.strictObject({
   session: z.string(), profile: z.string(), lease: z.string(), persistent: z.boolean(),
   createdAt: z.string(), state: z.enum(["reserved", "running"]),
+  egress: egressPolicy.nullable(),
   target: z.strictObject({ name: z.string(), backend: z.string() }).nullable(),
 });
 const sessionOf = (row: Awaited<ReturnType<Backend["get"]>>) => row && ({
   session: row.session, profile: row.profile, lease: row.lease, persistent: row.persistent,
   createdAt: row.createdAt, state: row.target ? "running" as const : "reserved" as const, target: row.target,
+  egress: row.egress ?? null,
 });
 
 export const browserSessionGet = operation({
@@ -247,7 +260,7 @@ export const topics = {
 export const api: PackageApi<BrowserContext, keyof typeof topics> = {
   operations: [browserStatus, browserProfileList, browserProfileCreate, browserProfileDelete, browserControllerList, browserControllerSelect, browserControllerLaunch, browserControllerClose, browserBotRelease,
     browserHandoffRequest, browserHandoffGet, browserHandoffList, browserHandoffCompletion, browserHandoffTake, browserHandoffFinish, browserHandoffCancel,
-    browserSessionGet, browserSessionList, browserSessionClose, browserSessionReconcile,
+    browserSessionGet, browserSessionList, browserSessionClose, browserSessionReconcile, browserResearchAcquire,
     browserToolStatus, browserToolDetect, browserToolCheck, browserToolPolicy, browserToolInstall, browserToolAccept, browserToolUninstall,
     hypemanDetect, hypemanLocationSet, hypemanEnable, hypemanInstall, hypemanUninstall],
   events: { topics, start(ctx, publish) {

@@ -4,7 +4,7 @@ export type BrainTopic = "jobs_changed" | "sources_changed" | "index_changed";
 
 /** Invalidation notices only: they carry no values, so a subscriber re-reads what it shows. */
 export const brainTopics: Record<BrainTopic, string> = {
-  jobs_changed: "The ingestion ledger or ingestion worker health changed. Re-read jobs_stats, jobs_list and brain_status.",
+  jobs_changed: "The ingestion ledger, effective network policy or ingestion worker health changed. Re-read jobs_stats, jobs_list, inspected jobs_show records and brain_status.",
   sources_changed: "A Research source definition, pause state, Run or checkpoint changed. Re-read sources_list and sources_status.",
   index_changed: "Research documents were added, replaced, retagged or deleted. Re-read stats, tags and any search or document on screen.",
 };
@@ -12,7 +12,9 @@ export const brainTopics: Record<BrainTopic, string> = {
 // Each fingerprint is a handful of primary-key maxima and counts, so it never reads document bodies.
 // Lease heartbeats change no fingerprint and therefore publish nothing.
 const fingerprints: Record<BrainTopic, string> = {
-  jobs_changed: `SELECT json_array((SELECT max(id) FROM jobs), (SELECT max(id) FROM job_transitions), (SELECT max(id) FROM attempts)) AS value`,
+  jobs_changed: `SELECT json_array((SELECT max(id) FROM jobs), (SELECT max(id) FROM job_transitions), (SELECT max(id) FROM attempts),
+    (SELECT max(id) FROM egress_grants), (SELECT count(*) FROM egress_grants WHERE revoked_at IS NOT NULL),
+    (SELECT sum(definition_version) FROM sources)) AS value`,
   sources_changed: `SELECT json_array((SELECT count(*) FROM sources), (SELECT max(updated_at) FROM sources), (SELECT max(id) FROM runs),
     (SELECT max(updated_at) FROM runs), (SELECT max(id) FROM source_audit_events), (SELECT max(id) FROM source_checkpoints)) AS value`,
   index_changed: `SELECT json_array((SELECT max(id) FROM documents), (SELECT count(*) FROM documents), (SELECT max(id) FROM chunks), (SELECT count(*) FROM chunks)) AS value`,

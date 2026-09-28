@@ -40,7 +40,7 @@ test("real MCP handshake, discovery and calls preserve Brain object outputs over
     await request("notifications/initialized", {}, true);
     const listed = await request("tools/list");
     assert.deepEqual(listed.tools.map((tool: { name: string }) => tool.name).sort(), api.operations.map((op) => op.name)
-      .filter((name) => !["share_receive", "share_read_states"].includes(name)).sort());
+      .filter((name) => !["share_receive", "share_read_states", "egress_grant_create", "egress_grant_revoke", "egress_grant_list"].includes(name)).sort());
     for (const tool of listed.tools) assert.equal(tool.outputSchema.type, "object", tool.name);
     const callTool = async (name: string, input: object = {}): Promise<any> => {
       const result = await request("tools/call", { name, arguments: input });

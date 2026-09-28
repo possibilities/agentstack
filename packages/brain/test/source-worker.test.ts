@@ -704,7 +704,7 @@ test("partial blog warnings persist admitted evidence without advancing the chec
   store.close();
 });
 
-test("shared blog discoveries reuse one Resource and ingestion job", async () => {
+test("shared blog discoveries reuse one Resource but keep source authority scopes separate", async () => {
   const { store, registry } = fixture();
   registry.applySourceDefinitions([blog("blog-a"), blog("blog-b")], {
     now: T0,
@@ -720,7 +720,7 @@ test("shared blog discoveries reuse one Resource and ingestion job", async () =>
   sync(registry, "blog-b", new Date("2026-07-20T00:10:00.000Z"));
   await drain(store, discovery, { now: new Date("2026-07-20T00:10:01.000Z") });
 
-  expect(count(store, "jobs", "kind='url'")).toBe(1);
+  expect(count(store, "jobs", "kind='url'")).toBe(2);
   expect(count(store, "resources", "key_type='url'")).toBe(1);
   expect(count(store, "source_observation_details")).toBe(2);
   store.close();

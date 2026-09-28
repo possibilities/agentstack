@@ -258,6 +258,12 @@ A versioned recurring producer or discovery definition, such as a feed or accoun
 
 _Avoid_: ingress, individual URL job, attempt
 
+## Research egress grant
+
+Operator-controlled permission for a URL submission root or exact Research source version to reach specified TCP IP/port endpoints in addition to public destinations. Children retain its scope; execution and completion recheck revocation. It grants no browser-profile access and is not part of shared intent.
+
+_Avoid_: caller network boolean, source credential, indexing permission
+
 ## Proc schedule
 
 A durable, attributed definition for a one-shot or interval invocation of one Package API operation or guarded argv process. Its execution authority is the operator, a sanctioned Bot/root/thread, or a protected system task; operator edits do not promote Bot authority. Proc owns the wake-up, authorized due admission and execution evidence; the target Package API owns its own effects and idempotency. A missed interval is coalesced, not replayed. An interrupted API call has an unknown outcome, never an automatic retry. _Avoid_: Brain Source cadence, agent turn, cron job

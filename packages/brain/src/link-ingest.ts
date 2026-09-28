@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { currentEgress } from "@agentstack/scrape/network";
 import { DEFAULT_MAX_BYTES } from "./extract.js";
 import type {
   ExtractionFanoutPlan,
@@ -145,7 +146,11 @@ function policySuppression(
   relationType: ResourceRelationType,
 ): FanoutSuppressionReason | null {
   const parsed = validateHttpUrl(targetUrl);
-  if (unsafeDestination(parsed.hostname)) return "unsafe_destination";
+  if (unsafeDestination(parsed.hostname)) {
+    const policy = currentEgress()?.policy;
+    const address = parsed.hostname.replace(/^\[|\]$/g, "");
+    if (!policy || !policy.privateDestinations.some((entry) => entry.address === address && entry.port === Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80)))) return "unsafe_destination";
+  }
   if (
     (relationType === "article" && xArticleId(targetUrl) === null) ||
     (relationType === "quoted_post" && xStatusId(targetUrl) === null)

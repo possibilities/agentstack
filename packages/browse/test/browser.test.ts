@@ -7,6 +7,7 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { BrowserSystem } from "../src/system.js";
+import { researchFirewall } from "../src/research-egress.js";
 import { Backend, backendSession } from "../src/backend.js";
 import { handleProvider } from "../src/provider.js";
 import { prepareBrowserConfig } from "../src/config.js";
@@ -20,6 +21,38 @@ import { botMcpUrl, botInstance, serveSocket, socketPath, operation, type Invoca
 import { browserProfileList, browserProfileCreate, browserProfileDelete, browserControllerList, browserControllerSelect } from "../api.js";
 
 type Item = Record<string, unknown>;
+
+test("research firewall denies guest private ranges, direct UDP and non-global IPv6 before Chrome starts", () => {
+  const script = researchFirewall({ privateDestinations: [{ address: "10.1.2.3", port: 8443 }] });
+  assert.ok(script.indexOf("iptables -P OUTPUT DROP") < script.indexOf("iptables -F OUTPUT"));
+  assert.match(script, /ip6tables -P OUTPUT DROP/);
+  assert.match(script, /--ctstate ESTABLISHED --ctdir REPLY/);
+  assert.match(script, /-d 10\.1\.2\.3 -p tcp --dport 8443 -j ACCEPT/);
+  assert.ok(script.indexOf("--dport 8443") < script.indexOf("-d 10.0.0.0/8 -j REJECT"));
+  assert.ok(script.indexOf("-d 127.0.0.0/8 -j REJECT") < script.indexOf("iptables -A OUTPUT -p tcp -j ACCEPT"));
+  assert.match(script, /-d 2000::\/3 -p tcp -j ACCEPT/);
+  assert.equal(script.split("; ").filter((line) => line.includes("-p udp")).length, 1, "only fixed resolver DNS uses UDP");
+  assert.throws(() => researchFirewall({ privateDestinations: [{ address: "10.0.0.1; echo bad", port: 80 }] }));
+});
+
+test("research runtime binds policy to its receipt and never attaches to an unrestricted incarnation", async () => {
+  const s = await fixture(); const backend = new Backend(s.system, async () => undefined);
+  try {
+    await s.system.setHypemanLocation(s.root); await s.system.enableHypeman(s.root);
+    const policy = { privateDestinations: [] };
+    const acquired = await backend.launch("research", false, policy);
+    const instance = s.instances()[0]!;
+    const command = (instance.cmd as string[])[0]!;
+    assert.ok(command.indexOf("iptables -P OUTPUT DROP") < command.indexOf("exec /wrapper"));
+    assert.match(command, /sleep 300; iptables -F OUTPUT; ip6tables -F OUTPUT/);
+    assert.equal((instance.env as Item).ENABLE_WEBRTC, "false");
+    await assert.rejects(backend.launch("research"), /policy mismatch/);
+    await assert.rejects(backend.launch("research", false, { privateDestinations: [{ address: "10.0.0.1", port: 80 }] }), /policy mismatch/);
+    delete (instance.tags as Item)["dev.agentstack.egress"];
+    await assert.rejects(backend.launch("research", false, policy), /egress_unverifiable/);
+    await backend.close(acquired.cleanup);
+  } finally { await backend.closeContext(); await s.close(); }
+});
 async function fixture(options: { failInstanceCreate?: boolean } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "agentstack-browser-") );
   const root = join(dir, "local-hypeman");
