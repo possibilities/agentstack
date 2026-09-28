@@ -367,14 +367,9 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
         <div ref={setWorld} className={cn("absolute top-0 left-0 origin-top-left", !ready && "invisible", animating && "transition-transform duration-300 ease-out motion-reduce:transition-none", dragging && "select-none")}
           style={{ transform: `translate3d(${camera.x}px,${camera.y}px,0) scale(${camera.k})` }}>
           <Lines world={world} scale={camera.k} version={settled} animating={animating || dragging || settling !== null} subtle={false} />
-          {regions.map((region) => {
-            const origin = geometry.origins[region.id];
-            const bounds = geometry.regions.find((entry) => entry.id === region.id)!.bounds;
-            return <Fragment key={region.id}>
-              <h2 className="absolute text-sm font-medium tracking-wide text-muted-foreground" style={{ left: origin.x + bounds.x, top: origin.y + bounds.y - 36 }}>{region.title}</h2>
-              {region.defs.map((def) => <Fragment key={def.id}>{def.element}</Fragment>)}
-            </Fragment>;
-          })}
+          {regions.map((region) => <Fragment key={region.id}>
+            {region.defs.map((def) => <Fragment key={def.id}>{def.element}</Fragment>)}
+          </Fragment>)}
         </div>
       </main>
     </PlacementContext>
