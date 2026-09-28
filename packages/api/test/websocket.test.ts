@@ -35,7 +35,7 @@ async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "agentstack-ws-"));
   const dir = join(root, "packages", "demo");
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n");
+  await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n  operations: all\n  events: all\n");
   const env = { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_WEBSOCKET_PORT: "0" };
   const socket = await serveSocket<{ allowed: string }>({
     info: { name: "demo", description: "Demo.", transportDescription: "Socket.", path: socketPath("demo", env) },
@@ -88,7 +88,7 @@ test("one package-addressed connection calls and watches multiple Package APIs i
   const setup = await fixture();
   const betaDir = join(setup.root, "packages", "beta");
   await mkdir(betaDir);
-  await writeFile(join(betaDir, "api.yaml"), "name: beta\ndescription: Beta.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n  operations: [ping]\n");
+  await writeFile(join(betaDir, "api.yaml"), "name: beta\ndescription: Beta.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n  operations: [ping]\n  events: all\n");
   const beta = await serveSocket({
     info: { name: "beta", description: "Beta.", transportDescription: "Socket.", path: socketPath("beta", setup.env) },
     context: {},
@@ -169,7 +169,7 @@ test("a WebSocket operation list denies direct calls as well as hiding names", a
   let restricted: WebSocket | undefined;
   try {
     await writeFile(join(setup.root, "packages", "demo", "api.yaml"),
-      "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n  operations: []\n");
+      "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n  operations: []\n  events: all\n");
     restricted = await connect(setup.url);
     restricted.send(JSON.stringify({ id: 1, method: "tools/list", params: { package: "demo" } }));
     assert.deepEqual((await nextMessage(restricted)).result.tools, []);
@@ -197,10 +197,42 @@ test("a lost socket subscription tells the WebSocket client to resnapshot after 
   }
 });
 
+test("WebSocket event selection gates listing and subscription independently at handshake", async () => {
+  const setup = await fixture();
+  const existing = await connect(setup.url);
+  const file = join(setup.root, "packages", "demo", "api.yaml");
+  const configure = (operations: string, events: string) => writeFile(file,
+    `name: demo\ndescription: Demo.\nwebsocket:\n  description: Selected.\n  operations: ${operations}\n  events: ${events}\n`);
+  let restricted: WebSocket | undefined;
+  try {
+    await configure("all", "[]");
+    restricted = await connect(setup.url);
+    restricted.send(JSON.stringify({ id: 1, method: "tools/list", params: { package: "demo" } }));
+    const listed = (await nextMessage(restricted)).result;
+    assert.deepEqual(listed.tools.map((tool: { name: string }) => tool.name), ["greet"]);
+    assert.equal(listed.events, null);
+    restricted.send(JSON.stringify({ id: 2, method: "events/subscribe", params: { package: "demo", subscription: "watch", topics: ["changed"], scope: "bot-1" } }));
+    assert.match((await nextMessage(restricted)).error?.message ?? "", /not available over websocket/);
+    existing.send(JSON.stringify({ id: 3, method: "events/subscribe", params: { package: "demo", subscription: "watch", topics: ["changed"], scope: "bot-1" } }));
+    assert.deepEqual((await nextMessage(existing)).result.topics, ["changed"]);
+    restricted.close();
+    await configure("[]", "[changed]");
+    restricted = await connect(setup.url);
+    restricted.send(JSON.stringify({ id: 4, method: "tools/list", params: { package: "demo" } }));
+    const eventsOnly = (await nextMessage(restricted)).result;
+    assert.deepEqual(eventsOnly.tools, []);
+    assert.deepEqual(eventsOnly.events.topics, { changed: "A change." });
+    for (const [ops, events] of [["[unknown]", "all"], ["all", "[unknown]"], ["all", "[changed, changed]"], ["[greet, greet]", "all"]]) {
+      await configure(ops!, events!);
+      await assert.rejects(connect(setup.url), /503/);
+    }
+  } finally { existing.close(); restricted?.close(); await setup.close(); }
+});
+
 test("WebSocket admits current configuration while existing connections keep working", async () => {
   const setup = await fixture();
   const existing = await connect(setup.url);
-  const demoConfig = "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n";
+  const demoConfig = "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n  operations: all\n  events: all\n";
   const demoFile = join(setup.root, "packages", "demo", "api.yaml");
   let betaSocket: Awaited<ReturnType<typeof serveSocket>> | undefined;
   let beta: WebSocket | undefined;
@@ -219,7 +251,7 @@ test("WebSocket admits current configuration while existing connections keep wor
     const betaDir = join(setup.root, "packages", "beta");
     await mkdir(betaDir);
     const betaFile = join(betaDir, "api.yaml");
-    await writeFile(betaFile, "name: beta\ndescription: Beta.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n");
+    await writeFile(betaFile, "name: beta\ndescription: Beta.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n  operations: all\n  events: all\n");
     betaSocket = await serveSocket({
       info: { name: "beta", description: "Beta.", transportDescription: "Socket.", path: socketPath("beta", setup.env) },
       context: {},

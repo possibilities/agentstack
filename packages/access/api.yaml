@@ -3,6 +3,8 @@ description: Shared AgentStack client pairing, grants, revocable credentials and
 socket:
   description: Same-user trusted approval, inventory and revocation authority.
 websocket:
+  operations: all
+  events: all
   description: Local System Access controls and invalidations.
 http:
   description: Dedicated tailnet-only pairing and scoped Brain and Content ingress. No internal MCP forwarding.

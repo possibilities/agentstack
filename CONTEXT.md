@@ -36,7 +36,7 @@ A durable request from a verified Bot Chat for human help with an entire Browser
 
 ## Transport
 
-A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are the local control transports. `mcp` exposes operations over loopback HTTP through the running socket Package APIs and, under the owner, offers generated agent-facing event tools. `websocket` exposes operations and event subscriptions over one shared loopback listener and one package-addressed client connection, forwarding to those same socket Package APIs; each subscription has its own identifier and optional scope. An optional `http` Transport declares explicit JSON or static routes on separate owner-lifecycle listeners; it does not make other Package API operations remotely available. MCP and WebSocket may select a positive list of operations independently, while existing unrestricted declarations retain all socket operations.
+A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are the local control transports. Socket is the full internal superset. Each MCP and WebSocket declaration independently requires `operations` and `events`: `all`, a positive name list, or `[]` for none; an absent transport is disabled. MCP forwards over loopback HTTP using a request-time selection and, under the owner, offers generated Bot event tools for selected topics and exposed read-only operations. WebSocket forwards over one shared loopback listener and package-addressed connection, retaining its operation/topic selection from handshake; each subscription has its own identifier and optional scope. An optional `http` Transport declares explicit JSON or static routes on separate owner-lifecycle listeners; it does not expose other Package API operations.
 
 _Avoid_: protocol, binding
 
@@ -48,7 +48,7 @@ _Avoid_: stream, feed, pubsub
 
 ## MCP event subscription
 
-A durable, revisionless request by a verified Bot thread to watch one Package API topic and re-read one read-only operation after each invalidation. The owner records the request, reconnects and resnapshots after interruptions, coalesces unchanged values, and starts a Codex turn on that same sanctioned thread for a changed value. The initial value is returned to the subscribing tool call; event notices themselves carry no values.
+A durable, revisionless request by a verified Bot thread to watch one MCP-selected Package API topic and re-read one exposed read-only operation after each invalidation. The owner records the request, reconnects and resnapshots after interruptions, coalesces unchanged values, and starts a Codex turn on that same sanctioned thread for a changed value. Current exposure is checked around reads and before delivery, including after queued or idle waits; removed or invalid configuration fences subsequent work. The initial value is returned to the subscribing tool call; event notices themselves carry no values.
 
 ## Codex account
 

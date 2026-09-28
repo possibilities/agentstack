@@ -3,8 +3,9 @@ import { chmodSync, closeSync, constants, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { socketCall, socketSubscribe, type SocketSubscription } from "./socket.js";
-import { socketPath, stateDir } from "./workspace.js";
+import { socketPath, stateDir, workspaceRoot } from "./workspace.js";
 import type { InvocationContext } from "./operation.js";
+import { currentMcpCatalog, type SocketCatalog } from "./exposure.js";
 
 export type EventTarget = { botId: string; instance: string; threadId: string };
 export type EventSubscription = EventTarget & {
@@ -18,11 +19,6 @@ export type EventValue = { subscription: EventSubscription; reason: "changed" | 
 type RecordState = EventSubscription & {
   abort: AbortController; socket?: SocketSubscription; retry?: ReturnType<typeof setTimeout>;
   pending: boolean; flushing: boolean; reconnect: boolean; lastValueHash: string | null; retryDelay: number;
-};
-
-type Catalog = {
-  events: { topics: Record<string, string>; scope?: { description: string; example: string; required: boolean } } | null;
-  tools: Array<{ name: string; description: string; annotations?: { readOnlyHint?: boolean }; inputSchema: unknown }>;
 };
 
 const maxValueChars = 16_000;
@@ -53,9 +49,10 @@ export class McpEventSubscriptions {
   private closed = false;
 
   constructor(private readonly env: NodeJS.ProcessEnv, private readonly validate: (target: EventTarget) => Promise<void>,
-    private readonly deliver: (event: EventValue, signal: AbortSignal) => Promise<void>,
+    private readonly deliver: (event: EventValue, signal: AbortSignal, authorize: () => Promise<void>) => Promise<void>,
     private readonly rebind?: (botId: string, threadId: string) => Promise<EventTarget | null>,
-    private readonly authorizeRead?: (subscription: EventSubscription) => Promise<void>) {
+    private readonly authorizeRead?: (subscription: EventSubscription) => Promise<void>,
+    private readonly workspace: string = workspaceRoot(import.meta.dirname)) {
     const root = stateDir(env);
     mkdirSync(root, { recursive: true, mode: 0o700 });
     const file = join(root, "event-subscriptions.sqlite");
@@ -100,11 +97,11 @@ export class McpEventSubscriptions {
     for (const record of this.records.values()) if (!record.socket && !record.retry) void this.reconnect(record);
   }
 
-  async catalog(pkg: string): Promise<{ topics: Record<string, string>; scope: { description: string; example: string; required: boolean } | null; reads: Array<{ name: string; description: string; inputSchema: unknown }> }> {
-    const doc = await this.definition(pkg);
+  async catalog(pkg: string, admitted?: SocketCatalog): Promise<{ topics: Record<string, string>; scope: { description: string; example: string; required: boolean } | null; reads: Array<{ name: string; description: string; inputSchema: unknown }> }> {
+    const doc = admitted ?? await this.definition(pkg);
     return {
       topics: doc.events?.topics ?? {}, scope: doc.events?.scope ?? null,
-      reads: doc.tools.filter((tool) => tool.annotations?.readOnlyHint).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+      reads: doc.tools.filter((tool) => tool.annotations?.readOnlyHint).map(({ name, description, inputSchema }) => ({ name, description: description ?? "", inputSchema })),
     };
   }
 
@@ -140,7 +137,7 @@ export class McpEventSubscriptions {
       abort: new AbortController(), pending: false, flushing: false, reconnect: false, lastValueHash: null, retryDelay: 2_000,
     };
     try {
-      await this.authorizeRead?.(state);
+      await this.authorize(state);
       // Subscribe before reading, because notices are invalidations without replay.
       state.socket = await socketSubscribe(socketPath(pkg, this.env), [state.topic], () => { state.pending = true; if (this.records.has(state.id)) void this.flush(state); },
         { scope, signal: state.abort.signal });
@@ -192,17 +189,34 @@ export class McpEventSubscriptions {
     this.db.close();
   }
 
-  private definition(pkg: string): Promise<Catalog> {
-    return socketCall(socketPath(pkg, this.env), "tools/list", {}, { timeoutMs: 5_000 }) as Promise<Catalog>;
+  private definition(pkg: string): Promise<SocketCatalog> {
+    return currentMcpCatalog(this.workspace, pkg, this.env);
+  }
+
+  private async authorize(state: RecordState): Promise<void> {
+    if (this.closed || state.abort.signal.aborted) throw new Error("event subscription cancelled");
+    preventThreadFeedback(state.pkg, state.topic, state.scope, state.botId);
+    // Check policy before package-specific reads, and again afterwards: those
+    // checks can themselves await socket I/O while the manifest changes.
+    const check = async () => {
+      const doc = await this.definition(state.pkg);
+      if (!doc.events || !Object.hasOwn(doc.events.topics, state.topic)) throw new Error(`${state.topic} is not available over mcp`);
+      if (!doc.tools.some((tool) => tool.name === state.readOperation && tool.annotations?.readOnlyHint))
+        throw new Error(`${state.readOperation} is not an exposed read-only ${state.pkg} operation`);
+      if (this.closed || state.abort.signal.aborted) throw new Error("event subscription cancelled");
+    };
+    await check();
+    if (this.authorizeRead) { await this.authorizeRead(state); await check(); }
   }
 
   private read(state: RecordState): Promise<unknown> {
     return (async () => {
-      preventThreadFeedback(state.pkg, state.topic, state.scope, state.botId);
-      await this.authorizeRead?.(state);
-      return socketCall(socketPath(state.pkg, this.env), "tools/call", { name: state.readOperation, arguments: state.readArguments,
+      await this.authorize(state);
+      const value = await socketCall(socketPath(state.pkg, this.env), "tools/call", { name: state.readOperation, arguments: state.readArguments,
         ...(state.pkg === "browse" ? { invocation: { transport: "mcp", botId: state.botId, instance: state.instance, threadId: state.threadId, sessionId: null } } : {}),
-      }, { timeoutMs: 10_000 });
+      }, { timeoutMs: 10_000, signal: state.abort.signal });
+      await this.authorize(state);
+      return value;
     })();
   }
 
@@ -232,7 +246,7 @@ export class McpEventSubscriptions {
       state.instance = target.instance;
       this.db.prepare("UPDATE subscriptions SET instance = ? WHERE id = ?").run(state.instance, state.id);
       preventThreadFeedback(state.pkg, state.topic, state.scope, state.botId);
-      await this.authorizeRead?.(state);
+      await this.authorize(state);
       state.socket = await socketSubscribe(socketPath(state.pkg, this.env), [state.topic], () => { state.pending = true; void this.flush(state); },
         { scope: state.scope ?? undefined, signal: state.abort.signal });
       state.pending = true;
@@ -266,9 +280,13 @@ export class McpEventSubscriptions {
           if (!state.reconnect && hash === state.lastValueHash) { state.state = "active"; continue; }
           const key = `${state.botId}:${state.instance}:${state.threadId}`;
           const previous = this.deliveries.get(key) ?? Promise.resolve();
-          const next = previous.catch(() => undefined).then(() => this.deliver({ subscription: publicView(state), reason: state.reconnect ? "reconnected" : "changed",
-            value: encoded.length <= maxValueChars ? value : { readOperation: state.readOperation, readArguments: state.readArguments, bytes: Buffer.byteLength(encoded), note: "Value exceeds turn limit; call the read operation directly." },
-            truncated: encoded.length > maxValueChars }, state.abort.signal));
+          const authorize = () => this.authorize(state);
+          const next = previous.catch(() => undefined).then(async () => {
+            await authorize();
+            return this.deliver({ subscription: publicView(state), reason: state.reconnect ? "reconnected" : "changed",
+              value: encoded.length <= maxValueChars ? value : { readOperation: state.readOperation, readArguments: state.readArguments, bytes: Buffer.byteLength(encoded), note: "Value exceeds turn limit; call the read operation directly." },
+              truncated: encoded.length > maxValueChars }, state.abort.signal, authorize);
+          });
           this.deliveries.set(key, next);
           try { await next; }
           finally { if (this.deliveries.get(key) === next) this.deliveries.delete(key); }

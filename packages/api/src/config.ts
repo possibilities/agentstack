@@ -12,10 +12,13 @@ const blurb = z
     message: "description must be 1-400 characters",
   });
 
+const selectionSchema = z.union([z.literal("all"), z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/))]);
+
 const transportSchema = z
   .object({
     description: blurb,
-    operations: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)).optional(),
+    operations: selectionSchema,
+    events: selectionSchema,
   })
   .strict();
 

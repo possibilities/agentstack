@@ -3,4 +3,6 @@ description: Headless, forward-observed conversation interpretation and attentio
 socket:
   description: Local attention configuration, lifecycle, queries, feedback and explicit replay.
 websocket:
+  operations: all
+  events: all
   description: Loopback attention API and payload-free change notices for future clients.

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { lstat, mkdtemp, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -12,6 +12,11 @@ import { socketPath } from "../src/workspace.js";
 
 const caller: InvocationContext = { transport: "mcp", botId: "bot-1", instance: "launch-1", threadId: "main", sessionId: "session-1" };
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+async function manifest(root: string, name: string, operations = "all", events = "all") {
+  const dir = join(root, "packages", name);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "api.yaml"), `name: ${name}\ndescription: Test.\nmcp:\n  description: Test.\n  operations: ${operations}\n  events: ${events}\n`);
+}
 async function until(check: () => boolean, timeoutMs = 3_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!check() && Date.now() < deadline) await pause(10);
@@ -20,6 +25,7 @@ async function until(check: () => boolean, timeoutMs = 3_000): Promise<void> {
 
 test("MCP subscriptions return an initial value, coalesce notices, reconnect with a snapshot, and fence ownership", { timeout: 15_000 }, async () => {
   const root = await mkdtemp("/tmp/as-events-");
+  await manifest(root, "bots");
   const env = { AGENTSTACK_STATE_DIR: root };
   let value = 0;
   const snapshot = operation({ name: "bot_list", description: "Read bots.", input: z.strictObject({}), output: z.object({ value: z.number() }),
@@ -38,7 +44,7 @@ test("MCP subscriptions return an initial value, coalesce notices, reconnect wit
   const service = new McpEventSubscriptions(env, async (target) => { assert.equal(target.threadId, "main"); }, async (event) => {
     delivered.push(event);
     if (delivered.length === 1) await firstWait;
-  });
+  }, undefined, undefined, root);
   try {
     const catalog = await service.catalog("bots");
     assert.deepEqual(catalog.topics, { bots_changed: "Refresh bot_list.", threads_changed: "Refresh thread state." });
@@ -87,6 +93,7 @@ test("MCP subscriptions return an initial value, coalesce notices, reconnect wit
 
 test("optional Bot scopes cannot bypass chat and thread wakeup feedback fencing", async () => {
   const root = await mkdtemp(join(tmpdir(), "as-tree-events-"));
+  await manifest(root, "bots");
   const env = { AGENTSTACK_STATE_DIR: root };
   const socket = await serveSocket({
     info: { name: "bots", description: "Bots.", transportDescription: "Socket.", path: socketPath("bots", env) },
@@ -95,7 +102,7 @@ test("optional Bot scopes cannot bypass chat and thread wakeup feedback fencing"
     events: { topics: { chats_changed: "Refresh chats.", threads_changed: "Refresh threads." },
       scope: { description: "Bot ID.", example: "bot-1", valid: (_ctx, scope) => ["bot-1", "bot-2"].includes(scope) } },
   });
-  const service = new McpEventSubscriptions(env, async () => undefined, async () => undefined);
+  const service = new McpEventSubscriptions(env, async () => undefined, async () => undefined, undefined, undefined, root);
   let restored: McpEventSubscriptions | undefined;
   try {
     for (const topic of ["chats_changed", "threads_changed"]) {
@@ -113,7 +120,7 @@ test("optional Bot scopes cannot bypass chat and thread wakeup feedback fencing"
       db.exec("UPDATE subscriptions SET scope = CASE WHEN topic = 'chats_changed' THEN NULL ELSE 'bot-1' END");
     } finally { db.close(); }
     let delivered = 0;
-    restored = new McpEventSubscriptions(env, async () => undefined, async () => { delivered++; });
+    restored = new McpEventSubscriptions(env, async () => undefined, async () => { delivered++; }, undefined, undefined, root);
     restored.resume();
     await until(() => restored!.status(caller).subscriptions.every((item) => item.state === "error"));
     assert.equal(delivered, 0);
@@ -128,6 +135,7 @@ test("optional Bot scopes cannot bypass chat and thread wakeup feedback fencing"
 
 test("subscriptions survive owner-process recreation and rebind to the current Bot launch", { timeout: 10_000 }, async () => {
   const root = await mkdtemp("/tmp/as-events-durable-");
+  await manifest(root, "sample");
   const env = { AGENTSTACK_STATE_DIR: root };
   const socket = await serveSocket({
     info: { name: "sample", description: "Sample.", transportDescription: "Socket.", path: socketPath("sample", env) },
@@ -138,14 +146,14 @@ test("subscriptions survive owner-process recreation and rebind to the current B
   let first: McpEventSubscriptions | undefined;
   let second: McpEventSubscriptions | undefined;
   try {
-    first = new McpEventSubscriptions(env, async () => undefined, async () => undefined);
+    first = new McpEventSubscriptions(env, async () => undefined, async () => undefined, undefined, undefined, root);
     const subscribed = await first.subscribe("sample", { topic: "changed", readOperation: "snapshot" }, caller);
     assert.equal((await lstat(`${root}/event-subscriptions.sqlite`)).mode & 0o777, 0o600);
     await first.close();
     first = undefined;
     const delivered: EventValue[] = [];
     second = new McpEventSubscriptions(env, async (target) => { assert.equal(target.instance, "launch-2"); },
-      async (event) => { delivered.push(event); }, async (botId, threadId) => ({ botId, threadId, instance: "launch-2" }));
+      async (event) => { delivered.push(event); }, async (botId, threadId) => ({ botId, threadId, instance: "launch-2" }), undefined, root);
     second.resume();
     await until(() => delivered.length === 1);
     assert.equal(delivered[0]?.reason, "reconnected");
@@ -154,11 +162,11 @@ test("subscriptions survive owner-process recreation and rebind to the current B
     await second.unsubscribe(subscribed.subscription.id, { ...caller, instance: "launch-2" });
     await second.close();
     second = undefined;
-    const empty = new McpEventSubscriptions(env, async () => undefined, async () => undefined);
+    const empty = new McpEventSubscriptions(env, async () => undefined, async () => undefined, undefined, undefined, root);
     assert.deepEqual(empty.status({ ...caller, instance: "launch-2" }).subscriptions, []);
     await empty.subscribe("sample", { topic: "changed", readOperation: "snapshot" }, caller);
     await empty.close();
-    const gone = new McpEventSubscriptions(env, async () => undefined, async () => undefined, async () => null);
+    const gone = new McpEventSubscriptions(env, async () => undefined, async () => undefined, async () => null, undefined, root);
     gone.resume();
     await until(() => gone.status(caller).subscriptions.length === 0);
     await gone.close();
@@ -174,6 +182,7 @@ test("saved package selectors migrate without dropping Bot watches or replaying 
   const root = await mkdtemp(join(tmpdir(), "as-renamed-events-"));
   const env = { AGENTSTACK_STATE_DIR: root };
   const names = ["signal", "browse", "worker"] as const;
+  await Promise.all(names.map((name) => manifest(root, name)));
   const sockets = await Promise.all(names.map((name) => serveSocket({
     info: { name, description: name, transportDescription: "Socket", path: socketPath(name, env) },
     context: {}, operations: [operation({ name: "snapshot", description: "Read value.", input: z.strictObject({}), output: z.object({ value: z.string() }),
@@ -183,7 +192,7 @@ test("saved package selectors migrate without dropping Bot watches or replaying 
   let first: McpEventSubscriptions | undefined;
   let restored: McpEventSubscriptions | undefined;
   try {
-    first = new McpEventSubscriptions(env, async () => undefined, async () => undefined);
+    first = new McpEventSubscriptions(env, async () => undefined, async () => undefined, undefined, undefined, root);
     const saved = await Promise.all(names.map((name) => first!.subscribe(name,
       { topic: name === "signal" ? "signal_changed" : "changed", readOperation: "snapshot" }, caller)));
     await first.close();
@@ -194,17 +203,17 @@ test("saved package selectors migrate without dropping Bot watches or replaying 
         topic = CASE WHEN pkg = 'signal' THEN 'attention_changed' ELSE topic END`);
     } finally { db.close(); }
     const deliveries: EventValue[] = [];
-    restored = new McpEventSubscriptions(env, async () => undefined, async (event) => { deliveries.push(event); });
-    assert.deepEqual(restored.status(caller).subscriptions.map(({ id, pkg, topic }) => ({ id, pkg, topic })),
-      saved.map(({ subscription }, i) => ({ id: subscription.id, pkg: names[i], topic: names[i] === "signal" ? "signal_changed" : "changed" })));
+    restored = new McpEventSubscriptions(env, async () => undefined, async (event) => { deliveries.push(event); }, undefined, undefined, root);
+    assert.deepEqual(restored.status(caller).subscriptions.map(({ id, pkg, topic }) => ({ id, pkg, topic })).sort((a, b) => a.pkg.localeCompare(b.pkg)),
+      saved.map(({ subscription }, i) => ({ id: subscription.id, pkg: names[i]!, topic: names[i] === "signal" ? "signal_changed" : "changed" })).sort((a, b) => a.pkg.localeCompare(b.pkg)));
     restored.resume();
     await until(() => deliveries.length === names.length);
     assert.deepEqual(deliveries.map(({ subscription, reason }) => [subscription.pkg, reason]).sort(),
       names.map((name) => [name, "reconnected"]).sort());
     await restored.close();
     restored = undefined;
-    const again = new McpEventSubscriptions(env, async () => undefined, async () => undefined);
-    try { assert.deepEqual(again.status(caller).subscriptions.map((row) => row.pkg), [...names]); }
+    const again = new McpEventSubscriptions(env, async () => undefined, async () => undefined, undefined, undefined, root);
+    try { assert.deepEqual(again.status(caller).subscriptions.map((row) => row.pkg).sort(), [...names].sort()); }
     finally { await again.close(); }
   } finally {
     await first?.close();
@@ -212,4 +221,93 @@ test("saved package selectors migrate without dropping Bot watches or replaying 
     await Promise.all(sockets.map((socket) => socket.close()));
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("durable watches reauthorize refresh and discard values read across a policy change", async () => {
+  const root = await mkdtemp(join(tmpdir(), "as-policy-events-"));
+  const env = { AGENTSTACK_STATE_DIR: root };
+  const file = join(root, "packages", "sample", "api.yaml");
+  await manifest(root, "sample", "[snapshot]", "[changed]");
+  let reads = 0;
+  let release: (() => void) | undefined;
+  let block: Promise<void> | undefined;
+  const socket = await serveSocket({
+    info: { name: "sample", description: "Test.", transportDescription: "Test.", path: socketPath("sample", env) }, context: {},
+    operations: [operation({ name: "snapshot", description: "Read.", input: z.strictObject({}), output: z.object({ reads: z.number() }), annotations: { readOnlyHint: true },
+      async call() { reads++; await block; return { reads }; } })], events: { topics: { changed: "Refresh." } },
+  });
+  const delivered: EventValue[] = [];
+  const service = new McpEventSubscriptions(env, async () => undefined, async (event) => { delivered.push(event); }, undefined, undefined, root);
+  try {
+    const input = { topic: "changed", readOperation: "snapshot" };
+    await service.subscribe("sample", input, caller);
+    const changes = [
+      () => manifest(root, "sample", "[]", "all"),
+      () => manifest(root, "sample", "all", "[]"),
+      () => manifest(root, "sample", "[unknown]", "all"),
+      () => writeFile(file, "name: [broken"),
+      () => writeFile(file, "name: sample\ndescription: Test.\nsocket:\n  description: Test.\n"),
+      () => rm(file),
+    ];
+    for (const change of changes) {
+      const before = reads;
+      const deliveries = delivered.length;
+      await change();
+      socket.publish?.("changed");
+      await until(() => service.status(caller).subscriptions[0]?.state === "error");
+      assert.equal(reads, before, "revoked policy must prevent a fresh read");
+      assert.equal(delivered.length, deliveries);
+      await assert.rejects(service.subscribe("sample", input, caller));
+      await manifest(root, "sample", "[snapshot]", "[changed]");
+      socket.publish?.("changed");
+      await until(() => delivered.length === deliveries + 1);
+      await until(() => service.status(caller).subscriptions[0]?.state === "active");
+    }
+    const before = reads;
+    const deliveries = delivered.length;
+    block = new Promise<void>((resolve) => { release = resolve; });
+    socket.publish?.("changed");
+    await until(() => reads > before);
+    await manifest(root, "sample", "all", "[]");
+    release!();
+    await until(() => service.status(caller).subscriptions[0]?.state === "error");
+    assert.equal(delivered.length, deliveries, "a read started before revocation must not deliver afterwards");
+  } finally { release?.(); await service.close(); await socket.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("queued deliveries reauthorize after the previous turn and respect unsubscribe", async () => {
+  const root = await mkdtemp(join(tmpdir(), "as-queued-events-"));
+  const env = { AGENTSTACK_STATE_DIR: root };
+  await manifest(root, "sample");
+  let value = 0;
+  const socket = await serveSocket({
+    info: { name: "sample", description: "Test.", transportDescription: "Test.", path: socketPath("sample", env) }, context: {},
+    operations: [operation({ name: "snapshot", description: "Read.", input: z.strictObject({ slot: z.number() }), output: z.object({ value: z.number() }), annotations: { readOnlyHint: true },
+      async call() { return { value }; } })], events: { topics: { changed: "Refresh." } },
+  });
+  const delivered: EventValue[] = [];
+  let release: (() => void) | undefined;
+  const service = new McpEventSubscriptions(env, async () => undefined, async (event) => {
+    delivered.push(event);
+    await new Promise<void>((resolve) => { release = resolve; });
+  }, undefined, undefined, root);
+  try {
+    for (const slot of [1, 2]) await service.subscribe("sample", { topic: "changed", readOperation: "snapshot", readArguments: { slot } }, caller);
+    value++;
+    socket.publish?.("changed");
+    await until(() => delivered.length === 1 && service.status(caller).subscriptions.every((row) => row.state === "delivering"));
+    await manifest(root, "sample", "[]", "all");
+    release!();
+    await until(() => service.status(caller).subscriptions.some((row) => row.state === "error"));
+    assert.equal(delivered.length, 1);
+    await manifest(root, "sample");
+    value++;
+    socket.publish?.("changed");
+    await until(() => delivered.length === 2 && service.status(caller).subscriptions.every((row) => row.state === "delivering"));
+    const queued = service.status(caller).subscriptions.find((row) => row.id !== delivered[1]!.subscription.id)!;
+    await service.unsubscribe(queued.id, caller);
+    release!();
+    await until(() => service.status(caller).subscriptions[0]?.state === "active");
+    assert.equal(delivered.length, 2, "unsubscribing fences a value already waiting in the thread queue");
+  } finally { release?.(); await service.close(); await socket.close(); await rm(root, { recursive: true, force: true }); }
 });

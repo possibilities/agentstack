@@ -234,7 +234,7 @@ test("an event-bearing package fails closed before its context is created on an 
   await mkdir(join(dir, "dist", "src"), { recursive: true });
   await writeFile(
     join(dir, "api.yaml"),
-    "name: demo\ndescription: Demo operations.\nmcp:\n  description: MCP transport for demo operations.\n",
+    "name: demo\ndescription: Demo operations.\nmcp:\n  description: MCP transport for demo operations.\n  operations: all\n  events: all\n",
   );
   await writeFile(
     join(dir, "dist", "src", "index.js"),
@@ -258,7 +258,7 @@ test("scoped events stay on the socket owner for WebSocket forwarding", async ()
   const root = await mkdtemp(join(tmpdir(), "agentstack-scoped-websocket-"));
   const dir = join(root, "packages", "demo");
   await mkdir(join(dir, "dist"), { recursive: true });
-  await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo operations.\nsocket:\n  description: Local socket.\nwebsocket:\n  description: Browser notices.\n");
+  await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo operations.\nsocket:\n  description: Local socket.\nwebsocket:\n  description: Browser notices.\n  operations: all\n  events: all\n");
   await writeFile(join(dir, "dist", "api.js"), `export const api = {
     operations: [],
     events: {

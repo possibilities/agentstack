@@ -10,14 +10,14 @@ test("Inspector's read-only server file follows Package API configuration", { ti
   const root = await mkdtemp(join(tmpdir(), "agentstack-inspector-catalog-"));
   const alpha = join(root, "packages", "alpha");
   await mkdir(alpha, { recursive: true });
-  await writeFile(join(alpha, "api.yaml"), "name: alpha\ndescription: Alpha.\nmcp:\n  description: Alpha HTTP.\n");
+  await writeFile(join(alpha, "api.yaml"), "name: alpha\ndescription: Alpha.\nmcp:\n  description: Alpha HTTP.\n  operations: all\n  events: all\n");
   const catalog = await serveInspectorCatalog({ root, env: { AGENTSTACK_STATE_DIR: join(root, "state") }, mcpPort: 7823 });
   const names = async () => Object.keys((JSON.parse(await readFile(catalog.path, "utf8")) as { mcpServers: Record<string, unknown> }).mcpServers);
   try {
     assert.deepEqual(await names(), ["alpha"]);
     const beta = join(root, "packages", "beta");
     await mkdir(beta);
-    await writeFile(join(beta, "api.yaml"), "name: beta\ndescription: Beta.\nmcp:\n  description: Beta HTTP.\n");
+    await writeFile(join(beta, "api.yaml"), "name: beta\ndescription: Beta.\nmcp:\n  description: Beta HTTP.\n  operations: all\n  events: all\n");
     await waitFor(async () => (await names()).join() === "alpha,beta");
     const config = JSON.parse(await readFile(catalog.path, "utf8")) as { mcpServers: Record<string, { url: string; suppressNotificationStream: boolean }> };
     assert.equal(config.mcpServers.beta?.url, "http://127.0.0.1:7823/mcp/beta");

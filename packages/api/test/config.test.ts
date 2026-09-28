@@ -40,16 +40,16 @@ test("config rejects unknown transports and empty blurbs", () => {
 });
 
 test("MCP and WebSocket select operations by explicit positive lists", () => {
-  const config = parseConfig("name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nmcp:\n  description: Restricted MCP.\n  operations: [read]\nwebsocket:\n  description: Restricted WebSocket.\n  operations: []\n");
+  const config = parseConfig("name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nmcp:\n  description: Restricted MCP.\n  operations: [read]\n  events: []\nwebsocket:\n  description: Restricted WebSocket.\n  operations: []\n  events: all\n");
   assert.deepEqual(config.mcp?.operations, ["read"]);
   assert.deepEqual(config.websocket?.operations, []);
   assert.throws(() => parseConfig("name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\n  operations: [read]\n"), /operations/);
 });
 
 test("WebSocket uses Package API events rather than transport-specific pubsub", () => {
-  const parsed = parseConfig("name: demo\ndescription: Demo.\nwebsocket:\n  description: Browser operations and events.\n");
+  const parsed = parseConfig("name: demo\ndescription: Demo.\nwebsocket:\n  description: Browser operations and events.\n  operations: all\n  events: all\n");
   assert.match(parsed.websocket?.description ?? "", /Browser/);
-  assert.throws(() => parseConfig("name: demo\ndescription: Demo.\nwebsocket:\n  description: Demo events.\n  pubsub:\n    pids_changed: Fired.\n"), /pubsub/);
+  assert.throws(() => parseConfig("name: demo\ndescription: Demo.\nwebsocket:\n  description: Demo events.\n  operations: all\n  events: all\n  pubsub:\n    pids_changed: Fired.\n"), /pubsub/);
   assert.throws(
     () => parseConfig("name: demo\ndescription: Demo.\nsocket:\n  description: Demo socket.\n  pubsub:\n    pids_changed: Fired.\n"),
     /pubsub|Unrecognized/,
@@ -60,7 +60,7 @@ test("individual WebSocket launch is refused in favor of the shared listener", a
   const root = await mkdtemp(join(tmpdir(), "agentstack-ws-config-"));
   const dir = join(root, "packages", "demo");
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n");
+  await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n  operations: all\n  events: all\n");
   try {
     await assert.rejects(serveApi({ name: "demo", transport: "websocket", root }), /agentstack websocket/);
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -72,7 +72,7 @@ test("individual mcp launch is refused in favor of the shared HTTP process", asy
   await mkdir(dir, { recursive: true });
   await writeFile(
     join(dir, "api.yaml"),
-    "name: demo\ndescription: Demo operations.\nmcp:\n  description: MCP transport for demo operations.\n",
+    "name: demo\ndescription: Demo operations.\nmcp:\n  description: MCP transport for demo operations.\n  operations: all\n  events: all\n",
   );
   try {
     await assert.rejects(serveApi({ name: "demo", transport: "mcp", root }), /agentstack mcp/);

@@ -3,6 +3,10 @@ description: Durable internal notifications with stable IDs, group replacement, 
 socket:
   description: Local notification creation, dismissal, and history.
 mcp:
+  operations: all
+  events: all
   description: Agent-facing notification creation and history over the owner's loopback MCP listener.
 websocket:
+  operations: all
+  events: all
   description: Loopback notification API and payload-free invalidation notices for future clients.

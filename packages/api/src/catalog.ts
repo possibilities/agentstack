@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { packageEventTopics, type PackageApi } from "./operation.js";
 import { publishedJsonSchema } from "./schema.js";
 import { configuredTransports } from "./config.js";
+import { resolveExposure } from "./exposure.js";
 import { listPackages, mcpPort, socketPath, websocketPort, workspaceRoot } from "./workspace.js";
 
 export type CatalogTransport = {
@@ -13,6 +14,7 @@ export type CatalogTransport = {
   subscriptions: boolean;
   endpoint: string | null;
   operations: string[];
+  events: string[];
   routes: Array<{
     surface: string; surfaceDescription: string; kind: "json" | "static"; authentication: "bearer" | "none";
     method: string; path: string; description: string; format: string; operation: string | null;
@@ -79,7 +81,7 @@ export async function loadCatalog(env: NodeJS.ProcessEnv = process.env, from = i
           if (!api.http?.length) throw new Error(`${item.config.name} configures http without declared HTTP surfaces`);
           return {
             type: "http", description: transport.description, supported: true, subscriptions: false, endpoint: null,
-            operations: [], routes: api.http.flatMap((surface) => surface.routes.map((route) => ({
+            operations: [], events: [], routes: api.http.flatMap((surface) => surface.routes.map((route) => ({
               surface: surface.name, surfaceDescription: surface.description, kind: surface.kind, authentication: surface.authentication,
               method: route.method, path: route.path, description: route.description, format: route.format,
               operation: route.operation?.name ?? null,
@@ -90,15 +92,13 @@ export async function loadCatalog(env: NodeJS.ProcessEnv = process.env, from = i
             }))),
           };
         }
-        const allowed = transport.type === "socket" ? undefined : item.config[transport.type]?.operations;
-        if (allowed?.some((name) => !api.operations.some((op) => op.name === name)))
-          throw new Error(`${item.config.name} ${transport.type} selects an unknown operation`);
-        const operations = api.operations.map((op) => op.name).filter((name) => !allowed || allowed.includes(name));
-        const base = { type: transport.type, description: transport.description, supported: true, operations, routes: [] };
-        if (transport.type === "socket") return { ...base, subscriptions: api.events !== undefined, endpoint: socketPath(item.config.name, env) };
-        if (transport.type === "websocket") return { ...base, subscriptions: api.events !== undefined,
+        const exposure = resolveExposure(item.config, transport.type, api.operations.map((op) => op.name), Object.keys(events));
+        const base = { type: transport.type, description: transport.description, supported: true, ...exposure, routes: [] };
+        const subscriptions = exposure.events.length > 0;
+        if (transport.type === "socket") return { ...base, subscriptions, endpoint: socketPath(item.config.name, env) };
+        if (transport.type === "websocket") return { ...base, subscriptions,
           endpoint: wsPort === 0 ? null : `ws://127.0.0.1:${wsPort}/websocket` };
-        return { ...base, subscriptions: false, endpoint: port === 0 ? null : `http://127.0.0.1:${port}/mcp/${item.config.name}` };
+        return { ...base, subscriptions, endpoint: port === 0 ? null : `http://127.0.0.1:${port}/mcp/${item.config.name}` };
       }),
     });
   }

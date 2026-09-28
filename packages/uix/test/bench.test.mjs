@@ -242,9 +242,9 @@ test("a card link crosses spaces: Bot to account lands in Accounts and back, kee
 test("transport templates never invent input values or unsupported call/subscription transports", () => {
   const operation = { name: "write", inputSchema: { type: "object", required: ["count", "id", "nested"], properties: { count: { type: "number" }, id: { type: "string", format: "uuid" }, nested: { type: "object", required: ["enabled"], properties: { enabled: { type: "boolean" } } }, optional: { type: "string" } } } };
   assert.deepEqual(inputTemplate(operation.inputSchema), { count: "<replace: number>", id: "<replace: string>", nested: { enabled: "<replace: boolean>" } });
-  const socket = { type: "socket", supported: true, subscriptions: true };
+  const socket = { type: "socket", supported: true, subscriptions: true, operations: ["write"], events: ["changed"] };
   const ws = { ...socket, type: "websocket" };
-  const mcp = { type: "mcp", supported: true, subscriptions: false };
+  const mcp = { ...socket, type: "mcp" };
   assert.equal(JSON.parse(requestExample(operation, socket, "bots")).jsonrpc, undefined);
   assert.equal(JSON.parse(requestExample(operation, ws, "bots")).method, "tools/call");
   assert.equal(JSON.parse(requestExample(operation, ws, "bots")).params.package, "bots");
@@ -254,7 +254,9 @@ test("transport templates never invent input values or unsupported call/subscrip
   const doc = { name: "bots", events: { changed: "Changed" }, eventScope: { required: true, example: "bot-1" } };
   assert.equal(subscriptionExample(doc, mcp), null);
   assert.equal(subscriptionExample(doc, { ...socket, subscriptions: false }), null);
-  assert.equal(subscriptionExample({ ...doc, events: {} }, socket), null);
+  assert.equal(subscriptionExample(doc, { ...socket, events: [] }), null);
+  assert.deepEqual(JSON.parse(subscriptionExample({ ...doc, events: { changed: "Changed", hidden: "Hidden" } }, ws)).params.topics, ["changed"]);
+  assert.equal(requestExample(operation, { ...socket, operations: [] }, "bots"), null);
   const sub = JSON.parse(subscriptionExample(doc, ws));
   assert.equal(sub.method, "events/subscribe");
   assert.equal(sub.params.package, "bots");

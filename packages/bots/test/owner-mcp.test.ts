@@ -13,7 +13,7 @@ test("bot MCP URLs follow the owner catalog and bind each connection to its laun
     const beta = join(root, "packages", "beta");
     await mkdir(alpha, { recursive: true });
     await mkdir(beta);
-    await writeFile(join(alpha, "api.yaml"), "name: alpha\ndescription: Alpha.\nmcp:\n  description: Alpha HTTP.\n");
+    await writeFile(join(alpha, "api.yaml"), "name: alpha\ndescription: Alpha.\nmcp:\n  description: Alpha HTTP.\n  operations: all\n  events: all\n");
     await writeFile(join(beta, "api.yaml"), "name: beta\ndescription: Beta.\nsocket:\n  description: Beta socket.\n");
     const env = { AGENTSTACK_STATE_DIR: join(root, "state") };
     const endpoint = "unix:///tmp/agentstack-app/first.sock";
@@ -21,7 +21,7 @@ test("bot MCP URLs follow the owner catalog and bind each connection to its laun
     assert.deepEqual(Object.keys(first), ["alpha"]);
     assert.deepEqual(parseBotMcpIdentity(new URL(first.alpha!), env), { botId: "bot-1", instance: botInstance(endpoint) });
     assert.equal(new URL(first.alpha!).pathname, "/mcp/alpha");
-    await writeFile(join(beta, "api.yaml"), "name: beta\ndescription: Beta.\nmcp:\n  description: Beta HTTP.\n");
+    await writeFile(join(beta, "api.yaml"), "name: beta\ndescription: Beta.\nmcp:\n  description: Beta HTTP.\n  operations: all\n  events: all\n");
     const next = await ownerMcpUrls(root, 43123, "bot-1", "unix:///tmp/agentstack-app/second.sock", env);
     assert.deepEqual(Object.keys(next), ["alpha", "beta"]);
     assert.notEqual(next.alpha, first.alpha);

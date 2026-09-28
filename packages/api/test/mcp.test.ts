@@ -22,6 +22,11 @@ test("one HTTP process exposes each configured Package API and forwards operatio
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-mcp-"));
   const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0" };
   const seen: string[] = [];
+  for (const name of ["auth", "bots", "brain", "browse", "content", "notify", "roles", "owner", "scrape", "usage", "worker"]) {
+    const dir = join(stateDir, "packages", name);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "api.yaml"), `name: ${name}\ndescription: Test.\nmcp:\n  description: Test.\n  operations: all\n  events: all\n`);
+  }
   const sockets = await Promise.all(["auth", "bots", "brain", "browse", "content", "notify", "roles", "owner", "scrape", "usage", "worker"].map((name) => serveSocket({
     info: { name, description: `${name}.`, transportDescription: "Socket.", path: socketPath(name, env) },
     context: {},
@@ -33,7 +38,7 @@ test("one HTTP process exposes each configured Package API and forwards operatio
       async call() { return { ok: true }; },
     })],
   })));
-  const served = await serveMcp({ env });
+  const served = await serveMcp({ env, root: stateDir });
   try {
     assert.deepEqual(Object.keys(served.urls), ["auth", "bots", "brain", "browse", "content", "notify", "owner", "roles", "scrape", "usage", "worker"]);
     for (const [name, url] of Object.entries(served.urls)) {
@@ -41,7 +46,7 @@ test("one HTTP process exposes each configured Package API and forwards operatio
       await client.connect(new StreamableHTTPClientTransport(new URL(url)));
       try {
         const tools = (await client.listTools()).tools;
-        assert.deepEqual(tools.map((tool) => tool.name), name === "browse" ? [] : [name === "auth" ? "account_list" : name === "scrape" ? "scrape_fetch" : "ping"]);
+        assert.deepEqual(tools.map((tool) => tool.name), [name === "auth" ? "account_list" : name === "scrape" ? "scrape_fetch" : "ping"]);
         assert.ok(tools.every((tool) => tool.inputSchema.type === "object" && tool.outputSchema?.type === "object"));
         if (name === "auth") {
           assert.ok(tools.some((tool) => tool.name === "account_list"));
@@ -90,7 +95,7 @@ test("any Package API can present native MCP media without changing its socket o
   const root = await mkdtemp(join(tmpdir(), "agentstack-mcp-media-"));
   const dir = join(root, "packages", "demo");
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nmcp:\n  description: MCP.\nwebsocket:\n  description: WebSocket.\n");
+  await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nmcp:\n  description: MCP.\n  operations: all\n  events: all\nwebsocket:\n  description: WebSocket.\n  operations: all\n  events: all\n");
   const env = { ...process.env, AGENTSTACK_STATE_DIR: root };
   const bytes = Buffer.from("sample audio\0");
   const payload = { mimeType: "audio/wav", base64: bytes.toString("base64") };
@@ -136,8 +141,10 @@ test("content items keep portable JSON on socket and WebSocket and gain native M
   const state = await mkdtemp(join(tmpdir(), "agentstack-content-media-"));
   const env = { ...process.env, AGENTSTACK_STATE_DIR: state, AGENTSTACK_CONTENT_PORT: "0", AGENTSTACK_CONTENT_ARTIFACT_PORT: "0" };
   const content = await serveApi({ name: "content", transport: "socket", env });
+  await mkdir(join(state, "packages", "content"), { recursive: true });
+  await writeFile(join(state, "packages", "content", "api.yaml"), "name: content\ndescription: Test.\nmcp:\n  description: Test.\n  operations: all\n  events: all\nwebsocket:\n  description: Test.\n  operations: all\n  events: all\n");
   const mcp = await serveMcp({ env, port: 0 });
-  const websocket = await serveWebSocket({ env, port: 0 });
+  const websocket = await serveWebSocket({ env, root: state, port: 0 });
   const client = new Client({ name: "test", version: "1" });
   try {
     await client.connect(new StreamableHTTPClientTransport(new URL(mcp.urls.content!)));
@@ -214,7 +221,7 @@ test("MCP allowlists hide and reject direct calls to excluded socket operations"
   const env = { ...process.env, AGENTSTACK_STATE_DIR: root };
   const dir = join(root, "packages", "demo");
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nmcp:\n  description: Selected tools.\n  operations: [read]\n");
+  await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nmcp:\n  description: Selected tools.\n  operations: [read]\n  events: []\n");
   let called = false;
   const socket = await serveSocket({ info: { name: "demo", description: "Demo.", transportDescription: "Socket.", path: socketPath("demo", env) }, context: {},
     operations: ["read", "secret"].map((name) => operation({ name, description: `${name}.`, input: z.strictObject({}), output: z.object({ ok: z.boolean() }),
@@ -236,7 +243,8 @@ test("a bot-bound MCP URL forwards verified bot and Codex thread context without
   const env = { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_MCP_PORT: "0" };
   const packageDir = join(root, "packages", "sample");
   await mkdir(packageDir, { recursive: true });
-  await writeFile(join(packageDir, "api.yaml"), "name: sample\ndescription: Sample.\nmcp:\n  description: Sample MCP.\n");
+  const configure = (operations: string, events: string) => writeFile(join(packageDir, "api.yaml"), `name: sample\ndescription: Sample.\nmcp:\n  description: Sample MCP.\n  operations: ${operations}\n  events: ${events}\n`);
+  await configure("[who, snapshot]", "[sample_changed]");
   let endpoint = "unix:///tmp/bot-instance-1.sock";
   let snapshotValue = 0;
   const seen: Array<{ input: unknown; invocation: InvocationContext | undefined }> = [];
@@ -253,10 +261,11 @@ test("a bot-bound MCP URL forwards verified bot and Codex thread context without
         async call(_ctx, input, invocation) { seen.push({ input, invocation }); return { invocation }; } }),
       operation({ name: "snapshot", description: "Read state.", input: z.strictObject({}), output: z.object({ value: z.number() }), annotations: { readOnlyHint: true },
         async call() { return { value: snapshotValue }; } }),
+      operation({ name: "hidden", description: "Hidden read.", input: z.strictObject({}), output: z.object({}), annotations: { readOnlyHint: true }, async call() { throw new Error("must not read hidden"); } }),
     ],
-    events: { topics: { sample_changed: "Refresh snapshot." } },
+    events: { topics: { sample_changed: "Refresh snapshot.", hidden_changed: "Not exposed." } },
   });
-  const subscriptions = new McpEventSubscriptions(env, async (target) => { assert.equal(target.botId, "bot-1"); }, async (event) => { delivered.push(event); });
+  const subscriptions = new McpEventSubscriptions(env, async (target) => { assert.equal(target.botId, "bot-1"); }, async (event) => { delivered.push(event); }, undefined, undefined, root);
   const served = await serveMcp({ root, env, subscriptions });
   const url = botMcpUrl(served.urls.sample!, "bot-1", endpoint, env);
   const client = new Client({ name: "bot-bound", version: "1.0.0" });
@@ -265,6 +274,9 @@ test("a bot-bound MCP URL forwards verified bot and Codex thread context without
     assert.ok((await client.listTools()).tools.some((tool) => tool.name === "events_subscribe"));
     const catalog = await client.callTool({ name: "events_catalog", arguments: {}, _meta: { threadId: "thread-1" } });
     assert.deepEqual((catalog.structuredContent as { topics: Record<string, string> }).topics, { sample_changed: "Refresh snapshot." });
+    assert.deepEqual((catalog.structuredContent as { reads: Array<{ name: string }> }).reads.map((read) => read.name), ["snapshot"]);
+    for (const args of [{ topic: "hidden_changed", readOperation: "snapshot" }, { topic: "sample_changed", readOperation: "hidden" }, { topic: "sample_changed", readOperation: "who" }])
+      assert.equal((await client.callTool({ name: "events_subscribe", arguments: args, _meta: { threadId: "thread-1" } })).isError, true);
     const subscribed = await client.callTool({ name: "events_subscribe", arguments: { topic: "sample_changed", readOperation: "snapshot" }, _meta: { threadId: "thread-1" } });
     const sub = subscribed.structuredContent as { subscription: { id: string }; value: { value: number } };
     assert.deepEqual(sub.value, { value: 0 });
@@ -290,6 +302,18 @@ test("a bot-bound MCP URL forwards verified bot and Codex thread context without
     tampered.searchParams.set("proof", "0".repeat(64));
     const forbidden = await fetch(tampered, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" }, body: "{}" });
     assert.equal(forbidden.status, 403);
+    await configure("[]", "[]");
+    assert.deepEqual((await client.listTools()).tools, []);
+    assert.equal((await client.callTool({ name: "events_catalog", _meta: { threadId: "thread-1" } })).isError, true);
+    assert.equal((await client.callTool({ name: "snapshot", _meta: { threadId: "thread-1" } })).isError, true);
+    for (const [ops, events] of [["[missing]", "all"], ["all", "[missing]"], ["[snapshot, snapshot]", "all"], ["all", "[sample_changed, sample_changed]"]]) {
+      await configure(ops!, events!);
+      await assert.rejects(client.listTools(), /Error POSTing/);
+      await assert.rejects(client.callTool({ name: "snapshot", _meta: { threadId: "thread-1" } }), /Error POSTing/);
+      assert.equal((await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1" } } }) })).status, 503);
+    }
+    await configure("[who, snapshot]", "[sample_changed]");
     endpoint = "unix:///tmp/bot-instance-2.sock";
     const stale = await client.callTool({ name: "who", arguments: { value: "stale" }, _meta: { threadId: "thread-1" } });
     assert.equal(stale.isError, true);
@@ -310,7 +334,7 @@ test("a Worker-bound MCP URL exposes only read operations and fences a replaced 
   const env = { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_MCP_PORT: "0" };
   const packageDir = join(root, "packages", "sample");
   await mkdir(packageDir, { recursive: true });
-  await writeFile(join(packageDir, "api.yaml"), "name: sample\ndescription: Sample.\nmcp:\n  description: Sample MCP.\n");
+  await writeFile(join(packageDir, "api.yaml"), "name: sample\ndescription: Sample.\nmcp:\n  description: Sample MCP.\n  operations: all\n  events: all\n");
   const workerId = "11111111-1111-4111-8111-111111111111";
   const accountId = "22222222-2222-4222-8222-222222222222";
   let instance = "33333333-3333-4333-8333-333333333333";
@@ -357,14 +381,14 @@ test("MCP paths follow configured packages after startup", async () => {
   const root = await mkdtemp(join(tmpdir(), "agentstack-mcp-config-"));
   const dir = join(root, "packages", "alpha");
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, "api.yaml"), "name: alpha\ndescription: Alpha.\nmcp:\n  description: Alpha HTTP.\n");
+  await writeFile(join(dir, "api.yaml"), "name: alpha\ndescription: Alpha.\nmcp:\n  description: Alpha HTTP.\n  operations: all\n  events: all\n");
   const served = await serveMcp({ root, port: 0 });
   try {
     const url = `http://127.0.0.1:${served.port}/mcp/beta`;
     assert.equal((await fetch(url, { method: "POST" })).status, 404);
     const beta = join(root, "packages", "beta");
     await mkdir(beta);
-    await writeFile(join(beta, "api.yaml"), "name: beta\ndescription: Beta.\nmcp:\n  description: Beta HTTP.\n");
+    await writeFile(join(beta, "api.yaml"), "name: beta\ndescription: Beta.\nmcp:\n  description: Beta HTTP.\n  operations: all\n  events: all\n");
     assert.equal((await fetch(url, { method: "GET" })).status, 405);
     await writeFile(join(beta, "api.yaml"), "name: beta\ndescription: Beta.\nsocket:\n  description: Beta socket.\n");
     assert.equal((await fetch(url, { method: "GET" })).status, 404);

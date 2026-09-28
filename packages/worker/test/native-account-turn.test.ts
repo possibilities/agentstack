@@ -51,7 +51,7 @@ test("isolated native Grok and Devin accounts finish Worker turns in owned workt
     context: { supervisor, manager }, operations: workersApi.operations });
   const catalogRoot = join(root, "catalog");
   await mkdir(join(catalogRoot, "packages", "worker"), { recursive: true });
-  await writeFile(join(catalogRoot, "packages", "worker", "api.yaml"), "name: worker\ndescription: Workers.\nmcp:\n  description: Worker MCP.\n");
+  await writeFile(join(catalogRoot, "packages", "worker", "api.yaml"), "name: worker\ndescription: Workers.\nmcp:\n  description: Worker MCP.\n  operations: all\n  events: all\n");
   const mcp = await serveMcp({ root: catalogRoot, env, port: 0 });
   mcpUrls = { worker: mcp.urls.worker! };
   try {

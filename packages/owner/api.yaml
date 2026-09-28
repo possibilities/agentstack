@@ -3,6 +3,10 @@ description: Owns agentstack child processes and reports status, cached process-
 socket:
   description: Unix socket for owned-process status, paged resource snapshots, recent history and payload-free change events, namespaced as owner.
 mcp:
+  operations: all
+  events: all
   description: HTTP MCP tools for owned-process status and read-only resource observations, forwarded to the owner socket.
 websocket:
+  operations: all
+  events: all
   description: Loopback WebSocket for owned-process status, resource snapshots/history and change events, forwarded to the owner socket.

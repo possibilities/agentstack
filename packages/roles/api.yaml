@@ -3,6 +3,10 @@ description: Manage the single role's instruction fragments, skills, additional 
 socket:
   description: Unix socket for role operations and change events.
 mcp:
+  operations: all
+  events: all
   description: HTTP MCP operations for role editing, forwarded to the roles socket.
 websocket:
+  operations: all
+  events: all
   description: Loopback WebSocket for role operations and change events, forwarded to the roles socket.

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 import { WebSocketServer } from "ws";
 import { z } from "zod";
@@ -29,6 +30,10 @@ test("Worker UI progress and rich reads cannot become originating-Bot wakeups", 
 
 test("event values start a turn only on a loaded descendant of the Bot's sanctioned main thread", { timeout: 15_000 }, async () => {
   const root = await mkdtemp("/tmp/as-turn-events-");
+  for (const name of ["sample", "worker", "browse"]) {
+    await mkdir(join(root, "packages", name), { recursive: true });
+    await writeFile(join(root, "packages", name, "api.yaml"), `name: ${name}\ndescription: Test.\nmcp:\n  description: Test.\n  operations: all\n  events: all\n`);
+  }
   const env = { AGENTSTACK_STATE_DIR: root };
   const http = createServer();
   const wss = new WebSocketServer({ server: http });
@@ -76,7 +81,7 @@ test("event values start a turn only on a loaded descendant of the Bot's sanctio
       async call(_ctx, { id }) { assert.equal(id, workerId); return { worker: { id, botId: workerOwner, threadId: "child", phase: workerPhase }, turn: { stopReason: workerPhase === "completed" ? "end_turn" : null }, pending: [] }; } })],
     events: { topics: { worker_changed: "Worker changed." }, scope: { description: "Worker ID.", example: workerId, required: false, valid: (_ctx, id) => id === workerId } },
   });
-  const subscriptions = createMcpEventSubscriptions(env);
+  const subscriptions = createMcpEventSubscriptions(env, root);
   let handback: unknown = null;
   const browser = await serveSocket({
     info: { name: "browse", description: "Browser.", transportDescription: "Socket.", path: socketPath("browse", env) }, context: {},
@@ -133,6 +138,14 @@ test("event values start a turn only on a loaded descendant of the Bot's sanctio
     const completedBeforeSubscribe = await subscriptions.subscribe("browse", { ...handoffChoice, readArguments: { ...handoffChoice.readArguments, requestId: "22222222-2222-4222-8222-222222222222" } }, invocation);
     assert.deepEqual(completedBeforeSubscribe.value, { result: handback }, "a completion before subscribe is returned initially, never lost awaiting a future notice");
     assert.equal(turns.length, 3);
+    childActivity = "active";
+    value = 2;
+    sample.publish?.("changed");
+    await until(() => subscriptions.status(invocation).subscriptions.find((s) => s.id === initial.subscription.id)?.state === "delivering");
+    await writeFile(join(root, "packages", "sample", "api.yaml"), "name: sample\ndescription: Test.\nmcp:\n  description: Test.\n  operations: all\n  events: []\n");
+    childActivity = "idle";
+    await until(() => subscriptions.status(invocation).subscriptions.find((s) => s.id === initial.subscription.id)?.state === "error");
+    assert.equal(turns.length, 3, "revocation during the idle wait must fence turn/start");
   } finally {
     await subscriptions.close();
     await browser.close();

@@ -74,7 +74,7 @@ function eventMessage({ subscription, reason, value, truncated }: EventValue): s
   ].join("\n");
 }
 
-async function startTurn(url: string, threadId: string, text: string, signal: AbortSignal): Promise<void> {
+async function startTurn(url: string, threadId: string, text: string, signal: AbortSignal, authorize: () => Promise<void>): Promise<void> {
   if (signal.aborted) throw new Error("subscription delivery cancelled");
   const ws = appServerSocket(url);
   let nextId = 1;
@@ -116,6 +116,7 @@ async function startTurn(url: string, threadId: string, text: string, signal: Ab
     await opened;
     await call("initialize", { clientInfo: { name: "agentstack-events", version: "0.0.0" } });
     ws.send(JSON.stringify({ method: "initialized" }));
+    await authorize();
     if (signal.aborted) throw new Error("subscription delivery cancelled");
     const result = await call("turn/start", { threadId, clientUserMessageId: randomUUID(), input: [{ type: "text", text, text_elements: [] }] }) as { turn?: { id?: unknown } };
     if (typeof result?.turn?.id !== "string") throw new Error("turn/start returned no turn ID; delivery outcome is unknown");
@@ -145,19 +146,20 @@ async function startTurn(url: string, threadId: string, text: string, signal: Ab
   }
 }
 
-export function createMcpEventSubscriptions(env: NodeJS.ProcessEnv): McpEventSubscriptions {
-  return new McpEventSubscriptions(env, async (target) => { await verifiedTarget(target, env); }, async (event, signal) => {
+export function createMcpEventSubscriptions(env: NodeJS.ProcessEnv, root?: string): McpEventSubscriptions {
+  return new McpEventSubscriptions(env, async (target) => { await verifiedTarget(target, env); }, async (event, signal, authorize) => {
     const target: EventTarget = event.subscription;
     const deadline = Date.now() + 5 * 60_000;
     for (;;) {
       if (signal.aborted) throw new Error("subscription delivery cancelled");
+      await authorize();
       const current = await verifiedTarget(target, env);
       if (current.activity === "idle") {
-        await startTurn(current.url, target.threadId, eventMessage(event), signal);
+        await startTurn(current.url, target.threadId, eventMessage(event), signal, authorize);
         return;
       }
       if (Date.now() >= deadline) throw new Error("subscription thread stayed busy; latest value awaits the next event");
       await wait(1_000, signal);
     }
-  }, (botId, threadId) => rebindTarget(botId, threadId, env), (subscription) => authorizeWorkerRead(subscription, env));
+  }, (botId, threadId) => rebindTarget(botId, threadId, env), (subscription) => authorizeWorkerRead(subscription, env), root);
 }

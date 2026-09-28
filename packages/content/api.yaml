@@ -3,8 +3,12 @@ description: Store and share documents, files and images in collections, search 
 socket:
   description: Unix socket for document and artifact operations.
 mcp:
+  operations: all
+  events: all
   description: HTTP MCP operations forwarded to the content socket.
 websocket:
+  operations: all
+  events: all
   description: Loopback WebSocket for content operations forwarded to the content socket.
 http:
   description: Separate read-only document and artifact origins for static content; no control operations are available.

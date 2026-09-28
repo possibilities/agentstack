@@ -3,8 +3,12 @@ description: Search local research and admit durable ingestion into an isolated 
 socket:
   description: Unix socket for research, ingestion ledger, recurring sources and recovery operations.
 mcp:
+  operations: all
+  events: all
   description: HTTP MCP operations forwarded to the Brain socket.
 websocket:
+  operations: all
+  events: all
   description: Loopback WebSocket operations forwarded to the Brain socket.
 http:
   description: Authenticated versioned JSON routes for device shares on a separate listener; only the declared share operations are available.

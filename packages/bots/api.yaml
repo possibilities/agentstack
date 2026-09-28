@@ -3,6 +3,10 @@ description: Own Codex Bots, sanctioned chats and a single voice call. Inspect n
 socket:
   description: Unix socket for bot lifecycle, chat search, bounded transcript history and live observation, live turn controls, durable queue, scoped change notices, voice calls and speech submission.
 mcp:
+  operations: all
+  events: all
   description: HTTP MCP operations for Bots, chats and voice speech, forwarded to the bots socket.
 websocket:
+  operations: all
+  events: all
   description: Loopback WebSocket for Bot, chat and voice operations, with scoped chat and queue invalidations forwarded to the bots socket.

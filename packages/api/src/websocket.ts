@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import { listPackages, socketPath, websocketPort, workspaceRoot } from "./workspace.js";
 import { socketCall, socketSubscribe, type SocketSubscription } from "./socket.js";
+import { exposeCatalog, socketExposure, type Exposure, type SocketCatalog } from "./exposure.js";
 
 export type ServedWebSocket = { url: string; close(): Promise<void> };
 
@@ -30,7 +31,7 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
   if ((await listPackages(root)).every((item) => !item.config.websocket)) throw new Error("no Package APIs configure websocket");
 
   const clients = new Set<WebSocket>();
-  const admitted = new WeakMap<WebSocket, Map<string, readonly string[] | undefined>>();
+  const admitted = new WeakMap<WebSocket, Map<string, Exposure>>();
   const wss = new WebSocketServer({ noServer: true, maxPayload });
   let closing: Promise<void> | undefined;
   wss.on("connection", (client) => {
@@ -77,6 +78,10 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
           return;
         }
         const topics = params?.topics as string[];
+        if (message.method === "events/subscribe" && topics.some((topic) => !operations.get(name)!.events.includes(topic))) {
+          fail(new Error("event topic is not available over websocket"));
+          return;
+        }
         const scope = params?.scope as string | undefined;
         const key = params?.subscription;
         if (typeof key !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/.test(key)) {
@@ -137,18 +142,14 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
         const timeoutMs = typeof operation === "string" ? forwardTimeouts.get(`${name}/${operation}`) : undefined;
         void (async () => {
           if (message.method === "tools/call") {
-            const allowedOperations = operations.get(name);
-            if (typeof operation !== "string" || (allowedOperations && !allowedOperations.includes(operation)))
+            const allowedOperations = operations.get(name)!.operations;
+            if (typeof operation !== "string" || !allowedOperations.includes(operation))
               throw new Error(`operation ${String(operation)} is not available over websocket`);
             if (message.params && typeof message.params === "object" && "resultFormat" in message.params)
               throw new Error("MCP result presentation is not available over websocket");
           }
           const result = await socketCall(socketPath(name, env), message.method as "tools/list" | "tools/call", message.params, { signal: controller.signal, timeoutMs });
-          const allowedOperations = operations.get(name);
-          if (message.method === "tools/list" && allowedOperations) {
-            const listed = result as { tools: Array<{ name: string }> };
-            return { ...listed, tools: listed.tools.filter((tool) => allowedOperations.includes(tool.name)) };
-          }
+          if (message.method === "tools/list") return exposeCatalog(result as SocketCatalog, operations.get(name)!);
           return result;
         })().then(respond, fail);
       } else {
@@ -166,17 +167,17 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
       socket.write("HTTP/1.1 403 Forbidden\r\n\r\n"); socket.destroy(); return;
     }
     void (async () => {
-      let configured: Awaited<ReturnType<typeof listPackages>>;
+      let operations: Map<string, Exposure>;
       try {
-        configured = await listPackages(root);
+        const configured = await listPackages(root);
+        operations = new Map(await Promise.all(configured.filter((item) => item.config.websocket).map(async (item) =>
+          [item.config.name, (await socketExposure(item.config, "websocket", env)).exposure] as const)));
       } catch (error) {
         console.error(`WebSocket configuration unavailable: ${error instanceof Error ? error.message : String(error)}`);
         if (!socket.destroyed) { socket.write("HTTP/1.1 503 Service Unavailable\r\n\r\n"); socket.destroy(); }
         return;
       }
       if (closing || socket.destroyed) { socket.destroy(); return; }
-      const operations = new Map(configured.filter((item) => item.config.websocket)
-        .map((item) => [item.config.name, item.config.websocket?.operations] as const));
       if (operations.size === 0) { socket.write("HTTP/1.1 503 Service Unavailable\r\n\r\n"); socket.destroy(); return; }
       try {
         wss.handleUpgrade(request, socket, head, (client) => {

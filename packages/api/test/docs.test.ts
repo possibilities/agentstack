@@ -7,7 +7,7 @@ import test from "node:test";
 import { docsSnapshot, serveApi, socketCall } from "../src/index.js";
 
 type TransportDoc = { type: string; description: string; supported: boolean; subscriptions: boolean; endpoint: string | null;
-  operations: string[]; routes: Array<{ surface: string; surfaceDescription: string; kind: "json" | "static"; authentication: "bearer" | "none";
+  operations: string[]; events: string[]; routes: Array<{ surface: string; surfaceDescription: string; kind: "json" | "static"; authentication: "bearer" | "none";
     method: string; path: string; description: string; format: string; operation: string | null;
     inputSchema: Record<string, unknown> | null; querySchema: Record<string, unknown> | null;
     outputSchema: Record<string, unknown> | null; errorSchema: Record<string, unknown> | null }> };
@@ -140,7 +140,11 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(botsSocket.endpoint, join(stateDir, "sockets", "bots.sock"));
     const botsMcp = bots.transports.find((transport) => transport.type === "mcp") as TransportDoc;
     assert.equal(botsMcp.supported, true);
-    assert.equal(botsMcp.subscriptions, false);
+    assert.equal(botsMcp.subscriptions, true);
+    assert.deepEqual(botsMcp.events, Object.keys(bots.events));
+    assert.deepEqual(scrape.transports.find((t) => t.type === "mcp")!.events, []);
+    assert.deepEqual(scrape.transports.find((t) => t.type === "websocket")!.events, ["scrape_queue_changed"]);
+    assert.ok(scrape.operations.every((op) => !/socket.only/i.test(op.description)));
     assert.equal(botsMcp.endpoint, "http://127.0.0.1:8743/mcp/bots");
     const botsWebSocket = bots.transports.find((transport) => transport.type === "websocket") as TransportDoc;
     assert.equal(botsWebSocket.subscriptions, true);

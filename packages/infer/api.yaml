@@ -3,4 +3,6 @@ description: Bounded, non-agentic Codex subscription inference for an explicitly
 socket:
   description: Private local model discovery, waiting or admitted inference requests, the durable request ledger, traces and change events; no Codex threads, turns or tools are created.
 websocket:
+  operations: all
+  events: all
   description: Loopback WebSocket for the UIX Lab's model discovery, request admission, ledger reads and change events, forwarded to the infer socket. There is deliberately no MCP transport.
