@@ -8,6 +8,15 @@ import test from "node:test";
 import { serveApi, socketCall, socketPath } from "@agentstack/api";
 import { api, contentNetworkConfig } from "../api.js";
 import { resolveObjectPath } from "../src/serve.js";
+import { listingPage } from "../src/render.js";
+
+test("artifact listing links retain a scoped view prefix and encode entry names", () => {
+  const html = listingPage({ title: "Bundle", base: "/a/bundle/v/hash/", entries: ["file name.pdf", "nested/"] });
+  assert.ok(html.includes('href="./file%20name.pdf"'));
+  assert.ok(html.includes('href="./nested/"'));
+  assert.equal(new URL("./file%20name.pdf", "https://host/view/credential/a/bundle/v/hash/").pathname,
+    "/view/credential/a/bundle/v/hash/file%20name.pdf");
+});
 
 test("isolated vault supports documents, graph, tombstones and static artifacts", { timeout: 30_000 }, async () => {
   const state = await mkdtemp(join(tmpdir(), "agentstack-wiki-"));

@@ -269,7 +269,8 @@ export function indexPage(options: {
 function hrefFor(base: string, entry: string): string {
   const isDirectory = entry.endsWith("/");
   const name = isDirectory ? entry.slice(0, -1) : entry;
-  return `${base}${encodeURIComponent(name)}${isDirectory ? "/" : ""}`;
+  // Relative links preserve an Access resource-scoped view prefix.
+  return `./${encodeURIComponent(name)}${isDirectory ? "/" : ""}`;
 }
 
 export function listingPage(options: { title: string; base: string; entries: string[] }): string {
