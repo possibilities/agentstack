@@ -1,6 +1,7 @@
 # 92. Give Bots durable profiles and independent browser controllers
 
 Status: accepted, 2026-09-27. Supersedes [ADR 0076](0076-internal-disposable-browser-lifecycle.md); extends [ADR 0014](0014-recovery-and-shutdown-order.md).
+Its profile viewer and management UI is the Browse space of [ADR 0104](0108-browse-space.md).
 
 The browser Package API owns profile admission, exclusive Bot assignment,
 native resource receipts, runtime supervision and controller selection.

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import {
   BotIcon,
+  LifeBuoyIcon,
   ChevronRightIcon,
   CircleCheckIcon,
   CopyIcon,
@@ -39,7 +40,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { annotationBadges, fieldsOf, findOperation } from "@/lib/stack/catalog";
 import { accountLabels, addableWorkerProviders, botsFor, histogram, pairedWorker, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
-import type { Account, Bot, Login, OperationDoc, PackageDoc, WorkerAccount, WorkerLogin } from "@/lib/stack/types";
+import type { Account, Bot, BrowserHandoff, Login, OperationDoc, PackageDoc, WorkerAccount, WorkerLogin } from "@/lib/stack/types";
+import { botHandoff } from "@/lib/stack/browse";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
 import { BotTile, CopyButton, Empty, NodeCard, NodeLink, NodeTitle, Orb, Row, Sparkline, StatusDot, Time } from "./primitives";
@@ -578,8 +580,21 @@ function workspaceName(cwd: string): string {
   return cwd.split("/").filter(Boolean).at(-1) ?? cwd;
 }
 
+/** A Bot's Browser handoff that needs a person, linking to it in Browse. */
+function BrowserHelpLink({ handoff }: { handoff: BrowserHandoff | null }) {
+  if (!handoff) return null;
+  const waiting = handoff.state === "awaiting_human";
+  return (
+    <NodeLink node={{ kind: "browser-handoff", id: handoff.id }} label="browser handoff"
+      className={cn("flex items-start gap-1.5 rounded-lg px-2 py-1.5 text-[0.72rem] text-pretty no-underline hover:underline", waiting ? "bg-warning/10 text-warning" : "bg-pkg-browse/10 text-pkg-browse")}>
+      <LifeBuoyIcon aria-hidden className="mt-px size-3.5 shrink-0" />
+      <span className="min-w-0 truncate">{waiting ? "Waiting on you in the browser" : "Browser under human control"} · {handoff.message.split("\n")[0]}</span>
+    </NodeLink>
+  );
+}
+
 export function BotsWindow() {
-  const { bots, accounts, scoped, status, endpoints } = useStack();
+  const { bots, accounts, scoped, status, endpoints, browserHandoffs } = useStack();
   const voice = useVoice();
   const activity = useActivity();
   const labels = accountLabels(accounts.data);
@@ -639,6 +654,7 @@ export function BotsWindow() {
                   <WorkersLink filter={{ botId: bot.id }} />
                 </div>
                 {bot.recoveryIssue ? <RecoveryWarning message={bot.recoveryIssue} /> : null}
+                <BrowserHelpLink handoff={botHandoff(bot.id, browserHandoffs.data)} />
                 {mismatch ? (
                   <p className="flex items-start gap-1.5 rounded-lg bg-warning/10 px-2 py-1.5 text-[0.72rem] text-pretty text-warning">
                     <TriangleAlertIcon aria-hidden className="mt-px size-3.5 shrink-0" />

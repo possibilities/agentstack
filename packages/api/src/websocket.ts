@@ -19,7 +19,6 @@ export type RemoteWebSocketAdmission = {
 // Match the socket's bounded JSON allowance for escaped inline content.
 const maxPayload = 4_000_000;
 const maxClientBuffer = 4_000_000;
-
 export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: string; port?: number;
   server?: Server; authenticate?: (request: IncomingMessage) => Promise<RemoteWebSocketAdmission> } = {}): Promise<ServedWebSocket> {
   if (options.server && !options.authenticate) throw new Error("An attached WebSocket server requires authenticated admission");

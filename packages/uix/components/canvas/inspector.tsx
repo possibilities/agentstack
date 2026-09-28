@@ -31,6 +31,7 @@ import { OperationBadges, RecoveryWarning } from "./windows";
 import { AttentionItemDetail, AttentionMessageDetail, TraceViewer } from "./signal-windows";
 import { useShowWorker } from "./worker-windows";
 import { workerLabel } from "@/lib/stack/workers";
+import { controllerKey, handoffOutcomes, handoffStates, heldBy, profileName } from "@/lib/stack/browse";
 
 type View = {
   eyebrow: string;
@@ -207,7 +208,8 @@ function resolve(ref: NodeRef, state: StackState): View | null {
     }
     case "chat":
     case "worker-window":
-      return null; // Chat and Worker windows are views onto a record, not records.
+    case "browser-viewer":
+      return null; // Chat, Worker and viewer windows are views onto a record, not records.
     case "worker": {
       const worker = state.workerStatuses[ref.id]?.data?.worker ?? state.workerSessions.data?.find((item) => item.id === ref.id);
       if (!worker) return null;
@@ -407,10 +409,58 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         events: state.events.filter((event) => event.pkg === "scrape"),
       };
     }
+    case "browser-profile": {
+      const profile = state.browserProfiles.data?.find((item) => item.id === ref.id);
+      if (!profile) return null;
+      const held = heldBy(profile.id, state.browserHandoffs.data);
+      const related: View["related"] = [];
+      if (profile.botId && state.bots.data?.some((bot) => bot.id === profile.botId)) related.push({ ref: { kind: "bot", id: profile.botId }, label: `${profile.botId} · ${profile.default ? "default profile" : "owns it"}` });
+      if (held) related.push({ ref: { kind: "browser-handoff", id: held.id }, label: `Handoff · ${handoffStates[held.state].label}` });
+      return {
+        eyebrow: `Browser profile · ${profile.state}${profile.botId ? "" : " · unassigned"}`, accent: "browse", title: profileName(profile), record: profile,
+        fields: browseFields(catalog, "browser_profile_list", "profiles"), related,
+        operations: { pkg: "browse", list: browseOperations(catalog, ["browser_profile_list", "browser_profile_create", "browser_profile_delete"]) },
+        events: state.events.filter((event) => event.pkg === "browse" && event.topic === "browser_profiles_changed"),
+      };
+    }
+    case "browser-handoff": {
+      const handoff = state.browserHandoffs.data?.find((item) => item.id === ref.id);
+      if (!handoff) return null;
+      const profile = state.browserProfiles.data?.find((item) => item.id === handoff.profileId);
+      const related: View["related"] = [{ ref: { kind: "browser-profile", id: handoff.profileId }, label: `${profileName(profile, handoff.profileId)} · profile` }];
+      if (state.bots.data?.some((bot) => bot.id === handoff.botId)) related.push({ ref: { kind: "bot", id: handoff.botId }, label: `${handoff.botId} · asked for help` });
+      return {
+        eyebrow: `Browser handoff · ${handoff.outcome ? handoffOutcomes[handoff.outcome] : handoffStates[handoff.state].label}`, accent: "browse", title: handoff.message.split("\n")[0].slice(0, 80) || "Handoff",
+        record: handoff, fields: browseFields(catalog, "browser_handoff_list", "handoffs"), related,
+        operations: { pkg: "browse", list: browseOperations(catalog, ["browser_handoff_get", "browser_handoff_take", "browser_handoff_finish"]) },
+        events: state.events.filter((event) => event.pkg === "browse" && event.topic === "browser_handoffs_changed"),
+      };
+    }
+    case "browser-controller": {
+      const controller = state.browserControllers.data?.find((item) => controllerKey(item) === ref.id);
+      if (!controller) return null;
+      const related: View["related"] = [{ ref: { kind: "browser-profile", id: controller.profileId }, label: "Selected profile" }];
+      if (controller.actualProfileId && controller.actualProfileId !== controller.profileId) related.push({ ref: { kind: "browser-profile", id: controller.actualProfileId }, label: "Actual profile" });
+      if (state.bots.data?.some((bot) => bot.id === controller.botId)) related.push({ ref: { kind: "bot", id: controller.botId }, label: `${controller.botId} · launched it` });
+      return {
+        eyebrow: `Browser controller · ${controller.state}`, accent: "browse", title: `${controller.botId} · ${controller.session}`, record: controller,
+        fields: browseFields(catalog, "browser_controller_list", "controllers"), related,
+        operations: { pkg: "browse", list: browseOperations(catalog, ["browser_controller_list"]) },
+      };
+    }
     case "package":
     case "operation":
       return null; // Reference destinations are rendered in the shared dock's reading mode.
   }
+}
+
+function browseOperations(catalog: PackageDoc[] | null, names: string[]): OperationDoc[] {
+  return catalog?.find((doc) => doc.name === "browse")?.operations.filter((operation) => names.includes(operation.name)) ?? [];
+}
+
+/** Field notes for one entry of a browse list output. */
+function browseFields(catalog: PackageDoc[] | null, operation: string, list: string): Map<string, Field> {
+  return new Map((fieldsOf(findOperation(catalog, "browse", operation)?.outputSchema).find((field) => field.name === list)?.children ?? []).map((field) => [field.name, field]));
 }
 
 function scrapeOperations(catalog: PackageDoc[] | null, names: string[]): OperationDoc[] {
@@ -511,6 +561,7 @@ function referencePackage(ref: NodeRef): string {
   if (ref.kind === "worker-catalog" || ref.kind === "worker" || ref.kind === "worker-runtime" || ref.kind === "worker-window") return "worker";
   if (ref.kind === "usage" || ref.kind === "usage-account" || ref.kind === "grok-bot-usage") return "usage";
   if (ref.kind === "preset" || ref.kind === "scrape-job") return "scrape";
+  if (ref.kind === "browser-profile" || ref.kind === "browser-handoff" || ref.kind === "browser-controller" || ref.kind === "browser-viewer") return "browse";
   if (ref.kind === "signal" || ref.kind === "attention-item" || ref.kind === "attention-message" || ref.kind === "attention-run") return "signal";
   return "auth";
 }

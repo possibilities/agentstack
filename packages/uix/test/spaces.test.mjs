@@ -42,6 +42,10 @@ test("homeOf distinguishes spatial records from reference destinations", () => {
   assert.deepEqual(homeOf({ kind: "artifact", id: "test-bundle" }), { kind: "space", space: "content", window: "content-artifacts" });
   assert.deepEqual(homeOf({ kind: "preset", id: "x-tweet" }), { kind: "space", space: "scrape", window: "scrape-presets" });
   assert.deepEqual(homeOf({ kind: "scrape-job", id: "a".repeat(64) }), { kind: "space", space: "scrape", window: "scrape-queue" });
+  assert.deepEqual(homeOf({ kind: "browser-profile", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" }), { kind: "space", space: "browse", window: "browse-profiles" });
+  assert.deepEqual(homeOf({ kind: "browser-handoff", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" }), { kind: "space", space: "browse", window: "browse-handoffs" });
+  assert.deepEqual(homeOf({ kind: "browser-controller", id: "bot-1/abc/default" }), { kind: "space", space: "browse", window: "browse-controllers" });
+  assert.deepEqual(homeOf({ kind: "browser-viewer", id: "browse-viewer-2" }), { kind: "space", space: "browse", window: "browse-viewer-2" });
   assert.deepEqual(homeOf({ kind: "package", id: "bots" }), { kind: "reference" });
   assert.deepEqual(homeOf({ kind: "operation", id: "bot_start", pkg: "bots" }), { kind: "reference" });
   assert.deepEqual(homeOf({ kind: "usage" }), { kind: "space", space: "accounts", window: "usage" });
@@ -76,6 +80,7 @@ test("parseSpacePath resolves /x and single space segments only", () => {
   assert.equal(parseSpacePath("/x/content"), "content");
   assert.equal(parseSpacePath("/x/workers"), "workers");
   assert.equal(parseSpacePath("/x/scrape"), "scrape");
+  assert.equal(parseSpacePath("/x/browse"), "browse");
   assert.equal(parseSpacePath("/x/nope"), null);
   assert.equal(parseSpacePath("/x/api/extra"), null);
   assert.equal(parseSpacePath("/y"), null);
@@ -117,6 +122,10 @@ test("parseNodeKey inverts nodeKey for every kind and rejects malformed keys", (
     { kind: "artifact", id: "test-bundle" },
     { kind: "preset", id: "deepwiki-wiki-page" },
     { kind: "scrape-job", id: "failed:1767225500000-bad00000--failed-x.yaml" },
+    { kind: "browser-profile", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" },
+    { kind: "browser-handoff", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" },
+    { kind: "browser-controller", id: "bot-1/inst:ance/named session" },
+    { kind: "browser-viewer", id: "browse-viewer" },
   ];
   for (const ref of refs) assert.deepEqual(parseNodeKey(nodeKey(ref)), ref);
   for (const bad of ["", "bogus", "account:", "operation:bots"]) assert.equal(parseNodeKey(bad), null);
@@ -137,7 +146,7 @@ const quiet = {
 };
 
 test("spaceAttention reports human reasons per space and ignores healthy state", () => {
-  assert.deepEqual(spaceAttention(quiet), { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], api: [] });
+  assert.deepEqual(spaceAttention(quiet), { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], api: [] });
   assert.deepEqual(spaceAttention({ ...quiet, notifyCounts: { data: { open: 0, total: 4, sources: [] }, error: null, at: null } }).inbox, []);
   assert.deepEqual(spaceAttention({ ...quiet, notifyCounts: { data: { open: 1, total: 4, sources: [] }, error: null, at: null } }).inbox, ["1 open notification"]);
   const inbox = spaceAttention({ ...quiet, notifyCounts: { data: { open: 3, total: 4, sources: [] }, error: null, at: null }, status: { notify: "closed" } });
@@ -214,7 +223,7 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
 
   // Idle and connecting channels are normal, not attention.
   const waiting = spaceAttention({ ...quiet, status: { auth: "connecting", bots: "idle", owner: "connecting", api: "idle" } });
-  assert.deepEqual(waiting, { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], api: [] });
+  assert.deepEqual(waiting, { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], api: [] });
 });
 
 test("spaceAttention flags Signal's unreadable sources, failed interpretation and channel, but not a deliberate pause", () => {
@@ -231,4 +240,19 @@ test("spaceAttention flags Scrape's closed channel and missing browser runtime, 
   const status = (patch) => ({ data: { stateRoot: "/s", browser: true, github: false, pdf: false, pandoc: false, summary: false, ...patch }, error: null, at: 1 });
   assert.deepEqual(spaceAttention({ ...quiet, scrapeStatus: status({}) }).scrape, []);
   assert.deepEqual(spaceAttention({ ...quiet, status: { scrape: "closed" }, scrapeStatus: status({ browser: false }) }).scrape, ["scrape reconnecting", "Browser runtime unavailable"]);
+});
+
+test("spaceAttention flags Browse handoffs awaiting a human, their issues, failed profiles, no Hypeman and a closed channel", () => {
+  const handoff = (patch) => ({ id: "h", profileId: "p", botId: "bot-2", threadId: "t", instance: "i", requestId: "r", targetId: null, targetStatus: "unspecified", message: "Sign in",
+    state: "awaiting_human", outcome: null, note: null, revision: 2, createdAt: "2026-09-28T10:00:00Z", resolvedAt: null, issue: null, quiesced: true, ...patch });
+  const profile = (patch) => ({ id: "p", botId: "bot-2", label: "default", default: true, createdAt: "2026-09-28T09:00:00Z", state: "ready", error: null, observedAt: null, cdpUrl: null, observation: null, ...patch });
+  const resource = (data) => ({ data, error: null, at: 1 });
+  const toolchain = (selected) => resource({ status: { provider: "hypeman", mode: "durable", sessions: 0, profiles: 1 }, agentBrowser: {}, detected: [],
+    hypeman: [{ root: "/h", installed: true, selected, source: "agentstack", running: true, issue: null }] });
+  const calm = spaceAttention({ ...quiet, browserHandoffs: resource([handoff({ state: "resolved", outcome: "completed" }), handoff({ id: "h2", state: "human_controlling" })]),
+    browserProfiles: resource([profile({})]), browserToolchain: toolchain(true) });
+  assert.deepEqual(calm.browse, []);
+  const noisy = spaceAttention({ ...quiet, status: { browse: "closed" }, browserHandoffs: resource([handoff({}), handoff({ id: "h3", botId: "bot-3", state: "preparing", issue: "drain deadline exceeded" })]),
+    browserProfiles: resource([profile({ state: "failed", label: "research" })]), browserToolchain: toolchain(false) });
+  assert.deepEqual(noisy.browse, ["browse reconnecting", "bot-2 needs browser help", "bot-3 handoff: drain deadline exceeded", "research browser failed", "No local Hypeman selected"]);
 });

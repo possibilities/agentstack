@@ -127,6 +127,16 @@ PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
   node packages/uix/test/scrape-browser-check.mjs
 ```
 
+The Browse space's check serves fixture browse, Bots and owner sockets with the real browse schemas and a
+loopback stand-in for the Neko viewer, so no profile, Hypeman or live owner is touched. It covers the Fleet
+link, take, reload and Reopen, finish, profile creation and deletion, and the toolchain. It uses `next dev`
+unless `BROWSE_NEXT=start`, and keeps screenshots when `BROWSE_EVIDENCE_DIR` is set:
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  node packages/uix/test/browse-browser-check.mjs
+```
+
 The bench check uses disposable sockets, a fixture snapshot and its own `next start`
 process. `CHROME_EXECUTABLE` overrides the default macOS Chrome path;
 `NEXT_MODE=dev` selects development verification instead. Screenshots are written

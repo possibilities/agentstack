@@ -3,6 +3,10 @@
 import { ActivityIcon, BellIcon, HammerIcon, BlocksIcon, BotIcon, BoxesIcon, EyeIcon, LibraryIcon, NotebookTextIcon, ChartLineIcon, CpuIcon, FilePenLineIcon, FileTextIcon, FlaskConicalIcon, FolderLockIcon, GaugeIcon, HistoryIcon, InboxIcon, KeyRoundIcon, ListTreeIcon, MegaphoneIcon, MessageSquareWarningIcon, MessagesSquareIcon, PackageIcon, PlugIcon, RadarIcon, RadioIcon, ScanLineIcon, ScrollTextIcon, ServerIcon, SparklesIcon, SquareTerminalIcon, UserCogIcon } from "lucide-react";
 import type { ChatWindows } from "@/lib/stack/chat-windows";
 import type { WorkerWindows } from "@/lib/stack/worker-windows";
+import type { ViewerWindows } from "@/lib/stack/browse-viewers";
+import { CableIcon, HardDriveIcon, LifeBuoyIcon, MonitorIcon, WrenchIcon } from "lucide-react";
+import { HandoffsWindow, ViewerWindow } from "./browse-handoffs";
+import { ControllersWindow, ProfilesWindow, ToolchainWindow } from "./browse-operator";
 import { ArrowRightLeftIcon, FolderInputIcon, GlobeIcon, ListChecksIcon, RssIcon } from "lucide-react";
 import { ExtractWindow } from "./scrape-extract";
 import { ConvertWindow, FeedsWindow } from "./scrape-feeds";
@@ -51,7 +55,7 @@ export type WindowDef = {
 export const spaceViews: Record<SpaceId, {
   icon: React.ComponentType<{ className?: string }>;
   accent: Accent;
-  windows(state: StackState, arrangement: { chats: ChatWindows; workers: WorkerWindows }): WindowDef[];
+  windows(state: StackState, arrangement: { chats: ChatWindows; workers: WorkerWindows; viewers: ViewerWindows }): WindowDef[];
 }> = {
   fleet: {
     icon: BotIcon,
@@ -158,6 +162,19 @@ export const spaceViews: Record<SpaceId, {
       { id: "scrape-status", title: "Status", icon: GaugeIcon, accent: "scrape", width: 460, height: 340, column: 2, element: <StatusWindow /> },
       { id: "scrape-checks", title: "Checks", icon: ListChecksIcon, accent: "scrape", width: 440, height: 760, column: 3, fixed: true, element: <ChecksWindow /> },
       { id: "scrape-queue", title: "Queue", icon: FolderInputIcon, accent: "scrape", width: 480, height: 760, column: 4, fixed: true, element: <QueueWindow /> },
+    ],
+  },
+  browse: {
+    icon: MonitorIcon,
+    accent: "browse",
+    windows: (_state, { viewers }) => [
+      { id: "browse-handoffs", title: "Handoffs", icon: LifeBuoyIcon, accent: "browse", width: 420, height: 640, column: 0, element: <HandoffsWindow /> },
+      // The primary viewer sits beside Handoffs; each additional viewer opens in the next column.
+      ...viewers.map((viewer, index) => ({ id: viewer.id, title: "Viewer", icon: MonitorIcon, accent: "browse" as const, width: 800, height: 640, column: index + 1, fixed: true,
+        element: <ViewerWindow id={viewer.id} /> })),
+      { id: "browse-profiles", title: "Profiles", icon: HardDriveIcon, accent: "browse", width: 420, height: 460, column: viewers.length + 1, element: <ProfilesWindow /> },
+      { id: "browse-controllers", title: "Controllers", icon: CableIcon, accent: "browse", width: 420, height: 320, column: viewers.length + 1, element: <ControllersWindow /> },
+      { id: "browse-toolchain", title: "Toolchain", icon: WrenchIcon, accent: "browse", width: 420, height: 720, column: viewers.length + 2, element: <ToolchainWindow /> },
     ],
   },
 };

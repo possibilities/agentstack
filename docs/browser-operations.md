@@ -57,7 +57,7 @@ provider internals. `browser_bot_release` is the owner-local deletion/ID-reuse
 fence, so a removed Bot's ID cannot inherit its old profiles between supervision
 cycles. Legacy `browser_session_*` inspection/cleanup handles only
 old disposable receipts and cannot delete durable profiles. No new disposable
-session launch is exposed. These management operations have no new UI controls;
+session launch is exposed. The local UIX Browse space ([ADR 0104](adr/0108-browse-space.md)) answers handoffs, views and manages profiles and runs the toolchain; controller selection stays with Bots;
 the dynamic API reference continues to describe them.
 
 ## Recovery and shutdown

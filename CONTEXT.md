@@ -194,7 +194,7 @@ A named collection of related windows on its own UIX open bench, addressed as `/
 
 _Avoid_: page, tab, workspace (a Bot's working directory)
 
-Roles is the fifth Canvas space, managing the Role's instruction Categories and Fragments. Inbox is the sixth, where people read, answer and dismiss Notifications. Signal is the seventh, showing what conversations ask of people and the interpretation evidence behind it. Content is the eighth, for Vault documents, Content collections and items, and published Artifacts; it does not publish Artifacts. Workers is the ninth, following what Workers started by Bots are doing. Scrape is the tenth, for trying extractions, checking preset health and running scrape-to-file jobs.
+Roles is the fifth Canvas space, managing the Role's instruction Categories and Fragments. Inbox is the sixth, where people read, answer and dismiss Notifications. Signal is the seventh, showing what conversations ask of people and the interpretation evidence behind it. Content is the eighth, for Vault documents, Content collections and items, and published Artifacts; it does not publish Artifacts. Workers is the ninth, following what Workers started by Bots are doing. Scrape is the tenth, for trying extractions, checking preset health and running scrape-to-file jobs. Browse is the eleventh, where a person answers Browser handoffs in a profile viewer and manages Browser profiles and the browser toolchain; it is local-only.
 
 ## Open bench
 
