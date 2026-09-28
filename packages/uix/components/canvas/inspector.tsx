@@ -388,10 +388,38 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         events: state.events.filter((event) => event.pkg === "content"),
       };
     }
+    case "preset": {
+      const preset = state.scrapePresets.data?.find((item) => item.name === ref.id);
+      if (!preset) return null;
+      const configured = state.scrapeCanaries.data?.includes(preset.name);
+      return {
+        eyebrow: `Scrape preset · ${preset.source}${configured === undefined ? "" : configured ? " · canary configured" : " · no canary"}`, accent: "scrape", title: preset.name,
+        record: preset, fields: scrapeFields(catalog, "scrape_presets_list", "presets"),
+        operations: { pkg: "scrape", list: scrapeOperations(catalog, ["scrape_preset_show", "scrape_corpus_replay", "scrape_presets_check"]) },
+      };
+    }
+    case "scrape-job": {
+      const job = state.scrapeQueue.data?.jobs.find((item) => item.id === ref.id);
+      if (!job) return null;
+      return {
+        eyebrow: `Scrape job · ${job.state}`, accent: "scrape", title: job.url ?? job.file, record: job, fields: scrapeFields(catalog, "scrape_queue_list", "jobs"),
+        operations: { pkg: "scrape", list: scrapeOperations(catalog, ["scrape_queue_list", "scrape_queue_process"]) },
+        events: state.events.filter((event) => event.pkg === "scrape"),
+      };
+    }
     case "package":
     case "operation":
       return null; // Reference destinations are rendered in the shared dock's reading mode.
   }
+}
+
+function scrapeOperations(catalog: PackageDoc[] | null, names: string[]): OperationDoc[] {
+  return catalog?.find((doc) => doc.name === "scrape")?.operations.filter((operation) => names.includes(operation.name)) ?? [];
+}
+
+/** Field notes for one entry of a Scrape list output. */
+function scrapeFields(catalog: PackageDoc[] | null, operation: string, list: string): Map<string, Field> {
+  return new Map((fieldsOf(findOperation(catalog, "scrape", operation)?.outputSchema).find((field) => field.name === list)?.children ?? []).map((field) => [field.name, field]));
 }
 
 function signalOperations(catalog: PackageDoc[] | null, names: string[]): OperationDoc[] {
@@ -482,6 +510,7 @@ function referencePackage(ref: NodeRef): string {
   if (ref.kind === "document" || ref.kind === "collection" || ref.kind === "item" || ref.kind === "artifact") return "content";
   if (ref.kind === "worker-catalog" || ref.kind === "worker" || ref.kind === "worker-runtime" || ref.kind === "worker-window") return "worker";
   if (ref.kind === "usage" || ref.kind === "usage-account" || ref.kind === "grok-bot-usage") return "usage";
+  if (ref.kind === "preset" || ref.kind === "scrape-job") return "scrape";
   if (ref.kind === "signal" || ref.kind === "attention-item" || ref.kind === "attention-message" || ref.kind === "attention-run") return "signal";
   return "auth";
 }

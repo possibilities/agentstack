@@ -5,6 +5,8 @@ import { loadResources, mergeHistory } from "./resources";
 import { asText, itemKindFor, itemLimit, scopeKey, sha256Hex } from "./content";
 import { stageBytes, StageStalled } from "./content-upload";
 import type { ContentArtifact, ContentCollection, ContentDocument, ContentItem, ContentItemPage, ContentItemScope, ContentLibrary, ContentTag, ContentUpload } from "./types";
+import { scrapeCallError } from "./scrape";
+import type { ScrapeCanaryRun, ScrapePreset, ScrapeQueue, ScrapeReplay, ScrapeStatus } from "./types";
 import type { Account, AttentionItem, AttentionMessage, AttentionPage, AttentionRun, AttentionStatus, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, OwnerResources, OwnerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RoleLaunchPreview, RolePreview, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerLogin, WorkerRuntime, WorkerSession, WorkerStatus } from "./types";
 
 export type StackState = Snapshot & {
@@ -62,7 +64,19 @@ export type StackState = Snapshot & {
   workerStatuses: Record<string, Resource<WorkerStatus>>;
   /** Bumped on a watched Worker's scoped notices and (re)subscription; its windows re-read their pages on it. */
   workerGenerations: Record<string, number>;
+  scrapeStatus: Resource<ScrapeStatus>;
+  scrapePresets: Resource<ScrapePreset[]>;
+  /** Preset names with a configured live canary; configuration is not a passing check. */
+  scrapeCanaries: Resource<string[]>;
+  scrapeQueue: Resource<ScrapeQueue>;
+  /** This page's latest canary run and corpus replay; neither is durable. */
+  scrapeChecks: { canary: ScrapeCheck<ScrapeCanaryRun> | null; replay: ScrapeCheck<ScrapeReplay> | null };
+  /** A preset another window asked Extract to try; `seq` distinguishes repeated requests. */
+  scrapeCompose: { seq: number; preset: string; mode: "page" | "links" } | null;
 };
+
+/** A check this page started. `error` is set when the call itself failed; `uncertain` when it may still be running. */
+export type ScrapeCheck<T> = { startedAt: number; finishedAt: number | null; args: Record<string, unknown>; result: T | null; error: string | null; uncertain: boolean };
 
 export type SignalRecords = { items: Record<string, AttentionItem>; messages: Record<string, AttentionMessage>; runs: Record<string, AttentionRun> };
 
@@ -86,9 +100,11 @@ const contentWrites = new Set(["collection_create", "collection_update", "collec
 const itemPage = 100;
 export const contentDocumentLimit = 200;
 
-type ResourceKey = ContentKey | "access" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "role" | "rolePreview" | "roleLaunch" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts" | "signalStatus";
+type ResourceKey = ContentKey | "access" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "role" | "rolePreview" | "roleLaunch" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts" | "signalStatus" | "scrapeStatus" | "scrapePresets" | "scrapeCanaries" | "scrapeQueue";
 
 const inferPage = 20;
+/** Jobs the Queue window lists; counts cover every job. */
+export const scrapeQueueLimit = 200;
 /** notification_list's maximum page size. */
 const notifyPage = 25;
 
@@ -152,6 +168,9 @@ export class StackStore {
       contentArtifacts: { data: null, error: null, at: null }, contentRoutes: { data: null, error: null, at: null },
       contentGeneration: 0, contentRecords: {}, contentUploads: [], contentItemScope: undefined,
       workerStatuses: {}, workerGenerations: {},
+      scrapeStatus: { data: null, error: null, at: null }, scrapePresets: { data: null, error: null, at: null },
+      scrapeCanaries: { data: null, error: null, at: null }, scrapeQueue: { data: null, error: null, at: null },
+      scrapeChecks: { canary: null, replay: null }, scrapeCompose: null,
     };
     this.serverState = this.state;
     for (const account of snapshot.workerAccounts.data ?? []) if (this.catalogAccountAvailable(account.id)) this.catalogAvailable.add(account.id);
@@ -224,6 +243,9 @@ export class StackStore {
     open("access", () => this.refresh("access"), () => this.refresh("access"), ["access_changed"]);
     // content_changed is an invalidation notice; windows re-read what they show from contentGeneration.
     open("content", () => this.invalidateContent(), () => this.invalidateContent(), ["content_changed"]);
+    // Presets and executables have no change event; they are read on (re)connect and on request.
+    // scrape_queue_changed is an invalidation notice only, so the queue is re-read after each.
+    open("scrape", () => { this.refreshScrape(); this.refresh("scrapeQueue"); }, () => this.refresh("scrapeQueue"), ["scrape_queue_changed"]);
     this.reconcileScoped();
     for (const id of this.workerWatchers.keys()) this.openWorkerChannel(id);
   }
@@ -290,6 +312,38 @@ export class StackStore {
       this.refresh("roleLaunch");
     }
     return result;
+  };
+
+  /** Ask the Extract window to use a preset; it keeps the URL already entered. */
+  composeScrape = (preset: string, mode: "page" | "links"): void => {
+    this.set({ scrapeCompose: { seq: (this.state.scrapeCompose?.seq ?? 0) + 1, preset, mode } });
+  };
+
+  /** Re-read Scrape's status, presets and canary inventory. */
+  refreshScrape = (): void => {
+    this.refresh("scrapeStatus"); this.refresh("scrapePresets"); this.refresh("scrapeCanaries");
+  };
+
+  /**
+   * Scrape queue writes. The queue is re-read afterwards either way, since a lost acknowledgement
+   * may still have submitted or processed; nothing is resent automatically.
+   */
+  scrapeQueueAction = <T>(name: "scrape_queue_submit" | "scrape_queue_process", args: Record<string, unknown>): Promise<T> =>
+    this.call<T>("scrape", name, args).finally(() => this.refresh("scrapeQueue"));
+
+  /** Run a canary check or corpus replay and keep its latest outcome for this page. */
+  scrapeCheck = async (kind: "canary" | "replay", args: Record<string, unknown>): Promise<void> => {
+    const startedAt = Date.now();
+    const set = (check: ScrapeCheck<unknown>) => this.set({ scrapeChecks: { ...this.state.scrapeChecks, [kind]: check } });
+    set({ startedAt, finishedAt: null, args, result: null, error: null, uncertain: false });
+    const current = () => this.state.scrapeChecks[kind]?.startedAt === startedAt;
+    try {
+      const result = await this.call<ScrapeCanaryRun | ScrapeReplay>("scrape", kind === "canary" ? "scrape_presets_check" : "scrape_corpus_replay", args);
+      if (current()) set({ startedAt, finishedAt: Date.now(), args, result, error: null, uncertain: false });
+    } catch (error) {
+      const failure = scrapeCallError(error);
+      if (current()) set({ startedAt, finishedAt: Date.now(), args, result: null, error: failure.text, uncertain: failure.uncertain });
+    }
   };
 
   /** Explicit infer actions. The ledger and model cache are re-read after each attempt, since a lost acknowledgement may still have admitted it. */
@@ -744,6 +798,11 @@ export class StackStore {
       case "contentRoutes": return call<{ documentPath: string; artifactPath: string; itemPath: string }>("content", "content_status", {});
       case "contentLibrary": return this.loadLibrary(call);
       case "contentItems": return this.loadItems(call);
+      case "scrapeStatus": return call<ScrapeStatus>("scrape", "scrape_status");
+      case "scrapePresets": return call<{ presets: ScrapePreset[] }>("scrape", "scrape_presets_list").then((result) => result.presets);
+      case "scrapeCanaries": return call<{ presets: Array<{ preset: string; configured: boolean }> }>("scrape", "scrape_canary_inventory")
+        .then((result) => result.presets.filter((item) => item.configured).map((item) => item.preset));
+      case "scrapeQueue": return call<ScrapeQueue>("scrape", "scrape_queue_list", { limit: scrapeQueueLimit });
     }
   }
 

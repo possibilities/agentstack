@@ -539,6 +539,45 @@ export type ContentUpload = { key: string; name: string; bytes: number; received
 
 export type Resource<T> = { data: T | null; error: string | null; at: number | null };
 
+/** A `scrape` extraction preset. `domain` "*" presets are explicit-only link modes; any other domain (and its aliases) is claimed, so an unmatched URL there fails rather than falling back. */
+export type ScrapePreset = { name: string; summary: string; domain: string; mode: "content" | "links" | "nav-links"; aliases: string[]; browser_profile?: string; url_patterns: string[];
+  handler?: string; schema?: string; selector?: string; section_selector?: string; category_selector?: string; toggle_selector?: string; source: "official" | "local" };
+/** `scrape_status`: optional route capabilities, never a claim that every route works. */
+export type ScrapeStatus = { stateRoot: string; browser: boolean; github: boolean; pdf: boolean; pandoc: boolean; summary: boolean };
+export type ScrapeFailureClass = "invalid_request" | "authentication_required" | "upstream_unavailable" | "timeout" | "browser_error" | "provider_error"
+  | "malformed_provider_output" | "empty_content" | "output_limit_exceeded" | "cancelled" | "internal_error";
+/** `scrape_fetch`'s schema-version-1 extraction envelope. Metadata is what the page reported, not verified fact. */
+export type ScrapeEnvelope = {
+  schema_version: "1"; status: "success" | "failure"; requested_url: string; final_url: string | null;
+  extractor: { name: string; version: string; implementation: string; implementation_version: string };
+  artifacts: Array<{ artifact_type: "document"; media_type: "text/markdown"; encoding: "utf-8"; content: string; size_bytes: number; sha256: string }>;
+  metadata: { content_type: "web_page" | "social_post" | "article"; content_kind?: "post" | "thread" | "article"; content_item_count?: number; title: string; author_name: string;
+    author_handle: string; published_at: string; source_id: string; warnings: Array<"partial_content"> } | null;
+  relations: Array<{ relation_type: "references"; target_url: string }>;
+  failure: { failure_class: ScrapeFailureClass; retryable: boolean; message: string; evidence: string } | null;
+};
+/** `scrape_links`: navigation links or an X timeline. `structured` and `links` are preset-shaped. */
+export type ScrapeLinks = { markdown: string; structured: unknown; links?: unknown[] };
+export type ScrapeFeedValidators = { etag: string | null; last_modified: string | null };
+/** `scrape_feed_discover` / `scrape_feed_parse`. A missing item never implies deletion. */
+export type ScrapeFeed = {
+  schema_version: "1"; status: "success" | "partial" | "failure"; source_url: string; source_format: "rss" | "atom" | "archive" | "mixed" | "unknown"; validators: ScrapeFeedValidators;
+  cursor: { validators: ScrapeFeedValidators; newest_seen_at: string | null; next_url: string | null };
+  items: Array<{ stable_id: string; upstream_id: string | null; identity_source: "upstream_id" | "canonical_url" | "hashed_upstream_id"; url: string | null; candidate_urls: string[];
+    title: string; published_at: string | null; updated_at: string | null; tombstone: boolean }>;
+  pagination: { pages: Array<{ url: string; page_format: "rss" | "atom" | "archive"; validators: ScrapeFeedValidators; item_count: number; next_url: string | null }>; complete: boolean; stop_reason: string; next_url: string | null };
+  warnings: Array<{ code: string; message: string; page_url?: string }>; absence_implies_deletion: false; failure: { code: string; retryable: boolean; message: string } | null;
+};
+/** One scrape-to-file job from `scrape_queue_list`; `id` is its generation ID where derivable, so it survives state moves. */
+export type ScrapeQueueJob = { id: string; state: "pending" | "retrying" | "failed"; file: string; submitted_at: string | null; url: string | null; destination: string | null;
+  summarize: boolean; allow_private_network: boolean | null; frontmatter_keys: string[]; completed_failures: number; max_attempts: number | null; next_attempt_at: string | null; problem: string | null };
+export type ScrapeQueue = { jobs: ScrapeQueueJob[]; counts: Record<ScrapeQueueJob["state"], number>; truncated: boolean };
+export type ScrapeQueueResult = { processed: number; failed: number; retry_scheduled: number; retry_waiting: number; retry_exhausted: number };
+/** `scrape_presets_check`: `not_configured` is never a pass. */
+export type ScrapeCanaryStatus = "pass" | "drift" | "operational_failure" | "not_configured";
+export type ScrapeCanaryRun = { checked_at: string; results: Array<{ preset: string; status: ScrapeCanaryStatus; detail: string }> };
+export type ScrapeReplay = { passed: number; failed: number; lines: string[] };
+
 export type Snapshot = {
   owner: Resource<OwnerStatus>;
   resources: Resource<OwnerResources>;
@@ -601,6 +640,8 @@ export type NodeRef =
   | { kind: "trusted-project"; id: string }
   | { kind: "signal" }
   | { kind: "attention-item" | "attention-message" | "attention-run"; id: string }
+  /** A Scrape extraction preset by name, and a scrape-to-file job by its `scrape_queue_list` ID. */
+  | { kind: "preset" | "scrape-job"; id: string }
   | { kind: "package"; id: string }
   | { kind: "operation"; id: string; pkg: string }
   /** Content records: a Vault document by slug, a collection by slug, an item by stable ID, an Artifact by name. */

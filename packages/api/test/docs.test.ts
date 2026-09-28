@@ -107,6 +107,12 @@ test("the api package serves structured documents for every workspace package", 
     const exposed = scrape.transports.find((transport) => transport.type === "mcp")!.operations;
     assert.ok(exposed.includes("scrape_fetch") && exposed.includes("scrape_presets_list"));
     assert.ok(!exposed.includes("scrape_queue_submit") && !exposed.includes("scrape_corpus_capture") && !exposed.includes("scrape_session_close") && !exposed.includes("scrape_fetch_file") && !exposed.includes("scrape_convert_html_directory"));
+    // Agents keep the bounded nine; the local UI additionally operates replay, canaries and the queue (ADR 0103).
+    const agentFacing = ["scrape_canary_inventory", "scrape_convert_html", "scrape_feed_discover", "scrape_feed_parse", "scrape_fetch", "scrape_links", "scrape_preset_show", "scrape_presets_list", "scrape_status"];
+    assert.deepEqual([...exposed].sort(), agentFacing);
+    assert.deepEqual([...scrape.transports.find((transport) => transport.type === "websocket")!.operations].sort(),
+      [...agentFacing, "scrape_corpus_replay", "scrape_presets_check", "scrape_queue_list", "scrape_queue_process", "scrape_queue_submit"].sort());
+    assert.equal(scrape.operations.find((operation) => operation.name === "scrape_queue_list")?.annotations.readOnlyHint, true);
 
     const bots = found.get("bots") as PackageDoc;
     assert.deepEqual(Object.keys(bots.events).sort(), ["bots_changed", "chat_live_changed", "chat_queue_changed", "chats_changed", "defaults_changed", "threads_changed", "voice_changed"]);

@@ -30,6 +30,15 @@ const forwardTimeouts = new Map([
   ["infer/infer_complete", 75_000],
   ["signal/attention_models", 75_000],
   ["bots/chat_message_changes", 30_000],
+  // Browser-backed extraction chains several 30s agent-browser steps; links also scroll.
+  ["scrape/scrape_fetch", 120_000],
+  ["scrape/scrape_links", 180_000],
+  // Feed discovery accepts timeoutSeconds up to 300.
+  ["scrape/scrape_feed_discover", 310_000],
+  ["scrape/scrape_corpus_replay", 120_000],
+  // Canaries and queue processing run sequential live extractions.
+  ["scrape/scrape_presets_check", 600_000],
+  ["scrape/scrape_queue_process", 600_000],
 ]);
 
 export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: string; port?: number;

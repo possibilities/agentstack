@@ -8,5 +8,5 @@ mcp:
   operations: [scrape_fetch, scrape_links, scrape_feed_discover, scrape_feed_parse, scrape_convert_html, scrape_presets_list, scrape_preset_show, scrape_canary_inventory, scrape_status]
 websocket:
   events: all
-  description: Loopback read and extraction operations; operator filesystem and browser lifecycle remain on the socket.
-  operations: [scrape_fetch, scrape_links, scrape_feed_discover, scrape_feed_parse, scrape_convert_html, scrape_presets_list, scrape_preset_show, scrape_canary_inventory, scrape_status]
+  description: Loopback extraction and preset inspection for the UIX Scrape space, plus its operator corpus replay, live canary checks and scrape-to-file queue. Machine-path conversion, fetch-to-file, corpus capture and browser session administration remain on the socket.
+  operations: [scrape_fetch, scrape_links, scrape_feed_discover, scrape_feed_parse, scrape_convert_html, scrape_presets_list, scrape_preset_show, scrape_canary_inventory, scrape_status, scrape_corpus_replay, scrape_presets_check, scrape_queue_list, scrape_queue_submit, scrape_queue_process]

@@ -93,3 +93,43 @@ test("TLS WebSocket intersects live exposure, refuses cross-origin, and closes i
     viewer?.terminate(); controller?.terminate(); await remote.close(); await backend.close(); store.close(); rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("remote control sessions receive only Scrape's read-only operations; fetching and queue writes stay local", async () => {
+  const root = mkdtempSync(join(tmpdir(), "agentstack-remote-scrape-"));
+  const store = new AccessStore(root);
+  const env = { AGENTSTACK_STATE_DIR: root };
+  const directory = join(root, "packages", "scrape"); mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, "api.yaml"), "name: scrape\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: [scrape_queue_list, scrape_queue_submit, scrape_fetch]\n  events: all\n  description: WebSocket.\n");
+  let writes = 0;
+  const ok = z.object({ ok: z.boolean() });
+  const backend = await serveSocket({ info: { name: "scrape", description: "Demo.", transportDescription: "Socket.", path: socketPath("scrape", env) }, context: {},
+    operations: [
+      operation({ name: "scrape_queue_list", description: "Read.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { return { ok: true }; } }),
+      operation({ name: "scrape_queue_submit", description: "Write.", input: z.strictObject({}), output: ok, async call() { writes++; return { ok: true }; } }),
+      operation({ name: "scrape_fetch", description: "Network.", input: z.strictObject({}), output: ok, annotations: { openWorldHint: true }, async call() { writes++; return { ok: true }; } }),
+    ], events: { topics: { scrape_queue_changed: "Changed." } } });
+  const key = join(root, "key.pem"), cert = join(root, "cert.pem");
+  execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "1", "-subj", "/CN=localhost"], { stdio: "ignore" });
+  const port = await freePort();
+  const remote = await startRemoteUix({ store, env, host: "127.0.0.1", port, root, verify: async () => {} }, { key: readFileSync(key), cert: readFileSync(cert) });
+  const keyMaterial = randomBytes(32).toString("base64url");
+  const pairing = store.pair({ requestId: randomUUID(), label: "browser", kind: "browser", scopes: ["uix:view", "uix:control"], redemptionSecret: keyMaterial });
+  store.approve(pairing.id, pairing.code, true, ["uix:view", "uix:control"]);
+  const issued = store.startUix(store.redeem(pairing.id, keyMaterial).refreshToken, randomUUID());
+  let ws: WebSocket | undefined;
+  const send = async (method: string, params: Record<string, unknown>) => {
+    const response = frame(ws!);
+    ws!.send(JSON.stringify({ id: 1, method, params: { package: "scrape", ...params } }));
+    return response;
+  };
+  try {
+    ws = await open(`wss://127.0.0.1:${port}/websocket`, `https://127.0.0.1:${port}`, `__Host-agentstack_uix=${issued.accessToken}`);
+    assert.deepEqual((await send("tools/list", {})).result.tools.map((tool: { name: string }) => tool.name), ["scrape_queue_list"]);
+    assert.equal((await send("tools/call", { name: "scrape_queue_list", arguments: {} })).result.ok, true);
+    for (const name of ["scrape_queue_submit", "scrape_fetch"])
+      assert.match((await send("tools/call", { name, arguments: {} })).error.message, /not available/);
+    assert.equal(writes, 0);
+  } finally {
+    ws?.terminate(); await remote.close(); await backend.close(); store.close(); rmSync(root, { recursive: true, force: true });
+  }
+});

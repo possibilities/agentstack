@@ -1738,3 +1738,164 @@ export async function processQueue(
   if (retryError !== undefined) throw retryError;
   return result;
 }
+
+export type QueueJobState = "pending" | "retrying" | "failed";
+export interface QueueJob {
+  /** The job's generation ID where it can be derived, so one job keeps its ID as it moves between states. */
+  id: string;
+  state: QueueJobState;
+  /** Basename of the record in its state directory. */
+  file: string;
+  submitted_at: string | null;
+  url: string | null;
+  destination: string | null;
+  summarize: boolean;
+  allow_private_network: boolean | null;
+  /** Frontmatter keys only; values can be arbitrary operator content. */
+  frontmatter_keys: string[];
+  completed_failures: number;
+  max_attempts: number | null;
+  next_attempt_at: string | null;
+  /** Why the record could not be read as a job; null for a readable job. */
+  problem: string | null;
+}
+export interface QueueListing {
+  jobs: QueueJob[];
+  counts: Record<QueueJobState, number>;
+  truncated: boolean;
+}
+
+const LIST_STATE_ORDER: Record<QueueJobState, number> = { failed: 0, retrying: 1, pending: 2 };
+
+/** Regular, non-symlinked files in one state directory, never creating or repairing it. */
+function listedFiles(directory: string, extension: string): string[] {
+  let entries: Dirent<string>[];
+  try {
+    entries = readdirSync(directory, { withFileTypes: true });
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return [];
+    throw error;
+  }
+  return entries
+    .filter((entry) => entry.isFile() && !entry.name.startsWith(".") && entry.name.endsWith(extension))
+    .map((entry) => entry.name)
+    .slice(0, MAX_STATE_DIRECTORY_ENTRIES);
+}
+function readListedRecord(path: string): Buffer {
+  const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const info = fstatSync(descriptor);
+    if (!info.isFile()) throw new Error("not a regular file");
+    if (info.size > MAX_RECORD_BYTES) throw new Error("record exceeds its size limit");
+    return readFileSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+function submittedAt(name: string): string | null {
+  const match = /^(\d{13})-/.exec(name);
+  return match ? new Date(Number(match[1])).toISOString() : null;
+}
+function listedJob(
+  id: string,
+  state: QueueJobState,
+  file: string,
+  originalName: string,
+  raw: Buffer | null,
+  problem: string | null,
+): QueueJob {
+  const job: QueueJob = {
+    id,
+    state,
+    file,
+    submitted_at: submittedAt(originalName),
+    url: null,
+    destination: null,
+    summarize: false,
+    allow_private_network: null,
+    frontmatter_keys: [],
+    completed_failures: 0,
+    max_attempts: null,
+    next_attempt_at: null,
+    problem,
+  };
+  if (!raw) return job;
+  try {
+    const value = parseStandaloneJob(raw);
+    job.url = String(value.url);
+    job.destination = String(value.destination);
+    job.summarize = value.summarize === true;
+    job.allow_private_network =
+      typeof value.allow_private_network === "boolean" ? value.allow_private_network : null;
+    job.frontmatter_keys = Object.keys((value.frontmatter as Record<string, unknown>) ?? {});
+  } catch (error) {
+    job.problem ??= boundedErrorText(error);
+  }
+  return job;
+}
+
+/**
+ * Read-only census of the scrape-to-file queue. It never claims, repairs, retires or creates
+ * state, so a concurrent processor may move a job between states during the scan. Where one
+ * generation appears in several states, failed wins over retrying and retrying over pending,
+ * matching the order processing resolves them.
+ */
+export function listQueue(options: { limit?: number } = {}): QueueListing {
+  const limit = options.limit ?? 200;
+  const byId = new Map<string, QueueJob>();
+  const add = (job: QueueJob) => {
+    const existing = byId.get(job.id);
+    if (!existing || LIST_STATE_ORDER[job.state] < LIST_STATE_ORDER[existing.state]) byId.set(job.id, job);
+  };
+  for (const name of listedFiles(QUEUE_DIR, ".yaml")) {
+    try {
+      const raw = readListedRecord(join(QUEUE_DIR, name));
+      add(listedJob(generationId(name, raw), "pending", name, name, raw, null));
+    } catch (error) {
+      if (errorCode(error) === "ENOENT") continue;
+      add(listedJob(`pending:${name}`, "pending", name, name, null, boundedErrorText(error)));
+    }
+  }
+  const retries = new Map<string, { envelope: RetryEnvelope; raw: Buffer; file: string }>();
+  for (const name of listedFiles(RETRY_DIR, ".json")) {
+    try {
+      const value = readRetryEnvelope(join(RETRY_DIR, name));
+      const current = retries.get(value.envelope.generationId);
+      if (!current || current.envelope.completedFailures < value.envelope.completedFailures)
+        retries.set(value.envelope.generationId, { ...value, file: name });
+    } catch (error) {
+      if (errorCode(error) === "ENOENT" || errorCode((error as { cause?: unknown }).cause) === "ENOENT") continue;
+      const id = retryGenerationFromName(name) ?? `retrying:${name}`;
+      add(listedJob(id, "retrying", name, name, null, boundedErrorText(error)));
+    }
+  }
+  for (const [id, { envelope, raw, file }] of retries) {
+    const job = listedJob(id, "retrying", file, envelope.originalFilename, raw, null);
+    job.completed_failures = envelope.completedFailures;
+    job.max_attempts = envelope.policy.maxAttempts;
+    job.next_attempt_at = new Date(envelope.nextAttemptAtMs).toISOString();
+    add(job);
+  }
+  for (const name of listedFiles(FAILED_DIR, ".yaml")) {
+    // Terminal names carry the generation ID; an immediate failure keeps the ready name.
+    const terminal = /^(.*)--failed-([0-9a-f]{64})\.yaml$/.exec(name);
+    const original = terminal ? `${terminal[1]}.yaml` : name.replace(/--failed-[^/]*\.yaml$/, ".yaml");
+    try {
+      const raw = readListedRecord(join(FAILED_DIR, name));
+      const id = terminal?.[2] ?? (original === name ? generationId(name, raw) : `failed:${name}`);
+      add(listedJob(id, "failed", name, original, raw, null));
+    } catch (error) {
+      if (errorCode(error) === "ENOENT") continue;
+      add(listedJob(terminal?.[2] ?? `failed:${name}`, "failed", name, original, null, boundedErrorText(error)));
+    }
+  }
+  const all = [...byId.values()].sort(
+    (left, right) =>
+      LIST_STATE_ORDER[left.state] - LIST_STATE_ORDER[right.state] ||
+      (right.submitted_at ?? "").localeCompare(left.submitted_at ?? "") ||
+      left.file.localeCompare(right.file),
+  );
+  const counts: Record<QueueJobState, number> = { pending: 0, retrying: 0, failed: 0 };
+  for (const job of all) counts[job.state] += 1;
+  return { jobs: all.slice(0, limit), counts, truncated: all.length > limit };
+}

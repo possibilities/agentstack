@@ -6,7 +6,7 @@ import { canaryInventory, checkPresets } from "./src/canary.js";
 import { captureCorpus, testCorpus } from "./src/corpus.js";
 import { discoverFeed, discoverFeedLive } from "./src/feed.js";
 import { loadRegistry, validatePresetFile } from "./src/presets.js";
-import { processQueue, type QueueResult } from "./src/queue.js";
+import { listQueue, processQueue, type QueueResult } from "./src/queue.js";
 import { resolveDataHome } from "./src/queue-paths.js";
 import { findExecutable } from "./src/subprocess.js";
 import { convertHtmlDirectory, readRegularFileNoFollow } from "./src/html-files.js";
@@ -50,6 +50,9 @@ const feedOptions = z.strictObject({ sourceUrl: url, sourceKind: z.enum(["auto",
   archive: archive.optional(), etag: z.string().optional(), lastModified: z.string().optional(), validatorUrl: url.optional() });
 const recordedPage = z.strictObject({ url, content: z.string().max(20_000_000), kind: z.enum(["auto", "feed", "archive"]).optional(),
   validators: z.strictObject({ etag: z.string().nullable().optional(), last_modified: z.string().nullable().optional() }).optional(), effectiveUrl: url.optional() });
+const queueJob = z.strictObject({ id: z.string(), state: z.enum(["pending", "retrying", "failed"]), file: z.string(), submitted_at: nullableText,
+  url: nullableText, destination: nullableText, summarize: z.boolean(), allow_private_network: z.boolean().nullable(), frontmatter_keys: z.array(z.string()),
+  completed_failures: z.number().int(), max_attempts: z.number().int().nullable(), next_attempt_at: nullableText, problem: nullableText });
 const read = { readOnlyHint: true } as const;
 interface Context {
   controller: AbortController;
@@ -133,6 +136,10 @@ export const api: PackageApi<Context, "scrape_queue_changed"> = {
     operation({ name: "scrape_queue_submit", description: "Submit a standalone scrape-to-file job to AgentStack-local queue. Output destination is an operator-controlled machine path; this is not Brain admission.",
       input: z.strictObject({ url, destination: z.string().min(1), summarize: z.boolean().optional(), frontmatter: z.record(z.string(), z.unknown()).optional(), allowPrivateNetwork: z.boolean().optional() }),
       output: z.strictObject({ path: z.string() }), async call(ctx, { url, destination, ...options }) { active(ctx); const path = submitScrapeJob(url, destination, options); ctx.changed?.(); return { path }; } }),
+    operation({ name: "scrape_queue_list", description: "List scrape-to-file jobs as pending, retrying or failed without claiming, repairing or processing them. Failed records keep no failure reason, and frontmatter values are omitted. A concurrent processor can move a job between states during the scan.",
+      input: z.strictObject({ limit: z.number().int().min(1).max(1000).default(200) }),
+      output: z.strictObject({ jobs: z.array(queueJob), counts: z.strictObject({ pending: z.number().int(), retrying: z.number().int(), failed: z.number().int() }), truncated: z.boolean() }), annotations: read,
+      async call(ctx, { limit }) { active(ctx); return listQueue({ limit }); } }),
     operation({ name: "scrape_queue_process", description: "Process ready scrape-to-file records and due retries once; also processed periodically by the owner-managed Scrape child.",
       input: z.strictObject({}), output: z.strictObject({ processed: z.number(), failed: z.number(), retry_scheduled: z.number(), retry_waiting: z.number(), retry_exhausted: z.number() }),
       async call(ctx) { return drain(ctx); } }),
@@ -146,7 +153,7 @@ export const api: PackageApi<Context, "scrape_queue_changed"> = {
       input: z.strictObject({}), output: z.strictObject({ stateRoot: z.string(), browser: z.boolean(), github: z.boolean(), pdf: z.boolean(), pandoc: z.boolean(), summary: z.boolean() }), annotations: read,
       async call(ctx) { active(ctx); return { stateRoot: resolveDataHome(), browser: Boolean(findAgentBrowserExecutable()), github: Boolean(findExecutable("gh")), pdf: Boolean(findExecutable("pdftotext")), pandoc: Boolean(findExecutable("pandoc")), summary: Boolean(findExecutable("summaryctl")) }; } }),
   ],
-  events: { topics: { scrape_queue_changed: "A scrape-to-file job was submitted or its processing state changed. Re-read scrape_status or inspect the isolated queue." },
+  events: { topics: { scrape_queue_changed: "A scrape-to-file job was submitted or its processing state changed. Re-read scrape_queue_list." },
     start(ctx, publish) { ctx.changed = () => publish("scrape_queue_changed"); return () => { ctx.changed = undefined; }; } },
   async createContext() {
     const ctx: Context = { controller: new AbortController(), work: null, maintenance: undefined! };

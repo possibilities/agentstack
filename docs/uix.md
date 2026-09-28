@@ -118,6 +118,15 @@ PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
   node packages/uix/test/roles-browser-check.mjs
 ```
 
+The Scrape space's check serves the real Scrape API against a disposable state directory and a
+loopback HTTP fixture, so it fetches no public site and never touches a live queue. It uses
+`next dev` unless `SCRAPE_NEXT=start`, and keeps screenshots when `SCRAPE_EVIDENCE_DIR` is set:
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  node packages/uix/test/scrape-browser-check.mjs
+```
+
 The bench check uses disposable sockets, a fixture snapshot and its own `next start`
 process. `CHROME_EXECUTABLE` overrides the default macOS Chrome path;
 `NEXT_MODE=dev` selects development verification instead. Screenshots are written

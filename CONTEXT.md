@@ -194,7 +194,7 @@ A named collection of related windows on its own UIX open bench, addressed as `/
 
 _Avoid_: page, tab, workspace (a Bot's working directory)
 
-Roles is the fifth Canvas space, managing the Role's instruction Categories and Fragments. Inbox is the sixth, where people read, answer and dismiss Notifications. Signal is the seventh, showing what conversations ask of people and the interpretation evidence behind it. Content is the eighth, for Vault documents, Content collections and items, and published Artifacts; it does not publish Artifacts.
+Roles is the fifth Canvas space, managing the Role's instruction Categories and Fragments. Inbox is the sixth, where people read, answer and dismiss Notifications. Signal is the seventh, showing what conversations ask of people and the interpretation evidence behind it. Content is the eighth, for Vault documents, Content collections and items, and published Artifacts; it does not publish Artifacts. Workers is the ninth, following what Workers started by Bots are doing. Scrape is the tenth, for trying extractions, checking preset health and running scrape-to-file jobs.
 
 ## Open bench
 
@@ -210,7 +210,7 @@ _Avoid_: external research service, Content Vault
 
 ## Scrape
 
-The `scrape` Package API's extraction, preset, link and source-discovery engine. Brain consumes its typed library interface for Ingestion jobs; standalone scrape-to-file jobs live under isolated AgentStack state and are not Brain jobs. A preset's failure to match the provider's current content shape is a classified failure requiring a preset update, not permission for generic extraction. Browser page actions still belong to agent-browser. _Avoid_: Brain ingestion worker, browser lifecycle, separate Agentscrape service
+The `scrape` Package API's extraction, preset, link and source-discovery engine. Brain consumes its typed library interface for Ingestion jobs; standalone scrape-to-file jobs live under isolated AgentStack state and are not Brain jobs. A preset's failure to match the provider's current content shape is a classified failure requiring a preset update, not permission for generic extraction. Browser page actions still belong to agent-browser. The local UIX operates its canary checks and queue over the WebSocket; agents do not receive them over MCP. _Avoid_: Brain ingestion worker, browser lifecycle, separate Agentscrape service
 
 ## Admission
 
