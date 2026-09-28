@@ -1,28 +1,47 @@
 "use client";
 
-import { BellIcon, BlocksIcon, BookOpenIcon, BotIcon, CircleCheckIcon, CpuIcon, FilePlusIcon, FolderIcon, FolderLockIcon, FolderPlusIcon, MicIcon, MicOffIcon, PhoneIcon, PhoneOffIcon, PlugIcon, RefreshCwIcon, ScrollTextIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
+import { useEffect, useState } from "react";
+import { BellIcon, BlocksIcon, BookOpenIcon, BotIcon, BoxesIcon, FileTextIcon, NotebookTextIcon, UploadIcon, CircleCheckIcon, CpuIcon, FilePlusIcon, FolderIcon, FolderLockIcon, FolderPlusIcon, MicIcon, MicOffIcon, PhoneIcon, PhoneOffIcon, PlugIcon, RefreshCwIcon, ScrollTextIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
 import { operationTitle } from "@/lib/stack/catalog";
 import { accountLabels, addableWorkerProviders, pairedWorker, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
 import { spaces } from "@/lib/stack/spaces";
-import type { Account, NodeRef, WorkerAccount } from "@/lib/stack/types";
+import type { Account, ContentHit, NodeRef, WorkerAccount } from "@/lib/stack/types";
+import { useContentActions, type ContentSelection } from "./content-actions";
+import { KindIcon } from "./content-shared";
 import { useAuthActions } from "./auth-actions";
 import { useBotActions } from "./bot-actions";
 import { useNotifyActions } from "./notify-actions";
 import { useRoleActions, type RoleTarget } from "./role-actions";
 import { Orb, StatusDot } from "./primitives";
-import { useStack, useWorkbench } from "./provider";
+import { useStack, useStore, useWorkbench } from "./provider";
 import { spaceViews } from "./spaces";
 import { useVoice } from "./voice";
 
 export type PaletteAction = { id: string; label: string; shortcut?: string; icon: React.ComponentType; run(): void };
 
 export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpenChange(open: boolean): void; actions: PaletteAction[] }) {
-  const { bots, accounts, workerAccounts, owner, catalog, attempt, role, notificationRecords } = useStack();
+  const { bots, accounts, workerAccounts, owner, catalog, attempt, role, notificationRecords, contentDocuments, contentItems, contentArtifacts, status } = useStack();
+  const store = useStore();
   const notify = useNotifyActions();
   // Notifications the page has loaded, newest first; the palette never pages the ledger itself.
   const notices = Object.values(notificationRecords).sort((a, b) => b.sequence - a.sequence).slice(0, 25);
   const roleActions = useRoleActions();
+  const contentActions = useContentActions();
+  const [search, setSearch] = useState("");
+  const [hits, setHits] = useState<ContentHit[]>([]);
+  const contentOpen = status.content === "open";
+  // Documents beyond the loaded newest page come from full-text search as the query is typed.
+  useEffect(() => {
+    const query = search.trim();
+    if (!open || query.length < 2 || !contentOpen) { setHits([]); return; }
+    let live = true;
+    const timer = setTimeout(() => {
+      store.call<{ hits: ContentHit[] }>("content", "search", { query, limit: 8 }).then((result) => { if (live) setHits(result.hits); }, () => { if (live) setHits([]); });
+    }, 180);
+    return () => { live = false; clearTimeout(timer); };
+  }, [search, open, contentOpen, store]);
+  useEffect(() => { if (!open) setSearch(""); }, [open]);
   const auth = useAuthActions();
   const botActions = useBotActions();
   const voice = useVoice();
@@ -43,6 +62,18 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
     roleActions.open(target);
     if (ref) goTo(ref); else setSpace("roles");
   };
+  /** Preview a content record and bring its window into view. */
+  const show = (selection: ContentSelection, ref: NodeRef) => {
+    onOpenChange(false);
+    contentActions.preview(selection);
+    goTo(ref);
+  };
+  const contentAct = (run: () => void) => {
+    onOpenChange(false);
+    setSpace("content");
+    run();
+  };
+  const searchedSlugs = new Set(hits.map((hit) => hit.slug));
   const removable = (account: Account) => !account.removing;
   const workerRemovable = (account: WorkerAccount) => !account.removing;
   const addWorker = (provider: WorkerAccount["provider"]) => {
@@ -50,9 +81,9 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
   };
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange} title="Jump to" description="Find a bot, account, Role record, notification, process, or operation." className="sm:max-w-lg">
+    <CommandDialog open={open} onOpenChange={onOpenChange} title="Jump to" description="Find a bot, account, Role record, notification, document, process, or operation." className="sm:max-w-lg">
       <Command loop>
-        <CommandInput placeholder="Jump to a bot, account, operation…" />
+        <CommandInput placeholder="Jump to a bot, account, document, operation…" value={search} onValueChange={setSearch} />
         <CommandList className="max-h-96">
           <CommandEmpty>No matches.</CommandEmpty>
           <CommandGroup>
@@ -148,6 +179,40 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
               ))}
             </CommandGroup>
           ) : null}
+          <CommandGroup heading="Content">
+            <CommandItem value="content new document vault write" disabled={!contentOpen} onSelect={() => contentAct(() => contentActions.edit({ kind: "new-document" }))}><FilePlusIcon />New document</CommandItem>
+            <CommandItem value="content new collection group items" disabled={!contentOpen} onSelect={() => contentAct(() => contentActions.editCollection(null))}><FolderPlusIcon />New collection</CommandItem>
+            <CommandItem value="content upload files images items" disabled={!contentOpen} onSelect={() => contentAct(() => contentActions.upload(null))}><UploadIcon />Upload files</CommandItem>
+            {hits.map((hit) => (
+              <CommandItem key={`hit:${hit.slug}`} value={`document ${hit.title} ${hit.slug} ${search}`} onSelect={() => show({ kind: "document", slug: hit.slug }, { kind: "document", id: hit.slug })}>
+                <FileTextIcon />
+                <span className="truncate">{hit.title}</span>
+                <span className="truncate font-mono text-xs text-muted-foreground">{hit.slug}</span>
+                <CommandShortcut className="tracking-normal">match</CommandShortcut>
+              </CommandItem>
+            ))}
+            {(contentDocuments.data ?? []).filter((document) => !searchedSlugs.has(document.slug)).slice(0, 60).map((document) => (
+              <CommandItem key={`document:${document.slug}`} value={`document ${document.title} ${document.slug} ${document.tags.join(" ")}`} onSelect={() => show({ kind: "document", slug: document.slug }, { kind: "document", id: document.slug })}>
+                <NotebookTextIcon />
+                <span className="truncate">{document.title}</span>
+                <span className="truncate font-mono text-xs text-muted-foreground">{document.slug}</span>
+              </CommandItem>
+            ))}
+            {(contentItems.data?.items ?? []).slice(0, 60).map((item) => (
+              <CommandItem key={`item:${item.id}`} value={`item ${item.name} ${item.kind} ${item.collection ?? "ungrouped"} ${item.id}`} onSelect={() => show({ kind: "item", id: item.id }, { kind: "item", id: item.id })}>
+                <KindIcon kind={item.kind} />
+                <span className="truncate">{item.name}</span>
+                <span className="text-xs text-muted-foreground">{item.collection ?? "ungrouped"}</span>
+              </CommandItem>
+            ))}
+            {(contentArtifacts.data ?? []).map((artifact) => (
+              <CommandItem key={`artifact:${artifact.name}`} value={`artifact ${artifact.name} ${artifact.title ?? ""} ${artifact.kind}`} onSelect={() => show({ kind: "artifact", name: artifact.name }, { kind: "artifact", id: artifact.name })}>
+                <BoxesIcon />
+                <span className="truncate font-mono">{artifact.name}</span>
+                <CommandShortcut className="tracking-normal">{artifact.kind}</CommandShortcut>
+              </CommandItem>
+            ))}
+          </CommandGroup>
           {accounts.data?.length || workerAccounts.data?.length ? (
             <CommandGroup heading="Accounts">
               {(accounts.data ?? []).map((account) => (

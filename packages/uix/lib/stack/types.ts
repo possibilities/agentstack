@@ -501,6 +501,37 @@ export type RoleLaunchPreview = {
   snapshotChars: number;
   snapshotLimitChars: number;
 };
+/** A Vault document row from `list`; `search` hits add a snippet and score. */
+export type ContentDocument = { slug: string; title: string; tags: string[]; updated?: string | null; bytes?: number };
+export type ContentHit = { slug: string; title: string; snippet: string; score: number; tags: string[] };
+/** `get`: the body without frontmatter, plus the whole file's SHA-256 edit fence. */
+export type ContentDocumentBody = { slug: string; title: string; digest: string; content?: string; tags?: string[];
+  created?: string | null; updated?: string | null; frontmatter: Record<string, unknown>; bytes?: number };
+export type ContentLinks = { slug: string; title: string; outgoing: Array<{ to: string; title: string; kind: string }>; dangling: unknown[] };
+export type ContentBacklinks = { slug: string; title: string; incoming: Array<{ from: string; title: string; kind: string }> };
+export type ContentTag = { tag: string; documents: number };
+export type ContentCollection = { slug: string; title: string; description: string; createdAt: string; updatedAt: string };
+export type ContentItemKind = "document" | "file" | "image";
+/** A Content item: stable ID and revision, optional collection, immutable content-addressed bytes. */
+export type ContentItem = { id: string; collection: string | null; name: string; kind: ContentItemKind; mediaType: string;
+  bytes: number; digest: string; revision: number; createdAt: string; updatedAt: string; url: string };
+/** An Artifact at one version; `url` is the latest path and `version_url` the immutable citation. */
+export type ContentArtifact = { name: string; version: string; kind: string; url: string; version_url: string;
+  title?: string | null; tags?: string[]; created_at?: string | null; bytes?: number; files?: number; media_type?: string | null;
+  latest?: boolean; deleted?: string | null; deleted_reason?: string | null; [key: string]: unknown };
+export type ContentStage = { id: string; bytes: number; received: number; digest: string; blob: string | null };
+/** `collection_list` plus per-scope item totals from `item_list`. */
+export type ContentLibrary = { collections: ContentCollection[]; counts: { all: number; ungrouped: number; byCollection: Record<string, number> } };
+/** The Library's current item scope: undefined for all, null for ungrouped, or a collection slug. */
+export type ContentItemScope = string | null | undefined;
+export type ContentItemPage = { scope: ContentItemScope; items: ContentItem[]; total: number; nextOffset: number | null };
+/** Loopback HTTP origins of the Content backends, known to the UIX server from its environment. */
+export type ContentOrigins = { document: string; artifact: string };
+/** One browser upload through resumable blob stages; `stalled` resumes from the server's acknowledged offset. */
+export type ContentUpload = { key: string; name: string; bytes: number; received: number; collection: string | null;
+  phase: "hashing" | "uploading" | "storing" | "done" | "stalled" | "failed"; error: string | null; itemId: string | null; stageId: string | null;
+  /** False once item_put may have stored the item: retrying could create a duplicate. */
+  retryable: boolean };
 
 export type Resource<T> = { data: T | null; error: string | null; at: number | null };
 
@@ -521,6 +552,8 @@ export type Snapshot = {
   rolePreview: Resource<RolePreview>;
   catalog: Resource<PackageDoc[]>;
   endpoints: Record<string, string>;
+  /** Null when this server cannot name them, e.g. a random port; older snapshots omit it. */
+  contentOrigins?: ContentOrigins | null;
 };
 
 export type ChannelStatus = "idle" | "connecting" | "open" | "closed";
@@ -558,7 +591,12 @@ export type NodeRef =
   | { kind: "signal" }
   | { kind: "attention-item" | "attention-message" | "attention-run"; id: string }
   | { kind: "package"; id: string }
-  | { kind: "operation"; id: string; pkg: string };
+  | { kind: "operation"; id: string; pkg: string }
+  /** Content records: a Vault document by slug, a collection by slug, an item by stable ID, an Artifact by name. */
+  | { kind: "document"; id: string }
+  | { kind: "collection"; id: string }
+  | { kind: "item"; id: string }
+  | { kind: "artifact"; id: string };
 
 export function nodeKey(ref: NodeRef): string {
   if (ref.kind === "operation") return `operation:${ref.pkg}.${ref.id}`;

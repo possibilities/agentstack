@@ -33,6 +33,10 @@ test("homeOf distinguishes spatial records from reference destinations", () => {
   assert.deepEqual(homeOf({ kind: "skill", id: "s1" }), { kind: "space", space: "roles", window: "role-skills" });
   assert.deepEqual(homeOf({ kind: "mcp-server", id: "m1" }), { kind: "space", space: "roles", window: "role-mcp-servers" });
   assert.deepEqual(homeOf({ kind: "trusted-project", id: "p1" }), { kind: "space", space: "roles", window: "role-projects" });
+  assert.deepEqual(homeOf({ kind: "document", id: "first-note" }), { kind: "space", space: "content", window: "content-documents" });
+  assert.deepEqual(homeOf({ kind: "collection", id: "notes" }), { kind: "space", space: "content", window: "content-library" });
+  assert.deepEqual(homeOf({ kind: "item", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" }), { kind: "space", space: "content", window: "content-library" });
+  assert.deepEqual(homeOf({ kind: "artifact", id: "test-bundle" }), { kind: "space", space: "content", window: "content-artifacts" });
   assert.deepEqual(homeOf({ kind: "package", id: "bots" }), { kind: "reference" });
   assert.deepEqual(homeOf({ kind: "operation", id: "bot_start", pkg: "bots" }), { kind: "reference" });
   assert.deepEqual(homeOf({ kind: "usage" }), { kind: "space", space: "accounts", window: "usage" });
@@ -64,6 +68,7 @@ test("parseSpacePath resolves /x and single space segments only", () => {
   assert.equal(parseSpacePath("/x/roles"), "roles");
   assert.equal(parseSpacePath("/x/inbox"), "inbox");
   assert.equal(parseSpacePath("/x/signal"), "signal");
+  assert.equal(parseSpacePath("/x/content"), "content");
   assert.equal(parseSpacePath("/x/nope"), null);
   assert.equal(parseSpacePath("/x/api/extra"), null);
   assert.equal(parseSpacePath("/y"), null);
@@ -96,6 +101,10 @@ test("parseNodeKey inverts nodeKey for every kind and rejects malformed keys", (
     { kind: "attention-run", id: "3f0c1b7e-run" },
     { kind: "package", id: "bots" },
     { kind: "operation", id: "bot_start", pkg: "bots" },
+    { kind: "document", id: "first-note" },
+    { kind: "collection", id: "notes" },
+    { kind: "item", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" },
+    { kind: "artifact", id: "test-bundle" },
   ];
   for (const ref of refs) assert.deepEqual(parseNodeKey(nodeKey(ref)), ref);
   for (const bad of ["", "bogus", "account:", "operation:bots"]) assert.equal(parseNodeKey(bad), null);
@@ -116,7 +125,7 @@ const quiet = {
 };
 
 test("spaceAttention reports human reasons per space and ignores healthy state", () => {
-  assert.deepEqual(spaceAttention(quiet), { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], api: [] });
+  assert.deepEqual(spaceAttention(quiet), { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], api: [] });
   assert.deepEqual(spaceAttention({ ...quiet, notifyCounts: { data: { open: 0, total: 4, sources: [] }, error: null, at: null } }).inbox, []);
   assert.deepEqual(spaceAttention({ ...quiet, notifyCounts: { data: { open: 1, total: 4, sources: [] }, error: null, at: null } }).inbox, ["1 open notification"]);
   const inbox = spaceAttention({ ...quiet, notifyCounts: { data: { open: 3, total: 4, sources: [] }, error: null, at: null }, status: { notify: "closed" } });
@@ -168,9 +177,17 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
   // Roles: only a closed channel needs attention.
   assert.deepEqual(spaceAttention({ ...quiet, status: { roles: "closed" } }).roles, ["roles reconnecting"]);
 
+  // Content: a closed channel and uploads that stalled or failed; finished and running uploads are quiet.
+  const content = spaceAttention({ ...quiet, status: { content: "closed" }, contentUploads: [
+    { key: "u1", name: "a.png", phase: "stalled" }, { key: "u2", name: "b.pdf", phase: "failed" },
+    { key: "u3", name: "c.md", phase: "done" }, { key: "u4", name: "d.md", phase: "uploading" },
+  ] });
+  assert.deepEqual(content.content, ["content reconnecting", "a.png upload stalled", "b.pdf upload failed"]);
+  assert.deepEqual(content.system, ["content reconnecting"]);
+
   // Idle and connecting channels are normal, not attention.
   const waiting = spaceAttention({ ...quiet, status: { auth: "connecting", bots: "idle", owner: "connecting", api: "idle" } });
-  assert.deepEqual(waiting, { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], api: [] });
+  assert.deepEqual(waiting, { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], api: [] });
 });
 
 test("spaceAttention flags Signal's unreadable sources, failed interpretation and channel, but not a deliberate pause", () => {

@@ -131,6 +131,54 @@ test("content operations are served over the Package API socket", { timeout: 30_
   }
 });
 
+test("content mutations publish content_changed; reads announce only direct vault edits they notice", { timeout: 30_000 }, async () => {
+  const state = await mkdtemp(join(tmpdir(), "agentstack-content-events-"));
+  const env = { ...process.env, AGENTSTACK_STATE_DIR: state, AGENTSTACK_WIKI_PORT: "0", AGENTSTACK_WIKI_ARTIFACT_PORT: "0" };
+  const ctx = await api.createContext(env);
+  const notices: string[] = [];
+  const stop = await api.events!.start(ctx, (topic) => { notices.push(topic); });
+  const call = async (name: string, input: Record<string, unknown>) => {
+    const op = api.operations.find((item) => item.name === name);
+    assert.ok(op, name);
+    return op.output.parse(await op.call(ctx, op.input.parse(input))) as Record<string, any>;
+  };
+  const expectNotices = async (count: number, run: () => Promise<unknown>) => {
+    const before = notices.length;
+    await run();
+    assert.deepEqual(notices.slice(before), Array(count).fill("content_changed"));
+  };
+  try {
+    assert.deepEqual(Object.keys(api.events!.topics), ["content_changed"]);
+    await expectNotices(0, () => call("content_status", {}));
+    await expectNotices(1, () => call("collection_create", { slug: "notes", title: "Notes" }));
+    await expectNotices(0, () => call("collection_list", {}));
+    await expectNotices(1, () => call("collection_update", { collection: "notes", title: "Notes", description: "Kept" }));
+    let item: Record<string, any> = {};
+    await expectNotices(1, async () => { item = await call("item_put", { collection: "notes", name: "a.md", kind: "document", mediaType: "text/markdown", content: "# A" }); });
+    await expectNotices(0, () => call("item_list", {}));
+    await expectNotices(1, async () => { item = await call("item_move", { id: item.id, collection: null, expectedRevision: item.revision }); });
+    await expectNotices(0, () => assert.rejects(call("item_move", { id: item.id, collection: null, expectedRevision: item.revision + 5 }), /revision conflict/));
+    await expectNotices(1, () => call("item_delete", { id: item.id, expectedRevision: item.revision }));
+    await expectNotices(1, () => call("collection_delete", { collection: "notes" }));
+    await expectNotices(1, () => call("new", { title: "Evented" }));
+    await expectNotices(0, () => call("list", {}));
+    const read = await call("get", { ref: "evented" });
+    await expectNotices(1, () => call("document_update", { ref: "evented", expectedDigest: read.digest, content: "# Evented\n\nEdited." }));
+    await expectNotices(1, () => call("rm", { ref: "evented", reason: "test" }));
+    await expectNotices(1, () => call("restore", { ref: "evented" }));
+    await expectNotices(1, () => call("add", { title: "Captured", content: "# Captured" }));
+    // A direct edit is announced by the read that commits it, then never again.
+    await writeFile(join(state, "wiki", "vault", "evented.md"), "---\ntitle: Evented\n---\n# Evented\n\nDirect.\n");
+    await expectNotices(1, () => call("list", {}));
+    await expectNotices(0, () => call("list", {}));
+    stop?.();
+    await expectNotices(0, () => call("new", { title: "After stop" }));
+  } finally {
+    await api.closeContext(ctx);
+    await rm(state, { recursive: true, force: true });
+  }
+});
+
 test("collections store documents and binary media with fenced edits and shareable URLs", { timeout: 30_000 }, async () => {
   const state = await mkdtemp(join(tmpdir(), "agentstack-content-"));
   const env = { ...process.env, AGENTSTACK_STATE_DIR: state, AGENTSTACK_CONTENT_PORT: "0", AGENTSTACK_CONTENT_ARTIFACT_PORT: "0" };

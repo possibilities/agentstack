@@ -24,6 +24,7 @@ import { ObservationStatus } from "./usage-window";
 import { useNotifyActions } from "./notify-actions";
 import { useOperation, useStack, useStore, useWorkbench } from "./provider";
 import { useRoleActions } from "./role-actions";
+import { useContentActions } from "./content-actions";
 import { useVoice } from "./voice";
 import { accentBg, accentText, type Accent } from "./window";
 import { OperationBadges, RecoveryWarning } from "./windows";
@@ -308,6 +309,52 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         fields: signalFields(catalog, "attention_run_list"), body: <TraceViewer id={ref.id} state={run?.state} />, related,
         operations: { pkg: "signal", list: signalOperations(catalog, ["attention_trace_read", "attention_replay", "attention_feedback"]) } };
     }
+    case "document": {
+      const listed = state.contentDocuments.data?.find((item) => item.slug === ref.id);
+      const record = state.contentRecords[nodeKey(ref)] ?? listed;
+      if (!record) return null;
+      return {
+        eyebrow: "Vault document", accent: "content", title: String(record.title ?? ref.id), record,
+        fields: new Map(fieldsOf(findOperation(catalog, "content", "get")?.outputSchema).map((field) => [field.name, field])),
+        operations: { pkg: "content", list: recordOperations(catalog, "content").filter((operation) => ["get", "document_update", "links", "backlinks", "rm", "restore"].includes(operation.name)) },
+        controls: <ContentRecordControls target={{ kind: "document", slug: ref.id }} />,
+        events: state.events.filter((event) => event.pkg === "content"),
+      };
+    }
+    case "item": {
+      const record = state.contentRecords[nodeKey(ref)] ?? state.contentItems.data?.items.find((item) => item.id === ref.id);
+      if (!record) return null;
+      const collection = typeof record.collection === "string" ? record.collection : null;
+      return {
+        eyebrow: `Content item · ${String(record.kind)}`, accent: "content", title: String(record.name ?? ref.id), record,
+        fields: contentItemFields(catalog),
+        related: collection ? [{ ref: { kind: "collection", id: collection }, label: `${collection} · collection` }] : [],
+        operations: { pkg: "content", list: recordOperations(catalog, "content").filter((operation) => operation.name.startsWith("item_")) },
+        controls: record.kind === "document" ? <ContentRecordControls target={{ kind: "item", id: ref.id }} /> : undefined,
+        events: state.events.filter((event) => event.pkg === "content"),
+      };
+    }
+    case "collection": {
+      const record = state.contentRecords[nodeKey(ref)] ?? state.contentLibrary.data?.collections.find((item) => item.slug === ref.id);
+      if (!record) return null;
+      const count = state.contentLibrary.data?.counts.byCollection[ref.id];
+      return {
+        eyebrow: "Content collection", accent: "content", title: String(record.title ?? ref.id), record: count === undefined ? record : { ...record, items: count },
+        fields: new Map(fieldsOf(findOperation(catalog, "content", "collection_get")?.outputSchema).map((field) => [field.name, field])),
+        operations: { pkg: "content", list: recordOperations(catalog, "content").filter((operation) => operation.name.startsWith("collection_")) },
+        events: state.events.filter((event) => event.pkg === "content"),
+      };
+    }
+    case "artifact": {
+      const record = state.contentRecords[nodeKey(ref)] ?? state.contentArtifacts.data?.find((item) => item.name === ref.id);
+      if (!record) return null;
+      return {
+        eyebrow: "Artifact", accent: "content", title: String(record.name ?? ref.id), record,
+        fields: new Map(fieldsOf(findOperation(catalog, "content", "artifacts_show")?.outputSchema).map((field) => [field.name, field])),
+        operations: { pkg: "content", list: recordOperations(catalog, "content").filter((operation) => operation.name.startsWith("artifacts_")) },
+        events: state.events.filter((event) => event.pkg === "content"),
+      };
+    }
     case "package":
     case "operation":
       return null; // Reference destinations are rendered in the shared dock's reading mode.
@@ -323,6 +370,25 @@ function signalFields(catalog: PackageDoc[] | null, list: string, nested?: strin
   const entries = fieldsOf(findOperation(catalog, "signal", list)?.outputSchema).find((field) => field.name === "entries")?.children ?? [];
   const fields = nested ? entries.find((field) => field.name === nested)?.children ?? [] : entries;
   return new Map(fields.map((field) => [field.name, field]));
+}
+
+/** Field notes for Content items, from item_get's output. */
+function contentItemFields(catalog: PackageDoc[] | null): Map<string, Field> {
+  return new Map(fieldsOf(findOperation(catalog, "content", "item_get")?.outputSchema).map((field) => [field.name, field]));
+}
+
+/** Editing lives in the Content space; the inspector hands documents and document items to its editor. */
+function ContentRecordControls({ target }: { target: { kind: "document"; slug: string } | { kind: "item"; id: string } }) {
+  const actions = useContentActions();
+  const { goTo } = useWorkbench();
+  return (
+    <Button size="sm" variant="outline" className="w-fit" onClick={() => {
+      actions.open(target.kind === "document" ? target : { kind: "item", id: target.id, itemKind: "document" });
+      goTo(target.kind === "document" ? { kind: "document", id: target.slug } : { kind: "item", id: target.id });
+    }}>
+      <PencilIcon data-icon="inline-start" />Edit in Content
+    </Button>
+  );
 }
 
 const accountControls = new Set(["account_set_enabled", "account_remove", "account_login_replace"]);
@@ -370,6 +436,7 @@ function referencePackage(ref: NodeRef): string {
   if (ref.kind === "owner" || ref.kind === "child" || ref.kind === "resource" || ref.kind === "process") return "owner";
   if (ref.kind === "category" || ref.kind === "fragment" || ref.kind === "skill" || ref.kind === "mcp-server" || ref.kind === "trusted-project") return "roles";
   if (ref.kind === "notification") return "notify";
+  if (ref.kind === "document" || ref.kind === "collection" || ref.kind === "item" || ref.kind === "artifact") return "content";
   if (ref.kind === "worker-catalog") return "worker";
   if (ref.kind === "usage" || ref.kind === "usage-account" || ref.kind === "grok-bot-usage") return "usage";
   if (ref.kind === "signal" || ref.kind === "attention-item" || ref.kind === "attention-message" || ref.kind === "attention-run") return "signal";

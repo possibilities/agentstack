@@ -194,6 +194,9 @@ test("the api package serves structured documents for every workspace package", 
     assert.deepEqual(Object.keys(content.operations.find((op) => op.name === "content_status")?.outputSchema.properties ?? {}).sort(), ["artifactPath", "documentPath", "itemPath"]);
     assert.equal(JSON.stringify(content.operations.find((op) => op.name === "item_put")?.inputSchema).includes('"path"'), false);
     assert.equal(content.transports.find((transport) => transport.type === "mcp")?.supported, true);
+    assert.deepEqual(Object.keys(content.events), ["content_changed"]);
+    assert.equal(content.eventScope, null);
+    assert.equal(content.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
     const brain = found.get("brain") as PackageDoc;
     assert.ok(brain.operations.length > 0);
     assert.ok(brain.operations.every((operation) => operation.description && operation.inputSchema.type === "object" && operation.outputSchema.type === "object"));

@@ -2,7 +2,7 @@ import { accountLabels, workerAccountLabels } from "./derive";
 import type { StackState } from "./store";
 import { nodeKey, type NodeRef } from "./types";
 
-export type SpaceId = "fleet" | "accounts" | "lab" | "system" | "roles" | "inbox" | "signal";
+export type SpaceId = "fleet" | "accounts" | "lab" | "system" | "roles" | "inbox" | "signal" | "content";
 
 export const spaces: { id: SpaceId; title: string; description: string; key: string }[] = [
   { id: "fleet", title: "Fleet", description: "Bots and their controls", key: "1" },
@@ -12,6 +12,7 @@ export const spaces: { id: SpaceId; title: string; description: string; key: str
   { id: "roles", title: "Roles", description: "Instructions, skills, MCP servers and trusted projects every new Bot launches with", key: "5" },
   { id: "inbox", title: "Inbox", description: "Notifications to read, answer and dismiss", key: "6" },
   { id: "signal", title: "Signal", description: "What conversations ask of you, and how it was interpreted", key: "7" },
+  { id: "content", title: "Content", description: "Vault documents, collections, files and Artifacts", key: "8" },
 ];
 
 export const defaultSpace: SpaceId = "fleet";
@@ -74,6 +75,13 @@ export function homeOf(ref: NodeRef): NodeHome {
       return { kind: "space", space: "signal", window: "attention-messages" };
     case "attention-run":
       return { kind: "space", space: "signal", window: "attention-runs" };
+    case "document":
+      return { kind: "space", space: "content", window: "content-documents" };
+    case "collection":
+    case "item":
+      return { kind: "space", space: "content", window: "content-library" };
+    case "artifact":
+      return { kind: "space", space: "content", window: "content-artifacts" };
     case "package":
     case "operation":
       return { kind: "reference" };
@@ -94,8 +102,8 @@ export function parseSpacePath(pathname: string): SpaceId | null {
 }
 
 /** Human-readable reasons each space needs attention; an empty list means all quiet. Only "closed" channels count — idle and connecting are normal. */
-export function spaceAttention(state: Pick<StackState, "status" | "owner" | "resources" | "accounts" | "workerAccounts" | "bots" | "attempt" | "catalog" | "endpoints" | "notifyCounts" | "signalStatus">): Record<SpaceId | "api", string[]> {
-  const attention: Record<SpaceId | "api", string[]> = { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], api: [] };
+export function spaceAttention(state: Pick<StackState, "status" | "owner" | "resources" | "accounts" | "workerAccounts" | "bots" | "attempt" | "catalog" | "endpoints" | "notifyCounts" | "signalStatus"> & Partial<Pick<StackState, "contentUploads">>): Record<SpaceId | "api", string[]> {
+  const attention: Record<SpaceId | "api", string[]> = { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], api: [] };
   for (const bot of state.bots.data ?? []) if (bot.recoveryIssue) attention.fleet.push(`${bot.id} needs inspection`);
   const labels = accountLabels(state.accounts.data);
   for (const account of state.accounts.data ?? []) if (account.removing) attention.accounts.push(`${labels.get(account.id) ?? account.id} removal unfinished`);
@@ -116,6 +124,11 @@ export function spaceAttention(state: Pick<StackState, "status" | "owner" | "res
   const signal = state.signalStatus.data;
   for (const { source } of signal?.sourceErrors ?? []) attention.signal.push(`${source} unreadable`);
   if (signal?.lastInference?.error) attention.signal.push(`Last interpretation failed: ${signal.lastInference.error}`);
+  if (state.status.content === "closed") attention.content.push("content reconnecting");
+  for (const upload of state.contentUploads ?? []) {
+    if (upload.phase === "stalled") attention.content.push(`${upload.name} upload stalled`);
+    if (upload.phase === "failed") attention.content.push(`${upload.name} upload failed`);
+  }
   for (const name of ["auth", "usage", "worker"] as const) if (state.status[name] === "closed") attention.accounts.push(`${name} reconnecting`);
   for (const child of state.owner.data?.children ?? []) if (!child.running) attention.system.push(`${child.name} stopped`);
   if (state.status.owner === "closed") attention.system.push("owner reconnecting");
@@ -153,5 +166,7 @@ export function parseNodeKey(key: string): NodeRef | null {
   if (kind === "access-client" || kind === "access-pairing" || kind === "access-grant" || kind === "access-credential" || kind === "account" || kind === "worker-account" || kind === "worker-catalog" || kind === "usage-account" || kind === "child" || kind === "bot" || kind === "chat" || kind === "category" || kind === "fragment" || kind === "skill" || kind === "mcp-server" || kind === "trusted-project" || kind === "notification" || kind === "attention-item" || kind === "attention-message" || kind === "attention-run" || kind === "package" || kind === "resource" || kind === "process") {
     return { kind, id: rest };
   }
+  // A separate branch keeps each union small enough for TypeScript to check assignability.
+  if (kind === "document" || kind === "collection" || kind === "item" || kind === "artifact") return { kind, id: rest };
   return null;
 }

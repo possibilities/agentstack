@@ -161,9 +161,10 @@ export function pushVault(root: string): void {
 /** The single hook every command runs through. Agents edit vault files with
  * their own tools, so the only moment agentwiki can observe a change is after
  * a command has finished. */
-export function syncVault(root: string): void {
-  if (!commitVault(root)) return;
+export function syncVault(root: string): boolean {
+  if (!commitVault(root)) return false;
   pushVault(root);
+  return true;
 }
 
 export function gitReport(root: string): GitReport {

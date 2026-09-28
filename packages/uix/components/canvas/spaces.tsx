@@ -1,6 +1,6 @@
 "use client";
 
-import { ActivityIcon, BellIcon, BlocksIcon, BotIcon, ChartLineIcon, CpuIcon, FilePenLineIcon, FileTextIcon, FlaskConicalIcon, FolderLockIcon, GaugeIcon, HistoryIcon, InboxIcon, KeyRoundIcon, ListTreeIcon, MegaphoneIcon, MessageSquareWarningIcon, MessagesSquareIcon, PackageIcon, PlugIcon, RadarIcon, RadioIcon, ScanLineIcon, ScrollTextIcon, ServerIcon, SparklesIcon, SquareTerminalIcon, UserCogIcon } from "lucide-react";
+import { ActivityIcon, BellIcon, BlocksIcon, BotIcon, BoxesIcon, EyeIcon, LibraryIcon, NotebookTextIcon, ChartLineIcon, CpuIcon, FilePenLineIcon, FileTextIcon, FlaskConicalIcon, FolderLockIcon, GaugeIcon, HistoryIcon, InboxIcon, KeyRoundIcon, ListTreeIcon, MegaphoneIcon, MessageSquareWarningIcon, MessagesSquareIcon, PackageIcon, PlugIcon, RadarIcon, RadioIcon, ScanLineIcon, ScrollTextIcon, ServerIcon, SparklesIcon, SquareTerminalIcon, UserCogIcon } from "lucide-react";
 import type { ChatWindows } from "@/lib/stack/chat-windows";
 import type { SpaceId } from "@/lib/stack/spaces";
 import type { StackState } from "@/lib/stack/store";
@@ -20,6 +20,11 @@ import { RoleMcpServersWindow, RoleProjectsWindow, RoleSkillsWindow } from "./ro
 import { AccessWindow } from "./access-window";
 import { InboxWindow, NotificationWindow } from "./notify-windows";
 import { AttentionChangesWindow, AttentionMessagesWindow, AttentionRunsWindow, AttentionWindow, SignalWindow } from "./signal-windows";
+import { ContentArtifactsWindow } from "./content-artifacts";
+import { ContentDocumentsWindow } from "./content-documents";
+import { ContentEditorWindow } from "./content-editor";
+import { ContentLibraryWindow } from "./content-library";
+import { ContentPreviewWindow } from "./content-preview";
 
 export type WindowDef = {
   /** Globally unique across spaces; also used by Window and node destinations. */
@@ -111,6 +116,17 @@ export const spaceViews: Record<SpaceId, {
       { id: "attention-messages", title: "Messages", icon: MessagesSquareIcon, accent: "events", width: 460, height: 780, column: 2, fixed: true, element: <AttentionMessagesWindow /> },
       { id: "attention-runs", title: "Runs", icon: HistoryIcon, accent: "events", width: 500, height: 520, column: 3, fixed: true, element: <AttentionRunsWindow /> },
       { id: "attention-changes", title: "Changes", icon: ActivityIcon, accent: "events", width: 500, height: 420, column: 3, fixed: true, element: <AttentionChangesWindow /> },
+    ],
+  },
+  content: {
+    icon: NotebookTextIcon,
+    accent: "content",
+    windows: () => [
+      { id: "content-documents", title: "Documents", icon: NotebookTextIcon, accent: "content", width: 420, height: 560, column: 0, element: <ContentDocumentsWindow /> },
+      { id: "content-library", title: "Library", icon: LibraryIcon, accent: "content", width: 560, height: 520, column: 0, element: <ContentLibraryWindow /> },
+      { id: "content-editor", title: "Editor", icon: FilePenLineIcon, accent: "content", width: 540, height: 760, column: 1, element: <ContentEditorWindow /> },
+      { id: "content-preview", title: "Preview", icon: EyeIcon, accent: "content", width: 480, height: 760, column: 2, element: <ContentPreviewWindow /> },
+      { id: "content-artifacts", title: "Artifacts", icon: BoxesIcon, accent: "content", width: 400, height: 640, column: 3, element: <ContentArtifactsWindow /> },
     ],
   },
 };

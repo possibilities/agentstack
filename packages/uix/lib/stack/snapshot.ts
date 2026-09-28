@@ -1,6 +1,7 @@
 import { socketCall, socketPath, websocketPort } from "@agentstack/api";
 import { loadCatalog } from "./catalog";
 import { loadResources } from "./resources";
+import type { ContentOrigins } from "./types";
 import type { Account, Bot, BotSettings, Login, OwnerStatus, PackageDoc, Resource, RolePreview, RoleSnapshot, Snapshot, UsageSnapshot, VoiceCall, WorkerAccount, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
 
 const knownPackages = ["api", "auth", "bots", "brain", "browse", "content", "infer", "notify", "roles", "owner", "scrape", "signal", "usage", "worker"];
@@ -33,6 +34,26 @@ export function websocketEndpoints(catalog: PackageDoc[] | null): Record<string,
   return port === 0 ? {} : Object.fromEntries(knownPackages.map((name) => [name, `ws://127.0.0.1:${port}/websocket`]));
 }
 
+/**
+ * Content's loopback backends as this server's environment configures them, mirroring the content package's
+ * settings and defaults. Null when a port is chosen at random or a setting is invalid: the page then offers no links.
+ */
+export function contentOrigins(env: NodeJS.ProcessEnv): ContentOrigins | null {
+  if (env.AGENTSTACK_CONTENT_DOCUMENT_ORIGIN || env.AGENTSTACK_CONTENT_ARTIFACT_ORIGIN) {
+    const document = env.AGENTSTACK_CONTENT_DOCUMENT_ORIGIN;
+    const artifact = env.AGENTSTACK_CONTENT_ARTIFACT_ORIGIN;
+    return document && artifact && document !== artifact ? { document, artifact } : null;
+  }
+  const port = (primary: string, legacy: string, fallback: number) => {
+    const raw = env[primary] ?? env[legacy];
+    const value = raw === undefined ? fallback : Number(raw);
+    return raw === "" || !Number.isInteger(value) || value <= 0 || value > 65535 ? null : value;
+  };
+  const document = port("AGENTSTACK_CONTENT_PORT", "AGENTSTACK_WIKI_PORT", 8777);
+  const artifact = port("AGENTSTACK_CONTENT_ARTIFACT_PORT", "AGENTSTACK_WIKI_ARTIFACT_PORT", 8778);
+  return document && artifact && document !== artifact ? { document: `http://127.0.0.1:${document}`, artifact: `http://127.0.0.1:${artifact}` } : null;
+}
+
 export async function loadSnapshot(): Promise<Snapshot> {
   const [owner, resources, accounts, workerAccounts, workerRuntimes, workerSessions, login, workerLogins, bots, botDefaults, voice, role, rolePreview, catalog, usage] = await Promise.all([
     resource(() => call<OwnerStatus>("owner", "owner_status")),
@@ -51,5 +72,5 @@ export async function loadSnapshot(): Promise<Snapshot> {
     resource(() => loadCatalog((name, args) => call("api", name, args))),
     resource(() => call<UsageSnapshot>("usage", "usage_snapshot")),
   ]);
-  return { owner, resources, accounts, workerAccounts, workerRuntimes, workerSessions, login, workerLogins, bots, botDefaults, voice, role, rolePreview, catalog, usage, endpoints: websocketEndpoints(catalog.data) };
+  return { owner, resources, accounts, workerAccounts, workerRuntimes, workerSessions, login, workerLogins, bots, botDefaults, voice, role, rolePreview, catalog, usage, endpoints: websocketEndpoints(catalog.data), contentOrigins: contentOrigins(process.env) };
 }

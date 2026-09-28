@@ -19,7 +19,28 @@ import { startServer, type RunningServer } from "./src/serve.js";
 import { DEFAULT_ARTIFACT_PORT, DEFAULT_HOST, DEFAULT_PORT } from "./src/urls.js";
 import { ensureVault } from "./src/vault.js";
 
-type ContentContext = { command: Context; server: RunningServer; index: ReturnType<typeof openIndex>; store: ArtifactStore; collections: Collections };
+type ContentContext = { command: Context; server: RunningServer; index: ReturnType<typeof openIndex>; store: ArtifactStore; collections: Collections;
+  /** Set while the events transport is running; every successful content mutation calls it. */
+  changed?: () => void };
+
+export const topics = {
+  content_changed: "Content documents, items, collections or artifacts changed; re-read what you show. Direct edits to vault files are noticed on the next content operation.",
+} as const;
+
+/** Operations whose success changes what a reader sees. Blob stages are private upload state and change nothing visible. */
+const mutating = new Set(["collection_create", "collection_update", "collection_delete", "item_put", "item_move", "item_delete",
+  "document_update", "new", "add", "rm", "restore", "artifacts_rm", "artifacts_restore", "artifact_publish", "gc"]);
+
+/** Publish content_changed after each successful mutation, and after any operation that noticed a direct vault edit. */
+function announced<Op extends { name: string; call(ctx: ContentContext, input: any, invocation?: any): Promise<any> }>(op: Op): Op {
+  if (!mutating.has(op.name)) return op;
+  const call = op.call;
+  return { ...op, async call(ctx: ContentContext, input: unknown, invocation?: unknown) {
+    const result = await call(ctx, input, invocation);
+    ctx.changed?.();
+    return result;
+  } };
+}
 
 const collectionSchema = z.object({ slug: z.string(), title: z.string(), description: z.string(), createdAt: z.string(), updatedAt: z.string() });
 const itemSchema = z.object({ id: z.string(), collection: z.string().nullable(), name: z.string(), kind: z.enum(["document", "file", "image"]),
@@ -237,8 +258,9 @@ const commandOperations = agentTools(contract)
         try {
           const result = await handlers[invocation.name]!(ctx.command, invocation.flags);
           // As with the original vault, the next API call records edits made directly
-          // to vault files. The fresh AgentStack vault has no remote by default.
-          syncVault(ctx.command.vaultRoot);
+          // to vault files. The fresh AgentStack vault has no remote by default. A read
+          // that commits a direct edit announces it; mutations announce themselves.
+          if (syncVault(ctx.command.vaultRoot) && !mutating.has(tool.name)) ctx.changed?.();
           const data = portableData(result.data) as Record<string, unknown>;
           if (tool.name === "get") data.digest = createHash("sha256").update(readFileSync((result.data as { path: string }).path)).digest("hex");
           return data;
@@ -280,6 +302,8 @@ export function contentNetworkConfig(env: NodeJS.ProcessEnv): { host: string; do
   return { host, ...(documentOrigin ? { documentOrigin, artifactOrigin } : {}) };
 }
 
+type AnyContentOperation = PackageApi<ContentContext>["operations"][number];
+
 const documentRoutes = [
   { method: "GET/HEAD", path: "/", format: "text/html; charset=utf-8", description: "List rendered vault documents." },
   { method: "GET/HEAD", path: "/d/*", format: "text/html; charset=utf-8", description: "Render a vault document by slug." },
@@ -292,12 +316,12 @@ const artifactRoutes = [
   { method: "GET/HEAD", path: "/", format: "302 redirect", description: "Redirect to the document origin." },
 ] as const;
 
-export const api: PackageApi<ContentContext> = {
+export const api: PackageApi<ContentContext, keyof typeof topics> = {
   http: [
     { name: "documents", kind: "static", authentication: "none", description: "Same-user loopback backend only. Remote documents require the separate authenticated Access ingress.", routes: documentRoutes },
     { name: "artifacts", kind: "static", authentication: "none", description: "Same-user loopback artifact backend only. Access authenticates remote requests on a separate isolated origin.", routes: artifactRoutes },
   ],
-  operations: [
+  operations: ([
     operation({
       name: "content_status", description: "Read portable route templates for documents, sites and items. Item IDs and paths do not depend on a host, port, collection or filesystem location.",
       input: z.strictObject({}),
@@ -325,7 +349,11 @@ export const api: PackageApi<ContentContext> = {
           nextOffset: input.offset + bytes.length < item.bytes ? input.offset + bytes.length : null };
       } }),
     ...commandOperations,
-  ],
+  ] as AnyContentOperation[]).map(announced),
+  events: {
+    topics,
+    start(ctx, publish) { ctx.changed = () => publish("content_changed"); return () => { ctx.changed = undefined; }; },
+  },
   async createContext(env) {
     const home = homedir();
     const state = env.AGENTSTACK_STATE_DIR ?? join(home, ".local", "state", "agentstack");

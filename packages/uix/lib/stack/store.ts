@@ -2,6 +2,9 @@ import { loadCatalog } from "./catalog";
 import type { AccessSnapshot } from "./types";
 import { Channel } from "./channel";
 import { loadResources, mergeHistory } from "./resources";
+import { asText, itemKindFor, itemLimit, scopeKey, sha256Hex } from "./content";
+import { stageBytes, StageStalled } from "./content-upload";
+import type { ContentArtifact, ContentCollection, ContentDocument, ContentItem, ContentItemPage, ContentItemScope, ContentLibrary, ContentTag, ContentUpload } from "./types";
 import type { Account, AttentionItem, AttentionMessage, AttentionPage, AttentionRun, AttentionStatus, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, OwnerResources, OwnerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RoleLaunchPreview, RolePreview, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
 
 export type StackState = Snapshot & {
@@ -38,6 +41,23 @@ export type StackState = Snapshot & {
   signalGeneration: number;
   /** Attention records any Signal view has read, by ID, so links and the inspector resolve them. */
   signalRecords: SignalRecords;
+  /** Newest Vault documents, as `list` returns them. */
+  contentDocuments: Resource<ContentDocument[]>;
+  contentTags: Resource<ContentTag[]>;
+  /** Every collection plus item totals per Library scope. */
+  contentLibrary: Resource<ContentLibrary>;
+  /** The Library's loaded item pages for its current scope. */
+  contentItems: Resource<ContentItemPage>;
+  contentArtifacts: Resource<ContentArtifact[]>;
+  /** `content_status` route templates. */
+  contentRoutes: Resource<{ documentPath: string; artifactPath: string; itemPath: string }>;
+  /** Increments on every content invalidation, so windows re-run their own reads. */
+  contentGeneration: number;
+  /** Single records windows have read, by node key, so the inspector can show records outside the loaded lists. */
+  contentRecords: Record<string, Record<string, unknown>>;
+  contentUploads: ContentUpload[];
+  /** The Library's chosen item scope, which contentItems follows. */
+  contentItemScope: ContentItemScope;
 };
 
 export type SignalRecords = { items: Record<string, AttentionItem>; messages: Record<string, AttentionMessage>; runs: Record<string, AttentionRun> };
@@ -54,7 +74,15 @@ function isWorkerLoginState(value: unknown): value is WorkerLogin {
   return typeof value === "object" && value !== null && "status" in value && "account" in value && "provider" in value && "needsCode" in value;
 }
 
-type ResourceKey = "access" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "role" | "rolePreview" | "roleLaunch" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts" | "signalStatus";
+type ContentKey = "contentDocuments" | "contentTags" | "contentLibrary" | "contentItems" | "contentArtifacts" | "contentRoutes";
+const contentKeys: ContentKey[] = ["contentDocuments", "contentTags", "contentLibrary", "contentItems", "contentArtifacts", "contentRoutes"];
+/** Successful content writes change what the lists show; blob stages do not. */
+const contentWrites = new Set(["collection_create", "collection_update", "collection_delete", "item_put", "item_move", "item_delete",
+  "document_update", "new", "add", "rm", "restore", "artifacts_rm", "artifacts_restore", "artifact_publish", "gc"]);
+const itemPage = 100;
+export const contentDocumentLimit = 200;
+
+type ResourceKey = ContentKey | "access" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "role" | "rolePreview" | "roleLaunch" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts" | "signalStatus";
 
 const inferPage = 20;
 /** notification_list's maximum page size. */
@@ -94,6 +122,10 @@ export class StackStore {
   private historyDirty = new Set<string>();
   private notificationWatchers = new Map<string, number>();
   private olderInflight: Promise<void> | null = null;
+  private itemScope: ContentItemScope = undefined;
+  private itemPages = 1;
+  private uploadFiles = new Map<string, File>();
+  private uploadSeq = 0;
 
   constructor(snapshot: Snapshot) {
     this.state = {
@@ -106,6 +138,10 @@ export class StackStore {
       notifyCounts: { data: null, error: null, at: null }, notificationRecords: {},
       roleLaunch: { data: null, error: null, at: null },
       signalStatus: { data: null, error: null, at: null }, signalGeneration: 0, signalRecords: { items: {}, messages: {}, runs: {} },
+      contentDocuments: { data: null, error: null, at: null }, contentTags: { data: null, error: null, at: null },
+      contentLibrary: { data: null, error: null, at: null }, contentItems: { data: null, error: null, at: null },
+      contentArtifacts: { data: null, error: null, at: null }, contentRoutes: { data: null, error: null, at: null },
+      contentGeneration: 0, contentRecords: {}, contentUploads: [], contentItemScope: undefined,
     };
     this.serverState = this.state;
     for (const account of snapshot.workerAccounts.data ?? []) if (this.catalogAccountAvailable(account.id)) this.catalogAvailable.add(account.id);
@@ -177,6 +213,8 @@ export class StackStore {
     open("notify", notify, notify, ["notify_changed"]);
     open("api", () => this.refresh("catalog"));
     open("access", () => this.refresh("access"), () => this.refresh("access"), ["access_changed"]);
+    // content_changed is an invalidation notice; windows re-read what they show from contentGeneration.
+    open("content", () => this.invalidateContent(), () => this.invalidateContent(), ["content_changed"]);
     this.reconcileScoped();
   }
 
@@ -198,7 +236,9 @@ export class StackStore {
       // never replay the operation automatically.
       if (pkg === "bots" && ["bot_start", "bot_stop", "bot_assign", "bot_remove", "chat_open"].includes(name)) this.refresh("bots");
       if (pkg === "bots" && name === "bot_defaults_set") this.refresh("botDefaults");
-    }) : pkg === "access" && name !== "access_snapshot" ? request.finally(() => this.refresh("access")) : request);
+    }) : pkg === "access" && name !== "access_snapshot" ? request.finally(() => this.refresh("access"))
+      // A lost acknowledgement may still have written; re-read either way, never replay.
+      : pkg === "content" && contentWrites.has(name) ? request.finally(() => this.invalidateContent()) : request);
     if (pkg === "auth") {
       if (isWorkerLoginState(result)) this.set({ workerAttempts: { ...this.state.workerAttempts, [result.account]: result } });
       else if (isLoginState(result)) this.set({ attempt: result });
@@ -329,6 +369,94 @@ export class StackStore {
   }
 
   dismissAttempt = (): void => this.set({ attempt: null });
+
+  /** Re-read every content list and tell windows to re-read their own records. */
+  invalidateContent = (): void => {
+    this.set({ contentGeneration: this.state.contentGeneration + 1 });
+    for (const key of contentKeys) this.refresh(key);
+  };
+
+  /** Show all items (undefined), ungrouped items (null) or one collection's items in the Library. */
+  setContentItemScope = (scope: ContentItemScope): void => {
+    if (scopeKey(scope) === scopeKey(this.itemScope)) return;
+    this.itemScope = scope;
+    this.itemPages = 1;
+    this.set({ contentItemScope: scope });
+    this.refresh("contentItems");
+  };
+
+  loadMoreContentItems = (): void => {
+    if (this.state.contentItems.data?.nextOffset === null) return;
+    this.itemPages++;
+    this.refresh("contentItems");
+  };
+
+  /** Keep (or forget, with null) a single content record a window read, for the inspector. */
+  rememberContent = (key: string, record: Record<string, unknown> | null): void => {
+    const current = this.state.contentRecords[key];
+    if (record === null ? current === undefined : JSON.stringify(current) === JSON.stringify(record)) return;
+    const contentRecords = { ...this.state.contentRecords };
+    if (record === null) delete contentRecords[key]; else contentRecords[key] = record;
+    this.set({ contentRecords });
+  };
+
+  /** Upload files as Content items through resumable blob stages; progress and failures stay visible until dismissed. */
+  uploadContent = (files: File[], collection: string | null): void => {
+    const added: ContentUpload[] = files.map((file) => {
+      const key = `upload-${++this.uploadSeq}`;
+      this.uploadFiles.set(key, file);
+      return { key, name: file.name, bytes: file.size, received: 0, collection, phase: "hashing", error: null, itemId: null, stageId: null, retryable: true };
+    });
+    this.set({ contentUploads: [...this.state.contentUploads, ...added] });
+    // One file at a time keeps chunks from competing for the one WebSocket.
+    void added.reduce((chain, upload) => chain.then(() => this.runUpload(upload.key)), Promise.resolve());
+  };
+
+  /** Resume a stalled upload or retry one that failed before it could have been stored. */
+  resumeUpload = (key: string): void => {
+    const upload = this.state.contentUploads.find((item) => item.key === key);
+    if (!upload || !this.uploadFiles.has(key) || !upload.retryable || !["stalled", "failed"].includes(upload.phase)) return;
+    void this.runUpload(key);
+  };
+
+  dismissUpload = (key: string): void => {
+    this.uploadFiles.delete(key);
+    this.set({ contentUploads: this.state.contentUploads.filter((item) => item.key !== key) });
+  };
+
+  private patchUpload(key: string, patch: Partial<ContentUpload>): void {
+    this.set({ contentUploads: this.state.contentUploads.map((item) => item.key === key ? { ...item, ...patch } : item) });
+  }
+
+  private async runUpload(key: string): Promise<void> {
+    const file = this.uploadFiles.get(key);
+    const upload = this.state.contentUploads.find((item) => item.key === key);
+    if (!file || !upload) return;
+    let storing = false;
+    try {
+      if (file.size > itemLimit) throw new Error("Larger than the 50 MiB item limit");
+      this.patchUpload(key, { phase: "hashing", error: null });
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const digest = await sha256Hex(bytes);
+      this.patchUpload(key, { phase: "uploading" });
+      const blob = await stageBytes((name, args) => this.call("content", name, args), bytes, digest,
+        (received, stageId) => this.patchUpload(key, { received, stageId }));
+      let { kind, mediaType } = itemKindFor(file.name, file.type);
+      // Documents must be UTF-8; other text is kept as a file.
+      if (kind === "document" && asText(bytes.subarray(0, Math.min(bytes.length, 65_536))) === null) kind = "file";
+      storing = true;
+      this.patchUpload(key, { phase: "storing", received: file.size });
+      const item = await this.call<ContentItem>("content", "item_put", { collection: upload.collection, name: file.name, kind, mediaType, blob });
+      this.uploadFiles.delete(key);
+      this.patchUpload(key, { phase: "done", itemId: item.id });
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      if (error instanceof StageStalled) this.patchUpload(key, { phase: "stalled", error: text, received: error.received, stageId: error.stageId });
+      // item_put is not idempotent: after a lost response the item may exist, so never retry blindly.
+      else if (storing && !/already exists|not found|must be|exceeds/.test(text)) this.patchUpload(key, { phase: "failed", error: `${text}. It may have been stored; check the Library.`, retryable: false });
+      else this.patchUpload(key, { phase: "failed", error: text, retryable: !storing || /already exists|not found/.test(text) });
+    }
+  }
 
   reloadUsage = (): void => this.refresh("usage");
 
@@ -471,6 +599,8 @@ export class StackStore {
         if (key === "notifications" && next.data && (next.data as NotificationPages).filter !== this.state.notificationFilter) { this.dirty.add(key); return; }
         if (key === "notifications" && next.data) this.upsertNotifications((next.data as NotificationPages).entries);
         const changeSeq = key === "signalStatus" ? this.state.signalStatus.data?.changeSeq : undefined;
+        // A Library scope change while a page read was in flight: read again for the new scope.
+        if (key === "contentItems" && next.data && scopeKey((next.data as ContentItemPage).scope) !== scopeKey(this.itemScope)) { this.dirty.add(key); return; }
         this.set({ [key]: next } as Partial<StackState>);
         if (key === "signalStatus" && next.data && (next.data as AttentionStatus).changeSeq !== changeSeq) this.bumpSignal();
         if (key === "login") this.reconcileAttempt();
@@ -515,7 +645,39 @@ export class StackStore {
       case "inferModels": return call<{ accounts: InferModelObservation[] }>("infer", "infer_model_list", {}).then((result) => result.accounts);
       case "notifications": return this.loadNotifications();
       case "notifyCounts": return call<NotificationCounts>("notify", "notification_counts");
+      case "contentDocuments": return call<{ documents: ContentDocument[] }>("content", "list", { limit: contentDocumentLimit }).then((result) => result.documents);
+      case "contentTags": return call<{ tags: ContentTag[] }>("content", "tags", {}).then((result) => result.tags);
+      case "contentArtifacts": return call<{ artifacts: ContentArtifact[] }>("content", "artifacts_list", {}).then((result) => result.artifacts);
+      case "contentRoutes": return call<{ documentPath: string; artifactPath: string; itemPath: string }>("content", "content_status", {});
+      case "contentLibrary": return this.loadLibrary(call);
+      case "contentItems": return this.loadItems(call);
     }
+  }
+
+  private async loadLibrary(call: <T>(pkg: string, name: string, args?: Record<string, unknown>) => Promise<T>): Promise<ContentLibrary> {
+    const collections: ContentCollection[] = [];
+    for (let offset: number | null = 0; offset !== null && collections.length < 2_000;) {
+      const page: { collections: ContentCollection[]; nextOffset: number | null } = await call("content", "collection_list", { limit: 200, offset });
+      collections.push(...page.collections);
+      offset = page.nextOffset;
+    }
+    const total = (collection?: string | null) => call<{ total: number }>("content", "item_list", { ...(collection !== undefined ? { collection } : {}), limit: 1 }).then((page) => page.total);
+    const [all, ungrouped, ...counts] = await Promise.all([total(), total(null), ...collections.map((collection) => total(collection.slug).catch(() => 0))]);
+    return { collections, counts: { all, ungrouped, byCollection: Object.fromEntries(collections.map((collection, index) => [collection.slug, counts[index]])) } };
+  }
+
+  private async loadItems(call: <T>(pkg: string, name: string, args?: Record<string, unknown>) => Promise<T>): Promise<ContentItemPage> {
+    const scope = this.itemScope;
+    const items: ContentItem[] = [];
+    let total = 0;
+    let nextOffset: number | null = 0;
+    for (let page = 0; page < this.itemPages && nextOffset !== null; page++) {
+      const result: { items: ContentItem[]; total: number; nextOffset: number | null } = await call("content", "item_list", { ...(scope !== undefined ? { collection: scope } : {}), limit: itemPage, offset: nextOffset });
+      items.push(...result.items);
+      total = result.total;
+      nextOffset = result.nextOffset;
+    }
+    return { scope, items, total, nextOffset };
   }
 
   /**
