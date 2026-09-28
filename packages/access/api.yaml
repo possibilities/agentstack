@@ -7,4 +7,4 @@ websocket:
   events: all
   description: Local System Access controls and invalidations.
 http:
-  description: Dedicated tailnet-only pairing and scoped Brain and Content ingress. No internal MCP forwarding.
+  description: Dedicated tailnet-only pairing, scoped Brain and Content ingress, and separately authenticated remote UIX origin. No internal MCP forwarding.

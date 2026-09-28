@@ -192,6 +192,7 @@ function feedbackAuthor(): string {
 /** Attributed evaluation evidence. The key is fixed while the dialog is open, so a retried submission never records twice. */
 function FeedbackDialog({ open, onOpenChange, messageId, runId, subject }: { open: boolean; onOpenChange(open: boolean): void; messageId: string; runId: string | null; subject: string }) {
   const store = useStore();
+  const { remote } = useStack();
   const formId = useId();
   const [id, setId] = useState(() => crypto.randomUUID());
   const [kind, setKind] = useState<AttentionFeedbackKind>("correction");
@@ -253,7 +254,7 @@ function FeedbackDialog({ open, onOpenChange, messageId, runId, subject }: { ope
         </form>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button type="submit" form={formId} disabled={pending || !body.trim() || !author.trim()}>
+          <Button type="submit" form={formId} disabled={pending || !body.trim() || !author.trim() || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined}>
             {pending ? <Spinner data-icon="inline-start" /> : null}{error ? "Retry" : "Record"}
           </Button>
         </DialogFooter>
@@ -276,7 +277,7 @@ const jobOrder: Array<{ state: string; label: string; className: string }> = [
 /** Processing control, health, backlog and the inference defaults later interpretations use. */
 export function SignalWindow() {
   const store = useStore();
-  const { signalStatus, status, endpoints } = useStack();
+  const { signalStatus, status, endpoints, remote } = useStack();
   const data = signalStatus.data;
   const [confirm, setConfirm] = useState(false);
   const [pending, setPending] = useState(false);
@@ -314,7 +315,7 @@ export function SignalWindow() {
               </span>
             </div>
             {pending ? <Spinner /> : null}
-            <Switch checked={data.enabled} disabled={!connected || pending} aria-label="Interpret new messages"
+            <Switch checked={data.enabled} disabled={!connected || pending || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} aria-label="Interpret new messages"
               onCheckedChange={(checked) => { if (checked) setConfirm(true); else void control(false); }} />
           </div>
           {error ? <p role="alert" className="text-[0.72rem] text-destructive">{error}</p> : null}
@@ -373,7 +374,7 @@ export function SignalWindow() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <Button onClick={() => { setConfirm(false); void control(true); }}>{data?.activatedAt ? "Resume" : "Start"}</Button>
+            <Button disabled={remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => { setConfirm(false); void control(true); }}>{data?.activatedAt ? "Resume" : "Start"}</Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -385,7 +386,7 @@ export function SignalWindow() {
 function DefaultsSection() {
   const store = useStore();
   const formId = useId();
-  const { signalStatus, status, accounts, inferModels } = useStack();
+  const { signalStatus, status, accounts, inferModels, remote } = useStack();
   const settings = signalStatus.data?.settings;
   const labels = accountLabels(accounts.data);
   const [draft, setDraft] = useState<{ revision: number; model: string; reasoningEffort: InferEffort; accountId: string | null } | null>(null);
@@ -472,7 +473,7 @@ function DefaultsSection() {
         {dirty ? (
           <div className="flex justify-end gap-1.5">
             <Button type="button" size="xs" variant="ghost" onClick={() => setDraft(null)}>Discard</Button>
-            <Button type="submit" size="xs" disabled={saving || !connected}>{saving ? <Spinner data-icon="inline-start" /> : null}Save defaults</Button>
+            <Button type="submit" size="xs" disabled={saving || !connected || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined}>{saving ? <Spinner data-icon="inline-start" /> : null}Save defaults</Button>
           </div>
         ) : null}
       </form>
@@ -554,7 +555,7 @@ export function AttentionWindow() {
 
 function AttentionCard({ item, quiet = false }: { item: AttentionItem; quiet?: boolean }) {
   const { select } = useWorkbench();
-  const { signalRecords } = useStack();
+  const { signalRecords, remote } = useStack();
   const [feedback, setFeedback] = useState(false);
   const inferred = item.attention.basis === "inferred";
   const reason = item.attention.reason;
@@ -608,7 +609,7 @@ function AttentionCard({ item, quiet = false }: { item: AttentionItem; quiet?: b
         <OpenChatButton conversation={item.conversation} />
         <Button type="button" size="xs" variant="ghost" onClick={() => select({ kind: "attention-message", id: item.messageId })}><FileSearchIcon data-icon="inline-start" />Source</Button>
         <Button type="button" size="xs" variant="ghost" onClick={() => select({ kind: "attention-run", id: item.runId })}><HistoryIcon data-icon="inline-start" />Trace</Button>
-        <Button type="button" size="xs" variant="ghost" onClick={() => setFeedback(true)}><MessageSquarePlusIcon data-icon="inline-start" />Feedback</Button>
+        <Button type="button" size="xs" variant="ghost" disabled={remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => setFeedback(true)}><MessageSquarePlusIcon data-icon="inline-start" />Feedback</Button>
       </div>
       <FeedbackDialog open={feedback} onOpenChange={setFeedback} messageId={item.messageId} runId={item.runId} subject={`“${item.summary}”`} />
     </NodeCard>
@@ -839,7 +840,7 @@ function Pre({ children, className }: { children: React.ReactNode; className?: s
 /** A run's exact evaluation example, read as a revision-fenced export. Also the inspector body for a run. */
 export function TraceViewer({ id, state }: { id: string; state?: string }) {
   const store = useStore();
-  const { signalStatus } = useStack();
+  const { signalStatus, remote } = useStack();
   const [tab, setTab] = useState<TraceTab>("annotation");
   const [replay, setReplay] = useState<{ requestId: string; pending: boolean; error: string | null } | null>(null);
   const [feedback, setFeedback] = useState(false);
@@ -956,8 +957,8 @@ export function TraceViewer({ id, state }: { id: string; state?: string }) {
       <div className="flex flex-wrap items-center gap-1.5 pt-1">
         <span className="min-w-0 flex-1 truncate font-mono text-[0.62rem] text-muted-foreground" title={body?.requestId}>request {body?.requestId ?? "—"}</span>
         {body?.requestId ? <CopyButton value={body.requestId} label="request ID" className="opacity-100" /> : null}
-        <Button type="button" size="xs" variant="ghost" onClick={() => setFeedback(true)}><MessageSquarePlusIcon data-icon="inline-start" />Feedback</Button>
-        <Button type="button" size="xs" variant="outline" disabled={data.run.state === "running"} onClick={() => setReplay({ requestId: crypto.randomUUID(), pending: false, error: null })}>
+        <Button type="button" size="xs" variant="ghost" disabled={remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => setFeedback(true)}><MessageSquarePlusIcon data-icon="inline-start" />Feedback</Button>
+        <Button type="button" size="xs" variant="outline" disabled={data.run.state === "running" || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => setReplay({ requestId: crypto.randomUUID(), pending: false, error: null })}>
           <RotateCcwIcon data-icon="inline-start" />Replay…
         </Button>
       </div>
@@ -1067,6 +1068,7 @@ export function AttentionChangesWindow() {
 /** Inspector body for a semantic item: its handoffs to the conversation, source, trace and feedback. */
 export function AttentionItemDetail({ item }: { item: AttentionItem }) {
   const { select } = useWorkbench();
+  const { remote } = useStack();
   const [feedback, setFeedback] = useState(false);
   return (
     <div className="flex flex-col gap-2">
@@ -1076,7 +1078,7 @@ export function AttentionItemDetail({ item }: { item: AttentionItem }) {
         <OpenChatButton conversation={item.conversation} />
         <Button type="button" size="xs" variant="outline" onClick={() => select({ kind: "attention-message", id: item.messageId })}><FileSearchIcon data-icon="inline-start" />Source</Button>
         <Button type="button" size="xs" variant="outline" onClick={() => select({ kind: "attention-run", id: item.runId })}><HistoryIcon data-icon="inline-start" />Trace</Button>
-        <Button type="button" size="xs" variant="outline" onClick={() => setFeedback(true)}><MessageSquarePlusIcon data-icon="inline-start" />Feedback</Button>
+        <Button type="button" size="xs" variant="outline" disabled={remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => setFeedback(true)}><MessageSquarePlusIcon data-icon="inline-start" />Feedback</Button>
       </div>
       <p className="text-[0.68rem] text-pretty text-muted-foreground">State follows the conversation: a reply that answers this resolves it. Feedback never does.</p>
       <FeedbackDialog open={feedback} onOpenChange={setFeedback} messageId={item.messageId} runId={item.runId} subject={`“${item.summary}”`} />

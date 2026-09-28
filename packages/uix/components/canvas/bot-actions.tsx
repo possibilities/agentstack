@@ -45,10 +45,10 @@ export function BotActionsProvider({ children }: { children: React.ReactNode }) 
 
 export function BotWindowActions() {
   const open = useBotActions();
-  const { status } = useStack();
+  const { status, remote } = useStack();
   return <>
     <Tooltip>
-      <TooltipTrigger render={<Button variant="ghost" size="icon-xs" aria-label="Edit Bot defaults" disabled={status.bots !== "open"} onClick={() => open("defaults")} />}>
+       <TooltipTrigger render={<Button variant="ghost" size="icon-xs" aria-label="Edit Bot defaults" title={remote?.scope === "view" ? "Requires uix:control" : undefined} disabled={status.bots !== "open" || remote?.scope === "view"} onClick={() => open("defaults")} />}>
         <Settings2Icon />
       </TooltipTrigger>
       <TooltipContent side="bottom">Defaults</TooltipContent>
@@ -59,27 +59,27 @@ export function BotWindowActions() {
 /** The Bots window's footer creation button. */
 export function CreateBotButton() {
   const open = useBotActions();
-  const { status } = useStack();
-  return <Button size="sm" variant="ghost" className={footerButton} disabled={status.bots !== "open"} onClick={() => open("create")}><PlusIcon data-icon="inline-start" />Create Bot</Button>;
+  const { status, remote } = useStack();
+  return <Button size="sm" variant="ghost" className={footerButton} disabled={status.bots !== "open" || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => open("create")}><PlusIcon data-icon="inline-start" />Create Bot</Button>;
 }
 
 /** A Bot's actions: the lifecycle step it needs next, a call, its tools, and the rest in a menu. */
 export function BotLifecycleControls({ bot }: { bot: Bot }) {
   const open = useBotActions();
   const voice = useVoice();
-  const { status } = useStack();
+  const { status, remote } = useStack();
   const offline = status.bots !== "open";
   const running = bot.state === "running";
   const onCall = voice.botId === bot.id;
   const callReason = voice.callable(bot);
   return <div className="flex items-center gap-1.5">
-    <Button size="xs" variant={running ? "outline" : "secondary"} disabled={offline || Boolean(bot.recoveryIssue)} onClick={() => open(running ? "stop" : "start", bot)}>
+    <Button size="xs" variant={running ? "outline" : "secondary"} disabled={offline || Boolean(bot.recoveryIssue) || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => open(running ? "stop" : "start", bot)}>
       {running ? <SquareIcon data-icon="inline-start" /> : <PlayIcon data-icon="inline-start" />}{running ? "Stop…" : "Start…"}
     </Button>
     {!onCall ? (
       <Tooltip>
         <TooltipTrigger render={<span tabIndex={callReason ? 0 : -1} className="inline-flex rounded-md focus-visible:outline-2 focus-visible:outline-ring" />}>
-          <Button size="xs" variant="outline" disabled={callReason !== null || voice.busy} onClick={() => voice.dial(bot.id)}><PhoneIcon data-icon="inline-start" />Call</Button>
+          <Button size="xs" variant="outline" disabled={callReason !== null || voice.busy || Boolean(remote)} title={remote ? "Voice calls are local-only" : undefined} onClick={() => voice.dial(bot.id)}><PhoneIcon data-icon="inline-start" />Call</Button>
         </TooltipTrigger>
         <TooltipContent side="bottom">{callReason ?? "Call main thread"}</TooltipContent>
       </Tooltip>
@@ -92,11 +92,11 @@ export function BotLifecycleControls({ bot }: { bot: Bot }) {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-44">
         <DropdownMenuGroup>
-          <DropdownMenuItem disabled={offline} onClick={() => open("assign", bot)}><UserRoundIcon />Assign account…</DropdownMenuItem>
+          <DropdownMenuItem disabled={offline || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => open("assign", bot)}><UserRoundIcon />Assign account…</DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
-          <DropdownMenuItem variant="destructive" disabled={offline} onClick={() => open("remove", bot)}><Trash2Icon />Remove…</DropdownMenuItem>
+          <DropdownMenuItem variant="destructive" disabled={offline || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => open("remove", bot)}><Trash2Icon />Remove…</DropdownMenuItem>
         </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>

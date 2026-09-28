@@ -418,6 +418,14 @@ test("remote content listeners require two distinct public origins before creati
   assert.match(await refusedStartup({ AGENTSTACK_CONTENT_DOCUMENT_ORIGIN: "https:\/\/same.example", AGENTSTACK_CONTENT_ARTIFACT_ORIGIN: "https:\/\/same.example" }), /origins must differ/);
 });
 
+test("remote UIX requires an exact HTTPS certificate origin and three distinct Access ports before creating sockets", { timeout: 30_000 }, async () => {
+  const base = { AGENTSTACK_ACCESS_HOST: "100.80.0.1", AGENTSTACK_ACCESS_TLS_KEY: "/operator/key", AGENTSTACK_ACCESS_TLS_CERT: "/operator/cert" };
+  assert.match(await refusedStartup({ ...base, AGENTSTACK_ACCESS_UIX_PORT: "8945" }), /AGENTSTACK_ACCESS_UIX_ORIGIN/);
+  assert.match(await refusedStartup({ ...base, AGENTSTACK_ACCESS_UIX_ORIGIN: "http://machine.ts.net:8945" }), /AGENTSTACK_ACCESS_UIX_ORIGIN/);
+  assert.match(await refusedStartup({ ...base, AGENTSTACK_ACCESS_UIX_ORIGIN: "https://machine.ts.net:8945/path" }), /AGENTSTACK_ACCESS_UIX_ORIGIN/);
+  assert.match(await refusedStartup({ ...base, AGENTSTACK_ACCESS_UIX_ORIGIN: "https://machine.ts.net:8945", AGENTSTACK_ACCESS_UIX_PORT: "8943" }), /distinct valid ports/);
+});
+
 test("Brain share rejects collisions with owner listeners before creating sockets", { timeout: 30_000 }, async () => {
   for (const setting of ["AGENTSTACK_MCP_PORT", "AGENTSTACK_WEBSOCKET_PORT", "AGENTSTACK_INSPECTOR_PORT", "AGENTSTACK_UIX_PORT", "AGENTSTACK_CONTENT_PORT", "AGENTSTACK_CONTENT_ARTIFACT_PORT"]) {
     const port = String(await availablePort());

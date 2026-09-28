@@ -1,10 +1,19 @@
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage, type Server } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import { listPackages, socketPath, websocketPort, workspaceRoot } from "./workspace.js";
 import { socketCall, socketSubscribe, type SocketSubscription } from "./socket.js";
 import { exposeCatalog, socketExposure, type Exposure, type SocketCatalog } from "./exposure.js";
 
 export type ServedWebSocket = { url: string; close(): Promise<void> };
+/** An ingress-authenticated connection. The gateway still resolves live socket
+ * metadata and intersects this principal's policy with WebSocket exposure. */
+export type RemoteWebSocketAdmission = {
+  select(pkg: string, exposure: Exposure, catalog: SocketCatalog): Exposure;
+  check(): void;
+  mutation(pkg: string, operation: string): void;
+  onChange(close: () => void): () => void;
+  expiresAt: number;
+};
 
 // Match the socket's bounded JSON allowance for escaped inline content.
 const maxPayload = 4_000_000;
@@ -23,7 +32,9 @@ const forwardTimeouts = new Map([
   ["bots/chat_message_changes", 30_000],
 ]);
 
-export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: string; port?: number } = {}): Promise<ServedWebSocket> {
+export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: string; port?: number;
+  server?: Server; authenticate?: (request: IncomingMessage) => Promise<RemoteWebSocketAdmission> } = {}): Promise<ServedWebSocket> {
+  if (options.server && !options.authenticate) throw new Error("An attached WebSocket server requires authenticated admission");
   const env = options.env ?? process.env;
   const port = options.port ?? websocketPort(env);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("WebSocket port must be an integer from 0 to 65535");
@@ -31,19 +42,24 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
   if ((await listPackages(root)).every((item) => !item.config.websocket)) throw new Error("no Package APIs configure websocket");
 
   const clients = new Set<WebSocket>();
-  const admitted = new WeakMap<WebSocket, Map<string, Exposure>>();
+  const admitted = new WeakMap<WebSocket, { operations: Map<string, Exposure>; remote?: RemoteWebSocketAdmission }>();
   const wss = new WebSocketServer({ noServer: true, maxPayload });
   let closing: Promise<void> | undefined;
   wss.on("connection", (client) => {
-    const operations = admitted.get(client);
+    const admission = admitted.get(client);
+    const operations = admission?.operations;
     clients.add(client);
     if (!operations) { client.terminate(); return; }
     const controller = new AbortController();
     const subscriptions = new Map<string, { name: string; current?: SocketSubscription; chain: Promise<void>; tasks: number }>();
     let stopped = false;
+    const unsubscribe = admission.remote?.onChange(() => { try { admission.remote?.check(); } catch { client.terminate(); } });
+    const expiry = admission.remote ? setTimeout(() => client.terminate(), Math.max(0, admission.remote.expiresAt - Date.now())) : null;
     const stop = () => {
       if (stopped) return;
       stopped = true;
+      unsubscribe?.();
+      if (expiry) clearTimeout(expiry);
       clients.delete(client);
       controller.abort();
       for (const entry of subscriptions.values()) void entry.current?.close();
@@ -52,6 +68,7 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
     client.on("close", stop);
     client.on("error", stop);
     client.on("message", (raw, binary) => {
+      try { admission.remote?.check(); } catch { client.terminate(); return; }
       if (binary) { send(client, { id: null, error: { message: "binary frames are not supported" } }); return; }
       let message: { id?: unknown; method?: unknown; params?: unknown };
       try {
@@ -147,8 +164,10 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
               throw new Error(`operation ${String(operation)} is not available over websocket`);
             if (message.params && typeof message.params === "object" && "resultFormat" in message.params)
               throw new Error("MCP result presentation is not available over websocket");
+            admission.remote?.mutation(name, operation);
           }
           const result = await socketCall(socketPath(name, env), message.method as "tools/list" | "tools/call", message.params, { signal: controller.signal, timeoutMs });
+          admission.remote?.check();
           if (message.method === "tools/list") return exposeCatalog(result as SocketCatalog, operations.get(name)!);
           return result;
         })().then(respond, fail);
@@ -158,30 +177,35 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
     });
   });
 
-  const http = createServer((_req, res) => res.writeHead(404).end());
-  http.on("upgrade", (request, socket, head) => {
+  const http = options.server ?? createServer((_req, res) => res.writeHead(404).end());
+  const upgrade = (request: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer) => {
     const address = http.address();
     if (request.url !== "/websocket") { socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.destroy(); return; }
-    if (!address || typeof address === "string" || ![`127.0.0.1:${address.port}`, `localhost:${address.port}`].includes(request.headers.host ?? "")
-      || !originAllowed(request.headers.origin, env.AGENTSTACK_WEBSOCKET_ORIGIN)) {
+    if (!options.server && (!address || typeof address === "string" || ![`127.0.0.1:${address.port}`, `localhost:${address.port}`].includes(request.headers.host ?? "")
+      || !originAllowed(request.headers.origin, env.AGENTSTACK_WEBSOCKET_ORIGIN))) {
       socket.write("HTTP/1.1 403 Forbidden\r\n\r\n"); socket.destroy(); return;
     }
     void (async () => {
       let operations: Map<string, Exposure>;
+      let remote: RemoteWebSocketAdmission | undefined;
       try {
+        remote = await options.authenticate?.(request);
         const configured = await listPackages(root);
         operations = new Map(await Promise.all(configured.filter((item) => item.config.websocket).map(async (item) =>
-          [item.config.name, (await socketExposure(item.config, "websocket", env)).exposure] as const)));
+          { const { exposure, catalog } = await socketExposure(item.config, "websocket", env);
+            return [item.config.name, remote ? remote.select(item.config.name, exposure, catalog) : exposure] as const; })));
+        // Access may revoke or narrow the grant while live metadata is loading.
+        remote?.check();
       } catch (error) {
         console.error(`WebSocket configuration unavailable: ${error instanceof Error ? error.message : String(error)}`);
-        if (!socket.destroyed) { socket.write("HTTP/1.1 503 Service Unavailable\r\n\r\n"); socket.destroy(); }
+        if (!socket.destroyed) { socket.write(`HTTP/1.1 ${options.server ? "403 Forbidden" : "503 Service Unavailable"}\r\n\r\n`); socket.destroy(); }
         return;
       }
       if (closing || socket.destroyed) { socket.destroy(); return; }
       if (operations.size === 0) { socket.write("HTTP/1.1 503 Service Unavailable\r\n\r\n"); socket.destroy(); return; }
       try {
         wss.handleUpgrade(request, socket, head, (client) => {
-          admitted.set(client, operations);
+          admitted.set(client, { operations, remote });
           wss.emit("connection", client, request);
         });
       } catch (error) {
@@ -189,8 +213,9 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
         socket.destroy();
       }
     })();
-  });
-  await new Promise<void>((resolve, reject) => {
+  };
+  http.on("upgrade", upgrade);
+  if (!options.server) await new Promise<void>((resolve, reject) => {
     http.once("error", reject);
     http.listen(port, "127.0.0.1", () => { http.off("error", reject); resolve(); });
   });
@@ -202,7 +227,8 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
       closing ??= (async () => {
         for (const client of clients) client.terminate();
         await new Promise<void>((resolve, reject) => wss.close((error) => error ? reject(error) : resolve()));
-        await new Promise<void>((resolve, reject) => http.close((error) => error ? reject(error) : resolve()));
+        http.off("upgrade", upgrade);
+        if (!options.server) await new Promise<void>((resolve, reject) => http.close((error) => error ? reject(error) : resolve()));
       })();
       return closing;
     },

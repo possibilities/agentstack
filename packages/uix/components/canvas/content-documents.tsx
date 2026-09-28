@@ -26,7 +26,7 @@ type Row = { slug: string; title: string; tags: string[]; snippet?: string; upda
 
 /** Vault documents: FTS search with snippets, otherwise newest first; tags narrow either. */
 export function ContentDocumentsWindow() {
-  const { contentDocuments, contentTags, status, endpoints } = useStack();
+  const { contentDocuments, contentTags, status, endpoints, remote } = useStack();
   const actions = useContentActions();
   const [query, setQuery] = useState("");
   const [tag, setTag] = useState<string | null>(null);
@@ -45,11 +45,11 @@ export function ContentDocumentsWindow() {
     <Window id="content-documents" title="Documents" subtitle="content · vault" icon={NotebookTextIcon} accent="content"
       count={contentDocuments.data?.length ?? null} status={status.content} endpoint={endpoints.content} updatedAt={contentDocuments.at} error={error}
       actions={
-        <Button size="icon-sm" variant="ghost" className="text-muted-foreground" aria-label="Restore a removed document" title="Restore a removed document"
-          disabled={!connected} onClick={() => actions.restoreByName("document")}><ArchiveRestoreIcon /></Button>
+        <Button size="icon-sm" variant="ghost" className="text-muted-foreground" aria-label="Restore a removed document" title={remote?.scope === "view" ? "Requires uix:control" : "Restore a removed document"}
+          disabled={!connected || remote?.scope === "view"} onClick={() => actions.restoreByName("document")}><ArchiveRestoreIcon /></Button>
       }
       footer={
-        <Button size="sm" variant="ghost" className={footerButton} disabled={!connected} onClick={() => actions.edit({ kind: "new-document" })}>
+        <Button size="sm" variant="ghost" className={footerButton} disabled={!connected || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => actions.edit({ kind: "new-document" })}>
           <FilePlusIcon data-icon="inline-start" />New document
         </Button>
       }>
@@ -102,7 +102,7 @@ function Snippet({ text }: { text: string }) {
 
 function DocumentRow({ row }: { row: Row }) {
   const actions = useContentActions();
-  const { contentRoutes, status } = useStack();
+  const { contentRoutes, status, remote } = useStack();
   const { select, flash } = useWorkbench();
   const node = { kind: "document", id: row.slug } as const;
   const key = nodeKey(node);
@@ -140,7 +140,7 @@ function DocumentRow({ row }: { row: Row }) {
             <DropdownMenuItem onClick={() => select(node)}><ScanSearchIcon />Inspect record</DropdownMenuItem>
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" disabled={!connected} onClick={() => actions.confirmRemoveDocument({ slug: row.slug, title: row.title })}><Trash2Icon />Remove…</DropdownMenuItem>
+          <DropdownMenuItem variant="destructive" disabled={!connected || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => actions.confirmRemoveDocument({ slug: row.slug, title: row.title })}><Trash2Icon />Remove…</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </li>

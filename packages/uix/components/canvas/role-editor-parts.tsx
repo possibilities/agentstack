@@ -83,16 +83,16 @@ export function ConflictNotice({ fields, onKeep, onYield }: { fields: string[]; 
 export function SaveBar({ dirty, conflicts, pending, invalid, saveLabel, onSave, onRevert, note }: {
   dirty: boolean; conflicts: number; pending: boolean; invalid: string | null; saveLabel: string; onSave(): void; onRevert?: () => void; note?: React.ReactNode;
 }) {
-  const { status } = useStack();
+  const { status, remote } = useStack();
   const connected = status.roles === "open";
-  const message = !connected ? "Roles reconnecting" : conflicts ? "Resolve the conflict to save" : invalid && dirty ? invalid : dirty ? "Unsaved changes · ⌘S to save" : note ?? "All changes saved";
+  const message = remote?.scope === "view" ? "View-only session · saving requires uix:control" : !connected ? "Roles reconnecting" : conflicts ? "Resolve the conflict to save" : invalid && dirty ? invalid : dirty ? "Unsaved changes · ⌘S to save" : note ?? "All changes saved";
   return (
     <div className="flex items-center gap-1.5 px-1.5">
       <span role="status" className={cn("min-w-0 flex-1 truncate text-[0.68rem]", dirty && !conflicts && !invalid ? "text-foreground" : "text-muted-foreground")}>{message}</span>
       {onRevert ? (
         <Button size="sm" variant="ghost" disabled={!dirty || pending} onClick={onRevert}><RotateCcwIcon data-icon="inline-start" />Revert</Button>
       ) : null}
-      <Button size="sm" disabled={!connected || !dirty || Boolean(invalid) || conflicts > 0 || pending} onClick={onSave}>
+      <Button size="sm" disabled={!connected || !dirty || Boolean(invalid) || conflicts > 0 || pending || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={onSave}>
         {pending ? <Spinner data-icon="inline-start" /> : <SaveIcon data-icon="inline-start" />}{saveLabel}
       </Button>
     </div>

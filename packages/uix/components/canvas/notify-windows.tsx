@@ -38,7 +38,7 @@ const at = (iso: string | null) => iso ? Date.parse(iso) : null;
 /** Newest-first notifications with an Open, Dismissed or All filter and an optional source. Choosing one shows it; it stays open until dismissed. */
 export function InboxWindow() {
   const store = useStore();
-  const { status, endpoints, notifications, notificationFilter, notifyCounts } = useStack();
+  const { status, endpoints, notifications, notificationFilter, notifyCounts, remote } = useStack();
   const actions = useNotifyActions();
   const list = useRef<HTMLUListElement>(null);
   const loaded = notifications.data?.filter === notificationFilter ? notifications.data : null;
@@ -66,7 +66,7 @@ export function InboxWindow() {
       event.preventDefault();
     } else if (event.key.toLowerCase() === "d" && !event.metaKey && !event.ctrlKey && !event.altKey) {
       const record = entries.find((item) => item.id === rows[index].dataset.notification);
-      if (record && !record.dismissedAt && !actions.pending.has(record.id)) void actions.dismiss(record, "closed");
+      if (record && !record.dismissedAt && !actions.pending.has(record.id) && remote?.scope !== "view") void actions.dismiss(record, "closed");
       event.preventDefault();
     }
   };
@@ -76,7 +76,7 @@ export function InboxWindow() {
       status={endpoints.notify ? status.notify : undefined} endpoint={endpoints.notify} updatedAt={notifications.at} error={notifications.error ?? notifyCounts.error}
       empty={!endpoints.notify}
       footer={endpoints.notify ? (
-        <Button variant="ghost" size="sm" className={footerButton} disabled={!notifyCounts.data?.open || status.notify !== "open"} onClick={actions.confirmDismissAll}>
+        <Button variant="ghost" size="sm" className={footerButton} disabled={!notifyCounts.data?.open || status.notify !== "open" || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={actions.confirmDismissAll}>
           <BellOffIcon data-icon="inline-start" />Dismiss all…
         </Button>
       ) : undefined}>
@@ -229,9 +229,10 @@ function Outcome({ record }: { record: Notification }) {
 /** Answer controls follow the notification's own actions and reply prompt; each records how it was dismissed. */
 function Respond({ record, connected }: { record: Notification; connected: boolean }) {
   const actions = useNotifyActions();
+  const { remote } = useStack();
   const formId = useId();
   const [reply, setReply] = useState("");
-  const busy = actions.pending.has(record.id) || !connected;
+  const busy = actions.pending.has(record.id) || !connected || remote?.scope === "view";
   const send = () => {
     const text = reply.trim();
     if (!text || busy) return;
@@ -239,6 +240,7 @@ function Respond({ record, connected }: { record: Notification; connected: boole
   };
   return (
     <div className="flex flex-col gap-2">
+      {remote?.scope === "view" ? <p className="text-xs text-muted-foreground">Answering or dismissing requires uix:control.</p> : null}
       {record.actions.length ? (
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Answer">
           {record.actions.map((label) => (

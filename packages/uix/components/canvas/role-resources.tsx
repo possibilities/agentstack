@@ -143,7 +143,7 @@ function ResourceList<T extends Item>({ spec }: { spec: ListSpec<T> }) {
   const items = spec.items(role.data) ?? [];
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   const shown = words.length ? items.filter((item) => { const text = spec.search(item).toLowerCase(); return words.every((word) => text.includes(word)); }) : items;
-  const connected = status.roles === "open";
+  const connected = status.roles === "open" && state.remote?.scope !== "view";
   const operation = resourceOperation[spec.kind];
   const enabled = items.filter((item) => item.enabled).length;
 
@@ -158,7 +158,7 @@ function ResourceList<T extends Item>({ spec }: { spec: ListSpec<T> }) {
     <Window id={spec.windowId} title={spec.title} subtitle={role.data ? `roles · ${enabled} of ${items.length} on` : "roles"} icon={spec.icon} accent="roles"
       count={items.length} status={status.roles} endpoint={endpoints.roles} updatedAt={role.at} error={role.error} empty={!items.length}
       footer={
-        <Button size="sm" variant="ghost" className={footerButton} disabled={!role.data || !connected} onClick={() => actions.open({ kind: `new-${spec.kind}`, enabled: true })}>
+        <Button size="sm" variant="ghost" className={footerButton} disabled={!role.data || !connected} title={state.remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => actions.open({ kind: `new-${spec.kind}`, enabled: true })}>
           <PlusIcon data-icon="inline-start" />{spec.newLabel}
         </Button>
       }>
@@ -209,7 +209,7 @@ function ResourceRow<T extends Item>({ spec, item, items, state, dragging, dropB
 }) {
   const actions = useRoleActions();
   const { select, flash } = useWorkbench();
-  const connected = state.status.roles === "open";
+  const connected = state.status.roles === "open" && state.remote?.scope !== "view";
   const node = { kind: spec.kind, id: item.id } as const;
   const key = nodeKey(node);
   const index = items.findIndex((other) => other.id === item.id);

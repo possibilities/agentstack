@@ -93,7 +93,7 @@ function useCategoryMove() {
 }
 
 export function RoleInstructionsWindow() {
-  const { role, rolePreview, status, endpoints } = useStack();
+  const { role, rolePreview, status, endpoints, remote } = useStack();
   const actions = useRoleActions();
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -104,7 +104,7 @@ export function RoleInstructionsWindow() {
   const data = role.data;
   const counts = data ? roleCounts(data) : null;
   const filtered = data ? filterRole(data.categories, query) : [];
-  const connected = status.roles === "open";
+  const connected = status.roles === "open" && remote?.scope !== "view";
   const searching = query.trim().length > 0;
   const bytes = rolePreview.data?.bytes ?? null;
 
@@ -120,7 +120,7 @@ export function RoleInstructionsWindow() {
       count={counts?.fragments ?? null} status={status.roles} endpoint={endpoints.roles} updatedAt={role.at} error={role.error}
       empty={!data?.categories.length}
       footer={
-        <Button size="sm" variant="ghost" className={footerButton} disabled={!data || !connected} onClick={() => actions.open({ kind: "new-category" })}>
+        <Button size="sm" variant="ghost" className={footerButton} disabled={!data || !connected} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => actions.open({ kind: "new-category" })}>
           <FolderPlusIcon data-icon="inline-start" />New category
         </Button>
       }>
@@ -180,10 +180,10 @@ function CategoryCard({ category, fragments, role, collapsed, onToggle, drag, dr
   last: boolean;
 }) {
   const actions = useRoleActions();
-  const { status } = useStack();
+  const { status, remote } = useStack();
   const { select, flash } = useWorkbench();
   const moveCategory = useCategoryMove();
-  const connected = status.roles === "open";
+  const connected = status.roles === "open" && remote?.scope !== "view";
   const index = role.categories.findIndex((item) => item.id === category.id);
   const node = { kind: "category", id: category.id } as const;
   const key = nodeKey(node);
@@ -306,10 +306,10 @@ function FragmentRow({ fragment, category, role, drag, drop, setDrag, setDrop, l
   land(): void;
 }) {
   const actions = useRoleActions();
-  const { status } = useStack();
+  const { status, remote } = useStack();
   const { select, flash } = useWorkbench();
   const move = useFragmentMove();
-  const connected = status.roles === "open";
+  const connected = status.roles === "open" && remote?.scope !== "view";
   const node = { kind: "fragment", id: fragment.id } as const;
   const key = nodeKey(node);
   const index = category.fragments.findIndex((item) => item.id === fragment.id);

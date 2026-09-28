@@ -18,6 +18,10 @@ A durable phone, extension, browser or future cloud consumer identity owned by t
 
 An explicit set of scopes or selected operations for one Access client and one network policy. Tailnet device grants and public-cloud grants are distinct; a device credential never authorizes public ingress. Client, grant and individual credential revocation fence dependent short-lived tokens and browser sessions on subsequent requests. Public-cloud credentials and remote MCP admission are not yet implemented. _Avoid_: network reachability, approval code, internal MCP context
 
+## Remote UIX session
+
+A five-minute Access session for one locally approved browser-kind client on the dedicated direct-tailnet UIX TLS origin. `uix:view` selects read-only WebSocket operations and events; `uix:control` adds UIX mutations, never Access, sign-in, voice or headful browser authority. The HttpOnly cookie and rotating refresh are distinct from Content resource handoffs. Revocation and grant changes fence the next HTTP request and close existing WebSockets. _Avoid_: forwarded local UIX port, internal MCP identity, public share link
+
 ## Content handoff
 
 A one-use, one-minute secret for opening one document, Content item or immutable Artifact version on its designated origin. The browser exchanges a URL fragment for a short-lived, resource-scoped HttpOnly cookie. Broad Access credentials never enter a URL; every subsequent request still needs verified tailnet provenance. _Avoid_: public share link, broad browser login, Artifact identity

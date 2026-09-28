@@ -49,7 +49,7 @@ const itemType = "application/x-agentstack-item";
 /** Collections and their items: upload by dropping files, regroup by dragging items onto a collection. */
 export function ContentLibraryWindow() {
   const store = useStore();
-  const { contentLibrary, contentItems, contentItemScope: scope, contentUploads, status, endpoints } = useStack();
+  const { contentLibrary, contentItems, contentItemScope: scope, contentUploads, status, endpoints, remote } = useStack();
   const actions = useContentActions();
   const [kind, setKind] = useState<ContentItemKind | "all">("all");
   const [query, setQuery] = useState("");
@@ -74,6 +74,7 @@ export function ContentLibraryWindow() {
   const scopeTitle = scope === undefined ? "All items" : scope === null ? "Ungrouped" : library?.collections.find((item) => item.slug === scope)?.title ?? scope;
 
   const move = (item: ContentItem, collection: string | null) => {
+    if (remote?.scope === "view") return;
     if (item.collection === collection) return;
     actions.run(`move:${item.id}`, "item_move", { id: item.id, collection, expectedRevision: item.revision })
       .then(() => toast.success(`Moved “${item.name}” to ${collection ?? "Ungrouped"}`),
@@ -86,10 +87,10 @@ export function ContentLibraryWindow() {
       error={contentItems.error ?? contentLibrary.error}
       footer={
         <div className="flex gap-1">
-          <Button size="sm" variant="ghost" className={footerButton} disabled={!connected} onClick={() => actions.upload(uploadTarget)}>
+          <Button size="sm" variant="ghost" className={footerButton} disabled={!connected || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => actions.upload(uploadTarget)}>
             <UploadIcon data-icon="inline-start" />Upload{uploadTarget ? " here" : ""}
           </Button>
-          <Button size="sm" variant="ghost" className={footerButton} disabled={!connected} onClick={() => actions.editCollection(null)}>
+          <Button size="sm" variant="ghost" className={footerButton} disabled={!connected || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => actions.editCollection(null)}>
             <FolderPlusIcon data-icon="inline-start" />New collection
           </Button>
         </div>
@@ -182,7 +183,7 @@ function RailEntry({ scope, current, icon: Icon, title, count, collection, dragg
   const store = useStore();
   const actions = useContentActions();
   const { select, flash } = useWorkbench();
-  const { status } = useStack();
+  const { status, remote } = useStack();
   const [over, setOver] = useState(false);
   const selected = scopeKey(scope) === scopeKey(current);
   const droppable = dragging !== null && scope !== undefined && dragging.collection !== scope;
@@ -207,12 +208,12 @@ function RailEntry({ scope, current, icon: Icon, title, count, collection, dragg
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-44">
             <DropdownMenuGroup>
-              <DropdownMenuItem disabled={status.content !== "open"} onClick={() => actions.upload(collection.slug)}><UploadIcon />Upload here…</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => actions.editCollection(collection)}><PencilIcon />Edit…</DropdownMenuItem>
+               <DropdownMenuItem disabled={status.content !== "open" || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => actions.upload(collection.slug)}><UploadIcon />Upload here…</DropdownMenuItem>
+               <DropdownMenuItem disabled={remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => actions.editCollection(collection)}><PencilIcon />Edit…</DropdownMenuItem>
               <DropdownMenuItem onClick={() => select({ kind: "collection", id: collection.slug })}><ScanSearchIcon />Inspect record</DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" disabled={status.content !== "open"} onClick={() => actions.confirmDeleteCollection(collection)}><Trash2Icon />Delete collection…</DropdownMenuItem>
+             <DropdownMenuItem variant="destructive" disabled={status.content !== "open" || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => actions.confirmDeleteCollection(collection)}><Trash2Icon />Delete collection…</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       ) : null}
@@ -232,7 +233,7 @@ function ItemRow({ item, collections, onDrag, onMove, showCollection }: {
 }) {
   const actions = useContentActions();
   const { select, flash } = useWorkbench();
-  const { status } = useStack();
+   const { status, remote } = useStack();
   const node = { kind: "item", id: item.id } as const;
   const key = nodeKey(node);
   const connected = status.content === "open";
@@ -240,7 +241,7 @@ function ItemRow({ item, collections, onDrag, onMove, showCollection }: {
   const previewing = actions.selection?.kind === "item" && actions.selection.id === item.id;
   const moving = actions.pending.has(`move:${item.id}`);
   return (
-    <tr data-node={key} draggable={connected}
+     <tr data-node={key} draggable={connected && remote?.scope !== "view"}
       onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData(itemType, item.id); event.dataTransfer.setData("text/plain", item.url); onDrag(item); }}
       onDragEnd={() => onDrag(null)}
       className={cn("group/row relative hover:bg-muted/70", previewing && "bg-pkg-content/10 hover:bg-pkg-content/15")}>
@@ -269,7 +270,7 @@ function ItemRow({ item, collections, onDrag, onMove, showCollection }: {
               <DropdownMenuItem onClick={() => actions.preview({ kind: "item", id: item.id })}><EyeIcon />Preview</DropdownMenuItem>
               <DropdownMenuItem onClick={() => { void navigator.clipboard.writeText(item.url).then(() => toast.success(`Copied ${item.url}`)); }}><CopyIcon />Copy {item.url.length > 18 ? "link path" : item.url}</DropdownMenuItem>
               <DropdownMenuSub>
-                <DropdownMenuSubTrigger disabled={!connected}><FolderInputIcon />Move to</DropdownMenuSubTrigger>
+                 <DropdownMenuSubTrigger disabled={!connected || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined}><FolderInputIcon />Move to</DropdownMenuSubTrigger>
                 <DropdownMenuSubContent className="min-w-40">
                   <DropdownMenuItem disabled={item.collection === null} onClick={() => onMove(item, null)}><InboxIcon />Ungrouped</DropdownMenuItem>
                   {collections.map((collection) => (
@@ -280,7 +281,7 @@ function ItemRow({ item, collections, onDrag, onMove, showCollection }: {
               <DropdownMenuItem onClick={() => select({ kind: "item", id: item.id })}><ScanSearchIcon />Inspect record</DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" disabled={!connected} onClick={() => actions.confirmDeleteItem(item)}><Trash2Icon />Delete permanently…</DropdownMenuItem>
+             <DropdownMenuItem variant="destructive" disabled={!connected || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => actions.confirmDeleteItem(item)}><Trash2Icon />Delete permanently…</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </td>

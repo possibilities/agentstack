@@ -17,6 +17,20 @@ export function StackProvider({ snapshot, children, connections }: { snapshot: S
     return () => store.stop();
   }, [store, connections]);
   useEffect(() => {
+    if (!snapshot.remote) return;
+    void store.syncRemote();
+    const refresh = () => {
+      if (document.visibilityState !== "visible") return;
+      void fetch("/connect/refresh", { method: "POST", cache: "no-store" }).then(response => {
+        if (!response.ok) throw new Error("Remote session expired");
+        void store.syncRemote();
+      }).catch(() => { window.location.assign("/connect"); });
+    };
+    const timer = window.setInterval(refresh, 240_000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
+  }, [snapshot.remote, store]);
+  useEffect(() => {
     let storage: Storage | null = null;
     try { storage = window.localStorage; } catch { /* optional persistence */ }
     chats.attach(storage);

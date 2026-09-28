@@ -5,7 +5,8 @@ export type AccessSnapshot = {
   grants: { id: string; client_id: string; network: "tailnet" | "public-cloud"; scopes: string[]; operations: string[]; created: number; revoked: number | null; revision: number }[];
   credentials: { id: string; client_id: string; grant_id: string; generation: number; created: number; expires: number; revoked: number | null }[];
   audit: { seq: number; time: number; action: string; subject: string }[];
-  ingress: { host: string; port: number; artifactPort: number } | null;
+  ingress: { host: string; port: number; artifactPort: number; uixPort: number | null } | null;
+  uixSessions: { credential_id: string; expires: number }[];
 };
 
 export type JsonSchema = {
@@ -554,6 +555,7 @@ export type Snapshot = {
   endpoints: Record<string, string>;
   /** Null when this server cannot name them, e.g. a random port; older snapshots omit it. */
   contentOrigins?: ContentOrigins | null;
+  remote?: { scope: "view" | "control"; scopes: string[]; contentOrigins: ContentOrigins };
 };
 
 export type ChannelStatus = "idle" | "connecting" | "open" | "closed";

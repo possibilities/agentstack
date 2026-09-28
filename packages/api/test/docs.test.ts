@@ -51,7 +51,9 @@ test("the api package serves structured documents for every workspace package", 
     const snapshot = (await socketCall(served.socketPath, "tools/call", { name: "docs_snapshot", arguments: {} })) as { packages: PackageDoc[] };
     assert.deepEqual(snapshot.packages, [...found.values()]);
     const responseLength = JSON.stringify({ id: 1, result: snapshot }).length + 1;
-    assert.ok(responseLength < 750_000, `discovery snapshot exceeds the socket response budget: ${responseLength} characters`);
+    // The browser session and scoped UIX HTTP routes add typed schemas. Keep a
+    // large margin below the socket's four-million-byte JSON frame limit.
+    assert.ok(responseLength < 800_000, `discovery snapshot exceeds the socket response budget: ${responseLength} characters`);
 
     const brainHttp = found.get("brain")!.transports.find((transport) => transport.type === "http")!;
     const access = found.get("access")!;
@@ -61,6 +63,8 @@ test("the api package serves structured documents for every workspace package", 
     const accessHttp = access.transports.find(t => t.type === "http")!;
     assert.ok(accessHttp.routes.some(r => r.path === "/v1/access/pair" && r.inputSchema));
     assert.ok(accessHttp.routes.some(r => r.path === "/v1/content/handoff" && r.authentication === "bearer"));
+    assert.ok(accessHttp.routes.some(r => r.surface === "uix" && r.path === "/connect/session" && r.inputSchema));
+    assert.ok(accessHttp.routes.some(r => r.surface === "uix" && r.path === "/websocket"));
     assert.deepEqual(brainHttp.operations, []);
     assert.deepEqual(brainHttp.routes.map(({ surface, kind, method, path, operation }) => [surface, kind, method, path, operation]), [
       ["share", "json", "GET", "/v1/health", "share_health"], ["share", "json", "GET", "/v1/shares", "share_states"],

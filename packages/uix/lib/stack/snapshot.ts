@@ -54,7 +54,21 @@ export function contentOrigins(env: NodeJS.ProcessEnv): ContentOrigins | null {
   return document && artifact && document !== artifact ? { document: `http://127.0.0.1:${document}`, artifact: `http://127.0.0.1:${artifact}` } : null;
 }
 
-export async function loadSnapshot(): Promise<Snapshot> {
+export async function loadSnapshot(remoteOrigin?: string, remoteScope?: "view" | "control", remoteScopes: string[] = []): Promise<Snapshot> {
+  if (remoteOrigin && remoteScope) {
+    // Never execute trusted-local socket reads while rendering an Access viewer's
+    // RSC response. All remote reads go through the scoped WebSocket gateway.
+    const empty = () => ({ data: null, error: null, at: null });
+    const url = new URL(remoteOrigin);
+    const host = url.hostname.includes(":") ? `[${url.hostname}]` : url.hostname;
+    const origins = { document: `https://${host}:${process.env.AGENTSTACK_ACCESS_PORT ?? 8943}`,
+      artifact: `https://${host}:${process.env.AGENTSTACK_ACCESS_ARTIFACT_PORT ?? 8944}` };
+    return { owner: empty(), resources: empty(), accounts: empty(), workerAccounts: empty(), workerRuntimes: empty(),
+      workerSessions: empty(), usage: empty(), login: empty(), workerLogins: empty(), bots: empty(), botDefaults: empty(),
+      voice: empty(), role: empty(), rolePreview: empty(), catalog: empty(),
+      endpoints: Object.fromEntries(knownPackages.filter(pkg => !["access", "auth", "browse"].includes(pkg)).map(pkg => [pkg, `${remoteOrigin.replace(/^https:/, "wss:")}/websocket`])),
+      contentOrigins: origins, remote: { scope: remoteScope, scopes: remoteScopes, contentOrigins: origins } };
+  }
   const [owner, resources, accounts, workerAccounts, workerRuntimes, workerSessions, login, workerLogins, bots, botDefaults, voice, role, rolePreview, catalog, usage] = await Promise.all([
     resource(() => call<OwnerStatus>("owner", "owner_status")),
     resource(() => loadResources((name, args) => call<never>("owner", name, args))),

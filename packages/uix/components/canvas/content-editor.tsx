@@ -98,14 +98,14 @@ function ConflictNotice({ conflicted, onKeep, onYield }: { conflicted: boolean; 
 function SaveBar({ dirty, conflicted, pending, saveLabel, onSave, onRevert, note, invalid }: {
   dirty: boolean; conflicted: boolean; pending: boolean; saveLabel: string; onSave(): void; onRevert?: () => void; note?: string; invalid?: string | null;
 }) {
-  const { status } = useStack();
+  const { status, remote } = useStack();
   const connected = status.content === "open";
-  const message = !connected ? "Content reconnecting" : conflicted ? "Resolve the conflict to save" : invalid ? invalid : dirty ? "Unsaved changes · ⌘S to save" : note ?? "All changes saved";
+  const message = remote?.scope === "view" ? "View-only session · saving requires uix:control" : !connected ? "Content reconnecting" : conflicted ? "Resolve the conflict to save" : invalid ? invalid : dirty ? "Unsaved changes · ⌘S to save" : note ?? "All changes saved";
   return (
     <div className="flex items-center gap-1.5 px-1.5">
       <span role="status" className={cn("min-w-0 flex-1 truncate text-[0.68rem]", dirty && !conflicted ? "text-foreground" : "text-muted-foreground")}>{message}</span>
       {onRevert ? <Button size="sm" variant="ghost" disabled={!dirty || pending} onClick={onRevert}><RotateCcwIcon data-icon="inline-start" />Revert</Button> : null}
-      <Button size="sm" disabled={!connected || !dirty || conflicted || pending || Boolean(invalid)} onClick={onSave}>
+      <Button size="sm" disabled={!connected || !dirty || conflicted || pending || Boolean(invalid) || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={onSave}>
         {pending ? <Spinner data-icon="inline-start" /> : <SaveIcon data-icon="inline-start" />}{saveLabel}
       </Button>
     </div>

@@ -126,6 +126,7 @@ export class StackStore {
   private itemPages = 1;
   private uploadFiles = new Map<string, File>();
   private uploadSeq = 0;
+  private remoteInflight: Promise<void> | null = null;
 
   constructor(snapshot: Snapshot) {
     this.state = {
@@ -167,7 +168,7 @@ export class StackStore {
       if (!url) return;
       const silent = new Set(options?.silent ?? []);
       const channel = new Channel(url, pkg, {
-        onStatus: (status) => this.set({ status: { ...this.state.status, [pkg]: status } }),
+        onStatus: (status) => { this.set({ status: { ...this.state.status, [pkg]: status } }); if (status === "closed" && this.state.remote) void this.syncRemote(); },
         onOpen,
         onNotice: (topic) => {
           if (!silent.has(topic)) this.log(pkg, topic, null);
@@ -225,9 +226,30 @@ export class StackStore {
     this.main.clear();
     this.scopedChannels.clear();
   }
+  syncRemote = (): Promise<void> => {
+    if (!this.state.remote) return Promise.resolve();
+    if (this.remoteInflight) return this.remoteInflight;
+    this.remoteInflight = (async () => {
+      try {
+        const response = await fetch("/connect/me", { cache: "no-store" });
+        if (!response.ok) { if (response.status === 401) window.location.assign("/connect"); return; }
+        const data: { data: { scopes: string[] } } = await response.json();
+        const current = this.state.remote;
+        if (!current || JSON.stringify(current.scopes) === JSON.stringify(data.data.scopes)) return;
+        this.set({ remote: { ...current, scope: data.data.scopes.includes("uix:control") ? "control" : "view", scopes: data.data.scopes } });
+      } catch { /* the gateway still denies stale permissions */ }
+    })().finally(() => { this.remoteInflight = null; });
+    return this.remoteInflight;
+  };
 
   /** Call any operation on a Package API's main channel. Auth mutations refresh accounts and sign-in state; dial/hangup refresh voice state. Speech submission changes no call state. */
   call = async <T>(pkg: string, name: string, args: Record<string, unknown> = {}): Promise<T> => {
+    if (this.state.remote?.scope === "view") {
+      const annotation = this.state.catalog.data?.find(doc => doc.name === pkg)?.operations.find(operation => operation.name === name)?.annotations;
+      if (annotation && annotation.readOnlyHint !== true) throw new Error("Read-only remote session: this operation requires uix:control");
+    }
+    if (this.state.remote && ["access", "auth", "browse"].includes(pkg)) throw new Error(`${pkg} controls are available only on the local UIX`);
+    if (this.state.remote && pkg === "bots" && name.startsWith("voice_")) throw new Error("Voice calls are available only on the local UIX");
     const channel = this.main.get(pkg);
     if (!channel || channel.status !== "open") throw new Error(`${pkg} WebSocket is not connected`);
     const request = channel.call<T>(name, args);

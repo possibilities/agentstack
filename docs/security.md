@@ -28,7 +28,7 @@ private, temporary directory under the state directory. The Inspector's
 authenticated UI can initiate tool calls, so it shares the local-user trust
 boundary described above.
 
-The UI canvas is a separate loopback-only Next.js listener and child process.
+The UI canvas remains a separate loopback-only Next.js listener and child process.
 It reads the Package APIs over local WebSocket and operates account and voice
 controls, and its Lab can start `infer` requests that spend a chosen Bot
 account's Codex allowance. `infer` has a WebSocket but no MCP Transport, so Bots
@@ -36,7 +36,19 @@ cannot reach it ([ADR 0074](adr/0074-lab-inference-over-websocket.md)). Its
 request ledger, `<state>/infer/traces.sqlite` (mode `0600`), keeps each request's
 instructions, input and output for every local caller of `infer_request_get`, but
 never credentials ([ADR 0081](adr/0081-infer-request-ledger-api.md)). The UI
-shares the local-user trust boundary and is not an authentication boundary.
+shares the local-user trust boundary and is not itself an authentication boundary.
+Access optionally supplies a third, distinct direct-tailnet TLS origin for
+authenticated browser-kind clients ([ADR 0101](adr/0101-remote-uix-through-access.md)).
+It verifies kernel peers and Tailscale evidence per HTTP request and WebSocket
+upgrade, refuses forwarded identity, requires an exact Origin for unsafe requests
+and upgrades, and admits short-lived HttpOnly cookie sessions only after local
+pairing approval. The remote Next render has no trusted-local socket snapshot;
+the Access-owned gateway intersects live WebSocket exposure with `uix:view` or
+`uix:control`, closes on grant changes and revocation, and never exposes `access`,
+`auth`, voice or headful browser controls remotely. Remote Artifact scripts run
+on their own sandboxed origin without access to UIX cookies or network calls.
+This does not authorize forwarding the local UIX, local WebSocket or MCP ports,
+or publishing the Access listener through Serve/Funnel or a public proxy.
 
 ## Research and device sharing
 

@@ -21,9 +21,26 @@ function useHostname(): string | null {
 
 /** A link to a Content origin, or a plain explanation when this page can’t reach one. */
 function OriginLink({ which, path, label, download }: { which: "document" | "artifact"; path: string; label: string; download?: boolean }) {
-  const { contentOrigins } = useStack();
+  const { contentOrigins, remote } = useStack();
   const hostname = useHostname();
+  const [error, setError] = useState<string | null>(null);
   const href = contentHref(contentOrigins, which, path, hostname);
+  if (remote) return <span className="inline-flex flex-col gap-1">
+    <Button size="xs" variant="outline" disabled={!remote.scopes.includes("content:read")} title={!remote.scopes.includes("content:read") ? "Opening Content requires content:read on this browser's Access grant" : undefined} onClick={() => {
+      setError(null);
+      const tab = window.open("about:blank", "_blank");
+      if (!tab) { setError("Allow pop-ups to open Content in a new tab."); return; }
+      tab.opener = null;
+      void fetch("/v1/content/handoff", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ origin: which === "document" ? "documents" : "artifacts", path }), cache: "no-store" })
+        .then(async response => {
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error?.message ?? "Content handoff refused");
+          tab.location.replace(`${remote.contentOrigins[which]}/session#${result.data.handoff}`);
+        }).catch((cause: Error) => { tab.close(); setError(cause.message); });
+    }}><ExternalLinkIcon data-icon="inline-start" />{label}</Button>
+    {error ? <span role="alert" className="text-xs text-destructive">{error}</span> : null}
+  </span>;
   if (!href) return null;
   return (
     <a href={href} target="_blank" rel="noreferrer noopener" {...(download ? { download: "" } : {})} className={buttonVariants({ size: "xs", variant: "outline" })}>
@@ -34,9 +51,9 @@ function OriginLink({ which, path, label, download }: { which: "document" | "art
 
 /** Explains when Content’s origins are out of reach: remote pages need an Access Content handoff this page can’t mint. */
 function OpenLocally() {
-  const { contentOrigins } = useStack();
+  const { contentOrigins, remote } = useStack();
   const hostname = useHostname();
-  if (!hostname || contentHref(contentOrigins, "artifact", "/", hostname)) return null;
+  if (remote || !hostname || contentHref(contentOrigins, "artifact", "/", hostname)) return null;
   return (
     <p className="flex items-start gap-1.5 rounded-lg border border-dashed px-2.5 py-2 text-[0.7rem] text-pretty text-muted-foreground">
       <MonitorIcon className="mt-px size-3.5 shrink-0" />
@@ -239,6 +256,7 @@ function PeekBody({ item }: { item: ItemRead }) {
 }
 
 function ArtifactPreview({ name, version, frame }: { name: string; version?: string; frame: Frame }) {
+  const { remote } = useStack();
   const latest = useContentRead<ContentArtifact>("artifacts_show", version ? null : { name });
   const versions = useContentRead<{ versions: ContentArtifact[] }>("artifacts_versions", version ? { name } : null);
   const artifact = version ? versions.data?.versions.find((item) => item.version === version) ?? null : latest.data;
@@ -257,7 +275,7 @@ function ArtifactPreview({ name, version, frame }: { name: string; version?: str
         {!tombstoned ? (
           <div className="flex flex-wrap items-center gap-1.5">
             <OriginLink which="artifact" path={artifact.version_url} label="Open this version" />
-            {artifact.latest || !version ? <OriginLink which="artifact" path={artifact.url} label="Open latest" /> : null}
+             {artifact.latest || !version ? <OriginLink which="artifact" path={remote ? artifact.version_url : artifact.url} label="Open latest" /> : null}
           </div>
         ) : null}
         <dl className="flex flex-col rounded-lg border bg-background/50 px-2.5 py-1">

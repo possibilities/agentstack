@@ -26,7 +26,7 @@ const copy = (value: string, what: string) => { void navigator.clipboard.writeTe
 
 /** Published Artifacts and their immutable versions. Publishing stays agent-only; people cite, tombstone and restore. */
 export function ContentArtifactsWindow() {
-  const { contentArtifacts, status, endpoints } = useStack();
+  const { contentArtifacts, status, endpoints, remote } = useStack();
   const actions = useContentActions();
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -38,8 +38,8 @@ export function ContentArtifactsWindow() {
       count={contentArtifacts.data?.length ?? null} status={status.content} endpoint={endpoints.content} updatedAt={contentArtifacts.at} error={contentArtifacts.error}
       empty={!contentArtifacts.data?.length}
       actions={
-        <Button size="icon-sm" variant="ghost" className="text-muted-foreground" aria-label="Restore a tombstoned Artifact" title="Restore a tombstoned Artifact"
-          disabled={status.content !== "open"} onClick={() => actions.restoreByName("artifact")}><ArchiveRestoreIcon /></Button>
+        <Button size="icon-sm" variant="ghost" className="text-muted-foreground" aria-label="Restore a tombstoned Artifact" title={remote?.scope === "view" ? "Requires uix:control" : "Restore a tombstoned Artifact"}
+          disabled={status.content !== "open" || remote?.scope === "view"} onClick={() => actions.restoreByName("artifact")}><ArchiveRestoreIcon /></Button>
       }>
       {contentArtifacts.data?.length ? (
         <>
@@ -66,7 +66,7 @@ export function ContentArtifactsWindow() {
 function ArtifactRow({ artifact, open, onToggle }: { artifact: ContentArtifact; open: boolean; onToggle(): void }) {
   const actions = useContentActions();
   const { select, flash } = useWorkbench();
-  const { status } = useStack();
+   const { status, remote } = useStack();
   const node = { kind: "artifact", id: artifact.name } as const;
   const key = nodeKey(node);
   const previewing = actions.selection?.kind === "artifact" && actions.selection.name === artifact.name;
@@ -104,7 +104,7 @@ function ArtifactRow({ artifact, open, onToggle }: { artifact: ContentArtifact; 
               <DropdownMenuItem onClick={() => select(node)}><ScanSearchIcon />Inspect record</DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" disabled={!connected} onClick={() => actions.confirmRemoveArtifact({ name: artifact.name })}><Trash2Icon />Tombstone every version…</DropdownMenuItem>
+             <DropdownMenuItem variant="destructive" disabled={!connected || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => actions.confirmRemoveArtifact({ name: artifact.name })}><Trash2Icon />Tombstone every version…</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -115,7 +115,7 @@ function ArtifactRow({ artifact, open, onToggle }: { artifact: ContentArtifact; 
 
 function Versions({ name }: { name: string }) {
   const actions = useContentActions();
-  const { status } = useStack();
+   const { status, remote } = useStack();
   const read = useContentRead<{ versions: ContentArtifact[] }>("artifacts_versions", { name });
   const connected = status.content === "open";
   if (!read.data) return <p className="px-9 pb-2 text-[0.7rem] text-muted-foreground">{read.error ?? "Loading versions…"}</p>;
@@ -139,7 +139,7 @@ function Versions({ name }: { name: string }) {
               {version.created_at ? <IsoTime at={version.created_at} className="ml-auto text-[0.64rem] text-muted-foreground" /> : null}
             </button>
             {tombstoned ? (
-              <Button size="xs" variant="ghost" disabled={!connected || restoring} onClick={() => restore(version)}>
+               <Button size="xs" variant="ghost" disabled={!connected || restoring || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => restore(version)}>
                 {restoring ? <Spinner data-icon="inline-start" /> : <ArchiveRestoreIcon data-icon="inline-start" />}Restore
               </Button>
             ) : (
@@ -153,7 +153,7 @@ function Versions({ name }: { name: string }) {
                     <DropdownMenuItem onClick={() => copy(version.version_url, "citation")}><LinkIcon />Copy citation</DropdownMenuItem>
                   </DropdownMenuGroup>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem variant="destructive" disabled={!connected} onClick={() => actions.confirmRemoveArtifact({ name, version: version.version })}><Trash2Icon />Tombstone this version…</DropdownMenuItem>
+                   <DropdownMenuItem variant="destructive" disabled={!connected || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => actions.confirmRemoveArtifact({ name, version: version.version })}><Trash2Icon />Tombstone this version…</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
