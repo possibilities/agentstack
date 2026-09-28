@@ -6,29 +6,22 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { copyFile, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath } from "@agentstack/api";
 import { api as contentApi } from "../../content/dist/api.js";
+import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, uix } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const require = createRequire(import.meta.url);
-const uix = dirname(dirname(fileURLToPath(import.meta.url)));
-const root = dirname(dirname(uix));
 const dir = await mkdtemp(join("/tmp", "as-content-ui-"));
 const evidence = process.env.CONTENT_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
-async function port() { const server = createServer(); await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve)); const value = server.address().port; await new Promise((resolve) => server.close(resolve)); return value; }
 const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1",
   AGENTSTACK_CONTENT_PORT: String(await port()), AGENTSTACK_CONTENT_ARTIFACT_PORT: String(await port()) };
-// Socket listings publish JSON Schemas, so fixtures need real zod types; zod comes from the content package.
-const { z } = createRequire(join(root, "packages", "content", "package.json"))("zod");
-const passthrough = z.looseObject({});
 const handlers = { owner_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uixUrl: null, inspectorUrl: null }) };
-const fixture = (names) => names.map((name) => ({ name, description: name, input: passthrough, output: passthrough, async call() { return handlers[name](); } }));
+const fixture = (names) => fixtureOperations(names, handlers);
 const sockets = [];
 let websocket, next, browser, content, page;
 let log = "";
@@ -36,19 +29,8 @@ const contentCall = (name, args = {}) => socketCall(socketPath("content", env), 
 
 try {
   content = await serveApi({ name: "content", transport: "socket", env, root });
-  // The gateway admits a connection only when every configured package's socket answers, so it
-  // sees a workspace of just the packages this check serves.
-  const gatewayRoot = join(dir, "gateway");
-  for (const name of ["content", "owner", "api"]) {
-    await mkdir(join(gatewayRoot, "packages", name), { recursive: true });
-    await copyFile(join(root, "packages", name, "api.yaml"), join(gatewayRoot, "packages", name, "api.yaml"));
-  }
-  websocket = await serveWebSocket({ env, root: gatewayRoot, port: 0 });
-  const doc = (name, api) => ({ name, packageName: `@agentstack/${name}`, description: `${name} fixture`, events: api?.events?.topics ?? {}, eventScope: null,
-    transports: [{ type: "websocket", description: "Isolated fixture", supported: true, subscriptions: true, endpoint: websocket.url,
-      operations: (api?.operations ?? []).map((operation) => operation.name), events: Object.keys(api?.events?.topics ?? {}), routes: [] }],
-    operations: (api?.operations ?? []).map((operation) => ({ name: operation.name, title: operation.annotations?.title ?? null, description: operation.description,
-      annotations: operation.annotations ?? {}, inputSchema: publishedJsonSchema(operation.input), outputSchema: publishedJsonSchema(operation.output) })) });
+  websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["content", "owner", "api"]), port: 0 });
+  const doc = (name, api) => fixtureDoc(name, api, websocket.url, publishedJsonSchema);
   const catalog = [doc("content", contentApi), doc("owner"), doc("api")];
   handlers.docs_snapshot = () => ({ packages: catalog });
   for (const [name, names, topics] of [["owner", ["owner_status"], { pids_changed: "Fixture" }], ["api", ["docs_snapshot"], {}]]) {

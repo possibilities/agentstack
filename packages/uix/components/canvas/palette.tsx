@@ -83,7 +83,7 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange} title="Jump to" description="Find a bot, account, Role record, notification, document, process, or operation." className="sm:max-w-lg">
       <Command loop>
-        <CommandInput placeholder="Jump to a bot, account, document, operation…" value={search} onValueChange={setSearch} />
+        <CommandInput placeholder="Jump to a bot, account, operation…" value={search} onValueChange={setSearch} />
         <CommandList className="max-h-96">
           <CommandEmpty>No matches.</CommandEmpty>
           <CommandGroup>

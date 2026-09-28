@@ -5,19 +5,16 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import { copyFile, mkdtemp, mkdir, rm } from "node:fs/promises";
-import { createServer } from "node:net";
-import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath } from "@agentstack/api";
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as rolesApi } from "../../roles/dist/api.js";
+import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, uix } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const require = createRequire(import.meta.url);
-const uix = dirname(dirname(fileURLToPath(import.meta.url)));
-const root = dirname(dirname(uix));
 // Unix socket paths are short; keep the state directory near the root of the temporary tree.
 const dir = await mkdtemp(join("/tmp", "as-roles-ui-"));
 const evidence = process.env.ROLES_EVIDENCE_DIR ?? join(dir, "evidence");
@@ -34,10 +31,7 @@ const handlers = {
   bot_defaults_get: () => ({ model: "fixture", reasoningEffort: "medium", sandboxMode: "danger-full-access", approvalPolicy: "never" }),
   voice_status: () => ({ call: null }),
 };
-// The gateway lists fixture schemas, so they must be real zod schemas; uix itself has no zod dependency.
-const { z } = await import(pathToFileURL(createRequire(join(root, "packages", "api", "package.json")).resolve("zod")).href);
-const fixture = (names) => names.map((name) => ({ name, description: name, input: z.looseObject({}), output: z.any(), async call() { return handlers[name](); } }));
-async function port() { const server = createServer(); await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve)); const value = server.address().port; await new Promise((resolve) => server.close(resolve)); return value; }
+const fixture = (names) => fixtureOperations(names, handlers);
 const sockets = [];
 let websocket, next, browser, roles;
 let log = "";
@@ -45,17 +39,8 @@ const rolesCall = (name, args = {}) => socketCall(socketPath("roles", env), "too
 
 try {
   roles = await serveApi({ name: "roles", transport: "socket", env, root });
-  // The gateway admits a connection only when every package it configures is live, so it sees the served ones alone.
-  const gateway = join(dir, "gateway");
-  for (const name of ["roles", "owner", "bots", "api"]) {
-    await mkdir(join(gateway, "packages", name), { recursive: true });
-    await copyFile(join(root, "packages", name, "api.yaml"), join(gateway, "packages", name, "api.yaml"));
-  }
-  websocket = await serveWebSocket({ env, root: gateway, port: 0 });
-  const doc = (name, api) => ({ name, packageName: `@agentstack/${name}`, description: `${name} fixture`, events: api?.events?.topics ?? {}, eventScope: null,
-    transports: [{ type: "websocket", description: "Isolated fixture", supported: true, subscriptions: true, endpoint: websocket.url }],
-    operations: (api?.operations ?? []).map((operation) => ({ name: operation.name, title: operation.annotations?.title ?? null, description: operation.description,
-      annotations: operation.annotations ?? {}, inputSchema: publishedJsonSchema(operation.input), outputSchema: publishedJsonSchema(operation.output) })) });
+  websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["roles", "owner", "bots", "api"]), port: 0 });
+  const doc = (name, api) => fixtureDoc(name, api, websocket.url, publishedJsonSchema);
   const catalog = [doc("roles", rolesApi), doc("bots", botsApi), doc("owner"), doc("api")];
   handlers.docs_snapshot = () => ({ packages: catalog });
   for (const [name, names, topics] of [["owner", ["owner_status"], { pids_changed: "Fixture" }], ["bots", ["bot_list", "bot_defaults_get", "voice_status"], botsApi.events.topics], ["api", ["docs_snapshot"], {}]]) {
