@@ -246,6 +246,14 @@ A versioned recurring producer or discovery definition, such as a feed or accoun
 
 _Avoid_: ingress, individual URL job, attempt
 
+## Proc schedule
+
+A durable, local-control definition for a one-shot or interval invocation of one Package API operation or guarded argv process. Proc owns the wake-up, due admission and execution evidence; the target Package API owns its own effects and idempotency. A missed interval is coalesced, not replayed. An interrupted API call has an unknown outcome, never an automatic retry. _Avoid_: Brain Source cadence, agent turn, cron job
+
+## Proc run
+
+One local-user process execution supervised by Proc's IPC guardian, with a caller-supplied idempotency ID for direct admission, bounded stdout/stderr line records, and a durable exit state. Output change notices contain no lines; consumers read by cursor to survive coalescing. _Avoid_: ACP Worker, Bot, Ingestion worker
+
 ## Share ingress
 
 Brain's authenticated inbound HTTP listener for AgentStack device clients. It resolves each share into the same Admission boundary and owns no separate queue or index. Network reachability alone is not authorization.

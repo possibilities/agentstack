@@ -1,0 +1,12 @@
+name: proc
+description: Durable scheduling of Package API operations and supervised process runs, with bounded output and exit observation.
+socket:
+  description: Full local control for process execution, scheduled calls, run history, line cursors and change notices.
+mcp:
+  operations: all
+  events: all
+  description: Agent tools for schedules, process runs, output observation and change subscriptions, forwarded to the Proc socket.
+websocket:
+  operations: all
+  events: all
+  description: Loopback WebSocket access to Proc operations and change notices, forwarded to the Proc socket.

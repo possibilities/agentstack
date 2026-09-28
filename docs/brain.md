@@ -24,7 +24,7 @@ The ingestion worker handles local materialization and delegates URL extraction 
 
 Research reads use read-only database connections. The research store owns migrations, index writes and the ingestion ledger. Jobs retain attempts and transitions; retry appends execution evidence. Ordinary job listings and summaries omit raw intent and artifact bodies. Explicit content inspection and operator dispositions retain their audit records.
 
-Source definitions are versioned policy. Source synchronization admits a durable run; its completion proves discovery and child-job admission, not that every discovered URL has finished indexing. Due checks are invoked explicitly by a caller or an external scheduler. A fresh installation has no enabled personal sources or recurring schedule.
+Source definitions are versioned policy. Source synchronization admits a durable run; its completion proves discovery and child-job admission, not that every discovered URL has finished indexing. Proc's protected five-minute schedule invokes due checks through Brain's Package API; Brain remains the cadence and checkpoint authority. A fresh installation has no enabled personal sources, so the scheduled check admits nothing until an operator configures and enables one. See [Proc](proc.md) for trigger and outcome semantics.
 
 ## Configure a device client
 

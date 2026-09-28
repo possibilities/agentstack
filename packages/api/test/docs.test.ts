@@ -35,7 +35,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.deepEqual(
       docs.packages.map((item) => item.name),
-       ["access", "api", "auth", "bots", "brain", "browse", "content", "infer", "notify", "owner", "roles", "scrape", "signal", "usage", "worker"],
+       ["access", "api", "auth", "bots", "brain", "browse", "content", "infer", "notify", "owner", "proc", "roles", "scrape", "signal", "usage", "worker"],
     );
     assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@agentstack/${item.name}`));
 
@@ -51,9 +51,18 @@ test("the api package serves structured documents for every workspace package", 
     const snapshot = (await socketCall(served.socketPath, "tools/call", { name: "docs_snapshot", arguments: {} })) as { packages: PackageDoc[] };
     assert.deepEqual(snapshot.packages, [...found.values()]);
     const responseLength = JSON.stringify({ id: 1, result: snapshot }).length + 1;
-    assert.ok(responseLength < 750_000, `discovery snapshot exceeds the socket response budget: ${responseLength} characters`);
+    assert.ok(responseLength < 900_000, `discovery snapshot exceeds the socket response budget: ${responseLength} characters`);
 
     const brainHttp = found.get("brain")!.transports.find((transport) => transport.type === "http")!;
+    const proc = found.get("proc")!;
+    assert.deepEqual(proc.transports.map((transport) => transport.type), ["socket", "mcp", "websocket"]);
+    assert.ok(proc.operations.some((op) => op.name === "proc_schedule_create"));
+    assert.ok(proc.operations.some((op) => op.name === "proc_run_wait"));
+    assert.deepEqual(Object.keys(proc.events), ["proc_schedules_changed", "proc_runs_changed", "proc_output_changed"]);
+    for (const transport of proc.transports.filter((entry) => entry.type !== "socket")) {
+      assert.deepEqual(transport.operations, proc.operations.map((operation) => operation.name));
+      assert.deepEqual(transport.events, Object.keys(proc.events));
+    }
     const access = found.get("access")!;
     assert.deepEqual(access.transports.map(t => t.type).sort(), ["http", "socket", "websocket"]);
     assert.ok(access.operations.some(op => op.name === "pairing_decide"));

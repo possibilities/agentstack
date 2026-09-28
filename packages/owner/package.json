@@ -27,6 +27,7 @@
     "@agentstack/bots": "workspace:*",
     "@agentstack/browse": "workspace:*",
     "@agentstack/brain": "workspace:*",
+    "@agentstack/proc": "workspace:*",
     "@agentstack/scrape": "workspace:*",
     "@agentstack/infer": "workspace:*",
     "@agentstack/notify": "workspace:*",

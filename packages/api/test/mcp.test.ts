@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -88,6 +89,58 @@ test("one HTTP process exposes each configured Package API and forwards operatio
     await served.close();
     await Promise.all(sockets.map((socket) => socket.close()));
     await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("Proc admits mutating calls over MCP and WebSocket with all event topics selected", { timeout: 30_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentstack-proc-transports-"));
+  const env = { ...process.env, AGENTSTACK_STATE_DIR: root };
+  const dir = join(root, "packages", "proc");
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "api.yaml"), "name: proc\ndescription: Processes and schedules.\nsocket:\n  description: Local.\nmcp:\n  description: Agent tools.\n  operations: all\n  events: all\nwebsocket:\n  description: Loopback tools.\n  operations: all\n  events: all\n");
+  const proc = await serveApi({ name: "proc", transport: "socket", env });
+  const mcp = await serveMcp({ root, env, port: 0 });
+  const websocket = await serveWebSocket({ root, env, port: 0 });
+  const client = new Client({ name: "proc-test", version: "1" });
+  let ws: WebSocket | undefined;
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(mcp.urls.proc!)));
+    const names = (await client.listTools()).tools.map((tool) => tool.name);
+    assert.ok(names.includes("proc_schedule_create") && names.includes("proc_run_start"));
+    const scheduleId = randomUUID();
+    const created = await client.callTool({ name: "proc_schedule_create", arguments: {
+      id: scheduleId, action: { type: "process", process: { command: process.execPath } },
+      firstAt: new Date(Date.now() + 3_600_000).toISOString(), enabled: false,
+    } });
+    assert.equal(created.isError, undefined);
+    assert.equal((created.structuredContent as { id: string }).id, scheduleId);
+    ws = await new Promise<WebSocket>((resolve, reject) => {
+      const conn = new WebSocket(websocket.url);
+      conn.once("open", () => resolve(conn)); conn.once("error", reject);
+    });
+    const exchange = async (id: number, method: string, params: object) => {
+      const frame = new Promise<any>((resolve, reject) => {
+        ws!.once("message", (raw) => { try { resolve(JSON.parse(String(raw))); } catch (error) { reject(error); } });
+        ws!.once("error", reject);
+      });
+      ws!.send(JSON.stringify({ id, method, params }));
+      return frame;
+    };
+    const listed = await exchange(1, "tools/list", { package: "proc" });
+    assert.ok(listed.result.tools.some((tool: { name: string }) => tool.name === "proc_run_start"));
+    assert.deepEqual(Object.keys(listed.result.events.topics), ["proc_schedules_changed", "proc_runs_changed", "proc_output_changed"]);
+    const removed = await exchange(2, "tools/call", { package: "proc", name: "proc_schedule_remove", arguments: { id: scheduleId, expectedRevision: 1 } });
+    assert.deepEqual(removed.result, { removed: true });
+    const started = await exchange(3, "tools/call", { package: "proc", name: "proc_run_start", arguments: {
+      requestId: randomUUID(), process: { command: process.execPath, args: ["-e", "process.stdout.write('agent\\n')"] },
+    } });
+    assert.ok(started.result.id);
+    const joined = await exchange(4, "tools/call", { package: "proc", name: "proc_run_join", arguments: { id: started.result.id, waitMs: 5_000 } });
+    assert.equal(joined.result.run.state, "exited");
+    assert.equal(joined.result.run.exitCode, 0);
+  } finally {
+    ws?.terminate(); await client.close(); await websocket.close(); await mcp.close(); await proc.close();
+    await rm(root, { recursive: true, force: true });
   }
 });
 

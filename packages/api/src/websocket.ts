@@ -21,6 +21,8 @@ const forwardTimeouts = new Map([
   ["infer/infer_complete", 75_000],
   ["attention/attention_models", 75_000],
   ["bots/chat_message_changes", 30_000],
+  ["proc/proc_run_wait", 40_000],
+  ["proc/proc_run_join", 310_000],
 ]);
 
 export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: string; port?: number } = {}): Promise<ServedWebSocket> {
