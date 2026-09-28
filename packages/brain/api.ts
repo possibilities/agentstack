@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { operation, type PackageApi } from "@agentstack/api";
 import { ArtifactStore } from "./src/artifacts.js";
+import { brainTopics, watchBrainChanges, type BrainChanges, type BrainTopic } from "./src/changes.js";
 import { runParsed } from "./src/dispatch.js";
 import { CliError } from "./src/errors.js";
 import { captureOutput } from "./src/format.js";
@@ -35,6 +36,8 @@ export interface BrainContext {
   calls: Set<Promise<unknown>>;
   workerState: "running" | "stopped" | "failed";
   health: string | null;
+  /** Present while events are served; operation calls ask it to compare fingerprints at once. */
+  changes?: BrainChanges;
   closing?: Promise<void>;
 }
 
@@ -109,7 +112,13 @@ const commandOperations = agentTools(undefined, true).filter((tool) => !internal
   },
   async call(ctx: BrainContext, input: Record<string, unknown>) {
     const invocation = invocationFor(tool, input);
-    const result = await invoke(ctx, invocation.command, invocation.commandArgv);
+    let result: unknown;
+    try { result = await invoke(ctx, invocation.command, invocation.commandArgv); } finally {
+      // A mutation (or a failed one that may still have committed) is announced without waiting for the next tick.
+      if (!tool.annotations.readOnlyHint) ctx.changes?.check();
+    }
+    // Retagging rewrites FTS rows in place, which no fingerprint sees.
+    if (tool.name === "retag" && input["dry-run"] !== true) ctx.changes?.touch("index_changed");
     const field = resultFields[tool.name];
     return field ? { [field]: result } : result;
   },
@@ -178,6 +187,7 @@ export async function closeBrainContext(ctx: BrainContext): Promise<void> {
   ctx.closing = (async () => {
     ctx.controller.abort();
     clearInterval(ctx.maintenance);
+    ctx.changes?.stop();
     try {
       await Promise.allSettled([ctx.server.stop(), ctx.worker, ctx.maintenanceTask, ...ctx.calls]);
     } finally { clearIngressRegistration(ctx.registrationPath); ctx.store.close(); }
@@ -185,7 +195,7 @@ export async function closeBrainContext(ctx: BrainContext): Promise<void> {
   return ctx.closing;
 }
 
-export const api: PackageApi<BrainContext> = {
+export const api: PackageApi<BrainContext, BrainTopic> = {
   http: [{ name: "share", kind: "json", authentication: "bearer",
     description: "Loopback-only internal share listener with ephemeral liveness credential. Devices pair through Access; legacy shared tokens are not accepted.", routes: shareRoutes }],
   operations: [
@@ -221,6 +231,11 @@ export const api: PackageApi<BrainContext> = {
     }),
     ...commandOperations,
   ],
+  events: { topics: brainTopics,
+    start(ctx, publish) {
+      ctx.changes = watchBrainChanges(ctx.dbPath, publish, { status: () => `${ctx.workerState}:${ctx.health ?? ""}` });
+      return () => { ctx.changes?.stop(); ctx.changes = undefined; };
+    } },
   createContext: createBrainContext,
   prepareCloseContext(ctx) { ctx.controller.abort(); },
   closeContext: closeBrainContext,

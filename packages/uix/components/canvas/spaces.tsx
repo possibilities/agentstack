@@ -7,6 +7,10 @@ import { ArrowRightLeftIcon, FolderInputIcon, GlobeIcon, ListChecksIcon, RssIcon
 import { ExtractWindow } from "./scrape-extract";
 import { ConvertWindow, FeedsWindow } from "./scrape-feeds";
 import { ChecksWindow, PresetsWindow, QueueWindow, StatusWindow } from "./scrape-operator";
+import { BookOpenTextIcon, BrainIcon, ImportIcon, SatelliteDishIcon, SearchIcon } from "lucide-react";
+import { ReaderWindow, SearchWindow } from "./brain-search";
+import { IngestWindow } from "./brain-ingest";
+import { JobsWindow, SourcesWindow } from "./brain-ledger";
 import type { SpaceId } from "@/lib/stack/spaces";
 import type { StackState } from "@/lib/stack/store";
 import { type Accent } from "./window";
@@ -158,6 +162,17 @@ export const spaceViews: Record<SpaceId, {
       { id: "scrape-status", title: "Status", icon: GaugeIcon, accent: "scrape", width: 460, height: 340, column: 2, element: <StatusWindow /> },
       { id: "scrape-checks", title: "Checks", icon: ListChecksIcon, accent: "scrape", width: 440, height: 760, column: 3, fixed: true, element: <ChecksWindow /> },
       { id: "scrape-queue", title: "Queue", icon: FolderInputIcon, accent: "scrape", width: 480, height: 760, column: 4, fixed: true, element: <QueueWindow /> },
+    ],
+  },
+  brain: {
+    icon: BrainIcon,
+    accent: "brain",
+    windows: () => [
+      { id: "brain-search", title: "Search", icon: SearchIcon, accent: "brain", width: 520, height: 780, column: 0, fixed: true, element: <SearchWindow /> },
+      { id: "brain-reader", title: "Reader", icon: BookOpenTextIcon, accent: "brain", width: 580, height: 780, column: 1, fixed: true, element: <ReaderWindow /> },
+      { id: "brain-ingest", title: "Ingest", icon: ImportIcon, accent: "brain", width: 400, height: 560, column: 2, element: <IngestWindow /> },
+      { id: "brain-jobs", title: "Jobs", icon: ListChecksIcon, accent: "brain", width: 480, height: 780, column: 3, fixed: true, element: <JobsWindow /> },
+      { id: "brain-sources", title: "Sources", icon: SatelliteDishIcon, accent: "brain", width: 460, height: 640, column: 4, element: <SourcesWindow /> },
     ],
   },
 };

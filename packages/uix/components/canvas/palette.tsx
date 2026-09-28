@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ImportIcon, ListChecksIcon, SatelliteDishIcon, SearchIcon } from "lucide-react";
 import { BellIcon, BlocksIcon, HammerIcon, BookOpenIcon, BotIcon, BoxesIcon, FileTextIcon, NotebookTextIcon, UploadIcon, CircleCheckIcon, CpuIcon, FilePlusIcon, FolderIcon, FolderLockIcon, FolderPlusIcon, MicIcon, MicOffIcon, PhoneIcon, PhoneOffIcon, PlugIcon, RefreshCwIcon, ScrollTextIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
 import { operationTitle } from "@/lib/stack/catalog";
@@ -23,7 +24,7 @@ import { workerAttention, workerLabel, workerOrigin } from "@/lib/stack/workers"
 export type PaletteAction = { id: string; label: string; shortcut?: string; icon: React.ComponentType; run(): void };
 
 export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpenChange(open: boolean): void; actions: PaletteAction[] }) {
-  const { bots, accounts, workerAccounts, workerSessions, owner, catalog, attempt, role, notificationRecords, contentDocuments, contentItems, contentArtifacts, status } = useStack();
+  const { bots, accounts, workerAccounts, workerSessions, owner, catalog, attempt, role, notificationRecords, contentDocuments, contentItems, contentArtifacts, status, brainSources } = useStack();
   const store = useStore();
   const notify = useNotifyActions();
   // Notifications the page has loaded, newest first; the palette never pages the ledger itself.
@@ -185,6 +186,30 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
               </CommandItem>
             ))}
           </CommandGroup>
+          {status.brain === "open" ? (
+            <CommandGroup heading="Brain">
+              {search.trim().length >= 2 ? (
+                // The value repeats the query, so the matcher keeps this item listed.
+                <CommandItem value={`brain search ${search}`} onSelect={() => { onOpenChange(false); store.searchBrain(search.trim()); setSpace("brain"); }}>
+                  <SearchIcon /><span className="truncate">Search Brain for “{search.trim()}”</span>
+                </CommandItem>
+              ) : null}
+              {/^#?\d+$/.test(search.trim()) ? (
+                <CommandItem value={`brain job ${search}`} onSelect={() => go({ kind: "ingestion-job", id: search.trim().replace("#", "") })}>
+                  <ListChecksIcon /><span>Ingestion job {search.trim().replace("#", "")}</span>
+                </CommandItem>
+              ) : null}
+              <CommandItem value="brain submit ingest url text research" onSelect={() => { onOpenChange(false); setSpace("brain"); }}><ImportIcon />Submit to Brain</CommandItem>
+              {(brainSources.data ?? []).map((source) => (
+                <CommandItem key={source.id} value={`brain research source ${source.display_name} ${source.kind} ${source.id}`} onSelect={() => go({ kind: "research-source", id: source.id })}>
+                  <SatelliteDishIcon />
+                  <span className="truncate">{source.display_name}</span>
+                  <span className="text-xs text-muted-foreground">{source.kind}</span>
+                  <CommandShortcut className="tracking-normal">{source.paused ? "paused" : source.enabled ? source.health.state : "off"}</CommandShortcut>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          ) : null}
           {notices.length ? (
             <CommandGroup heading="Inbox">
               {notices.map((record) => (

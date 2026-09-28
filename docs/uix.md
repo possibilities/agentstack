@@ -127,6 +127,16 @@ PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
   node packages/uix/test/scrape-browser-check.mjs
 ```
 
+The Brain space's check serves the real Brain API against a disposable state directory with an
+ephemeral share port, so it never opens a live research store. It submits text and a private URL,
+reads, searches, excludes, reveals, pauses a source and deletes. It uses `next dev` unless
+`BRAIN_NEXT=start`, and keeps screenshots when `BRAIN_EVIDENCE_DIR` is set:
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  node packages/uix/test/brain-browser-check.mjs
+```
+
 The bench check uses disposable sockets, a fixture snapshot and its own `next start`
 process. `CHROME_EXECUTABLE` overrides the default macOS Chrome path;
 `NEXT_MODE=dev` selects development verification instead. Screenshots are written

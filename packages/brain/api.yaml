@@ -4,11 +4,11 @@ socket:
   description: Unix socket for research, ingestion ledger, recurring sources and recovery operations.
 mcp:
   operations: all
-  events: all
-  description: HTTP MCP operations forwarded to the Brain socket.
+  events: []
+  description: HTTP MCP operations forwarded to the Brain socket. Change notices are not offered to agents.
 websocket:
   operations: all
   events: all
-  description: Loopback WebSocket operations forwarded to the Brain socket.
+  description: Loopback WebSocket operations forwarded to the Brain socket, with ledger, source and index change notices for the UIX Brain space.
 http:
   description: Authenticated versioned JSON routes for device shares on a separate listener; only the declared share operations are available.

@@ -1,9 +1,10 @@
 import { accountLabels, workerAccountLabels } from "./derive";
 import { workerAttention, workerLabel } from "./workers";
+import { statusIssues } from "./brain";
 import type { StackState } from "./store";
 import { nodeKey, type NodeRef } from "./types";
 
-export type SpaceId = "fleet" | "accounts" | "lab" | "system" | "roles" | "inbox" | "signal" | "content" | "workers" | "scrape";
+export type SpaceId = "fleet" | "accounts" | "lab" | "system" | "roles" | "inbox" | "signal" | "content" | "workers" | "scrape" | "brain";
 
 export const spaces: { id: SpaceId; title: string; description: string; key: string }[] = [
   { id: "fleet", title: "Fleet", description: "Bots and their controls", key: "1" },
@@ -16,6 +17,7 @@ export const spaces: { id: SpaceId; title: string; description: string; key: str
   { id: "content", title: "Content", description: "Vault documents, collections, files and Artifacts", key: "8" },
   { id: "workers", title: "Workers", description: "What Workers started by Bots are doing, read-only", key: "9" },
   { id: "scrape", title: "Scrape", description: "Extraction, feeds, presets and their health, and the scrape-to-file queue", key: "0" },
+  { id: "brain", title: "Brain", description: "Search and read collected research, submit material, and follow ingestion and sources", key: "b" },
 ];
 
 export const defaultSpace: SpaceId = "fleet";
@@ -95,6 +97,12 @@ export function homeOf(ref: NodeRef): NodeHome {
       return { kind: "space", space: "scrape", window: "scrape-presets" };
     case "scrape-job":
       return { kind: "space", space: "scrape", window: "scrape-queue" };
+    case "research-document":
+      return { kind: "space", space: "brain", window: "brain-reader" };
+    case "ingestion-job":
+      return { kind: "space", space: "brain", window: "brain-jobs" };
+    case "research-source":
+      return { kind: "space", space: "brain", window: "brain-sources" };
     case "package":
     case "operation":
       return { kind: "reference" };
@@ -115,8 +123,8 @@ export function parseSpacePath(pathname: string): SpaceId | null {
 }
 
 /** Human-readable reasons each space needs attention; an empty list means all quiet. Only "closed" channels count — idle and connecting are normal. */
-export function spaceAttention(state: Pick<StackState, "status" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerSessions" | "workerRuntimes" | "bots" | "attempt" | "catalog" | "endpoints" | "notifyCounts" | "signalStatus"> & Partial<Pick<StackState, "contentUploads" | "scrapeStatus">>): Record<SpaceId | "api", string[]> {
-  const attention: Record<SpaceId | "api", string[]> = { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], api: [] };
+export function spaceAttention(state: Pick<StackState, "status" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerSessions" | "workerRuntimes" | "bots" | "attempt" | "catalog" | "endpoints" | "notifyCounts" | "signalStatus"> & Partial<Pick<StackState, "contentUploads" | "scrapeStatus" | "brainStatus" | "brainJobStats" | "brainSources">>): Record<SpaceId | "api", string[]> {
+  const attention: Record<SpaceId | "api", string[]> = { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], brain: [], api: [] };
   for (const bot of state.bots.data ?? []) if (bot.recoveryIssue) attention.fleet.push(`${bot.id} needs inspection`);
   const labels = accountLabels(state.accounts.data);
   for (const account of state.accounts.data ?? []) if (account.removing) attention.accounts.push(`${labels.get(account.id) ?? account.id} removal unfinished`);
@@ -151,6 +159,16 @@ export function spaceAttention(state: Pick<StackState, "status" | "owner" | "res
   if (state.status.scrape === "closed") attention.scrape.push("scrape reconnecting");
   // Other optional tools affect narrower routes; the Status window lists them without raising attention.
   if (state.scrapeStatus?.data && !state.scrapeStatus.data.browser) attention.scrape.push("Browser runtime unavailable");
+  if (state.status.brain === "closed") attention.brain.push("brain reconnecting");
+  attention.brain.push(...statusIssues(state.brainStatus?.data ?? null));
+  const ledger = state.brainJobStats?.data;
+  if (ledger) {
+    // Failed and blocked jobs stay until someone retries or excludes them; retry_wait resolves itself.
+    const stalled = ledger.by_state.failed + ledger.by_state.blocked;
+    if (stalled) attention.brain.push(`${stalled} ${stalled === 1 ? "job needs" : "jobs need"} a decision`);
+    if (ledger.stale_leases) attention.brain.push(`${ledger.stale_leases} stale ${ledger.stale_leases === 1 ? "lease" : "leases"}`);
+  }
+  for (const source of state.brainSources?.data ?? []) if (source.enabled && !source.paused && source.health.state === "unhealthy") attention.brain.push(`${source.display_name} unhealthy`);
   for (const name of ["auth", "usage", "worker"] as const) if (state.status[name] === "closed") attention.accounts.push(`${name} reconnecting`);
   for (const child of state.owner.data?.children ?? []) if (!child.running) attention.system.push(`${child.name} stopped`);
   if (state.status.owner === "closed") attention.system.push("owner reconnecting");
@@ -192,5 +210,6 @@ export function parseNodeKey(key: string): NodeRef | null {
   if (kind === "document" || kind === "collection" || kind === "item" || kind === "artifact") return { kind, id: rest };
   if (kind === "worker" || kind === "worker-runtime" || kind === "worker-window") return { kind, id: rest };
   if (kind === "preset" || kind === "scrape-job") return { kind, id: rest };
+  if (kind === "research-document" || kind === "ingestion-job" || kind === "research-source") return { kind, id: rest };
   return null;
 }

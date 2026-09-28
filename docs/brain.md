@@ -14,7 +14,7 @@ The AgentStack owner starts Brain with the other Package APIs. It owns the inges
 | `AGENTSTACK_BRAIN_SHARE_HOST` | `127.0.0.1` | Internal backend; remote binds are refused. |
 | `AGENTSTACK_BRAIN_SHARE_PORT` | `8877` | Internal HTTP port; `0` requests an ephemeral test port. |
 
-The local Package API is available through the same socket, MCP and WebSocket mechanisms as other packages. Read `docs_get` for `brain`, or the live `/docs` reference, for operation inputs and outputs. The API canvas's existing catalog also describes the operations; it is not a dedicated research browser.
+The local Package API is available through the same socket, MCP and WebSocket mechanisms as other packages. Read `docs_get` for `brain`, or the live `/docs` reference, for operation inputs and outputs. The UIX **Brain** space ([ADR 0104](adr/0104-brain-space.md)) searches and reads the index, submits URLs and text, and follows the ingestion ledger and Research sources. It re-reads after Brain's `jobs_changed`, `sources_changed` and `index_changed` notices, which the WebSocket carries and MCP does not.
 
 ## Ingestion and retrieval
 
