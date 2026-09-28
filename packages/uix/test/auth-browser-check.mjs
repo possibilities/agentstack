@@ -9,6 +9,7 @@ import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serveSocket, serveWebSocket, socketPath } from "@agentstack/api";
+import { anyObject, gatewayRoot, z } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -85,15 +86,15 @@ async function port() {
   return value;
 }
 try {
-  websocket = await serveWebSocket({ env, root, port: 0 });
   const definitions = { owner: ["owner_status"], auth: Object.keys(handlers).filter((name) => /^(account_|worker_account_)/.test(name)),
-    bots: ["bot_list", "bot_defaults_get", "voice_status"], workers: ["worker_list", "worker_runtime_list"], usage: ["usage_snapshot"], api: ["docs_snapshot"] };
+    bots: ["bot_list", "bot_defaults_get", "voice_status"], worker: ["worker_list", "worker_runtime_list"], usage: ["usage_snapshot"], api: ["docs_snapshot"] };
+  websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, Object.keys(definitions)), port: 0 });
   const topics = { auth: Object.fromEntries(["accounts_changed", "worker_accounts_changed", "login_changed", "worker_login_changed"].map((name) => [name, "Fixture"])) };
   handlers.docs_snapshot = () => ({ packages: Object.keys(definitions).map((name) => ({ name, packageName: `@agentstack/${name}`, description: "Auth fixture", events: topics[name] ?? {}, eventScope: null, operations: [],
-    transports: [{ type: "websocket", endpoint: websocket.url, supported: true, subscriptions: true, description: "Isolated fixture" }] })) });
+    transports: [{ type: "websocket", endpoint: websocket.url, supported: true, subscriptions: true, description: "Isolated fixture", operations: definitions[name], events: Object.keys(topics[name] ?? {}) }] })) });
   for (const [name, names] of Object.entries(definitions)) {
     served.set(name, await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {},
-      operations: names.map((name) => ({ name, description: name, input: passthrough, output: passthrough, async call(_, input) { calls.push({ name, input }); return handlers[name](input); } })),
+      operations: names.map((name) => ({ name, description: name, input: anyObject, output: z.any(), async call(_, input) { calls.push({ name, input }); return handlers[name](input); } })),
       events: { topics: topics[name] ?? {} } }));
   }
   const nextPort = await port();
@@ -124,7 +125,8 @@ try {
     Object.defineProperty(navigator, "clipboard", { value: { writeText: async (text) => { window.authFixture.copies.push(text); } } });
     window.open = (...args) => { window.authFixture.opens.push(args); return null; };
   });
-  await page.goto(`${origin}/x/fleet`);
+  // Worker accounts live on the Accounts bench; hidden benches lay out at zero size.
+  await page.goto(`${origin}/x/accounts`);
   // Keep Next's development badge out of evidence; production has no such overlay.
   if (mode === "dev") await page.addStyleTag({ content: "nextjs-portal { display: none; }" });
   page.on("request", (request) => { if (request.isNavigationRequest() && request.frame() === page.mainFrame()) navigations.push(request.url()); });

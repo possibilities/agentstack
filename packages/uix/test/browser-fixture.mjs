@@ -1,4 +1,4 @@
-// Shared setup for the optional rendered checks (roles, inbox, content). Not a test file itself.
+// Shared setup for the optional rendered checks and the gateway-backed store test. Not a test file itself.
 import { copyFile, mkdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";

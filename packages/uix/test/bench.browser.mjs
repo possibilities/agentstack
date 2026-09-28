@@ -22,7 +22,7 @@ const pass = { parse: (value) => value };
 const fixtureAt = "2020-06-01T12:00:00.000Z";
 const op = (name, result) => ({ name, description: name, input: pass, output: pass, async call() { return result; } });
 const bots = Array.from({ length: 8 }, (_, i) => ({ id: `bot-${i + 1}`, pid: 100 + i, cwd: "/fixture/project", state: "running", account: "account-1", runningAccount: "account-1", mainThreadId: `thread-${i}`, url: null, recoveryIssue: null, roleRevision: 1, settings: { model: "fixture", reasoningEffort: "medium", sandboxMode: "read-only", approvalPolicy: "never" } }));
-const doc = (name, operation) => ({ name, packageName: `@agentstack/${name}`, description: `${name} fixture description`, events: { changed: "Fixture changed" }, eventScope: { required: true, description: "A current Bot ID", example: "bot-1" }, transports: [{ type: "socket", supported: true, subscriptions: true, endpoint: socketPath(name, env), description: "Fixture Unix socket" }], operations: [{ name: operation, title: "Read fixture", description: "Read current fixture state", annotations: { readOnlyHint: true, destructiveHint: false }, inputSchema: { type: "object", properties: { id: { type: "string", description: "Current ID", minLength: 1 } }, required: ["id"], additionalProperties: false }, outputSchema: { oneOf: [{ type: "object", properties: { value: { type: "string" } } }, { type: "null" }], $defs: { complete: { type: "number" } } } }] });
+const doc = (name, operation) => ({ name, packageName: `@agentstack/${name}`, description: `${name} fixture description`, events: { changed: "Fixture changed" }, eventScope: { required: true, description: "A current Bot ID", example: "bot-1" }, transports: [{ type: "socket", supported: true, subscriptions: true, endpoint: socketPath(name, env), description: "Fixture Unix socket", operations: [operation], events: ["changed"] }], operations: [{ name: operation, title: "Read fixture", description: "Read current fixture state", annotations: { readOnlyHint: true, destructiveHint: false }, inputSchema: { type: "object", properties: { id: { type: "string", description: "Current ID", minLength: 1 } }, required: ["id"], additionalProperties: false }, outputSchema: { oneOf: [{ type: "object", properties: { value: { type: "string" } } }, { type: "null" }], $defs: { complete: { type: "number" } } } }] });
 const catalog = [doc("owner", "owner_status"), doc("bots", "bot_status"), doc("auth", "account_list")];
 const resourcesFixture = {
   observation: { snapshotId: "snap-1", capturedAt: fixtureAt, ageMs: 400, freshness: "fresh", lastAttemptAt: fixtureAt, error: null,
@@ -335,8 +335,11 @@ try {
   const expectedWindows = {
     Fleet: ["bots", "chat"], Accounts: ["accounts", "model-catalogs", "usage"],
     Lab: ["call-speech", "inference"],
-    System: ["activity", "host", "owner", "packages", "processes", "resources", "sampling"],
-    Roles: ["role-editor", "role-instructions", "role-preview"],
+    System: ["access", "activity", "host", "owner", "packages", "processes", "resources", "sampling"],
+    Roles: ["role-editor", "role-instructions", "role-mcp-servers", "role-preview", "role-projects", "role-skills"],
+    Inbox: ["notify-detail", "notify-inbox"],
+    Signal: ["attention", "attention-changes", "attention-messages", "attention-runs", "signal"],
+    Content: ["content-artifacts", "content-documents", "content-editor", "content-library", "content-preview"],
   };
   const switchSpace = async (title) => {
     await page.getByRole("button", { name: /^Spaces/ }).click();

@@ -8,6 +8,7 @@ import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serveSocket, serveWebSocket, socketPath } from "@agentstack/api";
+import { anyObject, gatewayRoot, z } from "./browser-fixture.mjs";
 
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const require = createRequire(import.meta.url);
@@ -51,15 +52,15 @@ const handlers = {
   usage_snapshot: () => ({ atMs: now, inventoryAtMs: now, inventoryError: null, accounts: [], grokBot: null }),
 };
 try {
-  websocket = await serveWebSocket({ env, root, port: 0 });
   const definitions = { access: ["access_snapshot", "pairing_decide", "grant_update", "access_revoke"], owner: ["owner_status"],
     auth: ["account_list", "account_login_current", "worker_account_list", "worker_account_login_current"], bots: ["bot_list", "bot_defaults_get", "voice_status"],
-    workers: ["worker_list", "worker_runtime_list"], usage: ["usage_snapshot"], api: ["docs_snapshot"] };
+    worker: ["worker_list", "worker_runtime_list"], usage: ["usage_snapshot"], api: ["docs_snapshot"] };
+  websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, Object.keys(definitions)), port: 0 });
   const topics = { access: { access_changed: "Fixture" } };
   handlers.docs_snapshot = () => ({ packages: Object.keys(definitions).map((name) => ({ name, packageName: `@agentstack/${name}`, description: "Access fixture", events: topics[name] ?? {}, eventScope: null, operations: [],
-    transports: [{ type: "websocket", endpoint: websocket.url, supported: true, subscriptions: true, description: "Fixture" }] })) });
+    transports: [{ type: "websocket", endpoint: websocket.url, supported: true, subscriptions: true, description: "Fixture", operations: definitions[name], events: Object.keys(topics[name] ?? {}) }] })) });
   for (const [name, names] of Object.entries(definitions)) served.set(name, await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {},
-    operations: names.map((name) => ({ name, description: name, input: { parse: (v) => v }, output: { parse: (v) => v }, async call(_, input) { calls.push({ name, input }); return handlers[name](input); } })), events: { topics: topics[name] ?? {} } }));
+    operations: names.map((name) => ({ name, description: name, input: anyObject, output: z.any(), async call(_, input) { calls.push({ name, input }); return handlers[name](input); } })), events: { topics: topics[name] ?? {} } }));
   const server = createServer();
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = server.address().port;

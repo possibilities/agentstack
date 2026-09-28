@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { registerHooks } from "node:module";
 import { dirname, extname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { serveApi, serveWebSocket, socketCall, socketPath } from "@agentstack/api";
+import { gatewayRoot } from "./browser-fixture.mjs";
 
 // Load the browser store directly without a Next build. Its bundler-style
 // imports need extensions when loaded by Node.
@@ -39,11 +40,7 @@ test("the Inbox store pages, filters, follows notify_changed and applies dismiss
   const dir = await mkdtemp(join("/tmp", "as-notify-store-"));
   const env = { ...process.env, AGENTSTACK_STATE_DIR: dir };
   const notify = await serveApi({ name: "notify", transport: "socket", env, root });
-  // The gateway admits a connection only when every package it configures is live, so it sees notify alone.
-  const gateway = join(dir, "gateway");
-  await mkdir(join(gateway, "packages", "notify"), { recursive: true });
-  await copyFile(join(root, "packages", "notify", "api.yaml"), join(gateway, "packages", "notify", "api.yaml"));
-  const websocket = await serveWebSocket({ env, root: gateway, port: 0 });
+  const websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["notify"]), port: 0 });
   const call = (name, args = {}) => socketCall(socketPath("notify", env), "tools/call", { name, arguments: args });
   const store = new StackStore({ owner: empty, resources: empty, accounts: empty, workerAccounts: empty, workerRuntimes: empty, workerSessions: empty,
     usage: empty, login: empty, workerLogins: empty, bots: empty, botDefaults: empty, voice: empty, role: empty, rolePreview: empty, catalog: empty,
