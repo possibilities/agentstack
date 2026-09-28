@@ -129,7 +129,7 @@ test("Claude SDK workers preserve account/session continuity, exact permission a
     operations: [operation({ name: operationName, description: "Fixture", input: z.object({}), output: z.any(), async call() { return value; } })],
   });
   const auth = await socket("auth", "worker_account_list", { accounts });
-  const roles = await socket("roles", "role_snapshot", role);
+  const roles = await socket("roles", "role_launch_snapshot", role);
   const owner = await socket("owner", "owner_status", { mcpUrls: { roles: "http://127.0.0.1:12345/mcp/roles" } });
   const sdk = sdkFixture();
   let supervisor = new WorkerSupervisor(root, env, { claudeQuery: sdk.factory });

@@ -3,10 +3,33 @@ description: Manage the single role's instruction fragments, skills, additional 
 socket:
   description: Unix socket for role operations and change events.
 mcp:
-  operations: all
+  operations: &public_operations
+    - role_snapshot
+    - role_preview
+    - category_create
+    - category_update
+    - category_delete
+    - category_reorder
+    - fragment_create
+    - fragment_update
+    - fragment_delete
+    - fragment_reorder
+    - fragment_move
+    - skill_create
+    - skill_update
+    - skill_delete
+    - skill_reorder
+    - mcp_server_create
+    - mcp_server_update
+    - mcp_server_delete
+    - mcp_server_reorder
+    - project_create
+    - project_update
+    - project_delete
+    - project_reorder
   events: all
   description: HTTP MCP operations for role editing, forwarded to the roles socket.
 websocket:
-  operations: all
+  operations: *public_operations
   events: all
   description: Loopback WebSocket for role operations and change events, forwarded to the roles socket.

@@ -192,6 +192,7 @@ test("enabled role resources materialize privately and disabled items stay out o
     assert.equal(await readFile(join(first, "skills", "review", "scripts", "check.sh"), "utf8"), "exit 0\n");
     const config = await readFile(join(first, "config.toml"), "utf8");
     assert.match(config, /\[mcp_servers.auth\]/);
+    assert.match(config, /tool_timeout_sec = 305/);
     assert.match(config, /\[mcp_servers.remote\]/);
     assert.match(config, /bearer_token_env_var = "ROLE_TOKEN"/);
     assert.match(config, /http_headers = \{ "X-Role" = "managed" \}/);

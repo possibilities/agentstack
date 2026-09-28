@@ -110,24 +110,22 @@ export function ResourcesWindow() {
                   const share = totalRss && scope.metrics.rssBytes !== null ? scope.metrics.rssBytes / totalRss : null;
                   const key = nodeKey({ kind: "resource", id: scope.id });
                   return (
-                    <div key={scope.id} data-node={key} role="button" tabIndex={0} aria-pressed={active === scope.id}
-                      aria-label={`Chart ${scopeName(scope)}`}
-                      className={cn("relative flex cursor-pointer flex-col gap-0.5 rounded-md px-1 py-1 text-xs hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-ring", active === scope.id && "bg-muted/70")}
-                      onClick={() => setChosen(scope.id)}
-                      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setChosen(scope.id); } }}>
+                    <div key={scope.id} data-node={key}
+                      className={cn("relative flex flex-col gap-0.5 rounded-md px-1 py-1 text-xs", active === scope.id && "bg-muted/70")}>
                       <Flash id={key} />
                       <div className="flex items-center gap-2">
                         <NodeTitle node={{ kind: "resource", id: scope.id }} label={`${scope.name} resources`} className="min-w-0 truncate font-medium">{scopeName(scope)}</NodeTitle>
                         {target ? <NodeLink node={target} label={`${scope.name} home`} className="text-muted-foreground">{target.kind === "bot" ? "bot" : target.kind === "child" ? "child" : target.kind === "owner" ? "owner" : "account"}</NodeLink> : null}
                         <span className="ml-auto shrink-0 font-mono text-[0.68rem] text-muted-foreground tabular-nums">{scope.metrics.processCount} proc</span>
                       </div>
-                      <div className="flex items-center gap-2 text-muted-foreground">
+                      <button type="button" aria-label={`Chart ${scopeName(scope)}`} aria-pressed={active === scope.id}
+                        onClick={() => setChosen(scope.id)} className="flex items-center gap-2 rounded text-muted-foreground hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-ring">
                         <span className="flex h-1 w-16 overflow-hidden rounded-full bg-muted" aria-hidden>
                           <span className="bg-pkg-codex/70" style={{ width: `${Math.min(100, (share ?? 0) * 100)}%` }} />
                         </span>
                         <span className="tabular-nums">{formatPercent(scope.metrics.cpuPercent)}</span>
                         <span className="tabular-nums">{formatBytes(scope.metrics.rssBytes)}</span>
-                      </div>
+                      </button>
                     </div>
                   );
                 })}

@@ -148,7 +148,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
   const env = { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_OPENCODE_BIN: binary };
   const auth = await serveApi({ name: "auth", transport: "socket", env });
   const roles = await serveSocket({ info: { name: "roles", description: "Roles", transportDescription: "Socket", path: socketPath("roles", env) },
-    context: {}, operations: [operation({ name: "role_snapshot", description: "Role", input: z.object({}), output: z.any(),
+    context: {}, operations: [operation({ name: "role_launch_snapshot", description: "Role", input: z.object({}), output: z.any(),
       async call() { return role; } })] });
   const owner = await serveSocket({ info: { name: "owner", description: "Owner", transportDescription: "Socket", path: socketPath("owner", env) },
     context: {}, operations: [operation({ name: "owner_status", description: "Status", input: z.object({}), output: z.any(),

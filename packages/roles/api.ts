@@ -15,7 +15,8 @@ const stamps = { createdAt: stamp, updatedAt: stamp.describe("Unix milliseconds 
 const fragment = z.strictObject({ id, categoryId: id, title, description, body, enabled: z.boolean(), ...stamps });
 const category = z.strictObject({ id, title, description, enabled: z.boolean(), fragments: z.array(fragment), ...stamps });
 const index = z.number().int().nonnegative().describe("Zero-based position within the category.");
-const snapshot = z.strictObject({ revision, categories: z.array(category), skills: z.array(skillRecord), mcpServers: z.array(mcpRecord), trustedProjects: z.array(trustedProjectRecord) });
+const launchSnapshot = z.strictObject({ revision, categories: z.array(category), skills: z.array(skillRecord), mcpServers: z.array(mcpRecord), trustedProjects: z.array(trustedProjectRecord) });
+const snapshot = launchSnapshot.extend({ mcpServers: z.array(mcpRecord.omit({ definition: true }).extend({ transport: z.enum(["http", "stdio"]) })) });
 const segment = z.strictObject({ categoryId: id, fragmentId: id,
   start: z.number().int().nonnegative(), end: z.number().int().nonnegative() }).describe("One rendered fragment body as [start, end) string offsets; separators belong to no segment.");
 const preview = z.strictObject({ revision, rendered: z.string(), segments: z.array(segment),
@@ -23,15 +24,23 @@ const preview = z.strictObject({ revision, rendered: z.string(), segments: z.arr
 const write = z.strictObject({ expectedRevision: revision });
 
 export type RolesContext = { store: RoleStore; changed?: () => void };
-function changed(ctx: RolesContext, result: z.infer<typeof snapshot>) { ctx.changed?.(); return result; }
+function summarize(result: z.infer<typeof launchSnapshot>): z.infer<typeof snapshot> {
+  return { ...result, mcpServers: result.mcpServers.map(({ definition, ...record }) => ({ ...record, transport: definition.type })) };
+}
+function changed(ctx: RolesContext, result: z.infer<typeof launchSnapshot>) { ctx.changed?.(); return summarize(result); }
 async function ensureAdditionalMcpName(name: string): Promise<void> {
   const internal = await configuredMcpPackages(workspaceRoot(import.meta.dirname));
   if (internal.some((pkg) => pkg.name === name)) throw new Error(`role MCP server ${name} collides with an internal Package API`);
 }
 
 export const roleSnapshot = operation({
-  name: "role_snapshot", description: "Read the single role's categories, fragments, order, enabled flags, and current revision.",
+  name: "role_snapshot", description: "Read the role's instructions, skills, trusted projects, MCP server summaries, and revision. MCP connection definitions are omitted because URLs, arguments, headers and environment values can contain credentials.",
   input: z.strictObject({}), output: snapshot, annotations: { title: "Read role", readOnlyHint: true },
+  async call(ctx: RolesContext) { return summarize(ctx.store.snapshot()); },
+});
+export const roleLaunchSnapshot = operation({
+  name: "role_launch_snapshot", description: "Read the complete Role for native runtime launch, including credential-bearing MCP connection definitions. Keep the result in private launch state and out of model transcripts.",
+  input: z.strictObject({}), output: launchSnapshot, annotations: { title: "Read launch role", readOnlyHint: true },
   async call(ctx: RolesContext) { return ctx.store.snapshot(); },
 });
 export const rolePreview = operation({
@@ -172,7 +181,7 @@ export const projectReorder = operation({
 export const topics = { role_changed: "The role was edited. Read role_snapshot after (re)subscribing." } as const;
 
 export const api: PackageApi<RolesContext, keyof typeof topics> = {
-  operations: [roleSnapshot, rolePreview, categoryCreate, categoryUpdate, categoryDelete, categoryReorder,
+  operations: [roleSnapshot, roleLaunchSnapshot, rolePreview, categoryCreate, categoryUpdate, categoryDelete, categoryReorder,
     fragmentCreate, fragmentUpdate, fragmentDelete, fragmentReorder, fragmentMove, skillCreate, skillUpdate, skillDelete, skillReorder,
     mcpServerCreate, mcpServerUpdate, mcpServerDelete, mcpServerReorder,
     projectCreate, projectUpdate, projectDelete, projectReorder],

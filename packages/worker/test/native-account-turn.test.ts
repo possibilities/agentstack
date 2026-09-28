@@ -39,7 +39,7 @@ test("isolated native Grok and Devin accounts finish Worker turns in owned workt
     mcpServers: [], trustedProjects: [] };
   const auth = await serveApi({ name: "auth", transport: "socket", env });
   const roles = await serveSocket({ info: { name: "roles", description: "Roles", transportDescription: "Socket", path: socketPath("roles", env) },
-    context: {}, operations: [operation({ name: "role_snapshot", description: "Role", input: z.object({}), output: z.any(),
+    context: {}, operations: [operation({ name: "role_launch_snapshot", description: "Role", input: z.object({}), output: z.any(),
       async call() { return role; } })] });
   let mcpUrls: Record<string, string> = {};
   const owner = await serveSocket({ info: { name: "owner", description: "Owner", transportDescription: "Socket", path: socketPath("owner", env) },

@@ -10,7 +10,7 @@ import { agentTools, invocationFor } from "./src/mcp-tools.js";
 import * as schemas from "./src/output-schemas.js";
 import { assertDefaultDatabaseTargetSafe, brainStateRoot, withBrainEnvironment } from "./src/paths.js";
 import { generateShareToken, SHARE_DEFAULT_HOST, SHARE_DEFAULT_PORT } from "./src/share.js";
-import { clearIngressRegistration, probeShareIngress, writeIngressRegistration } from "./src/share-liveness.js";
+import { clearIngressRegistration, probeShareIngress, withShareIngressToken, writeIngressRegistration } from "./src/share-liveness.js";
 import { startShareServer, type RunningShareServer } from "./src/share-server.js";
 import { shareRoutes } from "./src/share-server.js";
 import { shareAdmit, shareStates } from "./src/share-server.js";
@@ -75,10 +75,10 @@ async function invoke(ctx: BrainContext, command: string, commandArgv: string[])
   if (ctx.controller.signal.aborted) throw new Error("brain_stopping\nAgentStack Brain is stopping");
   const call = withBrainEnvironment(ctx.env, async () => {
     try {
-      const text = await captureOutput(() => runParsed({
+      const text = await withShareIngressToken(ctx.shareToken, () => captureOutput(() => runParsed({
         command, commandArgv, globals: { dbPath: ctx.dbPath, format: "json", quiet: false },
         usesDefaultDb: false, showHelp: false, showVersion: false, showAgentHelp: false, showAgentTeaser: false,
-      }));
+      })));
       return JSON.parse(text).data;
     } catch (error) {
       if (error instanceof CliError) throw new Error([error.code, error.message, error.recovery].filter(Boolean).join("\n"));

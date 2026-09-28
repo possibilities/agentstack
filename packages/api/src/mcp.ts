@@ -10,6 +10,7 @@ import { McpEventSubscriptions } from "./mcp-subscriptions.js";
 import { z } from "zod";
 import type { PackageConfig } from "./config.js";
 import { socketExposure } from "./exposure.js";
+import { forwardTimeout } from "./forward-timeout.js";
 
 export type ServedMcp = { port: number; urls: Record<string, string>; close(): Promise<void> };
 
@@ -163,8 +164,7 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
           arguments: params.arguments ?? {},
           invocation,
           resultFormat: "mcp",
-        }, { signal: extra.signal, timeoutMs: name === "proc" && params.name === "proc_run_join" ? 310_000
-          : params.name === "account_remove" ? 300_000 : params.name === "voice_dial" && name === "bots" ? 75_000 : 60_000 });
+        }, { signal: extra.signal, timeoutMs: forwardTimeout(name, params.name) });
         if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("operation returned a non-object result");
         return result as CallToolResult;
       } catch (error) {

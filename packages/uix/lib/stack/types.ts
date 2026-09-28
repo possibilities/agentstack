@@ -428,7 +428,9 @@ export type RoleCategory = { id: string; title: string; description: string; ena
   createdAt: number | null; updatedAt: number | null };
 /** `role_snapshot`. Skills, MCP servers and trusted projects share the revision but have no Roles UI yet. */
 export type RoleSnapshot = { revision: number; categories: RoleCategory[];
-  skills: Array<Record<string, unknown>>; mcpServers: Array<Record<string, unknown>>; trustedProjects: Array<Record<string, unknown>> };
+  skills: Array<Record<string, unknown>>;
+  mcpServers: Array<{ id: string; name: string; description: string; enabled: boolean; transport: "http" | "stdio" }>;
+  trustedProjects: Array<Record<string, unknown>> };
 /** `role_preview`: the exact SYSTEM_APPEND.md text for the next launch, with each fragment's [start, end) span. */
 export type RolePreview = { revision: number; rendered: string; bytes: number; limitBytes: number;
   segments: Array<{ categoryId: string; fragmentId: string; start: number; end: number }> };

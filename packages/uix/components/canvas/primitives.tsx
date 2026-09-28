@@ -91,7 +91,7 @@ export function CopyButton({ value, label, className }: { value: string; label: 
             type="button"
             aria-label={`Copy ${label}`}
             className={cn(
-              "relative z-10 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-ring",
+              "relative z-10 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 [@media(hover:none)]:opacity-100 transition-opacity group-hover/row:opacity-100 hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-ring",
               copied && "opacity-100",
               className,
             )}
@@ -135,7 +135,7 @@ export function Row({ label, hint, children, copy, mono, className }: {
       <dt className="shrink-0 text-muted-foreground">
         {hint ? (
           <Tooltip>
-            <TooltipTrigger render={<span data-interactive="" className="relative z-10 cursor-help decoration-muted-foreground/40 decoration-dotted underline-offset-4 hover:underline" />}>{label}</TooltipTrigger>
+            <TooltipTrigger render={<span tabIndex={0} data-interactive="" className="relative z-10 cursor-help decoration-muted-foreground/40 decoration-dotted underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring" />}>{label}</TooltipTrigger>
             <TooltipContent side="left" className="max-w-64">{hint}</TooltipContent>
           </Tooltip>
         ) : label}

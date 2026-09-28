@@ -6,6 +6,7 @@ import { socketCall, socketSubscribe, type SocketSubscription } from "./socket.j
 import { socketPath, stateDir, workspaceRoot } from "./workspace.js";
 import type { InvocationContext } from "./operation.js";
 import { currentMcpCatalog, type SocketCatalog } from "./exposure.js";
+import { forwardTimeout } from "./forward-timeout.js";
 
 export type EventTarget = { botId: string; instance: string; threadId: string };
 export type EventSubscription = EventTarget & {
@@ -24,9 +25,10 @@ type RecordState = EventSubscription & {
 const maxValueChars = 16_000;
 const maxSubscriptions = 128;
 const valueHash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+const turnTopics = new Set(["threads_changed", "chats_changed", "chat_live_changed", "chat_queue_changed"]);
 
 function preventThreadFeedback(pkg: string, topic: string, scope: string | null | undefined, botId: string): void {
-  if (pkg === "bots" && (topic === "threads_changed" || topic === "chats_changed") && (!scope || scope === botId)) {
+  if (pkg === "bots" && turnTopics.has(topic) && (!scope || scope === botId)) {
     throw new Error(`subscribing a Bot thread to its own ${topic} would create a turn feedback loop; choose another Bot scope or bots_changed`);
   }
 }
@@ -112,7 +114,7 @@ export class McpEventSubscriptions {
     const doc = await this.definition(pkg);
     if (!doc.events || !Object.hasOwn(doc.events.topics, input.topic)) throw new Error(`unknown ${pkg} event topic: ${input.topic}`);
     const scope = input.scope ?? (doc.events.scope?.required && pkg === "bots" ? target.botId : undefined);
-    preventThreadFeedback(pkg, input.topic, scope, target.botId);
+    this.preventFeedback(pkg, input.topic, scope, target.botId);
     if (doc.events.scope?.required && !scope) throw new Error(`${pkg} event ${input.topic} requires a scope`);
     if (scope !== undefined && !doc.events.scope) throw new Error(`${pkg} events do not accept a scope`);
     if (!doc.tools.some((tool) => tool.name === input.readOperation && tool.annotations?.readOnlyHint)) throw new Error(`${input.readOperation} is not a read-only ${pkg} operation`);
@@ -143,6 +145,8 @@ export class McpEventSubscriptions {
         { scope, signal: state.abort.signal });
       const value = await this.read(state);
       if (this.closed) throw new Error("event subscriptions are closing");
+      // Another subscription may have completed admission during the read.
+      this.preventFeedback(pkg, input.topic, scope, target.botId);
       state.lastValueHash = valueHash(value);
       this.db.prepare("INSERT INTO subscriptions (id, bot_id, instance, thread_id, pkg, topic, scope, read_operation, read_arguments_json, last_value_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .run(state.id, state.botId, state.instance, state.threadId, state.pkg, state.topic, state.scope, state.readOperation, JSON.stringify(state.readArguments), state.lastValueHash);
@@ -193,9 +197,26 @@ export class McpEventSubscriptions {
     return currentMcpCatalog(this.workspace, pkg, this.env);
   }
 
+  private preventFeedback(pkg: string, topic: string, scope: string | null | undefined, botId: string): void {
+    preventThreadFeedback(pkg, topic, scope, botId);
+    if (pkg !== "bots" || !turnTopics.has(topic) || !scope) return;
+    // A watches B and B watches A is as self-referential as A watching A,
+    // including mixed chat/thread topics and cycles spanning several Bots.
+    const pending = [scope], visited = new Set<string>();
+    while (pending.length) {
+      const current = pending.pop()!;
+      if (current === botId) throw new Error("Bot event subscriptions would create a cross-Bot turn feedback loop");
+      if (visited.has(current)) continue;
+      visited.add(current);
+      for (const record of this.records.values()) {
+        if (record.botId === current && record.pkg === "bots" && turnTopics.has(record.topic) && record.scope) pending.push(record.scope);
+      }
+    }
+  }
+
   private async authorize(state: RecordState): Promise<void> {
     if (this.closed || state.abort.signal.aborted) throw new Error("event subscription cancelled");
-    preventThreadFeedback(state.pkg, state.topic, state.scope, state.botId);
+    this.preventFeedback(state.pkg, state.topic, state.scope, state.botId);
     // Check policy before package-specific reads, and again afterwards: those
     // checks can themselves await socket I/O while the manifest changes.
     const check = async () => {
@@ -213,8 +234,8 @@ export class McpEventSubscriptions {
     return (async () => {
       await this.authorize(state);
       const value = await socketCall(socketPath(state.pkg, this.env), "tools/call", { name: state.readOperation, arguments: state.readArguments,
-        ...(state.pkg === "browse" ? { invocation: { transport: "mcp", botId: state.botId, instance: state.instance, threadId: state.threadId, sessionId: null } } : {}),
-      }, { timeoutMs: 10_000, signal: state.abort.signal });
+        invocation: { transport: "mcp", botId: state.botId, instance: state.instance, threadId: state.threadId, sessionId: null },
+      }, { timeoutMs: forwardTimeout(state.pkg, state.readOperation), signal: state.abort.signal });
       await this.authorize(state);
       return value;
     })();
@@ -245,7 +266,7 @@ export class McpEventSubscriptions {
       await this.validate(target);
       state.instance = target.instance;
       this.db.prepare("UPDATE subscriptions SET instance = ? WHERE id = ?").run(state.instance, state.id);
-      preventThreadFeedback(state.pkg, state.topic, state.scope, state.botId);
+      this.preventFeedback(state.pkg, state.topic, state.scope, state.botId);
       await this.authorize(state);
       state.socket = await socketSubscribe(socketPath(state.pkg, this.env), [state.topic], () => { state.pending = true; void this.flush(state); },
         { scope: state.scope ?? undefined, signal: state.abort.signal });

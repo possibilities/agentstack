@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath } from "@agentstack/api";
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as rolesApi } from "../../roles/dist/api.js";
+import { fixtureWorkspace, passthrough, transport } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -23,7 +24,6 @@ const dir = await mkdtemp(join("/tmp", "as-roles-ui-"));
 const evidence = process.env.ROLES_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
 const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
-const passthrough = { parse: (value) => value };
 const bot = (id, roleRevision) => ({ id, state: "running", pid: 321, cwd: "/fixture", url: null, account: null, runningAccount: null, mainThreadId: null,
   recoveryIssue: null, roleRevision, settings: null });
 const handlers = {
@@ -41,9 +41,9 @@ const rolesCall = (name, args = {}) => socketCall(socketPath("roles", env), "too
 
 try {
   roles = await serveApi({ name: "roles", transport: "socket", env, root });
-  websocket = await serveWebSocket({ env, root, port: 0 });
+  websocket = await serveWebSocket({ env, root: await fixtureWorkspace(dir, ["roles", "bots", "owner", "api"]), port: 0 });
   const doc = (name, api) => ({ name, packageName: `@agentstack/${name}`, description: `${name} fixture`, events: api?.events?.topics ?? {}, eventScope: null,
-    transports: [{ type: "websocket", description: "Isolated fixture", supported: true, subscriptions: true, endpoint: websocket.url }],
+    transports: [transport(websocket.url, (api?.operations ?? []).map((op) => op.name), Object.keys(api?.events?.topics ?? {}))],
     operations: (api?.operations ?? []).map((operation) => ({ name: operation.name, title: operation.annotations?.title ?? null, description: operation.description,
       annotations: operation.annotations ?? {}, inputSchema: publishedJsonSchema(operation.input), outputSchema: publishedJsonSchema(operation.output) })) });
   const catalog = [doc("roles", rolesApi), doc("bots", botsApi), doc("owner"), doc("api")];
@@ -53,12 +53,13 @@ try {
       events: { topics, scope: name === "bots" ? { valid: () => true, description: "Fixture", example: "bot-1" } : undefined } }));
   }
   const nextPort = await port();
-  next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "start", "--hostname", "127.0.0.1", "--port", String(nextPort)], { cwd: uix, env, stdio: ["ignore", "pipe", "pipe"] });
+  env.AGENTSTACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${nextPort}`;
+  next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), process.env.NEXT_MODE === "dev" ? "dev" : "start", "--hostname", "127.0.0.1", "--port", String(nextPort)], { cwd: uix, env, stdio: ["ignore", "pipe", "pipe"] });
   next.stdout.on("data", (chunk) => { log += chunk; }); next.stderr.on("data", (chunk) => { log += chunk; });
   const origin = `http://127.0.0.1:${nextPort}`;
   for (let attempt = 0; ; attempt++) {
     try { if ((await fetch(origin)).ok) break; } catch { /* bounded readiness check */ }
-    if (attempt > 100 || next.exitCode !== null) throw new Error(log);
+    if (attempt > 1800 || next.exitCode !== null) throw new Error(log);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_BIN ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });

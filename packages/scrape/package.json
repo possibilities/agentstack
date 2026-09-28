@@ -19,9 +19,9 @@
     "@agentstack/api": "workspace:*",
     "cheerio": "1.2.0",
     "fast-xml-parser": "5.10.1",
-    "markdown-it": "14.1.0",
+    "markdown-it": "14.2.0",
     "turndown": "7.2.2",
-    "yaml": "2.8.2",
+    "yaml": "2.8.3",
     "zod": "^4.6.5"
   },
   "devDependencies": {

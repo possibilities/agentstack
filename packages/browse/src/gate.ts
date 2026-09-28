@@ -30,6 +30,7 @@ export class BrowserGate {
   constructor(private readonly cdp: string, private readonly neko: string, private readonly prefix: string) {
     this.server = createServer(async (request, response) => {
       try {
+        if (!this.hostAllowed(request.headers.host)) { response.writeHead(403).end(); return; }
         const url = new URL(request.url!, "http://localhost");
         if (url.pathname.startsWith("/json")) {
           if (this.held || this.closed) { response.writeHead(423).end("browser is held"); return; }
@@ -64,6 +65,9 @@ export class BrowserGate {
       } catch { if (!response.headersSent) response.writeHead(502); response.end(); }
     });
     this.server.on("upgrade", (request, socket, head) => {
+      if (!this.hostAllowed(request.headers.host) || (request.headers.origin !== undefined && request.headers.origin !== this.origin)) {
+        socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"); return;
+      }
       void (async () => {
       const url = new URL(request.url!, "http://localhost");
       const parts = url.pathname.split("/");
@@ -130,6 +134,7 @@ export class BrowserGate {
   }
 
   private viewAllowed(token: string | undefined): boolean { return !this.closed && !this.revoking && (token === this.viewerKey || (this.human !== null && token === this.human)); }
+  private hostAllowed(host: string | undefined): boolean { return !!this.origin && host === new URL(this.origin).host; }
   get cdpUrl(): string { return this.origin; }
   get observationUrl(): string { return `${this.origin}/${this.viewerKey}/?readOnly=1`; }
 

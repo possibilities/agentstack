@@ -9,6 +9,14 @@ import { brainEnvironment, brainStateRoot } from "./paths.js";
 import { dirname, join } from "node:path";
 import type { DoctorCheck } from "./jobs.js";
 import { defaultShareTokenPath, resolveShareServerToken } from "./share.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+
+const ingressToken = new AsyncLocalStorage<string>();
+/** Carry the owned listener's ephemeral credential through in-process doctor
+ * dispatch without persisting it or placing it in the process environment. */
+export function withShareIngressToken<T>(token: string, body: () => T): T {
+  return ingressToken.run(token, body);
+}
 
 /**
  * Ingress liveness.
@@ -279,7 +287,7 @@ export async function shareIngressCheck(
   }
   let token: string;
   try {
-    token = resolveShareServerToken(
+    token = ingressToken.getStore() ?? resolveShareServerToken(
       options.tokenPath ?? defaultShareTokenPath(),
     ).token;
   } catch (error) {

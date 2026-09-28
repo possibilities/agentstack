@@ -41,3 +41,9 @@ test("legacy catalog discovery also retains newly discovered Package APIs", asyn
   assert.deepEqual(reads.map(([name]) => name), ["docs_snapshot", "docs_list", "docs_get"]);
   assert.deepEqual(catalog, [brain]);
 });
+
+test("incompatible transport metadata becomes a read error rather than a render crash", async () => {
+  const old = { ...brain, transports: [{ type: "websocket", endpoint: "ws://localhost:1" }] };
+  await assert.rejects(loadCatalog(async (name) => name === "docs_snapshot" ? { packages: [old] }
+    : name === "docs_list" ? { packages: [{ name: "brain" }] } : old), /Incompatible API catalog/);
+});

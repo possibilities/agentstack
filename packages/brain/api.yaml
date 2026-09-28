@@ -3,11 +3,41 @@ description: Search local research and admit durable ingestion into an isolated 
 socket:
   description: Unix socket for research, ingestion ledger, recurring sources and recovery operations.
 mcp:
-  operations: all
+  operations: &public_operations
+    - brain_status
+    - jobs_reveal
+    - stats
+    - search
+    - context
+    - get
+    - tags
+    - submit
+    - delete
+    - retag
+    - jobs_list
+    - jobs_show
+    - jobs_run
+    - jobs_stats
+    - jobs_retry
+    - jobs_cancel
+    - jobs_exclude
+    - sources_list
+    - sources_show
+    - sources_status
+    - sources_apply
+    - sources_sync
+    - sources_pause
+    - sources_resume
+    - backup_create
+    - backup_verify
+    - recovery_import
+    - recovery_online
+    - recovery_execute
+    - doctor
   events: all
   description: HTTP MCP operations forwarded to the Brain socket.
 websocket:
-  operations: all
+  operations: *public_operations
   events: all
   description: Loopback WebSocket operations forwarded to the Brain socket.
 http:

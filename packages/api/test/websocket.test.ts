@@ -31,12 +31,12 @@ function nextMessage(ws: WebSocket, timeoutMs = 2_000): Promise<Frame> {
   });
 }
 
-async function fixture() {
+async function fixture(overrides: NodeJS.ProcessEnv = {}) {
   const root = await mkdtemp(join(tmpdir(), "agentstack-ws-"));
   const dir = join(root, "packages", "demo");
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n  operations: all\n  events: all\n");
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_WEBSOCKET_PORT: "0" };
+  const env = { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_UIX_PORT: "8745", AGENTSTACK_WEBSOCKET_ORIGIN: undefined, ...overrides };
   const socket = await serveSocket<{ allowed: string }>({
     info: { name: "demo", description: "Demo.", transportDescription: "Socket.", path: socketPath("demo", env) },
     context: { allowed: "bot-1" },
@@ -114,6 +114,8 @@ test("one package-addressed connection calls and watches multiple Package APIs i
     assert.match((await nextMessage(ws)).error?.message ?? "", /not available over websocket/);
     ws.send(JSON.stringify({ id: 11, method: "tools/call", params: { package: "beta", name: "ping", arguments: {}, resultFormat: "mcp" } }));
     assert.match((await nextMessage(ws)).error?.message ?? "", /MCP result presentation is not available/);
+    ws.send(JSON.stringify({ id: 12, method: "tools/call", params: { package: "beta", name: "ping", arguments: {}, invocation: { transport: "mcp", botId: "bot-1", instance: "forged", threadId: "main", sessionId: null } } }));
+    assert.match((await nextMessage(ws)).error?.message ?? "", /invocation context is supplied only/);
     ws.send(JSON.stringify({ id: 7, method: "events/subscribe", params: { package: "demo", subscription: "bot", topics: ["changed"], scope: "bot-1" } }));
     assert.deepEqual(await nextMessage(ws), { id: 7, result: { package: "demo", subscription: "bot", topics: ["changed"], scope: "bot-1" } });
     ws.send(JSON.stringify({ id: 8, method: "events/subscribe", params: { package: "beta", subscription: "beta", topics: ["changed"] } }));
@@ -143,6 +145,13 @@ test("WebSocket restricts host, origin, paths, frames and cleans up on close", a
     await assert.rejects(connect(`${setup.url}/demo`), /404|Unexpected server response/);
     await assert.rejects(connect(`${setup.url}/absent`), /404|Unexpected server response/);
     await assert.rejects(connect(setup.url, "https://evil.example"), /403|Unexpected server response/);
+    for (const origin of ["http://localhost:1", "http://127.0.0.1:8778", "null", "ftp://localhost:8745", "http://localhost:8745/evil"]) {
+      await assert.rejects(connect(setup.url, origin), /403/);
+    }
+    for (const origin of ["http://127.0.0.1:8745", "http://localhost:8745"]) {
+      const browser = await connect(setup.url, origin);
+      browser.close();
+    }
     await assert.rejects(connect(setup.url, undefined, { Host: "evil.example" }), /403|Unexpected server response/);
     ws.send("not json");
     assert.match((await nextMessage(ws)).error?.message ?? "", /invalid json/);
@@ -284,4 +293,13 @@ test("WebSocket port configuration rejects invalid values", () => {
   for (const value of ["", "-1", "65536", "123.5", "abc"]) {
     assert.throws(() => websocketPort({ AGENTSTACK_WEBSOCKET_PORT: value }), /AGENTSTACK_WEBSOCKET_PORT/);
   }
+});
+
+test("WebSocket explicit development origin replaces the default UI origins", async () => {
+  const setup = await fixture({ AGENTSTACK_WEBSOCKET_ORIGIN: "http://localhost:3000" });
+  try {
+    await assert.rejects(connect(setup.url, "http://localhost:8745"), /403/);
+    const browser = await connect(setup.url, "http://localhost:3000");
+    browser.close();
+  } finally { await setup.close(); }
 });

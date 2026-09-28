@@ -1,7 +1,7 @@
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { socketCall, socketPath } from "@agentstack/api";
+import { forwardTimeout, socketCall, socketPath } from "@agentstack/api";
 import type { Action, ProcessSpec, ScheduleSpec } from "./schema.js";
 import { ProcStore } from "./store.js";
 
@@ -76,7 +76,7 @@ export class ProcService {
             return;
           }
           try {
-            const result = await this.call(due.action.package, due.action.operation, due.action.input, 30_000, controller.signal);
+            const result = await this.call(due.action.package, due.action.operation, due.action.input, forwardTimeout(due.action.package, due.action.operation), controller.signal);
             this.store.finishExecution(due.executionId, "completed", result);
           } catch {
             // A socket error or lost reply cannot prove the operation did not run.

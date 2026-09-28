@@ -1,5 +1,6 @@
 # AgentStack repository guidance
 
+- Commit completed changes as you go and land them on `main`.
 - Use the terms in [`CONTEXT.md`](CONTEXT.md) and the decisions in [`docs/adr/`](docs/adr/) when changing a Package API or Server lifecycle.
 - A Package API declares its transports in `packages/<name>/api.yaml` and its typed operations and events in `packages/<name>/api.ts`. Shared socket, MCP, WebSocket, and discovery code lives in `packages/api/`; the process owner lives in `packages/owner/`.
 - MCP and WebSocket declarations require independent `operations` and `events` selections (`all`, positive names, or `[]`). Keep availability in the manifest and behavior in operation descriptions. Use the shared exposure resolver; gateways validate live socket metadata without creating package contexts. See [ADR 0096](docs/adr/0096-explicit-transport-exposure.md).

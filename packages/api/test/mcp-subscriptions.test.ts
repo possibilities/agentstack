@@ -29,7 +29,12 @@ test("MCP subscriptions return an initial value, coalesce notices, reconnect wit
   const env = { AGENTSTACK_STATE_DIR: root };
   let value = 0;
   const snapshot = operation({ name: "bot_list", description: "Read bots.", input: z.strictObject({}), output: z.object({ value: z.number() }),
-    annotations: { readOnlyHint: true }, async call() { return { value }; } });
+    annotations: { readOnlyHint: true }, async call(_ctx, _input, invocation) {
+      assert.equal(invocation?.botId, caller.botId);
+      assert.equal(invocation?.instance, caller.instance);
+      assert.equal(invocation?.threadId, caller.threadId);
+      return { value };
+    } });
   const change = operation({ name: "change", description: "Mutate.", input: z.strictObject({}), output: z.object({ ok: z.boolean() }),
     async call() { return { ok: true }; } });
   const serve = () => serveSocket({
@@ -99,19 +104,21 @@ test("optional Bot scopes cannot bypass chat and thread wakeup feedback fencing"
     info: { name: "bots", description: "Bots.", transportDescription: "Socket.", path: socketPath("bots", env) },
     context: {}, operations: [operation({ name: "chat_tree", description: "Read tree.", input: z.strictObject({}), output: z.object({ nodes: z.array(z.string()) }),
       annotations: { readOnlyHint: true }, async call() { return { nodes: [] }; } })],
-    events: { topics: { chats_changed: "Refresh chats.", threads_changed: "Refresh threads." },
+    events: { topics: { chats_changed: "Refresh chats.", threads_changed: "Refresh threads.", chat_live_changed: "Refresh live chat.", chat_queue_changed: "Refresh queue." },
       scope: { description: "Bot ID.", example: "bot-1", valid: (_ctx, scope) => ["bot-1", "bot-2"].includes(scope) } },
   });
   const service = new McpEventSubscriptions(env, async () => undefined, async () => undefined, undefined, undefined, root);
   let restored: McpEventSubscriptions | undefined;
   try {
-    for (const topic of ["chats_changed", "threads_changed"]) {
+    for (const topic of ["chats_changed", "threads_changed", "chat_live_changed", "chat_queue_changed"]) {
       for (const scope of [undefined, "bot-1"]) {
         await assert.rejects(service.subscribe("bots", { topic, scope, readOperation: "chat_tree" }, caller), /turn feedback loop/);
       }
       const other = await service.subscribe("bots", { topic, scope: "bot-2", readOperation: "chat_tree" }, caller);
       assert.equal(other.subscription.scope, "bot-2");
     }
+    await assert.rejects(service.subscribe("bots", { topic: "chat_live_changed", scope: "bot-1", readOperation: "chat_tree" },
+      { ...caller, botId: "bot-2" }), /cross-Bot turn feedback loop/);
     await service.close();
     // Simulate subscriptions admitted by an older owner, before the chat and
     // optional-scope guard. Restart must fence them before any delivery too.

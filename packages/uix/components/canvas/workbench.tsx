@@ -263,7 +263,7 @@ function TopBar({ space, setSpace, compact, reference, inspectorAvailable, openI
   const state = useStack();
   const attention = spaceAttention(state);
   const elsewhere = spaces.some((item) => item.id !== (space as string) && (attention as Record<string, string[]>)[item.id].length > 0);
-  const dot = <span className="size-1.5 shrink-0 rounded-full bg-warning" aria-label="needs attention" />;
+  const dot = <span role="img" className="size-1.5 shrink-0 rounded-full bg-warning" aria-label="needs attention" />;
   return <header data-chrome className="pointer-events-none fixed top-3 z-30 flex items-start justify-between gap-2" style={{ left: 12, right: "calc(var(--sheet) + 12px)" }}>
     <div className="pointer-events-auto flex items-center gap-1 rounded-xl border bg-card/95 p-1 shadow-sm">
       <DropdownMenu>

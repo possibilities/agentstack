@@ -13,7 +13,8 @@ import { api as botsApi } from "../../bots/dist/api.js";
 import { api as inferApi } from "../../infer/dist/api.js";
 import { ChatUploads } from "../../bots/dist/src/chats.js";
 import { api as usageApi } from "../../usage/dist/api.js";
-import { api as workersApi } from "../../workers/dist/api.js";
+import { api as workersApi } from "../../worker/dist/api.js";
+import { fixtureWorkspace, passthrough, transport } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -58,7 +59,6 @@ const inferModelsFixture = [{ id: "gpt-fixture", defaultEffort: "medium", suppor
 const inferChanged = () => served.get("infer").publish("infer_changed");
 const inferSummary = ({ instructions: _, input, text, ...fields }) => ({ ...fields, inputPreview: input.slice(0, 160), textPreview: text?.slice(0, 160) ?? null, textChars: text?.length ?? null });
 const activeCall = { sessionId: id(30), botId: "bot-1", threadId: id(10), phase: "connected" };
-const passthrough = { parse: (value) => value };
 const served = new Map();
 let websocket, next, browser;
 let log = "";
@@ -123,22 +123,23 @@ function operations(names, api) {
 }
 async function port() { const server = createServer(); await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve)); const value = server.address().port; await new Promise((resolve) => server.close(resolve)); return value; }
 try {
-  websocket = await serveWebSocket({ env, root, port: 0 });
-  const catalog = Object.entries({ bots: botsApi, usage: usageApi, workers: workersApi, infer: inferApi }).map(([name, api]) => ({ name, packageName: `@agentstack/${name}`, description: `${name} fixture`, events: api.events?.topics ?? {}, eventScope: null,
-    transports: [{ type: "websocket", description: "Isolated fixture", supported: true, subscriptions: true, endpoint: websocket.url }],
+  websocket = await serveWebSocket({ env, root: await fixtureWorkspace(dir, ["owner", "auth", "bots", "usage", "worker", "infer", "api"]), port: 0 });
+  const catalog = Object.entries({ bots: botsApi, usage: usageApi, worker: workersApi, infer: inferApi }).map(([name, api]) => ({ name, packageName: `@agentstack/${name}`, description: `${name} fixture`, events: api.events?.topics ?? {}, eventScope: null,
+    transports: [transport(websocket.url, api.operations.map((op) => op.name), Object.keys(api.events?.topics ?? {}))],
     operations: api.operations.map((operation) => ({ name: operation.name, title: operation.annotations?.title ?? null, description: operation.description, annotations: operation.annotations ?? {}, inputSchema: publishedJsonSchema(operation.input), outputSchema: publishedJsonSchema(operation.output) })) }));
-  for (const name of ["auth", "owner", "api"]) catalog.push({ name, packageName: `@agentstack/${name}`, description: "Fixture", events: {}, eventScope: null, operations: [], transports: [{ type: "websocket", endpoint: websocket.url, supported: true, subscriptions: true, description: "Fixture" }] });
+  for (const name of ["auth", "owner", "api"]) catalog.push({ name, packageName: `@agentstack/${name}`, description: "Fixture", events: {}, eventScope: null, operations: [], transports: [transport(websocket.url)] });
   handlers.docs_snapshot = () => ({ packages: catalog });
-  const definitions = { owner: ["owner_status"], auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"], bots: Object.keys(handlers).filter((name) => /^(bot_|voice_|chat_)/.test(name)), usage: ["usage_snapshot"], workers: ["worker_list", "worker_runtime_list", "worker_catalog"], infer: ["infer_model_list", "infer_discover", "infer_start", "infer_request_list", "infer_request_get"], api: ["docs_snapshot"] };
-  const topics = { owner: { pids_changed: "Fixture" }, auth: Object.fromEntries(["accounts_changed", "worker_accounts_changed", "login_changed", "worker_login_changed"].map((name) => [name, "Fixture"])), bots: botsApi.events.topics, workers: workersApi.events.topics, usage: usageApi.events.topics, infer: inferApi.events.topics, api: {} };
+  const definitions = { owner: ["owner_status"], auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"], bots: Object.keys(handlers).filter((name) => /^(bot_|voice_|chat_)/.test(name)), usage: ["usage_snapshot"], worker: ["worker_list", "worker_runtime_list", "worker_catalog"], infer: ["infer_model_list", "infer_discover", "infer_start", "infer_request_list", "infer_request_get"], api: ["docs_snapshot"] };
+  const topics = { owner: { pids_changed: "Fixture" }, auth: Object.fromEntries(["accounts_changed", "worker_accounts_changed", "login_changed", "worker_login_changed"].map((name) => [name, "Fixture"])), bots: botsApi.events.topics, worker: workersApi.events.topics, usage: usageApi.events.topics, infer: inferApi.events.topics, api: {} };
   for (const [name, names] of Object.entries(definitions)) served.set(name, await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {}, operations: operations(names, { bots: botsApi, infer: inferApi }[name]), events: { topics: topics[name], scope: name === "bots" ? { valid: () => true, description: "Fixture", example: "bot-1" } : undefined } }));
   const nextPort = await port();
-  next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "start", "--hostname", "127.0.0.1", "--port", String(nextPort)], { cwd: uix, env, stdio: ["ignore", "pipe", "pipe"] });
+  env.AGENTSTACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${nextPort}`;
+  next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), process.env.NEXT_MODE === "dev" ? "dev" : "start", "--hostname", "127.0.0.1", "--port", String(nextPort)], { cwd: uix, env, stdio: ["ignore", "pipe", "pipe"] });
   next.stdout.on("data", (chunk) => { log += chunk; }); next.stderr.on("data", (chunk) => { log += chunk; });
   const origin = `http://127.0.0.1:${nextPort}`;
   for (let attempt = 0; ; attempt++) {
     try { if ((await fetch(origin)).ok) break; } catch { /* bounded readiness check */ }
-    if (attempt > 100 || next.exitCode !== null) throw new Error(log);
+    if (attempt > 1800 || next.exitCode !== null) throw new Error(log);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_BIN ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });

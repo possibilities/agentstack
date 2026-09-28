@@ -3,27 +3,13 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { listPackages, socketPath, websocketPort, workspaceRoot } from "./workspace.js";
 import { socketCall, socketSubscribe, type SocketSubscription } from "./socket.js";
 import { exposeCatalog, socketExposure, type Exposure, type SocketCatalog } from "./exposure.js";
+import { forwardTimeout } from "./forward-timeout.js";
 
 export type ServedWebSocket = { url: string; close(): Promise<void> };
 
 // Match the socket's bounded JSON allowance for escaped inline content.
 const maxPayload = 4_000_000;
 const maxClientBuffer = 4_000_000;
-/**
- * Operations whose own bounds exceed the default forwarding timeout. Timing out
- * first would report a failure while the operation continues; for inference that
- * hides a request that may already have been charged.
- */
-const forwardTimeouts = new Map([
-  ["bots/voice_dial", 75_000],
-  // Discovery waits up to 20s for model/list; inference adds one request bounded at 30s.
-  ["infer/infer_models", 30_000],
-  ["infer/infer_complete", 75_000],
-  ["attention/attention_models", 75_000],
-  ["bots/chat_message_changes", 30_000],
-  ["proc/proc_run_wait", 40_000],
-  ["proc/proc_run_join", 310_000],
-]);
 
 export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: string; port?: number } = {}): Promise<ServedWebSocket> {
   const env = options.env ?? process.env;
@@ -141,7 +127,7 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
         });
       } else if (message.method === "tools/list" || message.method === "tools/call") {
         const operation = message.method === "tools/call" ? params?.name : undefined;
-        const timeoutMs = typeof operation === "string" ? forwardTimeouts.get(`${name}/${operation}`) : undefined;
+        const timeoutMs = typeof operation === "string" ? forwardTimeout(name, operation) : undefined;
         void (async () => {
           if (message.method === "tools/call") {
             const allowedOperations = operations.get(name)!.operations;
@@ -149,6 +135,8 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
               throw new Error(`operation ${String(operation)} is not available over websocket`);
             if (message.params && typeof message.params === "object" && "resultFormat" in message.params)
               throw new Error("MCP result presentation is not available over websocket");
+            if (params && "invocation" in params)
+              throw new Error("invocation context is supplied only by the MCP gateway");
           }
           const result = await socketCall(socketPath(name, env), message.method as "tools/list" | "tools/call", message.params, { signal: controller.signal, timeoutMs });
           if (message.method === "tools/list") return exposeCatalog(result as SocketCatalog, operations.get(name)!);
@@ -165,7 +153,7 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
     const address = http.address();
     if (request.url !== "/websocket") { socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.destroy(); return; }
     if (!address || typeof address === "string" || ![`127.0.0.1:${address.port}`, `localhost:${address.port}`].includes(request.headers.host ?? "")
-      || !originAllowed(request.headers.origin, env.AGENTSTACK_WEBSOCKET_ORIGIN)) {
+      || !originAllowed(request.headers.origin, env)) {
       socket.write("HTTP/1.1 403 Forbidden\r\n\r\n"); socket.destroy(); return;
     }
     void (async () => {
@@ -211,15 +199,11 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
   };
 }
 
-function originAllowed(header: string | undefined, configured: string | undefined): boolean {
-  if (header === undefined || header === "") return true;
-  if (configured) return header === configured;
-  try {
-    const hostname = new URL(header).hostname;
-    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]";
-  } catch {
-    return false;
-  }
+function originAllowed(header: string | undefined, env: NodeJS.ProcessEnv): boolean {
+  if (header === undefined) return true;
+  if (env.AGENTSTACK_WEBSOCKET_ORIGIN) return header === env.AGENTSTACK_WEBSOCKET_ORIGIN;
+  const port = env.AGENTSTACK_UIX_PORT ?? "8745";
+  return [`http://127.0.0.1:${port}`, `http://localhost:${port}`].includes(header);
 }
 
 function send(client: WebSocket, message: unknown): void {

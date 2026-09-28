@@ -5,11 +5,13 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
+import { get } from "node:http";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serveSocket, socketPath } from "@agentstack/api";
+import { passthrough as pass, transport } from "./browser-fixture.mjs";
 
 const require = createRequire(import.meta.url);
 const uixDir = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -17,12 +19,11 @@ if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const stateDir = await mkdtemp(join(tmpdir(), "opencode/agentstack-bench-"));
 const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_WEBSOCKET_PORT: "0", NEXT_TELEMETRY_DISABLED: "1" };
-const pass = { parse: (value) => value };
 // Fixed far-past timestamps keep SSR and hydration rendering the same coarse relative text.
 const fixtureAt = "2020-06-01T12:00:00.000Z";
 const op = (name, result) => ({ name, description: name, input: pass, output: pass, async call() { return result; } });
 const bots = Array.from({ length: 8 }, (_, i) => ({ id: `bot-${i + 1}`, pid: 100 + i, cwd: "/fixture/project", state: "running", account: "account-1", runningAccount: "account-1", mainThreadId: `thread-${i}`, url: null, recoveryIssue: null, roleRevision: 1, settings: { model: "fixture", reasoningEffort: "medium", sandboxMode: "read-only", approvalPolicy: "never" } }));
-const doc = (name, operation) => ({ name, packageName: `@agentstack/${name}`, description: `${name} fixture description`, events: { changed: "Fixture changed" }, eventScope: { required: true, description: "A current Bot ID", example: "bot-1" }, transports: [{ type: "socket", supported: true, subscriptions: true, endpoint: socketPath(name, env), description: "Fixture Unix socket" }], operations: [{ name: operation, title: "Read fixture", description: "Read current fixture state", annotations: { readOnlyHint: true, destructiveHint: false }, inputSchema: { type: "object", properties: { id: { type: "string", description: "Current ID", minLength: 1 } }, required: ["id"], additionalProperties: false }, outputSchema: { oneOf: [{ type: "object", properties: { value: { type: "string" } } }, { type: "null" }], $defs: { complete: { type: "number" } } } }] });
+const doc = (name, operation) => ({ name, packageName: `@agentstack/${name}`, description: `${name} fixture description`, events: { changed: "Fixture changed" }, eventScope: { required: true, description: "A current Bot ID", example: "bot-1" }, transports: [transport(socketPath(name, env), [operation], ["changed"], "socket")], operations: [{ name: operation, title: "Read fixture", description: "Read current fixture state", annotations: { readOnlyHint: true, destructiveHint: false }, inputSchema: { type: "object", properties: { id: { type: "string", description: "Current ID", minLength: 1 } }, required: ["id"], additionalProperties: false }, outputSchema: { oneOf: [{ type: "object", properties: { value: { type: "string" } } }, { type: "null" }], $defs: { complete: { type: "number" } } } }] });
 const catalog = [doc("owner", "owner_status"), doc("bots", "bot_status"), doc("auth", "account_list")];
 const resourcesFixture = {
   observation: { snapshotId: "snap-1", capturedAt: fixtureAt, ageMs: 400, freshness: "fresh", lastAttemptAt: fixtureAt, error: null,
@@ -57,7 +58,7 @@ const definitions = {
   ],
   auth: [op("account_list", { accounts: [{ id: "account-1", enabled: true, removing: false, linkedAccounts: [] }] }), op("account_login_current", { login: null }), op("worker_account_list", { accounts: [] }), op("worker_account_login_current", { logins: [] })],
   bots: [op("bot_list", { bots }), op("bot_defaults_get", bots[0].settings), op("voice_status", { call: null })],
-  workers: [op("worker_runtime_list", { runtimes: [] }), op("worker_list", { workers: [] })],
+  worker: [op("worker_runtime_list", { runtimes: [] }), op("worker_list", { workers: [] })],
   usage: [op("usage_snapshot", { atMs: Date.parse(fixtureAt), inventoryAtMs: null, inventoryError: null, accounts: [], grokBot: { observedAtMs: null, lastAttemptAtMs: null, fresh: false, error: "not_observed", usage: null } })],
   api: [op("docs_snapshot", { packages: catalog })],
 };
@@ -84,6 +85,10 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   assert.ok(ready, output);
+  const rebound = await new Promise((resolve, reject) => {
+    get(`${origin}/x`, { headers: { host: "rebind.example.invalid" } }, (response) => { response.resume(); resolve(response.statusCode); }).on("error", reject);
+  });
+  assert.equal(rebound, 403, "UIX must reject rebound Hosts before rendering the operator snapshot");
   browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_EXECUTABLE ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, reducedMotion: "reduce" });
   page.on("pageerror", (error) => issues.push(error.message));
@@ -335,7 +340,7 @@ try {
   const expectedWindows = {
     Fleet: ["bots", "chat"], Accounts: ["accounts", "model-catalogs", "usage"],
     Lab: ["call-speech", "inference"],
-    System: ["activity", "host", "owner", "packages", "processes", "resources", "sampling"],
+    System: ["access", "activity", "host", "owner", "packages", "processes", "resources", "sampling"],
     Roles: ["role-editor", "role-instructions", "role-preview"],
   };
   const switchSpace = async (title) => {

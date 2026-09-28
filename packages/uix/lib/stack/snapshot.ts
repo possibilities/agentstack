@@ -1,9 +1,7 @@
-import { socketCall, socketPath, websocketPort } from "@agentstack/api";
+import { listPackages, socketCall, socketPath, websocketPort, workspaceRoot } from "@agentstack/api";
 import { loadCatalog } from "./catalog";
 import { loadResources } from "./resources";
 import type { Account, Bot, BotSettings, Login, OwnerStatus, PackageDoc, Resource, RolePreview, RoleSnapshot, Snapshot, UsageSnapshot, VoiceCall, WorkerAccount, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
-
-const knownPackages = ["api", "auth", "bots", "brain", "browse", "content", "infer", "notify", "roles", "owner", "scrape", "signal", "usage", "worker"];
 
 function call<T>(pkg: string, name: string, args: Record<string, unknown> = {}): Promise<T> {
   return socketCall(socketPath(pkg), "tools/call", { name, arguments: args }, { timeoutMs: 2_000 }) as Promise<T>;
@@ -17,7 +15,7 @@ async function resource<T>(load: () => Promise<T>): Promise<Resource<T>> {
   }
 }
 
-export function websocketEndpoints(catalog: PackageDoc[] | null): Record<string, string> {
+export async function websocketEndpoints(catalog: PackageDoc[] | null): Promise<Record<string, string>> {
   if (catalog) {
     return Object.fromEntries(catalog.flatMap((doc) => {
       const endpoint = doc.transports.find((transport) => transport.type === "websocket")?.endpoint;
@@ -30,7 +28,11 @@ export function websocketEndpoints(catalog: PackageDoc[] | null): Record<string,
   } catch {
     return {};
   }
-  return port === 0 ? {} : Object.fromEntries(knownPackages.map((name) => [name, `ws://127.0.0.1:${port}/websocket`]));
+  if (port === 0) return {};
+  try {
+    const packages = await listPackages(workspaceRoot(process.cwd()));
+    return Object.fromEntries(packages.filter(({ config }) => config.websocket).map(({ config }) => [config.name, `ws://127.0.0.1:${port}/websocket`]));
+  } catch { return {}; }
 }
 
 export async function loadSnapshot(): Promise<Snapshot> {
@@ -51,5 +53,5 @@ export async function loadSnapshot(): Promise<Snapshot> {
     resource(() => loadCatalog((name, args) => call("api", name, args))),
     resource(() => call<UsageSnapshot>("usage", "usage_snapshot")),
   ]);
-  return { owner, resources, accounts, workerAccounts, workerRuntimes, workerSessions, login, workerLogins, bots, botDefaults, voice, role, rolePreview, catalog, usage, endpoints: websocketEndpoints(catalog.data) };
+  return { owner, resources, accounts, workerAccounts, workerRuntimes, workerSessions, login, workerLogins, bots, botDefaults, voice, role, rolePreview, catalog, usage, endpoints: await websocketEndpoints(catalog.data) };
 }

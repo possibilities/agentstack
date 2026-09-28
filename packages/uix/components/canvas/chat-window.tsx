@@ -187,8 +187,11 @@ function Scrollback({ view, loadOlder }: { view: MainChatView; loadOlder(): void
     <div ref={scroller} data-scroll onScroll={onScroll} className="chat-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain">
       <div ref={content} className="flex flex-col px-4 pt-4 pb-5 font-mono text-[12.5px] leading-[1.65]">
         {hasOlder ? (
-          <div ref={sentinel} className="pb-4 text-center text-[11px] text-muted-foreground/70">{loadingOlder ? "reading earlier turns…" : "\u00a0"}</div>
+          <div ref={sentinel} className="pb-4 text-center text-[11px] text-muted-foreground/70">
+            <button type="button" disabled={loadingOlder} onClick={loadOlder} className="rounded px-2 py-1 hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring">Load earlier turns</button>
+          </div>
         ) : null}
+        <span role="status" className="sr-only">{loadingOlder ? "Reading earlier turns…" : prepends > 0 ? "Earlier turns loaded." : ""}</span>
         {entries.map((entry, index) => (
           <Entry key={entry.key} entry={entry} end={view.turnEnds.get(entry.key)} first={index === 0} after={entries[index - 1]?.kind} />
         ))}

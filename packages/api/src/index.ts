@@ -9,6 +9,7 @@ export {
   type PackageEvents,
 } from "./operation.js";
 export { publishedJsonSchema } from "./schema.js";
+export { forwardTimeout, mcpToolTimeoutSeconds } from "./forward-timeout.js";
 export {
   configuredTransports,
   isTransportType,

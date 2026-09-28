@@ -38,6 +38,8 @@ export type AnyOperation<Ctx> = {
 
 export type PackageEvents<Ctx, Topic extends string = string> = {
   topics: Readonly<Record<Topic, string>>;
+  /** Unscoped subscribers receive every notice. A scoped subscriber receives
+   * only notices published with that exact scope, never unscoped notices. */
   scope?: {
     description: string;
     example: string;

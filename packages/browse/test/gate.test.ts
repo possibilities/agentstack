@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
+import { createServer, get } from "node:http";
 import { once } from "node:events";
 import test from "node:test";
 import WebSocket, { WebSocketServer } from "ws";
@@ -44,6 +44,15 @@ test("managed gate drains accepted CDP, rejects new work on existing and new con
   try {
     await gate.start(); assert.equal(implicit, false); gate.resume();
     const version = await (await fetch(gate.cdpUrl + "/json/version")).json() as { webSocketDebuggerUrl: string };
+    const reboundStatus = await new Promise<number | undefined>((resolve, reject) => {
+      get(gate.cdpUrl + "/json/version", { headers: { host: "rebind.example" } }, (response) => { response.resume(); resolve(response.statusCode); }).on("error", reject);
+    });
+    assert.equal(reboundStatus, 403);
+    const foreign = new WebSocket(version.webSocketDebuggerUrl, { origin: "http://localhost:3000" });
+    foreign.on("error", () => undefined);
+    const [, response] = await once(foreign, "unexpected-response");
+    assert.equal(response.statusCode, 403);
+    foreign.terminate();
     const client = await open(version.webSocketDebuggerUrl);
     client.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", sessionId: "page" }));
     while (!pending) await new Promise((r) => setTimeout(r, 5));

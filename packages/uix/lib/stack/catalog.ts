@@ -4,11 +4,22 @@ type Read = <T>(name: string, args?: Record<string, unknown>) => Promise<T>;
 
 export async function loadCatalog(read: Read): Promise<PackageDoc[]> {
   try {
-    return (await read<{ packages: PackageDoc[] }>("docs_snapshot")).packages;
+    return validateCatalog((await read<{ packages: PackageDoc[] }>("docs_snapshot")).packages);
   } catch {
     const { packages } = await read<{ packages: { name: string }[] }>("docs_list");
-    return Promise.all(packages.map(({ name }) => read<PackageDoc>("docs_get", { package: name })));
+    return validateCatalog(await Promise.all(packages.map(({ name }) => read<PackageDoc>("docs_get", { package: name }))));
   }
+}
+
+/** Fail the resource read before incompatible discovery metadata reaches render.
+ * Missing exposure selections are not equivalent to an empty selection. */
+function validateCatalog(packages: PackageDoc[]): PackageDoc[] {
+  if (!Array.isArray(packages) || packages.some((doc) => !doc || !Array.isArray(doc.operations) || !Array.isArray(doc.transports)
+    || doc.transports.some((transport) => !transport || !Array.isArray(transport.operations)
+      || !Array.isArray(transport.events) || !Array.isArray(transport.routes)))) {
+    throw new Error("Incompatible API catalog: transport operation, event and route selections are required. Restart matching package and UI versions.");
+  }
+  return packages;
 }
 
 export type Field = {

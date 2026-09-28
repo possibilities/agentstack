@@ -240,7 +240,7 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
   }, [zoomAt]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
-      if (blocked || event.metaKey || event.ctrlKey || event.altKey || (event.target as Element).closest("input,textarea,select,button,a,[contenteditable=true],[data-dock],[role=dialog],[role=alertdialog]")) return;
+      if (event.defaultPrevented || blocked || event.metaKey || event.ctrlKey || event.altKey || (event.target as Element).closest("input,textarea,select,button,a,[contenteditable=true],[data-dock],[role=dialog],[role=alertdialog],[role=button],[role=menu],[role=listbox],[role=slider],[role=switch],[role=tab],[role=separator]")) return;
       const value = event.key.toLowerCase();
       if (value.startsWith("arrow")) {
         const step = event.shiftKey ? 240 : 64;

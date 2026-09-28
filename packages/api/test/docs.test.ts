@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { docsSnapshot, serveApi, socketCall } from "../src/index.js";
+import { forwardTimeouts } from "../src/forward-timeout.js";
 
 type TransportDoc = { type: string; description: string; supported: boolean; subscriptions: boolean; endpoint: string | null;
   operations: string[]; events: string[]; routes: Array<{ surface: string; surfaceDescription: string; kind: "json" | "static"; authentication: "bearer" | "none";
@@ -49,6 +50,16 @@ test("the api package serves structured documents for every workspace package", 
       found.set(doc.name, doc);
     }
     const snapshot = (await socketCall(served.socketPath, "tools/call", { name: "docs_snapshot", arguments: {} })) as { packages: PackageDoc[] };
+    for (const key of forwardTimeouts.keys()) {
+      const [pkg, operation] = key.split("/");
+      assert.ok(found.get(pkg!)?.operations.some((op) => op.name === operation), `stale timeout: ${key}`);
+    }
+    for (const [pkg, internal] of [["roles", ["role_launch_snapshot"]], ["brain", ["share_receive", "share_read_states"]]] as const) {
+      const doc = found.get(pkg)!;
+      for (const transport of doc.transports.filter((entry) => entry.type === "mcp" || entry.type === "websocket")) {
+        assert.deepEqual([...transport.operations].sort(), doc.operations.map((op) => op.name).filter((name) => !(internal as readonly string[]).includes(name)).sort());
+      }
+    }
     assert.deepEqual(snapshot.packages, [...found.values()]);
     const responseLength = JSON.stringify({ id: 1, result: snapshot }).length + 1;
     assert.ok(responseLength < 900_000, `discovery snapshot exceeds the socket response budget: ${responseLength} characters`);
@@ -166,7 +177,7 @@ test("the api package serves structured documents for every workspace package", 
     const roles = found.get("roles") as PackageDoc;
     assert.deepEqual(Object.keys(roles.events), ["role_changed"]);
     assert.deepEqual(roles.operations.map((operation) => operation.name).sort(), [
-      "role_preview", "role_snapshot", "category_create", "category_delete", "category_reorder", "category_update",
+      "role_preview", "role_snapshot", "role_launch_snapshot", "category_create", "category_delete", "category_reorder", "category_update",
       "fragment_create", "fragment_delete", "fragment_move", "fragment_reorder", "fragment_update",
       "skill_create", "skill_delete", "skill_reorder", "skill_update",
       "mcp_server_create", "mcp_server_delete", "mcp_server_reorder", "mcp_server_update",

@@ -30,6 +30,13 @@ export async function serveHttp(options: {
       const address = server.address();
       const port = address && typeof address !== "string" ? address.port : options.port;
       const host = options.host.includes(":") ? `[${options.host}]` : options.host;
+      // Loopback is reachable by a browser after DNS rebinding. Validate the
+      // actual Host before constructing our canonical internal Request URL.
+      if (["127.0.0.1", "::1", "localhost"].includes(options.host)
+        && ![`${host}:${port}`, `localhost:${port}`].includes(incoming.headers.host ?? "")) {
+        outgoing.writeHead(403).end();
+        return;
+      }
       const request = new Request(`${options.tls ? "https" : "http"}://${host}:${port}${incoming.url ?? "/"}`, {
         method, headers,
         ...(["GET", "HEAD"].includes(method) ? {} : { body: Readable.toWeb(incoming) as ReadableStream<Uint8Array>, duplex: "half" }),
@@ -41,7 +48,7 @@ export async function serveHttp(options: {
           remoteAddress: incoming.socket.remoteAddress ?? "", remotePort: incoming.socket.remotePort ?? 0,
           localAddress: incoming.socket.localAddress ?? "",
         });
-      outgoing.writeHead(response.status, Object.fromEntries(response.headers));
+      outgoing.writeHead(response.status, responseHeaders(response));
       if (!incoming.complete) outgoing.once("finish", () => incoming.destroy());
       if (response.body && method !== "HEAD") {
         Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0])
@@ -51,7 +58,7 @@ export async function serveHttp(options: {
     } catch (error) {
       if (!outgoing.headersSent && options.onError) {
         const response = options.onError(error);
-        outgoing.writeHead(response.status, Object.fromEntries(response.headers));
+        outgoing.writeHead(response.status, responseHeaders(response));
         outgoing.end(Buffer.from(await response.arrayBuffer()));
       } else if (!outgoing.headersSent) outgoing.writeHead(500).end();
       else outgoing.destroy();
@@ -75,4 +82,11 @@ export async function serveHttp(options: {
       if (options.forceCloseConnections) server.closeAllConnections();
     }),
   };
+}
+
+function responseHeaders(response: Response): Record<string, string | string[]> {
+  const headers: Record<string, string | string[]> = Object.fromEntries(response.headers);
+  const cookies = response.headers.getSetCookie();
+  if (cookies.length) headers["set-cookie"] = cookies;
+  return headers;
 }

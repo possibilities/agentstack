@@ -72,7 +72,9 @@ export function useActivity(): Map<string, StackEvent[]> {
     const map = new Map<string, StackEvent[]>();
     for (const event of events) {
       const key = event.scope ? `bot:${event.scope}` : `${event.pkg}:${event.topic}`;
-      map.set(key, [...(map.get(key) ?? []), event]);
+      const list = map.get(key) ?? [];
+      list.push(event);
+      map.set(key, list);
     }
     return map;
   }, [events]);

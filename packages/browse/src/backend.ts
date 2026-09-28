@@ -1,6 +1,6 @@
 import { connect } from "node:net";
 import { type Duplex } from "node:stream";
-import { createServer, request as httpRequest, type Server } from "node:http";
+import { createServer, request as httpRequest, type Server, type IncomingHttpHeaders } from "node:http";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -105,7 +105,13 @@ export class Backend {
     if (current) return current.port;
     if (!(await this.system.guestSubnet())(ip)) throw new Error("Hypeman returned an address outside its local guest subnet");
     const sockets = new Set<Duplex>();
+    const allowed = (headers: IncomingHttpHeaders) => {
+      const address = server.address();
+      const host = address && typeof address !== "string" ? `127.0.0.1:${address.port}` : null;
+      return host !== null && headers.host === host && (headers.origin === undefined || headers.origin === `http://${host}`);
+    };
     const server = createServer((client, response) => {
+      if (!allowed(client.headers)) { response.writeHead(403).end(); return; }
       const upstream = httpRequest({ hostname: ip, port: 9222, method: client.method, path: client.url,
         headers: { ...client.headers, host: "127.0.0.1:9222", "accept-encoding": "identity" } }, async (source) => {
         const chunks: Buffer[] = [];
@@ -125,6 +131,7 @@ export class Backend {
       client.pipe(upstream);
     });
     server.on("upgrade", (request, client, head) => {
+      if (!allowed(request.headers)) { client.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"); return; }
       const remote = connect({ host: ip, port: 9222 });
       sockets.add(client); sockets.add(remote);
       client.once("close", () => sockets.delete(client));
