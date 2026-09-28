@@ -150,6 +150,17 @@ export type WorkerSession = { id: string; botId: string; threadId: string; accou
   phase: "preparing" | "idle" | "running" | "awaiting_input" | "cancelling" | "closed" | "failed" | "needs_recovery";
   currentTurnId: string | null; issue: string | null; createdAt: number; updatedAt: number };
 
+/** worker_list's compact most recent turn. */
+export type WorkerListTurn = Pick<WorkerTurn, "id" | "phase" | "stopReason" | "issue" | "dispatchedAt" | "createdAt" | "updatedAt">;
+/** A worker_list row: the Worker plus its latest turn and pending permission count. */
+export type WorkerListItem = WorkerSession & { turn: WorkerListTurn | null; pendingPermissions: number };
+export type WorkerDiffFile = { path: string; oldPath: string | null;
+  status: "added" | "modified" | "deleted" | "renamed" | "copied" | "typechange" | "unmerged" | "untracked" | "unknown";
+  additions: number | null; deletions: number | null; binary: boolean };
+/** worker_diff: the retained worktree against its base commit. */
+export type WorkerDiff = { workerId: string; branch: string | null; baseCommit: string; head: string;
+  commits: Array<{ sha: string; subject: string; at: number }>; commitsTruncated: boolean; files: WorkerDiffFile[]; filesTruncated: boolean;
+  uncommitted: boolean; path: string | null; patch: string | null; truncated: boolean };
 /** Worker conversation details, read by the Workers space. */
 export type WorkerObservedSettings = { model: string | null; effort: string | null; mode: string | null; at: number; recordSeq: number };
 export type WorkerTurn = { id: string; workerId: string;
@@ -584,7 +595,7 @@ export type Snapshot = {
   accounts: Resource<Account[]>;
   workerAccounts: Resource<WorkerAccount[]>;
   workerRuntimes: Resource<WorkerRuntime[]>;
-  workerSessions: Resource<WorkerSession[]>;
+  workerSessions: Resource<WorkerListItem[]>;
   usage: Resource<UsageSnapshot>;
   login: Resource<Login | null>;
   workerLogins: Resource<WorkerLogin[]>;

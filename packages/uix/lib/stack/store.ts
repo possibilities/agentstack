@@ -7,7 +7,7 @@ import { stageBytes, StageStalled } from "./content-upload";
 import type { ContentArtifact, ContentCollection, ContentDocument, ContentItem, ContentItemPage, ContentItemScope, ContentLibrary, ContentTag, ContentUpload } from "./types";
 import { scrapeCallError } from "./scrape";
 import type { ScrapeCanaryRun, ScrapePreset, ScrapeQueue, ScrapeReplay, ScrapeStatus } from "./types";
-import type { Account, AttentionItem, AttentionMessage, AttentionPage, AttentionRun, AttentionStatus, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, OwnerResources, OwnerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RoleLaunchPreview, RolePreview, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerLogin, WorkerRuntime, WorkerSession, WorkerStatus } from "./types";
+import type { Account, AttentionItem, AttentionMessage, AttentionPage, AttentionRun, AttentionStatus, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, OwnerResources, OwnerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RoleLaunchPreview, RolePreview, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerListItem, WorkerLogin, WorkerRuntime, WorkerStatus } from "./types";
 
 export type StackState = Snapshot & {
   access: Resource<AccessSnapshot>;
@@ -776,7 +776,7 @@ export class StackStore {
       case "accounts": return call<{ accounts: Account[] }>("auth", "account_list").then((result) => result.accounts);
       case "workerAccounts": return call<{ accounts: WorkerAccount[] }>("auth", "worker_account_list").then((result) => result.accounts);
       case "workerRuntimes": return call<{ runtimes: WorkerRuntime[] }>("worker", "worker_runtime_list").then((result) => result.runtimes);
-      case "workerSessions": return call<{ workers: WorkerSession[] }>("worker", "worker_list").then((result) => result.workers);
+      case "workerSessions": return call<{ workers: WorkerListItem[] }>("worker", "worker_list").then((result) => result.workers);
       case "login": return call<{ login: Login | null }>("auth", "account_login_current").then((result) => result.login);
       case "workerLogins": return call<{ logins: WorkerLogin[] }>("auth", "worker_account_login_current").then((result) => result.logins);
       case "bots": return call<{ bots: Bot[] }>("bots", "bot_list").then((result) => result.bots);

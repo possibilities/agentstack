@@ -220,8 +220,8 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(workers.eventScope?.required, false);
     assert.deepEqual(workers.operations.map((operation) => operation.name), ["worker_catalog", "worker_runtime_list", "worker_account_drain",
       "worker_start", "worker_list", "worker_status", "worker_read", "worker_detail", "worker_turn_list", "worker_record_list", "worker_record_read", "worker_tool_list",
-      "worker_send", "worker_respond", "worker_cancel", "worker_resume", "worker_close", "worker_remove"]);
-    for (const name of ["worker_detail", "worker_turn_list", "worker_record_list", "worker_record_read", "worker_tool_list"]) {
+      "worker_diff", "worker_send", "worker_respond", "worker_cancel", "worker_resume", "worker_close", "worker_remove"]);
+    for (const name of ["worker_list", "worker_detail", "worker_turn_list", "worker_record_list", "worker_record_read", "worker_tool_list", "worker_diff"]) {
       assert.equal(workers.operations.find((operation) => operation.name === name)?.annotations.readOnlyHint, true);
     }
     const workerDetail = workers.operations.find((operation) => operation.name === "worker_detail") as OperationDoc;
@@ -236,6 +236,10 @@ test("the api package serves structured documents for every workspace package", 
     const workerTurns = workers.operations.find((operation) => operation.name === "worker_turn_list") as OperationDoc;
     for (const field of ["prompt", "requestedModel", "observedSettings", "dispatchedPromptSeq"]) assert.ok(JSON.stringify(workerTurns.outputSchema).includes(`"${field}"`));
     assert.ok(JSON.stringify(workers.operations.find((operation) => operation.name === "worker_tool_list")?.outputSchema).includes('"hierarchyVerified"'));
+    const workerListSchema = JSON.stringify(workers.operations.find((operation) => operation.name === "worker_list")?.outputSchema);
+    for (const field of ["turn", "pendingPermissions"]) assert.ok(workerListSchema.includes(`"${field}"`));
+    const workerDiff = workers.operations.find((operation) => operation.name === "worker_diff") as OperationDoc;
+    for (const field of ["commits", "files", "uncommitted", "patch", "truncated"]) assert.ok((workerDiff.outputSchema.properties as Record<string, unknown> | undefined)?.[field], field);
 
     const usage = found.get("usage") as PackageDoc;
     assert.deepEqual(Object.keys(usage.events), ["usage_changed"]);

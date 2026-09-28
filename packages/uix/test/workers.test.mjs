@@ -12,7 +12,7 @@ registerHooks({
   },
 });
 
-const { appendBySeq, conversation, filterWorkers, groupWorkers, parsePlan, parseToolLine, settingsMismatch, workerAttention, workerLabel, workerOrigin } = await import("../lib/stack/workers.ts");
+const { appendBySeq, conversation, filterWorkers, groupWorkers, parsePlan, parseToolLine, settingsMismatch, workerAttention, workerLabel, workerNote, workerOrigin } = await import("../lib/stack/workers.ts");
 const { WorkerWindowStore, primaryWorker } = await import("../lib/stack/worker-windows.ts");
 
 const session = (id, phase, extra = {}) => ({ id, botId: "bot-1", threadId: "t", accountId: "w1", provider: "claude", model: "opus", effort: "high",
@@ -38,6 +38,13 @@ test("groupWorkers puts what needs a look first and keeps each group newest firs
   assert.deepEqual(ids("closed"), ["done"]);
   assert.equal(workerAttention(session("x", "needs_recovery", { issue: "Owner restarted" })), "Owner restarted");
   assert.equal(workerAttention(session("x", "closed", { issue: "stale" })), null);
+  assert.equal(workerAttention(session("x", "awaiting_input", { pendingPermissions: 3 })), "Waiting for its Bot to answer 3 permission requests");
+  assert.equal(workerAttention(session("x", "closed", { pendingPermissions: 3 })), null);
+  // An unknown outcome stays after the Bot resumes, so it is a row note, not attention.
+  const unknown = session("x", "idle", { turn: { id: "t", phase: "unknown", stopReason: null, issue: null, dispatchedAt: null, createdAt: 1, updatedAt: 1 } });
+  assert.equal(workerAttention(unknown), null);
+  assert.equal(workerNote(unknown), "Last turn outcome unknown");
+  assert.equal(workerNote({ ...unknown, phase: "closed" }), null);
 });
 
 test("filterWorkers narrows by Bot and account", () => {

@@ -1,11 +1,11 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { ChevronRightIcon, CpuIcon, HammerIcon, TriangleAlertIcon } from "lucide-react";
+import { ChevronRightIcon, CircleHelpIcon, CpuIcon, HammerIcon, TriangleAlertIcon } from "lucide-react";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
-import { nodeKey, type WorkerRuntime, type WorkerSession } from "@/lib/stack/types";
-import { filterWorkers, groupWorkers, localOperator, workerAttention, workerGroups, workerLabel, workerOrigin, type WorkerFilter } from "@/lib/stack/workers";
+import { nodeKey, type WorkerListItem, type WorkerRuntime, type WorkerSession } from "@/lib/stack/types";
+import { filterWorkers, groupWorkers, localOperator, workerAttention, workerGroups, workerLabel, workerNote, workerOrigin, type WorkerFilter } from "@/lib/stack/workers";
 import { cn } from "@/lib/utils";
 import { Empty, Flash, NodeLink, Orb, StatusDot, Time, type Tone } from "./primitives";
 import { useStack, useWorkbench, useWorkerWindows } from "./provider";
@@ -110,8 +110,11 @@ export function WorkersWindow() {
   );
 }
 
-function WorkerRow({ worker, accountLabel, selected, onSelect }: { worker: WorkerSession; accountLabel: string; selected: boolean; onSelect(): void }) {
+function WorkerRow({ worker, accountLabel, selected, onSelect }: { worker: WorkerListItem; accountLabel: string; selected: boolean; onSelect(): void }) {
   const attention = workerAttention(worker);
+  const note = workerNote(worker);
+  const turn = worker.turn;
+  const active = turn && ["queued", "running", "awaiting_input", "cancelling"].includes(turn.phase);
   const key = nodeKey({ kind: "worker", id: worker.id });
   return (
     <li data-node={key} className="relative">
@@ -137,6 +140,12 @@ function WorkerRow({ worker, accountLabel, selected, onSelect }: { worker: Worke
             <span className="shrink-0 font-mono">{workerOrigin(worker.botId)}</span>
             {attention ? (
               <span className="flex min-w-0 items-center gap-1 text-warning"><TriangleAlertIcon aria-hidden className="size-3 shrink-0" /><span className="truncate">{attention}</span></span>
+            ) : note ? (
+              <span className="flex min-w-0 items-center gap-1 text-warning"><CircleHelpIcon aria-hidden className="size-3 shrink-0" /><span className="truncate">{note}</span></span>
+            ) : active ? (
+              <span className="min-w-0 truncate">{phaseTitle[worker.phase]} · turn started <Time at={turn.dispatchedAt ?? turn.createdAt} /></span>
+            ) : turn ? (
+              <span className="min-w-0 truncate">{phaseTitle[worker.phase]} · last turn {turn.phase}{turn.stopReason ? ` · ${turn.stopReason}` : ""}</span>
             ) : <span className="shrink-0">{phaseTitle[worker.phase]}</span>}
           </span>
         </span>

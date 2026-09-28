@@ -10,7 +10,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
 import { primaryWorker } from "@/lib/stack/worker-windows";
 import type { StackStore } from "@/lib/stack/store";
-import type { WorkerDetail, WorkerPermission, WorkerRecord, WorkerRecordChunk, WorkerRecordPage, WorkerSession, WorkerStatus, WorkerTool, WorkerToolPage, WorkerTranscriptEntry, WorkerTranscriptPage, WorkerTurn, WorkerTurnPage } from "@/lib/stack/types";
+import type { WorkerDiff, WorkerDiffFile, WorkerDetail, WorkerPermission, WorkerRecord, WorkerRecordChunk, WorkerRecordPage, WorkerSession, WorkerStatus, WorkerTool, WorkerToolPage, WorkerTranscriptEntry, WorkerTranscriptPage, WorkerTurn, WorkerTurnPage } from "@/lib/stack/types";
 import { appendBySeq, conversation, localOperator, settingsMismatch, span, workerAttention, workerLabel, workerOrigin, type ConversationItem, type PlanEntry } from "@/lib/stack/workers";
 import { cn } from "@/lib/utils";
 import { Markdown } from "./chat-window";
@@ -20,8 +20,8 @@ import { useNow, useStack, useStore, useWorkbench, useWorkerWindows } from "./pr
 import { phaseTitle, phaseTone } from "./worker-windows";
 import { Window } from "./window";
 
-type Tab = "conversation" | "turns" | "tools" | "records" | "session";
-const tabs: Array<[Tab, string]> = [["conversation", "Conversation"], ["turns", "Turns"], ["tools", "Tools"], ["records", "Records"], ["session", "Session"]];
+type Tab = "conversation" | "changes" | "turns" | "tools" | "records" | "session";
+const tabs: Array<[Tab, string]> = [["conversation", "Conversation"], ["changes", "Changes"], ["turns", "Turns"], ["tools", "Tools"], ["records", "Records"], ["session", "Session"]];
 
 /** Keep a Worker's scoped subscription and status while a window shows it; its generation drives re-reads. */
 function useWatchedWorker(id: string | null): { status: WorkerStatus | null; statusError: string | null; generation: number } {
@@ -192,6 +192,7 @@ export function WorkerWindow({ id }: { id: string }) {
               ))}
             </div>
             {tab === "conversation" ? <ConversationTab key={worker.id} worker={worker} generation={generation} />
+              : tab === "changes" ? <ChangesTab key={worker.id} worker={worker} generation={generation} />
               : tab === "turns" ? <TurnsTab key={worker.id} worker={worker} generation={generation} />
               : tab === "tools" ? <ToolsTab key={worker.id} worker={worker} generation={generation} />
               : tab === "records" ? <RecordsTab key={worker.id} worker={worker} generation={generation} />
@@ -435,6 +436,107 @@ function ConversationRow({ item, streaming }: { item: ConversationItem; streamin
     default:
       return <p className="text-[0.7rem] text-pretty text-warning">{item.text}</p>;
   }
+}
+
+const fileStatus: Record<WorkerDiffFile["status"], { letter: string; className: string }> = {
+  added: { letter: "A", className: "text-success" }, untracked: { letter: "N", className: "text-success" }, modified: { letter: "M", className: "text-pkg-worker" },
+  deleted: { letter: "D", className: "text-destructive" }, renamed: { letter: "R", className: "text-pkg-worker" }, copied: { letter: "C", className: "text-pkg-worker" },
+  typechange: { letter: "T", className: "text-warning" }, unmerged: { letter: "U", className: "text-warning" }, unknown: { letter: "?", className: "text-muted-foreground" },
+};
+
+/** What the Worker changed in its retained worktree against its base commit, read through worker_diff. Nothing here writes to the worktree. */
+function ChangesTab({ worker, generation }: { worker: WorkerSession; generation: number }) {
+  const store = useStore();
+  const [shown, setShown] = useState<{ path: string | null } | null>(null);
+  const summary = useSnapshot(`${worker.id}:diff`, generation, () => store.call<WorkerDiff>("worker", "worker_diff", { id: worker.id }));
+  const patch = useSnapshot(shown ? `${worker.id}:patch:${shown.path ?? ""}` : null, generation, () =>
+    store.call<WorkerDiff>("worker", "worker_diff", shown?.path ? { id: worker.id, path: shown.path } : { id: worker.id, patch: true }));
+  const data = summary.data;
+  // A file the Worker no longer changes drops its open patch.
+  const stale = shown?.path && data && !data.files.some((file) => file.path === shown.path);
+  useEffect(() => { if (stale) setShown(null); }, [stale]);
+  const additions = data?.files.reduce((sum, file) => sum + (file.additions ?? 0), 0) ?? 0;
+  const deletions = data?.files.reduce((sum, file) => sum + (file.deletions ?? 0), 0) ?? 0;
+  return (
+    <Scroller>
+      {!data ? <FeedFooter loading={!summary.error} error={summary.error} hasMore={false} count={0} noun="changes" /> : (
+        <>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.75rem]">
+            <span className="font-medium">{data.files.length}{data.filesTruncated ? "+" : ""} file{data.files.length === 1 ? "" : "s"}</span>
+            <span className="text-success tabular-nums">+{additions}</span>
+            <span className="text-destructive tabular-nums">−{deletions}</span>
+            <span className="text-muted-foreground">· {data.commits.length}{data.commitsTruncated ? "+" : ""} commit{data.commits.length === 1 ? "" : "s"}</span>
+            {data.uncommitted ? <span className="rounded bg-warning/10 px-1.5 py-px text-[0.68rem] text-warning" title="The worktree has uncommitted or untracked changes">uncommitted</span> : null}
+            <span className="ml-auto flex items-center gap-1 font-mono text-[0.68rem] text-muted-foreground" title={`${data.baseCommit} → ${data.head}`}>
+              {data.baseCommit.slice(0, 7)} → {data.head.slice(0, 7)}<CopyButton value={data.head} label="head commit" className="size-5" />
+            </span>
+          </div>
+          {summary.error ? <p className="text-[0.7rem] text-destructive">{summary.error}</p> : null}
+          {data.commits.length ? (
+            <ul aria-label="Commits" className="flex flex-col gap-0.5">
+              {data.commits.map((commit) => (
+                <li key={commit.sha} className="flex min-w-0 items-baseline gap-2 text-[0.75rem]">
+                  <span className="shrink-0 font-mono text-[0.68rem] text-muted-foreground">{commit.sha.slice(0, 7)}</span>
+                  <span className="min-w-0 flex-1 truncate">{commit.subject}</span>
+                  <Time at={commit.at} className="shrink-0 text-[0.65rem] text-muted-foreground" />
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {data.files.length ? (
+            <ul aria-label="Changed files" className="flex flex-col gap-px rounded-lg border p-1">
+              {data.files.map((file) => {
+                const status = fileStatus[file.status];
+                const open = shown?.path === file.path;
+                return (
+                  <li key={file.path}>
+                    <button type="button" aria-pressed={open} onClick={() => setShown(open ? null : { path: file.path })}
+                      className={cn("flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left font-mono text-[0.72rem] hover:bg-muted/60", open && "bg-muted")}>
+                      <span title={file.status} className={cn("w-3 shrink-0 text-center font-semibold", status.className)}>{status.letter}</span>
+                      <span className="min-w-0 flex-1 truncate" title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}>
+                        {file.oldPath ? <span className="text-muted-foreground">{file.oldPath} → </span> : null}{file.path}
+                      </span>
+                      {file.binary ? <span className="shrink-0 text-muted-foreground">binary</span> : file.additions !== null ? (
+                        <span className="shrink-0 tabular-nums"><span className="text-success">+{file.additions}</span> <span className="text-destructive">−{file.deletions}</span></span>
+                      ) : null}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : <p className="py-2 text-center text-[0.72rem] text-muted-foreground">No changes against the base commit</p>}
+          {data.files.length ? (
+            <Button size="sm" variant={shown && !shown.path ? "secondary" : "ghost"} className="self-start" onClick={() => setShown(shown && !shown.path ? null : { path: null })}>
+              {shown && !shown.path ? "Hide all changes" : "Show all changes"}
+            </Button>
+          ) : null}
+          {shown ? (
+            patch.data ? <Patch diff={patch.data} /> : <FeedFooter loading={!patch.error} error={patch.error} hasMore={false} count={0} noun="patch" />
+          ) : null}
+        </>
+      )}
+    </Scroller>
+  );
+}
+
+function Patch({ diff }: { diff: WorkerDiff }) {
+  const lines = useMemo(() => (diff.patch ?? "").split("\n"), [diff.patch]);
+  return (
+    <div className="flex flex-col gap-1">
+      {diff.truncated ? <Notice>This patch was cut at its size limit. Read the rest in Git from the worktree.</Notice> : null}
+      <pre aria-label={diff.path ? `Patch for ${diff.path}` : "All changes"} className="overflow-x-auto rounded-lg border bg-background/60 py-1.5 font-mono text-[0.68rem] leading-[1.45]">
+        {lines.map((line, index) => (
+          <span key={index} className={cn("block px-2.5 whitespace-pre",
+            line.startsWith("+") && !line.startsWith("+++") ? "bg-success/10 text-success"
+              : line.startsWith("-") && !line.startsWith("---") ? "bg-destructive/10 text-destructive"
+              : line.startsWith("@@") ? "text-pkg-worker"
+              : /^(diff --git|index |--- |\+\+\+ |new file|deleted file|rename |similarity )/.test(line) ? "text-muted-foreground" : "text-foreground/85")}>
+            {line || " "}
+          </span>
+        ))}
+      </pre>
+    </div>
+  );
 }
 
 function TurnsTab({ worker, generation }: { worker: WorkerSession; generation: number }) {

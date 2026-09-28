@@ -1,5 +1,5 @@
 import { shortId } from "./derive";
-import type { WorkerSession, WorkerTool, WorkerTranscriptEntry } from "./types";
+import type { WorkerListItem, WorkerSession, WorkerTool, WorkerTranscriptEntry } from "./types";
 
 /** worker_list's `botId` for Workers the local operator started rather than a Bot. */
 export const localOperator = "_local_operator";
@@ -27,13 +27,23 @@ export const workerGroups: Array<{ id: WorkerGroup; title: string }> = [
  * Why a Worker is worth a look, from worker_list alone; null when it is not.
  * Its Bot, not the UI, answers permissions and recovers it.
  */
-export function workerAttention(worker: Pick<WorkerSession, "phase" | "issue">): string | null {
+export function workerAttention(worker: Pick<WorkerSession, "phase" | "issue"> & { pendingPermissions?: number }): string | null {
+  const pending = worker.pendingPermissions ?? 0;
+  if (pending > 1 && worker.phase !== "closed") return `Waiting for its Bot to answer ${pending} permission requests`;
   switch (worker.phase) {
     case "awaiting_input": return "Waiting for its Bot to answer a permission request";
     case "needs_recovery": return worker.issue ?? "Needs recovery";
     case "failed": return worker.issue ?? "Failed";
     default: return null;
   }
+}
+
+/**
+ * A turn whose outcome is unknown stays so until a later turn, even after its Bot
+ * has inspected the worktree and resumed, so it is a note rather than attention.
+ */
+export function workerNote(worker: Pick<WorkerListItem, "phase" | "turn">): string | null {
+  return worker.phase !== "closed" && worker.turn?.phase === "unknown" ? "Last turn outcome unknown" : null;
 }
 
 export function workerGroup(worker: Pick<WorkerSession, "phase" | "issue">): WorkerGroup {
@@ -45,13 +55,13 @@ export function workerGroup(worker: Pick<WorkerSession, "phase" | "issue">): Wor
 
 export type WorkerFilter = { botId?: string; accountId?: string };
 
-export function filterWorkers(workers: WorkerSession[], filter: WorkerFilter): WorkerSession[] {
+export function filterWorkers<T extends WorkerSession>(workers: T[], filter: WorkerFilter): T[] {
   return workers.filter((worker) => (!filter.botId || worker.botId === filter.botId) && (!filter.accountId || worker.accountId === filter.accountId));
 }
 
 /** Workers by group, most recently updated first. */
-export function groupWorkers(workers: WorkerSession[]): Map<WorkerGroup, WorkerSession[]> {
-  const groups = new Map<WorkerGroup, WorkerSession[]>(workerGroups.map(({ id }) => [id, []]));
+export function groupWorkers<T extends WorkerSession>(workers: T[]): Map<WorkerGroup, T[]> {
+  const groups = new Map<WorkerGroup, T[]>(workerGroups.map(({ id }) => [id, []]));
   for (const worker of [...workers].sort((a, b) => b.updatedAt - a.updatedAt)) groups.get(workerGroup(worker))!.push(worker);
   return groups;
 }

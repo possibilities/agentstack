@@ -2,7 +2,7 @@ import { socketCall, socketPath, websocketPort } from "@agentstack/api";
 import { loadCatalog } from "./catalog";
 import { loadResources } from "./resources";
 import type { ContentOrigins } from "./types";
-import type { Account, Bot, BotSettings, Login, OwnerStatus, PackageDoc, Resource, RolePreview, RoleSnapshot, Snapshot, UsageSnapshot, VoiceCall, WorkerAccount, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
+import type { Account, Bot, BotSettings, Login, OwnerStatus, PackageDoc, Resource, RolePreview, RoleSnapshot, Snapshot, UsageSnapshot, VoiceCall, WorkerAccount, WorkerListItem, WorkerLogin, WorkerRuntime } from "./types";
 
 const knownPackages = ["api", "auth", "bots", "brain", "browse", "content", "infer", "notify", "roles", "owner", "scrape", "signal", "usage", "worker"];
 
@@ -75,7 +75,7 @@ export async function loadSnapshot(remoteOrigin?: string, remoteScope?: "view" |
     resource(async () => (await call<{ accounts: Account[] }>("auth", "account_list")).accounts),
     resource(async () => (await call<{ accounts: WorkerAccount[] }>("auth", "worker_account_list")).accounts),
     resource(async () => (await call<{ runtimes: WorkerRuntime[] }>("worker", "worker_runtime_list")).runtimes),
-    resource(async () => (await call<{ workers: WorkerSession[] }>("worker", "worker_list")).workers),
+    resource(async () => (await call<{ workers: WorkerListItem[] }>("worker", "worker_list")).workers),
     resource(async () => (await call<{ login: Login | null }>("auth", "account_login_current")).login),
     resource(async () => (await call<{ logins: WorkerLogin[] }>("auth", "worker_account_login_current")).logins),
     resource(async () => (await call<{ bots: Bot[] }>("bots", "bot_list")).bots),

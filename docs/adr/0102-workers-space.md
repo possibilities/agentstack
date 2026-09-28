@@ -86,6 +86,8 @@ permission, needing recovery or failed, Worker runtime errors, and a closed
 
 ## Consequences
 
+[ADR 0104](0104-worker-diff-and-list-summaries.md) adds `worker_diff` and `worker_list` turn summaries. They resolve the first two consequences below: the space now has a Changes tab and marks unknown outcomes in the list.
+
 The UI cannot show a Worker's diff. Reviewing a closed Worker's branch still
 happens in Git, from the copied worktree path and base commit. A read-only
 `worker_diff` would complete the review story. It is a separate API change.

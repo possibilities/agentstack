@@ -193,6 +193,16 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     const id = started.worker.id;
     for (let i = 0; i < 100 && (await manager.status(id)).worker.phase !== "idle"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal((await manager.status(id)).turn?.stopReason, "end_turn");
+    const listed = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_list", arguments: {} }) as { workers: Awaited<ReturnType<WorkerManager["list"]>> };
+    const row = listed.workers.find((worker) => worker.id === id)!;
+    assert.equal(row.turn?.phase, "completed"); assert.equal(row.turn?.stopReason, "end_turn"); assert.equal(row.pendingPermissions, 0);
+    assert.equal("prompt" in (row.turn ?? {}), false, "list turns stay compact");
+    const changes = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_diff", arguments: { id } }) as Awaited<ReturnType<WorkerManager["diff"]>>;
+    assert.equal(changes.baseCommit, started.worker.baseCommit); assert.equal(changes.uncommitted, true);
+    assert.deepEqual(changes.files.find((file) => file.path === "output.txt")?.status, "untracked");
+    assert.ok(changes.files.every((file) => file.status === "untracked"), "the fixture runtime only adds files");
+    const written = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_diff", arguments: { id, path: "output.txt" } }) as { patch: string };
+    assert.match(written.patch, /^\+.*Write an output file/m);
     const detail = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_detail", arguments: { id } }) as Awaited<ReturnType<WorkerManager["detail"]>>;
     assert.equal(detail.observedSettings?.model, "xai/grok-build");
     assert.equal(detail.observedSettings?.effort, "low");

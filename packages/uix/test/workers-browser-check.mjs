@@ -80,7 +80,21 @@ const handlers = {
   bot_list: () => ({ bots: [{ id: "bot-1", state: "running", pid: 321, cwd: "/fixture/workspace", url: null, account: null, runningAccount: null, mainThreadId: "thread-1", recoveryIssue: null, roleRevision: 3, settings: null }] }),
   bot_defaults_get: () => ({ model: "fixture", reasoningEffort: "medium", sandboxMode: "danger-full-access", approvalPolicy: "never" }),
   voice_status: () => ({ call: null }),
-  worker_list: () => ({ workers }),
+  worker_list: () => ({ workers: workers.map((worker) => {
+    const last = turns[worker.id]?.at(-1);
+    return { ...worker, turn: last ? { id: last.id, phase: last.phase, stopReason: last.stopReason, issue: last.issue, dispatchedAt: last.dispatchedAt, createdAt: last.createdAt, updatedAt: last.updatedAt } : null,
+      pendingPermissions: worker.phase === "awaiting_input" ? 1 : 0 };
+  }) }),
+  worker_diff: ({ id, path, patch }) => {
+    if (id === wid("d")) throw new Error("the Worker's worktree is no longer available");
+    const files = { "src/scheduler.ts": "diff --git a/src/scheduler.ts b/src/scheduler.ts\n--- a/src/scheduler.ts\n+++ b/src/scheduler.ts\n@@ -1,2 +1,2 @@\n-const wait = 0;\n+const wait = await settled();\n",
+      "test/scheduler.test.ts": "diff --git a/test/scheduler.test.ts b/test/scheduler.test.ts\nnew file mode 100644\n--- /dev/null\n+++ b/test/scheduler.test.ts\n@@ -0,0 +1 @@\n+test(\"no race\");\n" };
+    return { workerId: id, branch: `agentstack-worker-${id}`, baseCommit: "025e608aa1b2c3d4", head: "9f8e7d6c5b4a3210",
+      commits: [{ sha: "9f8e7d6c5b4a3210", subject: "Fix the scheduler race", at: now - 100_000 }], commitsTruncated: false,
+      files: [{ path: "src/scheduler.ts", oldPath: null, status: "modified", additions: 1, deletions: 1, binary: false },
+        { path: "test/scheduler.test.ts", oldPath: null, status: "untracked", additions: null, deletions: null, binary: false }], filesTruncated: false,
+      uncommitted: true, path: path ?? null, patch: path ? files[path] : patch ? Object.values(files).join("") : null, truncated: false };
+  },
   worker_runtime_list: () => ({ runtimes: [
     { id: claude, provider: "claude", backend: "claude-sdk", processModel: "session", pids: [process.pid], state: "running", pid: null, instance: account(90), error: null },
     { id: codex, provider: "codex", backend: "acp", processModel: "account", pids: [], state: "error", pid: null, instance: null, error: "opencode exited (1)" }] }),
@@ -159,6 +173,7 @@ try {
   await list.getByText("Needs attention· 2").or(list.getByRole("button", { name: /Needs attention/ })).first().waitFor();
   await row("agentstack · aaaaaa").getByText("Waiting for its Bot to answer a permission request").waitFor();
   await row("brain · bbbbbb").getByText("Operator", { exact: true }).waitFor();
+  await row("brain · bbbbbb").getByText("Idle · last turn completed · end_turn").waitFor();
   assert.equal(await row("agentstack · dddddd").count(), 0, "closed Workers start collapsed");
   await list.getByRole("button", { name: /Closed/ }).click();
   await row("agentstack · dddddd").waitFor();
@@ -192,6 +207,16 @@ try {
   sockets.get("worker").publish("worker_progress", wid("a"));
   await worker.getByText("All 412 tests passed.").waitFor();
 
+  // Changes read the retained worktree through worker_diff; a file opens its patch.
+  await worker.getByRole("tab", { name: "Changes" }).click();
+  await worker.getByText("Fix the scheduler race", { exact: true }).waitFor();
+  await worker.getByText("uncommitted", { exact: true }).waitFor();
+  await worker.getByRole("button", { name: /src\/scheduler\.ts/ }).click();
+  await worker.getByText("+const wait = await settled();", { exact: true }).waitFor();
+  await worker.getByRole("button", { name: "Show all changes" }).click();
+  await worker.getByText('+test("no race");', { exact: true }).waitFor();
+  await page.screenshot({ path: join(evidence, "worker-changes.png"), animations: "disabled" });
+
   // Turns, tools, records and session metadata.
   await worker.getByRole("tab", { name: "Turns" }).click();
   await worker.getByText("Also run the full suite", { exact: true }).waitFor();
@@ -212,6 +237,12 @@ try {
   // A Worker whose last turn is unknown says so; its Bot recovers it.
   await row("agentstack · cccccc").click();
   await worker.getByText(/Turn outcome is unknown after owner restart/).waitFor();
+  // A removed worktree reads as an error in Changes, not a crash.
+  await row("agentstack · dddddd").click();
+  await worker.getByRole("tab", { name: "Changes" }).click();
+  await worker.getByText("the Worker's worktree is no longer available", { exact: false }).waitFor();
+  await worker.getByRole("tab", { name: "Conversation" }).click();
+  await row("agentstack · cccccc").click();
 
   // A second window keeps its own Worker while the primary follows the list.
   await worker.getByRole("button", { name: "New Worker window" }).click();
