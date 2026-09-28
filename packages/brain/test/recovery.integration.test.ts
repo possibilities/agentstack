@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Worker } from "node:worker_threads";
 import { BACKUP_DATABASE_FILE } from "../src/backup.js";
 
 const REPO = join(import.meta.dirname, "..");
@@ -81,7 +82,7 @@ function dispositionFor(index: number): string {
 // Builds one hash-bound synthetic frozen generation matching the locked
 // 1,088-row contract, on disk, exactly as the real generation is shaped, so the
 // installed CLI verifies and admits it without any special-casing.
-function makeFixture(options: FixtureOptions = {}): Fixture {
+function makeFixture(options: FixtureOptions & { onlineBaseUrl?: string } = {}): Fixture {
   const root = mkdtempSync(join(tmpdir(), "agentstack-brain-recovery-int-"));
   roots.push(root);
   const artifactRoot = join(root, "legacy-artifacts");
@@ -91,9 +92,11 @@ function makeFixture(options: FixtureOptions = {}): Fixture {
 
   const rows: Array<Record<string, unknown>> = [];
   for (let index = 0; index < 1088; index += 1) {
-    const sourceUri = `https://candidate.test/item/${index + 1}?v=${index + 1}`;
-    const candidateId = digest(sourceUri).slice(0, 16);
     const disposition = dispositionFor(index);
+    const sourceUri = disposition === "approved_online_backfill_telegram_human" && options.onlineBaseUrl
+      ? `${options.onlineBaseUrl}/item/${index + 1}.md`
+      : `https://candidate.test/item/${index + 1}?v=${index + 1}`;
+    const candidateId = digest(sourceUri).slice(0, 16);
     const catalogPosition = index < 584 ? index + 1 : null;
     const provenance: Record<string, unknown> = {
       botctl_messages: [],
@@ -319,54 +322,6 @@ interface CliResult {
 
 // A forbidden `agentscrape` shim: any invocation records a sentinel and exits
 // non-zero, so a rehearsal that touched the network fails loudly.
-function installSuccessfulAgentscrape(binDir: string): string {
-  const log = join(binDir, "online-agentscrape-invocations");
-  const executable = join(binDir, "agentscrape");
-  writeFileSync(
-    executable,
-    `#!${process.execPath}
-import { appendFileSync } from "node:fs";
-import { createHash } from "node:crypto";
-const url = process.argv[3];
-const content = "# Controlled online fixture\\n\\nSynthetic extracted body";
-appendFileSync(${JSON.stringify(log)}, url + "\\n");
-process.stdout.write(JSON.stringify({
-  schema_version: "1",
-  status: "success",
-  requested_url: url,
-  final_url: url,
-  extractor: {
-    name: "agentscrape",
-    version: "test-1",
-    implementation: "synthetic-fixture",
-    implementation_version: "1",
-  },
-  artifacts: [{
-    artifact_type: "document",
-    media_type: "text/markdown",
-    encoding: "utf-8",
-    content,
-    size_bytes: Buffer.byteLength(content),
-    sha256: createHash("sha256").update(content).digest("hex"),
-  }],
-  metadata: {
-    content_type: "web_page",
-    title: "Controlled online fixture",
-    author_name: "",
-    author_handle: "",
-    published_at: "",
-    source_id: "",
-    warnings: [],
-  },
-  relations: [],
-  failure: null,
-}));
-`,
-  );
-  chmodSync(executable, 0o755);
-  return log;
-}
-
 function forbiddenAgentscrape(root: string): {
   binDir: string;
   sentinel: string;
@@ -385,7 +340,7 @@ function forbiddenAgentscrape(root: string): {
 
 function runCli(args: string[], env: Record<string, string>): CliResult {
   const proc = spawnSync({
-    cmd: [process.execPath, "src/cli.js", ...args],
+    cmd: [process.execPath, "test/dispatch-entry.js", ...args],
     cwd: REPO,
     env: { ...process.env, ...env },
     stdout: "pipe",
@@ -584,8 +539,26 @@ afterAll(() => {
   }
 });
 
-test("disposable rehearsal drives the frozen generation through the internal Node dispatcher", async () => {
-  const fixture = makeFixture();
+test("disposable rehearsal drives the frozen generation through the internal Node dispatcher", async (t) => {
+  const onlineLog = join(mkdtempSync(join(tmpdir(), "agentstack-recovery-http-")), "requests");
+  t.after(() => rmSync(join(onlineLog, ".."), { recursive: true, force: true }));
+  const server = new Worker(`
+    const { parentPort, workerData } = require("node:worker_threads");
+    const { createServer } = require("node:http");
+    const { appendFileSync } = require("node:fs");
+    const http = createServer((request, response) => {
+      appendFileSync(workerData.log, request.url + "\\n");
+      response.writeHead(200, { "content-type": "text/markdown" });
+      response.end("# Controlled online fixture\\n\\nSynthetic extracted body");
+    });
+    http.listen(0, "127.0.0.1", () => parentPort.postMessage(http.address().port));
+  `, { eval: true, workerData: { log: onlineLog } });
+  t.after(async () => { await server.terminate(); });
+  const port = await new Promise<number>((resolve, reject) => {
+    server.once("message", resolve);
+    server.once("error", reject);
+  });
+  const fixture = makeFixture({ onlineBaseUrl: `http://127.0.0.1:${port}` });
   const { binDir, sentinel } = forbiddenAgentscrape(fixture.root);
   const dataHome = join(fixture.root, "data");
   const dbPath = join(fixture.root, "rehearsal.db");
@@ -842,7 +815,6 @@ test("disposable rehearsal drives the frozen generation through the internal Nod
   );
   expect(existsSync(sentinel)).toBe(false);
 
-  const onlineLog = installSuccessfulAgentscrape(binDir);
   const online = runCli(onlineArgs, env);
   expect(online.exitCode).toBe(0);
   const onlineData = jsonData(online) as {

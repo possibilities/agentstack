@@ -443,7 +443,7 @@ test("dry-run verifies the complete locked generation without state or network",
   const proc = spawnSync({
     cmd: [
       process.execPath,
-      "src/cli.js",
+      "test/dispatch-entry.js",
       "recovery",
       "import",
       "--manifest-generation",

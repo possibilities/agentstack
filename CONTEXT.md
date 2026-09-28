@@ -188,6 +188,10 @@ The `brain` Package API's isolated research index and durable ingestion system. 
 
 _Avoid_: external research service, Content Vault
 
+## Scrape
+
+The `scrape` Package API's extraction, preset, link and source-discovery engine. Brain consumes its typed library interface for Ingestion jobs; standalone scrape-to-file jobs live under isolated AgentStack state and are not Brain jobs. A preset's failure to match the provider's current content shape is a classified failure requiring a preset update, not permission for generic extraction. Browser page actions still belong to agent-browser. _Avoid_: Brain ingestion worker, browser lifecycle, separate Agentscrape service
+
 ## Admission
 
 The synchronous boundary that validates ingestion intent and durably creates or identifies an ingestion job. Accepted admission proves that the job exists, not that extraction or indexing has completed.

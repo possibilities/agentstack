@@ -1086,15 +1086,15 @@ async function runRecovery(
  * Attach the outcome of the operator notification to the report.
  *
  * The notice is reported rather than silent so a scheduled run leaves evidence
- * of whether the operator was actually reachable.
+ * of whether the notify Package API persisted it, not whether it was presented.
  */
-function withStrandedNotice(
+async function withStrandedNotice(
   cache: ResearchCache,
   data: DoctorReport,
-): DoctorReport & { notification: StrandedNotifyResult } {
+): Promise<DoctorReport & { notification: StrandedNotifyResult }> {
   return {
     ...data,
-    notification: notifyStranded(jobDispositions(cache).stranded),
+    notification: await notifyStranded(jobDispositions(cache).stranded),
   };
 }
 
@@ -1113,7 +1113,7 @@ function runDoctor(argv: string[], globals: GlobalOptions): ReadCommand {
     // The ingress check is a request to this machine's own registered share
     // address and nowhere else; AgentStack Brain still opens no socket to the web.
     const data = doctor(cache, new Date(), [await shareIngressCheck()]);
-    const report = notify ? withStrandedNotice(cache, data) : data;
+    const report = notify ? await withStrandedNotice(cache, data) : data;
     writeByFormat(
       "doctor",
       report,

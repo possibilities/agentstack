@@ -377,7 +377,7 @@ test("immediate write transactions serialize concurrent equivalent admissions", 
     spawn({
       cmd: [
         process.execPath,
-        "src/cli.js",
+        "test/dispatch-entry.js",
         "ingest",
         "concurrent stable text",
         "--source-type",

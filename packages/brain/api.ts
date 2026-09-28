@@ -63,7 +63,10 @@ const outputs: Record<string, z.ZodType> = {
   backup_verify: schemas.BackupVerifyResultSchema,
   recovery_import: schemas.RecoveryImportReportSchema,
   recovery_online: schemas.RecoveryOnlineReportSchema.extend({ worker: schemas.WorkerResultSchema.omit({ worker_id: true }).optional() }),
-  doctor: schemas.DoctorReportSchema,
+  doctor: schemas.DoctorReportSchema.extend({ notification: z.object({ notified: z.boolean(),
+    reason: z.enum(["unchanged", "increased", "cleared", "notify_unavailable"]),
+    stranded: z.number().int().nonnegative(), previous: z.number().int().nonnegative().nullable(),
+  }).optional() }),
 };
 
 async function invoke(ctx: BrainContext, command: string, commandArgv: string[]): Promise<unknown> {

@@ -32,6 +32,8 @@ test("Package API initializes isolated state and owns share-to-index processing 
     assert.equal(status.artifactStore, join(state, "brain", "artifacts"));
     assert.equal(status.worker, "running");
     assert.equal((await call(ctx, "stats")).document_count, 0);
+    assert.deepEqual((await call(ctx, "doctor", { notify: true })).notification,
+      { notified: false, reason: "cleared", stranded: 0, previous: null });
     assert.deepEqual(await call(ctx, "sources_list"), { sources: [] });
     assert.equal(existsSync(forbidden), false);
     assert.equal(existsSync(join(root, ".local")), false);

@@ -35,7 +35,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.deepEqual(
       docs.packages.map((item) => item.name),
-       ["api", "attention", "auth", "bots", "brain", "browser", "content", "infer", "notify", "owner", "roles", "usage", "workers"],
+        ["api", "attention", "auth", "bots", "brain", "browser", "content", "infer", "notify", "owner", "roles", "scrape", "usage", "workers"],
     );
     assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@agentstack/${item.name}`));
 
@@ -72,6 +72,9 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(statesRoute.inputSchema, null, "GET has no JSON request body");
     assert.equal(brainHttp.routes.find((route) => route.operation === "share_health")!.inputSchema, null);
     assert.ok(!found.get("brain")!.operations.some((operation) => operation.name === "share_admit"));
+    const doctor = found.get("brain")!.operations.find((operation) => operation.name === "doctor")!;
+    assert.ok(doctor.description.includes("notify Package API"));
+    assert.ok((doctor.outputSchema.properties as Record<string, unknown>).notification);
     const contentHttp = found.get("content")!.transports.find((transport) => transport.type === "http")!;
     assert.ok(contentHttp.routes.some((route) => route.surface === "artifacts" && route.path === "/a/*" && route.operation === null && route.format === "artifact media type" && route.authentication === "none" && route.outputSchema === null));
     const browser = found.get("browser") as PackageDoc;
@@ -87,6 +90,12 @@ test("the api package serves structured documents for every workspace package", 
         "hypeman_detect", "hypeman_location_set", "hypeman_enable", "hypeman_install", "hypeman_uninstall"].sort());
     assert.deepEqual(Object.keys(browser.events), ["browser_handoffs_changed", "browser_profiles_changed", "browser_system_changed", "browser_sessions_changed"]);
     assert.deepEqual(Object.keys(browser.operations.find((operation) => operation.name === "browser_controller_launch")?.inputSchema.properties ?? {}), ["identity", "session"]);
+    const scrape = found.get("scrape") as PackageDoc;
+    assert.deepEqual(scrape.transports.map((transport) => transport.type), ["socket", "mcp", "websocket"]);
+    assert.ok(Object.keys(scrape.operations.find((operation) => operation.name === "scrape_fetch")?.outputSchema.properties ?? {}).includes("failure"));
+    const exposed = scrape.transports.find((transport) => transport.type === "mcp")!.operations;
+    assert.ok(exposed.includes("scrape_fetch") && exposed.includes("scrape_presets_list"));
+    assert.ok(!exposed.includes("scrape_queue_submit") && !exposed.includes("scrape_corpus_capture") && !exposed.includes("scrape_session_close") && !exposed.includes("scrape_fetch_file") && !exposed.includes("scrape_convert_html_directory"));
 
     const bots = found.get("bots") as PackageDoc;
     assert.deepEqual(Object.keys(bots.events).sort(), ["bots_changed", "chat_live_changed", "chat_queue_changed", "chats_changed", "defaults_changed", "threads_changed", "voice_changed"]);

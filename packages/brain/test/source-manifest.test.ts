@@ -850,7 +850,7 @@ function runApply(manifestPath: string, extra: string[] = []) {
   const result = spawnSync({
     cmd: [
       process.execPath,
-      "src/cli.js",
+      "test/dispatch-entry.js",
       "sources",
       "apply",
       "--manifest",

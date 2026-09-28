@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -9,19 +10,19 @@ import { socketCall, socketPath } from "@agentstack/api";
 import { ResearchStore } from "../src/store.js";
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  test(`managed ${signal} shutdown settles an active socket wait, reaps extraction and releases Brain resources`, { timeout: 15_000, skip: process.platform === "win32" }, async () => {
+  test(`managed ${signal} shutdown cancels a live direct extraction and releases Brain resources`, { timeout: 15_000 }, async () => {
     const root = mkdtempSync(join(tmpdir(), "brain-life-"));
-    const bin = join(root, "bin");
-    mkdirSync(bin);
-    const providerFile = join(root, "provider.pid");
-    const descendantFile = join(root, "descendant.pid");
-    writeFileSync(join(bin, "agentscrape"), `#!/bin/sh
-printf '%s' "$$" > '${providerFile}'
-/bin/sh -c 'trap "" HUP INT TERM; printf "%s" "$$" > "${descendantFile}"; exec /bin/sleep 30' &
-wait
-`, { mode: 0o755 });
-    const env = { HOME: root, PATH: bin, AGENTSTACK_STATE_DIR: root, AGENTSTACK_BRAIN_SHARE_PORT: "0" };
-    // runApi is the same shared signal/lifecycle entry point used by owner children.
+    let requested = false;
+    let disconnected = false;
+    const server = createServer((request) => {
+      requested = true;
+      request.on("close", () => { disconnected = true; });
+      // A deliberately slow Markdown response: no browser or real network is involved.
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing local port");
+    const env = { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_BRAIN_SHARE_PORT: "0" };
     const child = spawn(process.execPath, ["--input-type=module", "-e", 'import { runApi } from "@agentstack/api"; await runApi(["brain", "socket"]);'], {
       cwd: join(import.meta.dirname, "../.."), env, stdio: ["ignore", "ignore", "pipe"],
     });
@@ -29,10 +30,8 @@ wait
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
       child.once("error", reject);
-      child.once("exit", (code, signal) => resolve({ code, signal }));
+      child.once("exit", (code, exitSignal) => resolve({ code, signal: exitSignal }));
     });
-    let providerPid: number | undefined;
-    let descendantPid: number | undefined;
     try {
       const socket = socketPath("brain", env);
       const registration = join(root, "brain", "share-ingress.json");
@@ -43,15 +42,10 @@ wait
       assert.ok(existsSync(socket) && existsSync(registration), stderr);
       const call = (name: string, input: object = {}): Promise<any> => socketCall(socket, "tools/call", { name, arguments: input });
       const status = await call("brain_status");
-      const waiting = call("submit", { source: "https://example.test/active-extraction", kind: "url", wait: true, "wait-timeout-ms": 60_000 });
+      const waiting = call("submit", { source: `http://127.0.0.1:${address.port}/active.md`, kind: "url", wait: true, "wait-timeout-ms": 60_000 });
       void waiting.catch(() => {});
-      for (let n = 0; n < 400 && !existsSync(descendantFile); n++) await sleep(10);
-      assert.ok(existsSync(descendantFile), stderr);
-      providerPid = Number(readFileSync(providerFile, "utf8"));
-      descendantPid = Number(readFileSync(descendantFile, "utf8"));
-      assert.ok(providerPid > 0 && descendantPid > 0);
-      process.kill(providerPid, 0);
-      process.kill(descendantPid, 0);
+      for (let n = 0; n < 400 && !requested; n++) await sleep(10);
+      assert.equal(requested, true, stderr);
       const jobs = (await call("jobs_list")).jobs;
       assert.equal(jobs.length, 1);
       const jobId = jobs[0].id;
@@ -65,10 +59,8 @@ wait
       assert.equal(existsSync(socket), false);
       assert.equal(existsSync(registration), false);
       await assert.rejects(fetch(`${status.shareUrl}/v1/health`));
-      for (const pid of [providerPid, descendantPid]) {
-        const state = spawnSync("/bin/ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" });
-        assert.ok(state.status === 1 || /^Z/.test(state.stdout.trim()), `owned process ${pid} survived: ${state.stdout}`);
-      }
+      for (let n = 0; n < 100 && !disconnected; n++) await sleep(10);
+      assert.equal(disconnected, true, "owned HTTP extraction was not cancelled");
       const reopened = new ResearchStore(status.database);
       try {
         reopened.db.transaction(() => {
@@ -78,9 +70,8 @@ wait
       } finally { reopened.close(); }
     } finally {
       if (child.exitCode === null && child.signalCode === null) { child.kill("SIGKILL"); await exited; }
-      // Only owned fixture groups can require cleanup after an assertion failure.
-      const ownedProvider = providerPid ?? (existsSync(providerFile) ? Number(readFileSync(providerFile, "utf8")) : undefined);
-      if (ownedProvider && ownedProvider > 0) { try { process.kill(-ownedProvider, "SIGKILL"); } catch {} }
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
       rmSync(root, { recursive: true, force: true });
     }
   });
