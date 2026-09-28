@@ -1,10 +1,17 @@
 # Share ingest JSON contract (v1)
 
-The share ingress is one endpoint shared by every device client. It is served by
-the owner-managed `brain` Package API under
-[ADR 0059](adr/0059-isolated-brain-and-platform-clients.md).
-Its HTTP-only typed operations and explicit route selection are declared alongside
-the Package API in `packages/brain/api.ts` and `packages/brain/src/share-server.ts`;
+**Access migration:** device requests now use the shared [Access ingress](access.md)
+and a short-lived Brain audience credential. The payload/admission semantics
+below remain v1; the old shared token is retired. Access responses contain
+`schema_version`, `ok`, and `data` (no server-local database path). Status reads
+are filtered by durable client/job admission receipts, including duplicate
+admissions. The old Brain listener is loopback-only with an ephemeral internal
+liveness credential. It is not a device connection URL. See
+[ADR 0091](adr/0091-shared-access-and-direct-tailnet-ingress.md).
+
+The share ingress is shared by every paired device client. Its remote routes are
+declared by the owner-managed `access` Package API; Brain owns admission and job
+state through `packages/brain/api.ts` and `packages/brain/src/share-server.ts`;
 the common HTTP listener implementation lives in `packages/api/src/http.ts`.
 The live `docs_snapshot` Package API and UIX API reference publish the HTTP
 wire schemas (including the `idempotency_key` request spelling, query string,
@@ -12,17 +19,16 @@ success/error envelopes), formats and per-origin authentication policy. These
 are distinct from the share operations' normalized internal inputs.
 
 ```text
-POST http://<agentstack-host>:8877/v1/share
-GET  http://<agentstack-host>:8877/v1/shares?job_ids=1,2,3
-GET  http://<agentstack-host>:8877/v1/health
+POST https://<tailnet-host>:8943/v1/share
+GET  https://<tailnet-host>:8943/v1/shares?job_ids=1,2,3
+GET  https://<tailnet-host>:8943/v1/health
 ```
 
-Every data and health request requires `Authorization: Bearer <token>`.
-Unauthenticated `OPTIONS` requests return only CORS preflight metadata;
-network reachability is not authorization. The local `share_token_reveal`
-operation requires `{ "reveal": true }`; `share_token_rotate` immediately
-replaces the token accepted by the listener. Neither operation is exposed by
-this device listener.
+Every data and health request requires an Access Brain audience bearer token
+and `X-AgentStack-Server-ID` matching its paired server, over direct verified
+tailnet traffic. `OPTIONS` returns only CORS metadata but
+also requires tailnet provenance. `share_token_reveal` and `share_token_rotate`
+are removed; pair and revoke through Access instead.
 
 ## Request
 
@@ -44,7 +50,7 @@ this device listener.
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `version` | no | Contract version; defaults to `1`. Any other value is rejected. |
-| `client` | yes | `chrome-extension` or `android-share`. Becomes the durable job `ingress`. |
+| `client` | no | Access sets this from the approved Client kind, overriding any supplied value. Becomes the durable job `ingress`. |
 | `url` | one of | An http(s) locator. Credentialed URLs are rejected. |
 | `text` | one of | Free text, up to 100,000 characters. |
 | `title` | no | Up to 500 characters. |
@@ -71,7 +77,7 @@ selected text, but that ordering is sender- and version-specific rather than
 guaranteed.
 
 The resolved intent is passed to the same `admitSubmission` path Package API submission uses.
-The ingress owns no storage of its own.
+Access stores client/job admission receipts, not a separate ingestion queue.
 
 ## Success response
 
@@ -79,7 +85,6 @@ The ingress owns no storage of its own.
 {
   "schema_version": 1,
   "ok": true,
-  "command": "share /v1/share",
   "data": {
     "version": 1,
     "client": "chrome-extension",
@@ -93,11 +98,6 @@ The ingress owns no storage of its own.
     "extracted_from_text": false,
     "collections": ["saved-links"],
     "tags": ["reading"]
-  },
-  "meta": {
-    "db_path": "/Users/you/.local/state/agentstack/brain/research.db",
-    "read_only": false,
-    "generated_at": "2026-08-01T16:26:13.876Z"
   }
 }
 ```
@@ -119,7 +119,6 @@ against the original contract never calls it and is unaffected.
 {
   "schema_version": 1,
   "ok": true,
-  "command": "share /v1/shares",
   "data": {
     "version": 1,
     "shares": [
@@ -138,40 +137,43 @@ against the original contract never calls it and is unaffected.
 
 At most 50 ids per request, deduplicated, and `job_ids` may be omitted for an
 empty answer. An id with no matching job is absent from `shares` rather than
-reported as missing. The bearer token authorizes instance-wide status reads;
-job IDs are not individually bound to a client. No
+reported as missing. Access returns only IDs admitted by this client, based on
+durable admission receipts, including duplicate admissions. No
 locator, title, or body is ever returned: a client asking about its own shares
 already has the content it sent.
 
 ## Errors
 
-Errors use the standard AgentStack Brain error envelope:
+Errors use the Access error envelope:
 
 ```json
 {
   "schema_version": 1,
   "ok": false,
-  "command": "share /v1/share",
-  "error": { "code": "bad_payload", "message": "…", "recovery": "…" }
+  "error": { "code": "bad_payload", "message": "…" }
 }
 ```
 
 | HTTP | Code | Cause |
 | --- | --- | --- |
-| 400 | `bad_payload` | Not JSON, not an object, missing/unknown `client`, no `url` or `text`, wrong field type, oversized field, malformed `job_ids`. |
+| 400 | `bad_payload` | Not JSON, not an object, no `url` or `text`, wrong field type, oversized field, malformed or excessive `job_ids`. |
 | 400 | `bad_source` | `url` is not a usable http(s) locator. |
 | 400 | `unsupported_version` | `version` is not `1`. |
-| 401 | `unauthorized` | Missing or non-matching bearer token. |
+| 401 | `unauthorized` | Missing, expired, revoked or wrong-audience Access token. |
+| 403 | `tailnet_required`, `tailnet_unverified`, `insufficient_scope` | Direct tailnet provenance or explicit scope is missing. Keep held content for connection recovery. |
 | 404 | `not_found` | Unknown path. |
 | 405 | `method_not_allowed` | Wrong method for the route. |
 | 409 | `idempotency_conflict` | An explicit `idempotency_key` already names a different intent. |
-| 413 | `payload_too_large` | Body exceeds 1 MiB, or more than 50 `job_ids`. |
-| 415 | `unsupported_media_type` | `Content-Type` is not JSON. |
-| 500 | `share_failed` | Unexpected server fault. Details are logged locally, never returned. |
+| 409 | `server_identity_mismatch` | The server differs from the paired destination; do not retarget held shares. |
+| 413 | `payload_too_large` | Body exceeds 1 MiB. |
+| 415 | `json_required` | `Content-Type` is not JSON. |
+| 429 | `verification_capacity`, `pairing_capacity` | Bounded ingress capacity is occupied; retry later. |
+| 503 | `service_unavailable` | A backend or verification dependency is unavailable. |
 
-A 4xx other than 401 means the payload is wrong and must not be resent
-unchanged. A 401 means the token is wrong. A 500 or a connection failure is
-safely retryable — replays deduplicate.
+Validation failures require payload correction. Authentication, permissions,
+tailnet, or destination failures keep held content for explicit recovery.
+Capacity failures, 5xx responses and connection failures are safely retryable;
+admission replays deduplicate.
 
 ## Cross-origin behavior
 

@@ -1,3 +1,4 @@
+import { connectionMessage } from "./connection.js";
 /**
  * Shared configuration and transport for the AgentStack share extension.
  *
@@ -12,10 +13,10 @@ export const DEFAULT_SERVER_URL = "http://127.0.0.1:8877";
 
 export function normalizeServerUrl(value) {
   const url = new URL(value.trim());
-  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
-    throw new Error("Use an http(s) server URL without credentials, a query, or a fragment.");
+  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/") {
+    throw new Error("Use an HTTPS origin without credentials, a path, query, or fragment.");
   }
-  return url.href.replace(/\/+$/, "");
+  return url.origin;
 }
 
 export async function readConfig() {
@@ -32,11 +33,20 @@ const SHARE_TIMEOUT_MS = 15_000;
 
 /** Device-local configuration; credentials are never synced to another browser. */
 export async function loadConfig() {
-  const stored = await readConfig();
-  const serverUrl = (stored.serverUrl || "").trim().replace(/\/+$/, "");
-  const token = (stored.token || "").trim();
-  if (serverUrl === "" || token === "") return null;
-  return { serverUrl, token };
+  try {
+    const message = { type: "agentstack.connection", action: "state" };
+    const result = typeof document === "undefined" ? await connectionMessage(message) : await chrome.runtime.sendMessage(message);
+    return result?.paired && result.serverId ? { serverUrl: result.serverUrl, serverId: result.serverId, destination: `${result.serverUrl}#agentstack=${result.serverId}`, connection: true } : null;
+  } catch { return null; }
+}
+
+async function credential(config) {
+  if (!config.connection) return config.token;
+  const message = { type: "agentstack.connection", action: "access", audience: "brain" };
+  if (typeof document !== "undefined") throw new Error("Credentials remain in the background worker");
+  const result = await connectionMessage(message);
+  if (result.error || result.serverUrl !== config.serverUrl || result.serverId !== config.serverId) throw new Error("Connection changed or requires pairing");
+  return result.token;
 }
 
 export function shareEndpoint(serverUrl) {
@@ -75,12 +85,15 @@ export async function hasHostPermission(serverUrl) {
 export async function postShare(config, payload) {
   let response;
   try {
+    const token = await credential(config);
     response = await fetch(shareEndpoint(config.serverUrl), {
+      redirect: "error",
       method: "POST",
       signal: AbortSignal.timeout(SHARE_TIMEOUT_MS),
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${config.token}`,
+        authorization: `Bearer ${token}`,
+        ...(config.serverId ? { "X-AgentStack-Server-ID": config.serverId } : {}),
       },
       body: JSON.stringify({
         version: SHARE_VERSION,
@@ -132,12 +145,14 @@ export async function fetchShareStates(config, jobIds) {
   if (jobIds.length === 0) return { ok: true, states: [] };
   let response;
   try {
+    const token = await credential(config);
     response = await fetch(
       `${statesEndpoint(config.serverUrl)}?job_ids=${jobIds.join(",")}`,
       {
         method: "GET",
+        redirect: "error",
         signal: AbortSignal.timeout(SHARE_TIMEOUT_MS),
-        headers: { authorization: `Bearer ${config.token}` },
+        headers: { authorization: `Bearer ${token}`, ...(config.serverId ? { "X-AgentStack-Server-ID": config.serverId } : {}) },
       },
     );
   } catch {
@@ -164,9 +179,10 @@ export async function fetchShareStates(config, jobIds) {
  */
 export function isRetryable(result) {
   if (result.ok) return false;
+  if (result.code === "server_identity_mismatch") return true;
   if (result.status === 0) return true;
   if (result.status >= 500) return true;
   return (
-    result.status === 401 || result.status === 408 || result.status === 429
+    result.status === 401 || result.status === 403 || result.status === 408 || result.status === 429
   );
 }

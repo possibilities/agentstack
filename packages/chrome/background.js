@@ -1,3 +1,4 @@
+import { connectionMessage } from "./connection.js";
 import {
   applyLedgerStates,
   clearHistory,
@@ -134,7 +135,7 @@ async function drainOutbox({ force = false } = {}) {
     }
     const summary = await flushOutbox((payload) => postShare(config, payload), {
       force,
-      destination: config.serverUrl,
+      destination: config.destination,
     });
     for (const { entry, result } of summary.settled) {
       await record({
@@ -146,7 +147,7 @@ async function drainOutbox({ force = false } = {}) {
       });
     }
     await reportDropped(summary.dropped);
-    await scheduleFlush(Date.now(), config.serverUrl);
+    await scheduleFlush(Date.now(), config.destination);
     await refreshBadge();
     return summary;
   };
@@ -163,7 +164,7 @@ async function send(payload) {
   const config = await loadConfig();
   // Persist before any fetch, including the first attempt. A worker teardown
   // after admission but before its receipt is safely recovered by deduplication.
-  const { entry, dropped } = await enqueue(payload, Date.now(), config?.serverUrl ?? null);
+  const { entry, dropped } = await enqueue(payload, Date.now(), config?.destination ?? null);
   await record({
     id: entry.id,
     payload,
@@ -171,10 +172,10 @@ async function send(payload) {
     destination: entry.destination,
   });
   await reportDropped(dropped.map((entry) => ({ entry, reason: "overflow" })));
-  await scheduleFlush(Date.now(), config?.serverUrl ?? null);
+  await scheduleFlush(Date.now(), config?.destination ?? null);
   const summary = await drainOutbox({ force: true });
   if (summary.unconfigured) {
-    notify("Held for later", "Set the AgentStack server URL, share token, and access permission in Settings.");
+    notify("Held for later", "Pair with AgentStack and grant host permission in Settings.");
     await chrome.runtime.openOptionsPage();
   } else {
     const settled = summary.settled.find((item) => item.entry.id === entry.id);
@@ -185,8 +186,8 @@ async function send(payload) {
       if (receipt.status === "duplicate") notify("Already admitted", `Brain already has this as job ${receipt.job_id}.`);
       if (receipt.status === "already_indexed") notify("Already indexed", `Brain already has this as document ${receipt.document_id}.`);
     } else if (held) {
-      const reason = held.destination !== (await loadConfig())?.serverUrl
-        ? "This share belongs to another server. Restore its address in Settings to send it."
+      const reason = held.destination !== (await loadConfig())?.destination
+        ? "This share has a different or legacy server identity. Reconnect to the original server, or discard and explicitly share again. URL-only legacy shares remain held."
         : held.lastMessage ?? "The server has not confirmed admission yet.";
       await record({ id: held.id, payload, outcome: OUTCOME.HELD, destination: held.destination, message: reason });
       notify("Held for later", `${reason} ${summary.pending} waiting.`);
@@ -285,18 +286,24 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 async function refreshHistory() {
   const entries = await readHistory();
   const config = await loadConfig();
-  const ids = pendingJobIds(entries, config?.serverUrl ?? null);
+  const ids = pendingJobIds(entries, config?.destination ?? null);
   if (config === null || ids.length === 0) return { entries, reachable: null };
   if (!(await hasHostPermission(config.serverUrl))) {
     return { entries, reachable: null };
   }
   const { ok, states } = await fetchShareStates(config, ids);
   if (!ok) return { entries, reachable: false };
-  return { entries: await applyLedgerStates(states, Date.now(), config.serverUrl), reachable: true };
+  return { entries: await applyLedgerStates(states, Date.now(), config.destination), reachable: true };
 }
 
 /** The Options page and the popover drive the client through these messages. */
 chrome.runtime.onMessage.addListener((message, _sender, respond) => {
+  if (_sender.id !== chrome.runtime.id || !["options.html", "popup.html"].some(path => _sender.url === chrome.runtime.getURL(path))) return false;
+  if (message?.type === "agentstack.connection") {
+    if (!["state", "pair", "complete", "check", "disconnect", "forget"].includes(message.action)) return false;
+    connectionMessage(message).then(respond, error => respond({ error: error.message }));
+    return true;
+  }
   if (message?.type === "agentstack.outbox-status") {
     void outboxCount().then((pending) => respond({ pending }));
     return true;
@@ -330,7 +337,7 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
       for (const entry of entries) {
         await record({ id: entry.id, payload: entry.payload, destination: entry.destination, outcome: OUTCOME.DISCARDED, message: "Removed from this device’s outbox. Any unconfirmed server admission is unaffected." });
       }
-      await scheduleFlush(Date.now(), (await loadConfig())?.serverUrl ?? null);
+      await scheduleFlush(Date.now(), (await loadConfig())?.destination ?? null);
       await refreshBadge();
       respond({ discarded });
     })();

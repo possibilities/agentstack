@@ -3,7 +3,7 @@ import { mcpPort, runApi, runMcp, runWebSocket, serveApi, serveMcp, socketCall, 
 import { contentNetworkConfig } from "@agentstack/content";
 import { lookup } from "node:dns/promises";
 import { connect } from "node:net";
-import { apiChild, attentionChild, authChild, brainChild, browserChild, contentChild, inferChild, notifyChild, rolesChild, scrapeChild, usageChild, workersChild, websocketChild } from "./children.js";
+import { accessChild, apiChild, attentionChild, authChild, brainChild, browserChild, contentChild, inferChild, notifyChild, rolesChild, scrapeChild, usageChild, workersChild, websocketChild } from "./children.js";
 import { botsChild } from "./bots.js";
 import { createMcpEventSubscriptions } from "./mcp-delivery.js";
 import { serveInspectorCatalog } from "./inspector-catalog.js";
@@ -52,8 +52,8 @@ for (const [name, value] of [["AGENTSTACK_CONTENT_PORT", contentPort], ["AGENTST
     process.exit(1);
   }
 }
-if (!brainShareHost.trim()) {
-  console.error("AGENTSTACK_BRAIN_SHARE_HOST must not be empty");
+if (brainShareHost !== "127.0.0.1") {
+  console.error("Brain backend must bind 127.0.0.1; configure remote clients through Access");
   process.exit(1);
 }
 let brainShareAddress: string;
@@ -139,7 +139,7 @@ const shutdown = () => {
   void (async () => {
     // Refuse new requests first. The remaining socket Servers drain their
     // active calls while the dependencies they call are still running.
-    const ingress = await Promise.allSettled([subscriptions.close(), owner.stop(["websocket", "inspector", "uix"]), events.close(), mcp?.close(), catalog?.close()]);
+    const ingress = await Promise.allSettled([subscriptions.close(), owner.stop(["access", "websocket", "inspector", "uix"]), events.close(), mcp?.close(), catalog?.close()]);
     const children = await Promise.allSettled([owner.close()]);
     return [...ingress, ...children];
   })().then((results) => {
@@ -150,14 +150,14 @@ const shutdown = () => {
     process.exit(childFailed || failed ? 1 : 0);
   });
 };
-owner = startOwner([apiChild(), authChild(), rolesChild(), browserChild(), botsChild(mcp.port), workersChild(), usageChild(), inferChild(), attentionChild(), notifyChild(), contentChild(), scrapeChild(), brainChild(), websocketChild(), inspectorChild(catalog.path, inspectorListenPort), uixChild(uixListenPort)], process.env, () => {
+owner = startOwner([apiChild(), accessChild(), authChild(), rolesChild(), browserChild(), botsChild(mcp.port), workersChild(), usageChild(), inferChild(), attentionChild(), notifyChild(), contentChild(), scrapeChild(), brainChild(), websocketChild(), inspectorChild(catalog.path, inspectorListenPort), uixChild(uixListenPort)], process.env, () => {
   statusSource.notify();
   if (!closing && owner.children().some((child) => !child.running)) {
     childFailed = true;
     console.error("a required child stopped; shutting down agentstack");
     shutdown();
   }
-}, [["attention"], ["infer"], ["auth"], ["workers"], ["bots"], ["usage"], ["brain"], ["scrape"], ["browser"], ["content"], ["roles"], ["notify"], ["api"]]);
+}, [["access"], ["attention"], ["infer"], ["auth"], ["workers"], ["bots"], ["usage"], ["brain"], ["scrape"], ["browser"], ["content"], ["roles"], ["notify"], ["api"]]);
 statusSource.attach(owner);
 subscriptions.resume();
 const indexUrl = `http://127.0.0.1:${uixListenPort}/`;

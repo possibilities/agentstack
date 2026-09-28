@@ -346,6 +346,10 @@ function serveArtifact(
   const stats = resolved.stats;
 
   if (stats.isDirectory()) {
+    const url = new URL(request.url);
+    if (!url.pathname.endsWith("/")) {
+      return new Response(null, { status: 302, headers: { location: `${url.pathname}/`, "cache-control": cacheControl } });
+    }
     if (resolved.segments.length === 0 && row.entry !== null) {
       return serveIndexFile(request, resolved.path, row.entry, cacheControl);
     }

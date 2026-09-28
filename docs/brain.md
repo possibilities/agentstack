@@ -11,8 +11,8 @@ The AgentStack owner starts Brain with the other Package APIs. It owns the inges
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `AGENTSTACK_STATE_DIR` | `~/.local/state/agentstack` | Parent directory of all AgentStack state. |
-| `AGENTSTACK_BRAIN_SHARE_HOST` | `127.0.0.1` | Explicit address for the device-share listener. |
-| `AGENTSTACK_BRAIN_SHARE_PORT` | `8877` | Device-share HTTP port; `0` requests an ephemeral test port. |
+| `AGENTSTACK_BRAIN_SHARE_HOST` | `127.0.0.1` | Internal backend; remote binds are refused. |
+| `AGENTSTACK_BRAIN_SHARE_PORT` | `8877` | Internal HTTP port; `0` requests an ephemeral test port. |
 
 The local Package API is available through the same socket, MCP and WebSocket mechanisms as other packages. Read `docs_get` for `brain`, or the live `/docs` reference, for operation inputs and outputs. The API canvas's existing catalog also describes the operations; it is not a dedicated research browser.
 
@@ -28,14 +28,14 @@ Source definitions are versioned policy. Source synchronization admits a durable
 
 ## Configure a device client
 
-1. Build and start the desired AgentStack instance. The share listener defaults to `http://127.0.0.1:8877` on that machine.
-2. For a phone or another computer, configure the listener with that machine's explicit reachable private-network address. Loopback on a phone refers to the phone itself. Reachability is independent of authorization.
-3. Read `brain_status` for the actual `shareUrl` and `shareTokenFile`. Call `share_token_reveal` with `{ "reveal": true }` through a local control transport to obtain this instance's bearer token, then configure the client's endpoint and token. The token is private local state; no prior application's token is reused.
+1. Configure the shared HTTPS [Access ingress](access.md) on the server's Tailscale address. Keep the Brain backend on loopback.
+2. Connect the device to Tailscale, enter the Access origin in its settings, and select Pair.
+3. Compare the device's approval code in **System → Access**, select its permissions, and approve. Select Check approval on the device. The connection serves AgentStack generally, not only Brain.
 4. Use the client's connection check, then share a small test link or text. Confirm admission and later status in its history or Brain's job reads.
 
 Every share, share-status and health request authenticates. The [share v1 contract](brain-share-contract.md) describes requests, responses, limits and errors. This device listener does not expose AgentStack's other local control APIs.
 
-`share_token_rotate` generates a new token and changes the running listener immediately. Its response contains the replacement token; update each device's configuration afterward. The old token stops working, while held shares retain their intent and can retry after credentials are repaired. Token reveal and rotation are explicit sensitive operations, excluded from read-only access and from the canvas's current controls.
+Shared-token reveal and rotation have been removed. Access grants and credentials are individually revocable through **System → Access**. Every remote request requires verified tailnet traffic, the expected server identity, and an appropriate audience token. Existing clients must pair again; held shares never silently change destination.
 
 Client build, installation and platform-specific setup instructions live in `packages/chrome` and `packages/android`. These are new AgentStack application identities. Browser extension installation, Android device installation, and changing an active owner's bind address are explicit deployment steps.
 

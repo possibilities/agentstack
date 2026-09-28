@@ -9,17 +9,19 @@
   <body class="settings">
     <header class="identity"><img src="assets/layers.svg" width="24" height="24" alt="" /><h1>AgentStack</h1></header>
     <main>
-      <h2>Share to Brain</h2>
-      <p class="sub">Send pages, links, and selections to your private research index.</p>
+      <h2>AgentStack connection</h2>
+      <p class="sub">Pair once for Brain and Content. Both devices must be on your tailnet.</p>
       <label for="serverUrl">Server URL</label>
-      <input id="serverUrl" type="url" placeholder="http://127.0.0.1:8877" aria-describedby="server-hint" autocomplete="off" spellcheck="false" />
+      <input id="serverUrl" type="url" placeholder="https://your-server:8943" aria-describedby="server-hint" autocomplete="off" spellcheck="false" />
       <p id="server-hint" class="hint">Use the AgentStack address reachable from this browser. Saving grants access to that origin only.</p>
-      <label for="token">Share token</label>
-      <input id="token" type="password" placeholder="Paste the AgentStack share token" aria-describedby="token-hint" autocomplete="off" />
-      <p id="token-hint" class="hint">Use the token from AgentStack’s Brain share listener. Settings stay in this browser profile.</p>
+      <p id="pairing-code" role="status"></p>
+      <p class="hint">Compare this code in System → Access, approve there, then check approval here. Credentials stay in this browser profile.</p>
       <div class="row">
-        <button id="save" class="primary" type="button">Save &amp; grant access</button>
-        <button id="test" type="button">Test connection</button>
+        <button id="save" class="primary" type="button">Pair</button>
+        <button id="test" type="button">Check approval</button>
+        <button id="disconnect" type="button">Disconnect</button>
+        <button id="check" type="button">Check connection</button>
+        <button id="forget" type="button">Forget locally…</button>
       </div>
       <p id="status" role="status"></p>
       <h2>Waiting to be sent</h2>

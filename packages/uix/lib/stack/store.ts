@@ -1,9 +1,11 @@
 import { loadCatalog } from "./catalog";
+import type { AccessSnapshot } from "./types";
 import { Channel } from "./channel";
 import { loadResources, mergeHistory } from "./resources";
 import type { Account, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, OwnerResources, OwnerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RolePreview, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
 
 export type StackState = Snapshot & {
+  access: Resource<AccessSnapshot>;
   /** Main channel status by Package API name. */
   status: Record<string, ChannelStatus>;
   /** Scoped event subscription status by bot id. */
@@ -37,7 +39,7 @@ function isWorkerLoginState(value: unknown): value is WorkerLogin {
   return typeof value === "object" && value !== null && "status" in value && "account" in value && "provider" in value && "needsCode" in value;
 }
 
-type ResourceKey = "owner" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "role" | "rolePreview" | "catalog" | "usage" | "inferRequests" | "inferModels";
+type ResourceKey = "access" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "role" | "rolePreview" | "catalog" | "usage" | "inferRequests" | "inferModels";
 
 const inferPage = 20;
 
@@ -49,6 +51,7 @@ const maxEvents = 250;
 
 export class StackStore {
   private state: StackState;
+  private readonly serverState: StackState;
   private listeners = new Set<() => void>();
   private main = new Map<string, Channel>();
   private scopedChannels = new Map<string, Channel>();
@@ -67,14 +70,19 @@ export class StackStore {
   constructor(snapshot: Snapshot) {
     this.state = {
       ...snapshot, status: {}, scoped: {}, events: [], attempt: snapshot.login.data,
+      access: { data: null, error: null, at: null },
       workerAttempts: Object.fromEntries((snapshot.workerLogins.data ?? []).map((login) => [login.account, login])),
       workerCatalogs: {}, catalogPending: {}, resourceHistory: {}, botInvalidations: {},
       inferRequests: { data: null, error: null, at: null }, inferModels: { data: null, error: null, at: null },
     };
+    this.serverState = this.state;
     for (const account of snapshot.workerAccounts.data ?? []) if (this.catalogAccountAvailable(account.id)) this.catalogAvailable.add(account.id);
   }
 
   getState = (): StackState => this.state;
+  // Activity benches can hydrate after socket effects run. Hydration must still
+  // read the original server snapshot, never the subsequently updated live state.
+  getServerState = (): StackState => this.serverState;
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -130,6 +138,7 @@ export class StackStore {
     }, ["infer_changed"]);
     open("roles", () => { this.refresh("role"); this.refresh("rolePreview"); }, () => { this.refresh("role"); this.refresh("rolePreview"); }, ["role_changed"]);
     open("api", () => this.refresh("catalog"));
+    open("access", () => this.refresh("access"), () => this.refresh("access"), ["access_changed"]);
     this.reconcileScoped();
   }
 
@@ -151,7 +160,7 @@ export class StackStore {
       // never replay the operation automatically.
       if (pkg === "bots" && ["bot_start", "bot_stop", "bot_assign", "bot_remove", "chat_open"].includes(name)) this.refresh("bots");
       if (pkg === "bots" && name === "bot_defaults_set") this.refresh("botDefaults");
-    }) : request);
+    }) : pkg === "access" && name !== "access_snapshot" ? request.finally(() => this.refresh("access")) : request);
     if (pkg === "auth") {
       if (isWorkerLoginState(result)) this.set({ workerAttempts: { ...this.state.workerAttempts, [result.account]: result } });
       else if (isLoginState(result)) this.set({ attempt: result });
@@ -336,6 +345,7 @@ export class StackStore {
       return channel ? channel.call<T>(name, args) : Promise.reject(new Error(`${pkg} WebSocket is not configured`));
     };
     switch (key) {
+      case "access": return call<AccessSnapshot>("access", "access_snapshot");
       case "owner": return call<OwnerStatus>("owner", "owner_status");
       case "resources": return loadResources((name, args) => call<never>("owner", name, args)) as Promise<OwnerResources>;
       case "accounts": return call<{ accounts: Account[] }>("auth", "account_list").then((result) => result.accounts);

@@ -8,6 +8,15 @@ import test from "node:test";
 import { serveApi, socketCall, socketPath } from "@agentstack/api";
 import { api, contentNetworkConfig } from "../api.js";
 import { resolveObjectPath } from "../src/serve.js";
+import { listingPage } from "../src/render.js";
+
+test("artifact listing links retain a scoped view prefix and encode entry names", () => {
+  const html = listingPage({ title: "Bundle", base: "/a/bundle/v/hash/", entries: ["file name.pdf", "nested/"] });
+  assert.ok(html.includes('href="./file%20name.pdf"'));
+  assert.ok(html.includes('href="./nested/"'));
+  assert.equal(new URL("./file%20name.pdf", "https://host/view/credential/a/bundle/v/hash/").pathname,
+    "/view/credential/a/bundle/v/hash/file%20name.pdf");
+});
 
 test("isolated vault supports documents, graph, tombstones and static artifacts", { timeout: 30_000 }, async () => {
   const state = await mkdtemp(join(tmpdir(), "agentstack-wiki-"));
@@ -264,11 +273,10 @@ test("the original collection schema migrates IDs and byte references without re
   } finally { await api.closeContext(ctx); await rm(state, { recursive: true, force: true }); }
 });
 
-test("remote static origins are explicit, separated and independent of portable API paths", () => {
-  assert.throws(() => contentNetworkConfig({ AGENTSTACK_CONTENT_HOST: "0.0.0.0" }), /require explicit/);
+test("Content backends cannot bind remotely; Access owns authenticated remote ingress", () => {
+  assert.throws(() => contentNetworkConfig({ AGENTSTACK_CONTENT_HOST: "0.0.0.0" }), /must bind 127/);
   assert.throws(() => contentNetworkConfig({ AGENTSTACK_CONTENT_DOCUMENT_ORIGIN: "https://same.example", AGENTSTACK_CONTENT_ARTIFACT_ORIGIN: "https://same.example" }), /must differ/);
-  assert.deepEqual(contentNetworkConfig({ AGENTSTACK_CONTENT_HOST: "0.0.0.0", AGENTSTACK_CONTENT_DOCUMENT_ORIGIN: "https://docs.example", AGENTSTACK_CONTENT_ARTIFACT_ORIGIN: "https://assets.example" }),
-    { host: "0.0.0.0", documentOrigin: "https://docs.example", artifactOrigin: "https://assets.example" });
+  assert.throws(() => contentNetworkConfig({ AGENTSTACK_CONTENT_HOST: "0.0.0.0", AGENTSTACK_CONTENT_DOCUMENT_ORIGIN: "https://docs.example", AGENTSTACK_CONTENT_ARTIFACT_ORIGIN: "https://assets.example" }), /must bind 127/);
 });
 
 test("configured public origins drive static redirects without appearing in stored item identities", { timeout: 30_000 }, async () => {

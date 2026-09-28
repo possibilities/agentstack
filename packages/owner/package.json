@@ -21,6 +21,7 @@
     "node": ">=24"
   },
   "dependencies": {
+    "@agentstack/access": "workspace:*",
     "@agentstack/api": "workspace:*",
     "@agentstack/attention": "workspace:*",
     "@agentstack/bots": "workspace:*",

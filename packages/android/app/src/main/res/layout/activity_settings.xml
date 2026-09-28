@@ -40,23 +40,23 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="20dp"
-            android:text="@string/token_label"
+            android:text="Approval code"
             android:labelFor="@id/token"
             android:textStyle="bold" />
 
-        <EditText
+        <TextView
             android:id="@+id/token"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:minHeight="48dp"
             android:importantForAutofill="no"
-            android:inputType="textPassword" />
+            android:textIsSelectable="true" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="@string/setup_hint"
+            android:text="Pair once for Brain and Content. Both devices must be on your tailnet. Approve the matching code in System → Access."
             android:textSize="14sp" />
 
         <LinearLayout
@@ -70,7 +70,7 @@
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:layout_height="wrap_content"
-                android:text="@string/save" />
+                android:text="Pair" />
 
             <Button
                 android:id="@+id/test"
@@ -78,8 +78,16 @@
                 android:layout_weight="1"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="12dp"
-                android:text="@string/test" />
+                android:text="Check approval" />
         </LinearLayout>
+
+        <Button
+            android:id="@+id/disconnect"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Disconnect" />
+        <Button android:id="@+id/check_connection" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Check connection" />
+        <Button android:id="@+id/forget" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Forget locally…" />
 
         <TextView
             android:id="@+id/status"

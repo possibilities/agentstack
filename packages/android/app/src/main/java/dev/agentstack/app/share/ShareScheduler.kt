@@ -28,7 +28,7 @@ object ShareScheduler {
 
     /** Schedules a drain for when the earliest held share is due. */
     fun scheduleNext(context: Context, outbox: ShareOutbox) {
-        val due = outbox.earliestAttempt(Settings(context).configuration()?.serverUrl)
+        val due = outbox.earliestAttempt(Settings(context).configuration()?.destination)
         if (due == null) {
             WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
             return

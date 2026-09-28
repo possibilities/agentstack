@@ -28,9 +28,9 @@ class ShareUploadWorker(
         // be named, and saving one schedules this round again.
         val configuration = settings.configuration() ?: return Result.success()
 
-        val client = ShareClient(configuration.serverUrl, configuration.token)
+        val client = ShareClient(configuration.serverUrl, "", tokenProvider = { settings.accessToken(configuration.destination) }, serverId = configuration.serverId)
         try {
-            outbox.flush({ payload -> client.share(payload) }, destination = configuration.serverUrl)
+            outbox.flush({ payload -> client.share(payload) }, destination = configuration.destination)
             ShareScheduler.scheduleNext(applicationContext, outbox)
         } catch (error: OutboxReadException) {
             return Result.failure(workDataOf(

@@ -35,7 +35,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.deepEqual(
       docs.packages.map((item) => item.name),
-        ["api", "attention", "auth", "bots", "brain", "browser", "content", "infer", "notify", "owner", "roles", "scrape", "usage", "workers"],
+       ["access", "api", "attention", "auth", "bots", "brain", "browser", "content", "infer", "notify", "owner", "roles", "scrape", "usage", "workers"],
     );
     assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@agentstack/${item.name}`));
 
@@ -54,6 +54,13 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok(responseLength < 750_000, `discovery snapshot exceeds the socket response budget: ${responseLength} characters`);
 
     const brainHttp = found.get("brain")!.transports.find((transport) => transport.type === "http")!;
+    const access = found.get("access")!;
+    assert.deepEqual(access.transports.map(t => t.type).sort(), ["http", "socket", "websocket"]);
+    assert.ok(access.operations.some(op => op.name === "pairing_decide"));
+    assert.deepEqual(Object.keys(access.events), ["access_changed"]);
+    const accessHttp = access.transports.find(t => t.type === "http")!;
+    assert.ok(accessHttp.routes.some(r => r.path === "/v1/access/pair" && r.inputSchema));
+    assert.ok(accessHttp.routes.some(r => r.path === "/v1/content/handoff" && r.authentication === "bearer"));
     assert.deepEqual(brainHttp.operations, []);
     assert.deepEqual(brainHttp.routes.map(({ surface, kind, method, path, operation }) => [surface, kind, method, path, operation]), [
       ["share", "json", "GET", "/v1/health", "share_health"], ["share", "json", "GET", "/v1/shares", "share_states"],

@@ -21,7 +21,7 @@ export function StackProvider({ snapshot, children, connections }: { snapshot: S
     try { storage = window.localStorage; } catch { /* optional persistence */ }
     chats.attach(storage);
   }, [chats]);
-  const bots = useSyncExternalStore(store.subscribe, () => store.getState().bots.data, () => store.getState().bots.data);
+  const bots = useSyncExternalStore(store.subscribe, () => store.getState().bots.data, () => store.getServerState().bots.data);
   useEffect(() => { if (bots) chats.prune(new Set(bots.map((bot) => bot.id))); }, [bots, chats]);
   return <StoreContext value={store}><ChatWindowsContext value={chats}>{children}</ChatWindowsContext></StoreContext>;
 }
@@ -42,7 +42,7 @@ export function useStore(): StackStore {
 
 export function useStack(): StackState {
   const store = useStore();
-  return useSyncExternalStore(store.subscribe, store.getState, store.getState);
+  return useSyncExternalStore(store.subscribe, store.getState, store.getServerState);
 }
 
 /** Run one Package API operation with per-control pending and error state. */

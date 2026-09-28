@@ -31,19 +31,17 @@ The launcher is **AgentStack**, application ID and namespace `dev.agentstack.app
 Root settings live in `dev.agentstack.app`; the current share feature lives in
 `dev.agentstack.app.share`. This is a fresh app with no migration or copied data.
 
-Configure the owner-managed Brain share listener as described in
-[Brain operations](../../docs/brain.md) and the
-[share contract](../../docs/brain-share-contract.md), then enter its reachable URL
-and new AgentStack token in **Share to Brain**. The protocol default is
-`http://127.0.0.1:8877`; on a phone that address means the phone itself. Replace it
-with the actual AgentStack server address. **Save** stores the address and token
-atomically in AgentStack-namespaced encrypted preferences. **Test connection**
-checks `/v1/health` with the entered values.
+Configure the shared [Access ingress](../../docs/access.md), enter its HTTPS
+origin in Settings, and choose **Pair**. Approve the matching code in AgentStack
+**System → Access**, then check approval. Credentials and retry intents remain
+in device-local encrypted preferences. **Check connection** authenticates
+against `/v1/access/me`; a stored credential alone is not a connected status.
 
-HTTPS works with the platform trust store. The inherited cleartext policy permits
-HTTP for `*.ts.net` tailnet names only. If your deployment uses a literal private IP,
-add that exact domain to `app/src/main/res/xml/network_security_config.xml` and
-rebuild, or use HTTPS. Never enable global cleartext as a workaround.
+HTTPS uses the platform trust store and the server requires direct tailnet
+traffic. Unreachability does not prove that Tailscale is absent. **Disconnect**
+requires confirmed revocation. **Forget locally** deliberately clears local
+credentials without that confirmation; revoke in System → Access separately.
+Held shares remain on the device in either case.
 
 ## Sharing and recovery
 
@@ -58,11 +56,11 @@ no confirmed admission. **Admitted** and **Duplicate** acknowledge a job; they
 do not claim indexing completion. Already-indexed content names its Document.
 Malformed success receipts are ambiguous and remain held for idempotent retry.
 
-Shares bind to the server address used for their first attempt; shares taken
-before configuration bind to the first configured address. A server change
-never silently reroutes held content. Restore the original address to retry it.
-Rotating its token does not move its outbox. The API exposes no stable account or
-database identity, so a different store behind the same URL cannot be detected.
+Shares bind to both server address and pairing server ID. Shares taken before
+configuration bind on their first attempt. Rotation and re-pairing the same
+identity preserve delivery; a replacement at the same URL cannot receive old
+content. Legacy URL-only entries stay held, including beyond normal retry age.
+Reconnect to the original identity, or explicitly discard and share again.
 
 The app retains the newest 20 shared links independently of admission. Android
 13+ requires notification permission for existing local link reminders, with

@@ -146,13 +146,13 @@ export async function flushOutbox(
 
   for (const entry of entries) {
     processed.add(entry.id);
-    if (now - entry.createdAt > OUTBOX_MAX_AGE_MS) {
-      summary.dropped.push({ entry, reason: "expired" });
-      continue;
-    }
     if (entry.destination !== destination) {
       summary.otherDestination += 1;
       kept.push(entry);
+      continue;
+    }
+    if (now - entry.createdAt > OUTBOX_MAX_AGE_MS) {
+      summary.dropped.push({ entry, reason: "expired" });
       continue;
     }
     if (summary.offline || (!force && entry.nextAttemptAt > now)) {

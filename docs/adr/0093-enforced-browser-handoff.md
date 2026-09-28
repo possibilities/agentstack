@@ -1,6 +1,6 @@
-# 92. Fence managed browser control during durable human handoff
+# 93. Fence managed browser control during durable human handoff
 
-Status: accepted, 2026-09-28. Extends [ADR 0091](0091-durable-bot-browser-profiles.md), superseding its exclusion of handoff; uses [ADR 0033](0033-agent-facing-event-subscriptions.md) and [ADR 0032](0032-bot-mcp-invocation-context.md).
+Status: accepted, 2026-09-28. Extends [ADR 0092](0092-durable-bot-browser-profiles.md), superseding its exclusion of handoff; uses [ADR 0033](0033-agent-facing-event-subscriptions.md) and [ADR 0032](0032-bot-mcp-invocation-context.md).
 
 ## Ownership and durable states
 

@@ -10,11 +10,10 @@ All default state is under `<AGENTSTACK_STATE_DIR>/brain`, or `~/.local/state/ag
 
 - `research.db` and SQLite sidecars
 - `artifacts/`
-- `share-token` (fresh 32-byte token, private file)
 - `share-ingress.json` (private listener registration, removed on clean shutdown)
 - `doctor-notify.json` (only after explicit notification)
 
-The share listener uses `AGENTSTACK_BRAIN_SHARE_HOST` (default `127.0.0.1`) and `AGENTSTACK_BRAIN_SHARE_PORT` (default `8877`; zero allocates an ephemeral port). `/v1/health`, `/v1/share` and `/v1/shares` retain their request/response shapes and bearer authentication. Status reports the token file path, never the token. `share_token_reveal` and `share_token_rotate` are explicit non-read-only operations; rotation updates the running listener immediately.
+The internal share listener requires `AGENTSTACK_BRAIN_SHARE_HOST=127.0.0.1` and uses `AGENTSTACK_BRAIN_SHARE_PORT` (default `8877`; zero allocates an ephemeral port). Its liveness credential is ephemeral. Devices use the shared Access tailnet ingress and individually approved credentials. `brain_status.shareTokenFile` is null; shared-token reveal and rotation have been removed. Existing token files are not imported or accepted. See [Access setup](../../docs/access.md).
 
 The worker polls at one second. Expired-lease recovery and a bounded self-health probe run every 60 seconds. `brain_status.health` reports `ingestion_worker_failed`, `ingestion_maintenance_failed` or `share_ingress_unhealthy`; the package does not terminate its hosting process on a health failure. The owner owns process restart policy. The `prepareCloseContext` lifecycle hook aborts extraction and operation waits before socket draining. Final context closure clears maintenance, closes HTTP connections, awaits owned work and closes SQLite. URL extraction and discovery call the in-package Scrape engine directly. Its browser adapter uses bounded subprocesses; managed cancellation reaches direct HTTP and browser routes through AbortSignals.
 

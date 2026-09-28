@@ -10,6 +10,18 @@ Typed operations a workspace package exports so agentstack can serve them. Descr
 
 _Avoid_: MCP server, endpoint, route
 
+## Access client
+
+A durable phone, extension, browser or future cloud consumer identity owned by the `access` Package API. A tailnet client pairs through an expiring request approved on trusted local control. Its human approval code is distinct from its high-entropy redemption secret. One client may receive Brain and Content scopes. _Avoid_: Brain token, Bot, Worker, Tailscale node identity
+
+## Access grant
+
+An explicit set of scopes or selected operations for one Access client and one network policy. Tailnet device grants and public-cloud grants are distinct; a device credential never authorizes public ingress. Client, grant and individual credential revocation fence dependent short-lived tokens and browser sessions on subsequent requests. Public-cloud credentials and remote MCP admission are not yet implemented. _Avoid_: network reachability, approval code, internal MCP context
+
+## Content handoff
+
+A one-use, one-minute secret for opening one document, Content item or immutable Artifact version on its designated origin. The browser exchanges a URL fragment for a short-lived, resource-scoped HttpOnly cookie. Broad Access credentials never enter a URL; every subsequent request still needs verified tailnet provenance. _Avoid_: public share link, broad browser login, Artifact identity
+
 ## Browser profile
 
 A durable, empty-at-creation Chrome user-data volume with one owner-supervised Kernel/Hypeman browser while AgentStack runs. Each Bot has an exclusive default; additional profiles may belong exclusively to that Bot or remain unassigned. Deleting a Bot retains its profiles unassigned. Only explicit profile deletion discards their data. Planned owner shutdown closes Chrome before stopping the exact VM; restart retains the volume and refreshes its guest address and CDP relay. _Avoid_: disposable task, shared account profile, sleeping browser
@@ -162,11 +174,11 @@ A named static file or directory held by `content` with an immutable content-has
 
 ## Artifact origin
 
-The second HTTP origin owned by the `content` Package API. It serves static Artifact and Content item bytes and has no access to the document origin; the separate origin and CSP isolate Artifact scripts from the Vault. Both listeners default to loopback, but may be explicitly bound and advertised on distinct remote origins. _Avoid_: sandbox
+The second HTTP origin owned by the `content` Package API. It serves static Artifact and Content item bytes and has no access to the document origin; the separate origin and CSP isolate Artifact scripts from the Vault. Both backend listeners are loopback-only; Access provides distinct authenticated remote origins. _Avoid_: sandbox
 
 ## Content collection
 
-A named, optional group of Content items. Items exist independently of collections: each document, file or image has a stable ID and revision, a portable `/c/<id>` path and immutable content-addressed bytes; moving or deleting a collection does not change an item's identity or discard its bytes. The Package API uses IDs and bounded byte transfer rather than machine paths. An explicitly exposed HTTP origin serves read-only bytes without access control; it is not an authenticated sharing service.
+A named, optional group of Content items. Items exist independently of collections: each document, file or image has a stable ID and revision, a portable `/c/<id>` path and immutable content-addressed bytes; moving or deleting a collection does not change an item's identity or discard its bytes. The Package API uses IDs and bounded byte transfer rather than machine paths. Content's backends are loopback-only; Access authenticates remote read-only bytes on separate document and Artifact origins.
 
 ## Canvas space
 
@@ -184,7 +196,7 @@ _Avoid_: shared world, space tabs
 
 ## Brain
 
-The `brain` Package API's isolated research index and durable ingestion system. Its database, research artifacts and device-share credentials live under AgentStack state. It collects material for retrieval; the Content Vault holds authored wiki documents.
+The `brain` Package API's isolated research index and durable ingestion system. Its database and research artifacts live under AgentStack state; Access owns shared device credentials. It collects material for retrieval; the Content Vault holds authored wiki documents.
 
 _Avoid_: external research service, Content Vault
 

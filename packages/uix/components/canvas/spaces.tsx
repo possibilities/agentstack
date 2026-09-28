@@ -16,6 +16,7 @@ import { ChatWindow } from "./chat-window";
 import { RoleEditorWindow } from "./role-editor";
 import { RoleInstructionsWindow } from "./role-instructions";
 import { RolePreviewWindow } from "./role-preview";
+import { AccessWindow } from "./access-window";
 
 export type WindowDef = {
   /** Globally unique across spaces; also used by Window and node destinations. */
@@ -69,6 +70,7 @@ export const spaceViews: Record<SpaceId, {
     accent: "owner",
     windows: () => [
       { id: "owner", title: "Owner", icon: CpuIcon, accent: "owner", width: 400, height: 520, column: 0, element: <OwnerWindow /> },
+      { id: "access", title: "Access", icon: KeyRoundIcon, accent: "owner", width: 460, height: 720, column: 4, element: <AccessWindow /> },
       { id: "packages", title: "Packages", icon: PackageIcon, accent: "owner", width: 400, height: 420, column: 0, element: <PackagesWindow /> },
       { id: "resources", title: "Resources", icon: ChartLineIcon, accent: "owner", width: 460, height: 640, column: 1, element: <ResourcesWindow /> },
       { id: "host", title: "Host", icon: ServerIcon, accent: "owner", width: 400, height: 460, column: 1, element: <HostWindow /> },

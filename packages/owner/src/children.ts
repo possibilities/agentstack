@@ -5,6 +5,12 @@ import type { OwnedChild } from "./owner.js";
 
 const require = createRequire(import.meta.url);
 
+export function accessChild(): OwnedChild {
+  const apiPackage = require.resolve("@agentstack/api/package.json");
+  return { name: "access", command: process.execPath,
+    args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "access", "socket"] };
+}
+
 export function apiChild(): OwnedChild {
   const apiPackage = require.resolve("@agentstack/api/package.json");
   return {

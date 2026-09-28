@@ -1,6 +1,6 @@
 # 76. Keep disposable browser lifecycle behind agent-browser
 
-Status: superseded by [ADR 0091](0091-durable-bot-browser-profiles.md), 2026-09-27. Originally accepted 2026-09-26; extends [ADR 0001](0001-package-apis.md) and [ADR 0014](0014-recovery-and-shutdown-order.md).
+Status: superseded by [ADR 0092](0092-durable-bot-browser-profiles.md), 2026-09-27. Originally accepted 2026-09-26; extends [ADR 0001](0001-package-apis.md) and [ADR 0014](0014-recovery-and-shutdown-order.md).
 
 The `browser` Package API has a Unix socket lifecycle Transport and a loopback
 WebSocket management Transport. AgentStack owns the provider bridge, Hypeman
