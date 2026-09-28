@@ -1,6 +1,6 @@
 # 83. Durable notifications without a presentation surface
 
-Status: accepted, 2026-09-26. Builds on the Package API and transport contracts in
+Status: superseded by [ADR 0095](0095-one-dismissal-with-an-outcome.md), 2026-09-28. Accepted 2026-09-26. Builds on the Package API and transport contracts in
 [ADR 0001](0001-package-apis.md) and [ADR 0010](0010-shared-websocket-transport.md).
 
 ## Decision

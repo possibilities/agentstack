@@ -1536,7 +1536,7 @@ question is not a defect.`,
           name: "--notify",
           type: "boolean",
           description:
-            'Persist an internal notification when the stranded count rises above the last notified value, and report what it did under "notification". A steady backlog stays silent and an unavailable notify Package API is not an ingestion error.',
+            'Persist an internal notification when the stranded count rises above the last notified value, and report what it did under "notification". A new notice replaces the earlier open one. A steady backlog stays silent and an unavailable notify Package API is not an ingestion error.',
           default: false,
         },
       ],

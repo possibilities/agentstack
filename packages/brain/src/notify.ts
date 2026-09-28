@@ -22,9 +22,12 @@ interface NotifySignal {
   title: string;
   message: string;
   source: string;
+  group: string;
 }
 
 const DOCTOR_SOURCE = "agentstack.brain.doctor";
+// One open stranded notice at a time: a higher count replaces the one the operator has not dismissed.
+const STRANDED_GROUP = "agentstack.brain.stranded";
 
 export function defaultNotifyStatePath(home?: string): string {
   return join(brainStateRoot(brainEnvironment(), home), "doctor-notify.json");
@@ -112,6 +115,7 @@ export async function notifyStranded(
       title: "AgentStack Brain ingestion stranded",
       message: stranded === 1 ? "1 submitted link never became searchable." : `${stranded} submitted links never became searchable.`,
       source: DOCTOR_SOURCE,
+      group: STRANDED_GROUP,
     });
     if (!result || typeof result !== "object" || (result as { id?: unknown }).id !== id) throw new Error("notify did not confirm the notification ID");
   } catch {

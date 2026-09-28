@@ -2,16 +2,37 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { Content, Notification } from "./schema.js";
+import type { Content, Notification, Outcome } from "./schema.js";
 
-type Row = { id: string; sequence: number; revision: number; title: string; message: string; subtitle: string | null;
-  source: string | null; initial_digest: string; created_at: string; updated_at: string; acknowledged_at: string | null; dismissed_at: string | null };
+type Row = { id: string; sequence: number; title: string; message: string; subtitle: string | null; source: string | null;
+  group_key: string | null; open_url: string | null; actions: string; reply: string | null; initial_digest: string;
+  created_at: string; dismissed_at: string | null; outcome: Outcome | null; response: string | null };
+
+const schemaVersion = 2;
+const table = (name: string) => `CREATE TABLE ${name} (
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL, message TEXT NOT NULL, subtitle TEXT, source TEXT,
+  group_key TEXT, open_url TEXT, actions TEXT NOT NULL DEFAULT '[]', reply TEXT,
+  initial_digest TEXT NOT NULL, created_at TEXT NOT NULL,
+  dismissed_at TEXT, outcome TEXT, response TEXT
+)`;
+const indexes = `CREATE INDEX notifications_dismissed_sequence ON notifications(dismissed_at, sequence);
+  CREATE INDEX notifications_group_open ON notifications(group_key, dismissed_at);`;
 
 function fromRow(row: Row): Notification {
-  return { id: row.id, sequence: row.sequence, revision: row.revision, title: row.title, message: row.message,
-    subtitle: row.subtitle, source: row.source, createdAt: row.created_at, updatedAt: row.updated_at,
-    acknowledgedAt: row.acknowledged_at, dismissedAt: row.dismissed_at };
+  return { id: row.id, sequence: row.sequence, title: row.title, message: row.message, subtitle: row.subtitle,
+    source: row.source, group: row.group_key, open: row.open_url, actions: JSON.parse(row.actions) as string[], reply: row.reply,
+    createdAt: row.created_at, dismissedAt: row.dismissed_at, outcome: row.outcome, response: row.response };
 }
+
+/** Plain sends hash exactly as the first schema did, so retries of a pre-migration send stay idempotent. */
+function digest(input: Content): string {
+  const parts: unknown[] = [input.title, input.message, input.subtitle, input.source];
+  if (input.group !== null || input.open !== null || input.actions.length || input.reply !== null) parts.push(input.group, input.open, input.actions, input.reply);
+  return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
+}
+
+export type Dismissal = { outcome: Exclude<Outcome, "replaced">; response?: string };
 
 export class NotificationStore {
   readonly db: DatabaseSync;
@@ -28,72 +49,99 @@ export class NotificationStore {
     const path = join(dir, "notifications.sqlite");
     this.db = new DatabaseSync(path);
     chmodSync(path, 0o600);
-    this.db.exec(`PRAGMA journal_mode=WAL;
-      CREATE TABLE IF NOT EXISTS notifications (
-        sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
-        revision INTEGER NOT NULL, title TEXT NOT NULL, message TEXT NOT NULL,
-        subtitle TEXT, source TEXT, initial_digest TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-        acknowledged_at TEXT, dismissed_at TEXT
-      );
-      CREATE INDEX IF NOT EXISTS notifications_dismissed_sequence ON notifications(dismissed_at, sequence);
-      CREATE INDEX IF NOT EXISTS notifications_acknowledged_sequence ON notifications(acknowledged_at, sequence);`);
+    this.db.exec("PRAGMA journal_mode=WAL");
+    this.migrate();
+  }
+
+  private migrate(): void {
+    const version = (this.db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
+    if (version === schemaVersion) return;
+    if (version > schemaVersion) throw new Error(`notify_schema_unsupported: version ${version}`);
+    const exists = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notifications'").get();
+    this.transaction(() => {
+      if (!exists) this.db.exec(table("notifications"));
+      else {
+        // Version 1 kept independent acknowledgment and dismissal. Acknowledgment now means the
+        // person engaged, which dismisses: it becomes an "opened" dismissal at the earlier time.
+        this.db.exec(`${table("notifications_v2")};
+          INSERT INTO notifications_v2 (sequence, id, title, message, subtitle, source, initial_digest, created_at, dismissed_at, outcome)
+            SELECT sequence, id, title, message, subtitle, source, initial_digest, created_at,
+              CASE WHEN acknowledged_at IS NULL THEN dismissed_at WHEN dismissed_at IS NULL THEN acknowledged_at ELSE MIN(acknowledged_at, dismissed_at) END,
+              CASE WHEN acknowledged_at IS NOT NULL THEN 'opened' WHEN dismissed_at IS NOT NULL THEN 'closed' END
+            FROM notifications;
+          DROP TABLE notifications;
+          ALTER TABLE notifications_v2 RENAME TO notifications;`);
+      }
+      this.db.exec(`${indexes} PRAGMA user_version = ${schemaVersion};`);
+    });
+  }
+
+  private transaction<T>(work: () => T): T {
+    this.db.exec("BEGIN IMMEDIATE");
+    try { const result = work(); this.db.exec("COMMIT"); return result; }
+    catch (error) { this.db.exec("ROLLBACK"); throw error; }
+  }
+
+  private find(id: string): Row | undefined {
+    return this.db.prepare("SELECT * FROM notifications WHERE id = ?").get(id) as Row | undefined;
   }
 
   get(id: string): Notification {
-    const row = this.db.prepare("SELECT * FROM notifications WHERE id = ?").get(id) as Row | undefined;
+    const row = this.find(id);
     if (!row) throw new Error("notification_not_found");
     return fromRow(row);
   }
 
+  /** Inserts, then dismisses any other open notification in the same group as "replaced". A retried ID replaces nothing. */
   create(input: Content & { id?: string }): { record: Notification; created: boolean } {
     const id = input.id ?? randomUUID();
-    const existing = this.db.prepare("SELECT * FROM notifications WHERE id = ?").get(id) as Row | undefined;
-    const initial = createHash("sha256").update(JSON.stringify([input.title, input.message, input.subtitle, input.source])).digest("hex");
-    if (existing) {
-      if (existing.initial_digest !== initial)
-        throw new Error("notification_id_conflict");
-      return { record: fromRow(existing), created: false };
-    }
-    const now = new Date().toISOString();
-    this.db.prepare(`INSERT INTO notifications (id, revision, title, message, subtitle, source, initial_digest, created_at, updated_at)
-      VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?)`).run(id, input.title, input.message, input.subtitle, input.source, initial, now, now);
-    return { record: this.get(id), created: true };
+    const initial = digest(input);
+    return this.transaction(() => {
+      const existing = this.find(id);
+      if (existing) {
+        if (existing.initial_digest !== initial) throw new Error("notification_id_conflict");
+        return { record: fromRow(existing), created: false };
+      }
+      const now = new Date().toISOString();
+      this.db.prepare(`INSERT INTO notifications (id, title, message, subtitle, source, group_key, open_url, actions, reply, initial_digest, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, input.title, input.message, input.subtitle, input.source,
+        input.group, input.open, JSON.stringify(input.actions), input.reply, initial, now);
+      if (input.group !== null) this.db.prepare(`UPDATE notifications SET dismissed_at = ?, outcome = 'replaced'
+        WHERE group_key = ? AND dismissed_at IS NULL AND id != ?`).run(now, input.group, id);
+      return { record: this.get(id), created: true };
+    });
   }
 
-  update(id: string, revision: number, patch: Partial<Content>): Notification {
+  /** The first dismissal wins. Repeating it is a no-op; a different outcome or response is refused. */
+  dismiss(id: string, { outcome, response }: Dismissal): { record: Notification; changed: boolean } {
     const current = this.get(id);
-    if (current.revision !== revision) throw new Error("notification_revision_conflict");
-    if (!Object.keys(patch).length) throw new Error("notification_update_empty");
-    const changed = Object.entries(patch).some(([key, value]) => current[key as keyof Content] !== value);
-    if (!changed) return current;
-    const next = { ...current, ...patch };
-    const result = this.db.prepare(`UPDATE notifications SET title = ?, message = ?, subtitle = ?, source = ?,
-      revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?`).run(
-      next.title, next.message, next.subtitle, next.source, new Date().toISOString(), id, revision);
-    if (result.changes !== 1) throw new Error("notification_revision_conflict");
-    return this.get(id);
+    const value = response ?? null;
+    if (outcome === "action" ? value === null || !current.actions.includes(value)
+      : outcome === "replied" ? current.reply === null || value === null
+      : value !== null) throw new Error(`notification_response_invalid: ${outcome === "action" ? "response must be one of the notification's actions"
+        : outcome === "replied" ? "reply requires a notification that offers one and a response" : `${outcome} takes no response`}`);
+    if (current.dismissedAt !== null) {
+      if (current.outcome === outcome && current.response === value) return { record: current, changed: false };
+      throw new Error("notification_already_dismissed");
+    }
+    const result = this.db.prepare(`UPDATE notifications SET dismissed_at = ?, outcome = ?, response = ?
+      WHERE id = ? AND dismissed_at IS NULL`).run(new Date().toISOString(), outcome, value, id);
+    if (result.changes !== 1) return this.dismiss(id, { outcome, response });
+    return { record: this.get(id), changed: true };
   }
 
-  mark(id: string, field: "acknowledged_at" | "dismissed_at"): { record: Notification; changed: boolean } {
-    this.get(id);
-    const now = new Date().toISOString();
-    const result = this.db.prepare(`UPDATE notifications SET ${field} = ?, revision = revision + 1, updated_at = ?
-      WHERE id = ? AND ${field} IS NULL`).run(now, now, id);
-    return { record: this.get(id), changed: result.changes === 1 };
+  dismissAll(group?: string): number {
+    const scope = group === undefined ? "" : " AND group_key = ?";
+    return Number(this.db.prepare(`UPDATE notifications SET dismissed_at = ?, outcome = 'closed' WHERE dismissed_at IS NULL${scope}`)
+      .run(new Date().toISOString(), ...(group === undefined ? [] : [group])).changes);
   }
 
-  dismissAll(): number {
-    const now = new Date().toISOString();
-    return Number(this.db.prepare(`UPDATE notifications SET dismissed_at = ?, updated_at = ?, revision = revision + 1
-      WHERE dismissed_at IS NULL`).run(now, now).changes);
-  }
-
-  list(input: { before?: number; limit: number; acknowledged?: boolean; dismissed?: boolean; source?: string }): { entries: Notification[]; nextCursor: number | null } {
+  list(input: { before?: number; limit: number; dismissed?: boolean; source?: string; group?: string }): { entries: Notification[]; nextCursor: number | null } {
     const where = ["sequence < ?"];
     const params: Array<string | number> = [input.before ?? Number.MAX_SAFE_INTEGER];
-    if (input.acknowledged !== undefined) where.push(`acknowledged_at IS ${input.acknowledged ? "NOT " : ""}NULL`);
     if (input.dismissed !== undefined) where.push(`dismissed_at IS ${input.dismissed ? "NOT " : ""}NULL`);
     if (input.source !== undefined) { where.push("source = ?"); params.push(input.source); }
+    if (input.group !== undefined) { where.push("group_key = ?"); params.push(input.group); }
     const rows = this.db.prepare(`SELECT * FROM notifications WHERE ${where.join(" AND ")}
       ORDER BY sequence DESC LIMIT ?`).all(...params, input.limit + 1) as Row[];
     const entries = rows.slice(0, input.limit).map(fromRow);

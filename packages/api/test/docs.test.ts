@@ -256,15 +256,17 @@ test("the api package serves structured documents for every workspace package", 
 
     const notify = found.get("notify") as PackageDoc;
     assert.deepEqual(notify.operations.map((operation) => operation.name),
-      ["notification_send", "notification_get", "notification_list", "notification_update", "notification_acknowledge", "notification_dismiss", "notification_dismiss_all"]);
+      ["notification_send", "notification_get", "notification_list", "notification_dismiss", "notification_dismiss_all"]);
     assert.deepEqual(Object.keys(notify.events), ["notify_changed"]);
     assert.deepEqual(notify.transports.map((transport) => transport.type), ["socket", "mcp", "websocket"]);
     assert.equal(notify.transports.find((transport) => transport.type === "socket")?.endpoint, join(stateDir, "sockets", "notify.sock"));
     assert.equal(notify.transports.find((transport) => transport.type === "mcp")?.endpoint, "http://127.0.0.1:8743/mcp/notify");
     assert.equal(notify.transports.find((transport) => transport.type === "websocket")?.endpoint, "ws://127.0.0.1:8744/websocket");
-    assert.ok((notify.operations.find((operation) => operation.name === "notification_update")!.inputSchema.required as string[]).includes("expectedRevision"));
-    assert.ok(JSON.stringify(notify.operations.find((operation) => operation.name === "notification_list")!.outputSchema).includes("acknowledgedAt"));
-    assert.ok(JSON.stringify(notify.operations.find((operation) => operation.name === "notification_list")!.outputSchema).includes("dismissedAt"));
+    assert.deepEqual((notify.operations.find((operation) => operation.name === "notification_dismiss")!.inputSchema.properties as { outcome: { enum: string[] } }).outcome.enum,
+      ["closed", "opened", "action", "replied"]);
+    const notifyListed = JSON.stringify(notify.operations.find((operation) => operation.name === "notification_list")!.outputSchema);
+    for (const field of ["dismissedAt", "outcome", "response", "group", "open", "actions", "reply"]) assert.ok(notifyListed.includes(`"${field}"`), field);
+    assert.ok(!notifyListed.includes("acknowledgedAt"));
 
     assert.deepEqual(bots.eventScope, {
       description: "Optional bot ID. Scoped subscriptions receive changes only for that bot; omit scope to receive global voice, defaults, and bot notices.",

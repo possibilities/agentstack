@@ -2,7 +2,7 @@
 
 ## Notification
 
-A durable AgentStack-owned message with a stable ID and revision. Its text may be edited by ID; acknowledgment and dismissal are independent timestamps, and neither removes its history. Future transient presentation is separate from storage. _Avoid_: operating-system notification, action request, grouped replacement key
+A durable AgentStack-owned message with a stable ID. It is open or dismissed; dismissal happens once and records its outcome (closed, opened, action, replied or replaced), so answering or clicking through is what acknowledges it. A group replaces the open notification with the same key. Its actions, reply prompt and open URL are data; presentation is separate from storage and nothing executes. _Avoid_: operating-system notification, acknowledgment as a separate state, callback
 
 ## Package API
 

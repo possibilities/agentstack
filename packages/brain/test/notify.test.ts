@@ -13,7 +13,7 @@ test("Brain doctor records increases in the local notify Package API and resets 
   const served = await serveApi({ name: "notify", transport: "socket", env });
   const list = async () => (await socketCall(socketPath("notify", env), "tools/call", {
     name: "notification_list", arguments: { source: "agentstack.brain.doctor" },
-  })) as { entries: Array<{ id: string; title: string; message: string; source: string }> };
+  })) as { entries: Array<{ id: string; title: string; message: string; source: string; group: string; outcome: string | null }> };
   try {
     await withBrainEnvironment(env, async () => {
       assert.deepEqual(await notifyStranded(0), { notified: false, reason: "cleared", stranded: 0, previous: null });
@@ -33,6 +33,8 @@ test("Brain doctor records increases in the local notify Package API and resets 
     ]);
     assert.ok(entries.every(({ title, source }) => title === "AgentStack Brain ingestion stranded" && source === "agentstack.brain.doctor"));
     assert.equal(new Set(entries.map(({ id }) => id)).size, 3);
+    assert.ok(entries.every(({ group }) => group === "agentstack.brain.stranded"));
+    assert.deepEqual(entries.map(({ outcome }) => outcome), [null, "replaced", "replaced"]);
   } finally {
     await served.close();
     await rm(root, { recursive: true, force: true });

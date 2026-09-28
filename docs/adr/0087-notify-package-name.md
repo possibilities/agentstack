@@ -2,7 +2,8 @@
 
 Status: accepted, 2026-09-26. Amends the package name and event topic in
 [ADR 0083](0083-durable-notifications-api.md); its notification record and
-lifecycle decisions remain in force.
+lifecycle decisions were later superseded by
+[ADR 0095](0095-one-dismissal-with-an-outcome.md).
 
 ## Decision
 
