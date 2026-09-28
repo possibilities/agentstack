@@ -208,6 +208,10 @@ The `brain` Package API's isolated research index and durable ingestion system. 
 
 _Avoid_: external research service, Content Vault
 
+## Xcom archive
+
+The `xcom` Package API's best-effort, private cache of observed posts from the authenticated X following feed and fetched full X Articles. A post ID remains stable; an observed author profile is not proof that the account is currently followed. Its independent two-month backfill and frequent bounded head scans prioritize freshness without promising complete feed coverage. FTS5 searches tweet and article text separately; Brain remains the general research index. _Avoid_: complete following graph, semantic embeddings, Brain ingestion job
+
 ## Scrape
 
 The `scrape` Package API's extraction, preset, link and source-discovery engine. Brain consumes its typed library interface for Ingestion jobs; standalone scrape-to-file jobs live under isolated AgentStack state and are not Brain jobs. A preset's failure to match the provider's current content shape is a classified failure requiring a preset update, not permission for generic extraction. Browser page actions still belong to agent-browser. The local UIX operates its canary checks and queue over the WebSocket; agents do not receive them over MCP. _Avoid_: Brain ingestion worker, browser lifecycle, separate Agentscrape service

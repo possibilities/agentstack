@@ -1,0 +1,8 @@
+name: xcom
+description: Keep a private, best-effort archive of the X following feed and full X Articles; search it with FTS5, traverse posts, and read citation-ready research context. No embeddings or Brain ingestion.
+socket:
+  description: Local archive control, retrieval, sync and index repair.
+mcp:
+  operations: [xcom_status, xcom_sync, xcom_articles_sync, xcom_search, xcom_context, xcom_list, xcom_get, xcom_users, xcom_user_get]
+  events: []
+  description: Agent research retrieval and asynchronous archive maintenance. Index repair is local socket-only.

@@ -23,6 +23,7 @@
         "@agentstack/owner#build",
         "@agentstack/worker#build",
         "@agentstack/brain#build",
+        "@agentstack/xcom#build",
         "@agentstack/browse#build",
         "@agentstack/content#build"
       ],

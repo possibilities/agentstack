@@ -81,6 +81,11 @@ export function brainChild(): OwnedChild {
     args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "brain", "socket"],
   };
 }
+export function xcomChild(): OwnedChild {
+  const apiPackage = require.resolve("@agentstack/api/package.json");
+  return { name: "xcom", command: process.execPath,
+    args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "xcom", "socket"] };
+}
 export function procChild(): OwnedChild {
   const apiPackage = require.resolve("@agentstack/api/package.json");
   return {
