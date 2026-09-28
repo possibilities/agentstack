@@ -125,7 +125,8 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
       onPointerDownCapture={placement.onFocusWithin}
       onFocusCapture={placement.onFocusWithin}
       className={cn(
-        "flex flex-col overflow-hidden rounded-2xl border bg-card/85 text-card-foreground backdrop-blur-xl",
+        // The bench's grab cursor stops at the window edge; only the header's empty surface drags.
+        "flex cursor-auto flex-col overflow-hidden rounded-2xl border bg-card/85 text-card-foreground backdrop-blur-xl",
         "shadow-[0_1px_0_0_rgb(255_255_255/0.06)_inset,0_1px_2px_rgb(0_0_0/0.06),0_24px_48px_-24px_rgb(0_0_0/0.28)]",
         "absolute",
         placement.animating && "transition-[left,top] duration-300 ease-out motion-reduce:transition-none",
@@ -142,6 +143,8 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
         onPointerDown={placement.onHeaderPointerDown}
         className={cn(
           "group/header relative flex shrink-0 cursor-grab items-center gap-3 px-3.5 py-3 select-none active:cursor-grabbing",
+          // Controls the drag ignores (see onHeaderPointerDown) keep their own cursor.
+          "[&_:where(button,[data-interactive],[tabindex])]:cursor-default",
           !placement.collapsed && "border-b border-border/60",
         )}
       >
