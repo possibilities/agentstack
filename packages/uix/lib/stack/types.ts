@@ -433,6 +433,18 @@ export type RoleSnapshot = { revision: number; categories: RoleCategory[];
 export type RolePreview = { revision: number; rendered: string; bytes: number; limitBytes: number;
   segments: Array<{ categoryId: string; fragmentId: string; start: number; end: number }> };
 
+/** How a Notification was dismissed: once, with the chosen action label or reply text as `response`. */
+export type NotificationOutcome = "closed" | "opened" | "action" | "replied" | "replaced";
+/** A `notify` Notification; open until `dismissedAt`. Actions, reply and open are data; nothing executes. */
+export type Notification = { id: string; sequence: number; title: string; message: string; subtitle: string | null; source: string | null;
+  group: string | null; open: string | null; actions: string[]; reply: string | null; createdAt: string;
+  dismissedAt: string | null; outcome: NotificationOutcome | null; response: string | null };
+/** `notification_counts`. A null source counts notifications sent without one. */
+export type NotificationCounts = { open: number; total: number; sources: Array<{ source: string | null; open: number; total: number }> };
+/** The Inbox's view of `notification_list`: which filter it shows and the pages loaded so far. */
+export type NotificationFilter = { dismissed?: boolean; source?: string };
+export type NotificationPages = { filter: NotificationFilter; entries: Notification[]; nextCursor: number | null };
+
 export type Resource<T> = { data: T | null; error: string | null; at: number | null };
 
 export type Snapshot = {
@@ -482,6 +494,7 @@ export type NodeRef =
   | { kind: "chat"; id: string }
   | { kind: "category"; id: string }
   | { kind: "fragment"; id: string }
+  | { kind: "notification"; id: string }
   | { kind: "package"; id: string }
   | { kind: "operation"; id: string; pkg: string };
 

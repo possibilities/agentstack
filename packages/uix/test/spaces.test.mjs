@@ -29,6 +29,7 @@ test("homeOf distinguishes spatial records from reference destinations", () => {
   assert.deepEqual(homeOf({ kind: "bot", id: "bot-1" }), { kind: "space", space: "fleet", window: "bots" });
   assert.deepEqual(homeOf({ kind: "category", id: "c1" }), { kind: "space", space: "roles", window: "role-instructions" });
   assert.deepEqual(homeOf({ kind: "fragment", id: "f1" }), { kind: "space", space: "roles", window: "role-instructions" });
+  assert.deepEqual(homeOf({ kind: "notification", id: "n1" }), { kind: "space", space: "inbox", window: "notify-inbox" });
   assert.deepEqual(homeOf({ kind: "package", id: "bots" }), { kind: "reference" });
   assert.deepEqual(homeOf({ kind: "operation", id: "bot_start", pkg: "bots" }), { kind: "reference" });
   assert.deepEqual(homeOf({ kind: "usage" }), { kind: "space", space: "accounts", window: "usage" });
@@ -54,6 +55,7 @@ test("parseSpacePath resolves /x and single space segments only", () => {
   assert.equal(parseSpacePath("/x/accounts"), "accounts");
   assert.equal(parseSpacePath("/x/lab"), "lab");
   assert.equal(parseSpacePath("/x/roles"), "roles");
+  assert.equal(parseSpacePath("/x/inbox"), "inbox");
   assert.equal(parseSpacePath("/x/nope"), null);
   assert.equal(parseSpacePath("/x/api/extra"), null);
   assert.equal(parseSpacePath("/y"), null);
@@ -72,6 +74,7 @@ test("parseNodeKey inverts nodeKey for every kind and rejects malformed keys", (
     { kind: "bot", id: "bot-1" },
     { kind: "category", id: "00000000-0000-4000-8000-000000000001" },
     { kind: "fragment", id: "00000000-0000-4000-8000-000000000002" },
+    { kind: "notification", id: "00000000-0000-4000-8000-000000000003" },
     { kind: "usage" },
     { kind: "usage-account", id: "worker:account-with-colons:ok" },
     { kind: "grok-bot-usage" },
@@ -93,10 +96,16 @@ const quiet = {
   attempt: null,
   catalog: { data: [], error: null, at: null },
   endpoints: {},
+  notifyCounts: { data: null, error: null, at: null },
 };
 
 test("spaceAttention reports human reasons per space and ignores healthy state", () => {
-  assert.deepEqual(spaceAttention(quiet), { fleet: [], accounts: [], lab: [], roles: [], system: [], api: [] });
+  assert.deepEqual(spaceAttention(quiet), { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], api: [] });
+  assert.deepEqual(spaceAttention({ ...quiet, notifyCounts: { data: { open: 0, total: 4, sources: [] }, error: null, at: null } }).inbox, []);
+  assert.deepEqual(spaceAttention({ ...quiet, notifyCounts: { data: { open: 1, total: 4, sources: [] }, error: null, at: null } }).inbox, ["1 open notification"]);
+  const inbox = spaceAttention({ ...quiet, notifyCounts: { data: { open: 3, total: 4, sources: [] }, error: null, at: null }, status: { notify: "closed" } });
+  assert.deepEqual(inbox.inbox, ["3 open notifications", "notify reconnecting"]);
+  assert.deepEqual(inbox.system, ["notify reconnecting"]);
 
   // Fleet: a bot recovery issue and its channel. Accounts: an unfinished removal, a failed sign-in, its channels.
   const fleet = spaceAttention({
@@ -145,5 +154,5 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
 
   // Idle and connecting channels are normal, not attention.
   const waiting = spaceAttention({ ...quiet, status: { auth: "connecting", bots: "idle", owner: "connecting", api: "idle" } });
-  assert.deepEqual(waiting, { fleet: [], accounts: [], lab: [], roles: [], system: [], api: [] });
+  assert.deepEqual(waiting, { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], api: [] });
 });

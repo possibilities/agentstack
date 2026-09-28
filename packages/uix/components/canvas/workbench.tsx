@@ -17,6 +17,7 @@ import { Inspector } from "./inspector";
 import { Palette, type PaletteAction } from "./palette";
 import { StackProvider, useStack, WorkbenchContext, type WorkbenchValue } from "./provider";
 import { Reference } from "./reference";
+import { NotifyActionsProvider } from "./notify-actions";
 import { RoleActionsProvider } from "./role-actions";
 import { Bench, type BenchControls } from "./bench";
 import { CallLauncher, VoiceProvider } from "./voice";
@@ -223,7 +224,7 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
   ], [controls, location.inspect, openReference, openInspector]);
   const workbench: WorkbenchValue = useMemo(() => ({ space: location.space, setSpace, selected: collapsed ? null : location.inspect, hovered, select, hover, goTo, flash }), [location.space, location.inspect, collapsed, setSpace, hovered, select, goTo, flash]);
   return <div className="contents" style={{ "--sheet": `${right}px` } as React.CSSProperties}>
-    <WorkbenchContext value={workbench}><AuthActionsProvider><VoiceProvider><BotActionsProvider><RoleActionsProvider>
+    <WorkbenchContext value={workbench}><AuthActionsProvider><VoiceProvider><BotActionsProvider><RoleActionsProvider><NotifyActionsProvider>
       {spaces.map(({ id }) => <div key={id} hidden={id !== location.space} inert={id !== location.space}>
         <Activity mode={id === location.space ? "visible" : "hidden"}>
           <div className={id === location.space ? "bench-enter" : undefined}>
@@ -246,7 +247,7 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
         {location.reference ? <Reference target={location.reference} onOverview={referenceOverview} onClose={closeRight} hasInspection={Boolean(location.inspect)} expanded={expanded} onExpand={() => setExpanded((value) => !value)} /> : null}
       </Dock>
       <Palette open={paletteOpen} onOpenChange={setPaletteOpen} actions={actions} />
-    </RoleActionsProvider></BotActionsProvider></VoiceProvider></AuthActionsProvider></WorkbenchContext>
+    </NotifyActionsProvider></RoleActionsProvider></BotActionsProvider></VoiceProvider></AuthActionsProvider></WorkbenchContext>
   </div>;
 }
 

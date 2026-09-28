@@ -65,6 +65,7 @@ test("notifications persist, page, replace by group, and dismiss once with an ou
     await call<Notification>("notification_send", { title: "Other group", message: "Open", group: "other" });
     assert.deepEqual((await call<Notification>("notification_dismiss", { id: reply.id, outcome: "replied", response: "Atlas" })).response, "Atlas");
 
+    assert.deepEqual(await call("notification_counts"), { open: 3, total: 8, sources: [{ source: null, open: 2, total: 6 }, { source: "worker", open: 1, total: 2 }] });
     assert.deepEqual(await call("notification_dismiss_all", { group: "missing" }), { dismissed: 0 });
     assert.deepEqual(await call("notification_dismiss_all", { group: "other" }), { dismissed: 1 });
     assert.deepEqual(await call("notification_dismiss_all"), { dismissed: 2 });

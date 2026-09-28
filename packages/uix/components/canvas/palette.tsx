@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpenIcon, BotIcon, CircleCheckIcon, CpuIcon, FilePlusIcon, FolderIcon, FolderPlusIcon, MicIcon, MicOffIcon, PhoneIcon, PhoneOffIcon, RefreshCwIcon, ScrollTextIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
+import { BellIcon, BookOpenIcon, BotIcon, CircleCheckIcon, CpuIcon, FilePlusIcon, FolderIcon, FolderPlusIcon, MicIcon, MicOffIcon, PhoneIcon, PhoneOffIcon, RefreshCwIcon, ScrollTextIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
 import { operationTitle } from "@/lib/stack/catalog";
 import { accountLabels, addableWorkerProviders, pairedWorker, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
@@ -8,6 +8,7 @@ import { spaces } from "@/lib/stack/spaces";
 import type { Account, NodeRef, WorkerAccount } from "@/lib/stack/types";
 import { useAuthActions } from "./auth-actions";
 import { useBotActions } from "./bot-actions";
+import { useNotifyActions } from "./notify-actions";
 import { useRoleActions, type RoleTarget } from "./role-actions";
 import { Orb, StatusDot } from "./primitives";
 import { useStack, useWorkbench } from "./provider";
@@ -17,7 +18,10 @@ import { useVoice } from "./voice";
 export type PaletteAction = { id: string; label: string; shortcut?: string; icon: React.ComponentType; run(): void };
 
 export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpenChange(open: boolean): void; actions: PaletteAction[] }) {
-  const { bots, accounts, workerAccounts, owner, catalog, attempt, role } = useStack();
+  const { bots, accounts, workerAccounts, owner, catalog, attempt, role, notificationRecords } = useStack();
+  const notify = useNotifyActions();
+  // Notifications the page has loaded, newest first; the palette never pages the ledger itself.
+  const notices = Object.values(notificationRecords).sort((a, b) => b.sequence - a.sequence).slice(0, 25);
   const roleActions = useRoleActions();
   const auth = useAuthActions();
   const botActions = useBotActions();
@@ -46,7 +50,7 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
   };
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange} title="Jump to" description="Find a bot, account, instruction, process, or operation." className="sm:max-w-lg">
+    <CommandDialog open={open} onOpenChange={onOpenChange} title="Jump to" description="Find a bot, account, instruction, notification, process, or operation." className="sm:max-w-lg">
       <Command loop>
         <CommandInput placeholder="Jump to a bot, account, operation…" />
         <CommandList className="max-h-96">
@@ -105,6 +109,19 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
               )),
             ])}
           </CommandGroup>
+          {notices.length ? (
+            <CommandGroup heading="Inbox">
+              {notices.map((record) => (
+                <CommandItem key={record.id} value={`notification ${record.title} ${record.subtitle ?? ""} ${record.source ?? ""} ${record.id}`}
+                  onSelect={() => { notify.open(record.id); go({ kind: "notification", id: record.id }); }}>
+                  <BellIcon />
+                  <span className="truncate">{record.title}</span>
+                  {record.source ? <span className="truncate font-mono text-xs text-muted-foreground">{record.source}</span> : null}
+                  <CommandShortcut className="tracking-normal">{record.dismissedAt ? record.outcome : "open"}</CommandShortcut>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          ) : null}
           {accounts.data?.length || workerAccounts.data?.length ? (
             <CommandGroup heading="Accounts">
               {(accounts.data ?? []).map((account) => (

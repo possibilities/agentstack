@@ -1,6 +1,6 @@
 "use client";
 
-import { BotIcon, ChartLineIcon, CpuIcon, FilePenLineIcon, FileTextIcon, FlaskConicalIcon, KeyRoundIcon, GaugeIcon, ListTreeIcon, MegaphoneIcon, PackageIcon, RadioIcon, ScanLineIcon, ScrollTextIcon, ServerIcon, SparklesIcon, SquareTerminalIcon, UserCogIcon } from "lucide-react";
+import { BellIcon, BotIcon, ChartLineIcon, CpuIcon, FilePenLineIcon, FileTextIcon, FlaskConicalIcon, KeyRoundIcon, GaugeIcon, InboxIcon, ListTreeIcon, MegaphoneIcon, PackageIcon, RadioIcon, ScanLineIcon, ScrollTextIcon, ServerIcon, SparklesIcon, SquareTerminalIcon, UserCogIcon } from "lucide-react";
 import type { ChatWindows } from "@/lib/stack/chat-windows";
 import type { SpaceId } from "@/lib/stack/spaces";
 import type { StackState } from "@/lib/stack/store";
@@ -17,6 +17,7 @@ import { RoleEditorWindow } from "./role-editor";
 import { RoleInstructionsWindow } from "./role-instructions";
 import { RolePreviewWindow } from "./role-preview";
 import { AccessWindow } from "./access-window";
+import { InboxWindow, NotificationWindow } from "./notify-windows";
 
 export type WindowDef = {
   /** Globally unique across spaces; also used by Window and node destinations. */
@@ -86,6 +87,14 @@ export const spaceViews: Record<SpaceId, {
       { id: "role-instructions", title: "Instructions", icon: ScrollTextIcon, accent: "roles", width: 440, height: 720, column: 0, element: <RoleInstructionsWindow /> },
       { id: "role-editor", title: "Editor", icon: FilePenLineIcon, accent: "roles", width: 520, height: 760, column: 1, element: <RoleEditorWindow /> },
       { id: "role-preview", title: "Preview", icon: FileTextIcon, accent: "roles", width: 460, height: 720, column: 2, element: <RolePreviewWindow /> },
+    ],
+  },
+  inbox: {
+    icon: InboxIcon,
+    accent: "notify",
+    windows: () => [
+      { id: "notify-inbox", title: "Inbox", icon: InboxIcon, accent: "notify", width: 440, height: 720, column: 0, fixed: true, element: <InboxWindow /> },
+      { id: "notify-detail", title: "Notification", icon: BellIcon, accent: "notify", width: 480, height: 640, column: 1, element: <NotificationWindow /> },
     ],
   },
 };

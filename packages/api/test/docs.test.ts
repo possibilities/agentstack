@@ -260,7 +260,7 @@ test("the api package serves structured documents for every workspace package", 
 
     const notify = found.get("notify") as PackageDoc;
     assert.deepEqual(notify.operations.map((operation) => operation.name),
-      ["notification_send", "notification_get", "notification_list", "notification_dismiss", "notification_dismiss_all"]);
+      ["notification_send", "notification_get", "notification_list", "notification_counts", "notification_dismiss", "notification_dismiss_all"]);
     assert.deepEqual(Object.keys(notify.events), ["notify_changed"]);
     assert.deepEqual(notify.transports.map((transport) => transport.type), ["socket", "mcp", "websocket"]);
     assert.equal(notify.transports.find((transport) => transport.type === "socket")?.endpoint, join(stateDir, "sockets", "notify.sock"));

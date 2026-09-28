@@ -148,5 +148,13 @@ export class NotificationStore {
     return { entries, nextCursor: rows.length > input.limit ? entries.at(-1)!.sequence : null };
   }
 
+  /** Open and total counts, overall and per source (null for notifications without one), most-used sources first. */
+  counts(): { open: number; total: number; sources: Array<{ source: string | null; open: number; total: number }> } {
+    const sources = (this.db.prepare(`SELECT source, SUM(dismissed_at IS NULL) AS open, COUNT(*) AS total FROM notifications
+      GROUP BY source ORDER BY total DESC, source`).all() as Array<{ source: string | null; open: number; total: number }>)
+      .map(({ source, open, total }) => ({ source, open: Number(open), total: Number(total) }));
+    return { open: sources.reduce((sum, item) => sum + item.open, 0), total: sources.reduce((sum, item) => sum + item.total, 0), sources };
+  }
+
   close(): void { this.db.close(); }
 }

@@ -2,7 +2,7 @@ import { accountLabels, workerAccountLabels } from "./derive";
 import type { StackState } from "./store";
 import { nodeKey, type NodeRef } from "./types";
 
-export type SpaceId = "fleet" | "accounts" | "lab" | "system" | "roles";
+export type SpaceId = "fleet" | "accounts" | "lab" | "system" | "roles" | "inbox";
 
 export const spaces: { id: SpaceId; title: string; description: string; key: string }[] = [
   { id: "fleet", title: "Fleet", description: "Bots and their controls", key: "1" },
@@ -10,6 +10,7 @@ export const spaces: { id: SpaceId; title: string; description: string; key: str
   { id: "lab", title: "Lab", description: "Experimental windows for tinkering", key: "3" },
   { id: "system", title: "System", description: "Owner, processes, packages, host resources and activity", key: "4" },
   { id: "roles", title: "Roles", description: "Instructions every new Bot launches with", key: "5" },
+  { id: "inbox", title: "Inbox", description: "Notifications to read, answer and dismiss", key: "6" },
 ];
 
 export const defaultSpace: SpaceId = "fleet";
@@ -56,6 +57,8 @@ export function homeOf(ref: NodeRef): NodeHome {
     case "category":
     case "fragment":
       return { kind: "space", space: "roles", window: "role-instructions" };
+    case "notification":
+      return { kind: "space", space: "inbox", window: "notify-inbox" };
     case "package":
     case "operation":
       return { kind: "reference" };
@@ -76,8 +79,8 @@ export function parseSpacePath(pathname: string): SpaceId | null {
 }
 
 /** Human-readable reasons each space needs attention; an empty list means all quiet. Only "closed" channels count — idle and connecting are normal. */
-export function spaceAttention(state: Pick<StackState, "status" | "owner" | "resources" | "accounts" | "workerAccounts" | "bots" | "attempt" | "catalog" | "endpoints">): Record<SpaceId | "api", string[]> {
-  const attention: Record<SpaceId | "api", string[]> = { fleet: [], accounts: [], lab: [], roles: [], system: [], api: [] };
+export function spaceAttention(state: Pick<StackState, "status" | "owner" | "resources" | "accounts" | "workerAccounts" | "bots" | "attempt" | "catalog" | "endpoints" | "notifyCounts">): Record<SpaceId | "api", string[]> {
+  const attention: Record<SpaceId | "api", string[]> = { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], api: [] };
   for (const bot of state.bots.data ?? []) if (bot.recoveryIssue) attention.fleet.push(`${bot.id} needs inspection`);
   const labels = accountLabels(state.accounts.data);
   for (const account of state.accounts.data ?? []) if (account.removing) attention.accounts.push(`${labels.get(account.id) ?? account.id} removal unfinished`);
@@ -90,6 +93,9 @@ export function spaceAttention(state: Pick<StackState, "status" | "owner" | "res
   if (state.attempt?.status === "failed") attention.accounts.push("Sign-in failed");
   if (state.status.bots === "closed") attention.fleet.push("bots reconnecting");
   if (state.status.roles === "closed") attention.roles.push("roles reconnecting");
+  const open = state.notifyCounts.data?.open ?? 0;
+  if (open) attention.inbox.push(`${open} open notification${open === 1 ? "" : "s"}`);
+  if (state.status.notify === "closed") attention.inbox.push("notify reconnecting");
   for (const name of ["auth", "usage", "worker"] as const) if (state.status[name] === "closed") attention.accounts.push(`${name} reconnecting`);
   for (const child of state.owner.data?.children ?? []) if (!child.running) attention.system.push(`${child.name} stopped`);
   if (state.status.owner === "closed") attention.system.push("owner reconnecting");
@@ -123,7 +129,7 @@ export function parseNodeKey(key: string): NodeRef | null {
     if (dot <= 0 || dot === rest.length - 1) return null;
     return { kind: "operation", pkg: rest.slice(0, dot), id: rest.slice(dot + 1) };
   }
-  if (kind === "access-client" || kind === "access-pairing" || kind === "access-grant" || kind === "access-credential" || kind === "account" || kind === "worker-account" || kind === "worker-catalog" || kind === "usage-account" || kind === "child" || kind === "bot" || kind === "chat" || kind === "category" || kind === "fragment" || kind === "package" || kind === "resource" || kind === "process") {
+  if (kind === "access-client" || kind === "access-pairing" || kind === "access-grant" || kind === "access-credential" || kind === "account" || kind === "worker-account" || kind === "worker-catalog" || kind === "usage-account" || kind === "child" || kind === "bot" || kind === "chat" || kind === "category" || kind === "fragment" || kind === "notification" || kind === "package" || kind === "resource" || kind === "process") {
     return { kind, id: rest };
   }
   return null;

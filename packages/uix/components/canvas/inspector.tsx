@@ -21,7 +21,8 @@ import { BotLifecycleControls } from "./bot-actions";
 import { CatalogRefresh, CatalogStatus } from "./catalog-window";
 import { RecordTree } from "./record-tree";
 import { ObservationStatus } from "./usage-window";
-import { useOperation, useStack, useWorkbench } from "./provider";
+import { useNotifyActions } from "./notify-actions";
+import { useOperation, useStack, useStore, useWorkbench } from "./provider";
 import { useRoleActions } from "./role-actions";
 import { useVoice } from "./voice";
 import { accentBg, accentText, type Accent } from "./window";
@@ -226,6 +227,17 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         events: state.events.filter((event) => event.pkg === "roles"),
       };
     }
+    case "notification": {
+      const record = state.notificationRecords[ref.id];
+      if (!record) return null;
+      return {
+        eyebrow: record.dismissedAt ? `Notification · ${record.outcome}` : "Notification · open", accent: "notify", title: record.title, record,
+        fields: new Map(fieldsOf(findOperation(catalog, "notify", "notification_get")?.outputSchema).map((field) => [field.name, field])),
+        operations: { pkg: "notify", list: recordOperations(catalog, "notify").filter((operation) => operation.name !== "notification_dismiss") },
+        controls: <NotificationRecordControls id={record.id} />,
+        events: state.events.filter((event) => event.pkg === "notify"),
+      };
+    }
     case "package":
     case "operation":
       return null; // Reference destinations are rendered in the shared dock's reading mode.
@@ -255,10 +267,22 @@ function RoleRecordControls({ target }: { target: { kind: "category" | "fragment
   );
 }
 
+/** Answering and dismissing live in the Inbox; the inspector hands off to it. */
+function NotificationRecordControls({ id }: { id: string }) {
+  const actions = useNotifyActions();
+  const { goTo } = useWorkbench();
+  return (
+    <Button size="sm" variant="outline" className="w-fit" onClick={() => { actions.open(id); goTo({ kind: "notification", id }); }}>
+      <ArrowRightIcon data-icon="inline-start" />Open in Inbox
+    </Button>
+  );
+}
+
 function referencePackage(ref: NodeRef): string {
   if (ref.kind === "bot") return "bots";
   if (ref.kind === "owner" || ref.kind === "child" || ref.kind === "resource" || ref.kind === "process") return "owner";
   if (ref.kind === "category" || ref.kind === "fragment") return "roles";
+  if (ref.kind === "notification") return "notify";
   if (ref.kind === "worker-catalog") return "worker";
   if (ref.kind === "usage" || ref.kind === "usage-account" || ref.kind === "grok-bot-usage") return "usage";
   return "auth";
@@ -415,6 +439,10 @@ export function Inspector({ hidden = false, onGone, pinned, onPinnedChange }: { 
   const shown = selected ?? last.current;
   const heading = useRef<HTMLHeadingElement>(null);
   const selectedKey = selected ? nodeKey(selected) : null;
+  // A notification may be inspected before any Inbox page lists it.
+  const store = useStore();
+  const watched = selected?.kind === "notification" ? selected.id : null;
+  useEffect(() => watched ? store.watchNotification(watched) : undefined, [store, watched]);
   useLayoutEffect(() => { if (!hidden && selectedKey) heading.current?.focus({ preventScroll: true }); }, [hidden, selectedKey]);
 
   const view = shown ? resolve(shown, state) : null;

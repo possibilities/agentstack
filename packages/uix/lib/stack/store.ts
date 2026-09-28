@@ -2,7 +2,7 @@ import { loadCatalog } from "./catalog";
 import type { AccessSnapshot } from "./types";
 import { Channel } from "./channel";
 import { loadResources, mergeHistory } from "./resources";
-import type { Account, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, OwnerResources, OwnerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RolePreview, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
+import type { Account, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, OwnerResources, OwnerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RolePreview, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
 
 export type StackState = Snapshot & {
   access: Resource<AccessSnapshot>;
@@ -25,6 +25,12 @@ export type StackState = Snapshot & {
   inferRequests: Resource<InferRequestSummary[]>;
   /** Cached model discovery per Bot account; reading it starts no discovery. */
   inferModels: Resource<InferModelObservation[]>;
+  /** The Inbox's chosen filter; `notifications.data.filter` is the one its loaded pages answer. */
+  notificationFilter: NotificationFilter;
+  notifications: Resource<NotificationPages>;
+  notifyCounts: Resource<NotificationCounts>;
+  /** Latest known record per notification ID, from any page, read or write. */
+  notificationRecords: Record<string, Notification>;
 };
 
 export type StackConnections = { packages?: readonly string[]; scopedBots?: boolean };
@@ -39,9 +45,15 @@ function isWorkerLoginState(value: unknown): value is WorkerLogin {
   return typeof value === "object" && value !== null && "status" in value && "account" in value && "provider" in value && "needsCode" in value;
 }
 
-type ResourceKey = "access" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "role" | "rolePreview" | "catalog" | "usage" | "inferRequests" | "inferModels";
+type ResourceKey = "access" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "role" | "rolePreview" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts";
 
 const inferPage = 20;
+/** notification_list's maximum page size. */
+const notifyPage = 25;
+
+function isNotification(value: unknown): value is Notification {
+  return typeof value === "object" && value !== null && "id" in value && "sequence" in value && "dismissedAt" in value;
+}
 
 function isRoleSnapshot(value: unknown): value is RoleSnapshot {
   return typeof value === "object" && value !== null && "revision" in value && "categories" in value;
@@ -66,6 +78,8 @@ export class StackStore {
   private historyWatchers = new Map<string, number>();
   private historyInflight = new Map<string, Promise<void>>();
   private historyDirty = new Set<string>();
+  private notificationWatchers = new Map<string, number>();
+  private olderInflight: Promise<void> | null = null;
 
   constructor(snapshot: Snapshot) {
     this.state = {
@@ -74,6 +88,8 @@ export class StackStore {
       workerAttempts: Object.fromEntries((snapshot.workerLogins.data ?? []).map((login) => [login.account, login])),
       workerCatalogs: {}, catalogPending: {}, resourceHistory: {}, botInvalidations: {},
       inferRequests: { data: null, error: null, at: null }, inferModels: { data: null, error: null, at: null },
+      notificationFilter: { dismissed: false }, notifications: { data: null, error: null, at: null },
+      notifyCounts: { data: null, error: null, at: null }, notificationRecords: {},
     };
     this.serverState = this.state;
     for (const account of snapshot.workerAccounts.data ?? []) if (this.catalogAccountAvailable(account.id)) this.catalogAvailable.add(account.id);
@@ -137,6 +153,8 @@ export class StackStore {
       this.refresh("inferRequests"); this.refresh("inferModels");
     }, ["infer_changed"]);
     open("roles", () => { this.refresh("role"); this.refresh("rolePreview"); }, () => { this.refresh("role"); this.refresh("rolePreview"); }, ["role_changed"]);
+    const notify = () => { this.refresh("notifications"); this.refresh("notifyCounts"); this.refreshWatchedNotifications(); };
+    open("notify", notify, notify, ["notify_changed"]);
     open("api", () => this.refresh("catalog"));
     open("access", () => this.refresh("access"), () => this.refresh("access"), ["access_changed"]);
     this.reconcileScoped();
@@ -172,6 +190,7 @@ export class StackStore {
       }
     }
     if (pkg === "bots" && (name === "voice_dial" || name === "voice_hangup")) this.refresh("voice");
+    if (pkg === "notify" && isNotification(result)) this.upsertNotifications([result]);
     // Role writes return the whole snapshot; apply it before role_changed arrives so editors see their own write at once.
     if (pkg === "roles" && isRoleSnapshot(result) && result.revision >= (this.state.role?.data?.revision ?? -1)) {
       this.set({ role: { data: result, error: null, at: Date.now() } });
@@ -187,6 +206,83 @@ export class StackStore {
   };
   /** A fresh Role read that starts now, e.g. after a stale-revision refusal; it is applied like a write's result. */
   reloadRole = (): Promise<RoleSnapshot> => this.call<RoleSnapshot>("roles", "role_snapshot");
+
+  /** Notify writes. Lists and counts are re-read after each attempt, since a lost acknowledgement may still have dismissed. */
+  notify = <T>(name: "notification_dismiss" | "notification_dismiss_all", args: Record<string, unknown>): Promise<T> =>
+    this.call<T>("notify", name, args).finally(() => { this.refresh("notifications"); this.refresh("notifyCounts"); });
+
+  /** Show a different slice of the ledger; its first page replaces the loaded pages when it arrives. */
+  setNotificationFilter = (filter: NotificationFilter): void => {
+    this.set({ notificationFilter: filter });
+    this.refresh("notifications");
+  };
+
+  /** Append the next older page of the loaded filter. */
+  loadOlderNotifications = (): Promise<void> => {
+    const pages = this.state.notifications.data;
+    if (this.olderInflight || !pages?.nextCursor || pages.filter !== this.state.notificationFilter) return this.olderInflight ?? Promise.resolve();
+    const { filter, nextCursor } = pages;
+    this.olderInflight = this.call<{ entries: Notification[]; nextCursor: number | null }>("notify", "notification_list", { ...filter, before: nextCursor, limit: notifyPage })
+      .then((page) => {
+        const current = this.state.notifications.data;
+        if (!current || current.filter !== filter || current.nextCursor !== nextCursor) return;
+        const known = new Set(current.entries.map((item) => item.id));
+        this.upsertNotifications(page.entries);
+        this.set({ notifications: { data: { filter, entries: [...current.entries, ...page.entries.filter((item) => !known.has(item.id))], nextCursor: page.nextCursor }, error: null, at: Date.now() } });
+      }, (error: Error) => this.set({ notifications: { ...this.state.notifications, error: error.message, at: Date.now() } }))
+      .finally(() => { this.olderInflight = null; });
+    return this.olderInflight;
+  };
+
+  /** Keep one record fresh while something shows it, even when no loaded page lists it. */
+  watchNotification = (id: string): (() => void) => {
+    const watchers = (this.notificationWatchers.get(id) ?? 0) + 1;
+    this.notificationWatchers.set(id, watchers);
+    if (watchers === 1) this.readNotification(id);
+    return () => {
+      const remaining = (this.notificationWatchers.get(id) ?? 0) - 1;
+      if (remaining > 0) this.notificationWatchers.set(id, remaining);
+      else this.notificationWatchers.delete(id);
+    };
+  };
+
+  private refreshWatchedNotifications(): void {
+    for (const id of this.notificationWatchers.keys()) this.readNotification(id);
+  }
+
+  private readNotification(id: string): void {
+    if (this.main.get("notify")?.status !== "open") return;
+    this.call<Notification>("notify", "notification_get", { id }).catch((error: Error) => {
+      if (!/notification_not_found/.test(error.message) || !this.state.notificationRecords[id]) return;
+      const notificationRecords = { ...this.state.notificationRecords };
+      delete notificationRecords[id];
+      this.set({ notificationRecords });
+    });
+  }
+
+  private upsertNotifications(entries: Notification[]): void {
+    if (entries.length) this.set({ notificationRecords: { ...this.state.notificationRecords, ...Object.fromEntries(entries.map((item) => [item.id, item])) } });
+  }
+
+  /** Re-read as many pages as are loaded, so an invalidation neither drops older rows nor keeps stale ones. */
+  private async loadNotifications(): Promise<NotificationPages> {
+    const filter = this.state.notificationFilter;
+    const loaded = this.state.notifications.data;
+    const pages = loaded?.filter === filter ? Math.max(1, Math.ceil(loaded.entries.length / notifyPage)) : 1;
+    const channel = this.main.get("notify");
+    if (!channel) throw new Error("notify WebSocket is not configured");
+    const entries: Notification[] = [];
+    let before: number | undefined;
+    let nextCursor: number | null = null;
+    for (let index = 0; index < pages; index += 1) {
+      const page = await channel.call<{ entries: Notification[]; nextCursor: number | null }>("notification_list", { ...filter, limit: notifyPage, ...(before ? { before } : {}) });
+      entries.push(...page.entries);
+      nextCursor = page.nextCursor;
+      if (nextCursor === null) break;
+      before = nextCursor;
+    }
+    return { filter, entries, nextCursor };
+  }
 
   dismissAttempt = (): void => this.set({ attempt: null });
 
@@ -326,6 +422,9 @@ export class StackStore {
         // A read that started before a write it lost the race to must not roll the Role back.
         const newer = (key === "role" || key === "rolePreview") && (this.state[key]?.data as { revision: number } | null)?.revision;
         if (typeof newer === "number" && next.data && (next.data as { revision: number }).revision < newer) return;
+        // Pages for a filter the Inbox has since left are dropped; the follow-up read serves the new one.
+        if (key === "notifications" && next.data && (next.data as NotificationPages).filter !== this.state.notificationFilter) { this.dirty.add(key); return; }
+        if (key === "notifications" && next.data) this.upsertNotifications((next.data as NotificationPages).entries);
         this.set({ [key]: next } as Partial<StackState>);
         if (key === "login") this.reconcileAttempt();
         if (key === "workerLogins") this.reconcileWorkerAttempts();
@@ -363,6 +462,8 @@ export class StackStore {
       case "catalog": return loadCatalog((name, args) => call<never>("api", name, args)) as Promise<PackageDoc[]>;
       case "inferRequests": return call<{ requests: InferRequestSummary[] }>("infer", "infer_request_list", { limit: inferPage }).then((result) => result.requests);
       case "inferModels": return call<{ accounts: InferModelObservation[] }>("infer", "infer_model_list", {}).then((result) => result.accounts);
+      case "notifications": return this.loadNotifications();
+      case "notifyCounts": return call<NotificationCounts>("notify", "notification_counts");
     }
   }
 
