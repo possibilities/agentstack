@@ -30,6 +30,9 @@ test("homeOf distinguishes spatial records from reference destinations", () => {
   assert.deepEqual(homeOf({ kind: "category", id: "c1" }), { kind: "space", space: "roles", window: "role-instructions" });
   assert.deepEqual(homeOf({ kind: "fragment", id: "f1" }), { kind: "space", space: "roles", window: "role-instructions" });
   assert.deepEqual(homeOf({ kind: "notification", id: "n1" }), { kind: "space", space: "inbox", window: "notify-inbox" });
+  assert.deepEqual(homeOf({ kind: "skill", id: "s1" }), { kind: "space", space: "roles", window: "role-skills" });
+  assert.deepEqual(homeOf({ kind: "mcp-server", id: "m1" }), { kind: "space", space: "roles", window: "role-mcp-servers" });
+  assert.deepEqual(homeOf({ kind: "trusted-project", id: "p1" }), { kind: "space", space: "roles", window: "role-projects" });
   assert.deepEqual(homeOf({ kind: "package", id: "bots" }), { kind: "reference" });
   assert.deepEqual(homeOf({ kind: "operation", id: "bot_start", pkg: "bots" }), { kind: "reference" });
   assert.deepEqual(homeOf({ kind: "usage" }), { kind: "space", space: "accounts", window: "usage" });
@@ -75,6 +78,9 @@ test("parseNodeKey inverts nodeKey for every kind and rejects malformed keys", (
     { kind: "category", id: "00000000-0000-4000-8000-000000000001" },
     { kind: "fragment", id: "00000000-0000-4000-8000-000000000002" },
     { kind: "notification", id: "00000000-0000-4000-8000-000000000003" },
+    { kind: "skill", id: "00000000-0000-4000-8000-000000000006" },
+    { kind: "mcp-server", id: "00000000-0000-4000-8000-000000000007" },
+    { kind: "trusted-project", id: "00000000-0000-4000-8000-000000000008" },
     { kind: "usage" },
     { kind: "usage-account", id: "worker:account-with-colons:ok" },
     { kind: "grok-bot-usage" },

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { join, dirname, basename, isAbsolute, relative, sep } from "node:path";
 import { renderInstructions, type RoleSnapshot } from "./store.js";
-import { mcpRecord, skillRecord, trustedProjectRecord, type RoleMcpServer } from "./resources.js";
+import { mcpRecord, skillRecord, trustedProjectRecord, type RoleMcpServer, type TrustedProject } from "./resources.js";
 import { parseBotMcpIdentity } from "@agentstack/api";
 
 const namePattern = /^[a-z][a-z0-9-]{0,31}$/;
@@ -24,6 +24,36 @@ function mcpLines(server: RoleMcpServer): string[] {
   return [...lines, "enabled = true", ""];
 }
 
+/** The owner's MCP listener as its loopback origins; a role MCP server must never address it. */
+export function ownerMcpOrigins(port: number): string[] {
+  return ["127.0.0.1", "localhost", "[::1]"].map((host) => `http://${host}:${port}`);
+}
+
+/**
+ * Why an enabled role MCP server would stop a Bot launch, or null. A disabled one never enters the
+ * launch config, so it is never a conflict.
+ */
+export function roleMcpConflict(server: RoleMcpServer, ownerNames: ReadonlySet<string>, ownerOrigins: ReadonlySet<string>): string | null {
+  if (!server.enabled) return null;
+  if (ownerNames.has(server.name.toLowerCase())) return `role MCP server ${server.name} collides with an internal Package API`;
+  if (server.definition.type === "http" && ownerOrigins.has(new URL(server.definition.url).origin)) return `role MCP server ${server.name} cannot alias the internal MCP listener`;
+  return null;
+}
+
+/** The enabled trusted project roots that contain a canonical working directory. */
+export function matchingProjects(snapshot: Pick<RoleSnapshot, "trustedProjects">, actualCwd: string): TrustedProject[] {
+  return snapshot.trustedProjects.map((value) => trustedProjectRecord.parse(value)).filter((project) => {
+    if (!project.enabled) return false;
+    const child = relative(project.path, actualCwd);
+    return !(child === ".." || child.startsWith(`..${sep}`) || isAbsolute(child));
+  });
+}
+
+/** The config.toml tables the Role itself contributes for its enabled MCP servers, exactly as a launch writes them. */
+export function roleMcpConfig(snapshot: Pick<RoleSnapshot, "mcpServers">): string {
+  return snapshot.mcpServers.map((value) => mcpRecord.parse(value)).filter((server) => server.enabled).flatMap(mcpLines).join("\n");
+}
+
 /** Codexnk reads SYSTEM_APPEND.md, config.toml and skills/ from --capabilities. */
 export async function materializeRole(stateDir: string, botId: string, snapshot: RoleSnapshot, mcpServers: Readonly<Record<string, string>>, cwd?: string): Promise<string> {
   const rendered = renderInstructions(snapshot);
@@ -33,16 +63,7 @@ export async function materializeRole(stateDir: string, botId: string, snapshot:
   try {
     if (rendered) await writeFile(join(root, "SYSTEM_APPEND.md"), rendered, { mode: 0o600 });
     const lines: string[] = [];
-    if (cwd) {
-      const actualCwd = await realpath(cwd);
-      for (const value of snapshot.trustedProjects) {
-        const project = trustedProjectRecord.parse(value);
-        if (!project.enabled) continue;
-        const child = relative(project.path, actualCwd);
-        if (child === ".." || child.startsWith(`..${sep}`) || isAbsolute(child)) continue;
-        lines.push(`[projects.${toml(project.path)}]`, 'trust_level = "trusted"', "");
-      }
-    }
+    if (cwd) for (const project of matchingProjects(snapshot, await realpath(cwd))) lines.push(`[projects.${toml(project.path)}]`, 'trust_level = "trusted"', "");
     for (const [name, url] of Object.entries(mcpServers).sort(([a], [b]) => a.localeCompare(b))) {
       let parsed: URL;
       try { parsed = new URL(url); }
@@ -56,10 +77,8 @@ export async function materializeRole(stateDir: string, botId: string, snapshot:
     const ownerOrigins = new Set(Object.values(mcpServers).map((url) => new URL(url).origin));
     for (const value of snapshot.mcpServers) {
       const server = mcpRecord.parse(value);
-      if (ownerNames.has(server.name.toLowerCase())) throw new Error(`role MCP server ${server.name} collides with an internal Package API`);
-      if (server.definition.type === "http" && ownerOrigins.has(new URL(server.definition.url).origin)) {
-        throw new Error(`role MCP server ${server.name} cannot alias the internal MCP listener`);
-      }
+      const conflict = roleMcpConflict(server, ownerNames, ownerOrigins);
+      if (conflict) throw new Error(conflict);
       if (server.enabled) lines.push(...mcpLines(server));
     }
     await writeFile(join(root, "config.toml"), lines.join("\n"), { mode: 0o600 });

@@ -11,7 +11,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { fieldsOf, findOperation, operationTitle, recordFields, recordOperations, type Field } from "@/lib/stack/catalog";
 import { accountLabels, clockTime, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
 import { scopeTarget } from "@/lib/stack/resources";
-import { findCategory, findFragment } from "@/lib/stack/roles";
+import { base64Bytes, findCategory, findFragment, findResource, projectBots, type ResourceKind } from "@/lib/stack/roles";
 import type { StackState } from "@/lib/stack/store";
 import { nodeKey, type Account, type Bot, type Login, type NodeRef, type OperationDoc, type PackageDoc, type StackEvent, type WorkerAccount } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
@@ -238,6 +238,40 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         events: state.events.filter((event) => event.pkg === "notify"),
       };
     }
+    case "skill": {
+      const skill = findResource(state.role.data?.skills, ref.id)?.item;
+      if (!skill) return null;
+      // Supporting files are listed by path and size; their base64 bytes would bury the record.
+      return {
+        eyebrow: "Role skill", accent: "roles", title: skill.name, fields: roleResourceFields(catalog, "skills"),
+        record: { ...skill, files: skill.files.map((file) => ({ path: file.path, bytes: base64Bytes(file.contentBase64) })) },
+        operations: { pkg: "roles", list: recordOperations(catalog, "roles").filter((operation) => operation.name.startsWith("skill_")) },
+        controls: <RoleRecordControls target={{ kind: "skill", id: skill.id }} />,
+        events: state.events.filter((event) => event.pkg === "roles"),
+      };
+    }
+    case "mcp-server": {
+      const server = findResource(state.role.data?.mcpServers, ref.id)?.item;
+      if (!server) return null;
+      return {
+        eyebrow: "Role MCP server", accent: "roles", title: server.name, record: server, fields: roleResourceFields(catalog, "mcpServers"),
+        operations: { pkg: "roles", list: recordOperations(catalog, "roles").filter((operation) => operation.name.startsWith("mcp_server_")) },
+        controls: <RoleRecordControls target={{ kind: "mcp-server", id: server.id }} />,
+        events: state.events.filter((event) => event.pkg === "roles"),
+      };
+    }
+    case "trusted-project": {
+      const project = findResource(state.role.data?.trustedProjects, ref.id)?.item;
+      if (!project) return null;
+      const inside = project.enabled && state.roleLaunch.data?.revision === state.role.data?.revision ? projectBots(state.roleLaunch.data, project.id, state.bots.data) : [];
+      return {
+        eyebrow: "Trusted project", accent: "roles", title: project.path, record: project, fields: roleResourceFields(catalog, "trustedProjects"),
+        related: inside.map((bot) => ({ ref: { kind: "bot", id: bot.id } as NodeRef, label: `${bot.id} · runs inside` })),
+        operations: { pkg: "roles", list: recordOperations(catalog, "roles").filter((operation) => operation.name.startsWith("project_")) },
+        controls: <RoleRecordControls target={{ kind: "trusted-project", id: project.id }} />,
+        events: state.events.filter((event) => event.pkg === "roles"),
+      };
+    }
     case "package":
     case "operation":
       return null; // Reference destinations are rendered in the shared dock's reading mode.
@@ -256,8 +290,14 @@ function roleFields(catalog: PackageDoc[] | null): { category: Map<string, Field
   return { category: new Map(categories.map((field) => [field.name, field])), fragment: new Map(fragments.map((field) => [field.name, field])) };
 }
 
+/** Field notes for skills, MCP servers and trusted projects, which role_snapshot lists at its top level. */
+function roleResourceFields(catalog: PackageDoc[] | null, list: "skills" | "mcpServers" | "trustedProjects"): Map<string, Field> {
+  const fields = fieldsOf(findOperation(catalog, "roles", "role_snapshot")?.outputSchema).find((field) => field.name === list)?.children ?? [];
+  return new Map(fields.map((field) => [field.name, field]));
+}
+
 /** Editing lives in the Roles space; the inspector hands off to it. */
-function RoleRecordControls({ target }: { target: { kind: "category" | "fragment"; id: string } }) {
+function RoleRecordControls({ target }: { target: { kind: "category" | "fragment" | ResourceKind; id: string } }) {
   const actions = useRoleActions();
   const { goTo } = useWorkbench();
   return (
@@ -281,7 +321,7 @@ function NotificationRecordControls({ id }: { id: string }) {
 function referencePackage(ref: NodeRef): string {
   if (ref.kind === "bot") return "bots";
   if (ref.kind === "owner" || ref.kind === "child" || ref.kind === "resource" || ref.kind === "process") return "owner";
-  if (ref.kind === "category" || ref.kind === "fragment") return "roles";
+  if (ref.kind === "category" || ref.kind === "fragment" || ref.kind === "skill" || ref.kind === "mcp-server" || ref.kind === "trusted-project") return "roles";
   if (ref.kind === "notification") return "notify";
   if (ref.kind === "worker-catalog") return "worker";
   if (ref.kind === "usage" || ref.kind === "usage-account" || ref.kind === "grok-bot-usage") return "usage";

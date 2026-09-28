@@ -426,9 +426,19 @@ export type RoleFragment = { id: string; categoryId: string; title: string; desc
   createdAt: number | null; updatedAt: number | null };
 export type RoleCategory = { id: string; title: string; description: string; enabled: boolean; fragments: RoleFragment[];
   createdAt: number | null; updatedAt: number | null };
-/** `role_snapshot`. Skills, MCP servers and trusted projects share the revision but have no Roles UI yet. */
-export type RoleSnapshot = { revision: number; categories: RoleCategory[];
-  skills: Array<Record<string, unknown>>; mcpServers: Array<Record<string, unknown>>; trustedProjects: Array<Record<string, unknown>> };
+/** A supporting file beside a skill's generated SKILL.md; bytes travel as canonical base64. */
+export type RoleSkillFile = { path: string; contentBase64: string };
+/** A Role-owned skill. Its name and description become SKILL.md frontmatter, so both reach Bots. */
+export type RoleSkill = { id: string; name: string; description: string; body: string; files: RoleSkillFile[]; enabled: boolean };
+export type RoleMcpDefinition =
+  | { type: "http"; url: string; bearerTokenEnvVar?: string; httpHeaders?: Record<string, string>; envHttpHeaders?: Record<string, string> }
+  | { type: "stdio"; command: string; args: string[]; env?: Record<string, string>; envVars?: string[] };
+/** An additional MCP server for new Bot launches; its description is for people only. */
+export type RoleMcpServer = { id: string; name: string; description: string; definition: RoleMcpDefinition; enabled: boolean };
+/** A canonical project root whose project config Bots launched inside it may load. */
+export type RoleTrustedProject = { id: string; path: string; description: string; enabled: boolean };
+/** `role_snapshot`: one revision covers instructions, skills, MCP servers and trusted projects. */
+export type RoleSnapshot = { revision: number; categories: RoleCategory[]; skills: RoleSkill[]; mcpServers: RoleMcpServer[]; trustedProjects: RoleTrustedProject[] };
 /** `role_preview`: the exact SYSTEM_APPEND.md text for the next launch, with each fragment's [start, end) span. */
 export type RolePreview = { revision: number; rendered: string; bytes: number; limitBytes: number;
   segments: Array<{ categoryId: string; fragmentId: string; start: number; end: number }> };
@@ -444,6 +454,20 @@ export type NotificationCounts = { open: number; total: number; sources: Array<{
 /** The Inbox's view of `notification_list`: which filter it shows and the pages loaded so far. */
 export type NotificationFilter = { dismissed?: boolean; source?: string };
 export type NotificationPages = { filter: NotificationFilter; entries: Notification[]; nextCursor: number | null };
+/** `role_launch_preview`: what the next launch receives besides instructions, matched against given working directories. */
+export type RoleLaunchPreview = {
+  revision: number;
+  instructions: { bytes: number; limitBytes: number; fragments: number };
+  skills: Array<{ id: string; name: string; description: string; files: number; bytes: number }>;
+  internalMcpServers: string[];
+  mcpServers: Array<{ id: string; name: string; type: "http" | "stdio" }>;
+  config: string;
+  trustedProjects: Array<{ id: string; path: string }>;
+  cwds: Array<{ cwd: string; path: string | null; trustedProjectIds: string[] }>;
+  issues: Array<{ id: string; name: string; message: string }>;
+  snapshotChars: number;
+  snapshotLimitChars: number;
+};
 
 export type Resource<T> = { data: T | null; error: string | null; at: number | null };
 
@@ -495,6 +519,9 @@ export type NodeRef =
   | { kind: "category"; id: string }
   | { kind: "fragment"; id: string }
   | { kind: "notification"; id: string }
+  | { kind: "skill"; id: string }
+  | { kind: "mcp-server"; id: string }
+  | { kind: "trusted-project"; id: string }
   | { kind: "package"; id: string }
   | { kind: "operation"; id: string; pkg: string };
 

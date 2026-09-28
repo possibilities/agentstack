@@ -5,10 +5,10 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, mkdir, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath } from "@agentstack/api";
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as rolesApi } from "../../roles/dist/api.js";
@@ -23,16 +23,20 @@ const dir = await mkdtemp(join("/tmp", "as-roles-ui-"));
 const evidence = process.env.ROLES_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
 const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
-const passthrough = { parse: (value) => value };
-const bot = (id, roleRevision) => ({ id, state: "running", pid: 321, cwd: "/fixture", url: null, account: null, runningAccount: null, mainThreadId: null,
+// bot-1 runs inside a real project directory so trusted-project matching has something to find.
+const project = join(dir, "project");
+await mkdir(join(project, "src"), { recursive: true });
+const bot = (id, roleRevision, cwd = "/fixture") => ({ id, state: "running", pid: 321, cwd, url: null, account: null, runningAccount: null, mainThreadId: null,
   recoveryIssue: null, roleRevision, settings: null });
 const handlers = {
   owner_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uixUrl: null, inspectorUrl: null }),
-  bot_list: () => ({ bots: [bot("bot-1", 0), bot("bot-2", 5)] }),
+  bot_list: () => ({ bots: [bot("bot-1", 0, join(project, "src")), bot("bot-2", 5)] }),
   bot_defaults_get: () => ({ model: "fixture", reasoningEffort: "medium", sandboxMode: "danger-full-access", approvalPolicy: "never" }),
   voice_status: () => ({ call: null }),
 };
-const fixture = (names) => names.map((name) => ({ name, description: name, input: passthrough, output: passthrough, async call() { return handlers[name](); } }));
+// The gateway lists fixture schemas, so they must be real zod schemas; uix itself has no zod dependency.
+const { z } = await import(pathToFileURL(createRequire(join(root, "packages", "api", "package.json")).resolve("zod")).href);
+const fixture = (names) => names.map((name) => ({ name, description: name, input: z.looseObject({}), output: z.any(), async call() { return handlers[name](); } }));
 async function port() { const server = createServer(); await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve)); const value = server.address().port; await new Promise((resolve) => server.close(resolve)); return value; }
 const sockets = [];
 let websocket, next, browser, roles;
@@ -41,7 +45,13 @@ const rolesCall = (name, args = {}) => socketCall(socketPath("roles", env), "too
 
 try {
   roles = await serveApi({ name: "roles", transport: "socket", env, root });
-  websocket = await serveWebSocket({ env, root, port: 0 });
+  // The gateway admits a connection only when every package it configures is live, so it sees the served ones alone.
+  const gateway = join(dir, "gateway");
+  for (const name of ["roles", "owner", "bots", "api"]) {
+    await mkdir(join(gateway, "packages", name), { recursive: true });
+    await copyFile(join(root, "packages", name, "api.yaml"), join(gateway, "packages", name, "api.yaml"));
+  }
+  websocket = await serveWebSocket({ env, root: gateway, port: 0 });
   const doc = (name, api) => ({ name, packageName: `@agentstack/${name}`, description: `${name} fixture`, events: api?.events?.topics ?? {}, eventScope: null,
     transports: [{ type: "websocket", description: "Isolated fixture", supported: true, subscriptions: true, endpoint: websocket.url }],
     operations: (api?.operations ?? []).map((operation) => ({ name: operation.name, title: operation.annotations?.title ?? null, description: operation.description,
@@ -62,7 +72,7 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_BIN ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });
-  const page = await browser.newPage({ viewport: { width: 1600, height: 1100 }, reducedMotion: "reduce" });
+  const page = await browser.newPage({ viewport: { width: 2000, height: 1100 }, reducedMotion: "reduce" });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(`${origin}/x/roles`);
@@ -202,14 +212,114 @@ try {
   await dialog.waitFor({ state: "hidden" });
   snapshot = await rolesCall("role_snapshot");
   assert.deepEqual(snapshot.categories.flatMap((category) => category.fragments.map((fragment) => fragment.title)), ["Plan before acting", "Plain words"]);
-  await open("Plain words").click();
+
+  // Skills, MCP servers and trusted projects: list windows, the shared editor and the launch preview.
+  const skills = page.locator('[data-window="role-skills"]');
+  const servers = page.locator('[data-window="role-mcp-servers"]');
+  const projects = page.locator('[data-window="role-projects"]');
+  await skills.getByText("No skills", { exact: true }).waitFor();
+  await skills.getByRole("button", { name: "New skill", exact: true }).click();
+  const newSkill = editor.getByRole("form", { name: "New skill" });
+  await newSkill.waitFor();
+  assert.equal(await newSkill.getByLabel("Name", { exact: true }).evaluate((el) => el === document.activeElement), true);
+  await newSkill.getByLabel("Name", { exact: true }).fill("Review Changes");
+  assert.equal(await newSkill.getByLabel("Name", { exact: true }).inputValue(), "review-changes", "names are typed as launch names");
+  assert.equal(await editor.getByRole("button", { name: "Create skill" }).isDisabled(), true, "a description is required");
+  await newSkill.getByLabel(/^Description/).fill("Review a change before reporting it");
+  await newSkill.getByLabel("SKILL.md body", { exact: true }).fill("# Review\n\nRun scripts/check.sh.");
+  await newSkill.getByRole("button", { name: "New text file" }).click();
+  await newSkill.getByLabel("Contents of notes.md").fill("exit 0\n");
+  await newSkill.getByLabel("Path of notes.md").fill("scripts/check.sh");
+  await newSkill.locator('input[type="file"]').setInputFiles({ name: "logo image.png", mimeType: "image/png", buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0xff, 0x00]) });
+  await newSkill.getByText("binary · 6 B").waitFor();
+  await editor.getByRole("button", { name: "Create skill" }).click();
+  await editor.getByRole("form", { name: "Edit skill review-changes" }).waitFor();
+  snapshot = await rolesCall("role_snapshot");
+  assert.deepEqual(snapshot.skills.map((skill) => [skill.name, skill.files.map((file) => file.path)]), [["review-changes", ["scripts/check.sh", "logo-image.png"]]]);
+  assert.equal(Buffer.from(snapshot.skills[0].files[0].contentBase64, "base64").toString(), "exit 0\n");
+  // The preview follows the editor to the launch view.
+  await preview.getByRole("button", { name: /^review-changes/ }).waitFor();
+  await skills.getByRole("button", { name: "review-changes actions" }).click();
+  await page.getByRole("menuitem", { name: "Duplicate" }).click();
+  await editor.getByRole("form", { name: "Edit skill review-changes-copy" }).waitFor();
+  await skills.locator('li[data-node^="skill:"]').filter({ hasText: "review-changes-copy" }).getByRole("button", { name: /^review-changes-copy(?! actions)/ }).focus();
+  await page.keyboard.press("Alt+ArrowUp");
+  for (let attempt = 0; snapshot.skills[0]?.name !== "review-changes-copy" && attempt < 40; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    snapshot = await rolesCall("role_snapshot");
+  }
+  assert.deepEqual(snapshot.skills.map((skill) => skill.name), ["review-changes-copy", "review-changes"]);
+  await skills.getByRole("switch", { name: "review-changes-copy enabled" }).click();
+  await skills.locator('li[data-node^="skill:"]').filter({ hasText: "review-changes-copy" }).getByText("Off", { exact: true }).waitFor();
+
+  // An MCP server cannot take an internal Package API's name; its TOML is shown before saving.
+  await servers.getByRole("button", { name: "New MCP server", exact: true }).click();
+  const newServer = editor.getByRole("form", { name: "New MCP server" });
+  await newServer.getByLabel("Name", { exact: true }).fill("roles");
+  await newServer.getByText("An internal Package API already uses this name").first().waitFor();
+  await newServer.getByLabel("Name", { exact: true }).fill("docs");
+  await newServer.getByLabel("URL", { exact: true }).fill("https://mcp.example.test/docs");
+  await newServer.getByLabel("Bearer token variable · optional").fill("DOCS_TOKEN");
+  await newServer.getByText('bearer_token_env_var = "DOCS_TOKEN"').waitFor();
+  await editor.getByRole("button", { name: "Create server" }).click();
+  const serverForm = editor.getByRole("form", { name: "Edit MCP server docs" });
+  await serverForm.waitFor();
+  await serverForm.getByRole("button", { name: "stdio" }).click();
+  await serverForm.getByLabel("Command line to split").fill(`node "docs server.js" --port 7`);
+  await serverForm.getByRole("button", { name: "Split" }).click();
+  assert.equal(await serverForm.getByLabel("Command", { exact: true }).inputValue(), "node");
+  await serverForm.getByLabel("Name", { exact: true }).press("Meta+s");
+  await editor.getByText("All changes saved", { exact: true }).waitFor();
+  snapshot = await rolesCall("role_snapshot");
+  assert.deepEqual(snapshot.mcpServers[0].definition, { type: "stdio", command: "node", args: ["docs server.js", "--port", "7"] });
+  await preview.getByText('command = "node"', { exact: false }).waitFor();
+  const launch = await rolesCall("role_launch_preview", { cwds: [join(project, "src")] });
+  assert.equal(launch.config, '[mcp_servers.docs]\ncommand = "node"\nargs = ["docs server.js", "--port", "7"]\nenabled = true\n');
+
+  // Trusting a project shows which running Bots launch inside it.
+  await projects.getByRole("button", { name: "Trust a project", exact: true }).click();
+  const newProject = editor.getByRole("form", { name: "New trusted project" });
+  await newProject.getByText("Trust covers the whole project config").waitFor();
+  await newProject.getByLabel("Project root", { exact: true }).fill(project);
+  await editor.getByRole("button", { name: "Trust project" }).click();
+  const canonical = (await rolesCall("role_snapshot")).trustedProjects[0].path;
+  const projectForm = editor.getByRole("form", { name: `Edit trusted project ${canonical}` });
+  await projectForm.waitFor();
+  await projectForm.getByRole("list", { name: "Bots inside this root" }).getByText("bot-1").waitFor();
+  await projects.getByText("1 Bot", { exact: true }).waitFor();
+  await page.screenshot({ path: join(evidence, "roles-resources.png"), animations: "disabled" });
+
+  // Inspecting a skill lists its files by path, not bytes; deleting asks first.
+  await servers.getByRole("button", { name: "docs actions" }).click();
+  await page.getByRole("menuitem", { name: "Inspect record" }).click();
+  await inspector.getByText("Role MCP server", { exact: true }).waitFor();
+  await inspector.getByRole("button", { name: "Edit in Roles" }).click();
+  await page.keyboard.press("Escape");
+  await skills.getByRole("button", { name: "review-changes-copy actions" }).click();
+  await page.getByRole("menuitem", { name: "Delete…" }).click();
+  await dialog.getByText("Delete skill “review-changes-copy”?", { exact: true }).waitFor();
+  await dialog.getByRole("button", { name: "Delete", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+  await projects.getByRole("button", { name: "project actions" }).click();
+  await page.getByRole("menuitem", { name: "Remove…" }).click();
+  await dialog.getByText(`Stop trusting “${canonical}”?`, { exact: true }).waitFor();
+  await dialog.getByRole("button", { name: "Remove", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+  snapshot = await rolesCall("role_snapshot");
+  assert.deepEqual([snapshot.skills.map((skill) => skill.name), snapshot.trustedProjects.length], [["review-changes"], 0]);
+
+  // "Edit in Roles" revealed the server's window; the palette brings the fragment back into view.
+  await page.keyboard.press("Meta+k");
+  await page.getByRole("combobox").fill("role fragment plain");
+  await page.getByRole("option", { name: /Plain words/ }).first().click();
+  await editor.getByRole("form", { name: "Edit Plain words" }).waitFor();
   await page.screenshot({ path: join(evidence, "roles-light.png"), animations: "disabled" });
   await page.emulateMedia({ colorScheme: "dark" });
   await page.screenshot({ path: join(evidence, "roles-dark.png"), animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: join(evidence, "roles-mobile.png"), animations: "disabled" });
   assert.deepEqual(errors, [], "browser has no uncaught application errors");
-  console.log(JSON.stringify({ ok: true, evidence, assertions: "empty states, category and fragment creation, preview order and segments, launch revisions, switches, cross-category drag, keyboard move, drafts, conflict keep-mine, stale-revision rebuild, search, category off, inspector hand-off, palette, delete guard and delete, light/dark/mobile" }, null, 2));
+  console.log(JSON.stringify({ ok: true, evidence, assertions: "empty states, category and fragment creation, preview order and segments, launch revisions, switches, cross-category drag, keyboard move, drafts, conflict keep-mine, stale-revision rebuild, search, category off, inspector hand-off, palette, delete guard and delete, skill files and duplicate/reorder/switch, MCP name guard, TOML and stdio split, trusted-project Bot matching, resource inspect and delete, light/dark/mobile" }, null, 2));
 } catch (error) {
   const page = browser?.contexts()[0]?.pages()[0];
   if (page) await page.screenshot({ path: join(evidence, "failure.png"), animations: "disabled" }).catch(() => undefined);

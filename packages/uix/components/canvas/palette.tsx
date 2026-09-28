@@ -1,6 +1,6 @@
 "use client";
 
-import { BellIcon, BookOpenIcon, BotIcon, CircleCheckIcon, CpuIcon, FilePlusIcon, FolderIcon, FolderPlusIcon, MicIcon, MicOffIcon, PhoneIcon, PhoneOffIcon, RefreshCwIcon, ScrollTextIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
+import { BellIcon, BlocksIcon, BookOpenIcon, BotIcon, CircleCheckIcon, CpuIcon, FilePlusIcon, FolderIcon, FolderLockIcon, FolderPlusIcon, MicIcon, MicOffIcon, PhoneIcon, PhoneOffIcon, PlugIcon, RefreshCwIcon, ScrollTextIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
 import { operationTitle } from "@/lib/stack/catalog";
 import { accountLabels, addableWorkerProviders, pairedWorker, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
@@ -50,7 +50,7 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
   };
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange} title="Jump to" description="Find a bot, account, instruction, notification, process, or operation." className="sm:max-w-lg">
+    <CommandDialog open={open} onOpenChange={onOpenChange} title="Jump to" description="Find a bot, account, Role record, notification, process, or operation." className="sm:max-w-lg">
       <Command loop>
         <CommandInput placeholder="Jump to a bot, account, operation…" />
         <CommandList className="max-h-96">
@@ -108,6 +108,32 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
                 </CommandItem>
               )),
             ])}
+            <CommandItem value="role new skill" disabled={!role.data} onSelect={() => edit({ kind: "new-skill", enabled: true })}><BlocksIcon />New skill</CommandItem>
+            <CommandItem value="role new mcp server" disabled={!role.data} onSelect={() => edit({ kind: "new-mcp-server", enabled: true })}><PlugIcon />New MCP server</CommandItem>
+            <CommandItem value="role trust project" disabled={!role.data} onSelect={() => edit({ kind: "new-trusted-project", enabled: true })}><FolderLockIcon />Trust a project</CommandItem>
+            {role.data?.skills.map((skill) => (
+              <CommandItem key={skill.id} value={`role skill ${skill.name} ${skill.description}`} onSelect={() => edit({ kind: "skill", id: skill.id }, { kind: "skill", id: skill.id })}>
+                <BlocksIcon />
+                <span className="font-mono">{skill.name}</span>
+                <span className="text-xs text-muted-foreground">skill</span>
+                <CommandShortcut className="tracking-normal">{skill.enabled ? "" : "off"}</CommandShortcut>
+              </CommandItem>
+            ))}
+            {role.data?.mcpServers.map((server) => (
+              <CommandItem key={server.id} value={`role mcp server ${server.name} ${server.description}`} onSelect={() => edit({ kind: "mcp-server", id: server.id }, { kind: "mcp-server", id: server.id })}>
+                <PlugIcon />
+                <span className="font-mono">{server.name}</span>
+                <span className="text-xs text-muted-foreground">MCP server</span>
+                <CommandShortcut className="tracking-normal">{server.enabled ? "" : "off"}</CommandShortcut>
+              </CommandItem>
+            ))}
+            {role.data?.trustedProjects.map((project) => (
+              <CommandItem key={project.id} value={`role trusted project ${project.path} ${project.description}`} onSelect={() => edit({ kind: "trusted-project", id: project.id }, { kind: "trusted-project", id: project.id })}>
+                <FolderLockIcon />
+                <span className="truncate font-mono">{project.path}</span>
+                <CommandShortcut className="tracking-normal">{project.enabled ? "" : "off"}</CommandShortcut>
+              </CommandItem>
+            ))}
           </CommandGroup>
           {notices.length ? (
             <CommandGroup heading="Inbox">

@@ -1,33 +1,11 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
-import {
-  CopyPlusIcon,
-  EllipsisIcon,
-  FilePenLineIcon,
-  FolderIcon,
-  PlusIcon,
-  RotateCcwIcon,
-  SaveIcon,
-  ScanSearchIcon,
-  Trash2Icon,
-  TriangleAlertIcon,
-  XIcon,
-} from "lucide-react";
+import { useId, useRef, useState } from "react";
+import { FilePenLineIcon, FolderIcon, PlusIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
-import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -38,8 +16,6 @@ import {
   descriptionLimit,
   draftChanges,
   draftConflicts,
-  editDraft,
-  emptyDraft,
   findCategory,
   findFragment,
   formatBytes,
@@ -52,7 +28,6 @@ import {
   titleLimit,
   utf8Bytes,
   yieldDraft,
-  type Draft,
   type FragmentState,
 } from "@/lib/stack/roles";
 import type { RoleCategory, RoleFragment, RoleSnapshot } from "@/lib/stack/types";
@@ -61,11 +36,9 @@ import { errorMessage } from "./auth-actions";
 import { Empty, Time } from "./primitives";
 import { useStack, useWorkbench } from "./provider";
 import { targetKey, useRoleActions, type RoleTarget } from "./role-actions";
-import { Window } from "./window";
+import { ConflictNotice, EditorFrame, Gone, hintClass, labelClass, RecordMenu, SaveBar, saveKeys, useDraft, useFocusField } from "./role-editor-parts";
+import { McpServerEditor, NewMcpServerEditor, NewProjectEditor, NewSkillEditor, ProjectEditor, SkillEditor } from "./role-resource-editor";
 
-const labelClass = "px-0.5 text-[0.7rem] font-medium text-muted-foreground";
-const hintClass = "px-0.5 text-[0.68rem] text-pretty text-muted-foreground";
-const fieldLabels: Record<string, string> = { title: "title", description: "description", body: "instructions" };
 const blankText = { title: "", description: "", body: "" };
 
 const stateTone: Record<FragmentState, string> = {
@@ -79,51 +52,19 @@ const stateTone: Record<FragmentState, string> = {
 export function RoleEditorWindow() {
   const { role } = useStack();
   const { target } = useRoleActions();
-  if (!target) return <EditorFrame empty><Empty icon={FilePenLineIcon} title={role.data?.categories.length ? "Choose a fragment to edit" : "Nothing to edit yet"} /></EditorFrame>;
+  if (!target) return <EditorFrame empty><Empty icon={FilePenLineIcon} title={role.data?.categories.length ? "Choose a record to edit" : "Nothing to edit yet"} /></EditorFrame>;
   switch (target.kind) {
     case "fragment": return <FragmentEditor key={target.id} id={target.id} />;
     case "category": return <CategoryEditor key={target.id} id={target.id} />;
     case "new-fragment": return <NewFragmentEditor target={target} />;
     case "new-category": return <NewCategoryEditor />;
+    case "skill": return <SkillEditor key={target.id} id={target.id} />;
+    case "mcp-server": return <McpServerEditor key={target.id} id={target.id} />;
+    case "trusted-project": return <ProjectEditor key={target.id} id={target.id} />;
+    case "new-skill": return <NewSkillEditor enabled={target.enabled} />;
+    case "new-mcp-server": return <NewMcpServerEditor enabled={target.enabled} />;
+    case "new-trusted-project": return <NewProjectEditor enabled={target.enabled} />;
   }
-}
-
-function EditorFrame({ subtitle, footer, actions, empty = false, children }: {
-  subtitle?: string; footer?: React.ReactNode; actions?: React.ReactNode; empty?: boolean; children: React.ReactNode;
-}) {
-  const { role, status, endpoints } = useStack();
-  return (
-    <Window id="role-editor" title="Editor" subtitle={subtitle} icon={FilePenLineIcon} accent="roles" status={status.roles} endpoint={endpoints.roles}
-      updatedAt={role.at} error={role.error} footer={footer} actions={actions} empty={empty}>
-      {children}
-    </Window>
-  );
-}
-
-/** Shared text-draft state for one record: current values, conflicts with saved changes, and what a save would send. */
-function useDraft(key: string, saved: Record<string, string>) {
-  const actions = useRoleActions();
-  const draft = actions.drafts[key] ?? emptyDraft;
-  const value = (field: string) => field in draft.values ? draft.values[field] : saved[field] ?? "";
-  return {
-    draft,
-    value,
-    set: (field: string, next: string) => actions.setDraft(key, editDraft(draft, field, next, saved)),
-    conflicts: draftConflicts(draft, saved),
-    changes: draftChanges(draft, saved),
-    clear: () => actions.setDraft(key, null),
-    replace: (next: Draft) => actions.setDraft(key, next),
-  };
-}
-
-/** ⌘S or ⌘Enter saves from anywhere in the form. */
-function saveKeys(save: () => void) {
-  return (event: React.KeyboardEvent) => {
-    if (!(event.metaKey || event.ctrlKey) || event.nativeEvent.isComposing) return;
-    if (event.key.toLowerCase() !== "s" && event.key !== "Enter") return;
-    event.preventDefault();
-    save();
-  };
 }
 
 function TextFields({ id, value, set, body }: { id: string; value(field: string): string; set(field: string, value: string): void; body?: boolean }) {
@@ -162,42 +103,6 @@ function TextFields({ id, value, set, body }: { id: string; value(field: string)
   );
 }
 
-function ConflictNotice({ fields, onKeep, onYield }: { fields: string[]; onKeep(): void; onYield(): void }) {
-  if (!fields.length) return null;
-  return (
-    <Alert className="border-warning/40 bg-warning/5">
-      <TriangleAlertIcon className="text-warning" />
-      <AlertTitle>Changed elsewhere</AlertTitle>
-      <AlertDescription className="flex flex-col gap-2">
-        <span>The saved {fields.map((field) => fieldLabels[field] ?? field).join(" and ")} changed since you started editing. “Keep mine” overwrites it; “Use theirs” drops your edit.</span>
-        <span className="flex flex-wrap gap-1.5">
-          <Button size="xs" variant="outline" onClick={onYield}>Use theirs</Button>
-          <Button size="xs" variant="outline" onClick={onKeep}>Keep mine</Button>
-        </span>
-      </AlertDescription>
-    </Alert>
-  );
-}
-
-function SaveBar({ dirty, conflicts, pending, valid, saveLabel, onSave, onRevert, note }: {
-  dirty: boolean; conflicts: number; pending: boolean; valid: boolean; saveLabel: string; onSave(): void; onRevert?: () => void; note?: React.ReactNode;
-}) {
-  const { status } = useStack();
-  const connected = status.roles === "open";
-  const message = !connected ? "Roles reconnecting" : conflicts ? "Resolve the conflict to save" : !valid ? "A title is required" : dirty ? "Unsaved changes · ⌘S to save" : note ?? "All changes saved";
-  return (
-    <div className="flex items-center gap-1.5 px-1.5">
-      <span role="status" className={cn("min-w-0 flex-1 truncate text-[0.68rem]", dirty && !conflicts ? "text-foreground" : "text-muted-foreground")}>{message}</span>
-      {onRevert ? (
-        <Button size="sm" variant="ghost" disabled={!dirty || pending} onClick={onRevert}><RotateCcwIcon data-icon="inline-start" />Revert</Button>
-      ) : null}
-      <Button size="sm" disabled={!connected || !dirty || !valid || conflicts > 0 || pending} onClick={onSave}>
-        {pending ? <Spinner data-icon="inline-start" /> : <SaveIcon data-icon="inline-start" />}{saveLabel}
-      </Button>
-    </div>
-  );
-}
-
 function StateBadge({ state }: { state: FragmentState }) {
   return <span className={cn("rounded px-1.5 py-px text-[0.64rem] font-medium", stateTone[state])}>{fragmentStateLabel[state]}</span>;
 }
@@ -209,26 +114,6 @@ function Stamps({ record }: { record: { createdAt: number | null; updatedAt: num
     <span className="text-[0.66rem] text-muted-foreground" title={[record.createdAt ? `Created ${new Date(record.createdAt).toLocaleString()}` : null, record.updatedAt ? `Edited ${new Date(record.updatedAt).toLocaleString()}` : null].filter(Boolean).join("\n")}>
       {typeof record.updatedAt === "number" && record.updatedAt !== record.createdAt ? <>Edited <Time at={record.updatedAt} /></> : <>Created <Time at={record.createdAt} /></>}
     </span>
-  );
-}
-
-/** Once a record disappears, say so and offer to keep the unsaved text as something new. */
-function Gone({ kind, draft, onRestore }: { kind: "fragment" | "category"; draft: Draft; onRestore?: () => void }) {
-  const actions = useRoleActions();
-  const { role } = useStack();
-  return (
-    <EditorFrame empty={!role.data}>
-      {role.data ? (
-        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-4 py-6 text-center">
-          <Trash2Icon className="size-5 text-muted-foreground/70" />
-          <p className="text-sm font-medium">This {kind} no longer exists</p>
-          <div className="flex gap-1.5">
-            {Object.keys(draft.values).length && onRestore ? <Button size="sm" variant="outline" onClick={onRestore}><PlusIcon data-icon="inline-start" />Keep my text as new</Button> : null}
-            <Button size="sm" variant="ghost" onClick={() => actions.open(null)}><XIcon data-icon="inline-start" />Close</Button>
-          </div>
-        </div>
-      ) : <Empty icon={FilePenLineIcon} title="Role unavailable" />}
-    </EditorFrame>
   );
 }
 
@@ -255,7 +140,7 @@ function FragmentEditor({ id }: { id: string }) {
       actions.setDraft(key, null);
       actions.open({ kind: "new-fragment", categoryId, enabled: lastSeen.current?.enabled ?? true });
     };
-    return <Gone kind="fragment" draft={draft.draft} onRestore={restore} />;
+    return <Gone noun="fragment" draft={draft.draft} onRestore={restore} />;
   }
 
   const { fragment, category } = found;
@@ -290,7 +175,7 @@ function FragmentEditor({ id }: { id: string }) {
 
   return (
     <EditorFrame subtitle={`fragment · ${category.title}`}
-      footer={<SaveBar dirty={dirty} conflicts={draft.conflicts.length} pending={saving} valid={valid} saveLabel="Save" onSave={save} onRevert={() => { draft.clear(); setError(null); }} />}
+      footer={<SaveBar dirty={dirty} conflicts={draft.conflicts.length} pending={saving} invalid={valid ? null : "A title is required"} saveLabel="Save" onSave={save} onRevert={() => { draft.clear(); setError(null); }} />}
       actions={<RecordMenu label={fragment.title} onInspect={() => select({ kind: "fragment", id })} onDuplicate={duplicate} onDelete={() => actions.confirmDelete({ kind: "fragment", id })} />}>
       <form className="flex flex-col gap-3" aria-label={`Edit ${fragment.title}`} onSubmit={(event) => { event.preventDefault(); save(); }} onKeyDown={saveKeys(save)}>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -348,7 +233,7 @@ function CategoryEditor({ id }: { id: string }) {
       actions.setDraft(key, null);
       actions.open({ kind: "new-category" });
     };
-    return <Gone kind="category" draft={draft.draft} onRestore={restore} />;
+    return <Gone noun="category" draft={draft.draft} onRestore={restore} />;
   }
 
   const { category } = found;
@@ -369,7 +254,7 @@ function CategoryEditor({ id }: { id: string }) {
 
   return (
     <EditorFrame subtitle="category"
-      footer={<SaveBar dirty={dirty} conflicts={draft.conflicts.length} pending={saving} valid={valid} saveLabel="Save" onSave={save} onRevert={() => { draft.clear(); setError(null); }} />}
+      footer={<SaveBar dirty={dirty} conflicts={draft.conflicts.length} pending={saving} invalid={valid ? null : "A title is required"} saveLabel="Save" onSave={save} onRevert={() => { draft.clear(); setError(null); }} />}
       actions={<RecordMenu label={category.title} onInspect={() => select({ kind: "category", id })} onDelete={() => actions.confirmDelete({ kind: "category", id })} />}>
       <form className="flex flex-col gap-3" aria-label={`Edit ${category.title}`} onSubmit={(event) => { event.preventDefault(); save(); }} onKeyDown={saveKeys(save)}>
         <div className="flex items-center gap-1.5">
@@ -423,7 +308,7 @@ function NewFragmentEditor({ target }: { target: Extract<RoleTarget, { kind: "ne
   const connected = status.roles === "open";
   const creating = actions.pending.has(`save:${key}`);
   const valid = draft.value("title").trim().length > 0;
-  useFocusTitle(formId);
+  useFocusField(formId);
 
   const create = () => {
     if (!valid || creating || !connected) return;
@@ -445,7 +330,7 @@ function NewFragmentEditor({ target }: { target: Extract<RoleTarget, { kind: "ne
 
   return (
     <EditorFrame subtitle="new fragment"
-      footer={<SaveBar dirty={connected} conflicts={0} pending={creating} valid={valid && Boolean(category)} saveLabel="Create fragment" onSave={create} note="Not created yet" />}
+      footer={<SaveBar dirty={connected} conflicts={0} pending={creating} invalid={!category ? "Choose a category" : valid ? null : "A title is required"} saveLabel="Create fragment" onSave={create} note="Not created yet" />}
       actions={<Button size="icon-sm" variant="ghost" aria-label="Discard new fragment" onClick={cancel}><XIcon /></Button>}>
       <form className="flex flex-col gap-3" aria-label="New fragment" onSubmit={(event) => { event.preventDefault(); create(); }} onKeyDown={saveKeys(create)}>
         <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 rounded-xl border bg-background/50 px-3 py-2">
@@ -482,7 +367,7 @@ function NewCategoryEditor() {
   const connected = status.roles === "open";
   const creating = actions.pending.has(`save:${key}`);
   const valid = draft.value("title").trim().length > 0;
-  useFocusTitle(formId);
+  useFocusField(formId);
 
   const create = () => {
     if (!valid || creating || !connected) return;
@@ -499,7 +384,7 @@ function NewCategoryEditor() {
 
   return (
     <EditorFrame subtitle="new category"
-      footer={<SaveBar dirty={connected} conflicts={0} pending={creating} valid={valid} saveLabel="Create category" onSave={create} note="Not created yet" />}
+      footer={<SaveBar dirty={connected} conflicts={0} pending={creating} invalid={valid ? null : "A title is required"} saveLabel="Create category" onSave={create} note="Not created yet" />}
       actions={<Button size="icon-sm" variant="ghost" aria-label="Discard new category" onClick={cancel}><XIcon /></Button>}>
       <form className="flex flex-col gap-3" aria-label="New category" onSubmit={(event) => { event.preventDefault(); create(); }} onKeyDown={saveKeys(create)}>
         <p className={hintClass}>Categories group and order fragments. Their names and descriptions are for people; switching one off skips all of its fragments.</p>
@@ -511,27 +396,4 @@ function NewCategoryEditor() {
   );
 }
 
-/** A new record starts with its title focused. */
-function useFocusTitle(formId: string) {
-  useEffect(() => { document.getElementById(`${formId}-title`)?.focus({ preventScroll: true }); }, [formId]);
-}
 
-function RecordMenu({ label, onInspect, onDuplicate, onDelete }: { label: string; onInspect(): void; onDuplicate?: () => void; onDelete(): void }) {
-  const { status } = useStack();
-  const connected = status.roles === "open";
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger render={<Button size="icon-sm" variant="ghost" className="text-muted-foreground" aria-label={`${label} actions`} />}>
-        <EllipsisIcon />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-44">
-        <DropdownMenuGroup>
-          {onDuplicate ? <DropdownMenuItem disabled={!connected} onClick={onDuplicate}><CopyPlusIcon />Duplicate</DropdownMenuItem> : null}
-          <DropdownMenuItem onClick={onInspect}><ScanSearchIcon />Inspect record</DropdownMenuItem>
-        </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem variant="destructive" disabled={!connected} onClick={onDelete}><Trash2Icon />Delete…</DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}

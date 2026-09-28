@@ -9,7 +9,7 @@ export const spaces: { id: SpaceId; title: string; description: string; key: str
   { id: "accounts", title: "Accounts", description: "Accounts, usage limits, and model catalogs", key: "2" },
   { id: "lab", title: "Lab", description: "Experimental windows for tinkering", key: "3" },
   { id: "system", title: "System", description: "Owner, processes, packages, host resources and activity", key: "4" },
-  { id: "roles", title: "Roles", description: "Instructions every new Bot launches with", key: "5" },
+  { id: "roles", title: "Roles", description: "Instructions, skills, MCP servers and trusted projects every new Bot launches with", key: "5" },
   { id: "inbox", title: "Inbox", description: "Notifications to read, answer and dismiss", key: "6" },
 ];
 
@@ -59,6 +59,12 @@ export function homeOf(ref: NodeRef): NodeHome {
       return { kind: "space", space: "roles", window: "role-instructions" };
     case "notification":
       return { kind: "space", space: "inbox", window: "notify-inbox" };
+    case "skill":
+      return { kind: "space", space: "roles", window: "role-skills" };
+    case "mcp-server":
+      return { kind: "space", space: "roles", window: "role-mcp-servers" };
+    case "trusted-project":
+      return { kind: "space", space: "roles", window: "role-projects" };
     case "package":
     case "operation":
       return { kind: "reference" };
@@ -129,7 +135,7 @@ export function parseNodeKey(key: string): NodeRef | null {
     if (dot <= 0 || dot === rest.length - 1) return null;
     return { kind: "operation", pkg: rest.slice(0, dot), id: rest.slice(dot + 1) };
   }
-  if (kind === "access-client" || kind === "access-pairing" || kind === "access-grant" || kind === "access-credential" || kind === "account" || kind === "worker-account" || kind === "worker-catalog" || kind === "usage-account" || kind === "child" || kind === "bot" || kind === "chat" || kind === "category" || kind === "fragment" || kind === "notification" || kind === "package" || kind === "resource" || kind === "process") {
+  if (kind === "access-client" || kind === "access-pairing" || kind === "access-grant" || kind === "access-credential" || kind === "account" || kind === "worker-account" || kind === "worker-catalog" || kind === "usage-account" || kind === "child" || kind === "bot" || kind === "chat" || kind === "category" || kind === "fragment" || kind === "skill" || kind === "mcp-server" || kind === "trusted-project" || kind === "notification" || kind === "package" || kind === "resource" || kind === "process") {
     return { kind, id: rest };
   }
   return null;

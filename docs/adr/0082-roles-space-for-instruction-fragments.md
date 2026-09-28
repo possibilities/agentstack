@@ -1,6 +1,6 @@
 # 82. A Roles space for managing instruction fragments
 
-Status: accepted, 2026-09-26. Adds a fifth Canvas space to the open bench of
+Status: accepted, 2026-09-26; extended by [ADR 0098](0098-roles-space-for-launch-resources.md), which gives skills, MCP servers and trusted projects their UI. Adds a fifth Canvas space to the open bench of
 [ADR 0058](0058-open-bench-and-global-tools.md). Gives the single Role of
 [ADR 0030](0030-single-role-package.md) its first editing UI, and extends its
 fragment operations from [ADR 0027](0027-default-capabilities-bundle.md). Role

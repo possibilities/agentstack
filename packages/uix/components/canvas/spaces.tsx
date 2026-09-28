@@ -1,6 +1,6 @@
 "use client";
 
-import { BellIcon, BotIcon, ChartLineIcon, CpuIcon, FilePenLineIcon, FileTextIcon, FlaskConicalIcon, KeyRoundIcon, GaugeIcon, InboxIcon, ListTreeIcon, MegaphoneIcon, PackageIcon, RadioIcon, ScanLineIcon, ScrollTextIcon, ServerIcon, SparklesIcon, SquareTerminalIcon, UserCogIcon } from "lucide-react";
+import { BellIcon, BlocksIcon, BotIcon, ChartLineIcon, CpuIcon, FilePenLineIcon, FileTextIcon, FlaskConicalIcon, FolderLockIcon, GaugeIcon, InboxIcon, KeyRoundIcon, ListTreeIcon, MegaphoneIcon, PackageIcon, PlugIcon, RadioIcon, ScanLineIcon, ScrollTextIcon, ServerIcon, SparklesIcon, SquareTerminalIcon, UserCogIcon } from "lucide-react";
 import type { ChatWindows } from "@/lib/stack/chat-windows";
 import type { SpaceId } from "@/lib/stack/spaces";
 import type { StackState } from "@/lib/stack/store";
@@ -16,6 +16,7 @@ import { ChatWindow } from "./chat-window";
 import { RoleEditorWindow } from "./role-editor";
 import { RoleInstructionsWindow } from "./role-instructions";
 import { RolePreviewWindow } from "./role-preview";
+import { RoleMcpServersWindow, RoleProjectsWindow, RoleSkillsWindow } from "./role-resources";
 import { AccessWindow } from "./access-window";
 import { InboxWindow, NotificationWindow } from "./notify-windows";
 
@@ -87,6 +88,9 @@ export const spaceViews: Record<SpaceId, {
       { id: "role-instructions", title: "Instructions", icon: ScrollTextIcon, accent: "roles", width: 440, height: 720, column: 0, element: <RoleInstructionsWindow /> },
       { id: "role-editor", title: "Editor", icon: FilePenLineIcon, accent: "roles", width: 520, height: 760, column: 1, element: <RoleEditorWindow /> },
       { id: "role-preview", title: "Preview", icon: FileTextIcon, accent: "roles", width: 460, height: 720, column: 2, element: <RolePreviewWindow /> },
+      { id: "role-skills", title: "Skills", icon: BlocksIcon, accent: "roles", width: 400, height: 300, column: 3, element: <RoleSkillsWindow /> },
+      { id: "role-mcp-servers", title: "MCP servers", icon: PlugIcon, accent: "roles", width: 400, height: 280, column: 3, element: <RoleMcpServersWindow /> },
+      { id: "role-projects", title: "Trusted projects", icon: FolderLockIcon, accent: "roles", width: 400, height: 240, column: 3, element: <RoleProjectsWindow /> },
     ],
   },
   inbox: {

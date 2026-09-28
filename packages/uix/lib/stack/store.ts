@@ -2,7 +2,7 @@ import { loadCatalog } from "./catalog";
 import type { AccessSnapshot } from "./types";
 import { Channel } from "./channel";
 import { loadResources, mergeHistory } from "./resources";
-import type { Account, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, OwnerResources, OwnerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RolePreview, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
+import type { Account, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, OwnerResources, OwnerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RoleLaunchPreview, RolePreview, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
 
 export type StackState = Snapshot & {
   access: Resource<AccessSnapshot>;
@@ -31,6 +31,8 @@ export type StackState = Snapshot & {
   notifyCounts: Resource<NotificationCounts>;
   /** Latest known record per notification ID, from any page, read or write. */
   notificationRecords: Record<string, Notification>;
+  /** What the next launch receives besides instructions, matched against every known Bot working directory. */
+  roleLaunch: Resource<RoleLaunchPreview>;
 };
 
 export type StackConnections = { packages?: readonly string[]; scopedBots?: boolean };
@@ -45,7 +47,7 @@ function isWorkerLoginState(value: unknown): value is WorkerLogin {
   return typeof value === "object" && value !== null && "status" in value && "account" in value && "provider" in value && "needsCode" in value;
 }
 
-type ResourceKey = "access" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "role" | "rolePreview" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts";
+type ResourceKey = "access" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "role" | "rolePreview" | "roleLaunch" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts";
 
 const inferPage = 20;
 /** notification_list's maximum page size. */
@@ -60,6 +62,11 @@ function isRoleSnapshot(value: unknown): value is RoleSnapshot {
 }
 
 const maxEvents = 250;
+
+/** Distinct absolute Bot working directories, newline-joined so a change is one string comparison. */
+function botCwds(bots: Bot[] | null): string {
+  return [...new Set((bots ?? []).map((bot) => bot.cwd).filter((cwd) => typeof cwd === "string" && cwd.startsWith("/")))].sort().slice(0, 64).join("\n");
+}
 
 export class StackStore {
   private state: StackState;
@@ -90,6 +97,7 @@ export class StackStore {
       inferRequests: { data: null, error: null, at: null }, inferModels: { data: null, error: null, at: null },
       notificationFilter: { dismissed: false }, notifications: { data: null, error: null, at: null },
       notifyCounts: { data: null, error: null, at: null }, notificationRecords: {},
+      roleLaunch: { data: null, error: null, at: null },
     };
     this.serverState = this.state;
     for (const account of snapshot.workerAccounts.data ?? []) if (this.catalogAccountAvailable(account.id)) this.catalogAvailable.add(account.id);
@@ -152,7 +160,8 @@ export class StackStore {
     open("infer", () => { this.refresh("inferRequests"); this.refresh("inferModels"); }, () => {
       this.refresh("inferRequests"); this.refresh("inferModels");
     }, ["infer_changed"]);
-    open("roles", () => { this.refresh("role"); this.refresh("rolePreview"); }, () => { this.refresh("role"); this.refresh("rolePreview"); }, ["role_changed"]);
+    const roleReads = () => { this.refresh("role"); this.refresh("rolePreview"); this.refresh("roleLaunch"); };
+    open("roles", roleReads, roleReads, ["role_changed"]);
     const notify = () => { this.refresh("notifications"); this.refresh("notifyCounts"); this.refreshWatchedNotifications(); };
     open("notify", notify, notify, ["notify_changed"]);
     open("api", () => this.refresh("catalog"));
@@ -195,6 +204,7 @@ export class StackStore {
     if (pkg === "roles" && isRoleSnapshot(result) && result.revision >= (this.state.role?.data?.revision ?? -1)) {
       this.set({ role: { data: result, error: null, at: Date.now() } });
       this.refresh("rolePreview");
+      this.refresh("roleLaunch");
     }
     return result;
   };
@@ -420,7 +430,8 @@ export class StackStore {
       .then((data) => ({ data, error: null, at: Date.now() }), (error: Error) => ({ data: this.state[key]?.data ?? null, error: error.message, at: Date.now() }))
       .then((next) => {
         // A read that started before a write it lost the race to must not roll the Role back.
-        const newer = (key === "role" || key === "rolePreview") && (this.state[key]?.data as { revision: number } | null)?.revision;
+        const newer = (key === "role" || key === "rolePreview" || key === "roleLaunch") && (this.state[key]?.data as { revision: number } | null)?.revision;
+        const cwds = key === "bots" ? botCwds(this.state.bots.data) : "";
         if (typeof newer === "number" && next.data && (next.data as { revision: number }).revision < newer) return;
         // Pages for a filter the Inbox has since left are dropped; the follow-up read serves the new one.
         if (key === "notifications" && next.data && (next.data as NotificationPages).filter !== this.state.notificationFilter) { this.dirty.add(key); return; }
@@ -429,6 +440,8 @@ export class StackStore {
         if (key === "login") this.reconcileAttempt();
         if (key === "workerLogins") this.reconcileWorkerAttempts();
         if (key === "bots") this.reconcileScoped();
+        // Trusted project matches depend on where Bots run.
+        if (key === "bots" && botCwds(this.state.bots.data) !== cwds) this.refresh("roleLaunch");
         if (key === "workerAccounts") this.reconcileCatalogs(true);
       })
       .finally(() => {
@@ -458,6 +471,7 @@ export class StackStore {
       case "voice": return call<{ call: VoiceCall | null }>("bots", "voice_status").then((result) => result.call);
       case "role": return call<RoleSnapshot>("roles", "role_snapshot");
       case "rolePreview": return call<RolePreview>("roles", "role_preview");
+      case "roleLaunch": return call<RoleLaunchPreview>("roles", "role_launch_preview", { cwds: botCwds(this.state.bots.data).split("\n").filter(Boolean) });
       case "usage": return call<UsageSnapshot>("usage", "usage_snapshot");
       case "catalog": return loadCatalog((name, args) => call<never>("api", name, args)) as Promise<PackageDoc[]>;
       case "inferRequests": return call<{ requests: InferRequestSummary[] }>("infer", "infer_request_list", { limit: inferPage }).then((result) => result.requests);

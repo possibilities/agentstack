@@ -157,7 +157,7 @@ test("the api package serves structured documents for every workspace package", 
     const roles = found.get("roles") as PackageDoc;
     assert.deepEqual(Object.keys(roles.events), ["role_changed"]);
     assert.deepEqual(roles.operations.map((operation) => operation.name).sort(), [
-      "role_preview", "role_snapshot", "category_create", "category_delete", "category_reorder", "category_update",
+      "role_preview", "role_launch_preview", "role_snapshot", "category_create", "category_delete", "category_reorder", "category_update",
       "fragment_create", "fragment_delete", "fragment_move", "fragment_reorder", "fragment_update",
       "skill_create", "skill_delete", "skill_reorder", "skill_update",
       "mcp_server_create", "mcp_server_delete", "mcp_server_reorder", "mcp_server_update",

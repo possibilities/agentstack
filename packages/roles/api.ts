@@ -1,8 +1,10 @@
+import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { z } from "zod";
-import { configuredMcpPackages, operation, workspaceRoot, type PackageApi } from "@agentstack/api";
-import { RoleStore, instructionLimitBytes, renderSegments } from "./src/store.js";
+import { configuredMcpPackages, mcpPort, operation, workspaceRoot, type PackageApi } from "@agentstack/api";
+import { matchingProjects, ownerMcpOrigins, roleMcpConfig, roleMcpConflict } from "./src/bundle.js";
+import { RoleStore, instructionLimitBytes, renderSegments, snapshotLimitChars } from "./src/store.js";
 import { mcpDefinition, mcpRecord, projectPath, resourceName, resourceDescription, skillBody, skillFiles, skillRecord, trustedProjectRecord } from "./src/resources.js";
 
 const id = z.uuid().describe("Stable Role record ID.");
@@ -21,12 +23,34 @@ const segment = z.strictObject({ categoryId: id, fragmentId: id,
 const preview = z.strictObject({ revision, rendered: z.string(), segments: z.array(segment),
   bytes: z.number().int().nonnegative().describe("UTF-8 size of rendered."), limitBytes: z.number().int().positive().describe("Largest rendered size an edit may produce.") });
 const write = z.strictObject({ expectedRevision: revision });
+const count = z.number().int().nonnegative();
+const launchPreview = z.strictObject({
+  revision,
+  instructions: z.strictObject({ bytes: count.describe("UTF-8 size of SYSTEM_APPEND.md."), limitBytes: count, fragments: count.describe("Fragments that render.") }),
+  skills: z.array(z.strictObject({ id, name: resourceName, description: resourceDescription, files: count.describe("Supporting files beside SKILL.md."),
+    bytes: count.describe("Decoded size of the body and supporting files.") })).describe("Enabled role skills in order; each becomes skills/<name>/SKILL.md."),
+  internalMcpServers: z.array(z.string()).describe("Owner-provided Package API MCP servers every Bot receives; each launch binds their URLs to that Bot."),
+  mcpServers: z.array(z.strictObject({ id, name: resourceName, type: z.enum(["http", "stdio"]) })).describe("Enabled role MCP servers in order."),
+  config: z.string().describe("The config.toml tables the Role contributes for its enabled MCP servers, exactly as launches write them."),
+  trustedProjects: z.array(z.strictObject({ id, path: projectPath })).describe("Enabled trusted project roots in order."),
+  cwds: z.array(z.strictObject({
+    cwd: z.string().describe("The working directory as given."),
+    path: z.string().nullable().describe("Its canonical path, or null when it does not exist."),
+    trustedProjectIds: z.array(id).describe("Enabled trusted projects whose root contains it; a launch there trusts each."),
+  })).describe("Each requested working directory, matched against trusted project roots."),
+  issues: z.array(z.strictObject({ id, name: resourceName, message: z.string() })).describe("Enabled role MCP servers that would stop every Bot launch until changed or disabled."),
+  snapshotChars: count.describe("JSON size of role_snapshot."),
+  snapshotLimitChars: count.describe("Largest role_snapshot JSON size a write may leave behind."),
+});
 
-export type RolesContext = { store: RoleStore; changed?: () => void };
+export type RolesContext = { store: RoleStore; changed?: () => void; mcpOrigins?: readonly string[] };
 function changed(ctx: RolesContext, result: z.infer<typeof snapshot>) { ctx.changed?.(); return result; }
-async function ensureAdditionalMcpName(name: string): Promise<void> {
-  const internal = await configuredMcpPackages(workspaceRoot(import.meta.dirname));
-  if (internal.some((pkg) => pkg.name === name)) throw new Error(`role MCP server ${name} collides with an internal Package API`);
+const internalMcpNames = async () => (await configuredMcpPackages(workspaceRoot(import.meta.dirname))).map((pkg) => pkg.name);
+/** Refuse a role MCP server a launch would refuse, whether or not it is enabled now. */
+async function ensureRoleMcp(ctx: RolesContext, name?: string, definition?: z.infer<typeof mcpDefinition>): Promise<void> {
+  const origins = new Set(ctx.mcpOrigins ?? []);
+  if (name && (await internalMcpNames()).some((internal) => internal.toLowerCase() === name.toLowerCase())) throw new Error(`role MCP server ${name} collides with an internal Package API`);
+  if (definition?.type === "http" && origins.has(new URL(definition.url).origin)) throw new Error("role MCP server URL cannot alias the internal MCP listener");
 }
 
 export const roleSnapshot = operation({
@@ -41,6 +65,41 @@ export const rolePreview = operation({
     const value = ctx.store.snapshot();
     const { rendered, segments } = renderSegments(value);
     return { revision: value.revision, rendered, segments, bytes: Buffer.byteLength(rendered), limitBytes: instructionLimitBytes };
+  },
+});
+export const roleLaunchPreview = operation({
+  name: "role_launch_preview", description: "Preview what the next Bot launch receives from the role besides its instructions: enabled skills, MCP servers and their config.toml, trusted project roots matched against given working directories, and anything that would stop a launch.",
+  input: z.strictObject({ cwds: z.array(z.string().max(4_096).refine(isAbsolute, "working directory must be an absolute path")).max(64).optional()
+    .describe("Working directories to match against trusted project roots, such as each Bot's cwd.") }),
+  output: launchPreview, annotations: { title: "Preview role launch", readOnlyHint: true },
+  async call(ctx: RolesContext, { cwds = [] }) {
+    const value = ctx.store.snapshot();
+    const { rendered, segments } = renderSegments(value);
+    const internal = await internalMcpNames();
+    const ownerNames = new Set(internal.map((name) => name.toLowerCase()));
+    const origins = new Set(ctx.mcpOrigins ?? []);
+    const issues = value.mcpServers.flatMap((server) => {
+      const message = roleMcpConflict(server, ownerNames, origins);
+      return message ? [{ id: server.id, name: server.name, message }] : [];
+    });
+    const enabledProjects = value.trustedProjects.filter((project) => project.enabled);
+    return {
+      revision: value.revision,
+      instructions: { bytes: Buffer.byteLength(rendered), limitBytes: instructionLimitBytes, fragments: segments.length },
+      skills: value.skills.filter((skill) => skill.enabled).map((skill) => ({ id: skill.id, name: skill.name, description: skill.description, files: skill.files.length,
+        bytes: Buffer.byteLength(skill.body) + skill.files.reduce((sum, file) => sum + Buffer.from(file.contentBase64, "base64").length, 0) })),
+      internalMcpServers: internal,
+      mcpServers: value.mcpServers.filter((server) => server.enabled).map((server) => ({ id: server.id, name: server.name, type: server.definition.type })),
+      config: roleMcpConfig(value),
+      trustedProjects: enabledProjects.map((project) => ({ id: project.id, path: project.path })),
+      cwds: await Promise.all([...new Set(cwds)].map(async (cwd) => {
+        const path = await realpath(cwd).catch(() => null);
+        return { cwd, path, trustedProjectIds: path ? matchingProjects(value, path).map((project) => project.id) : [] };
+      })),
+      issues,
+      snapshotChars: JSON.stringify(value).length,
+      snapshotLimitChars,
+    };
   },
 });
 export const categoryCreate = operation({
@@ -122,7 +181,7 @@ export const mcpServerCreate = operation({
   input: write.extend({ name: resourceName, description: resourceDescription, definition: mcpDefinition, enabled: z.boolean().optional() }),
   output: snapshot, annotations: { title: "Create role MCP server" },
   async call(ctx: RolesContext, input) {
-    await ensureAdditionalMcpName(input.name);
+    await ensureRoleMcp(ctx, input.name, input.definition);
     return changed(ctx, ctx.store.createMcpServer(input.expectedRevision, input.name, input.description, input.definition, input.enabled));
   },
 });
@@ -131,7 +190,7 @@ export const mcpServerUpdate = operation({
   input: write.extend({ id, name: resourceName.optional(), description: resourceDescription.optional(), definition: mcpDefinition.optional(), enabled: z.boolean().optional() }),
   output: snapshot, annotations: { title: "Update role MCP server" },
   async call(ctx: RolesContext, { id, expectedRevision, ...fields }) {
-    if (fields.name) await ensureAdditionalMcpName(fields.name);
+    await ensureRoleMcp(ctx, fields.name, fields.definition);
     return changed(ctx, ctx.store.updateMcpServer(expectedRevision, id, fields));
   },
 });
@@ -172,7 +231,7 @@ export const projectReorder = operation({
 export const topics = { role_changed: "The role was edited. Read role_snapshot after (re)subscribing." } as const;
 
 export const api: PackageApi<RolesContext, keyof typeof topics> = {
-  operations: [roleSnapshot, rolePreview, categoryCreate, categoryUpdate, categoryDelete, categoryReorder,
+  operations: [roleSnapshot, rolePreview, roleLaunchPreview, categoryCreate, categoryUpdate, categoryDelete, categoryReorder,
     fragmentCreate, fragmentUpdate, fragmentDelete, fragmentReorder, fragmentMove, skillCreate, skillUpdate, skillDelete, skillReorder,
     mcpServerCreate, mcpServerUpdate, mcpServerDelete, mcpServerReorder,
     projectCreate, projectUpdate, projectDelete, projectReorder],
@@ -180,6 +239,10 @@ export const api: PackageApi<RolesContext, keyof typeof topics> = {
     topics,
     start(ctx, publish) { ctx.changed = () => publish("role_changed"); return () => { ctx.changed = undefined; }; },
   },
-  async createContext(env) { return { store: new RoleStore(env.AGENTSTACK_STATE_DIR ?? join(homedir(), ".local", "state", "agentstack")) }; },
+  async createContext(env) {
+    // The owner serves MCP on its configured port; Bots also report the bound one.
+    const ports = [mcpPort(env), Number(env.AGENTSTACK_OWNER_MCP_PORT)].filter((port) => Number.isInteger(port) && port > 0);
+    return { store: new RoleStore(env.AGENTSTACK_STATE_DIR ?? join(homedir(), ".local", "state", "agentstack")), mcpOrigins: ports.flatMap(ownerMcpOrigins) };
+  },
   async closeContext(ctx) { ctx.store.close(); },
 };
