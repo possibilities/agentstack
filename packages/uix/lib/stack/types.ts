@@ -578,6 +578,38 @@ export type ScrapeCanaryStatus = "pass" | "drift" | "operational_failure" | "not
 export type ScrapeCanaryRun = { checked_at: string; results: Array<{ preset: string; status: ScrapeCanaryStatus; detail: string }> };
 export type ScrapeReplay = { passed: number; failed: number; lines: string[] };
 
+/** A durable Browser profile from `browser_profile_list`. `observation` follows the visible tab; its delivery is never verified. */
+export type BrowserProfile = {
+  id: string; botId: string | null; label: string; default: boolean; createdAt: string;
+  state: "starting" | "ready" | "recovering" | "failed"; error: string | null; observedAt: string | null; cdpUrl: string | null;
+  observation: { url: string; udpPort: number; follows: "visible-tab"; verified: false } | null;
+};
+/** A controller's selection and last confirmed binding. `connected` is a timestamped observation, never liveness; `unknown` never asserts attachment. */
+export type BrowserController = {
+  botId: string; instance: string; session: string; profileId: string; actualProfileId: string | null; targetId: string | null; cdpUrl: string | null;
+  state: "connecting" | "connected" | "disconnected" | "unknown"; revision: number; observedAt: string | null; error: string | null;
+};
+/** A durable Browser handoff. `issue` is a runtime problem separate from the human outcome; completed is a report, not verification. */
+export type BrowserHandoff = {
+  id: string; profileId: string; botId: string; threadId: string; instance: string; requestId: string;
+  targetId: string | null; targetStatus: "unspecified" | "present" | "missing" | "unknown"; message: string;
+  state: "preparing" | "awaiting_human" | "human_controlling" | "returning" | "resolved";
+  outcome: "completed" | "skipped" | "cancelled" | null; note: string | null;
+  revision: number; createdAt: string; resolvedAt: string | null; issue: string | null; quiesced: boolean;
+};
+/** `browser_handoff_take` / `browser_handoff_finish`. `controlUrl` is a human input grant: keep it in memory only. */
+export type BrowserHandoffAction = { handoff: BrowserHandoff; controlUrl: string | null };
+/** `browser_status`: provider policy and counts; it does not probe Hypeman or promise launch capacity. */
+export type BrowserStatus = { provider: "hypeman"; mode: "durable"; sessions: number; profiles: number };
+/** `agent_browser_status`: the managed installation and its update observation. */
+export type AgentBrowserStatus = {
+  installed: boolean; version: string | null; location: string | null; latest: string | null; pending: string | null;
+  checkedAt: string | null; checkError: string | null; policy: "manual" | "automatic";
+};
+export type AgentBrowserInstallation = { location: string; version: string | null; source: "agentstack" | "agentstart" };
+export type HypemanInstallation = { root: string; installed: boolean; selected: boolean; source: "agentstack" | "legacy" | "custom"; running: boolean; issue: string | null };
+export type BrowserToolchain = { status: BrowserStatus; agentBrowser: AgentBrowserStatus; detected: AgentBrowserInstallation[]; hypeman: HypemanInstallation[] };
+
 export type Snapshot = {
   owner: Resource<OwnerStatus>;
   resources: Resource<OwnerResources>;
@@ -642,6 +674,8 @@ export type NodeRef =
   | { kind: "attention-item" | "attention-message" | "attention-run"; id: string }
   /** A Scrape extraction preset by name, and a scrape-to-file job by its `scrape_queue_list` ID. */
   | { kind: "preset" | "scrape-job"; id: string }
+  /** Browse records: a profile and a handoff by ID, a controller by `botId/instance/session`, and a viewer window by window ID. */
+  | { kind: "browser-profile" | "browser-handoff" | "browser-controller" | "browser-viewer"; id: string }
   | { kind: "package"; id: string }
   | { kind: "operation"; id: string; pkg: string }
   /** Content records: a Vault document by slug, a collection by slug, an item by stable ID, an Artifact by name. */

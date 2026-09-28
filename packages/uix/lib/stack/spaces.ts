@@ -1,9 +1,10 @@
 import { accountLabels, workerAccountLabels } from "./derive";
 import { workerAttention, workerLabel } from "./workers";
+import { browseAttention } from "./browse";
 import type { StackState } from "./store";
 import { nodeKey, type NodeRef } from "./types";
 
-export type SpaceId = "fleet" | "accounts" | "lab" | "system" | "roles" | "inbox" | "signal" | "content" | "workers" | "scrape";
+export type SpaceId = "fleet" | "accounts" | "lab" | "system" | "roles" | "inbox" | "signal" | "content" | "workers" | "scrape" | "browse";
 
 export const spaces: { id: SpaceId; title: string; description: string; key: string }[] = [
   { id: "fleet", title: "Fleet", description: "Bots and their controls", key: "1" },
@@ -16,6 +17,8 @@ export const spaces: { id: SpaceId; title: string; description: string; key: str
   { id: "content", title: "Content", description: "Vault documents, collections, files and Artifacts", key: "8" },
   { id: "workers", title: "Workers", description: "What Workers started by Bots are doing, read-only", key: "9" },
   { id: "scrape", title: "Scrape", description: "Extraction, feeds, presets and their health, and the scrape-to-file queue", key: "0" },
+  // The digits are taken; b is free on the bench.
+  { id: "browse", title: "Browse", description: "Bot browser profiles, human handoffs and the browser toolchain", key: "b" },
 ];
 
 export const defaultSpace: SpaceId = "fleet";
@@ -95,6 +98,14 @@ export function homeOf(ref: NodeRef): NodeHome {
       return { kind: "space", space: "scrape", window: "scrape-presets" };
     case "scrape-job":
       return { kind: "space", space: "scrape", window: "scrape-queue" };
+    case "browser-profile":
+      return { kind: "space", space: "browse", window: "browse-profiles" };
+    case "browser-handoff":
+      return { kind: "space", space: "browse", window: "browse-handoffs" };
+    case "browser-controller":
+      return { kind: "space", space: "browse", window: "browse-controllers" };
+    case "browser-viewer":
+      return { kind: "space", space: "browse", window: ref.id };
     case "package":
     case "operation":
       return { kind: "reference" };
@@ -115,8 +126,8 @@ export function parseSpacePath(pathname: string): SpaceId | null {
 }
 
 /** Human-readable reasons each space needs attention; an empty list means all quiet. Only "closed" channels count — idle and connecting are normal. */
-export function spaceAttention(state: Pick<StackState, "status" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerSessions" | "workerRuntimes" | "bots" | "attempt" | "catalog" | "endpoints" | "notifyCounts" | "signalStatus"> & Partial<Pick<StackState, "contentUploads" | "scrapeStatus">>): Record<SpaceId | "api", string[]> {
-  const attention: Record<SpaceId | "api", string[]> = { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], api: [] };
+export function spaceAttention(state: Pick<StackState, "status" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerSessions" | "workerRuntimes" | "bots" | "attempt" | "catalog" | "endpoints" | "notifyCounts" | "signalStatus"> & Partial<Pick<StackState, "contentUploads" | "scrapeStatus" | "browserHandoffs" | "browserProfiles" | "browserToolchain">>): Record<SpaceId | "api", string[]> {
+  const attention: Record<SpaceId | "api", string[]> = { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], api: [] };
   for (const bot of state.bots.data ?? []) if (bot.recoveryIssue) attention.fleet.push(`${bot.id} needs inspection`);
   const labels = accountLabels(state.accounts.data);
   for (const account of state.accounts.data ?? []) if (account.removing) attention.accounts.push(`${labels.get(account.id) ?? account.id} removal unfinished`);
@@ -151,6 +162,8 @@ export function spaceAttention(state: Pick<StackState, "status" | "owner" | "res
   if (state.status.scrape === "closed") attention.scrape.push("scrape reconnecting");
   // Other optional tools affect narrower routes; the Status window lists them without raising attention.
   if (state.scrapeStatus?.data && !state.scrapeStatus.data.browser) attention.scrape.push("Browser runtime unavailable");
+  if (state.status.browse === "closed") attention.browse.push("browse reconnecting");
+  attention.browse.push(...browseAttention(state.browserHandoffs?.data ?? null, state.browserProfiles?.data ?? null, state.browserToolchain?.data ?? null));
   for (const name of ["auth", "usage", "worker"] as const) if (state.status[name] === "closed") attention.accounts.push(`${name} reconnecting`);
   for (const child of state.owner.data?.children ?? []) if (!child.running) attention.system.push(`${child.name} stopped`);
   if (state.status.owner === "closed") attention.system.push("owner reconnecting");
@@ -192,5 +205,6 @@ export function parseNodeKey(key: string): NodeRef | null {
   if (kind === "document" || kind === "collection" || kind === "item" || kind === "artifact") return { kind, id: rest };
   if (kind === "worker" || kind === "worker-runtime" || kind === "worker-window") return { kind, id: rest };
   if (kind === "preset" || kind === "scrape-job") return { kind, id: rest };
+  if (kind === "browser-profile" || kind === "browser-handoff" || kind === "browser-controller" || kind === "browser-viewer") return { kind, id: rest };
   return null;
 }

@@ -39,6 +39,16 @@ const forwardTimeouts = new Map([
   // Canaries and queue processing run sequential live extractions.
   ["scrape/scrape_presets_check", 600_000],
   ["scrape/scrape_queue_process", 600_000],
+  // Take drains, activates the tab and grants input; finish also closes each bound controller (65s each).
+  ["browse/browser_handoff_take", 60_000],
+  ["browse/browser_handoff_finish", 180_000],
+  ["browse/browser_profile_delete", 60_000],
+  // npm install is bounded at 180s; an automatic-policy check may install.
+  ["browse/agent_browser_check_updates", 200_000],
+  ["browse/agent_browser_install", 200_000],
+  ["browse/agent_browser_update_accept", 200_000],
+  // Download (180s) plus verification and extraction.
+  ["browse/hypeman_install", 300_000],
 ]);
 
 export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: string; port?: number;

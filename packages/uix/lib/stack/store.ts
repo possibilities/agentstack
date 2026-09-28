@@ -7,6 +7,7 @@ import { stageBytes, StageStalled } from "./content-upload";
 import type { ContentArtifact, ContentCollection, ContentDocument, ContentItem, ContentItemPage, ContentItemScope, ContentLibrary, ContentTag, ContentUpload } from "./types";
 import { scrapeCallError } from "./scrape";
 import type { ScrapeCanaryRun, ScrapePreset, ScrapeQueue, ScrapeReplay, ScrapeStatus } from "./types";
+import type { AgentBrowserInstallation, AgentBrowserStatus, BrowserController, BrowserHandoff, BrowserProfile, BrowserStatus, BrowserToolchain, HypemanInstallation } from "./types";
 import type { Account, AttentionItem, AttentionMessage, AttentionPage, AttentionRun, AttentionStatus, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, OwnerResources, OwnerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RoleLaunchPreview, RolePreview, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerLogin, WorkerRuntime, WorkerSession, WorkerStatus } from "./types";
 
 export type StackState = Snapshot & {
@@ -73,6 +74,11 @@ export type StackState = Snapshot & {
   scrapeChecks: { canary: ScrapeCheck<ScrapeCanaryRun> | null; replay: ScrapeCheck<ScrapeReplay> | null };
   /** A preset another window asked Extract to try; `seq` distinguishes repeated requests. */
   scrapeCompose: { seq: number; preset: string; mode: "page" | "links" } | null;
+  browserProfiles: Resource<BrowserProfile[]>;
+  /** Last confirmed controller bindings; observations, not liveness. */
+  browserControllers: Resource<BrowserController[]>;
+  browserHandoffs: Resource<BrowserHandoff[]>;
+  browserToolchain: Resource<BrowserToolchain>;
 };
 
 /** A check this page started. `error` is set when the call itself failed; `uncertain` when it may still be running. */
@@ -100,7 +106,15 @@ const contentWrites = new Set(["collection_create", "collection_update", "collec
 const itemPage = 100;
 export const contentDocumentLimit = 200;
 
-type ResourceKey = ContentKey | "access" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "role" | "rolePreview" | "roleLaunch" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts" | "signalStatus" | "scrapeStatus" | "scrapePresets" | "scrapeCanaries" | "scrapeQueue";
+type ResourceKey = ContentKey | "access" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "role" | "rolePreview" | "roleLaunch" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts" | "signalStatus" | "scrapeStatus" | "scrapePresets" | "scrapeCanaries" | "scrapeQueue"
+  | "browserProfiles" | "browserControllers" | "browserHandoffs" | "browserToolchain";
+
+/** Which reads each browse write can change; each is re-read afterwards, since a lost acknowledgement may still have acted. */
+function browseReads(name: string): ResourceKey[] {
+  if (name.startsWith("browser_handoff_")) return ["browserHandoffs", "browserProfiles", "browserControllers"];
+  if (name.startsWith("browser_profile_")) return ["browserProfiles", "browserToolchain"];
+  return ["browserToolchain"];
+}
 
 const inferPage = 20;
 /** Jobs the Queue window lists; counts cover every job. */
@@ -171,6 +185,8 @@ export class StackStore {
       scrapeStatus: { data: null, error: null, at: null }, scrapePresets: { data: null, error: null, at: null },
       scrapeCanaries: { data: null, error: null, at: null }, scrapeQueue: { data: null, error: null, at: null },
       scrapeChecks: { canary: null, replay: null }, scrapeCompose: null,
+      browserProfiles: { data: null, error: null, at: null }, browserControllers: { data: null, error: null, at: null },
+      browserHandoffs: { data: null, error: null, at: null }, browserToolchain: { data: null, error: null, at: null },
     };
     this.serverState = this.state;
     for (const account of snapshot.workerAccounts.data ?? []) if (this.catalogAccountAvailable(account.id)) this.catalogAvailable.add(account.id);
@@ -246,6 +262,12 @@ export class StackStore {
     // Presets and executables have no change event; they are read on (re)connect and on request.
     // scrape_queue_changed is an invalidation notice only, so the queue is re-read after each.
     open("scrape", () => { this.refreshScrape(); this.refresh("scrapeQueue"); }, () => this.refresh("scrapeQueue"), ["scrape_queue_changed"]);
+    // Browse notices are invalidations only. Legacy disposable reservations have no UI, so their topic is not subscribed.
+    open("browse", this.refreshBrowse, (topic) => {
+      if (topic === "browser_handoffs_changed") this.refresh("browserHandoffs");
+      if (topic === "browser_profiles_changed") { this.refresh("browserProfiles"); this.refresh("browserControllers"); }
+      if (topic === "browser_system_changed") this.refresh("browserToolchain");
+    }, ["browser_handoffs_changed", "browser_profiles_changed", "browser_system_changed"]);
     this.reconcileScoped();
     for (const id of this.workerWatchers.keys()) this.openWorkerChannel(id);
   }
@@ -317,6 +339,15 @@ export class StackStore {
   /** Ask the Extract window to use a preset; it keeps the URL already entered. */
   composeScrape = (preset: string, mode: "page" | "links"): void => {
     this.set({ scrapeCompose: { seq: (this.state.scrapeCompose?.seq ?? 0) + 1, preset, mode } });
+  };
+
+  /** A browse write. What it can change is re-read either way; nothing is resent automatically. */
+  browse = <T>(name: string, args: Record<string, unknown> = {}): Promise<T> =>
+    this.call<T>("browse", name, args).finally(() => { for (const key of browseReads(name)) this.refresh(key); });
+
+  /** Re-read everything the Browse space shows. */
+  refreshBrowse = (): void => {
+    for (const key of ["browserProfiles", "browserControllers", "browserHandoffs", "browserToolchain"] as const) this.refresh(key);
   };
 
   /** Re-read Scrape's status, presets and canary inventory. */
@@ -803,6 +834,15 @@ export class StackStore {
       case "scrapeCanaries": return call<{ presets: Array<{ preset: string; configured: boolean }> }>("scrape", "scrape_canary_inventory")
         .then((result) => result.presets.filter((item) => item.configured).map((item) => item.preset));
       case "scrapeQueue": return call<ScrapeQueue>("scrape", "scrape_queue_list", { limit: scrapeQueueLimit });
+      case "browserProfiles": return call<{ profiles: BrowserProfile[] }>("browse", "browser_profile_list").then((result) => result.profiles);
+      case "browserControllers": return call<{ controllers: BrowserController[] }>("browse", "browser_controller_list").then((result) => result.controllers);
+      case "browserHandoffs": return call<{ handoffs: BrowserHandoff[] }>("browse", "browser_handoff_list").then((result) => result.handoffs);
+      case "browserToolchain": return Promise.all([
+        call<BrowserStatus>("browse", "browser_status"),
+        call<AgentBrowserStatus>("browse", "agent_browser_status"),
+        call<{ installations: AgentBrowserInstallation[] }>("browse", "agent_browser_detect"),
+        call<{ installations: HypemanInstallation[] }>("browse", "hypeman_detect"),
+      ]).then(([status, agentBrowser, detected, hypeman]) => ({ status, agentBrowser, detected: detected.installations, hypeman: hypeman.installations }));
     }
   }
 

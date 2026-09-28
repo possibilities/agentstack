@@ -4,6 +4,7 @@ import { createContext, use, useCallback, useEffect, useMemo, useState, useSyncE
 import type { SpaceId } from "@/lib/stack/spaces";
 import { ChatWindowStore, type ChatWindows } from "@/lib/stack/chat-windows";
 import { WorkerWindowStore, type WorkerWindows } from "@/lib/stack/worker-windows";
+import { ViewerWindowStore, type ControlGrants, type HandoffActions, type ViewerWindows } from "@/lib/stack/browse-viewers";
 import type { WorkerFilter } from "@/lib/stack/workers";
 import { StackStore, type StackConnections, type StackState } from "@/lib/stack/store";
 import type { NodeRef, Snapshot, StackEvent } from "@/lib/stack/types";
@@ -11,11 +12,13 @@ import type { NodeRef, Snapshot, StackEvent } from "@/lib/stack/types";
 const StoreContext = createContext<StackStore | null>(null);
 const ChatWindowsContext = createContext<ChatWindowStore | null>(null);
 const WorkerWindowsContext = createContext<WorkerWindowStore | null>(null);
+const ViewerWindowsContext = createContext<ViewerWindowStore | null>(null);
 
 export function StackProvider({ snapshot, children, connections }: { snapshot: Snapshot; children: React.ReactNode; connections?: StackConnections }) {
   const [store] = useState(() => new StackStore(snapshot));
   const [chats] = useState(() => new ChatWindowStore());
   const [workerWindows] = useState(() => new WorkerWindowStore());
+  const [viewers] = useState(() => new ViewerWindowStore());
   useEffect(() => {
     store.start(connections);
     return () => store.stop();
@@ -39,12 +42,18 @@ export function StackProvider({ snapshot, children, connections }: { snapshot: S
     try { storage = window.localStorage; } catch { /* optional persistence */ }
     chats.attach(storage);
     workerWindows.attach(storage);
-  }, [chats, workerWindows]);
+    viewers.attach(storage);
+  }, [chats, workerWindows, viewers]);
   const bots = useSyncExternalStore(store.subscribe, () => store.getState().bots.data, () => store.getServerState().bots.data);
   useEffect(() => { if (bots) chats.prune(new Set(bots.map((bot) => bot.id))); }, [bots, chats]);
   const workers = useSyncExternalStore(store.subscribe, () => store.getState().workerSessions.data, () => store.getServerState().workerSessions.data);
   useEffect(() => { if (workers) workerWindows.prune(new Set(workers.map((worker) => worker.id))); }, [workers, workerWindows]);
-  return <StoreContext value={store}><ChatWindowsContext value={chats}><WorkerWindowsContext value={workerWindows}>{children}</WorkerWindowsContext></ChatWindowsContext></StoreContext>;
+  const profiles = useSyncExternalStore(store.subscribe, () => store.getState().browserProfiles.data, () => store.getServerState().browserProfiles.data);
+  useEffect(() => { if (profiles) viewers.prune(new Set(profiles.map((profile) => profile.id))); }, [profiles, viewers]);
+  // A grant ends when its handoff leaves human control; the API has revoked it by then.
+  const handoffs = useSyncExternalStore(store.subscribe, () => store.getState().browserHandoffs.data, () => store.getServerState().browserHandoffs.data);
+  useEffect(() => { if (handoffs) viewers.pruneGrants(new Set(handoffs.filter((item) => item.state === "human_controlling").map((item) => item.id))); }, [handoffs, viewers]);
+  return <StoreContext value={store}><ChatWindowsContext value={chats}><WorkerWindowsContext value={workerWindows}><ViewerWindowsContext value={viewers}>{children}</ViewerWindowsContext></WorkerWindowsContext></ChatWindowsContext></StoreContext>;
 }
 
 /** Fleet chat windows and the store that arranges them. */
@@ -62,6 +71,16 @@ export function useWorkerWindows(): { windows: WorkerWindows; filter: WorkerFilt
   const windows = useSyncExternalStore(workerWindows.subscribe, workerWindows.getWindows, workerWindows.getWindows);
   const filter = useSyncExternalStore(workerWindows.subscribe, workerWindows.getFilter, workerWindows.getFilter);
   return { windows, filter, workerWindows };
+}
+
+/** Browse viewer windows, this page's human control grants, and the store that arranges them. */
+export function useViewerWindows(): { windows: ViewerWindows; grants: ControlGrants; actions: HandoffActions; viewers: ViewerWindowStore } {
+  const viewers = use(ViewerWindowsContext);
+  if (!viewers) throw new Error("useViewerWindows requires StackProvider");
+  const windows = useSyncExternalStore(viewers.subscribe, viewers.getWindows, viewers.getServerWindows);
+  const grants = useSyncExternalStore(viewers.subscribe, viewers.getGrants, viewers.getServerGrants);
+  const actions = useSyncExternalStore(viewers.subscribe, viewers.getActions, viewers.getServerActions);
+  return { windows, grants, actions, viewers };
 }
 
 export function useStore(): StackStore {
