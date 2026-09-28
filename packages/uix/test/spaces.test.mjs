@@ -27,6 +27,9 @@ test("homeOf distinguishes spatial records from reference destinations", () => {
   assert.deepEqual(homeOf({ kind: "worker-account", id: "w-1" }), { kind: "space", space: "accounts", window: "accounts" });
   assert.deepEqual(homeOf({ kind: "login" }), { kind: "space", space: "accounts", window: "accounts" });
   assert.deepEqual(homeOf({ kind: "bot", id: "bot-1" }), { kind: "space", space: "fleet", window: "bots" });
+  assert.deepEqual(homeOf({ kind: "worker", id: "w-1" }), { kind: "space", space: "workers", window: "workers" });
+  assert.deepEqual(homeOf({ kind: "worker-window", id: "worker-2" }), { kind: "space", space: "workers", window: "worker-2" });
+  assert.deepEqual(homeOf({ kind: "worker-runtime", id: "acc-1" }), { kind: "space", space: "workers", window: "worker-runtimes" });
   assert.deepEqual(homeOf({ kind: "category", id: "c1" }), { kind: "space", space: "roles", window: "role-instructions" });
   assert.deepEqual(homeOf({ kind: "fragment", id: "f1" }), { kind: "space", space: "roles", window: "role-instructions" });
   assert.deepEqual(homeOf({ kind: "notification", id: "n1" }), { kind: "space", space: "inbox", window: "notify-inbox" });
@@ -69,6 +72,7 @@ test("parseSpacePath resolves /x and single space segments only", () => {
   assert.equal(parseSpacePath("/x/inbox"), "inbox");
   assert.equal(parseSpacePath("/x/signal"), "signal");
   assert.equal(parseSpacePath("/x/content"), "content");
+  assert.equal(parseSpacePath("/x/workers"), "workers");
   assert.equal(parseSpacePath("/x/nope"), null);
   assert.equal(parseSpacePath("/x/api/extra"), null);
   assert.equal(parseSpacePath("/y"), null);
@@ -95,6 +99,9 @@ test("parseNodeKey inverts nodeKey for every kind and rejects malformed keys", (
     { kind: "usage-account", id: "worker:account-with-colons:ok" },
     { kind: "grok-bot-usage" },
     { kind: "worker-catalog", id: "w1" },
+    { kind: "worker", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" },
+    { kind: "worker-runtime", id: "w1" },
+    { kind: "worker-window", id: "worker-2" },
     { kind: "signal" },
     { kind: "attention-item", id: "3f0c1b7e-run:2" },
     { kind: "attention-message", id: "a".repeat(64) },
@@ -125,7 +132,7 @@ const quiet = {
 };
 
 test("spaceAttention reports human reasons per space and ignores healthy state", () => {
-  assert.deepEqual(spaceAttention(quiet), { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], api: [] });
+  assert.deepEqual(spaceAttention(quiet), { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], api: [] });
   assert.deepEqual(spaceAttention({ ...quiet, notifyCounts: { data: { open: 0, total: 4, sources: [] }, error: null, at: null } }).inbox, []);
   assert.deepEqual(spaceAttention({ ...quiet, notifyCounts: { data: { open: 1, total: 4, sources: [] }, error: null, at: null } }).inbox, ["1 open notification"]);
   const inbox = spaceAttention({ ...quiet, notifyCounts: { data: { open: 3, total: 4, sources: [] }, error: null, at: null }, status: { notify: "closed" } });
@@ -157,6 +164,21 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
   });
   assert.deepEqual(workers.fleet, []);
   assert.deepEqual(workers.accounts, ["codex-worker-account-1 removal unfinished", "codex-worker-account-2 needs sign-in", "grok-worker-account-1 needs sign-in"]);
+  assert.deepEqual(workers.workers, []);
+
+  // Workers: permission waits, recovery, failures and runtime errors; idle, running and closed Workers are quiet.
+  const session = (id, phase, issue = null) => ({ id, botId: "bot-1", threadId: "t", accountId: "w1", provider: "claude", model: "opus", effort: "high",
+    repo: "/src/agentstack", cwd: null, branch: null, baseCommit: null, sourceDirty: false, roleRevision: 1, sessionId: null, runtimeInstance: null,
+    phase, currentTurnId: null, issue, createdAt: 1, updatedAt: 1 });
+  const sessions = spaceAttention({
+    ...quiet,
+    workerSessions: { data: [session("aaaaaaaa-1", "awaiting_input"), session("bbbbbbbb-2", "needs_recovery", "Owner restarted"), session("cccccccc-3", "failed"),
+      session("dddddddd-4", "idle"), session("eeeeeeee-5", "running"), session("ffffffff-6", "closed")], error: null, at: null },
+    workerRuntimes: { data: [{ id: "w1", provider: "claude", backend: "claude-sdk", processModel: "session", pids: [], state: "error", pid: null, instance: null, error: "sdk missing" }], error: null, at: null },
+    status: { worker: "closed" },
+  });
+  assert.deepEqual(sessions.workers, ["agentstack · aaaaaa: Waiting for its Bot to answer a permission request", "agentstack · bbbbbb: Owner restarted",
+    "agentstack · cccccc: Failed", "claude runtime error: sdk missing", "worker reconnecting"]);
 
   // System: a stopped child, a closed owner channel, a status read error, resource errors and stale attribution.
   const system = spaceAttention({
@@ -187,7 +209,7 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
 
   // Idle and connecting channels are normal, not attention.
   const waiting = spaceAttention({ ...quiet, status: { auth: "connecting", bots: "idle", owner: "connecting", api: "idle" } });
-  assert.deepEqual(waiting, { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], api: [] });
+  assert.deepEqual(waiting, { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], api: [] });
 });
 
 test("spaceAttention flags Signal's unreadable sources, failed interpretation and channel, but not a deliberate pause", () => {

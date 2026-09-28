@@ -1,8 +1,9 @@
 import { accountLabels, workerAccountLabels } from "./derive";
+import { workerAttention, workerLabel } from "./workers";
 import type { StackState } from "./store";
 import { nodeKey, type NodeRef } from "./types";
 
-export type SpaceId = "fleet" | "accounts" | "lab" | "system" | "roles" | "inbox" | "signal" | "content";
+export type SpaceId = "fleet" | "accounts" | "lab" | "system" | "roles" | "inbox" | "signal" | "content" | "workers";
 
 export const spaces: { id: SpaceId; title: string; description: string; key: string }[] = [
   { id: "fleet", title: "Fleet", description: "Bots and their controls", key: "1" },
@@ -13,6 +14,7 @@ export const spaces: { id: SpaceId; title: string; description: string; key: str
   { id: "inbox", title: "Inbox", description: "Notifications to read, answer and dismiss", key: "6" },
   { id: "signal", title: "Signal", description: "What conversations ask of you, and how it was interpreted", key: "7" },
   { id: "content", title: "Content", description: "Vault documents, collections, files and Artifacts", key: "8" },
+  { id: "workers", title: "Workers", description: "What Workers started by Bots are doing, read-only", key: "9" },
 ];
 
 export const defaultSpace: SpaceId = "fleet";
@@ -54,6 +56,12 @@ export function homeOf(ref: NodeRef): NodeHome {
       return { kind: "space", space: "accounts", window: "usage" };
     case "bot":
       return { kind: "space", space: "fleet", window: "bots" };
+    case "worker":
+      return { kind: "space", space: "workers", window: "workers" };
+    case "worker-window":
+      return { kind: "space", space: "workers", window: ref.id };
+    case "worker-runtime":
+      return { kind: "space", space: "workers", window: "worker-runtimes" };
     case "chat":
       return { kind: "space", space: "fleet", window: ref.id };
     case "category":
@@ -102,8 +110,8 @@ export function parseSpacePath(pathname: string): SpaceId | null {
 }
 
 /** Human-readable reasons each space needs attention; an empty list means all quiet. Only "closed" channels count — idle and connecting are normal. */
-export function spaceAttention(state: Pick<StackState, "status" | "owner" | "resources" | "accounts" | "workerAccounts" | "bots" | "attempt" | "catalog" | "endpoints" | "notifyCounts" | "signalStatus"> & Partial<Pick<StackState, "contentUploads">>): Record<SpaceId | "api", string[]> {
-  const attention: Record<SpaceId | "api", string[]> = { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], api: [] };
+export function spaceAttention(state: Pick<StackState, "status" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerSessions" | "workerRuntimes" | "bots" | "attempt" | "catalog" | "endpoints" | "notifyCounts" | "signalStatus"> & Partial<Pick<StackState, "contentUploads">>): Record<SpaceId | "api", string[]> {
+  const attention: Record<SpaceId | "api", string[]> = { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], api: [] };
   for (const bot of state.bots.data ?? []) if (bot.recoveryIssue) attention.fleet.push(`${bot.id} needs inspection`);
   const labels = accountLabels(state.accounts.data);
   for (const account of state.accounts.data ?? []) if (account.removing) attention.accounts.push(`${labels.get(account.id) ?? account.id} removal unfinished`);
@@ -125,6 +133,12 @@ export function spaceAttention(state: Pick<StackState, "status" | "owner" | "res
   for (const { source } of signal?.sourceErrors ?? []) attention.signal.push(`${source} unreadable`);
   if (signal?.lastInference?.error) attention.signal.push(`Last interpretation failed: ${signal.lastInference.error}`);
   if (state.status.content === "closed") attention.content.push("content reconnecting");
+  for (const worker of state.workerSessions?.data ?? []) {
+    const reason = workerAttention(worker);
+    if (reason) attention.workers.push(`${workerLabel(worker)}: ${reason}`);
+  }
+  for (const runtime of state.workerRuntimes?.data ?? []) if (runtime.state === "error") attention.workers.push(`${runtime.provider} runtime error${runtime.error ? `: ${runtime.error}` : ""}`);
+  if (state.status.worker === "closed") attention.workers.push("worker reconnecting");
   for (const upload of state.contentUploads ?? []) {
     if (upload.phase === "stalled") attention.content.push(`${upload.name} upload stalled`);
     if (upload.phase === "failed") attention.content.push(`${upload.name} upload failed`);
@@ -168,5 +182,6 @@ export function parseNodeKey(key: string): NodeRef | null {
   }
   // A separate branch keeps each union small enough for TypeScript to check assignability.
   if (kind === "document" || kind === "collection" || kind === "item" || kind === "artifact") return { kind, id: rest };
+  if (kind === "worker" || kind === "worker-runtime" || kind === "worker-window") return { kind, id: rest };
   return null;
 }

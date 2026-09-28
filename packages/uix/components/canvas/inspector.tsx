@@ -29,6 +29,8 @@ import { useVoice } from "./voice";
 import { accentBg, accentText, type Accent } from "./window";
 import { OperationBadges, RecoveryWarning } from "./windows";
 import { AttentionItemDetail, AttentionMessageDetail, TraceViewer } from "./signal-windows";
+import { useShowWorker } from "./worker-windows";
+import { workerLabel } from "@/lib/stack/workers";
 
 type View = {
   eyebrow: string;
@@ -204,7 +206,38 @@ function resolve(ref: NodeRef, state: StackState): View | null {
       };
     }
     case "chat":
-      return null; // A chat window is a view onto a Bot, not a record.
+    case "worker-window":
+      return null; // Chat and Worker windows are views onto a record, not records.
+    case "worker": {
+      const worker = state.workerStatuses[ref.id]?.data?.worker ?? state.workerSessions.data?.find((item) => item.id === ref.id);
+      if (!worker) return null;
+      const related: View["related"] = [];
+      if (state.bots.data?.some((bot) => bot.id === worker.botId)) related.push({ ref: { kind: "bot", id: worker.botId }, label: `${worker.botId} · started it` });
+      related.push({ ref: { kind: "worker-account", id: worker.accountId }, label: workerLabels.get(worker.accountId) ?? shortId(worker.accountId) });
+      if (state.workerRuntimes.data?.some((runtime) => runtime.id === worker.accountId)) related.push({ ref: { kind: "worker-runtime", id: worker.accountId }, label: "Runtime" });
+      return {
+        eyebrow: `${providerTitle(worker.provider)} Worker · ${worker.phase.replace("_", " ")}`, accent: "worker", title: workerLabel(worker), record: worker,
+        fields: recordFields(catalog, "worker", "worker_list"), related,
+        // Bots start and steer Workers; only the reads are listed.
+        operations: { pkg: "worker", list: recordOperations(catalog, "worker").filter((operation) => operation.annotations?.readOnlyHint) },
+        controls: <WorkerRecordControls id={worker.id} />,
+        events: state.events.filter((event) => event.pkg === "worker"),
+      };
+    }
+    case "worker-runtime": {
+      const runtime = state.workerRuntimes.data?.find((item) => item.id === ref.id);
+      if (!runtime) return null;
+      const related: View["related"] = [{ ref: { kind: "worker-account", id: runtime.id }, label: "Worker account" }, { ref: { kind: "worker-catalog", id: runtime.id }, label: "Model catalog" }];
+      for (const pid of new Set([...(runtime.pid !== null ? [runtime.pid] : []), ...runtime.pids])) {
+        const process = state.resources.data?.processes.find((item) => item.pid === pid);
+        if (process) related.push({ ref: { kind: "process", id: process.id }, label: `pid ${pid}` });
+      }
+      return {
+        eyebrow: `${providerTitle(runtime.provider)} Worker runtime · ${runtime.state}`, accent: "worker", title: workerLabels.get(runtime.id) ?? shortId(runtime.id), orb: runtime.id, record: runtime,
+        fields: recordFields(catalog, "worker", "worker_runtime_list"), related,
+        events: state.events.filter((event) => event.pkg === "worker"),
+      };
+    }
     case "category": {
       const found = findCategory(state.role.data, ref.id);
       if (!found) return null;
@@ -420,6 +453,16 @@ function RoleRecordControls({ target }: { target: { kind: "category" | "fragment
   );
 }
 
+/** The Worker window reads the conversation; the inspector hands off to it. */
+function WorkerRecordControls({ id }: { id: string }) {
+  const show = useShowWorker();
+  return (
+    <Button size="sm" variant="outline" className="w-fit" onClick={() => show(id)}>
+      <ArrowRightIcon data-icon="inline-start" />Show in Worker window
+    </Button>
+  );
+}
+
 /** Answering and dismissing live in the Inbox; the inspector hands off to it. */
 function NotificationRecordControls({ id }: { id: string }) {
   const actions = useNotifyActions();
@@ -437,7 +480,7 @@ function referencePackage(ref: NodeRef): string {
   if (ref.kind === "category" || ref.kind === "fragment" || ref.kind === "skill" || ref.kind === "mcp-server" || ref.kind === "trusted-project") return "roles";
   if (ref.kind === "notification") return "notify";
   if (ref.kind === "document" || ref.kind === "collection" || ref.kind === "item" || ref.kind === "artifact") return "content";
-  if (ref.kind === "worker-catalog") return "worker";
+  if (ref.kind === "worker-catalog" || ref.kind === "worker" || ref.kind === "worker-runtime" || ref.kind === "worker-window") return "worker";
   if (ref.kind === "usage" || ref.kind === "usage-account" || ref.kind === "grok-bot-usage") return "usage";
   if (ref.kind === "signal" || ref.kind === "attention-item" || ref.kind === "attention-message" || ref.kind === "attention-run") return "signal";
   return "auth";

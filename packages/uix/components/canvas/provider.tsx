@@ -3,15 +3,19 @@
 import { createContext, use, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { SpaceId } from "@/lib/stack/spaces";
 import { ChatWindowStore, type ChatWindows } from "@/lib/stack/chat-windows";
+import { WorkerWindowStore, type WorkerWindows } from "@/lib/stack/worker-windows";
+import type { WorkerFilter } from "@/lib/stack/workers";
 import { StackStore, type StackConnections, type StackState } from "@/lib/stack/store";
 import type { NodeRef, Snapshot, StackEvent } from "@/lib/stack/types";
 
 const StoreContext = createContext<StackStore | null>(null);
 const ChatWindowsContext = createContext<ChatWindowStore | null>(null);
+const WorkerWindowsContext = createContext<WorkerWindowStore | null>(null);
 
 export function StackProvider({ snapshot, children, connections }: { snapshot: Snapshot; children: React.ReactNode; connections?: StackConnections }) {
   const [store] = useState(() => new StackStore(snapshot));
   const [chats] = useState(() => new ChatWindowStore());
+  const [workerWindows] = useState(() => new WorkerWindowStore());
   useEffect(() => {
     store.start(connections);
     return () => store.stop();
@@ -34,10 +38,13 @@ export function StackProvider({ snapshot, children, connections }: { snapshot: S
     let storage: Storage | null = null;
     try { storage = window.localStorage; } catch { /* optional persistence */ }
     chats.attach(storage);
-  }, [chats]);
+    workerWindows.attach(storage);
+  }, [chats, workerWindows]);
   const bots = useSyncExternalStore(store.subscribe, () => store.getState().bots.data, () => store.getServerState().bots.data);
   useEffect(() => { if (bots) chats.prune(new Set(bots.map((bot) => bot.id))); }, [bots, chats]);
-  return <StoreContext value={store}><ChatWindowsContext value={chats}>{children}</ChatWindowsContext></StoreContext>;
+  const workers = useSyncExternalStore(store.subscribe, () => store.getState().workerSessions.data, () => store.getServerState().workerSessions.data);
+  useEffect(() => { if (workers) workerWindows.prune(new Set(workers.map((worker) => worker.id))); }, [workers, workerWindows]);
+  return <StoreContext value={store}><ChatWindowsContext value={chats}><WorkerWindowsContext value={workerWindows}>{children}</WorkerWindowsContext></ChatWindowsContext></StoreContext>;
 }
 
 /** Fleet chat windows and the store that arranges them. */
@@ -46,6 +53,15 @@ export function useChatWindows(): { windows: ChatWindows; chats: ChatWindowStore
   if (!chats) throw new Error("useChatWindows requires StackProvider");
   const windows = useSyncExternalStore(chats.subscribe, chats.getWindows, chats.getWindows);
   return { windows, chats };
+}
+
+/** Workers-space windows, the store that arranges them, and the Workers list's filter. */
+export function useWorkerWindows(): { windows: WorkerWindows; filter: WorkerFilter; workerWindows: WorkerWindowStore } {
+  const workerWindows = use(WorkerWindowsContext);
+  if (!workerWindows) throw new Error("useWorkerWindows requires StackProvider");
+  const windows = useSyncExternalStore(workerWindows.subscribe, workerWindows.getWindows, workerWindows.getWindows);
+  const filter = useSyncExternalStore(workerWindows.subscribe, workerWindows.getFilter, workerWindows.getFilter);
+  return { windows, filter, workerWindows };
 }
 
 export function useStore(): StackStore {

@@ -251,7 +251,7 @@ const Block = memo(function Block({ source }: { source: string }) {
   return <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{source}</ReactMarkdown>;
 });
 
-const Markdown = memo(function Markdown({ text, streaming }: { text: string; streaming: boolean }) {
+export const Markdown = memo(function Markdown({ text, streaming }: { text: string; streaming: boolean }) {
   const blocks = useMemo(() => markdownBlocks(text), [text]);
   return (
     <div className={cn("chat-md break-words text-foreground/90", streaming && "chat-streaming")}>

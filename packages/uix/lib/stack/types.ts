@@ -150,7 +150,7 @@ export type WorkerSession = { id: string; botId: string; threadId: string; accou
   phase: "preparing" | "idle" | "running" | "awaiting_input" | "cancelling" | "closed" | "failed" | "needs_recovery";
   currentTurnId: string | null; issue: string | null; createdAt: number; updatedAt: number };
 
-/** API-only conversation details; existing Worker account cards still read worker_list. */
+/** Worker conversation details, read by the Workers space. */
 export type WorkerObservedSettings = { model: string | null; effort: string | null; mode: string | null; at: number; recordSeq: number };
 export type WorkerTurn = { id: string; workerId: string;
   phase: "queued" | "running" | "awaiting_input" | "cancelling" | "completed" | "cancelled" | "failed" | "unknown";
@@ -178,6 +178,9 @@ export type WorkerTask = { toolCallId: string; sessionId: string; callingSession
   model: { providerID: string | null; modelID: string | null } | null; recordSeq: number;
   visibility: "task_reference"; hierarchyVerified: false; childStatus: "unknown" };
 export type WorkerToolPage = { tools: WorkerTool[]; tasks: WorkerTask[]; nextSeq: number; hasMore: boolean };
+/** worker_read: bounded user, agent, tool, plan and turn-outcome text by sequence. Agent text arrives as chunks. */
+export type WorkerTranscriptEntry = { seq: number; workerId: string; turnId: string; kind: string; text: string; at: number };
+export type WorkerTranscriptPage = { entries: WorkerTranscriptEntry[]; nextSeq: number; hasMore: boolean };
 
 export type Login = {
   id: string;
@@ -577,6 +580,12 @@ export type NodeRef =
   | { kind: "account"; id: string }
   | { kind: "worker-account"; id: string }
   | { kind: "worker-catalog"; id: string }
+  /** A durable Worker session, by Worker ID. */
+  | { kind: "worker"; id: string }
+  /** A Worker account's runtime, by account ID. */
+  | { kind: "worker-runtime"; id: string }
+  /** A Worker window on the bench, by window ID; it has no inspectable record. */
+  | { kind: "worker-window"; id: string }
   | { kind: "usage" }
   | { kind: "usage-account"; id: string }
   | { kind: "grok-bot-usage" }

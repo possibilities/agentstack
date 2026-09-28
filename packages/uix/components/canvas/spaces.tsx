@@ -1,7 +1,8 @@
 "use client";
 
-import { ActivityIcon, BellIcon, BlocksIcon, BotIcon, BoxesIcon, EyeIcon, LibraryIcon, NotebookTextIcon, ChartLineIcon, CpuIcon, FilePenLineIcon, FileTextIcon, FlaskConicalIcon, FolderLockIcon, GaugeIcon, HistoryIcon, InboxIcon, KeyRoundIcon, ListTreeIcon, MegaphoneIcon, MessageSquareWarningIcon, MessagesSquareIcon, PackageIcon, PlugIcon, RadarIcon, RadioIcon, ScanLineIcon, ScrollTextIcon, ServerIcon, SparklesIcon, SquareTerminalIcon, UserCogIcon } from "lucide-react";
+import { ActivityIcon, BellIcon, HammerIcon, BlocksIcon, BotIcon, BoxesIcon, EyeIcon, LibraryIcon, NotebookTextIcon, ChartLineIcon, CpuIcon, FilePenLineIcon, FileTextIcon, FlaskConicalIcon, FolderLockIcon, GaugeIcon, HistoryIcon, InboxIcon, KeyRoundIcon, ListTreeIcon, MegaphoneIcon, MessageSquareWarningIcon, MessagesSquareIcon, PackageIcon, PlugIcon, RadarIcon, RadioIcon, ScanLineIcon, ScrollTextIcon, ServerIcon, SparklesIcon, SquareTerminalIcon, UserCogIcon } from "lucide-react";
 import type { ChatWindows } from "@/lib/stack/chat-windows";
+import type { WorkerWindows } from "@/lib/stack/worker-windows";
 import type { SpaceId } from "@/lib/stack/spaces";
 import type { StackState } from "@/lib/stack/store";
 import { type Accent } from "./window";
@@ -25,6 +26,8 @@ import { ContentDocumentsWindow } from "./content-documents";
 import { ContentEditorWindow } from "./content-editor";
 import { ContentLibraryWindow } from "./content-library";
 import { ContentPreviewWindow } from "./content-preview";
+import { WorkerRuntimesWindow, WorkersWindow } from "./worker-windows";
+import { WorkerWindow } from "./worker-session";
 
 export type WindowDef = {
   /** Globally unique across spaces; also used by Window and node destinations. */
@@ -44,12 +47,12 @@ export type WindowDef = {
 export const spaceViews: Record<SpaceId, {
   icon: React.ComponentType<{ className?: string }>;
   accent: Accent;
-  windows(state: StackState, chats: ChatWindows): WindowDef[];
+  windows(state: StackState, arrangement: { chats: ChatWindows; workers: WorkerWindows }): WindowDef[];
 }> = {
   fleet: {
     icon: BotIcon,
     accent: "bots",
-    windows: (_state, chats) => [
+    windows: (_state, { chats }) => [
       { id: "bots", title: "Bots", icon: BotIcon, accent: "bots", width: 420, height: 620, column: 0, element: <BotsWindow /> },
       // The primary chat sits beside Bots; each additional chat opens in the next column.
       ...chats.map((chat, index) => ({ id: chat.id, title: "Chat", icon: SquareTerminalIcon, accent: "bots" as const, width: 640, height: 720, column: index + 1, fixed: true,
@@ -127,6 +130,17 @@ export const spaceViews: Record<SpaceId, {
       { id: "content-editor", title: "Editor", icon: FilePenLineIcon, accent: "content", width: 540, height: 760, column: 1, element: <ContentEditorWindow /> },
       { id: "content-preview", title: "Preview", icon: EyeIcon, accent: "content", width: 480, height: 760, column: 2, element: <ContentPreviewWindow /> },
       { id: "content-artifacts", title: "Artifacts", icon: BoxesIcon, accent: "content", width: 400, height: 640, column: 3, element: <ContentArtifactsWindow /> },
+    ],
+  },
+  workers: {
+    icon: HammerIcon,
+    accent: "worker",
+    windows: (_state, { workers }) => [
+      { id: "workers", title: "Workers", icon: HammerIcon, accent: "worker", width: 420, height: 720, column: 0, element: <WorkersWindow /> },
+      // The primary Worker window sits beside the list; each additional one opens in the next column.
+      ...workers.map((window, index) => ({ id: window.id, title: "Worker", icon: HammerIcon, accent: "worker" as const, width: 620, height: 760, column: index + 1, fixed: true,
+        element: <WorkerWindow id={window.id} /> })),
+      { id: "worker-runtimes", title: "Runtimes", icon: CpuIcon, accent: "worker", width: 380, height: 420, column: workers.length + 1, element: <WorkerRuntimesWindow /> },
     ],
   },
 };

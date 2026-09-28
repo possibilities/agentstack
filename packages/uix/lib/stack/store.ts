@@ -5,7 +5,7 @@ import { loadResources, mergeHistory } from "./resources";
 import { asText, itemKindFor, itemLimit, scopeKey, sha256Hex } from "./content";
 import { stageBytes, StageStalled } from "./content-upload";
 import type { ContentArtifact, ContentCollection, ContentDocument, ContentItem, ContentItemPage, ContentItemScope, ContentLibrary, ContentTag, ContentUpload } from "./types";
-import type { Account, AttentionItem, AttentionMessage, AttentionPage, AttentionRun, AttentionStatus, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, OwnerResources, OwnerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RoleLaunchPreview, RolePreview, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
+import type { Account, AttentionItem, AttentionMessage, AttentionPage, AttentionRun, AttentionStatus, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, OwnerResources, OwnerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RoleLaunchPreview, RolePreview, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerLogin, WorkerRuntime, WorkerSession, WorkerStatus } from "./types";
 
 export type StackState = Snapshot & {
   access: Resource<AccessSnapshot>;
@@ -58,6 +58,10 @@ export type StackState = Snapshot & {
   contentUploads: ContentUpload[];
   /** The Library's chosen item scope, which contentItems follows. */
   contentItemScope: ContentItemScope;
+  /** worker_status for each Worker a window watches. */
+  workerStatuses: Record<string, Resource<WorkerStatus>>;
+  /** Bumped on a watched Worker's scoped notices and (re)subscription; its windows re-read their pages on it. */
+  workerGenerations: Record<string, number>;
 };
 
 export type SignalRecords = { items: Record<string, AttentionItem>; messages: Record<string, AttentionMessage>; runs: Record<string, AttentionRun> };
@@ -127,6 +131,10 @@ export class StackStore {
   private uploadFiles = new Map<string, File>();
   private uploadSeq = 0;
   private remoteInflight: Promise<void> | null = null;
+  private workerWatchers = new Map<string, number>();
+  private workerChannels = new Map<string, Channel>();
+  private statusInflight = new Map<string, Promise<void>>();
+  private statusDirty = new Set<string>();
 
   constructor(snapshot: Snapshot) {
     this.state = {
@@ -143,6 +151,7 @@ export class StackStore {
       contentLibrary: { data: null, error: null, at: null }, contentItems: { data: null, error: null, at: null },
       contentArtifacts: { data: null, error: null, at: null }, contentRoutes: { data: null, error: null, at: null },
       contentGeneration: 0, contentRecords: {}, contentUploads: [], contentItemScope: undefined,
+      workerStatuses: {}, workerGenerations: {},
     };
     this.serverState = this.state;
     for (const account of snapshot.workerAccounts.data ?? []) if (this.catalogAccountAvailable(account.id)) this.catalogAvailable.add(account.id);
@@ -194,9 +203,8 @@ export class StackStore {
       if (topic === "defaults_changed") this.refresh("botDefaults");
       if (topic === "voice_changed") this.refresh("voice");
     }, ["bots_changed", "defaults_changed", "voice_changed"]);
-    // Existing cards use the global inventory invalidation. Conversation consumers
-    // subscribe to worker_progress + worker_changed scoped by Worker ID and resnapshot
-    // worker_detail/worker_tool_list or continue immutable worker_record_list pages.
+    // Cards and the Workers list use the global inventory invalidation. Worker windows
+    // subscribe to worker_progress + worker_changed scoped by Worker ID (watchWorker).
     open("worker", () => { this.refresh("workerRuntimes"); this.refresh("workerSessions"); this.reconcileCatalogs(true); }, () => {
       this.refresh("workerRuntimes"); this.refresh("workerSessions"); this.reconcileCatalogs(true);
     }, ["workers_changed"]);
@@ -217,14 +225,16 @@ export class StackStore {
     // content_changed is an invalidation notice; windows re-read what they show from contentGeneration.
     open("content", () => this.invalidateContent(), () => this.invalidateContent(), ["content_changed"]);
     this.reconcileScoped();
+    for (const id of this.workerWatchers.keys()) this.openWorkerChannel(id);
   }
 
   stop(): void {
     this.catalogDirty.clear();
     for (const id of this.catalogAvailable) this.catalogGeneration.set(id, (this.catalogGeneration.get(id) ?? 0) + 1);
-    for (const channel of [...this.main.values(), ...this.scopedChannels.values()]) channel.dispose();
+    for (const channel of [...this.main.values(), ...this.scopedChannels.values(), ...this.workerChannels.values()]) channel.dispose();
     this.main.clear();
     this.scopedChannels.clear();
+    this.workerChannels.clear();
   }
   syncRemote = (): Promise<void> => {
     if (!this.state.remote) return Promise.resolve();
@@ -581,6 +591,67 @@ export class StackStore {
       if (invalidated && this.catalogInflight.has(id) && !this.catalogDirty.has(id)) this.catalogDirty.set(id, false);
       void this.refreshWorkerCatalog(id, false);
     }
+  }
+
+  /**
+   * Reference-counted scoped subscription to one Worker's worker_changed and
+   * worker_progress notices. Every notice and (re)subscription bumps its
+   * generation, since missed notices are not replayed; worker_changed and
+   * (re)subscription also re-read its status. Reads only: nothing here writes.
+   */
+  watchWorker = (id: string): (() => void) => {
+    const watchers = (this.workerWatchers.get(id) ?? 0) + 1;
+    this.workerWatchers.set(id, watchers);
+    if (watchers === 1) this.openWorkerChannel(id);
+    return () => {
+      const remaining = (this.workerWatchers.get(id) ?? 0) - 1;
+      if (remaining > 0) { this.workerWatchers.set(id, remaining); return; }
+      this.workerWatchers.delete(id);
+      this.statusDirty.delete(id);
+      this.workerChannels.get(id)?.dispose();
+      this.workerChannels.delete(id);
+      if (this.state.workerStatuses[id]) {
+        const workerStatuses = { ...this.state.workerStatuses };
+        delete workerStatuses[id];
+        this.set({ workerStatuses });
+      }
+    };
+  };
+
+  private openWorkerChannel(id: string): void {
+    const url = this.state.endpoints.worker;
+    if (!url || this.workerChannels.has(id)) return;
+    const channel = new Channel(url, "worker", {
+      onOpen: () => {
+        if (this.workerChannels.get(id) !== channel) return;
+        this.bumpWorker(id);
+        this.readWorkerStatus(id);
+      },
+      onNotice: (topic) => {
+        if (this.workerChannels.get(id) !== channel) return;
+        this.bumpWorker(id);
+        if (topic === "worker_changed") this.readWorkerStatus(id);
+      },
+    });
+    this.workerChannels.set(id, channel);
+    channel.subscribe(["worker_changed", "worker_progress"], id).connect();
+  }
+
+  private bumpWorker(id: string): void {
+    this.set({ workerGenerations: { ...this.state.workerGenerations, [id]: (this.state.workerGenerations[id] ?? 0) + 1 } });
+  }
+
+  private readWorkerStatus(id: string): void {
+    if (!this.workerWatchers.has(id)) return;
+    if (this.statusInflight.has(id)) { this.statusDirty.add(id); return; }
+    const run = this.call<WorkerStatus>("worker", "worker_status", { id })
+      .then((data) => ({ data, error: null, at: Date.now() }), (error: Error) => ({ data: this.state.workerStatuses[id]?.data ?? null, error: error.message, at: Date.now() }))
+      .then((next) => { if (this.workerWatchers.has(id)) this.set({ workerStatuses: { ...this.state.workerStatuses, [id]: next } }); })
+      .finally(() => {
+        this.statusInflight.delete(id);
+        if (this.statusDirty.delete(id)) this.readWorkerStatus(id);
+      });
+    this.statusInflight.set(id, run);
   }
 
   dismissWorkerAttempt = (accountId: string): void => {

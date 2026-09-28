@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { StatusDot, Time } from "./primitives";
 import { useWorkbench } from "./provider";
 
-export type Accent = "owner" | "auth" | "bots" | "api" | "events" | "roles" | "notify" | "content";
+export type Accent = "owner" | "auth" | "bots" | "api" | "events" | "roles" | "notify" | "content" | "worker";
 
 export const accentTile: Record<Accent, string> = {
   owner: "bg-pkg-owner/15 text-pkg-owner",
@@ -19,6 +19,7 @@ export const accentTile: Record<Accent, string> = {
   roles: "bg-pkg-roles/15 text-pkg-roles",
   notify: "bg-pkg-notify/15 text-pkg-notify",
   content: "bg-pkg-content/15 text-pkg-content",
+  worker: "bg-pkg-worker/15 text-pkg-worker",
 };
 
 export const accentText: Record<Accent, string> = {
@@ -30,6 +31,7 @@ export const accentText: Record<Accent, string> = {
   roles: "text-pkg-roles",
   notify: "text-pkg-notify",
   content: "text-pkg-content",
+  worker: "text-pkg-worker",
 };
 
 export const accentBg: Record<Accent, string> = {
@@ -41,6 +43,7 @@ export const accentBg: Record<Accent, string> = {
   roles: "bg-pkg-roles",
   notify: "bg-pkg-notify",
   content: "bg-pkg-content",
+  worker: "bg-pkg-worker",
 };
 
 export function accentOf(pkg: string): Accent {
@@ -101,7 +104,7 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
   actions?: React.ReactNode;
   /** When the window represents a node, a header tap or the title button inspects it. */
   node?: NodeRef;
-  /** A navigation destination that flashes the window without making it inspectable. */
+  /** A navigation destination that flashes the window; alone, it does not make the window inspectable. */
   reveal?: NodeRef;
   /** The body has no padding or scrolling of its own; the content manages both. */
   bleed?: boolean;
@@ -112,7 +115,7 @@ export function Window({ id, title, subtitle, icon: Icon, accent, count, status,
   const { selected, select, flash } = useWorkbench();
   const key = node ? nodeKey(node) : reveal ? nodeKey(reveal) : null;
   const isSelected = node !== undefined && selected !== null && nodeKey(selected) === key;
-  const flashing = key !== null && flash?.key === key;
+  const flashing = flash !== null && (flash.key === key || (reveal !== undefined && flash.key === nodeKey(reveal)));
   const toggle = () => {
     if (node) select(isSelected ? null : node);
   };

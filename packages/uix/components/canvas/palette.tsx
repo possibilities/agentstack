@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { BellIcon, BlocksIcon, BookOpenIcon, BotIcon, BoxesIcon, FileTextIcon, NotebookTextIcon, UploadIcon, CircleCheckIcon, CpuIcon, FilePlusIcon, FolderIcon, FolderLockIcon, FolderPlusIcon, MicIcon, MicOffIcon, PhoneIcon, PhoneOffIcon, PlugIcon, RefreshCwIcon, ScrollTextIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
+import { BellIcon, BlocksIcon, HammerIcon, BookOpenIcon, BotIcon, BoxesIcon, FileTextIcon, NotebookTextIcon, UploadIcon, CircleCheckIcon, CpuIcon, FilePlusIcon, FolderIcon, FolderLockIcon, FolderPlusIcon, MicIcon, MicOffIcon, PhoneIcon, PhoneOffIcon, PlugIcon, RefreshCwIcon, ScrollTextIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
 import { operationTitle } from "@/lib/stack/catalog";
 import { accountLabels, addableWorkerProviders, pairedWorker, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
@@ -17,11 +17,13 @@ import { Orb, StatusDot } from "./primitives";
 import { useStack, useStore, useWorkbench } from "./provider";
 import { spaceViews } from "./spaces";
 import { useVoice } from "./voice";
+import { useShowWorker } from "./worker-windows";
+import { workerAttention, workerLabel, workerOrigin } from "@/lib/stack/workers";
 
 export type PaletteAction = { id: string; label: string; shortcut?: string; icon: React.ComponentType; run(): void };
 
 export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpenChange(open: boolean): void; actions: PaletteAction[] }) {
-  const { bots, accounts, workerAccounts, owner, catalog, attempt, role, notificationRecords, contentDocuments, contentItems, contentArtifacts, status } = useStack();
+  const { bots, accounts, workerAccounts, workerSessions, owner, catalog, attempt, role, notificationRecords, contentDocuments, contentItems, contentArtifacts, status } = useStack();
   const store = useStore();
   const notify = useNotifyActions();
   // Notifications the page has loaded, newest first; the palette never pages the ledger itself.
@@ -46,6 +48,9 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
   const botActions = useBotActions();
   const voice = useVoice();
   const { goTo, setSpace } = useWorkbench();
+  const showWorker = useShowWorker();
+  // Open Workers first, then the most recently updated closed ones.
+  const workers = [...(workerSessions.data ?? [])].sort((a, b) => Number(a.phase === "closed") - Number(b.phase === "closed") || b.updatedAt - a.updatedAt).slice(0, 40);
   const labels = accountLabels(accounts.data);
   const workerLabels = workerAccountLabels(workerAccounts.data);
   const go = (ref: NodeRef) => {
@@ -81,7 +86,7 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
   };
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange} title="Jump to" description="Find a bot, account, Role record, notification, document, process, or operation." className="sm:max-w-lg">
+    <CommandDialog open={open} onOpenChange={onOpenChange} title="Jump to" description="Find a bot, Worker, account, Role record, notification, document, process, or operation." className="sm:max-w-lg">
       <Command loop>
         <CommandInput placeholder="Jump to a bot, account, operation…" value={search} onValueChange={setSearch} />
         <CommandList className="max-h-96">
@@ -115,6 +120,20 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
                   <span className="font-mono">{bot.id}</span>
                   <StatusDot tone={bot.state === "running" ? "success" : "muted"} />
                   <CommandShortcut className="tracking-normal">{bot.state}</CommandShortcut>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          ) : null}
+          {workers.length ? (
+            <CommandGroup heading="Workers">
+              {workers.map((worker) => (
+                <CommandItem key={worker.id} value={`worker ${workerLabel(worker)} ${worker.repo} ${workerOrigin(worker.botId)} ${worker.provider} ${worker.model} ${worker.phase} ${worker.id}`}
+                  onSelect={() => { onOpenChange(false); showWorker(worker.id); }}>
+                  <HammerIcon />
+                  <span className="truncate font-mono">{workerLabel(worker)}</span>
+                  <span className="truncate text-xs text-muted-foreground">{workerOrigin(worker.botId)}</span>
+                  <StatusDot tone={workerAttention(worker) ? "warning" : worker.phase === "running" ? "success" : "muted"} />
+                  <CommandShortcut className="tracking-normal">{worker.phase.replace("_", " ")}</CommandShortcut>
                 </CommandItem>
               ))}
             </CommandGroup>
