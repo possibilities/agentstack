@@ -19,7 +19,7 @@ const forwardTimeouts = new Map([
   // Discovery waits up to 20s for model/list; inference adds one request bounded at 30s.
   ["infer/infer_models", 30_000],
   ["infer/infer_complete", 75_000],
-  ["attention/attention_models", 75_000],
+  ["signal/attention_models", 75_000],
   ["bots/chat_message_changes", 30_000],
 ]);
 

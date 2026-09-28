@@ -7,6 +7,10 @@ import { DEFAULTS, settings, type SourceMessage, type Settings, type Annotation 
 export const digest = (value: unknown) => createHash("sha256").update(typeof value === "string" ? value : JSON.stringify(value)).digest("hex");
 export type Message = SourceMessage & { id:string; logicalId:string; revision:string; observedAt:number; seq:number; current:boolean };
 export type Job = { id:string; messageId:string; start:number; end:number; state:string; replay:boolean; requestId:string; availableAt:number };
+/** List filters; each applies only to the record kinds that carry it. */
+export type PageFilters = { conversation?:string; botId?:string; messageId?:string; runId?:string; state?:string; states?:string[]; audience?:string; reason?:string; kinds?:string[]; excludeKinds?:string[] };
+/** Source polling records every read; these kinds never change attention records. */
+export const readKinds = ["source_read","source_read_failed"];
 export type Item = Annotation["items"][number] & { id:string; messageId:string; runId:string; conversation:string; botId:string|null; start:number; end:number; current:boolean };
 
 export class AttentionStore {
@@ -27,6 +31,8 @@ export class AttentionStore {
       UPDATE jobs SET state='unknown' WHERE state='running';
       UPDATE runs SET state='unknown',finished=${Date.now()} WHERE state='running';`);
     if (!this.meta("settings")) this.setMeta("settings",{...DEFAULTS,revision:1});
+    // Stores that predate the counter derive it once from their event history.
+    if (this.meta("changeSeq")===null) this.setMeta("changeSeq",Number(this.db.prepare(`SELECT COALESCE(MAX(seq),0) AS n FROM events WHERE kind NOT IN (${readKinds.map(()=>"?").join(",")})`).get(...readKinds)!.n));
     if(!(this.db.prepare("PRAGMA table_info(items)").all() as {name:string}[]).some(row=>row.name==="initial_state")){
       this.db.exec("ALTER TABLE items ADD COLUMN initial_state TEXT; UPDATE items SET initial_state=state;");
     }
@@ -44,7 +50,8 @@ export class AttentionStore {
   }
   blob(text:string){const hash=digest(text);this.db.prepare("INSERT OR IGNORE INTO blobs VALUES(?,?)").run(hash,text);return hash;}
   text(hash:string){const row=this.db.prepare("SELECT text FROM blobs WHERE hash=?").get(hash) as {text:string}|undefined;if(!row)throw new Error("unknown attention blob");return row.text;}
-  event(kind:string,body:unknown){return Number(this.db.prepare("INSERT INTO events(at,kind,body) VALUES(?,?,?)").run(Date.now(),kind,JSON.stringify(body)).lastInsertRowid);}
+  event(kind:string,body:unknown){const seq=Number(this.db.prepare("INSERT INTO events(at,kind,body) VALUES(?,?,?)").run(Date.now(),kind,JSON.stringify(body)).lastInsertRowid);
+    if(!readKinds.includes(kind))this.setMeta("changeSeq",seq);return seq;}
   admit(source:SourceMessage):Message {
     const logicalId=digest([source.source,source.conversation,source.key]);
     const revision=digest([source.text,source.complete]),id=digest([logicalId,revision]);
@@ -153,21 +160,32 @@ export class AttentionStore {
       this.jobState(job.id,"completed");this.finishRun(runId,"completed",{annotation:result,itemIds:items.map(item=>item.id),applied:!job.replay&&this.message(message.id).current});
     });
   }
-  page(kind:"messages"|"runs"|"items"|"events"|"feedback",after:number,limit:number,filters:{conversation?:string;state?:string;audience?:string;reason?:string}={}){
+  page(kind:"messages"|"runs"|"items"|"events"|"feedback",after:number,limit:number,filters:PageFilters={},order:"asc"|"desc"="asc",before?:number){
     const conditions=["rowid>?"];const args:(string|number)[]=[after];
+    if(order==="desc"&&before)conditions.push("rowid<?"),args.push(before);
     if(kind==="items")conditions.push("current=1");
-    for(const [key,value] of Object.entries(filters))if(value && (kind==="items" || kind==="messages"&&key==="conversation")){conditions.push(`${key}=?`);args.push(value);}
-    const rows=this.db.prepare(`SELECT rowid AS cursor,* FROM ${kind} WHERE ${conditions.join(" AND ")} ORDER BY rowid LIMIT ?`).all(...args,limit+1);
+    const equal=(column:string,value?:string)=>{if(value){conditions.push(`${column}=?`);args.push(value);}};
+    const within=(column:string,values:string[]|undefined,negate=false)=>{if(values?.length){conditions.push(`${column} ${negate?"NOT ":""}IN (${values.map(()=>"?").join(",")})`);args.push(...values);}};
+    if(kind==="items"){equal("conversation",filters.conversation);equal("bot_id",filters.botId);equal("message_id",filters.messageId);equal("state",filters.state);within("state",filters.states);equal("audience",filters.audience);equal("reason",filters.reason);}
+    if(kind==="messages"){equal("conversation",filters.conversation);equal("bot_id",filters.botId);}
+    if(kind==="runs"&&filters.messageId){conditions.push("job_id IN (SELECT id FROM jobs WHERE message_id=?)");args.push(filters.messageId);}
+    if(kind==="events"){within("kind",filters.kinds);within("kind",filters.excludeKinds,true);}
+    if(kind==="feedback"){equal("json_extract(body,'$.messageId')",filters.messageId);equal("json_extract(body,'$.runId')",filters.runId);}
+    const rows=this.db.prepare(`SELECT rowid AS cursor,* FROM ${kind} WHERE ${conditions.join(" AND ")} ORDER BY rowid ${order==="desc"?"DESC":"ASC"} LIMIT ?`).all(...args,limit+1);
     const candidates=rows.slice(0,limit).map(row=>{
       if(kind==="messages"){const m=this.message(String(row.id));const {evidence:_evidence,...preview}=m;return {...preview,text:m.text.slice(0,2000),textChars:m.text.length,cursor:row.cursor};}
-      if(kind==="runs"){const body=JSON.parse(String(row.body));return {id:row.id,jobId:row.job_id,at:row.at,finished:row.finished,state:row.state,requestId:body.requestId,settings:body.settings,error:body.error??null,cursor:row.cursor};}
+      if(kind==="runs"){const body=JSON.parse(String(row.body));const job=this.db.prepare("SELECT message_id,replay FROM jobs WHERE id=?").get(String(row.job_id));
+        return {id:row.id,jobId:row.job_id,messageId:job?String(job.message_id):null,replay:Boolean(job?.replay),replayOf:body.replayOf??null,promptVersion:body.promptVersion??null,
+          at:row.at,finished:row.finished,state:row.state,requestId:body.requestId,settings:body.settings,error:body.error??null,cursor:row.cursor};}
       if(kind==="items")return {cursor:row.cursor,item:{...JSON.parse(String(row.body)),current:Boolean(row.current),state:row.state}};
+      if(kind==="feedback"){const body=JSON.parse(String(row.body));return {cursor:row.cursor,id:row.id,at:row.at,messageId:body.messageId,runId:body.runId??null,kind:body.kind,author:body.author,body:body.body};}
       const body=String(row.body);
       return {...row,body:body.length<=12_000?JSON.parse(body):null,bodyChars:body.length,omitted:body.length>12_000};
     });
     const entries:typeof candidates=[];let bytes=0;
     for(const entry of candidates){const size=Buffer.byteLength(JSON.stringify(entry));if(entries.length&&bytes+size>200_000)break;entries.push(entry);bytes+=size;}
-    return {entries,nextCursor:Number(rows[entries.length-1]?.cursor??after),hasMore:rows.length>entries.length};
+    const fallback=order==="desc"?before??0:after;
+    return {entries,nextCursor:Number(rows[entries.length-1]?.cursor??fallback),hasMore:rows.length>entries.length};
   }
   exportRun(id:string){
     const run=this.run(id);const job=this.db.prepare("SELECT * FROM jobs WHERE id=?").get(String(run.job_id))!;
@@ -181,5 +199,6 @@ export class AttentionStore {
   status(){return {enabled:this.meta<boolean>("enabled")??false,activatedAt:this.meta<number>("activatedAt"),baselined:this.meta<boolean>("baselined")??false,
     settings:this.defaults(),lastScan:this.meta("lastScan"),lastInference:this.meta("lastInference"),sourceErrors:this.meta("sourceErrors")??[],
     jobs:this.db.prepare("SELECT state,COUNT(*) AS count FROM jobs GROUP BY state").all(),messages:Number(this.db.prepare("SELECT COUNT(*) AS n FROM messages").get()!.n),
-    runs:Number(this.db.prepare("SELECT COUNT(*) AS n FROM runs").get()!.n)};}
+    runs:Number(this.db.prepare("SELECT COUNT(*) AS n FROM runs").get()!.n),
+    changeSeq:this.meta<number>("changeSeq")??0};}
 }

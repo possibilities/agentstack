@@ -2,7 +2,7 @@ import { accountLabels, workerAccountLabels } from "./derive";
 import type { StackState } from "./store";
 import { nodeKey, type NodeRef } from "./types";
 
-export type SpaceId = "fleet" | "accounts" | "lab" | "system" | "roles" | "inbox";
+export type SpaceId = "fleet" | "accounts" | "lab" | "system" | "roles" | "inbox" | "signal";
 
 export const spaces: { id: SpaceId; title: string; description: string; key: string }[] = [
   { id: "fleet", title: "Fleet", description: "Bots and their controls", key: "1" },
@@ -11,6 +11,7 @@ export const spaces: { id: SpaceId; title: string; description: string; key: str
   { id: "system", title: "System", description: "Owner, processes, packages, host resources and activity", key: "4" },
   { id: "roles", title: "Roles", description: "Instructions, skills, MCP servers and trusted projects every new Bot launches with", key: "5" },
   { id: "inbox", title: "Inbox", description: "Notifications to read, answer and dismiss", key: "6" },
+  { id: "signal", title: "Signal", description: "What conversations ask of you, and how it was interpreted", key: "7" },
 ];
 
 export const defaultSpace: SpaceId = "fleet";
@@ -65,6 +66,14 @@ export function homeOf(ref: NodeRef): NodeHome {
       return { kind: "space", space: "roles", window: "role-mcp-servers" };
     case "trusted-project":
       return { kind: "space", space: "roles", window: "role-projects" };
+    case "signal":
+      return { kind: "space", space: "signal", window: "signal" };
+    case "attention-item":
+      return { kind: "space", space: "signal", window: "attention" };
+    case "attention-message":
+      return { kind: "space", space: "signal", window: "attention-messages" };
+    case "attention-run":
+      return { kind: "space", space: "signal", window: "attention-runs" };
     case "package":
     case "operation":
       return { kind: "reference" };
@@ -85,8 +94,8 @@ export function parseSpacePath(pathname: string): SpaceId | null {
 }
 
 /** Human-readable reasons each space needs attention; an empty list means all quiet. Only "closed" channels count — idle and connecting are normal. */
-export function spaceAttention(state: Pick<StackState, "status" | "owner" | "resources" | "accounts" | "workerAccounts" | "bots" | "attempt" | "catalog" | "endpoints" | "notifyCounts">): Record<SpaceId | "api", string[]> {
-  const attention: Record<SpaceId | "api", string[]> = { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], api: [] };
+export function spaceAttention(state: Pick<StackState, "status" | "owner" | "resources" | "accounts" | "workerAccounts" | "bots" | "attempt" | "catalog" | "endpoints" | "notifyCounts" | "signalStatus">): Record<SpaceId | "api", string[]> {
+  const attention: Record<SpaceId | "api", string[]> = { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], api: [] };
   for (const bot of state.bots.data ?? []) if (bot.recoveryIssue) attention.fleet.push(`${bot.id} needs inspection`);
   const labels = accountLabels(state.accounts.data);
   for (const account of state.accounts.data ?? []) if (account.removing) attention.accounts.push(`${labels.get(account.id) ?? account.id} removal unfinished`);
@@ -102,6 +111,11 @@ export function spaceAttention(state: Pick<StackState, "status" | "owner" | "res
   const open = state.notifyCounts.data?.open ?? 0;
   if (open) attention.inbox.push(`${open} open notification${open === 1 ? "" : "s"}`);
   if (state.status.notify === "closed") attention.inbox.push("notify reconnecting");
+  if (state.status.signal === "closed") attention.signal.push("signal reconnecting");
+  if (state.signalStatus.error) attention.signal.push(`Signal status: ${state.signalStatus.error}`);
+  const signal = state.signalStatus.data;
+  for (const { source } of signal?.sourceErrors ?? []) attention.signal.push(`${source} unreadable`);
+  if (signal?.lastInference?.error) attention.signal.push(`Last interpretation failed: ${signal.lastInference.error}`);
   for (const name of ["auth", "usage", "worker"] as const) if (state.status[name] === "closed") attention.accounts.push(`${name} reconnecting`);
   for (const child of state.owner.data?.children ?? []) if (!child.running) attention.system.push(`${child.name} stopped`);
   if (state.status.owner === "closed") attention.system.push("owner reconnecting");
@@ -122,6 +136,7 @@ export function spaceAttention(state: Pick<StackState, "status" | "owner" | "res
 /** Exact inverse of nodeKey(); malformed keys return null. */
 export function parseNodeKey(key: string): NodeRef | null {
   if (key === "owner") return { kind: "owner" };
+  if (key === "signal") return { kind: "signal" };
   if (key === "login") return { kind: "login" };
   if (key === "usage") return { kind: "usage" };
   if (key === "grok-bot-usage") return { kind: "grok-bot-usage" };
@@ -135,7 +150,7 @@ export function parseNodeKey(key: string): NodeRef | null {
     if (dot <= 0 || dot === rest.length - 1) return null;
     return { kind: "operation", pkg: rest.slice(0, dot), id: rest.slice(dot + 1) };
   }
-  if (kind === "access-client" || kind === "access-pairing" || kind === "access-grant" || kind === "access-credential" || kind === "account" || kind === "worker-account" || kind === "worker-catalog" || kind === "usage-account" || kind === "child" || kind === "bot" || kind === "chat" || kind === "category" || kind === "fragment" || kind === "skill" || kind === "mcp-server" || kind === "trusted-project" || kind === "notification" || kind === "package" || kind === "resource" || kind === "process") {
+  if (kind === "access-client" || kind === "access-pairing" || kind === "access-grant" || kind === "access-credential" || kind === "account" || kind === "worker-account" || kind === "worker-catalog" || kind === "usage-account" || kind === "child" || kind === "bot" || kind === "chat" || kind === "category" || kind === "fragment" || kind === "skill" || kind === "mcp-server" || kind === "trusted-project" || kind === "notification" || kind === "attention-item" || kind === "attention-message" || kind === "attention-run" || kind === "package" || kind === "resource" || kind === "process") {
     return { kind, id: rest };
   }
   return null;

@@ -9,12 +9,17 @@ export type Settings = z.infer<typeof settings>;
 export const DEFAULTS: Settings = { model:"gpt-5.6-luna", reasoningEffort:"low", accountId:null };
 export const statusSchema=z.strictObject({enabled:z.boolean(),activatedAt:z.number().nullable(),baselined:z.boolean(),settings:settings.extend({revision:z.number().int()}),
   lastScan:z.number().nullable(),lastInference:z.record(z.string(),z.unknown()).nullable(),sourceErrors:z.array(z.strictObject({source:z.string(),error:z.string()})),
-  jobs:z.array(z.strictObject({state:z.string(),count:z.number().int()})),messages:z.number().int(),runs:z.number().int()});
+  jobs:z.array(z.strictObject({state:z.string(),count:z.number().int()})),messages:z.number().int(),runs:z.number().int(),
+  changeSeq:z.number().int().describe("Newest durable event sequence that can change attention records, excluding source-read polling. Unchanged means list reads are still current.")});
 export const modelsSchema=z.strictObject({accountId:z.uuid(),observedAt:z.string(),models:z.array(z.strictObject({id:z.string(),defaultEffort:settings.shape.reasoningEffort,supportedEfforts:z.array(settings.shape.reasoningEffort)}))});
 const paging={nextCursor:z.number().int(),hasMore:z.boolean()};
 export const messagePageSchema=z.strictObject({...paging,entries:z.array(z.strictObject({cursor:z.number().int(),seq:z.number().int(),id:z.string(),logicalId:z.string(),revision:z.string(),current:z.boolean(),
   source:z.enum(["bots","workers"]),conversation:z.string(),key:z.string(),role:z.enum(["user","assistant"]),authorKind:z.enum(["human","agent","unknown"]),audienceHint:z.enum(["human","agent","unknown"]).optional(),botId:z.string().nullable(),text:z.string(),textChars:z.number().int(),complete:z.boolean(),occurredAt:z.string().nullable(),observedAt:z.number()}))});
-export const runPageSchema=z.strictObject({...paging,entries:z.array(z.strictObject({cursor:z.number().int(),id:z.string(),jobId:z.string(),at:z.number(),finished:z.number().nullable(),state:z.string(),requestId:z.string(),settings:settings.extend({revision:z.number().int()}),error:z.string().nullable()}))});
+export const runPageSchema=z.strictObject({...paging,entries:z.array(z.strictObject({cursor:z.number().int(),id:z.string(),jobId:z.string(),
+  messageId:z.string().nullable().describe("The interpreted message revision."),replay:z.boolean().describe("An explicit evaluation replay; it never changes live attention."),
+  replayOf:z.string().nullable().describe("The run whose frozen input this replay evaluated."),promptVersion:z.string().nullable(),at:z.number(),finished:z.number().nullable(),state:z.string(),requestId:z.string(),settings:settings.extend({revision:z.number().int()}),error:z.string().nullable()}))});
+export const feedbackPageSchema=z.strictObject({...paging,entries:z.array(z.strictObject({cursor:z.number().int(),id:z.string(),at:z.number(),messageId:z.string(),runId:z.string().nullable(),
+  kind:z.enum(["correction","label","outcome","behavior"]),author:z.string(),body:z.string()}))});
 export const eventPageSchema=z.strictObject({...paging,entries:z.array(z.strictObject({cursor:z.number().int(),seq:z.number().int(),at:z.number(),kind:z.string(),body:z.record(z.string(),z.unknown()).nullable(),bodyChars:z.number().int(),omitted:z.boolean()}))});
 export const itemState = z.enum(["informational", "open", "partial", "answered", "satisfied", "declined", "withdrawn", "superseded", "unclear"]);
 export const attentionReason = z.enum(["none", "awareness", "review", "response", "action"]);

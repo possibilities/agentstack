@@ -2,7 +2,7 @@ import { loadCatalog } from "./catalog";
 import type { AccessSnapshot } from "./types";
 import { Channel } from "./channel";
 import { loadResources, mergeHistory } from "./resources";
-import type { Account, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, OwnerResources, OwnerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RoleLaunchPreview, RolePreview, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
+import type { Account, AttentionItem, AttentionMessage, AttentionPage, AttentionRun, AttentionStatus, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, OwnerResources, OwnerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RoleLaunchPreview, RolePreview, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerLogin, WorkerRuntime, WorkerSession } from "./types";
 
 export type StackState = Snapshot & {
   access: Resource<AccessSnapshot>;
@@ -33,7 +33,14 @@ export type StackState = Snapshot & {
   notificationRecords: Record<string, Notification>;
   /** What the next launch receives besides instructions, matched against every known Bot working directory. */
   roleLaunch: Resource<RoleLaunchPreview>;
+  signalStatus: Resource<AttentionStatus>;
+  /** Bumped when attention records may have changed (a new `changeSeq` or a reconnect); Signal views re-read on it. */
+  signalGeneration: number;
+  /** Attention records any Signal view has read, by ID, so links and the inspector resolve them. */
+  signalRecords: SignalRecords;
 };
+
+export type SignalRecords = { items: Record<string, AttentionItem>; messages: Record<string, AttentionMessage>; runs: Record<string, AttentionRun> };
 
 export type StackConnections = { packages?: readonly string[]; scopedBots?: boolean };
 
@@ -47,7 +54,7 @@ function isWorkerLoginState(value: unknown): value is WorkerLogin {
   return typeof value === "object" && value !== null && "status" in value && "account" in value && "provider" in value && "needsCode" in value;
 }
 
-type ResourceKey = "access" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "role" | "rolePreview" | "roleLaunch" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts";
+type ResourceKey = "access" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "role" | "rolePreview" | "roleLaunch" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts" | "signalStatus";
 
 const inferPage = 20;
 /** notification_list's maximum page size. */
@@ -98,6 +105,7 @@ export class StackStore {
       notificationFilter: { dismissed: false }, notifications: { data: null, error: null, at: null },
       notifyCounts: { data: null, error: null, at: null }, notificationRecords: {},
       roleLaunch: { data: null, error: null, at: null },
+      signalStatus: { data: null, error: null, at: null }, signalGeneration: 0, signalRecords: { items: {}, messages: {}, runs: {} },
     };
     this.serverState = this.state;
     for (const account of snapshot.workerAccounts.data ?? []) if (this.catalogAccountAvailable(account.id)) this.catalogAvailable.add(account.id);
@@ -160,6 +168,9 @@ export class StackStore {
     open("infer", () => { this.refresh("inferRequests"); this.refresh("inferModels"); }, () => {
       this.refresh("inferRequests"); this.refresh("inferModels");
     }, ["infer_changed"]);
+    // Signal publishes signal_changed after every source scan while processing is enabled. The
+    // status read is cheap; list views re-read only when its changeSeq says records may have changed.
+    open("signal", () => this.refresh("signalStatus"), () => this.refresh("signalStatus"), ["signal_changed"], { silent: ["signal_changed"] });
     const roleReads = () => { this.refresh("role"); this.refresh("rolePreview"); this.refresh("roleLaunch"); };
     open("roles", roleReads, roleReads, ["role_changed"]);
     const notify = () => { this.refresh("notifications"); this.refresh("notifyCounts"); this.refreshWatchedNotifications(); };
@@ -214,6 +225,29 @@ export class StackStore {
     const refresh = () => this.refresh(name === "infer_start" ? "inferRequests" : "inferModels");
     return this.call<T>("infer", name, args).finally(refresh);
   };
+  /** Read a Signal list and remember its records for links and inspection. */
+  readSignal = async <T>(name: string, args: Record<string, unknown> = {}): Promise<T> => {
+    const result = await this.call<T>("signal", name, args);
+    const entries = (result as AttentionPage<unknown>).entries;
+    const records = this.state.signalRecords;
+    if (name === "attention_list") {
+      const items = (entries as Array<{ cursor: number; item: Omit<AttentionItem, "cursor"> }>).map(({ cursor, item }) => ({ ...item, cursor }));
+      this.set({ signalRecords: { ...records, items: { ...records.items, ...Object.fromEntries(items.map((item) => [item.id, item])) } } });
+      return { ...result, entries: items } as T;
+    }
+    if (name === "attention_message_list") this.set({ signalRecords: { ...records, messages: { ...records.messages, ...Object.fromEntries((entries as AttentionMessage[]).map((entry) => [entry.id, entry])) } } });
+    if (name === "attention_run_list") this.set({ signalRecords: { ...records, runs: { ...records.runs, ...Object.fromEntries((entries as AttentionRun[]).map((entry) => [entry.id, entry])) } } });
+    return result;
+  };
+
+  /** Signal writes. Status is re-read afterwards, since a lost acknowledgement may still have applied the write. */
+  signalAction = <T>(name: "attention_control" | "attention_defaults_set" | "attention_feedback" | "attention_replay", args: Record<string, unknown>): Promise<T> =>
+    this.call<T>("signal", name, args).finally(() => this.refresh("signalStatus"));
+
+  private bumpSignal(): void {
+    this.set({ signalGeneration: this.state.signalGeneration + 1 });
+  }
+
   /** A fresh Role read that starts now, e.g. after a stale-revision refusal; it is applied like a write's result. */
   reloadRole = (): Promise<RoleSnapshot> => this.call<RoleSnapshot>("roles", "role_snapshot");
 
@@ -436,7 +470,9 @@ export class StackStore {
         // Pages for a filter the Inbox has since left are dropped; the follow-up read serves the new one.
         if (key === "notifications" && next.data && (next.data as NotificationPages).filter !== this.state.notificationFilter) { this.dirty.add(key); return; }
         if (key === "notifications" && next.data) this.upsertNotifications((next.data as NotificationPages).entries);
+        const changeSeq = key === "signalStatus" ? this.state.signalStatus.data?.changeSeq : undefined;
         this.set({ [key]: next } as Partial<StackState>);
+        if (key === "signalStatus" && next.data && (next.data as AttentionStatus).changeSeq !== changeSeq) this.bumpSignal();
         if (key === "login") this.reconcileAttempt();
         if (key === "workerLogins") this.reconcileWorkerAttempts();
         if (key === "bots") this.reconcileScoped();
@@ -475,6 +511,7 @@ export class StackStore {
       case "usage": return call<UsageSnapshot>("usage", "usage_snapshot");
       case "catalog": return loadCatalog((name, args) => call<never>("api", name, args)) as Promise<PackageDoc[]>;
       case "inferRequests": return call<{ requests: InferRequestSummary[] }>("infer", "infer_request_list", { limit: inferPage }).then((result) => result.requests);
+      case "signalStatus": return call<AttentionStatus>("signal", "attention_status");
       case "inferModels": return call<{ accounts: InferModelObservation[] }>("infer", "infer_model_list", {}).then((result) => result.accounts);
       case "notifications": return this.loadNotifications();
       case "notifyCounts": return call<NotificationCounts>("notify", "notification_counts");

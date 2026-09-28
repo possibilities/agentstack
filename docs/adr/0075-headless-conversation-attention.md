@@ -2,6 +2,7 @@
 
 Status: accepted, 2026-09-26. Extends [ADR 0052](0052-private-experimental-inference.md),
 [ADR 0055](0055-agent-tree-observability.md) and [ADR 0074](0074-lab-inference-over-websocket.md).
+The deferral of dedicated UI is superseded by [ADR 0099](0099-signal-space.md).
 
 ## Decision
 

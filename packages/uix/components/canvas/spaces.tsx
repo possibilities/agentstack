@@ -1,6 +1,6 @@
 "use client";
 
-import { BellIcon, BlocksIcon, BotIcon, ChartLineIcon, CpuIcon, FilePenLineIcon, FileTextIcon, FlaskConicalIcon, FolderLockIcon, GaugeIcon, InboxIcon, KeyRoundIcon, ListTreeIcon, MegaphoneIcon, PackageIcon, PlugIcon, RadioIcon, ScanLineIcon, ScrollTextIcon, ServerIcon, SparklesIcon, SquareTerminalIcon, UserCogIcon } from "lucide-react";
+import { ActivityIcon, BellIcon, BlocksIcon, BotIcon, ChartLineIcon, CpuIcon, FilePenLineIcon, FileTextIcon, FlaskConicalIcon, FolderLockIcon, GaugeIcon, HistoryIcon, InboxIcon, KeyRoundIcon, ListTreeIcon, MegaphoneIcon, MessageSquareWarningIcon, MessagesSquareIcon, PackageIcon, PlugIcon, RadarIcon, RadioIcon, ScanLineIcon, ScrollTextIcon, ServerIcon, SparklesIcon, SquareTerminalIcon, UserCogIcon } from "lucide-react";
 import type { ChatWindows } from "@/lib/stack/chat-windows";
 import type { SpaceId } from "@/lib/stack/spaces";
 import type { StackState } from "@/lib/stack/store";
@@ -19,6 +19,7 @@ import { RolePreviewWindow } from "./role-preview";
 import { RoleMcpServersWindow, RoleProjectsWindow, RoleSkillsWindow } from "./role-resources";
 import { AccessWindow } from "./access-window";
 import { InboxWindow, NotificationWindow } from "./notify-windows";
+import { AttentionChangesWindow, AttentionMessagesWindow, AttentionRunsWindow, AttentionWindow, SignalWindow } from "./signal-windows";
 
 export type WindowDef = {
   /** Globally unique across spaces; also used by Window and node destinations. */
@@ -99,6 +100,17 @@ export const spaceViews: Record<SpaceId, {
     windows: () => [
       { id: "notify-inbox", title: "Inbox", icon: InboxIcon, accent: "notify", width: 440, height: 720, column: 0, fixed: true, element: <InboxWindow /> },
       { id: "notify-detail", title: "Notification", icon: BellIcon, accent: "notify", width: 480, height: 640, column: 1, element: <NotificationWindow /> },
+    ],
+  },
+  signal: {
+    icon: RadarIcon,
+    accent: "events",
+    windows: () => [
+      { id: "signal", title: "Signal", icon: RadarIcon, accent: "events", width: 400, height: 640, column: 0, element: <SignalWindow /> },
+      { id: "attention", title: "Attention", icon: MessageSquareWarningIcon, accent: "events", width: 520, height: 780, column: 1, fixed: true, element: <AttentionWindow /> },
+      { id: "attention-messages", title: "Messages", icon: MessagesSquareIcon, accent: "events", width: 460, height: 780, column: 2, fixed: true, element: <AttentionMessagesWindow /> },
+      { id: "attention-runs", title: "Runs", icon: HistoryIcon, accent: "events", width: 500, height: 520, column: 3, fixed: true, element: <AttentionRunsWindow /> },
+      { id: "attention-changes", title: "Changes", icon: ActivityIcon, accent: "events", width: 500, height: 420, column: 3, fixed: true, element: <AttentionChangesWindow /> },
     ],
   },
 };

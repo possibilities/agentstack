@@ -412,8 +412,41 @@ export type InferRequestSummary = InferRequestFields & { inputPreview: string; t
 /** `infer_request_get`: the full ledger record. */
 export type InferRequest = InferRequestFields & { instructions: string; input: string; text: string | null };
 
-/** Headless attention defaults; API reference exposes these before dedicated controls exist. */
+/** Signal's revisioned attention inference defaults; a null account uses the first available enabled Bot account. */
 export type AttentionDefaults = { model: string; reasoningEffort: InferEffort; accountId: string | null; revision: number };
+/** `attention_status`. `changeSeq` advances only when attention records may have changed, never for source-read polling. */
+export type AttentionStatus = { enabled: boolean; activatedAt: number | null; baselined: boolean; settings: AttentionDefaults;
+  lastScan: number | null; lastInference: { at?: number; runId?: string; requestId?: string; state?: string; model?: string; reportedModel?: string | null; error?: string } | null;
+  sourceErrors: Array<{ source: string; error: string }>; jobs: Array<{ state: string; count: number }>; messages: number; runs: number; changeSeq: number };
+/** `attention_models`: account-bound choices for the effective account; no inference. */
+export type AttentionModels = { accountId: string; observedAt: string; models: InferModel[] };
+export type AttentionItemState = "informational" | "open" | "partial" | "answered" | "satisfied" | "declined" | "withdrawn" | "superseded" | "unclear";
+export type AttentionReason = "none" | "awareness" | "review" | "response" | "action";
+export type AttentionAudience = "human" | "agent" | "team" | "unspecified" | "none";
+export type AttentionUrgency = "routine" | "soon" | "immediate" | "unspecified";
+/** One current semantic item from `attention_list`, with its list cursor flattened in. `start`/`end` locate its evidence in the message text (UTF-16). */
+export type AttentionItem = {
+  cursor: number; id: string; messageId: string; runId: string; conversation: string; botId: string | null; start: number; end: number; current: boolean;
+  acts: string[]; forms: string[]; summary: string; evidence: { quote: string; occurrence: number }; subject: string; scope: string | null;
+  audience: { kind: AttentionAudience; id: string | null }; engagement: string[];
+  attention: { reason: AttentionReason; rationale: string; basis: "explicit" | "inferred" };
+  timing: { urgency: AttentionUrgency; deadline: string | null; blockingScope: string | null };
+  conditions: string[]; uncertainty: string[]; state: AttentionItemState;
+  relations: Array<{ type: string; targetId: string | null; referenceText: string }>;
+};
+/** A captured message revision from `attention_message_list`; `text` is a preview of at most 2,000 characters. */
+export type AttentionMessage = { cursor: number; seq: number; id: string; logicalId: string; revision: string; current: boolean;
+  source: "bots" | "workers"; conversation: string; key: string; role: "user" | "assistant"; authorKind: "human" | "agent" | "unknown";
+  audienceHint?: "human" | "agent" | "unknown"; botId: string | null; text: string; textChars: number; complete: boolean; occurredAt: string | null; observedAt: number };
+/** `failed` is definite; `unknown` may have dispatched and needs an explicit replay decision. */
+export type AttentionRun = { cursor: number; id: string; jobId: string; messageId: string | null; replay: boolean; replayOf: string | null; promptVersion: string | null;
+  at: number; finished: number | null; state: string; requestId: string; settings: AttentionDefaults; error: string | null };
+export type AttentionFeedbackKind = "correction" | "label" | "outcome" | "behavior";
+export type AttentionFeedback = { cursor: number; id: string; at: number; messageId: string; runId: string | null; kind: AttentionFeedbackKind; author: string; body: string };
+export type AttentionEvent = { cursor: number; seq: number; at: number; kind: string; body: Record<string, unknown> | null; bodyChars: number; omitted: boolean };
+export type AttentionPage<T> = { entries: T[]; nextCursor: number; hasMore: boolean };
+/** A revision-fenced UTF-16 chunk from the attention_*_read exports. */
+export type AttentionChunk = { text: string; nextOffset: number; totalChars: number; revision: string };
 export type InferTraceChunk = { text: string; nextOffset: number; totalChars: number; complete: boolean; revision: string };
 export type ChatMessageCursor = { sourceId: string; line: number; prefixHash: string };
 export type ChatMessagePage = { cursor: ChatMessageCursor; reset: boolean; hasMore: boolean; entries: Array<{
@@ -522,6 +555,8 @@ export type NodeRef =
   | { kind: "skill"; id: string }
   | { kind: "mcp-server"; id: string }
   | { kind: "trusted-project"; id: string }
+  | { kind: "signal" }
+  | { kind: "attention-item" | "attention-message" | "attention-run"; id: string }
   | { kind: "package"; id: string }
   | { kind: "operation"; id: string; pkg: string };
 

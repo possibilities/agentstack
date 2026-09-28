@@ -7,7 +7,7 @@ import test from "node:test";
 import { AttentionStore } from "../src/store.js";
 import { AttentionService } from "../src/service.js";
 import { Sources, type Call } from "../src/sources.js";
-import { annotation, instructions, messagePageSchema, eventPageSchema, type Annotation, type SourceMessage } from "../src/schema.js";
+import { annotation, instructions, messagePageSchema, eventPageSchema, runPageSchema, feedbackPageSchema, statusSchema, type Annotation, type SourceMessage } from "../src/schema.js";
 
 const account="123e4567-e89b-42d3-a456-426614174000";
 const source=(text:string,key:string=randomUUID()):SourceMessage=>({source:"bots",conversation:"bot:one:root",key,role:"assistant",authorKind:"agent",botId:"one",text,complete:true,occurredAt:"2000-01-01T00:00:00Z",evidence:{line:2}});
@@ -155,4 +155,38 @@ test("Worker chunks form revisioned text units, tool text stays out, origin is a
     assert.deepEqual(messages.map(row=>row.text),["Do work","Hello world"]);assert.ok(messages.every(row=>row.authorKind==="agent"));
     await new Sources(store,call).scan();assert.equal(store.status().messages,2);
   }finally{store.close();await f.clean();}
+});
+
+test("list views filter, page newest first, link runs to messages and replays, and fence changes on attention records",async()=>{
+  const f=await fixture();
+  const call:Call=async<T>(_pkg:string,name:string,args:unknown)=>{
+    if(name==="account_list")return {accounts:[{id:account,enabled:true,removing:false}]} as T;
+    return completion(JSON.stringify(request()),(args as {requestId:string}).requestId) as T;
+  };
+  const service=new AttentionService(f.dir,{},call);const store=service.store;
+  try{
+    const first=store.admit(source("Please approve shipping."));await service.processOne();
+    store.admit({...source("Please approve shipping."),conversation:"bot:two:root",botId:"two"});await service.processOne();
+    const byBot=store.page("items",0,25,{botId:"two"});assert.equal(byBot.entries.length,1);assert.equal(byBot.entries[0]!.item.botId,"two");
+    assert.equal(store.page("items",0,25,{states:["open","partial"]}).entries.length,2);
+    assert.equal(store.page("items",0,25,{states:["satisfied"]}).entries.length,0);
+    assert.equal(store.page("items",0,25,{messageId:first.id}).entries.length,1);
+    assert.equal(store.page("messages",0,25,{botId:"two"}).entries.length,1);
+    const newest=messagePageSchema.parse(store.page("messages",0,1,{},"desc"));assert.equal(newest.entries[0]!.botId,"two");assert.ok(newest.hasMore);
+    const older=messagePageSchema.parse(store.page("messages",0,1,{},"desc",newest.nextCursor));assert.equal(older.entries[0]!.id,first.id);assert.equal(older.hasMore,false);
+    const [run]=runPageSchema.parse(store.page("runs",0,25,{messageId:first.id})).entries;
+    assert.equal(run!.messageId,first.id);assert.equal(run!.replay,false);assert.equal(run!.replayOf,null);
+    store.replay(run!.id,randomUUID());await service.processOne();
+    const replay=runPageSchema.parse(store.page("runs",0,1,{},"desc")).entries[0]!;
+    assert.equal(replay.replay,true);assert.equal(replay.replayOf,run!.id);assert.equal(replay.messageId,first.id);
+    store.feedback(randomUUID(),{messageId:first.id,runId:run!.id,kind:"label",author:"tester",body:"correct"});
+    const feedback=feedbackPageSchema.parse(store.page("feedback",0,25,{runId:run!.id}));
+    assert.deepEqual(feedback.entries.map(entry=>[entry.kind,entry.author,entry.body]),[["label","tester","correct"]]);
+    assert.equal(store.page("feedback",0,25,{messageId:"other"}).entries.length,0);
+    const fenced=statusSchema.parse(store.status()).changeSeq;assert.ok(fenced>0);
+    store.event("source_read",{});store.event("source_read_failed",{});
+    assert.equal(store.status().changeSeq,fenced,"polling reads do not invalidate attention records");
+    assert.ok(store.page("events",0,25,{excludeKinds:["source_read","source_read_failed"]}).entries.every(entry=>!String(entry.kind).startsWith("source_read")));
+    assert.ok(store.page("events",0,25,{kinds:["feedback_recorded"]}).entries.length===1);
+  }finally{await service.close();await f.clean();}
 });

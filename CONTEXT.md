@@ -186,7 +186,7 @@ A named collection of related windows on its own UIX open bench, addressed as `/
 
 _Avoid_: page, tab, workspace (a Bot's working directory)
 
-Roles is the fifth Canvas space, managing the Role's instruction Categories and Fragments. Inbox is the sixth, where people read, answer and dismiss Notifications.
+Roles is the fifth Canvas space, managing the Role's instruction Categories and Fragments. Inbox is the sixth, where people read, answer and dismiss Notifications. Signal is the seventh, showing what conversations ask of people and the interpretation evidence behind it.
 
 ## Open bench
 

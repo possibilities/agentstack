@@ -27,6 +27,7 @@ import { useRoleActions } from "./role-actions";
 import { useVoice } from "./voice";
 import { accentBg, accentText, type Accent } from "./window";
 import { OperationBadges, RecoveryWarning } from "./windows";
+import { AttentionItemDetail, AttentionMessageDetail, TraceViewer } from "./signal-windows";
 
 type View = {
   eyebrow: string;
@@ -272,10 +273,56 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         events: state.events.filter((event) => event.pkg === "roles"),
       };
     }
+    case "signal": {
+      const status = state.signalStatus.data;
+      if (!status) return null;
+      return { eyebrow: "Signal processing", accent: "events", title: status.enabled ? "Interpreting" : "Paused", record: status,
+        fields: new Map(fieldsOf(findOperation(catalog, "signal", "attention_status")?.outputSchema).map((field) => [field.name, field])),
+        related: status.lastInference?.runId ? [{ ref: { kind: "attention-run", id: status.lastInference.runId }, label: "Last interpretation" }] : [],
+        operations: { pkg: "signal", list: signalOperations(catalog, ["attention_control", "attention_defaults_set", "attention_models"]) },
+        events: state.events.filter((event) => event.pkg === "signal") };
+    }
+    case "attention-item": {
+      const item = state.signalRecords.items[ref.id];
+      if (!item) return null;
+      const related: View["related"] = [{ ref: { kind: "attention-message", id: item.messageId }, label: "Source message" }, { ref: { kind: "attention-run", id: item.runId }, label: "Interpretation run" }];
+      if (item.botId && state.bots.data?.some((bot) => bot.id === item.botId)) related.push({ ref: { kind: "bot", id: item.botId }, label: item.botId });
+      for (const relation of item.relations) if (relation.targetId) related.push({ ref: { kind: "attention-item", id: relation.targetId }, label: `${relation.type.replace("_", " ")} · ${state.signalRecords.items[relation.targetId]?.summary ?? relation.referenceText}` });
+      return { eyebrow: `Attention · ${item.state}`, accent: "events", title: item.summary, record: item, fields: signalFields(catalog, "attention_list", "item"),
+        body: <AttentionItemDetail item={item} />, related, operations: { pkg: "signal", list: signalOperations(catalog, ["attention_feedback"]) } };
+    }
+    case "attention-message": {
+      // A message not yet listed still resolves: its body reads the immutable record by ID.
+      const message = state.signalRecords.messages[ref.id];
+      const related: View["related"] = message?.botId && state.bots.data?.some((bot) => bot.id === message.botId) ? [{ ref: { kind: "bot", id: message.botId }, label: message.botId }] : [];
+      return { eyebrow: "Captured message", accent: "events", title: message ? `${message.role} · ${message.conversation}` : ref.id.slice(0, 12), record: message ?? { id: ref.id },
+        fields: signalFields(catalog, "attention_message_list"), body: <AttentionMessageDetail id={ref.id} />, related,
+        operations: { pkg: "signal", list: signalOperations(catalog, ["attention_message_read", "attention_blob_read", "attention_feedback"]) } };
+    }
+    case "attention-run": {
+      const run = state.signalRecords.runs[ref.id];
+      const related: View["related"] = [];
+      if (run?.messageId) related.push({ ref: { kind: "attention-message", id: run.messageId }, label: "Interpreted message" });
+      if (run?.replayOf) related.push({ ref: { kind: "attention-run", id: run.replayOf }, label: "Original run" });
+      return { eyebrow: `Interpretation run${run?.replay ? " · replay" : ""}`, accent: "events", title: run ? `${run.state} · ${run.settings.model}` : ref.id.slice(0, 12), record: run ?? { id: ref.id },
+        fields: signalFields(catalog, "attention_run_list"), body: <TraceViewer id={ref.id} state={run?.state} />, related,
+        operations: { pkg: "signal", list: signalOperations(catalog, ["attention_trace_read", "attention_replay", "attention_feedback"]) } };
+    }
     case "package":
     case "operation":
       return null; // Reference destinations are rendered in the shared dock's reading mode.
   }
+}
+
+function signalOperations(catalog: PackageDoc[] | null, names: string[]): OperationDoc[] {
+  return catalog?.find((doc) => doc.name === "signal")?.operations.filter((operation) => names.includes(operation.name)) ?? [];
+}
+
+/** Field notes for a Signal list's entries, optionally nested one level (attention_list wraps each item). */
+function signalFields(catalog: PackageDoc[] | null, list: string, nested?: string): Map<string, Field> {
+  const entries = fieldsOf(findOperation(catalog, "signal", list)?.outputSchema).find((field) => field.name === "entries")?.children ?? [];
+  const fields = nested ? entries.find((field) => field.name === nested)?.children ?? [] : entries;
+  return new Map(fields.map((field) => [field.name, field]));
 }
 
 const accountControls = new Set(["account_set_enabled", "account_remove", "account_login_replace"]);
@@ -325,6 +372,7 @@ function referencePackage(ref: NodeRef): string {
   if (ref.kind === "notification") return "notify";
   if (ref.kind === "worker-catalog") return "worker";
   if (ref.kind === "usage" || ref.kind === "usage-account" || ref.kind === "grok-bot-usage") return "usage";
+  if (ref.kind === "signal" || ref.kind === "attention-item" || ref.kind === "attention-message" || ref.kind === "attention-run") return "signal";
   return "auth";
 }
 
