@@ -264,11 +264,10 @@ test("the original collection schema migrates IDs and byte references without re
   } finally { await api.closeContext(ctx); await rm(state, { recursive: true, force: true }); }
 });
 
-test("remote static origins are explicit, separated and independent of portable API paths", () => {
-  assert.throws(() => contentNetworkConfig({ AGENTSTACK_CONTENT_HOST: "0.0.0.0" }), /require explicit/);
+test("Content backends cannot bind remotely; Access owns authenticated remote ingress", () => {
+  assert.throws(() => contentNetworkConfig({ AGENTSTACK_CONTENT_HOST: "0.0.0.0" }), /must bind 127/);
   assert.throws(() => contentNetworkConfig({ AGENTSTACK_CONTENT_DOCUMENT_ORIGIN: "https://same.example", AGENTSTACK_CONTENT_ARTIFACT_ORIGIN: "https://same.example" }), /must differ/);
-  assert.deepEqual(contentNetworkConfig({ AGENTSTACK_CONTENT_HOST: "0.0.0.0", AGENTSTACK_CONTENT_DOCUMENT_ORIGIN: "https://docs.example", AGENTSTACK_CONTENT_ARTIFACT_ORIGIN: "https://assets.example" }),
-    { host: "0.0.0.0", documentOrigin: "https://docs.example", artifactOrigin: "https://assets.example" });
+  assert.throws(() => contentNetworkConfig({ AGENTSTACK_CONTENT_HOST: "0.0.0.0", AGENTSTACK_CONTENT_DOCUMENT_ORIGIN: "https://docs.example", AGENTSTACK_CONTENT_ARTIFACT_ORIGIN: "https://assets.example" }), /must bind 127/);
 });
 
 test("configured public origins drive static redirects without appearing in stored item identities", { timeout: 30_000 }, async () => {

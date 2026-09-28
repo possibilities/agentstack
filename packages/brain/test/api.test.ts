@@ -37,12 +37,11 @@ test("Package API initializes isolated state and owns share-to-index processing 
     assert.deepEqual(await call(ctx, "sources_list"), { sources: [] });
     assert.equal(existsSync(forbidden), false);
     assert.equal(existsSync(join(root, ".local")), false);
-    const token = readFileSync(ctx.tokenPath, "utf8").trim();
+    const token = ctx.shareToken;
     assert.ok(token.length >= 32);
-    assert.equal(statSync(ctx.tokenPath).mode & 0o777, 0o600);
+    assert.equal(existsSync(ctx.tokenPath), false);
     assert.equal(JSON.stringify(status).includes(token), false);
-    assert.equal(api.operations.find((op) => op.name === "share_token_reveal")?.annotations?.readOnlyHint, false);
-    assert.equal((await call(ctx, "share_token_reveal", { reveal: true })).token, token);
+    assert.equal(api.operations.some(op => op.name === "share_token_reveal" || op.name === "share_token_rotate"), false);
 
     const unauthorized = await fetch(`${url}/v1/share`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client: "chrome-extension", text: "no admission" }) });
     assert.equal(unauthorized.status, 401);
@@ -80,11 +79,7 @@ test("Package API initializes isolated state and owns share-to-index processing 
     const removed = await call(ctx, "delete", { "document-id": documentId, confirm: "delete" });
     assert.equal(removed.deleted_document_id, documentId);
     assert.equal((await call(ctx, "search", { query: "Quasar" })).results.length, 0);
-    const rotated = await call(ctx, "share_token_rotate");
-    assert.notEqual(rotated.token, token);
-    assert.equal(readFileSync(ctx.tokenPath, "utf8").trim(), rotated.token);
-    assert.equal((await fetch(`${url}/v1/health`, { headers: { authorization: `Bearer ${token}` } })).status, 401);
-    assert.equal((await fetch(`${url}/v1/health`, { headers: { authorization: `Bearer ${rotated.token}` } })).status, 200);
+    assert.equal(existsSync(ctx.tokenPath), false);
   } finally { await closeBrainContext(ctx); }
   assert.equal(existsSync(ctx.registrationPath), false);
   assert.equal(ctx.workerState, "stopped");

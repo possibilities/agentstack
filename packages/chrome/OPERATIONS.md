@@ -14,13 +14,16 @@ Developer mode, and **Load unpacked** with that directory. Rebuild and click
 
 ## Connect to Brain
 
-1. Configure the owner-managed Brain share listener using the repository’s
-   [Brain operations](../../docs/brain.md) and [share contract](../../docs/brain-share-contract.md).
-2. Open the extension’s **Settings**. The initial URL is `http://127.0.0.1:8877`.
-   Use that only when the browser and AgentStack run on the same machine;
-   otherwise enter the actual reachable AgentStack address.
-3. Paste the newly configured AgentStack share token, **Save & grant access**,
-   then **Test connection**. Chrome grants access to that exact origin only.
+1. Configure the shared [Access ingress](../../docs/access.md) on the tailnet.
+2. In **Settings**, enter its HTTPS origin without a path and choose **Pair**.
+   Chrome grants host permission for that exact origin.
+3. Approve the matching code in AgentStack **System → Access**, then check
+   approval. **Check connection** authenticates against `/v1/access/me`.
+   Stored credentials alone do not establish connectivity.
+
+**Disconnect** confirms server revocation before clearing the credential.
+**Forget locally** explicitly clears it without claiming revocation; revoke the
+old credential in System → Access separately. Both preserve held shares.
 
 Settings, credentials, history, and the outbox start empty in AgentStack-prefixed
 `chrome.storage.local` keys. They are not imported or synced from another app or
@@ -39,13 +42,12 @@ it does not establish indexing completion. A timeout or malformed receipt remain
 held and retries with the same content-derived idempotency identity. A duplicate
 acknowledges the same job, while already-indexed content names its Document.
 
-Held shares bind to their configured server URL before a network attempt. Shares
-created before setup bind when the first server is saved. Changing servers keeps
-earlier shares held for their original destination, and history job IDs are only
-queried against their own server. Restore that URL to send them; token rotation
-at the same address works normally. The v1 API exposes no account/store identity,
-so this is URL binding, not proof of continuity if a different database replaces
-the server at the same address.
+Held shares and history bind to both URL and the server ID from pairing.
+Shares created before setup bind on their first attempt. Refresh rotation and
+re-pairing the same server preserve that identity; a replacement at the same URL
+cannot receive old content. Legacy URL-only records remain held and are never
+retargeted. Reconnect to the original identity, or explicitly discard and share
+again. Other-destination records are retained beyond the normal retry age.
 
 One alarm drives exponential retries from one minute to one hour. The outbox is
 bounded at 200 entries and seven days. Permanent rejection, expiry, and overflow

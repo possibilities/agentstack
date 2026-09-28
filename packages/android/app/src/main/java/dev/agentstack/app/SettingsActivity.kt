@@ -33,6 +33,23 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var recentNotificationStatus: TextView
     private lateinit var enableNotifications: Button
     private lateinit var clearRecent: Button
+    private var connectionBusy = false
+
+    private fun connectionTask(work: () -> Unit) {
+        if (connectionBusy) return
+        connectionBusy = true
+        val controls = listOf(R.id.save, R.id.test, R.id.disconnect, R.id.check_connection, R.id.forget, R.id.outbox_send, R.id.outbox_discard, R.id.server_url)
+        controls.forEach { findViewById<View>(it).isEnabled = false }
+        thread {
+            try { work() }
+            finally {
+                runOnUiThread {
+                    connectionBusy = false
+                    controls.forEach { findViewById<View>(it).isEnabled = true }
+                }
+            }
+        }
+    }
 
     private val requestNotificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -50,7 +67,7 @@ class SettingsActivity : AppCompatActivity() {
         outbox = ShareOutbox.at(this)
         recentLinks = RecentLinks.at(this)
         val serverField = findViewById<EditText>(R.id.server_url)
-        val tokenField = findViewById<EditText>(R.id.token)
+        val codeField = findViewById<TextView>(R.id.token)
         status = findViewById(R.id.status)
         outboxStatus = findViewById(R.id.outbox_status)
         outboxDropped = findViewById(R.id.outbox_dropped)
@@ -60,7 +77,8 @@ class SettingsActivity : AppCompatActivity() {
         clearRecent = findViewById(R.id.recent_clear)
 
         serverField.setText(settings.serverUrl)
-        tokenField.setText(settings.token)
+        codeField.text = settings.pairingCode
+        status.text = settings.connectionState
 
         findViewById<Button>(R.id.save).setOnClickListener {
             val url = try {
@@ -69,47 +87,40 @@ class SettingsActivity : AppCompatActivity() {
                 status.text = getString(R.string.bad_server_url)
                 return@setOnClickListener
             }
-            val token = tokenField.text.toString().trim()
-            if (token.isEmpty()) {
-                status.text = getString(R.string.missing_token)
-                return@setOnClickListener
-            }
-            if (!settings.save(url, token)) {
-                status.text = getString(R.string.settings_not_saved)
-                return@setOnClickListener
-            }
-            status.text = getString(R.string.saved)
-            Toast.makeText(this, R.string.saved, Toast.LENGTH_SHORT).show()
-            requestNotificationPermissionIfNeeded()
-            // A server that was only just named may be the one held shares are
-            // waiting on.
-            try {
-                if (outbox.pending() > 0) ShareScheduler.flushNow(applicationContext)
-            } catch (error: OutboxReadException) {
-                showOutboxProblem(error)
+            status.text = "Requesting pairing…"
+            connectionTask {
+                try {
+                    val code = settings.pair(url)
+                    runOnUiThread { codeField.text = code; status.text = "Approve this matching code in AgentStack System → Access, then check approval." }
+                } catch (error: Exception) { runOnUiThread { status.text = error.message } }
             }
         }
 
         findViewById<Button>(R.id.test).setOnClickListener {
-            val url = try {
-                Settings.normalizeServerUrl(serverField.text.toString())
-            } catch (_: Exception) {
-                status.text = getString(R.string.bad_server_url)
-                return@setOnClickListener
-            }
-            val token = tokenField.text.toString().trim()
             status.text = getString(R.string.testing)
-            thread {
-                val result = ShareClient(url, token).checkHealth()
-                val message = when (result) {
-                    is ShareResult.Queued -> getString(R.string.connected)
-                    is ShareResult.Rejected -> result.message
-                    is ShareResult.Unreachable -> getString(R.string.unreachable)
-                    else -> getString(R.string.unreachable)
-                }
-                if (result is ShareResult.Queued) ShareScheduler.flushNow(applicationContext)
-                runOnUiThread { status.text = message }
+            connectionTask {
+                try {
+                    settings.completePairing()
+                    ShareScheduler.flushNow(applicationContext)
+                    runOnUiThread { codeField.text = ""; status.text = "Paired with AgentStack."; requestNotificationPermissionIfNeeded() }
+                } catch (error: Exception) { runOnUiThread { status.text = error.message } }
             }
+        }
+
+        findViewById<Button>(R.id.disconnect).setOnClickListener {
+            connectionTask { try { settings.disconnect(); runOnUiThread { codeField.text = ""; status.text = "Disconnected. Held shares are kept." } }
+                catch (error: Exception) { runOnUiThread { status.text = "Disconnect not confirmed: ${error.message}. Revoke in System → Access if this server is unavailable." } } }
+        }
+        findViewById<Button>(R.id.check_connection).setOnClickListener {
+            connectionTask { val state = settings.checkConnection(); runOnUiThread { status.text = state } }
+        }
+        findViewById<Button>(R.id.forget).setOnClickListener {
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Forget locally?")
+                .setMessage("Server revocation will not be confirmed. Revoke the old credential in System → Access. Held shares remain bound to their original server.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Forget locally") { _, _ -> settings.forgetLocally(); codeField.text = ""; status.text = settings.connectionState }
+                .show()
         }
 
         findViewById<Button>(R.id.outbox_send).setOnClickListener {
@@ -119,11 +130,11 @@ class SettingsActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
             status.text = getString(R.string.outbox_sending)
-            val client = ShareClient(configuration.serverUrl, configuration.token)
-            thread {
+            val client = ShareClient(configuration.serverUrl, "", tokenProvider = { settings.accessToken(configuration.destination) }, serverId = configuration.serverId)
+            connectionTask {
                 try {
                     // Forced: the user asked now, so the backoff does not apply.
-                    val summary = outbox.flush({ client.share(it) }, force = true, destination = configuration.serverUrl)
+                    val summary = outbox.flush({ client.share(it) }, force = true, destination = configuration.destination)
                     ShareScheduler.scheduleNext(applicationContext, outbox)
                     val message = if (summary.otherDestination > 0) {
                         getString(R.string.outbox_other_server, summary.otherDestination)
@@ -272,8 +283,8 @@ class SettingsActivity : AppCompatActivity() {
             showOutboxProblem(error)
             return
         }
-        findViewById<Button>(R.id.outbox_send).isEnabled = true
-        findViewById<Button>(R.id.outbox_discard).isEnabled = true
+        findViewById<Button>(R.id.outbox_send).isEnabled = !connectionBusy
+        findViewById<Button>(R.id.outbox_discard).isEnabled = !connectionBusy
         outboxStatus.text = if (pending == 0) {
             getString(R.string.outbox_none)
         } else {

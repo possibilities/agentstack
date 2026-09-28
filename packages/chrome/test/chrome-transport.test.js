@@ -62,8 +62,8 @@ test("HTTP failures preserve retry policy and share-state reads preserve wire sh
 });
 
 test("server URLs normalize harmless variation and reject hidden routing data", () => {
-  assert.equal(normalizeServerUrl(" HTTP://LOCALHOST:8877/ "), "http://localhost:8877");
-  for (const url of ["file:///etc/hosts", "https://user:secret@example.com", "https://example.com?token=secret", "https://example.com#fragment"]) {
+  assert.equal(normalizeServerUrl(" HTTPS://LOCALHOST:8877/ "), "https://localhost:8877");
+  for (const url of ["http://localhost:8877", "file:///etc/hosts", "https://user:secret@example.com", "https://example.com?token=secret", "https://example.com#fragment"]) {
     assert.throws(() => normalizeServerUrl(url));
   }
 });

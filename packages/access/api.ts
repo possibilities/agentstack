@@ -1,0 +1,46 @@
+import { operation, stateDir, type PackageApi } from "@agentstack/api";
+import { z } from "zod";
+import { AccessStore, scopes } from "./src/store.js";
+import { startIngress, pairInput, redeemInput, refreshInput, handoffInput } from "./src/ingress.js";
+import { snapshotSchema, envelope, errorEnvelope, pairResponse, redeemResponse, refreshResponse, shareRequest, shareResponse, statesResponse } from "./src/schema.js";
+
+type Context = { store: AccessStore; ingress: Awaited<ReturnType<typeof startIngress>> };
+export const api: PackageApi<Context, "access_changed"> = {
+  operations: [
+    operation({ name: "access_snapshot", description: "Read clients, pending approval codes, grants, credential metadata and the last 100 audit entries. Never returns secrets. Public-cloud grants are foundations only; no public listener or connector tokens are issued.", input: z.strictObject({}),
+      output: snapshotSchema, annotations: { readOnlyHint: true },
+      async call(ctx) { return snapshotSchema.parse({ ...ctx.store.inventory(), ingress: ctx.ingress ? { host: ctx.ingress.host, port: ctx.ingress.port, artifactPort: ctx.ingress.artifactPort } : null }); } }),
+    operation({ name: "pairing_decide", description: "Approve a selected subset of requested scopes or deny a pairing after comparing the full human code. Omitted scopes approve the requested set. Only trusted local control can decide; expiry and transition are atomic.", input: z.strictObject({ id: z.uuid(), code: z.string(), approve: z.boolean(), scopes: z.array(z.enum(scopes)).max(3).optional() }), output: z.object({ state: z.string() }),
+      async call(ctx, input) { return ctx.store.approve(input.id, input.code, input.approve, input.scopes); } }),
+    operation({ name: "grant_update", description: "Extend or restrict an active grant without re-pairing. Requires the observed revision. New scopes apply immediately to tokens and Content sessions; cloud grants accept explicit package.operation selections only.", input: z.strictObject({ id: z.uuid(), expectedRevision: z.number().int().positive(), scopes: z.array(z.enum(scopes)).max(3), operations: z.array(z.string().regex(/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/)).max(100) }), output: z.object({ id: z.uuid(), revision: z.number().int() }),
+      async call(ctx, input) { return ctx.store.updateGrant(input.id, input.expectedRevision, input.scopes, input.operations); } }),
+    operation({ name: "grant_evaluate_operation", description: "Evaluate an authenticated cloud grant against its exact network policy and package.operation selection. Local authorization foundation only; this issues no credential, invokes no operation and creates no Bot/Worker MCP identity.", input: z.strictObject({ grantId: z.uuid(), network: z.enum(["tailnet", "public-cloud"]), operation: z.string().regex(/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/) }), output: z.object({ allowed: z.boolean(), grantId: z.uuid(), operation: z.string() }), annotations: { readOnlyHint: true },
+      async call(ctx, input) { return ctx.store.evaluateOperation(input.grantId, input.network, input.operation); } }),
+    operation({ name: "access_revoke", description: "Immediately revoke one client, grant or individual credential, including all its access tokens and content sessions. History and admission receipts are retained.", input: z.strictObject({ kind: z.enum(["client", "grant", "credential"]), id: z.uuid() }), output: z.object({ revoked: z.boolean() }),
+      async call(ctx, input) { return ctx.store.revoke(input.kind, input.id); } }),
+    operation({ name: "cloud_grant_create", description: "Record a public-cloud grant with an explicit positive list of package.operation names. This foundation issues no credentials and exposes no remote MCP; device credentials can never use this network policy.", input: z.strictObject({ label: z.string().trim().min(1).max(100), operations: z.array(z.string().regex(/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/)).min(1).max(100) }), output: z.object({ id: z.uuid(), clientId: z.uuid(), network: z.string(), operations: z.array(z.string()), credentialIssued: z.boolean() }),
+      async call(ctx, input) { return ctx.store.cloudGrant(input.label, [...new Set(input.operations)]); } }),
+  ],
+  http: [{ name: "private", kind: "json", authentication: "bearer", description: "Direct TLS tailnet ingress; socket peer and local tailscaled are checked on EVERY request, including pairing and preflight. Pairing uses a separate redemption secret, not the displayed code.", routes: [
+    { method: "GET", path: "/v1/access/identity", format: "application/json", description: "Read the stable server identity before sending credentials. Requires verified tailnet provenance, but no bearer. HTTPS authenticates the server; this ID fences accidental replacement and destination changes.", response: envelope(z.object({ serverId: z.uuid() })), error: errorEnvelope },
+    { method: "GET", path: "/v1/access/me", format: "application/json", description: "Verify a Brain audience credential and read its current grant scopes; no data scope is needed. Requires X-AgentStack-Server-ID, as do redemption and all authenticated JSON requests.", response: envelope(z.object({ serverId: z.uuid(), clientId: z.uuid(), credentialId: z.uuid(), scopes: z.array(z.enum(scopes)) })), error: errorEnvelope },
+    { method: "POST", path: "/v1/access/pair", format: "application/json", description: "Begin a retry-safe expiring pairing; persist a random 32-byte base64url redemption secret before sending. No bearer required.", request: pairInput, response: pairResponse, error: errorEnvelope },
+    { method: "POST", path: "/v1/access/redeem", format: "application/json", description: "Redeem an approved pairing or recover the identical receipt before expiry. Authenticates with redemption secret.", request: redeemInput, response: redeemResponse, error: errorEnvelope },
+    { method: "POST", path: "/v1/access/refresh", format: "application/json", description: "Rotate refresh credential and issue a five-minute audience token. Persist request ID before sending; exact retries recover for five minutes.", request: refreshInput, response: refreshResponse, error: errorEnvelope },
+    { method: "POST", path: "/v1/content/handoff", format: "application/json", description: "Mint a one-use 60-second resource-scoped browser handoff; browser opens /session#handoff on the selected origin.", request: handoffInput, response: envelope(z.object({ handoff: z.string(), expiresAt: z.number() })), error: errorEnvelope },
+    { method: "POST", path: "/v1/access/disconnect", format: "application/json", description: "Revoke this device credential.", response: envelope(z.object({ revoked: z.boolean() })), error: errorEnvelope },
+    { method: "POST", path: "/v1/share", format: "application/json", description: "Admit a Brain share and record this client's receipt, including duplicates.", request: shareRequest, response: shareResponse, error: errorEnvelope },
+    { method: "GET", path: "/v1/shares", format: "application/json", description: "Read only jobs this client has admitted; requires brain:status.", query: z.object({ job_ids: z.string().optional() }), response: statesResponse, error: errorEnvelope },
+    { method: "GET", path: "/v1/health", format: "application/json", description: "Authenticated Brain audience health.", response: envelope(z.object({ version: z.literal(1), ok: z.literal(true) })), error: errorEnvelope },
+  ] }, { name: "content", kind: "static", authentication: "bearer", description: "Authenticated documents and separate sandboxed artifact origin. Document cookies and artifact view credentials are short-lived and resource-scoped; every request requires tailnet provenance.", routes: [
+    { method: "GET", path: "/d/*", format: "text/html", description: "Rendered document on document origin." },
+    { method: "GET", path: "/a/*", format: "application/octet-stream", description: "Artifact on the separate artifact origin; scripts have opaque origin and no network access." },
+    { method: "GET", path: "/c/*", format: "application/octet-stream", description: "Content item on artifact origin." },
+    { method: "GET", path: "/view/*", format: "application/octet-stream", description: "Artifact view credential followed by its resource path. Covers one item or immutable bundle for fifteen minutes; still requires tailnet. Relative bundle assets use the same scoped path." },
+    { method: "GET", path: "/session", format: "text/html", description: "Exchange a fragment-carried one-use handoff for a resource-scoped document cookie or artifact view path." },
+    { method: "POST", path: "/session", format: "application/json", description: "Consume a handoff on its exact origin." },
+  ] }],
+  events: { topics: { access_changed: "Access approval, client, grant or credential state changed; re-read access_snapshot." }, start(ctx, publish) { ctx.store.changed = () => publish("access_changed"); return () => { ctx.store.changed = undefined; }; } },
+  async createContext(env) { const store = new AccessStore(stateDir(env)); try { return { store, ingress: await startIngress(store, env) }; } catch (error) { store.close(); throw error; } },
+  async closeContext(ctx) { await ctx.ingress?.close(); ctx.store.close(); },
+};

@@ -1,12 +1,17 @@
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type RequestListener } from "node:http";
 import { Readable } from "node:stream";
+import { createServer as createHttpsServer } from "node:https";
+
+/** Kernel socket facts. Never constructed from forwarding headers. */
+export type HttpPeer = { remoteAddress: string; remotePort: number; localAddress: string };
 
 /** One owner-local HTTP origin. Packages supply the route policy and response,
  * while the API package owns the HTTP listener, streaming and shutdown. */
 export async function serveHttp(options: {
   host: string;
   port: number;
-  handle(request: Request): Response | Promise<Response>;
+  handle(request: Request, peer: HttpPeer): Response | Promise<Response>;
+  tls?: { key: string | Buffer; cert: string | Buffer };
   /** Optional positive route selection for read-only static origins. A package
    * still owns rendering and redirects within these selected paths. */
   routes?: readonly { path: string }[];
@@ -15,7 +20,7 @@ export async function serveHttp(options: {
   headersTimeout?: number;
   forceCloseConnections?: boolean;
 }): Promise<{ server: Server; port: number; close(): Promise<void> }> {
-  const server = createServer(async (incoming, outgoing) => {
+  const listener: RequestListener = async (incoming, outgoing) => {
     try {
       const headers = new Headers();
       for (const [key, value] of Object.entries(incoming.headers)) {
@@ -25,14 +30,17 @@ export async function serveHttp(options: {
       const address = server.address();
       const port = address && typeof address !== "string" ? address.port : options.port;
       const host = options.host.includes(":") ? `[${options.host}]` : options.host;
-      const request = new Request(`http://${host}:${port}${incoming.url ?? "/"}`, {
+      const request = new Request(`${options.tls ? "https" : "http"}://${host}:${port}${incoming.url ?? "/"}`, {
         method, headers,
         ...(["GET", "HEAD"].includes(method) ? {} : { body: Readable.toWeb(incoming) as ReadableStream<Uint8Array>, duplex: "half" }),
       });
       const pathname = new URL(request.url).pathname;
       const response = options.routes && ["GET", "HEAD"].includes(method) && !options.routes.some(({ path }) =>
         path.endsWith("/*") ? pathname.startsWith(path.slice(0, -1)) : pathname === path)
-        ? new Response(null, { status: 404 }) : await options.handle(request);
+        ? new Response(null, { status: 404 }) : await options.handle(request, {
+          remoteAddress: incoming.socket.remoteAddress ?? "", remotePort: incoming.socket.remotePort ?? 0,
+          localAddress: incoming.socket.localAddress ?? "",
+        });
       outgoing.writeHead(response.status, Object.fromEntries(response.headers));
       if (!incoming.complete) outgoing.once("finish", () => incoming.destroy());
       if (response.body && method !== "HEAD") {
@@ -48,7 +56,8 @@ export async function serveHttp(options: {
       } else if (!outgoing.headersSent) outgoing.writeHead(500).end();
       else outgoing.destroy();
     }
-  });
+  };
+  const server = options.tls ? createHttpsServer(options.tls, listener) : createServer(listener);
   if (options.requestTimeout !== undefined) server.requestTimeout = options.requestTimeout;
   if (options.headersTimeout !== undefined) server.headersTimeout = options.headersTimeout;
   try {

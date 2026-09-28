@@ -280,3 +280,15 @@ test("a mixed round preserves accepted, rejected, and held outcomes", async () =
   assert.equal(summary.settled.length, 1);
   assert.equal((await readOutbox())[0].payload.text, "held");
 });
+
+test("legacy and replaced identities remain held beyond expiry without sending", async () => {
+  await enqueue({ text: "Legacy" }, NOW, "https://same.example");
+  await enqueue({ text: "Original" }, NOW, "https://same.example#agentstack=original");
+  const summary = await flushOutbox(() => { throw new Error("must not send"); }, {
+    now: NOW + OUTBOX_MAX_AGE_MS + 1, force: true, destination: "https://same.example#agentstack=replacement",
+  });
+  assert.equal(summary.otherDestination, 2);
+  assert.equal(summary.attempted, 0);
+  assert.equal(summary.dropped.length, 0);
+  assert.equal((await readOutbox()).length, 2);
+});

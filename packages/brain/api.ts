@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { operation, type PackageApi } from "@agentstack/api";
@@ -9,10 +9,12 @@ import { captureOutput } from "./src/format.js";
 import { agentTools, invocationFor } from "./src/mcp-tools.js";
 import * as schemas from "./src/output-schemas.js";
 import { assertDefaultDatabaseTargetSafe, brainStateRoot, withBrainEnvironment } from "./src/paths.js";
-import { generateShareToken, readShareToken, writeShareToken, SHARE_DEFAULT_HOST, SHARE_DEFAULT_PORT } from "./src/share.js";
+import { generateShareToken, SHARE_DEFAULT_HOST, SHARE_DEFAULT_PORT } from "./src/share.js";
 import { clearIngressRegistration, probeShareIngress, writeIngressRegistration } from "./src/share-liveness.js";
 import { startShareServer, type RunningShareServer } from "./src/share-server.js";
 import { shareRoutes } from "./src/share-server.js";
+import { shareAdmit, shareStates } from "./src/share-server.js";
+import { parseShareRequest } from "./src/share.js";
 import { ResearchStore } from "./src/store.js";
 import { runWorker, type WorkerOptions, type WorkerResult } from "./src/worker.js";
 
@@ -131,7 +133,7 @@ export async function createBrainContext(env: NodeJS.ProcessEnv, workerOptions: 
     const registrationPath = join(stateRoot, "share-ingress.json");
     const port = sharePort(env);
     const host = env.AGENTSTACK_BRAIN_SHARE_HOST ?? SHARE_DEFAULT_HOST;
-    if (!host.trim()) throw new Error("AGENTSTACK_BRAIN_SHARE_HOST must not be empty");
+    if (host !== "127.0.0.1") throw new Error("Brain backend must bind 127.0.0.1; configure remote clients through Access");
     assertDefaultDatabaseTargetSafe(dbPath);
     mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
     chmodSync(stateRoot, 0o700);
@@ -139,9 +141,9 @@ export async function createBrainContext(env: NodeJS.ProcessEnv, workerOptions: 
     let server: RunningShareServer | undefined;
     try {
       const artifacts = new ArtifactStore(join(stateRoot, "artifacts"));
-      if (!existsSync(tokenPath)) writeShareToken(tokenPath, generateShareToken());
-      const token = readShareToken(tokenPath);
-      chmodSync(tokenPath, 0o600);
+      // Legacy shared tokens are never imported or accepted. This ephemeral
+      // loopback-only token exists solely for the owner's liveness probe.
+      const token = generateShareToken();
       let currentToken = token;
       server = await startShareServer({ store, artifactStore: artifacts, token: () => currentToken, port, host });
       writeIngressRegistration(registrationPath, { version: 1, url: server.url, host, port: server.port, pid: process.pid, started_at: new Date().toISOString() });
@@ -185,14 +187,23 @@ export async function closeBrainContext(ctx: BrainContext): Promise<void> {
 
 export const api: PackageApi<BrainContext> = {
   http: [{ name: "share", kind: "json", authentication: "bearer",
-    description: "Versioned device ingress; all data routes require Authorization: Bearer <token>. OPTIONS preflight is unauthenticated.", routes: shareRoutes }],
+    description: "Loopback-only internal share listener with ephemeral liveness credential. Devices pair through Access; legacy shared tokens are not accepted.", routes: shareRoutes }],
   operations: [
+    operation({ name: "share_receive", description: "Trusted same-user Access ingress admission. Remote clients cannot call the socket directly; Access records client-bound receipts after this deduplicating admission.",
+      input: z.strictObject({ payload: z.unknown() }), output: shareAdmit.output,
+      async call(ctx, input) {
+        try { return await shareAdmit.call({ store: ctx.store, artifactStore: ctx.artifacts, token: ctx.shareToken }, shareAdmit.input.parse(parseShareRequest(input.payload))); }
+        catch (error) { if (error instanceof CliError) throw new Error(error.code); throw error; }
+      } }),
+    operation({ name: "share_read_states", description: "Trusted same-user read of bounded ingestion states. Access filters IDs through durable client admission receipts before invoking this operation.",
+      input: shareStates.input, output: shareStates.output, annotations: { readOnlyHint: true },
+      async call(ctx, input) { return shareStates.call({ store: ctx.store, token: ctx.shareToken }, input); } }),
     operation({
       name: "brain_status", description: "Read isolated Brain state paths, share ingress address, and ingestion worker health. The token is never returned by this read-only operation.",
       input: z.strictObject({}),
-      output: z.object({ stateRoot: z.string(), database: z.string(), artifactStore: z.string(), shareUrl: z.string(), shareTokenFile: z.string(), worker: z.enum(["running", "stopped", "failed"]), health: z.string().nullable() }),
+      output: z.object({ stateRoot: z.string(), database: z.string(), artifactStore: z.string(), shareUrl: z.string(), shareTokenFile: z.null(), worker: z.enum(["running", "stopped", "failed"]), health: z.string().nullable() }),
       annotations: { title: "Read Brain status", readOnlyHint: true },
-      async call(ctx) { return { stateRoot: ctx.stateRoot, database: ctx.dbPath, artifactStore: join(ctx.stateRoot, "artifacts"), shareUrl: ctx.server.url, shareTokenFile: ctx.tokenPath, worker: ctx.workerState, health: ctx.health }; },
+      async call(ctx) { return { stateRoot: ctx.stateRoot, database: ctx.dbPath, artifactStore: join(ctx.stateRoot, "artifacts"), shareUrl: ctx.server.url, shareTokenFile: null, worker: ctx.workerState, health: ctx.health }; },
     }),
     operation({
       name: "jobs_reveal", description: "Reveal a job's submitted intent and captured text Artifacts, appending a sensitive-inspection audit record. Ordinary job inspection uses jobs_show and never returns this content.",
@@ -200,22 +211,6 @@ export const api: PackageApi<BrainContext> = {
       output: schemas.RevealedJobSchema,
       annotations: { title: "Reveal ingestion job content", readOnlyHint: false, idempotentHint: false },
       async call(ctx, input) { return schemas.RevealedJobSchema.parse(await invoke(ctx, "jobs", ["show", String(input["job-id"]), "--reveal-content", `--actor=${input.actor}`, `--max-bytes=${input["max-bytes"]}`])); },
-    }),
-    operation({
-      name: "share_token_reveal", description: "Explicitly reveal the private bearer token for configuring an AgentStack device client. This sensitive operation is excluded from read-only access.",
-      input: z.strictObject({ reveal: z.literal(true) }), output: z.object({ token_file: z.string(), token: z.string() }),
-      annotations: { title: "Reveal share token", readOnlyHint: false },
-      async call(ctx) { return { token_file: ctx.tokenPath, token: ctx.shareToken }; },
-    }),
-    operation({
-      name: "share_token_rotate", description: "Generate a fresh private bearer token and immediately replace the token accepted by the running share ingress. Existing device clients must be configured with the returned token.",
-      input: z.strictObject({}), output: z.object({ token_file: z.string(), token: z.string() }),
-      annotations: { title: "Rotate share token", readOnlyHint: false, idempotentHint: false },
-      async call(ctx) {
-        if (ctx.controller.signal.aborted) throw new Error("brain_stopping\nAgentStack Brain is stopping");
-        const token = generateShareToken(); writeShareToken(ctx.tokenPath, token); ctx.shareToken = token;
-        return { token_file: ctx.tokenPath, token };
-      },
     }),
     operation({
       name: "recovery_execute", description: "Execute one explicitly authorized recovery Run until no eligible work remains. The persisted authorization digest and exact allowed kinds fence the work; unrelated queue jobs remain outside this scope.",

@@ -175,13 +175,13 @@ class ShareOutbox(private val file: File) {
         val dropped = mutableListOf<DroppedShare>()
 
         for (entry in snapshot) {
-            if (now - entry.createdAt > MAX_AGE_MS) {
-                dropped += DroppedShare(describe(entry.payload), DropReason.EXPIRED, entry.lastMessage, now)
-                continue
-            }
             if (entry.destination != destination) {
                 otherDestination += 1
                 kept += entry
+                continue
+            }
+            if (now - entry.createdAt > MAX_AGE_MS) {
+                dropped += DroppedShare(describe(entry.payload), DropReason.EXPIRED, entry.lastMessage, now)
                 continue
             }
             if (offline || (!force && entry.nextAttemptAt > now)) {
@@ -380,6 +380,7 @@ class ShareOutbox(private val file: File) {
             is ShareResult.Rejected ->
                 result.status >= 500 ||
                     result.status == 401 ||
+                    result.status == 403 ||
                     result.status == 408 ||
                     result.status == 429
             else -> false

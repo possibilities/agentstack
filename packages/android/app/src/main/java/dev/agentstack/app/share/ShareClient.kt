@@ -30,6 +30,8 @@ class ShareClient(
     private val serverUrl: String,
     private val token: String,
     private val timeoutMs: Int = 15_000,
+    private val tokenProvider: (() -> String)? = null,
+    private val serverId: String? = null,
 ) {
 
     fun share(payload: SharePayload): ShareResult {
@@ -40,11 +42,13 @@ class ShareClient(
         return try {
             connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
+                instanceFollowRedirects = false
                 connectTimeout = timeoutMs
                 readTimeout = timeoutMs
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                setRequestProperty("Authorization", "Bearer $token")
+                setRequestProperty("Authorization", "Bearer ${tokenProvider?.invoke() ?: token}")
+                serverId?.let { setRequestProperty("X-AgentStack-Server-ID", it) }
             }
             connection.outputStream.use { it.write(body) }
 
@@ -70,9 +74,11 @@ class ShareClient(
             val endpoint = "${serverUrl.trimEnd('/')}/v1/health"
             connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
+                instanceFollowRedirects = false
                 connectTimeout = timeoutMs
                 readTimeout = timeoutMs
-                setRequestProperty("Authorization", "Bearer $token")
+                setRequestProperty("Authorization", "Bearer ${tokenProvider?.invoke() ?: token}")
+                serverId?.let { setRequestProperty("X-AgentStack-Server-ID", it) }
             }
             when (val status = connection.responseCode) {
                 in 200..299 -> ShareResult.Queued(0)
@@ -109,6 +115,9 @@ class ShareClient(
         }
 
         val error = json?.optJSONObject("error")
+        if (error?.optString("code") == "server_identity_mismatch") {
+            return ShareResult.Unreachable("Server identity changed. Held shares remain bound to the original server.")
+        }
         return ShareResult.Rejected(
             status,
             error?.optString("code") ?: "http_$status",

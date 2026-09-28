@@ -14,7 +14,7 @@
     <string name="settings_not_saved">Settings could not be saved. Try again.</string>
     <string name="testing">Testing…</string>
     <string name="connected">Connected. AgentStack is ready to receive shares.</string>
-    <string name="bad_server_url">Enter an http:// or https:// server URL.</string>
+    <string name="bad_server_url">Enter an HTTPS server origin without a path, credentials, query, or fragment.</string>
     <string name="missing_token">Enter the share token.</string>
 
     <string name="sending">Sending to AgentStack…</string>
@@ -61,7 +61,7 @@
     <string name="outbox_discard">Discard held</string>
     <string name="outbox_sending">Sending held shares…</string>
     <string name="outbox_flushed">Brain admitted %1$d of %2$d. Still waiting: %3$d. Not delivered: %4$d.</string>
-    <string name="outbox_other_server">Shares for another server: %1$d. Restore its address in Settings to send them.</string>
+    <string name="outbox_other_server">Shares with a different or legacy server identity: %1$d. Reconnect to the original server, or discard and explicitly share again. URL-only legacy shares remain held.</string>
     <string name="outbox_nothing_waiting">Nothing was waiting to be sent.</string>
     <string name="outbox_cleared">Discarded held shares: %1$d. Any unconfirmed server admission is unaffected.</string>
     <string name="outbox_dropped_heading">Not delivered</string>

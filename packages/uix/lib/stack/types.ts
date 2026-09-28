@@ -1,3 +1,13 @@
+export type AccessSnapshot = {
+  serverId: string;
+  clients: { id: string; label: string; kind: string; created: number; revoked: number | null }[];
+  pairings: { id: string; code: string; label: string; kind: string; scopes: string[]; created: number; expires: number; state: string }[];
+  grants: { id: string; client_id: string; network: "tailnet" | "public-cloud"; scopes: string[]; operations: string[]; created: number; revoked: number | null; revision: number }[];
+  credentials: { id: string; client_id: string; grant_id: string; generation: number; created: number; expires: number; revoked: number | null }[];
+  audit: { seq: number; time: number; action: string; subject: string }[];
+  ingress: { host: string; port: number; artifactPort: number } | null;
+};
+
 export type JsonSchema = {
   type?: string | string[];
   description?: string;
@@ -454,6 +464,7 @@ export type StackEvent = {
 };
 
 export type NodeRef =
+  | { kind: "access-client" | "access-pairing" | "access-grant" | "access-credential"; id: string }
   | { kind: "owner" }
   | { kind: "child"; id: string }
   | { kind: "resource"; id: string }

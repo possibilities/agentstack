@@ -15,8 +15,8 @@ test("the Android application has a fresh root identity and feature-scoped compo
     assert.ok(manifest.includes(`android:name="${name}"`));
   }
   const settings = await read("app/src/main/java/dev/agentstack/app/Settings.kt");
-  assert.match(settings, /agentstack\.app\.share\.settings\.v1/);
-  assert.match(settings, /http:\/\/127\.0\.0\.1:8877/);
+  assert.match(settings, /agentstack\.app\.connection\.v1/);
+  assert.match(settings, /instanceFollowRedirects = false/);
 });
 
 test("adaptive, monochrome, in-app and notification assets retain the exact Layers paths", async () => {

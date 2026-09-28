@@ -41,7 +41,7 @@ class ShareActivity : Activity() {
 
         // Never attempt a new share if its durable hold could not be recorded.
         val entry = try {
-            outbox.enqueue(payload, destination = configuration?.serverUrl)
+            outbox.enqueue(payload, destination = configuration?.destination)
         } catch (error: OutboxReadException) {
             ShareScheduler.pause(app)
             toast(app, getString(R.string.outbox_share_not_held))
@@ -65,7 +65,7 @@ class ShareActivity : Activity() {
 
         // Finish before the network call so the share sheet dismisses at once;
         // the outcome arrives as a toast from the background thread.
-        val client = ShareClient(configuration.serverUrl, configuration.token)
+        val client = ShareClient(configuration.serverUrl, "", tokenProvider = { settings.accessToken(configuration.destination) }, serverId = configuration.serverId)
         // Admission can outlive this Activity, but persistence must precede finish.
         try {
             ShareScheduler.scheduleNext(app, outbox)

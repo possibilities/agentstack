@@ -51,6 +51,23 @@ function resolve(ref: NodeRef, state: StackState): View | null {
   const resourceItemFields = (list: string) =>
     new Map(fieldsOf(findOperation(catalog, "owner", "owner_resources")?.outputSchema).find((field) => field.name === list)?.children.map((field) => [field.name, field]) ?? []);
   switch (ref.kind) {
+    case "access-client":
+    case "access-pairing":
+    case "access-grant":
+    case "access-credential": {
+      const list = { "access-client": "clients", "access-pairing": "pairings", "access-grant": "grants", "access-credential": "credentials" } as const;
+      const record = state.access.data?.[list[ref.kind]].find((item) => item.id === ref.id);
+      if (!record) return null;
+      const fields = fieldsOf(findOperation(catalog, "access", "access_snapshot")?.outputSchema).find((field) => field.name === list[ref.kind]);
+      return {
+        eyebrow: ref.kind.replace("-", " "), accent: "owner", title: "label" in record ? record.label : record.id,
+        record: { ...record }, fields: new Map(fields?.children.map((field) => [field.name, field])),
+        related: [{ ref: { kind: "package", id: "access" }, label: "Access Package API" },
+          ...("client_id" in record ? [{ ref: { kind: "access-client", id: record.client_id } as NodeRef, label: "Client" }] : []),
+          ...("grant_id" in record ? [{ ref: { kind: "access-grant", id: record.grant_id } as NodeRef, label: "Grant" }] : [])],
+        events: state.events.filter((event) => event.pkg === "access"),
+      };
+    }
     case "owner": {
       const owner = state.owner.data;
       if (!owner) return null;

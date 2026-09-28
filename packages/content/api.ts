@@ -262,7 +262,7 @@ function port(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
 
 export function contentNetworkConfig(env: NodeJS.ProcessEnv): { host: string; documentOrigin?: string; artifactOrigin?: string } {
   const host = env.AGENTSTACK_CONTENT_HOST ?? DEFAULT_HOST;
-  if (!host.trim() || /[/:\s]/.test(host)) throw new Error("AGENTSTACK_CONTENT_HOST must be a hostname or IPv4 address");
+  if (host !== "127.0.0.1") throw new Error("Content backend must bind 127.0.0.1; configure remote clients through Access");
   const parseOrigin = (value: string | undefined, name: string): string | undefined => {
     if (value === undefined) return undefined;
     let url: URL;
@@ -294,8 +294,8 @@ const artifactRoutes = [
 
 export const api: PackageApi<ContentContext> = {
   http: [
-    { name: "documents", kind: "static", authentication: "none", description: "Read-only rendered documents; a separate origin keeps published scripts isolated.", routes: documentRoutes },
-    { name: "artifacts", kind: "static", authentication: "none", description: "Read-only published bytes and collection items on the artifact origin.", routes: artifactRoutes },
+    { name: "documents", kind: "static", authentication: "none", description: "Same-user loopback backend only. Remote documents require the separate authenticated Access ingress.", routes: documentRoutes },
+    { name: "artifacts", kind: "static", authentication: "none", description: "Same-user loopback artifact backend only. Access authenticates remote requests on a separate isolated origin.", routes: artifactRoutes },
   ],
   operations: [
     operation({

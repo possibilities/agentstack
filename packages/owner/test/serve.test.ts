@@ -13,7 +13,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { ownerResourcesOutput, ownerResourceHistoryOutput } from "../src/resources/schema.js";
 
 const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
-const socketNames = ["api", "attention", "auth", "roles", "bots", "brain", "browser", "content", "workers", "usage", "infer", "notify", "owner"];
+const socketNames = ["access", "api", "attention", "auth", "roles", "bots", "brain", "browser", "content", "workers", "usage", "infer", "notify", "owner"];
 const brainEnv = { AGENTSTACK_BRAIN_SHARE_HOST: "127.0.0.1", AGENTSTACK_BRAIN_SHARE_PORT: "0" };
 
 test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a standalone reference listener, then shuts them down", { timeout: 120_000 }, async () => {
@@ -47,7 +47,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       children: Array<{ name: string; pid: number | null; running: boolean }>;
     };
     assert.equal(status.pid, child.pid);
-    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["api", "attention", "auth", "bots", "brain", "browser", "content", "infer", "inspector", "notify", "roles", "uix", "usage", "websocket", "workers"]);
+    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["access", "api", "attention", "auth", "bots", "brain", "browser", "content", "infer", "inspector", "notify", "roles", "uix", "usage", "websocket", "workers"]);
     for (let i = 0; i < 200 && status.children.some((entry) => !entry.running); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
       status = (await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} })) as typeof status;
@@ -400,7 +400,7 @@ test("a claimed Brain share port on its configured host refuses startup before c
   assert.ok(address && typeof address !== "string");
   try {
     const stderr = await refusedStartup({ AGENTSTACK_BRAIN_SHARE_HOST: "::1", AGENTSTACK_BRAIN_SHARE_PORT: String(address.port) });
-    assert.match(stderr, new RegExp(`Brain share port ${address.port} is already in use on ::1`));
+    assert.match(stderr, /Brain backend must bind 127/);
   } finally {
     await new Promise<void>((resolve) => listener.close(() => resolve()));
   }
@@ -410,11 +410,11 @@ test("Brain share rejects invalid ports before creating sockets", { timeout: 30_
   for (const value of ["", "not-a-port", "-1", "65536", "1.5"]) {
     assert.match(await refusedStartup({ AGENTSTACK_BRAIN_SHARE_PORT: value }), /AGENTSTACK_BRAIN_SHARE_PORT must be a port from 0 to 65535/);
   }
-  assert.match(await refusedStartup({ AGENTSTACK_BRAIN_SHARE_HOST: "" }), /AGENTSTACK_BRAIN_SHARE_HOST must not be empty/);
+  assert.match(await refusedStartup({ AGENTSTACK_BRAIN_SHARE_HOST: "" }), /Brain backend must bind 127/);
 });
 
 test("remote content listeners require two distinct public origins before creating sockets", { timeout: 30_000 }, async () => {
-  assert.match(await refusedStartup({ AGENTSTACK_CONTENT_HOST: "0.0.0.0" }), /require explicit document and artifact origins/);
+  assert.match(await refusedStartup({ AGENTSTACK_CONTENT_HOST: "0.0.0.0" }), /Content backend must bind 127/);
   assert.match(await refusedStartup({ AGENTSTACK_CONTENT_DOCUMENT_ORIGIN: "https:\/\/same.example", AGENTSTACK_CONTENT_ARTIFACT_ORIGIN: "https:\/\/same.example" }), /origins must differ/);
 });
 

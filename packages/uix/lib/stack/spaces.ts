@@ -27,6 +27,11 @@ export type NodeHome = { kind: "space"; space: SpaceId; window: string } | { kin
 /** Reference records deliberately have no spatial home. */
 export function homeOf(ref: NodeRef): NodeHome {
   switch (ref.kind) {
+    case "access-client":
+    case "access-pairing":
+    case "access-grant":
+    case "access-credential":
+      return { kind: "space", space: "system", window: "access" };
     case "owner":
     case "child":
       return { kind: "space", space: "system", window: "owner" };
@@ -118,7 +123,7 @@ export function parseNodeKey(key: string): NodeRef | null {
     if (dot <= 0 || dot === rest.length - 1) return null;
     return { kind: "operation", pkg: rest.slice(0, dot), id: rest.slice(dot + 1) };
   }
-  if (kind === "account" || kind === "worker-account" || kind === "worker-catalog" || kind === "usage-account" || kind === "child" || kind === "bot" || kind === "chat" || kind === "category" || kind === "fragment" || kind === "package" || kind === "resource" || kind === "process") {
+  if (kind === "access-client" || kind === "access-pairing" || kind === "access-grant" || kind === "access-credential" || kind === "account" || kind === "worker-account" || kind === "worker-catalog" || kind === "usage-account" || kind === "child" || kind === "bot" || kind === "chat" || kind === "category" || kind === "fragment" || kind === "package" || kind === "resource" || kind === "process") {
     return { kind, id: rest };
   }
   return null;
