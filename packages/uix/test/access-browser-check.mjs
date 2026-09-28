@@ -28,7 +28,7 @@ const data = {
     { id: "cloud", client_id: "device", network: "public-cloud", scopes: [], operations: ["content.document_get"], created: now, revoked: null, revision: 1 }],
   credentials: [{ id: "credential", client_id: "device", grant_id: "grant", generation: 2, created: now, expires: now + 600000, revoked: null },
     { id: "old-credential", client_id: "device", grant_id: "grant", generation: 1, created: now - 20000, expires: now - 1, revoked: null }],
-  audit: [], ingress: { host: "100.64.0.1", port: 8787, artifactPort: 8788 },
+  audit: [], uixSessions: [], ingress: { host: "100.64.0.1", port: 8787, artifactPort: 8788, uixPort: 8789 },
 };
 const served = new Map(), calls = [], errors = [], external = [];
 let websocket, next, browser, log = "", failUpdate = true, failSnapshot = false;
@@ -151,7 +151,7 @@ try {
   console.log(JSON.stringify({ ok: true, evidence, assertions: "expiry; scoped approval; grant revision/update/error/retry; client revoke confirm/cancel; dependent credential status; snapshot error/stale/empty; inspector routing; light/dark/narrow; no external requests or hydration errors" }, null, 2));
 } catch (error) {
   await browser?.contexts()[0]?.pages()[0]?.screenshot({ path: join(evidence, "failure.png"), fullPage: true }).catch(() => {});
-  console.error(log); throw error;
+  console.error(log, { errors, external }); throw error;
 } finally {
   await browser?.close();
   if (next && next.exitCode === null) { next.kill("SIGTERM"); await new Promise((resolve) => next.once("exit", resolve)); }

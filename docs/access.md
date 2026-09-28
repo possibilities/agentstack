@@ -1,6 +1,6 @@
 # Access setup, pairing and recovery
 
-Access controls remote Brain sharing and Content reads. Local same-user control
+Access controls remote Brain sharing, Content reads and scoped remote UIX sessions. Local same-user control
 continues to use private sockets and the existing loopback UI. No listener here
 exposes internal MCP, Bot identity or Worker identity to a device.
 
@@ -15,6 +15,10 @@ Configure these in the owner's environment before a separately authorized restar
 AGENTSTACK_ACCESS_HOST=100.x.y.z
 AGENTSTACK_ACCESS_PORT=8943
 AGENTSTACK_ACCESS_ARTIFACT_PORT=8944
+# Optional: enable a distinct, authenticated remote UIX origin. Existing
+# Access Brain/Content device ingress runs without these two settings.
+AGENTSTACK_ACCESS_UIX_PORT=8945
+AGENTSTACK_ACCESS_UIX_ORIGIN=https://machine.example-tailnet.ts.net:8945
 AGENTSTACK_ACCESS_TLS_CERT=/operator/provisioned/server.crt
 AGENTSTACK_ACCESS_TLS_KEY=/operator/provisioned/server.key
 # Optional absolute CLI path, especially for GUI/launch-agent environments:
@@ -24,8 +28,9 @@ AGENTSTACK_TAILSCALE_BIN=/usr/local/bin/tailscale
 ```
 
 The bind is the machine's actual Tailscale IP, not `0.0.0.0`, loopback, or a
-hostname. The browser's server URL uses the certificate's hostname resolving to
-that address, for example `https://machine.example-tailnet.ts.net:8943`. A DNS
+hostname. The remote UIX origin must be an exact HTTPS origin on its own port,
+using the certificate's hostname resolving to that address. The Content origins
+use the same certificate hostname on ports 8943 and 8944. A DNS
 suffix is not an authorization signal. Certificate issuance/renewal remains the
 operator's responsibility; Access reads the files at startup. Omitting
 `AGENTSTACK_ACCESS_HOST` disables remote listeners while local inventory works.
@@ -38,7 +43,42 @@ and concurrent verification. With `AGENTSTACK_TAILSCALE_SOCKET`, the same checks
 use bounded read-only LocalAPI requests without spawning CLI processes.
 No command changes Tailscale configuration.
 Both peers must have working tailnet connectivity. Invalid or unavailable
-evidence refuses pairing, refresh, preflight, document and asset requests alike.
+evidence refuses pairing, refresh, preflight, document, UIX and asset requests alike.
+
+## Pair a plain browser for the remote UIX
+
+1. From a tailnet browser open the configured UIX origin's `/connect`, e.g.
+   `https://machine.example-tailnet.ts.net:8945/connect`. Check the TLS certificate.
+   Enter a label and request approval. The page saves its 256-bit redemption
+   secret in that origin's local storage **before** sending the request; do not
+   clear site data while pairing is pending.
+2. On the AgentStack machine, use the **local** System → Access window to compare
+   the full code and approve a subset of `uix:view`, `uix:control` and
+   `content:read`. The remote UIX can never approve, update or revoke grants.
+3. On the browser select **Approved? Connect**. The browser receives short-lived
+   Secure, HttpOnly, SameSite=Strict, host-only UIX and refresh cookies. It no
+   longer stores the redemption/refresh credential in JavaScript storage. The
+   UIX session lasts five minutes and refreshes by rotation with a sliding
+   15-minute refresh cookie; the underlying credential expires absolutely after 30 days.
+   Reopen `/connect` if the session expires; if recovery is unavailable, re-pair.
+
+`uix:view` admits read-only operations and event subscriptions selected by the
+live WebSocket manifest. `uix:control` adds only operations used by UIX. Both
+are intersected with the package selection, and `uix:control` alone does not
+admit a browser without `uix:view`. Access control operations, account sign-in
+and credential flows (`auth`), voice calls, and headful browser handoff (`browse`)
+are local-only even with control. The remote page's Next server render never
+uses trusted-local socket snapshots. Grant narrowing or revocation closes an
+open remote WebSocket immediately; subsequent requests fail. Access records
+session admission and remote mutation receipts in its local audit.
+
+Remote Content Preview and Artifacts require `content:read` in addition to
+`uix:view`. Clicking Open POSTs to the UIX origin as the current browser
+principal, then opens a one-use handoff fragment on the separate Content origin
+for **exactly one** document, item or immutable Artifact version. The old
+Content one-use exchange, 60-second handoff, 15-minute resource-scoped session
+and Artifact sandbox remain in force. A refused handoff shows an error rather
+than opening an unauthenticated local link. Loopback Preview remains unchanged.
 
 ## Pair and approve
 
@@ -71,7 +111,7 @@ For approval replace `name` with `pairing_decide` and `arguments` with
 dependent credentials. These are trusted local operations, never ingress routes.
 
 Approval may supply `scopes:["brain:share"]` (or any subset of the requested
-`brain:share`, `brain:status`, `content:read` scopes); omission approves the full
+`brain:share`, `brain:status`, `content:read`, `uix:view`, `uix:control` scopes); omission approves the full
 requested set. An exact approval replay must select the same scopes. Use
 `grant_update` with `{id,expectedRevision,scopes,operations}` to replace policy.
 Tailnet grants accept scopes and an empty operations array; cloud grants accept
@@ -92,8 +132,16 @@ The live `docs_snapshot` reference describes request/response schemas.
 | `GET /v1/shares?job_ids=…` | Brain audience token, `brain:status`, and durable admission receipts for those IDs |
 | `GET /v1/health` | Brain audience token and `brain:status` |
 | `GET /v1/access/me` | Brain audience token; no data scope required; returns `serverId`, `clientId`, `credentialId`, `scopes` |
-| `POST /v1/content/handoff` | Content audience token and `content:read` |
+| `POST /v1/content/handoff` (document origin) | Content audience token and `content:read` |
 | `POST /v1/access/disconnect` | Brain audience token; no data scope required; revokes this credential |
+
+On the separate UIX origin `/connect/pair` and `/connect/redeem` use the same
+locally approved browser pairing, `/connect/session` and `/connect/refresh`
+rotate credentials into cookies, `/connect/me` reads live scopes, and
+`POST /v1/content/handoff` uses the viewer's cookie rather than a Content
+audience bearer. `/x/*`, `/_next/*` and `/websocket` require a live UIX session;
+all unsafe HTTP requests and WebSocket upgrades require the exact UIX Origin.
+No UIX route forwards the internal MCP listener. See [ADR 0101](adr/0101-remote-uix-through-access.md).
 
 The pairing receipt, redemption and refresh responses include the durable UUID
 `serverId`. Pin it with the connection: all `/v1/` requests except initial pairing,

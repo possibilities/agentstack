@@ -14,6 +14,7 @@ case "$mode" in
     --check)
         printf 'Install required %s (%s) through %s.\n' "$release_tag" "$integration_sha" "$runtime_installer"
         printf 'Build AgentStack and link %s/agentstack. No services started or restarted.\n' "$bin_dir"
+        printf 'Remote UIX stays disabled until AGENTSTACK_ACCESS_HOST, AGENTSTACK_ACCESS_UIX_ORIGIN, TLS key/cert and distinct Access ports are configured.\n'
         exit 0
         ;;
     --install) ;;

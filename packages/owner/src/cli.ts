@@ -41,6 +41,26 @@ const inspectorListenPort = inspectorPort(process.env);
 const uixListenPort = uixPort(process.env);
 const contentPort = Number(process.env.AGENTSTACK_CONTENT_PORT ?? process.env.AGENTSTACK_WIKI_PORT ?? 8777);
 const contentArtifactPort = Number(process.env.AGENTSTACK_CONTENT_ARTIFACT_PORT ?? process.env.AGENTSTACK_WIKI_ARTIFACT_PORT ?? 8778);
+const accessHost = process.env.AGENTSTACK_ACCESS_HOST;
+const accessPort = Number(process.env.AGENTSTACK_ACCESS_PORT ?? 8943);
+const accessArtifactPort = Number(process.env.AGENTSTACK_ACCESS_ARTIFACT_PORT ?? 8944);
+const accessUixPort = Number(process.env.AGENTSTACK_ACCESS_UIX_PORT ?? 8945);
+if (accessHost) {
+  const origin = process.env.AGENTSTACK_ACCESS_UIX_ORIGIN;
+  let validOrigin = origin === undefined && process.env.AGENTSTACK_ACCESS_UIX_PORT === undefined;
+  try {
+    if (origin) {
+      const parsed = new URL(origin);
+      validOrigin = parsed.protocol === "https:" && parsed.origin === origin && Number(parsed.port) === accessUixPort && !parsed.username && !parsed.password;
+    }
+  } catch { /* fail closed below */ }
+  if (!validOrigin || !process.env.AGENTSTACK_ACCESS_TLS_CERT || !process.env.AGENTSTACK_ACCESS_TLS_KEY
+    || ![accessPort, accessArtifactPort, ...(origin ? [accessUixPort] : [])].every(value => Number.isInteger(value) && value > 0 && value <= 65535)
+    || new Set([accessPort, accessArtifactPort, ...(origin ? [accessUixPort] : [])]).size !== (origin ? 3 : 2)) {
+    console.error("Access needs distinct valid ports and TLS key/cert; remote UIX also needs AGENTSTACK_ACCESS_UIX_ORIGIN matching its port");
+    process.exit(1);
+  }
+}
 let contentHost: string;
 try { contentHost = contentNetworkConfig(process.env).host; }
 catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); }
@@ -67,7 +87,7 @@ if (contentPort !== 0 && contentPort === contentArtifactPort) {
   console.error("content document and artifact ports must differ");
   process.exit(1);
 }
-const listeners = [
+const listeners: Array<readonly [string, number, string, string]> = [
   ["MCP", mcpPort(process.env), "AGENTSTACK_MCP_PORT", "127.0.0.1"],
   ["WebSocket", websocketPort(process.env), "AGENTSTACK_WEBSOCKET_PORT", "127.0.0.1"],
   ["Inspector", inspectorListenPort, "AGENTSTACK_INSPECTOR_PORT", "127.0.0.1"],
@@ -75,7 +95,12 @@ const listeners = [
   ["Content documents", contentPort, "AGENTSTACK_CONTENT_PORT", contentHost],
   ["Content artifacts", contentArtifactPort, "AGENTSTACK_CONTENT_ARTIFACT_PORT", contentHost],
   ["Brain share", brainSharePort, "AGENTSTACK_BRAIN_SHARE_PORT", brainShareHost],
-] as const;
+  ...(accessHost ? [
+    ["Access documents", accessPort, "AGENTSTACK_ACCESS_PORT", accessHost],
+    ["Access artifacts", accessArtifactPort, "AGENTSTACK_ACCESS_ARTIFACT_PORT", accessHost],
+    ...(process.env.AGENTSTACK_ACCESS_UIX_ORIGIN ? [["Access UIX", accessUixPort, "AGENTSTACK_ACCESS_UIX_PORT", accessHost]] as const : []),
+  ] as const : []),
+];
 // Resolve the share host as net.Server.listen does so aliases and wildcard
 // binds cannot conceal a collision with the owner's IPv4 loopback listeners.
 const contentAddress = contentHost === "127.0.0.1" ? contentHost : (await lookup(contentHost).catch(() => {

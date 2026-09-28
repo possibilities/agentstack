@@ -212,6 +212,9 @@ test("enabled role resources materialize privately and disabled items stay out o
     assert.deepEqual(await readdir(join(second, "skills")), []);
     await removeRole(root, "bot-1", second);
     state = store.createMcpServer(state.revision, "auth", "Collision", { type: "http", url: "https://mcp.example.test/other" }, false);
+    // A disabled record never enters config.toml, so it cannot stop a launch.
+    await removeRole(root, "bot-1", await materializeRole(root, "bot-1", state, { auth: "http://127.0.0.1:8743/mcp/auth" }));
+    state = store.updateMcpServer(state.revision, state.mcpServers.at(-1)!.id, { enabled: true });
     await assert.rejects(materializeRole(root, "bot-1", state, { auth: "http://127.0.0.1:8743/mcp/auth" }), /collides/);
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 });

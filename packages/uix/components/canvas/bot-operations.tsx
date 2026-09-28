@@ -36,7 +36,7 @@ export function BotOperations({ bot, uploads, onPendingChange }: { bot: Bot; upl
 }
 
 function OperationForm({ bot, operation, onPendingChange }: { bot: Bot; operation: OperationDoc; onPendingChange(pending: boolean): void }) {
-  const { voice, status, botInvalidations } = useStack();
+  const { voice, status, botInvalidations, remote } = useStack();
   const store = useStore();
   const [draft, setDraft] = useState(() => botOperationDraft(operation, bot, voice.data));
   const [result, setResult] = useState<{ value: unknown; input: Record<string, unknown>; generation: number; at: string } | null>(null);
@@ -49,7 +49,8 @@ function OperationForm({ bot, operation, onPendingChange }: { bot: Bot; operatio
   const stale = result && (botInvalidations[bot.id] ?? 0) > result.generation;
   const change = (key: string, value: string) => { if (!pendingRef.current) setDraft((current) => ({ ...current, [key]: value })); };
   const scopeError = operationScopeError(operation, draft, bot, voice.data);
-  const unavailable = status.bots !== "open" || Boolean(scopeError);
+  const permission = remote && (operation.name.startsWith("voice_") ? "Voice calls are local-only" : remote.scope === "view" && !read ? "Requires uix:control" : null);
+  const unavailable = status.bots !== "open" || Boolean(scopeError) || Boolean(permission);
   const wrongThread = !read && fields.some(([key]) => key === "threadId") && draft.threadId !== bot.mainThreadId;
   const voiceSession = connectedVoiceSession(bot, voice.data);
   const wrongCall = operation.name === "voice_speak" && (!voiceSession || draft.sessionId !== voiceSession);
@@ -102,7 +103,7 @@ function OperationForm({ bot, operation, onPendingChange }: { bot: Bot; operatio
     </FieldGroup>
     {wrongThread ? <Alert><AlertDescription>Actions only reach the main thread.<Button type="button" size="xs" variant="outline" disabled={pending} onClick={() => change("threadId", bot.mainThreadId ?? "")}>Use current main thread</Button></AlertDescription></Alert> : null}
     {wrongCall ? <Alert><AlertDescription>{voiceSession ? "The call changed." : "Needs a connected call."}{voiceSession ? <Button type="button" size="xs" variant="outline" disabled={pending} onClick={() => change("sessionId", voiceSession)}>Use current connected call</Button> : null}</AlertDescription></Alert> : null}
-    {unavailable && !wrongThread && !wrongCall ? <p className="text-xs text-muted-foreground">{status.bots !== "open" ? "Bots offline." : scopeError}</p> : null}
+    {unavailable && !wrongThread && !wrongCall ? <p className="text-xs text-muted-foreground">{status.bots !== "open" ? "Bots offline." : permission ?? scopeError}</p> : null}
     {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
     <Button type="submit" className="w-fit" variant={operation.annotations.destructiveHint === true ? "destructive" : "default"} disabled={pending || unavailable || wrongThread}>{pending ? <Spinner data-icon="inline-start" /> : null}{read ? "Read" : operationTitle(operation)}</Button>
     {result ? <section className="flex min-w-0 flex-col gap-3 border-t pt-4">
@@ -117,14 +118,14 @@ function OperationForm({ bot, operation, onPendingChange }: { bot: Bot; operatio
 
 /** An interrupted upload resumes only after an explicit click and an offset read. */
 function BotUpload({ botId, uploads }: { botId: string; uploads: BotUploads }) {
-  const { status } = useStack();
+  const { status, remote } = useStack();
   const upload = useSyncExternalStore(uploads.subscribe, uploads.getState, uploads.getState)[botId];
   const { file, id: uploadId, receipt: result, error, pending = false } = upload ?? {};
   const id = useId();
   return <div className="flex flex-col gap-3">
     <Field data-disabled={pending}><FieldLabel htmlFor={id}>File (up to 20 MB)</FieldLabel><Input id={id} type="file" disabled={pending} onChange={(event) => { const file = event.target.files?.[0]; if (file) uploads.select(botId, file); }} /><FieldDescription>Use the returned path in a localImage, localAudio, or mention input. Nothing is sent.</FieldDescription></Field>
     {file && uploadId ? <div className="flex flex-col gap-1 text-xs"><span>Selected: {file.name}</span><div className="flex items-center gap-2"><span>Upload ID</span><code className="break-all">{uploadId}</code><CopyButton value={uploadId} label="upload ID" className="opacity-100" /></div></div> : null}
-    <Button type="button" size="sm" className="w-fit" variant="outline" disabled={!file || pending || Boolean(result?.path) || status.bots !== "open"} onClick={() => void uploads.run(botId)}>{pending ? <Spinner data-icon="inline-start" /> : null}{error ? "Resume upload" : "Upload file"}</Button>
+    <Button type="button" size="sm" className="w-fit" variant="outline" disabled={!file || pending || Boolean(result?.path) || status.bots !== "open" || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => void uploads.run(botId)}>{pending ? <Spinner data-icon="inline-start" /> : null}{error ? "Resume upload" : "Upload file"}</Button>
     {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
     {result ? <div className="flex flex-col gap-2 text-xs"><span>{result.offset.toLocaleString()} / {result.bytes.toLocaleString()} bytes</span>{result.path ? <div className="flex items-center gap-2"><code className="break-all">{result.path}</code><CopyButton value={result.path} label="verified upload path" className="opacity-100" /></div> : null}</div> : null}
   </div>;

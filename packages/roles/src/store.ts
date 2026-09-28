@@ -16,6 +16,8 @@ function canonicalProjectRoot(path: string): string {
 }
 
 export const instructionLimitBytes = 262_144;
+/** The largest role_snapshot, in JSON characters, a write may leave behind. */
+export const snapshotLimitChars = 750_000;
 /** Where one fragment's body sits in the rendered text, as string (UTF-16) offsets. */
 export type RenderedSegment = { categoryId: string; fragmentId: string; start: number; end: number };
 
@@ -300,7 +302,7 @@ export class RoleStore {
       mutate();
       const snapshot = this.readSnapshot();
       renderInstructions(snapshot);
-      if (JSON.stringify(snapshot).length > 750_000) throw new Error("role snapshot exceeds the socket response budget");
+      if (JSON.stringify(snapshot).length > snapshotLimitChars) throw new Error("role snapshot exceeds the socket response budget");
       this.db.prepare("UPDATE revision SET value = value + 1 WHERE singleton = 1").run();
       this.db.exec("COMMIT");
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }

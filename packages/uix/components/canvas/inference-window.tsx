@@ -44,7 +44,7 @@ function seconds(item: InferRequestSummary): string | null {
  */
 export function InferenceWindow() {
   const store = useStore();
-  const { accounts, status, endpoints, inferModels, inferRequests } = useStack();
+  const { accounts, status, endpoints, inferModels, inferRequests, remote } = useStack();
   const labels = accountLabels(accounts.data);
   const formId = useId();
   const [accountId, setAccountId] = useState("");
@@ -73,7 +73,8 @@ export function InferenceWindow() {
   const runningHere = requests.some((item) => item.accountId === accountId && item.state === "running");
   // Once the ledger lists an unconfirmed request, it was admitted.
   const pending = admission && !requests.some((item) => item.requestId === admission.request.requestId) ? admission : null;
-  const blocked = !endpoints.infer ? "Inference isn't served by this owner"
+  const blocked = remote?.scope === "view" ? "Running inference requires uix:control"
+    : !endpoints.infer ? "Inference isn't served by this owner"
     : !connected ? "Inference reconnecting"
     : !accountId ? "Choose a Bot account"
     : !account?.enabled || account.removing ? "Account unavailable"
@@ -108,7 +109,7 @@ export function InferenceWindow() {
   // Choosing an account discovers its models only when none are cached; the refresh control repeats it.
   const selectAccount = (id: string) => {
     setAccountId(id);
-    if (id && !inferModels.data?.some((item) => item.accountId === id)) discover(id);
+    if (id && remote?.scope !== "view" && !inferModels.data?.some((item) => item.accountId === id)) discover(id);
     else setDiscoverError(null);
   };
 
@@ -162,7 +163,7 @@ export function InferenceWindow() {
               </NativeSelect>
               <Tooltip>
                 <TooltipTrigger render={<Button type="button" size="icon-sm" variant="ghost" aria-label="Discover models again"
-                  disabled={!accountId || !connected || observation?.discovering} onClick={() => discover(accountId)} />}>
+                   disabled={!accountId || !connected || observation?.discovering || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => discover(accountId)} />}>
                   {observation?.discovering ? <Spinner /> : <RefreshCwIcon />}
                 </TooltipTrigger>
                 <TooltipContent side="bottom">Discover models again</TooltipContent>
@@ -219,7 +220,7 @@ export function InferenceWindow() {
               <p className="text-pretty">{pending.error.text}</p>
               {pending.error.uncertain ? (
                 <div className="flex gap-1.5">
-                  <Button type="button" size="xs" variant="outline" disabled={!connected} onClick={() => void submit(pending.request)}>Resend</Button>
+                   <Button type="button" size="xs" variant="outline" disabled={!connected || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires uix:control" : undefined} onClick={() => void submit(pending.request)}>Resend</Button>
                   <Button type="button" size="xs" variant="ghost" onClick={() => setAdmission(null)}>Dismiss</Button>
                 </div>
               ) : null}
@@ -234,7 +235,7 @@ export function InferenceWindow() {
             <span className="mb-1.5 min-w-0 flex-1 text-[0.68rem] text-pretty text-muted-foreground">
               {pending?.sending ? "Starting…" : blocked ?? `⌘Enter to run · spends ${label}'s Codex allowance`}
             </span>
-            <Button type="submit" size="sm" disabled={!canRun}>
+             <Button type="submit" size="sm" disabled={!canRun} title={remote?.scope === "view" ? "Requires uix:control" : undefined}>
               {pending?.sending ? <Spinner data-icon="inline-start" /> : <PlayIcon data-icon="inline-start" />}
               Run
             </Button>

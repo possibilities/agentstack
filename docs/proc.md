@@ -22,4 +22,4 @@ Each process has an IPC guardian. If Proc loses its owner connection, the guardi
 
 Topics `proc_output_changed`, `proc_runs_changed`, and `proc_schedules_changed` are payload-free on the event-capable transports. Each captured line publishes an output notice, optionally scoped to its run ID. **Do not count notices to reconstruct output**: they may be coalesced or lost on disconnect. Resnapshot with `proc_run_read` using the last cursor. Schedule and run topics may likewise be scoped by their stable IDs. No notification is a human approval or a system banner.
 
-See [ADR 0097](adr/0097-proc-local-scheduling-and-process-control.md) for the ownership and failure boundaries. Civil-time alarms, reminders, time zones and user-facing controls are reserved for later Clock design.
+See [ADR 0105](adr/0105-proc-local-scheduling-and-process-control.md) for the ownership and failure boundaries. Civil-time alarms, reminders, time zones and user-facing controls are reserved for later Clock design.

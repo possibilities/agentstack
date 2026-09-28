@@ -1,6 +1,7 @@
 # 90. Keep extraction and preset drift inside AgentStack Scrape
 
 Status: accepted, 2026-09-27. Revises [ADR 0059](0059-isolated-brain-and-platform-clients.md)'s external Agentscrape boundary and extends [ADR 0076](0076-internal-disposable-browser-lifecycle.md)'s browser lifecycle split.
+Live checks and queue mutations reach the local UIX over the WebSocket, not MCP, per [ADR 0103](0103-scrape-space-and-local-operator-exposure.md).
 
 ## Decision
 

@@ -17,7 +17,9 @@ import { Inspector } from "./inspector";
 import { Palette, type PaletteAction } from "./palette";
 import { StackProvider, useStack, WorkbenchContext, type WorkbenchValue } from "./provider";
 import { Reference } from "./reference";
+import { NotifyActionsProvider } from "./notify-actions";
 import { RoleActionsProvider } from "./role-actions";
+import { ContentActionsProvider } from "./content-actions";
 import { Bench, type BenchControls } from "./bench";
 import { CallLauncher, VoiceProvider } from "./voice";
 
@@ -27,6 +29,7 @@ export function Workbench({ snapshot, initialSpace, initialFocus, initialLocatio
 }
 
 function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
+  const { remote } = useStack();
   const [location, setLocation] = useState(initialLocation);
   const locationRef = useRef(location);
   const referenceReturn = useRef<HTMLElement | null>(null);
@@ -223,7 +226,7 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
   ], [controls, location.inspect, openReference, openInspector]);
   const workbench: WorkbenchValue = useMemo(() => ({ space: location.space, setSpace, selected: collapsed ? null : location.inspect, hovered, select, hover, goTo, flash }), [location.space, location.inspect, collapsed, setSpace, hovered, select, goTo, flash]);
   return <div className="contents" style={{ "--sheet": `${right}px` } as React.CSSProperties}>
-    <WorkbenchContext value={workbench}><AuthActionsProvider><VoiceProvider><BotActionsProvider><RoleActionsProvider>
+    <WorkbenchContext value={workbench}><AuthActionsProvider><VoiceProvider><BotActionsProvider><RoleActionsProvider><NotifyActionsProvider><ContentActionsProvider>
       {spaces.map(({ id }) => <div key={id} hidden={id !== location.space} inert={id !== location.space}>
         <Activity mode={id === location.space ? "visible" : "hidden"}>
           <div className={id === location.space ? "bench-enter" : undefined}>
@@ -232,6 +235,9 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
         </Activity>
       </div>)}
       <TopBar space={location.space} setSpace={setSpace} compact={screenWidth - right < 440} reference={Boolean(location.reference) && rightVisible} inspectorAvailable={Boolean(location.inspect) && !rightVisible} openInspector={openInspector} toggleReference={Boolean(location.reference) && rightVisible ? closeRight : openReference} openPalette={() => setPaletteOpen(true)} fit={() => controls?.fit()} />
+      {remote ? <p role="status" data-remote-scope={remote.scope} className="pointer-events-none fixed top-16 left-4 z-30 rounded-md border bg-card/95 px-2 py-1 text-xs shadow-sm">
+        Remote Access · {remote.scope === "view" ? "View only. Editing controls require uix:control; sign-in, voice and browser handoff stay local." : "Control granted. Sign-in, voice and browser handoff stay local."}
+      </p> : null}
       <div data-chrome className="fixed bottom-4 z-30 flex -translate-x-1/2 items-center gap-1 rounded-xl border bg-card/95 p-1 shadow-sm" style={{ left: "calc((100% - var(--sheet))/2)" }}>
         <Tool label="Zoom out" onClick={() => controls?.zoom(1 / 1.2)}><MinusIcon /></Tool>
         <Button variant="ghost" size="sm" aria-label="Actual size" className="w-14 tabular-nums" onClick={() => controls?.zoom(1 / scale)}>{Math.round(scale * 100)}%</Button>
@@ -246,7 +252,7 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
         {location.reference ? <Reference target={location.reference} onOverview={referenceOverview} onClose={closeRight} hasInspection={Boolean(location.inspect)} expanded={expanded} onExpand={() => setExpanded((value) => !value)} /> : null}
       </Dock>
       <Palette open={paletteOpen} onOpenChange={setPaletteOpen} actions={actions} />
-    </RoleActionsProvider></BotActionsProvider></VoiceProvider></AuthActionsProvider></WorkbenchContext>
+    </ContentActionsProvider></NotifyActionsProvider></RoleActionsProvider></BotActionsProvider></VoiceProvider></AuthActionsProvider></WorkbenchContext>
   </div>;
 }
 

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { headers } from "next/headers";
 import { Workbench } from "@/components/canvas/workbench";
 import { loadSnapshot } from "@/lib/stack/snapshot";
 import { defaultSpace, isSpaceId, parseNodeKey, spaceTitle } from "@/lib/stack/spaces";
@@ -27,5 +28,9 @@ export default async function Page({ params, searchParams }: { params: Promise<P
   const initialFocus = raw ? parseNodeKey(raw) : null;
   const paramsQuery = new URLSearchParams(Object.entries(query).flatMap(([key, value]) => value === undefined ? [] : [[key, Array.isArray(value) ? value[0] : value]]));
   const initialLocation = parseLocation(`/x/${segment ?? defaultSpace}`, paramsQuery)!;
-  return <Workbench snapshot={await loadSnapshot()} initialSpace={segment ?? defaultSpace} initialFocus={initialFocus} initialLocation={initialLocation} />;
+  const incoming = await headers();
+  const remote = incoming.get("x-agentstack-remote-uix") === "1" ? incoming.get("x-agentstack-uix-origin") : null;
+  const scope = incoming.get("x-agentstack-uix-scope");
+  return <Workbench snapshot={await loadSnapshot(remote ?? undefined, scope === "view" || scope === "control" ? scope : undefined,
+    incoming.get("x-agentstack-uix-scopes")?.split(",").filter(Boolean) ?? [])} initialSpace={segment ?? defaultSpace} initialFocus={initialFocus} initialLocation={initialLocation} />;
 }

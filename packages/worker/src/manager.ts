@@ -7,6 +7,10 @@ import { roleSnapshot, sessionMcpServers } from "./resources.js";
 import { WorkerSupervisor, type Runtime } from "./supervisor.js";
 import { claimWorktree, claudeRole, loadWorkerRole, removeWorkerRole, removeWorktree, saveWorkerRole } from "./worktree.js";
 import { safeValue } from "./history.js";
+import { readWorktreeDiff, type DiffOptions } from "./diff.js";
+
+/** worker_list's compact most recent turn; worker_status and worker_turn_list carry the rest. */
+export type ListedTurn = Pick<TurnSummary, "id" | "phase" | "stopReason" | "issue" | "dispatchedAt" | "createdAt" | "updatedAt">;
 
 export type StartInput = { accountId: string; model: string; effort?: string; repo: string; baseRef?: string; task: string; requestId: string };
 export type SendInput = { id: string; message: string; requestId: string; model?: string; effort?: string };
@@ -138,9 +142,18 @@ export class WorkerManager {
     ownsWorker(owner, worker);
     return worker;
   }
-  async list(invocation?: InvocationContext): Promise<WorkerRecord[]> {
+  async list(invocation?: InvocationContext): Promise<Array<WorkerRecord & { turn: ListedTurn | null; pendingPermissions: number }>> {
     const owner = await this.owner(invocation);
-    return this.ledger.workers(owner.botId === LOCAL_OPERATOR_ID ? undefined : owner.botId);
+    return this.ledger.workers(owner.botId === LOCAL_OPERATOR_ID ? undefined : owner.botId).map((worker) => {
+      const turn = worker.currentTurnId ? this.ledger.turn(worker.currentTurnId) : null;
+      return { ...worker, turn: turn && { id: turn.id, phase: turn.phase, stopReason: turn.stopReason, issue: turn.issue,
+        dispatchedAt: turn.dispatchedAt, createdAt: turn.createdAt, updatedAt: turn.updatedAt }, pendingPermissions: this.ledger.pending(worker.id).length };
+    });
+  }
+  async diff(id: string, options: DiffOptions, invocation?: InvocationContext) {
+    const worker = await this.owned(id, invocation);
+    if (!worker.cwd || !worker.baseCommit) throw new Error("this Worker has no prepared worktree");
+    return { workerId: worker.id, branch: worker.branch, ...await readWorktreeDiff(worker.cwd, worker.baseCommit, options) };
   }
   async status(id: string, invocation?: InvocationContext): Promise<{ worker: WorkerRecord; turn: TurnSummary | null; pending: PendingRequest[] }> {
     const worker = await this.owned(id, invocation);

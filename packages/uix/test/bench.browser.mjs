@@ -341,7 +341,12 @@ try {
     Fleet: ["bots", "chat"], Accounts: ["accounts", "model-catalogs", "usage"],
     Lab: ["call-speech", "inference"],
     System: ["access", "activity", "host", "owner", "packages", "processes", "resources", "sampling"],
-    Roles: ["role-editor", "role-instructions", "role-preview"],
+    Roles: ["role-editor", "role-instructions", "role-mcp-servers", "role-preview", "role-projects", "role-skills"],
+    Inbox: ["notify-detail", "notify-inbox"],
+    Signal: ["attention", "attention-changes", "attention-messages", "attention-runs", "signal"],
+    Content: ["content-artifacts", "content-documents", "content-editor", "content-library", "content-preview"],
+    Workers: ["worker", "worker-runtimes", "workers"],
+    Scrape: ["scrape-checks", "scrape-convert", "scrape-extract", "scrape-feeds", "scrape-presets", "scrape-queue", "scrape-status"],
   };
   const switchSpace = async (title) => {
     await page.getByRole("button", { name: /^Spaces/ }).click();

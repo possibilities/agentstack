@@ -6,6 +6,14 @@ export const forwardTimeouts = new Map<string, number>([
   ["infer/infer_complete", 75_000],
   ["signal/attention_models", 75_000],
   ["proc/proc_run_join", 310_000],
+  // Browser extraction chains bounded steps; feed discovery accepts up to 300s.
+  ["scrape/scrape_fetch", 120_000],
+  ["scrape/scrape_links", 180_000],
+  ["scrape/scrape_feed_discover", 310_000],
+  ["scrape/scrape_corpus_replay", 120_000],
+  // Canaries and queue processing run sequential live extractions.
+  ["scrape/scrape_presets_check", 600_000],
+  ["scrape/scrape_queue_process", 600_000],
 ]);
 
 export function forwardTimeout(pkg: string, operation: string): number {

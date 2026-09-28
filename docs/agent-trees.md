@@ -27,12 +27,13 @@ Starting input skips inherited subagent history when the rollout's ordinal bound
 
 | Operation | Use |
 | --- | --- |
-| `worker_list` / `worker_status({id})` | Inventory, origin, account/worktree, current phase, latest turn, and exact pending permissions. |
+| `worker_list` / `worker_status({id})` | Inventory, origin, account/worktree and current phase. The list carries each Worker's compact latest turn and pending permission count; status adds the exact pending permissions. |
 | `worker_detail({id})` | Latest retained session/runtime observations, capabilities, safe launch arguments, observed settings, freshness, capture statistics, and subagent visibility limits. |
 | `worker_turn_list({id, afterId?, limit?})` | Admission-order turn history with submitted prompts, requested model/effort, separately observed settings, and dispatch evidence. |
 | `worker_record_list({id, afterSeq?, limit?, turnId?})` | Immutable structured observations: content blocks, tool updates, plans, configuration/mode, session info, commands, usage, and vendor metadata. |
 | `worker_record_read({id, seq, offset?, limit?})` | Complete retained JSON for an oversized record, in UTF-16 chunks of at most 16,000 code units. |
 | `worker_tool_list({id, afterSeq?, limit?})` | Latest merged tool calls plus evidence-backed OpenCode task references. |
+| `worker_diff({id, path?, patch?, maxChars?})` | The retained worktree against its base commit: branch commits, changed and untracked files with line counts, uncommitted state, and an optional patch for all files or one listed path, cut at `maxChars` (default 100,000). Git runs without optional locks, fsmonitor, external diff or textconv. |
 
 `worker_turn_list` retains the submitted task even if preparation fails. The submitted prompt is distinct from the actual dispatch prompt: `dispatchedPromptSeq` references a structured `session/prompt` record, including Role text when the runtime receives it inline. Null admission fields on older turns mean that those values were not retained. Private MCP connection arguments are excluded from runtime/session observations.
 

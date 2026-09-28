@@ -1,6 +1,8 @@
-# 98. Keep launch secrets out of ordinary reads and pin browser control origins
+# 106. Keep launch secrets out of ordinary reads and pin browser control origins
 
 Status: accepted, 2026-09-28. Extends [ADR 0096](0096-explicit-transport-exposure.md).
+
+Integration with the Roles resource editor and authenticated remote UIX is recorded in [ADR 0107](0107-hardening-and-operator-ui-integration.md).
 
 ## Decision
 

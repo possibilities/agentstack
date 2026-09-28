@@ -1,4 +1,4 @@
-# 97. Proc owns local scheduling and guarded process execution
+# 105. Proc owns local scheduling and guarded process execution
 
 Status: accepted, 2026-09-28. Extends [ADR 0059](0059-isolated-brain-and-platform-clients.md)'s external Source trigger and [ADR 0096](0096-explicit-transport-exposure.md)'s explicit exposure boundary.
 

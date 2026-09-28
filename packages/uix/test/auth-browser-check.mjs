@@ -9,7 +9,7 @@ import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serveSocket, serveWebSocket, socketPath } from "@agentstack/api";
-import { fixtureWorkspace, passthrough, transport } from "./browser-fixture.mjs";
+import { fixtureWorkspace, anyObject, transport, z } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -93,7 +93,7 @@ try {
     transports: [transport(websocket.url, definitions[name], Object.keys(topics[name] ?? {}))] })) });
   for (const [name, names] of Object.entries(definitions)) {
     served.set(name, await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {},
-      operations: names.map((name) => ({ name, description: name, input: passthrough, output: passthrough, async call(_, input) { calls.push({ name, input }); return handlers[name](input); } })),
+      operations: names.map((name) => ({ name, description: name, input: anyObject, output: z.any(), async call(_, input) { calls.push({ name, input }); return handlers[name](input); } })),
       events: { topics: topics[name] ?? {} } }));
   }
   const nextPort = await port();
@@ -125,6 +125,7 @@ try {
     Object.defineProperty(navigator, "clipboard", { value: { writeText: async (text) => { window.authFixture.copies.push(text); } } });
     window.open = (...args) => { window.authFixture.opens.push(args); return null; };
   });
+  // Worker accounts live on the Accounts bench; hidden benches lay out at zero size.
   await page.goto(`${origin}/x/accounts`);
   // Keep Next's development badge out of evidence; production has no such overlay.
   if (mode === "dev") await page.addStyleTag({ content: "nextjs-portal { display: none; }" });

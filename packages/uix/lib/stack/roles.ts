@@ -1,4 +1,4 @@
-import type { Bot, RoleCategory, RoleFragment, RolePreview, RoleSnapshot, WorkerSession } from "./types";
+import type { Bot, RoleCategory, RoleFragment, RoleLaunchPreview, RoleMcpDefinition, RoleMcpServer, RolePreview, RoleSkill, RoleSkillFile, RoleSnapshot, RoleTrustedProject, WorkerSession } from "./types";
 
 /** Mirrors the Roles API's title limit. */
 export const titleLimit = 200;
@@ -193,4 +193,239 @@ export function roleLaunches(bots: Bot[] | null, workers: WorkerSession[] | null
     bots: running,
     workers: { current: open.filter((worker) => worker.roleRevision === revision).length, behind: open.filter((worker) => worker.roleRevision !== revision).length },
   };
+}
+
+/* ─── Skills, MCP servers and trusted projects ───────────────────────── */
+
+/** Mirrors the Roles API: a launch name for a skill directory or an MCP config table. */
+export const resourceNamePattern = /^[a-z][a-z0-9-]{0,31}$/;
+export const resourceNameLimit = 32;
+export const envNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
+export const headerNamePattern = /^[A-Za-z0-9-]+$/;
+export const skillBodyLimit = 262_144;
+export const skillFileCountLimit = 128;
+/** Each supporting file travels as at most 262,144 base64 characters. */
+export const skillFileBytesLimit = 196_608;
+/** The Role snapshot's JSON budget until a launch preview reports the API's own. */
+export const fallbackSnapshotLimit = 750_000;
+
+export type ResourceKind = "skill" | "mcp-server" | "trusted-project";
+
+export function findResource<T extends { id: string }>(items: T[] | undefined, id: string): { item: T; index: number } | null {
+  const index = items?.findIndex((item) => item.id === id) ?? -1;
+  return index >= 0 ? { item: items![index], index } : null;
+}
+
+/** The exact `*_reorder` permutation that places `id` before `beforeId`, or last when `beforeId` is null. */
+export const resourceOrder = categoryOrder;
+
+/** A launch name not yet taken, for duplicates: `name-copy`, then `name-copy-2`, … within the length limit. */
+export function uniqueName(base: string, taken: Iterable<string>): string {
+  const used = new Set([...taken].map((name) => name.toLowerCase()));
+  for (let attempt = 1; ; attempt++) {
+    const suffix = attempt === 1 ? "-copy" : `-copy-${attempt}`;
+    const name = `${base.slice(0, resourceNameLimit - suffix.length).replace(/-+$/, "")}${suffix}`;
+    if (!used.has(name)) return name;
+  }
+}
+
+export function nameIssue(name: string, taken: Iterable<string>): string | null {
+  if (!name) return "A name is required";
+  if (!resourceNamePattern.test(name)) return "Use lowercase letters, digits and hyphens, starting with a letter (32 at most)";
+  if ([...taken].some((other) => other.toLowerCase() === name.toLowerCase())) return "Another record already uses this name";
+  return null;
+}
+
+/* Skill files */
+
+export function decodeBase64(value: string): Uint8Array {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+/** Canonical padded base64, as the API requires. */
+export function encodeBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  return btoa(binary);
+}
+
+export const base64Bytes = (value: string): number => Math.floor(value.length * 3 / 4) - (value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0);
+
+const strictUtf8 = typeof TextDecoder === "undefined" ? null : new TextDecoder("utf-8", { fatal: true });
+
+/** The file as editable text, or null when its bytes are not UTF-8 text. */
+export function fileText(file: RoleSkillFile): string | null {
+  try {
+    const text = strictUtf8?.decode(decodeBase64(file.contentBase64)) ?? null;
+    return text !== null && !text.includes("\u0000") ? text : null;
+  } catch { return null; }
+}
+
+export const textFile = (path: string, text: string): RoleSkillFile => ({ path, contentBase64: encodeBase64(encoder.encode(text)) });
+
+/** A file name the API accepts: every path segment starts with a letter or digit and uses only letters, digits, `.`, `_` and `-`. */
+export function safeFilePath(name: string): string {
+  const segments = name.split("/").map((segment) => segment.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[^A-Za-z0-9]+/, "")).filter(Boolean);
+  const path = segments.join("/").slice(0, 240);
+  return path && path.toLowerCase() !== "skill.md" ? path : "file";
+}
+
+/** Why the API would refuse this supporting-file set, in its own terms. */
+export function skillFileIssues(files: RoleSkillFile[]): string[] {
+  const issues: string[] = [];
+  if (files.length > skillFileCountLimit) issues.push(`A skill holds at most ${skillFileCountLimit} files`);
+  const paths = new Set<string>();
+  for (const file of files) {
+    const path = file.path.toLowerCase();
+    if (!file.path || file.path.length > 240 || !file.path.split("/").every((part) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(part))) issues.push(`${file.path || "A file"} needs a relative path of letters, digits, “.”, “_” and “-”`);
+    else if (path === "skill.md") issues.push("SKILL.md is generated from the name, description and body");
+    if (file.contentBase64.length > 262_144) issues.push(`${file.path} is larger than ${formatBytes(skillFileBytesLimit)}`);
+    if (paths.has(path)) issues.push(`${file.path} appears twice`);
+    paths.add(path);
+  }
+  for (const path of paths) if ([...paths].some((other) => other !== path && other.startsWith(`${path}/`))) issues.push(`${path} is both a file and a folder`);
+  return [...new Set(issues)];
+}
+
+export const skillBytes = (skill: Pick<RoleSkill, "body" | "files">): number => utf8Bytes(skill.body) + skill.files.reduce((sum, file) => sum + base64Bytes(file.contentBase64), 0);
+
+/* Draft text for resources: every edited value is a string, so structured fields travel as JSON. */
+
+export const skillText = (skill: Pick<RoleSkill, "name" | "description" | "body" | "files">): Fields =>
+  ({ name: skill.name, description: skill.description, body: skill.body, files: JSON.stringify(skill.files) });
+export const projectText = (project: Pick<RoleTrustedProject, "path" | "description">): Fields => ({ path: project.path, description: project.description });
+export const mcpText = (server: Pick<RoleMcpServer, "name" | "description" | "definition">): Fields =>
+  ({ name: server.name, description: server.description, definition: JSON.stringify(toMcpForm(server.definition)) });
+export const blankSkillText: Fields = { name: "", description: "", body: "", files: "[]" };
+export const blankProjectText: Fields = { path: "", description: "" };
+
+export function draftFiles(value: string): RoleSkillFile[] {
+  try { const files = JSON.parse(value); return Array.isArray(files) ? files : []; } catch { return []; }
+}
+
+/* MCP definitions */
+
+type Pairs = Array<[string, string]>;
+/**
+ * The MCP editor's form. Both transports keep their fields, so switching type and back loses nothing;
+ * map fields are ordered rows so typing a key never reorders them.
+ */
+export type McpForm = {
+  type: "http" | "stdio";
+  url: string; bearerTokenEnvVar: string; httpHeaders: Pairs; envHttpHeaders: Pairs;
+  command: string; args: string[]; env: Pairs; envVars: string[];
+};
+
+export const emptyMcpForm: McpForm = { type: "http", url: "", bearerTokenEnvVar: "", httpHeaders: [], envHttpHeaders: [], command: "", args: [], env: [], envVars: [] };
+export const blankMcpText: Fields = { name: "", description: "", definition: JSON.stringify(emptyMcpForm) };
+
+export function toMcpForm(definition: RoleMcpDefinition): McpForm {
+  if (definition.type === "http") return { ...emptyMcpForm, type: "http", url: definition.url, bearerTokenEnvVar: definition.bearerTokenEnvVar ?? "",
+    httpHeaders: Object.entries(definition.httpHeaders ?? {}), envHttpHeaders: Object.entries(definition.envHttpHeaders ?? {}) };
+  return { ...emptyMcpForm, type: "stdio", command: definition.command, args: definition.args, env: Object.entries(definition.env ?? {}), envVars: definition.envVars ?? [] };
+}
+
+export function draftMcpForm(value: string): McpForm {
+  try { return { ...emptyMcpForm, ...JSON.parse(value) }; } catch { return emptyMcpForm; }
+}
+
+/** The API definition a form describes, or what the API would refuse. Blank rows are ignored and empty optional fields omitted. */
+export function fromMcpForm(form: McpForm): { definition: RoleMcpDefinition | null; issues: string[] } {
+  const issues: string[] = [];
+  const pairs = (rows: Pairs, label: string, key: RegExp, value?: RegExp, caseless = false) => {
+    const kept = rows.map(([name, text]) => [name.trim(), text] as [string, string]).filter(([name, text]) => name || text);
+    const seen = new Set<string>();
+    for (const [name, text] of kept) {
+      if (!key.test(name)) issues.push(`${label}: “${name}” is not a valid name`);
+      if (value && !value.test(text)) issues.push(`${label}: “${text}” is not an environment variable name`);
+      const id = caseless ? name.toLowerCase() : name;
+      if (seen.has(id)) issues.push(`${label}: “${name}” appears twice`);
+      seen.add(id);
+    }
+    return kept.length ? Object.fromEntries(kept) : undefined;
+  };
+  if (form.type === "http") {
+    const url = form.url.trim();
+    try {
+      const parsed = new URL(url);
+      if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.hash) issues.push("The URL must be HTTP(S) without credentials or a #fragment");
+    } catch { issues.push(url ? "The URL is not valid" : "A URL is required"); }
+    const token = form.bearerTokenEnvVar.trim();
+    if (token && !envNamePattern.test(token)) issues.push("The bearer token variable is not an environment variable name");
+    const httpHeaders = pairs(form.httpHeaders, "Headers", headerNamePattern, undefined, true);
+    const envHttpHeaders = pairs(form.envHttpHeaders, "Environment headers", headerNamePattern, envNamePattern, true);
+    const definition: RoleMcpDefinition = { type: "http", url, ...(token ? { bearerTokenEnvVar: token } : {}), ...(httpHeaders ? { httpHeaders } : {}), ...(envHttpHeaders ? { envHttpHeaders } : {}) };
+    return { definition: issues.length ? null : definition, issues };
+  }
+  const command = form.command.trim();
+  if (!command) issues.push("A command is required");
+  if (form.args.length > 128) issues.push("At most 128 arguments");
+  const env = pairs(form.env, "Environment", envNamePattern);
+  const envVars = [...new Set(form.envVars.map((name) => name.trim()).filter(Boolean))];
+  for (const name of envVars) if (!envNamePattern.test(name)) issues.push(`Passed variables: “${name}” is not an environment variable name`);
+  const definition: RoleMcpDefinition = { type: "stdio", command, args: form.args, ...(env ? { env } : {}), ...(envVars.length ? { envVars } : {}) };
+  return { definition: issues.length ? null : definition, issues };
+}
+
+/** Literal values that end up in plain text in the Role and each launch config. */
+export function mcpLiterals(definition: RoleMcpDefinition): number {
+  return definition.type === "http" ? Object.keys(definition.httpHeaders ?? {}).length : Object.keys(definition.env ?? {}).length;
+}
+
+/** Split a pasted command line into words, honouring quotes and backslashes; no expansion. */
+export function splitCommandLine(line: string): string[] {
+  const words: string[] = [];
+  let word = "", quote: "'" | "\"" | null = null, started = false;
+  for (let index = 0; index < line.length; index++) {
+    const char = line[index];
+    if (quote) {
+      if (char === quote) quote = null;
+      else if (char === "\\" && quote === "\"" && index + 1 < line.length) word += line[++index];
+      else word += char;
+    } else if (char === "'" || char === "\"") { quote = char; started = true; }
+    else if (char === "\\" && index + 1 < line.length) { word += line[++index]; started = true; }
+    else if (/\s/.test(char)) { if (started) words.push(word); word = ""; started = false; }
+    else { word += char; started = true; }
+  }
+  if (started) words.push(word);
+  return words;
+}
+
+const toml = (value: string) => JSON.stringify(value);
+const inline = (values: Record<string, string>) => `{ ${Object.entries(values).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${toml(key)} = ${toml(value)}`).join(", ")} }`;
+
+/** The config.toml table a launch writes for one enabled server; mirrors the Roles API's launch config. */
+export function mcpToml(name: string, definition: RoleMcpDefinition): string {
+  const lines = [`[mcp_servers.${name}]`];
+  if (definition.type === "http") {
+    lines.push(`url = ${toml(definition.url)}`);
+    if (definition.bearerTokenEnvVar) lines.push(`bearer_token_env_var = ${toml(definition.bearerTokenEnvVar)}`);
+    if (definition.httpHeaders) lines.push(`http_headers = ${inline(definition.httpHeaders)}`);
+    if (definition.envHttpHeaders) lines.push(`env_http_headers = ${inline(definition.envHttpHeaders)}`);
+  } else {
+    lines.push(`command = ${toml(definition.command)}`, `args = [${definition.args.map(toml).join(", ")}]`);
+    if (definition.env) lines.push(`env = ${inline(definition.env)}`);
+    if (definition.envVars) lines.push(`env_vars = [${definition.envVars.map(toml).join(", ")}]`);
+  }
+  return [...lines, "enabled = true", ""].join("\n");
+}
+
+/** A one-line target for a row: the host for HTTP, the command and argument count for stdio. */
+export function mcpTarget(definition: RoleMcpDefinition): string {
+  if (definition.type === "http") {
+    try { return new URL(definition.url).host; } catch { return definition.url; }
+  }
+  const command = definition.command.split("/").pop() || definition.command;
+  return definition.args.length ? `${command} +${definition.args.length}` : command;
+}
+
+/* Trusted projects */
+
+/** Bots whose working directory lies inside the project, as the launch preview matched them. */
+export function projectBots(launch: RoleLaunchPreview | null, projectId: string, bots: Bot[] | null): Bot[] {
+  const cwds = new Set((launch?.cwds ?? []).filter((entry) => entry.trustedProjectIds.includes(projectId)).map((entry) => entry.cwd));
+  return (bots ?? []).filter((bot) => cwds.has(bot.cwd));
 }

@@ -36,6 +36,14 @@ const recordSchema = z.strictObject({ seq: z.number().int(), workerId: id,
 const captureSchema = z.strictObject({ records: z.number().int(), retainedChars: z.number().int(), droppedRecords: z.number().int(),
   lastObservedAt: z.number().int().nullable(), maxRecords: z.number().int(), maxChars: z.number().int(), truncated: z.boolean() });
 const pageInput = { id, afterSeq: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(50).optional() };
+const listTurnSchema = turnSummarySchema.pick({ id: true, phase: true, stopReason: true, issue: true, dispatchedAt: true, createdAt: true, updatedAt: true });
+const listedWorkerSchema = workerSchema.extend({
+  turn: listTurnSchema.nullable().describe("Most recent turn, as worker_status summarizes it; null before the first admission. An unknown phase stays until a later turn."),
+  pendingPermissions: z.number().int().nonnegative().describe("Permission requests still waiting for an answer; read worker_status for them."),
+});
+const diffFileSchema = z.strictObject({ path: z.string(), oldPath: z.string().nullable(),
+  status: z.enum(["added", "modified", "deleted", "renamed", "copied", "typechange", "unmerged", "untracked", "unknown"]),
+  additions: z.number().int().nullable().describe("Added lines; null for binary and untracked files."), deletions: z.number().int().nullable(), binary: z.boolean() });
 const resultSchema = z.strictObject({ worker: workerSchema, turn: turnSummarySchema, duplicate: z.boolean() });
 const requestId = z.uuid().describe("Client-generated idempotency key. Retry with identical input after an uncertain response.");
 
@@ -72,8 +80,8 @@ export const workerStart = operation({
   async call(ctx: WorkersContext, input, invocation) { return ctx.manager.start(input, invocation); },
 });
 export const workerList = operation({
-  name: "worker_list", description: "List durable workers owned by this Bot; a local operator sees all. A turn outcome can be unknown after interruption.",
-  input: z.strictObject({}), output: z.strictObject({ workers: z.array(workerSchema) }), annotations: { title: "List workers", readOnlyHint: true },
+  name: "worker_list", description: "List durable workers owned by this Bot, each with its most recent turn summary and pending permission count; a local operator sees all. A turn outcome can be unknown after interruption.",
+  input: z.strictObject({}), output: z.strictObject({ workers: z.array(listedWorkerSchema) }), annotations: { title: "List workers", readOnlyHint: true },
   async call(ctx: WorkersContext, _input, invocation) { return { workers: await ctx.manager.list(invocation) }; },
 });
 export const workerStatus = operation({
@@ -130,6 +138,18 @@ export const workerToolList = operation({
   annotations: { title: "Read Worker tools and task evidence", readOnlyHint: true },
   async call(ctx: WorkersContext, { id, afterSeq, limit }, invocation) { return ctx.manager.tools(id, afterSeq ?? 0, limit ?? 20, invocation); },
 });
+export const workerDiff = operation({
+  name: "worker_diff", description: "Read a Worker's changes in its retained worktree against its base commit without writing to it: branch commits since the base, changed and untracked files with line counts, uncommitted state, and optionally a bounded unified patch for all files (patch: true) or one listed path. External diff and textconv programs are not run. Fails after worker_remove discards the worktree.",
+  input: z.strictObject({ id, path: z.string().min(1).max(4_096).optional().describe("One path from files; its patch is returned."),
+    patch: z.boolean().optional().describe("Return the patch for every file, untracked files last."),
+    maxChars: z.number().int().min(1).max(200_000).optional().describe("Patch limit in UTF-16 code units; default 100,000.") }),
+  output: z.strictObject({ workerId: id, branch: z.string().nullable(), baseCommit: z.string(), head: z.string(),
+    commits: z.array(z.strictObject({ sha: z.string(), subject: z.string(), at: z.number().int() })), commitsTruncated: z.boolean(),
+    files: z.array(diffFileSchema), filesTruncated: z.boolean(), uncommitted: z.boolean().describe("The worktree has uncommitted or untracked changes."),
+    path: z.string().nullable(), patch: z.string().nullable(), truncated: z.boolean().describe("The patch was cut at maxChars.") }),
+  annotations: { title: "Read Worker changes", readOnlyHint: true },
+  async call(ctx: WorkersContext, { id, path, patch, maxChars }, invocation) { return ctx.manager.diff(id, { path, patch, maxChars }, invocation); },
+});
 export const workerSend = operation({
   name: "worker_send", description: "Give the same idle native session follow-up work, including a request to fix or revise. Optional model/effort changes must match this account's current catalog.",
   input: z.strictObject({ id, message: z.string().min(1).max(65_536), requestId,
@@ -174,7 +194,7 @@ export const topics = {
 } as const;
 export const api: PackageApi<WorkersContext, keyof typeof topics> = {
   operations: [workerCatalog, workerRuntimeList, workerAccountDrain, workerStart, workerList, workerStatus, workerRead,
-    workerDetail, workerTurnList, workerRecordList, workerRecordRead, workerToolList,
+    workerDetail, workerTurnList, workerRecordList, workerRecordRead, workerToolList, workerDiff,
     workerSend, workerRespond, workerCancel, workerResume, workerClose, workerRemove],
   events: {
     topics,

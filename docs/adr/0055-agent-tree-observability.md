@@ -1,6 +1,6 @@
 # 55. Keep agent-tree observations with Bots and Workers
 
-Status: accepted, 2026-09-25. Extends [ADR 0043](0043-bot-chat-apis.md), [ADR 0038](0038-durable-acp-worker-execution.md), and [ADR 0039](0039-worker-wakeups-and-scoped-mcp.md).
+Status: accepted, 2026-09-25. Extends [ADR 0043](0043-bot-chat-apis.md), [ADR 0038](0038-durable-acp-worker-execution.md), and [ADR 0039](0039-worker-wakeups-and-scoped-mcp.md). Its deferral of Worker conversation views is superseded by [ADR 0102](0102-workers-space.md).
 
 UIs need identities, relationships, lifecycle state, configuration, and conversation evidence to inspect delegated work. The `bots` Package API owns Codex child-thread observations; `workers` owns ACP session observations. A separate Package API would duplicate lifecycle ownership and lineage checks. A Worker's existing `botId` and originating `threadId` attach it to the corresponding Bot tree without pretending that an ACP session is a Codex Chat.
 

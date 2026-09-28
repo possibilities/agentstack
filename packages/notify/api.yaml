@@ -1,5 +1,5 @@
 name: notify
-description: Durable internal notifications with stable IDs, group replacement, click-through, action and reply prompts, one dismissal with its outcome, filtered history, and change notices. No presentation or callbacks.
+description: Durable internal notifications with stable IDs, group replacement, click-through, action and reply prompts, one dismissal with its outcome, filtered history and counts, and change notices. No presentation or callbacks.
 socket:
   description: Local notification creation, dismissal, and history.
 mcp:

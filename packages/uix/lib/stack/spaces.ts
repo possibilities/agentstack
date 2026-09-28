@@ -1,15 +1,21 @@
 import { accountLabels, workerAccountLabels } from "./derive";
+import { workerAttention, workerLabel } from "./workers";
 import type { StackState } from "./store";
 import { nodeKey, type NodeRef } from "./types";
 
-export type SpaceId = "fleet" | "accounts" | "lab" | "system" | "roles";
+export type SpaceId = "fleet" | "accounts" | "lab" | "system" | "roles" | "inbox" | "signal" | "content" | "workers" | "scrape";
 
 export const spaces: { id: SpaceId; title: string; description: string; key: string }[] = [
   { id: "fleet", title: "Fleet", description: "Bots and their controls", key: "1" },
   { id: "accounts", title: "Accounts", description: "Accounts, usage limits, and model catalogs", key: "2" },
   { id: "lab", title: "Lab", description: "Experimental windows for tinkering", key: "3" },
   { id: "system", title: "System", description: "Owner, processes, packages, host resources and activity", key: "4" },
-  { id: "roles", title: "Roles", description: "Instructions every new Bot launches with", key: "5" },
+  { id: "roles", title: "Roles", description: "Instructions, skills, MCP servers and trusted projects every new Bot launches with", key: "5" },
+  { id: "inbox", title: "Inbox", description: "Notifications to read, answer and dismiss", key: "6" },
+  { id: "signal", title: "Signal", description: "What conversations ask of you, and how it was interpreted", key: "7" },
+  { id: "content", title: "Content", description: "Vault documents, collections, files and Artifacts", key: "8" },
+  { id: "workers", title: "Workers", description: "What Workers started by Bots are doing, read-only", key: "9" },
+  { id: "scrape", title: "Scrape", description: "Extraction, feeds, presets and their health, and the scrape-to-file queue", key: "0" },
 ];
 
 export const defaultSpace: SpaceId = "fleet";
@@ -51,11 +57,44 @@ export function homeOf(ref: NodeRef): NodeHome {
       return { kind: "space", space: "accounts", window: "usage" };
     case "bot":
       return { kind: "space", space: "fleet", window: "bots" };
+    case "worker":
+      return { kind: "space", space: "workers", window: "workers" };
+    case "worker-window":
+      return { kind: "space", space: "workers", window: ref.id };
+    case "worker-runtime":
+      return { kind: "space", space: "workers", window: "worker-runtimes" };
     case "chat":
       return { kind: "space", space: "fleet", window: ref.id };
     case "category":
     case "fragment":
       return { kind: "space", space: "roles", window: "role-instructions" };
+    case "notification":
+      return { kind: "space", space: "inbox", window: "notify-inbox" };
+    case "skill":
+      return { kind: "space", space: "roles", window: "role-skills" };
+    case "mcp-server":
+      return { kind: "space", space: "roles", window: "role-mcp-servers" };
+    case "trusted-project":
+      return { kind: "space", space: "roles", window: "role-projects" };
+    case "signal":
+      return { kind: "space", space: "signal", window: "signal" };
+    case "attention-item":
+      return { kind: "space", space: "signal", window: "attention" };
+    case "attention-message":
+      return { kind: "space", space: "signal", window: "attention-messages" };
+    case "attention-run":
+      return { kind: "space", space: "signal", window: "attention-runs" };
+    case "document":
+      return { kind: "space", space: "content", window: "content-documents" };
+    case "collection":
+    case "item":
+      return { kind: "space", space: "content", window: "content-library" };
+    case "artifact":
+      return { kind: "space", space: "content", window: "content-artifacts" };
+    case "preset":
+      return { kind: "space", space: "scrape", window: "scrape-presets" };
+    case "scrape-job":
+      return { kind: "space", space: "scrape", window: "scrape-queue" };
     case "package":
     case "operation":
       return { kind: "reference" };
@@ -76,8 +115,8 @@ export function parseSpacePath(pathname: string): SpaceId | null {
 }
 
 /** Human-readable reasons each space needs attention; an empty list means all quiet. Only "closed" channels count — idle and connecting are normal. */
-export function spaceAttention(state: Pick<StackState, "status" | "owner" | "resources" | "accounts" | "workerAccounts" | "bots" | "attempt" | "catalog" | "endpoints">): Record<SpaceId | "api", string[]> {
-  const attention: Record<SpaceId | "api", string[]> = { fleet: [], accounts: [], lab: [], roles: [], system: [], api: [] };
+export function spaceAttention(state: Pick<StackState, "status" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerSessions" | "workerRuntimes" | "bots" | "attempt" | "catalog" | "endpoints" | "notifyCounts" | "signalStatus"> & Partial<Pick<StackState, "contentUploads" | "scrapeStatus">>): Record<SpaceId | "api", string[]> {
+  const attention: Record<SpaceId | "api", string[]> = { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], api: [] };
   for (const bot of state.bots.data ?? []) if (bot.recoveryIssue) attention.fleet.push(`${bot.id} needs inspection`);
   const labels = accountLabels(state.accounts.data);
   for (const account of state.accounts.data ?? []) if (account.removing) attention.accounts.push(`${labels.get(account.id) ?? account.id} removal unfinished`);
@@ -90,6 +129,28 @@ export function spaceAttention(state: Pick<StackState, "status" | "owner" | "res
   if (state.attempt?.status === "failed") attention.accounts.push("Sign-in failed");
   if (state.status.bots === "closed") attention.fleet.push("bots reconnecting");
   if (state.status.roles === "closed") attention.roles.push("roles reconnecting");
+  const open = state.notifyCounts.data?.open ?? 0;
+  if (open) attention.inbox.push(`${open} open notification${open === 1 ? "" : "s"}`);
+  if (state.status.notify === "closed") attention.inbox.push("notify reconnecting");
+  if (state.status.signal === "closed") attention.signal.push("signal reconnecting");
+  if (state.signalStatus.error) attention.signal.push(`Signal status: ${state.signalStatus.error}`);
+  const signal = state.signalStatus.data;
+  for (const { source } of signal?.sourceErrors ?? []) attention.signal.push(`${source} unreadable`);
+  if (signal?.lastInference?.error) attention.signal.push(`Last interpretation failed: ${signal.lastInference.error}`);
+  if (state.status.content === "closed") attention.content.push("content reconnecting");
+  for (const worker of state.workerSessions?.data ?? []) {
+    const reason = workerAttention(worker);
+    if (reason) attention.workers.push(`${workerLabel(worker)}: ${reason}`);
+  }
+  for (const runtime of state.workerRuntimes?.data ?? []) if (runtime.state === "error") attention.workers.push(`${runtime.provider} runtime error${runtime.error ? `: ${runtime.error}` : ""}`);
+  if (state.status.worker === "closed") attention.workers.push("worker reconnecting");
+  for (const upload of state.contentUploads ?? []) {
+    if (upload.phase === "stalled") attention.content.push(`${upload.name} upload stalled`);
+    if (upload.phase === "failed") attention.content.push(`${upload.name} upload failed`);
+  }
+  if (state.status.scrape === "closed") attention.scrape.push("scrape reconnecting");
+  // Other optional tools affect narrower routes; the Status window lists them without raising attention.
+  if (state.scrapeStatus?.data && !state.scrapeStatus.data.browser) attention.scrape.push("Browser runtime unavailable");
   for (const name of ["auth", "usage", "worker"] as const) if (state.status[name] === "closed") attention.accounts.push(`${name} reconnecting`);
   for (const child of state.owner.data?.children ?? []) if (!child.running) attention.system.push(`${child.name} stopped`);
   if (state.status.owner === "closed") attention.system.push("owner reconnecting");
@@ -110,6 +171,7 @@ export function spaceAttention(state: Pick<StackState, "status" | "owner" | "res
 /** Exact inverse of nodeKey(); malformed keys return null. */
 export function parseNodeKey(key: string): NodeRef | null {
   if (key === "owner") return { kind: "owner" };
+  if (key === "signal") return { kind: "signal" };
   if (key === "login") return { kind: "login" };
   if (key === "usage") return { kind: "usage" };
   if (key === "grok-bot-usage") return { kind: "grok-bot-usage" };
@@ -123,8 +185,12 @@ export function parseNodeKey(key: string): NodeRef | null {
     if (dot <= 0 || dot === rest.length - 1) return null;
     return { kind: "operation", pkg: rest.slice(0, dot), id: rest.slice(dot + 1) };
   }
-  if (kind === "access-client" || kind === "access-pairing" || kind === "access-grant" || kind === "access-credential" || kind === "account" || kind === "worker-account" || kind === "worker-catalog" || kind === "usage-account" || kind === "child" || kind === "bot" || kind === "chat" || kind === "category" || kind === "fragment" || kind === "package" || kind === "resource" || kind === "process") {
+  if (kind === "access-client" || kind === "access-pairing" || kind === "access-grant" || kind === "access-credential" || kind === "account" || kind === "worker-account" || kind === "worker-catalog" || kind === "usage-account" || kind === "child" || kind === "bot" || kind === "chat" || kind === "category" || kind === "fragment" || kind === "skill" || kind === "mcp-server" || kind === "trusted-project" || kind === "notification" || kind === "attention-item" || kind === "attention-message" || kind === "attention-run" || kind === "package" || kind === "resource" || kind === "process") {
     return { kind, id: rest };
   }
+  // A separate branch keeps each union small enough for TypeScript to check assignability.
+  if (kind === "document" || kind === "collection" || kind === "item" || kind === "artifact") return { kind, id: rest };
+  if (kind === "worker" || kind === "worker-runtime" || kind === "worker-window") return { kind, id: rest };
+  if (kind === "preset" || kind === "scrape-job") return { kind, id: rest };
   return null;
 }

@@ -18,6 +18,10 @@ A durable phone, extension, browser or future cloud consumer identity owned by t
 
 An explicit set of scopes or selected operations for one Access client and one network policy. Tailnet device grants and public-cloud grants are distinct; a device credential never authorizes public ingress. Client, grant and individual credential revocation fence dependent short-lived tokens and browser sessions on subsequent requests. Public-cloud credentials and remote MCP admission are not yet implemented. _Avoid_: network reachability, approval code, internal MCP context
 
+## Remote UIX session
+
+A five-minute Access session for one locally approved browser-kind client on the dedicated direct-tailnet UIX TLS origin. `uix:view` selects read-only WebSocket operations and events; `uix:control` adds UIX mutations, never Access, sign-in, voice or headful browser authority. The HttpOnly cookie and rotating refresh are distinct from Content resource handoffs. Revocation and grant changes fence the next HTTP request and close existing WebSockets. _Avoid_: forwarded local UIX port, internal MCP identity, public share link
+
 ## Content handoff
 
 A one-use, one-minute secret for opening one document, Content item or immutable Artifact version on its designated origin. The browser exchanges a URL fragment for a short-lived, resource-scoped HttpOnly cookie. Broad Access credentials never enter a URL; every subsequent request still needs verified tailnet provenance. _Avoid_: public share link, broad browser login, Artifact identity
@@ -114,6 +118,10 @@ A Codex app-server thread in an AgentStack-owned Bot's sanctioned main-thread li
 
 A Fleet window that follows one Bot's main thread: human and assistant text, streamed live, with the turn's activity in a status line. The primary chat window always exists and switches between Bots; additional chat windows keep their own Bot until closed. The arrangement is browser-local. _Avoid_: chat tab, transcript pane
 
+## Worker window
+
+A read-only Workers-space window that follows one Worker: its summary, pending permissions, conversation, turns, tools, records and session metadata. The primary Worker window follows the Workers list; additional windows keep their own Worker until closed. The arrangement is browser-local. Its Bot, not the window, answers and steers the Worker. _Avoid_: Worker chat, Worker console
+
 ## Bot subagent
 
 A Codex child thread whose parent chain reaches a Bot's sanctioned main thread. Subagents can themselves have children; a thread's identity and parentage do not establish that it is currently loaded or working. Native task or child-session evidence belongs to its Worker and is not a Bot subagent. _Avoid_: Worker, arbitrary thread on the Bot socket
@@ -186,7 +194,7 @@ A named collection of related windows on its own UIX open bench, addressed as `/
 
 _Avoid_: page, tab, workspace (a Bot's working directory)
 
-Roles is the fifth Canvas space, managing the Role's instruction Categories and Fragments.
+Roles is the fifth Canvas space, managing the Role's instruction Categories and Fragments. Inbox is the sixth, where people read, answer and dismiss Notifications. Signal is the seventh, showing what conversations ask of people and the interpretation evidence behind it. Content is the eighth, for Vault documents, Content collections and items, and published Artifacts; it does not publish Artifacts. Workers is the ninth, following what Workers started by Bots are doing. Scrape is the tenth, for trying extractions, checking preset health and running scrape-to-file jobs.
 
 ## Open bench
 
@@ -202,7 +210,7 @@ _Avoid_: external research service, Content Vault
 
 ## Scrape
 
-The `scrape` Package API's extraction, preset, link and source-discovery engine. Brain consumes its typed library interface for Ingestion jobs; standalone scrape-to-file jobs live under isolated AgentStack state and are not Brain jobs. A preset's failure to match the provider's current content shape is a classified failure requiring a preset update, not permission for generic extraction. Browser page actions still belong to agent-browser. _Avoid_: Brain ingestion worker, browser lifecycle, separate Agentscrape service
+The `scrape` Package API's extraction, preset, link and source-discovery engine. Brain consumes its typed library interface for Ingestion jobs; standalone scrape-to-file jobs live under isolated AgentStack state and are not Brain jobs. A preset's failure to match the provider's current content shape is a classified failure requiring a preset update, not permission for generic extraction. Browser page actions still belong to agent-browser. The local UIX operates its canary checks and queue over the WebSocket; agents do not receive them over MCP. _Avoid_: Brain ingestion worker, browser lifecycle, separate Agentscrape service
 
 ## Admission
 

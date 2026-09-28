@@ -7,6 +7,7 @@ type Context = { store: NotificationStore; changed?: () => void };
 const id = z.strictObject({ id: z.uuid() });
 const read = { readOnlyHint: true } as const;
 const group = z.string().min(1).max(200);
+const count = z.number().int().nonnegative();
 
 export const api: PackageApi<Context, "notify_changed"> = {
   operations: [
@@ -19,6 +20,10 @@ export const api: PackageApi<Context, "notify_changed"> = {
       input: z.strictObject({ before: z.number().int().positive().optional(), limit: z.number().int().min(1).max(25).default(20),
         dismissed: z.boolean().optional(), source: z.string().min(1).max(200).optional(), group: group.optional() }),
       output: page, annotations: read, async call(ctx, input) { return ctx.store.list(input); } }),
+    operation({ name: "notification_counts", description: "Count open and total notifications, overall and per exact source (null for notifications sent without one), most-used sources first.",
+      input: z.strictObject({}), output: z.strictObject({ open: count, total: count,
+        sources: z.array(z.strictObject({ source: z.string().nullable(), open: count, total: count })) }),
+      annotations: read, async call(ctx) { return ctx.store.counts(); } }),
     operation({ name: "notification_dismiss", description: "Dismiss one notification, recording how: closed (default), opened (clicked through), action (response is one of its actions) or replied (response is the reply text). The first dismissal wins; repeating it returns the record unchanged, and a different outcome is refused. History is kept.",
       input: id.extend({ outcome: z.enum(["closed", "opened", "action", "replied"]).default("closed"), response: z.string().trim().min(1).max(4_000).optional() }),
       output: notification, annotations: { idempotentHint: true },

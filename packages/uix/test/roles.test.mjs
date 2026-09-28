@@ -107,3 +107,64 @@ test("preview pieces label spans from the Role and launches compare revisions", 
   assert.equal(roles.formatCount(3_640), "3.6k");
   assert.equal(roles.approxTokens(roles.utf8Bytes("é")), 1);
 });
+
+test("MCP forms round-trip a definition, omit blank optional fields and render the launch's TOML", () => {
+  const http = { type: "http", url: "https://mcp.example.test/tools", bearerTokenEnvVar: "ROLE_TOKEN" };
+  const form = roles.toMcpForm(http);
+  assert.deepEqual(roles.fromMcpForm(form), { definition: http, issues: [] });
+  // Switching transport keeps the other transport's fields for switching back.
+  assert.equal(roles.draftMcpForm(JSON.stringify({ ...form, type: "stdio" })).url, http.url);
+  // Byte-for-byte what role_launch_preview reports for the same server (packages/roles/test/socket.test.ts).
+  assert.equal(roles.mcpToml("remote", http), '[mcp_servers.remote]\nurl = "https://mcp.example.test/tools"\nbearer_token_env_var = "ROLE_TOKEN"\nenabled = true\n');
+  const stdio = roles.fromMcpForm({ ...roles.emptyMcpForm, type: "stdio", command: " /usr/bin/env ", args: ["true", ""], env: [["MODE", "role"], ["", ""]], envVars: [" HOME ", "HOME"] });
+  assert.deepEqual(stdio.definition, { type: "stdio", command: "/usr/bin/env", args: ["true", ""], env: { MODE: "role" }, envVars: ["HOME"] });
+  assert.equal(roles.mcpToml("local", stdio.definition), '[mcp_servers.local]\ncommand = "/usr/bin/env"\nargs = ["true", ""]\nenv = { "MODE" = "role" }\nenv_vars = ["HOME"]\nenabled = true\n');
+  assert.equal(roles.mcpLiterals(stdio.definition), 1);
+  assert.deepEqual(roles.fromMcpForm({ ...roles.emptyMcpForm, url: "https://user:pw@example.test/#x", httpHeaders: [["X-A", "1"], ["x-a", "2"]], envHttpHeaders: [["X-B", "not a var"]] }).issues, [
+    "The URL must be HTTP(S) without credentials or a #fragment", "Headers: “x-a” appears twice", "Environment headers: “not a var” is not an environment variable name",
+  ]);
+  assert.equal(roles.fromMcpForm({ ...roles.emptyMcpForm, type: "stdio" }).definition, null);
+  // A saved definition and its unedited form text compare equal, so opening a record never marks it dirty.
+  assert.equal(roles.mcpText({ name: "remote", description: "", definition: http }).definition, JSON.stringify(roles.toMcpForm(http)));
+});
+
+test("a pasted command line splits into words without shell expansion", () => {
+  assert.deepEqual(roles.splitCommandLine(`node "my server.js" --flag='a b' $HOME\\ x ""`), ["node", "my server.js", "--flag=a b", "$HOME x", ""]);
+  assert.deepEqual(roles.splitCommandLine("   "), []);
+});
+
+test("skill files mirror the API's path and size rules and survive a base64 round trip", () => {
+  const text = roles.textFile("scripts/check.sh", "exit 0\n");
+  assert.equal(text.contentBase64, Buffer.from("exit 0\n").toString("base64"));
+  assert.equal(roles.fileText(text), "exit 0\n");
+  assert.equal(roles.base64Bytes(text.contentBase64), 7);
+  assert.equal(roles.fileText({ path: "a.bin", contentBase64: Buffer.from([0xff, 0x00, 0x01]).toString("base64") }), null);
+  const bytes = new Uint8Array(100_000).map((_, index) => index % 256);
+  assert.deepEqual(roles.decodeBase64(roles.encodeBase64(bytes)), bytes);
+  assert.equal(roles.encodeBase64(bytes), Buffer.from(bytes).toString("base64"));
+  assert.deepEqual(roles.skillFileIssues([text]), []);
+  assert.deepEqual(roles.skillFileIssues([{ path: "../escape", contentBase64: "" }, { path: "SKILL.md", contentBase64: "" }, { path: "a", contentBase64: "" }, { path: "a/b", contentBase64: "" }, { path: "A", contentBase64: "" }]), [
+    "../escape needs a relative path of letters, digits, “.”, “_” and “-”", "SKILL.md is generated from the name, description and body", "A appears twice", "a is both a file and a folder",
+  ]);
+  assert.equal(roles.safeFilePath("My Notes (v2).md"), "My-Notes-v2-.md");
+  assert.equal(roles.safeFilePath("SKILL.md"), "file");
+  assert.equal(roles.skillBytes({ body: "é", files: [text] }), 9);
+});
+
+test("resource names follow the launch pattern and duplicates take the next free name", () => {
+  assert.equal(roles.nameIssue("review", ["draft"]), null);
+  assert.match(roles.nameIssue("Review", []), /lowercase/);
+  assert.match(roles.nameIssue("review", ["REVIEW"]), /already uses/);
+  assert.equal(roles.uniqueName("review", ["review"]), "review-copy");
+  assert.equal(roles.uniqueName("review", ["review-copy"]), "review-copy-2");
+  assert.equal(roles.uniqueName("review", ["review-copy", "review-copy-2"]), "review-copy-3");
+  assert.equal(roles.uniqueName("a".repeat(32), []).length, 32);
+  assert.deepEqual(roles.resourceOrder([{ id: "a" }, { id: "b" }, { id: "c" }], "c", "a"), ["c", "a", "b"]);
+});
+
+test("a trusted project lists the Bots whose working directory the launch preview matched", () => {
+  const launch = { cwds: [{ cwd: "/work/repo/src", path: "/work/repo/src", trustedProjectIds: ["p1"] }, { cwd: "/elsewhere", path: "/elsewhere", trustedProjectIds: [] }] };
+  const bots = [{ id: "bot-1", cwd: "/work/repo/src" }, { id: "bot-2", cwd: "/elsewhere" }];
+  assert.deepEqual(roles.projectBots(launch, "p1", bots).map((bot) => bot.id), ["bot-1"]);
+  assert.deepEqual(roles.projectBots(null, "p1", bots), []);
+});

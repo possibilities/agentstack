@@ -5,7 +5,8 @@ export type AccessSnapshot = {
   grants: { id: string; client_id: string; network: "tailnet" | "public-cloud"; scopes: string[]; operations: string[]; created: number; revoked: number | null; revision: number }[];
   credentials: { id: string; client_id: string; grant_id: string; generation: number; created: number; expires: number; revoked: number | null }[];
   audit: { seq: number; time: number; action: string; subject: string }[];
-  ingress: { host: string; port: number; artifactPort: number } | null;
+  ingress: { host: string; port: number; artifactPort: number; uixPort: number | null } | null;
+  uixSessions: { credential_id: string; expires: number }[];
 };
 
 export type JsonSchema = {
@@ -149,7 +150,18 @@ export type WorkerSession = { id: string; botId: string; threadId: string; accou
   phase: "preparing" | "idle" | "running" | "awaiting_input" | "cancelling" | "closed" | "failed" | "needs_recovery";
   currentTurnId: string | null; issue: string | null; createdAt: number; updatedAt: number };
 
-/** API-only conversation details; existing Worker account cards still read worker_list. */
+/** worker_list's compact most recent turn. */
+export type WorkerListTurn = Pick<WorkerTurn, "id" | "phase" | "stopReason" | "issue" | "dispatchedAt" | "createdAt" | "updatedAt">;
+/** A worker_list row: the Worker plus its latest turn and pending permission count. */
+export type WorkerListItem = WorkerSession & { turn: WorkerListTurn | null; pendingPermissions: number };
+export type WorkerDiffFile = { path: string; oldPath: string | null;
+  status: "added" | "modified" | "deleted" | "renamed" | "copied" | "typechange" | "unmerged" | "untracked" | "unknown";
+  additions: number | null; deletions: number | null; binary: boolean };
+/** worker_diff: the retained worktree against its base commit. */
+export type WorkerDiff = { workerId: string; branch: string | null; baseCommit: string; head: string;
+  commits: Array<{ sha: string; subject: string; at: number }>; commitsTruncated: boolean; files: WorkerDiffFile[]; filesTruncated: boolean;
+  uncommitted: boolean; path: string | null; patch: string | null; truncated: boolean };
+/** Worker conversation details, read by the Workers space. */
 export type WorkerObservedSettings = { model: string | null; effort: string | null; mode: string | null; at: number; recordSeq: number };
 export type WorkerTurn = { id: string; workerId: string;
   phase: "queued" | "running" | "awaiting_input" | "cancelling" | "completed" | "cancelled" | "failed" | "unknown";
@@ -177,6 +189,9 @@ export type WorkerTask = { toolCallId: string; sessionId: string; callingSession
   model: { providerID: string | null; modelID: string | null } | null; recordSeq: number;
   visibility: "task_reference"; hierarchyVerified: false; childStatus: "unknown" };
 export type WorkerToolPage = { tools: WorkerTool[]; tasks: WorkerTask[]; nextSeq: number; hasMore: boolean };
+/** worker_read: bounded user, agent, tool, plan and turn-outcome text by sequence. Agent text arrives as chunks. */
+export type WorkerTranscriptEntry = { seq: number; workerId: string; turnId: string; kind: string; text: string; at: number };
+export type WorkerTranscriptPage = { entries: WorkerTranscriptEntry[]; nextSeq: number; hasMore: boolean };
 
 export type Login = {
   id: string;
@@ -412,8 +427,41 @@ export type InferRequestSummary = InferRequestFields & { inputPreview: string; t
 /** `infer_request_get`: the full ledger record. */
 export type InferRequest = InferRequestFields & { instructions: string; input: string; text: string | null };
 
-/** Headless attention defaults; API reference exposes these before dedicated controls exist. */
+/** Signal's revisioned attention inference defaults; a null account uses the first available enabled Bot account. */
 export type AttentionDefaults = { model: string; reasoningEffort: InferEffort; accountId: string | null; revision: number };
+/** `attention_status`. `changeSeq` advances only when attention records may have changed, never for source-read polling. */
+export type AttentionStatus = { enabled: boolean; activatedAt: number | null; baselined: boolean; settings: AttentionDefaults;
+  lastScan: number | null; lastInference: { at?: number; runId?: string; requestId?: string; state?: string; model?: string; reportedModel?: string | null; error?: string } | null;
+  sourceErrors: Array<{ source: string; error: string }>; jobs: Array<{ state: string; count: number }>; messages: number; runs: number; changeSeq: number };
+/** `attention_models`: account-bound choices for the effective account; no inference. */
+export type AttentionModels = { accountId: string; observedAt: string; models: InferModel[] };
+export type AttentionItemState = "informational" | "open" | "partial" | "answered" | "satisfied" | "declined" | "withdrawn" | "superseded" | "unclear";
+export type AttentionReason = "none" | "awareness" | "review" | "response" | "action";
+export type AttentionAudience = "human" | "agent" | "team" | "unspecified" | "none";
+export type AttentionUrgency = "routine" | "soon" | "immediate" | "unspecified";
+/** One current semantic item from `attention_list`, with its list cursor flattened in. `start`/`end` locate its evidence in the message text (UTF-16). */
+export type AttentionItem = {
+  cursor: number; id: string; messageId: string; runId: string; conversation: string; botId: string | null; start: number; end: number; current: boolean;
+  acts: string[]; forms: string[]; summary: string; evidence: { quote: string; occurrence: number }; subject: string; scope: string | null;
+  audience: { kind: AttentionAudience; id: string | null }; engagement: string[];
+  attention: { reason: AttentionReason; rationale: string; basis: "explicit" | "inferred" };
+  timing: { urgency: AttentionUrgency; deadline: string | null; blockingScope: string | null };
+  conditions: string[]; uncertainty: string[]; state: AttentionItemState;
+  relations: Array<{ type: string; targetId: string | null; referenceText: string }>;
+};
+/** A captured message revision from `attention_message_list`; `text` is a preview of at most 2,000 characters. */
+export type AttentionMessage = { cursor: number; seq: number; id: string; logicalId: string; revision: string; current: boolean;
+  source: "bots" | "workers"; conversation: string; key: string; role: "user" | "assistant"; authorKind: "human" | "agent" | "unknown";
+  audienceHint?: "human" | "agent" | "unknown"; botId: string | null; text: string; textChars: number; complete: boolean; occurredAt: string | null; observedAt: number };
+/** `failed` is definite; `unknown` may have dispatched and needs an explicit replay decision. */
+export type AttentionRun = { cursor: number; id: string; jobId: string; messageId: string | null; replay: boolean; replayOf: string | null; promptVersion: string | null;
+  at: number; finished: number | null; state: string; requestId: string; settings: AttentionDefaults; error: string | null };
+export type AttentionFeedbackKind = "correction" | "label" | "outcome" | "behavior";
+export type AttentionFeedback = { cursor: number; id: string; at: number; messageId: string; runId: string | null; kind: AttentionFeedbackKind; author: string; body: string };
+export type AttentionEvent = { cursor: number; seq: number; at: number; kind: string; body: Record<string, unknown> | null; bodyChars: number; omitted: boolean };
+export type AttentionPage<T> = { entries: T[]; nextCursor: number; hasMore: boolean };
+/** A revision-fenced UTF-16 chunk from the attention_*_read exports. */
+export type AttentionChunk = { text: string; nextOffset: number; totalChars: number; revision: string };
 export type InferTraceChunk = { text: string; nextOffset: number; totalChars: number; complete: boolean; revision: string };
 export type ChatMessageCursor = { sourceId: string; line: number; prefixHash: string };
 export type ChatMessagePage = { cursor: ChatMessageCursor; reset: boolean; hasMore: boolean; entries: Array<{
@@ -426,16 +474,121 @@ export type RoleFragment = { id: string; categoryId: string; title: string; desc
   createdAt: number | null; updatedAt: number | null };
 export type RoleCategory = { id: string; title: string; description: string; enabled: boolean; fragments: RoleFragment[];
   createdAt: number | null; updatedAt: number | null };
-/** `role_snapshot`. Skills, MCP servers and trusted projects share the revision but have no Roles UI yet. */
-export type RoleSnapshot = { revision: number; categories: RoleCategory[];
-  skills: Array<Record<string, unknown>>;
-  mcpServers: Array<{ id: string; name: string; description: string; enabled: boolean; transport: "http" | "stdio" }>;
-  trustedProjects: Array<Record<string, unknown>> };
+/** A supporting file beside a skill's generated SKILL.md; bytes travel as canonical base64. */
+export type RoleSkillFile = { path: string; contentBase64: string };
+/** A Role-owned skill. Its name and description become SKILL.md frontmatter, so both reach Bots. */
+export type RoleSkill = { id: string; name: string; description: string; body: string; files: RoleSkillFile[]; enabled: boolean };
+export type RoleMcpDefinition =
+  | { type: "http"; url: string; bearerTokenEnvVar?: string; httpHeaders?: Record<string, string>; envHttpHeaders?: Record<string, string> }
+  | { type: "stdio"; command: string; args: string[]; env?: Record<string, string>; envVars?: string[] };
+/** An additional MCP server for new Bot launches; its description is for people only. */
+export type RoleMcpServer = { id: string; name: string; description: string; definition: RoleMcpDefinition; enabled: boolean };
+/** A canonical project root whose project config Bots launched inside it may load. */
+export type RoleTrustedProject = { id: string; path: string; description: string; enabled: boolean };
+/** `role_editor_snapshot`: operator-only definitions; ordinary snapshots and write replies use MCP summaries. */
+export type RoleSnapshot = { revision: number; categories: RoleCategory[]; skills: RoleSkill[]; mcpServers: RoleMcpServer[]; trustedProjects: RoleTrustedProject[] };
+export type RoleSummary = Omit<RoleSnapshot, "mcpServers"> & { mcpServers: Array<Omit<RoleMcpServer, "definition"> & { transport: "http" | "stdio" }> };
 /** `role_preview`: the exact SYSTEM_APPEND.md text for the next launch, with each fragment's [start, end) span. */
 export type RolePreview = { revision: number; rendered: string; bytes: number; limitBytes: number;
   segments: Array<{ categoryId: string; fragmentId: string; start: number; end: number }> };
 
+/** How a Notification was dismissed: once, with the chosen action label or reply text as `response`. */
+export type NotificationOutcome = "closed" | "opened" | "action" | "replied" | "replaced";
+/** A `notify` Notification; open until `dismissedAt`. Actions, reply and open are data; nothing executes. */
+export type Notification = { id: string; sequence: number; title: string; message: string; subtitle: string | null; source: string | null;
+  group: string | null; open: string | null; actions: string[]; reply: string | null; createdAt: string;
+  dismissedAt: string | null; outcome: NotificationOutcome | null; response: string | null };
+/** `notification_counts`. A null source counts notifications sent without one. */
+export type NotificationCounts = { open: number; total: number; sources: Array<{ source: string | null; open: number; total: number }> };
+/** The Inbox's view of `notification_list`: which filter it shows and the pages loaded so far. */
+export type NotificationFilter = { dismissed?: boolean; source?: string };
+export type NotificationPages = { filter: NotificationFilter; entries: Notification[]; nextCursor: number | null };
+/** `role_launch_preview`: what the next launch receives besides instructions, matched against given working directories. */
+export type RoleLaunchPreview = {
+  revision: number;
+  instructions: { bytes: number; limitBytes: number; fragments: number };
+  skills: Array<{ id: string; name: string; description: string; files: number; bytes: number }>;
+  internalMcpServers: string[];
+  mcpServers: Array<{ id: string; name: string; type: "http" | "stdio" }>;
+  config: string;
+  trustedProjects: Array<{ id: string; path: string }>;
+  cwds: Array<{ cwd: string; path: string | null; trustedProjectIds: string[] }>;
+  issues: Array<{ id: string; name: string; message: string }>;
+  snapshotChars: number;
+  snapshotLimitChars: number;
+};
+/** A Vault document row from `list`; `search` hits add a snippet and score. */
+export type ContentDocument = { slug: string; title: string; tags: string[]; updated?: string | null; bytes?: number };
+export type ContentHit = { slug: string; title: string; snippet: string; score: number; tags: string[] };
+/** `get`: the body without frontmatter, plus the whole file's SHA-256 edit fence. */
+export type ContentDocumentBody = { slug: string; title: string; digest: string; content?: string; tags?: string[];
+  created?: string | null; updated?: string | null; frontmatter: Record<string, unknown>; bytes?: number };
+export type ContentLinks = { slug: string; title: string; outgoing: Array<{ to: string; title: string; kind: string }>; dangling: unknown[] };
+export type ContentBacklinks = { slug: string; title: string; incoming: Array<{ from: string; title: string; kind: string }> };
+export type ContentTag = { tag: string; documents: number };
+export type ContentCollection = { slug: string; title: string; description: string; createdAt: string; updatedAt: string };
+export type ContentItemKind = "document" | "file" | "image";
+/** A Content item: stable ID and revision, optional collection, immutable content-addressed bytes. */
+export type ContentItem = { id: string; collection: string | null; name: string; kind: ContentItemKind; mediaType: string;
+  bytes: number; digest: string; revision: number; createdAt: string; updatedAt: string; url: string };
+/** An Artifact at one version; `url` is the latest path and `version_url` the immutable citation. */
+export type ContentArtifact = { name: string; version: string; kind: string; url: string; version_url: string;
+  title?: string | null; tags?: string[]; created_at?: string | null; bytes?: number; files?: number; media_type?: string | null;
+  latest?: boolean; deleted?: string | null; deleted_reason?: string | null; [key: string]: unknown };
+export type ContentStage = { id: string; bytes: number; received: number; digest: string; blob: string | null };
+/** `collection_list` plus per-scope item totals from `item_list`. */
+export type ContentLibrary = { collections: ContentCollection[]; counts: { all: number; ungrouped: number; byCollection: Record<string, number> } };
+/** The Library's current item scope: undefined for all, null for ungrouped, or a collection slug. */
+export type ContentItemScope = string | null | undefined;
+export type ContentItemPage = { scope: ContentItemScope; items: ContentItem[]; total: number; nextOffset: number | null };
+/** Loopback HTTP origins of the Content backends, known to the UIX server from its environment. */
+export type ContentOrigins = { document: string; artifact: string };
+/** One browser upload through resumable blob stages; `stalled` resumes from the server's acknowledged offset. */
+export type ContentUpload = { key: string; name: string; bytes: number; received: number; collection: string | null;
+  phase: "hashing" | "uploading" | "storing" | "done" | "stalled" | "failed"; error: string | null; itemId: string | null; stageId: string | null;
+  /** False once item_put may have stored the item: retrying could create a duplicate. */
+  retryable: boolean };
+
 export type Resource<T> = { data: T | null; error: string | null; at: number | null };
+
+/** A `scrape` extraction preset. `domain` "*" presets are explicit-only link modes; any other domain (and its aliases) is claimed, so an unmatched URL there fails rather than falling back. */
+export type ScrapePreset = { name: string; summary: string; domain: string; mode: "content" | "links" | "nav-links"; aliases: string[]; browser_profile?: string; url_patterns: string[];
+  handler?: string; schema?: string; selector?: string; section_selector?: string; category_selector?: string; toggle_selector?: string; source: "official" | "local" };
+/** `scrape_status`: optional route capabilities, never a claim that every route works. */
+export type ScrapeStatus = { stateRoot: string; browser: boolean; github: boolean; pdf: boolean; pandoc: boolean; summary: boolean };
+export type ScrapeFailureClass = "invalid_request" | "authentication_required" | "upstream_unavailable" | "timeout" | "browser_error" | "provider_error"
+  | "malformed_provider_output" | "empty_content" | "output_limit_exceeded" | "cancelled" | "internal_error";
+/** `scrape_fetch`'s schema-version-1 extraction envelope. Metadata is what the page reported, not verified fact. */
+export type ScrapeEnvelope = {
+  schema_version: "1"; status: "success" | "failure"; requested_url: string; final_url: string | null;
+  extractor: { name: string; version: string; implementation: string; implementation_version: string };
+  artifacts: Array<{ artifact_type: "document"; media_type: "text/markdown"; encoding: "utf-8"; content: string; size_bytes: number; sha256: string }>;
+  metadata: { content_type: "web_page" | "social_post" | "article"; content_kind?: "post" | "thread" | "article"; content_item_count?: number; title: string; author_name: string;
+    author_handle: string; published_at: string; source_id: string; warnings: Array<"partial_content"> } | null;
+  relations: Array<{ relation_type: "references"; target_url: string }>;
+  failure: { failure_class: ScrapeFailureClass; retryable: boolean; message: string; evidence: string } | null;
+};
+/** `scrape_links`: navigation links or an X timeline. `structured` and `links` are preset-shaped. */
+export type ScrapeLinks = { markdown: string; structured: unknown; links?: unknown[] };
+export type ScrapeFeedValidators = { etag: string | null; last_modified: string | null };
+/** `scrape_feed_discover` / `scrape_feed_parse`. A missing item never implies deletion. */
+export type ScrapeFeed = {
+  schema_version: "1"; status: "success" | "partial" | "failure"; source_url: string; source_format: "rss" | "atom" | "archive" | "mixed" | "unknown"; validators: ScrapeFeedValidators;
+  cursor: { validators: ScrapeFeedValidators; newest_seen_at: string | null; next_url: string | null };
+  items: Array<{ stable_id: string; upstream_id: string | null; identity_source: "upstream_id" | "canonical_url" | "hashed_upstream_id"; url: string | null; candidate_urls: string[];
+    title: string; published_at: string | null; updated_at: string | null; tombstone: boolean }>;
+  pagination: { pages: Array<{ url: string; page_format: "rss" | "atom" | "archive"; validators: ScrapeFeedValidators; item_count: number; next_url: string | null }>; complete: boolean; stop_reason: string; next_url: string | null };
+  warnings: Array<{ code: string; message: string; page_url?: string }>; absence_implies_deletion: false; failure: { code: string; retryable: boolean; message: string } | null;
+};
+/** One scrape-to-file job from `scrape_queue_list`; `id` is its generation ID where derivable, so it survives state moves. */
+export type ScrapeQueueJob = { id: string; state: "pending" | "retrying" | "failed"; file: string; submitted_at: string | null; url: string | null; destination: string | null;
+  summarize: boolean; allow_private_network: boolean | null; frontmatter_keys: string[]; completed_failures: number; max_attempts: number | null; next_attempt_at: string | null; problem: string | null };
+export type ScrapeQueue = { jobs: ScrapeQueueJob[]; counts: Record<ScrapeQueueJob["state"], number>; truncated: boolean };
+export type ScrapeQueueResult = { processed: number; failed: number; retry_scheduled: number; retry_waiting: number; retry_exhausted: number };
+/** `scrape_presets_check`: `not_configured` is never a pass. */
+export type ScrapeCanaryStatus = "pass" | "drift" | "operational_failure" | "not_configured";
+export type ScrapeCanaryRun = { checked_at: string; results: Array<{ preset: string; status: ScrapeCanaryStatus; detail: string }> };
+export type ScrapeReplay = { passed: number; failed: number; lines: string[] };
 
 export type Snapshot = {
   owner: Resource<OwnerStatus>;
@@ -443,7 +596,7 @@ export type Snapshot = {
   accounts: Resource<Account[]>;
   workerAccounts: Resource<WorkerAccount[]>;
   workerRuntimes: Resource<WorkerRuntime[]>;
-  workerSessions: Resource<WorkerSession[]>;
+  workerSessions: Resource<WorkerListItem[]>;
   usage: Resource<UsageSnapshot>;
   login: Resource<Login | null>;
   workerLogins: Resource<WorkerLogin[]>;
@@ -454,6 +607,9 @@ export type Snapshot = {
   rolePreview: Resource<RolePreview>;
   catalog: Resource<PackageDoc[]>;
   endpoints: Record<string, string>;
+  /** Null when this server cannot name them, e.g. a random port; older snapshots omit it. */
+  contentOrigins?: ContentOrigins | null;
+  remote?: { scope: "view" | "control"; scopes: string[]; contentOrigins: ContentOrigins };
 };
 
 export type ChannelStatus = "idle" | "connecting" | "open" | "closed";
@@ -475,6 +631,12 @@ export type NodeRef =
   | { kind: "account"; id: string }
   | { kind: "worker-account"; id: string }
   | { kind: "worker-catalog"; id: string }
+  /** A durable Worker session, by Worker ID. */
+  | { kind: "worker"; id: string }
+  /** A Worker account's runtime, by account ID. */
+  | { kind: "worker-runtime"; id: string }
+  /** A Worker window on the bench, by window ID; it has no inspectable record. */
+  | { kind: "worker-window"; id: string }
   | { kind: "usage" }
   | { kind: "usage-account"; id: string }
   | { kind: "grok-bot-usage" }
@@ -484,8 +646,21 @@ export type NodeRef =
   | { kind: "chat"; id: string }
   | { kind: "category"; id: string }
   | { kind: "fragment"; id: string }
+  | { kind: "notification"; id: string }
+  | { kind: "skill"; id: string }
+  | { kind: "mcp-server"; id: string }
+  | { kind: "trusted-project"; id: string }
+  | { kind: "signal" }
+  | { kind: "attention-item" | "attention-message" | "attention-run"; id: string }
+  /** A Scrape extraction preset by name, and a scrape-to-file job by its `scrape_queue_list` ID. */
+  | { kind: "preset" | "scrape-job"; id: string }
   | { kind: "package"; id: string }
-  | { kind: "operation"; id: string; pkg: string };
+  | { kind: "operation"; id: string; pkg: string }
+  /** Content records: a Vault document by slug, a collection by slug, an item by stable ID, an Artifact by name. */
+  | { kind: "document"; id: string }
+  | { kind: "collection"; id: string }
+  | { kind: "item"; id: string }
+  | { kind: "artifact"; id: string };
 
 export function nodeKey(ref: NodeRef): string {
   if (ref.kind === "operation") return `operation:${ref.pkg}.${ref.id}`;

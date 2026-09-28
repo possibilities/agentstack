@@ -16,6 +16,8 @@ const permissions = [
   { id: "brain:share", label: "Share to Brain" },
   { id: "brain:status", label: "Read share status" },
   { id: "content:read", label: "Read Content" },
+  { id: "uix:view", label: "View remote UIX" },
+  { id: "uix:control", label: "Control remote UIX" },
 ] as const;
 const date = (at: number) => new Date(at).toLocaleString();
 const scopeLabel = (id: string) => permissions.find((permission) => permission.id === id)?.label ?? id;
@@ -116,7 +118,7 @@ function GrantPermissions({ grant, disabled }: { grant: Grant; disabled: boolean
 }
 
 export function AccessWindow() {
-  const { access, status, endpoints } = useStack();
+  const { access, status, endpoints, remote } = useStack();
   const now = useNow();
   const data = access.data;
   const pending = data?.pairings.filter((pairing) => pairing.state === "pending" && pairing.expires > now) ?? [];
@@ -126,10 +128,11 @@ export function AccessWindow() {
   const clientLabel = (id: string) => clients.get(id)?.label ?? `Unknown client (${id})`;
   return <Window id="access" title="Access" subtitle="access" icon={ShieldCheckIcon} accent="owner"
     status={status.access} endpoint={endpoints.access} updatedAt={access.at} error={access.error}>
+     {remote ? <p role="status" className="text-xs text-muted-foreground">Access approvals, grants, revocations and inventory are available only on the trusted local UIX. Remote browsers cannot change their own permissions.</p> : null}
     {access.error ? <p role="alert" className="text-xs text-destructive">Access read failed: {access.error}{data ? " · showing last good read" : ""}</p> : null}
-    {!data ? <Empty icon={ShieldCheckIcon} title={access.error || status.access === "closed" ? "Access unavailable" : "Loading access…"} /> : <>
+     {!data && !remote ? <Empty icon={ShieldCheckIcon} title={access.error || status.access === "closed" ? "Access unavailable" : "Loading access…"} /> : !data ? null : <>
       {status.access !== "open" ? <p role="status" className="text-xs text-muted-foreground">Access disconnected. Showing last read; controls are unavailable.</p> : null}
-      <p className="text-xs text-muted-foreground">Pair on your device to connect Brain and Content. Device names are supplied by the client; verify the approval code.</p>
+       <p className="text-xs text-muted-foreground">Pair devices for Brain and Content, or pair a browser for the remote UIX. Verify the full approval code locally. Remote viewers cannot approve pairings or edit grants.</p>
       <dl><Row label="Server identity" mono><span className="select-all break-all">{data.serverId}</span></Row></dl>
       <Section title="Pending approvals" aside={<span className="text-xs text-muted-foreground">{pending.length}</span>}>
         {pending.length ? pending.map((pairing) => <PairingCard key={pairing.id} pairing={pairing} disabled={disabled} />)
@@ -161,7 +164,7 @@ export function AccessWindow() {
           </NodeCard>;
         }) : <Empty icon={ShieldCheckIcon} title="No grants" />}
       </Section>
-      <Section title="Credentials">
+       <Section title="Credentials">
         {data.credentials.length ? data.credentials.map((credential) => {
           const node = { kind: "access-credential", id: credential.id } as const;
           const client = clients.get(credential.client_id), grant = grants.get(credential.grant_id);
@@ -174,10 +177,19 @@ export function AccessWindow() {
             <p className="text-xs">{state}</p><p className="text-xs text-muted-foreground">Expires {date(credential.expires)}</p>
           </NodeCard>;
         }) : <Empty icon={ShieldCheckIcon} title="No credentials" />}
-      </Section>
-      <Section title="Ingress"><dl>
+       </Section>
+       <Section title="Remote UIX sessions" aside={<span className="text-xs text-muted-foreground">{data.uixSessions.filter(session => session.expires > now).length} active</span>}>
+         {data.uixSessions.length ? data.uixSessions.map((session, index) => {
+           const credential = data.credentials.find(item => item.id === session.credential_id);
+           return <p key={`${session.credential_id}:${session.expires}:${index}`} className="text-xs">
+             {credential ? clientLabel(credential.client_id) : "Unknown browser"} · {session.expires > now ? "Active until" : "Expired"} {date(session.expires)}
+           </p>;
+         }) : <Empty icon={ShieldCheckIcon} title="No remote sessions" />}
+       </Section>
+       <Section title="Ingress"><dl>
         <Row label="Tailnet">{data.ingress ? `${data.ingress.host}:${data.ingress.port}` : "Not configured"}</Row>
-        <Row label="Artifact port">{data.ingress?.artifactPort ?? "Not configured"}</Row>
+         <Row label="Artifact port">{data.ingress?.artifactPort ?? "Not configured"}</Row>
+         <Row label="Remote UIX port">{data.ingress?.uixPort ?? "Not configured"}</Row>
         <Row label="Public cloud">Not implemented</Row>
       </dl></Section>
       <Section title="Recent audit" aside={<span className="text-xs text-muted-foreground">Latest 20</span>}>

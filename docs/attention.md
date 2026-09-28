@@ -35,7 +35,22 @@ account. An explicit assignment never falls through to another account.
 - `attention_changes`: resumable processing and state-transition observations.
 - `signal_changed`: payload-free invalidation; re-read the appropriate operation.
 
-Page with `after` / `nextCursor`; read all pages while `hasMore` is true. An item
+- `attention_feedback_list`: recorded feedback, optionally for one `messageId` or `runId`.
+
+`attention_list` also filters by `botId`, `messageId` or several `states`;
+`attention_message_list` by `botId`; `attention_run_list` by `messageId` (run
+entries name their message, `replay`, `replayOf` and `promptVersion`); and
+`attention_changes` by `kinds` or `excludeKinds`. Source-read polling dominates
+the change log, so exclude `source_read` and `source_read_failed` to see
+attention changes.
+
+`signal_changed` follows every source scan while processing is enabled. Re-read
+`attention_status` and compare its `changeSeq`: it advances only for events that
+can change attention records, so an unchanged value means list reads are still
+current.
+
+Page with `after` / `nextCursor`; read all pages while `hasMore` is true. Pass
+`order: "desc"` to read newest first, then pass each `nextCursor` as `before`. An item
 page is a current view, so restart pagination after invalidation when reconciling
 changed existing records. The changes operation has a durable append-only cursor.
 

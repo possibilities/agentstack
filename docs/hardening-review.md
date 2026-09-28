@@ -23,13 +23,13 @@ The owner → package socket → transport gateway architecture is worth keeping
 | UI simplicity | Activity grouping uses linear accumulation. Font tokens reference distinct Next font variables instead of themselves. |
 | Verification | Browser fixtures use actual schemas, current transport fields, the `worker` package name and isolated manifests matching their sockets. Fleet/Roles checks can run in dev mode. UIX DNS-rebinding rejection is exercised in the bench check. |
 | Dependencies | Scrape's pinned `markdown-it` and `yaml` are updated to patched versions. |
-| Documentation | Security, account pairing/removal, onboarding and isolated bench descriptions now match current behavior. ADR 0098 records the contract changes. |
+| Documentation | Security, account pairing/removal, onboarding and isolated bench descriptions now match current behavior. ADR 0106 records the contract changes. |
 
 ## Proposals needing a product/architecture decision
 
 ### 1. Proc's durable caller policy — high priority
 
-**Verified:** `packages/proc/src/service.ts` validates targets against the full socket catalog and dispatches without invocation context. Downstream auth/Worker/Browse guards interpret that as the operator. Schedules do not retain their creator. ADR 0097 explicitly permits Bot scheduling and omits Bot invocation forwarding, so changing this is a contract decision, not just a missing conditional.
+**Verified:** `packages/proc/src/service.ts` validates targets against the full socket catalog and dispatches without invocation context. Downstream auth/Worker/Browse guards interpret that as the operator. Schedules do not retain their creator. ADR 0105 explicitly permits Bot scheduling and omits Bot invocation forwarding, so changing this is a contract decision, not just a missing conditional.
 
 **Recommended sketch:** persist a discriminated `createdBy` principal and admission transport on schedules. Introduce a distinct scheduled invocation containing the schedule ID and creator; never synthesize a current Bot launch proof. For Bot-created API actions, require the target's current MCP exposure at admission and dispatch and give targets an explicit scheduled-caller policy. Store refused dispatch as a definite refusal, not an uncertain call. Define migration for existing unattributed schedules before enforcing it. An interim alternative is operator-only API schedule admission, retaining Bot process scheduling.
 
@@ -68,7 +68,7 @@ One unavailable socket still refuses a new shared WebSocket connection; one fail
 - Brain/Content retain CLI-shaped names and fields. Introduce a style guide for new operations first; migrate existing contracts with deliberate aliases/versioning and UI changes rather than a sweeping rename.
 - Measure store-notification/render cost before adding selectors everywhere. Whole-state subscription is a scaling concern, not a demonstrated performance failure in this pass.
 - Window move/resize keyboard parity, accidental layout reset and touchscreen pinch need one coherent bench interaction design. Avoid adding several independent shortcut systems.
-- Proc remains API-only. A System schedules/runs window with cursor-based output would make its durable state inspectable. Role MCP/skill/project management also remains API-only. Build these only if requested.
+- Proc remains API-only. A System schedules/runs window with cursor-based output would make its durable state inspectable. Role MCP/skill/project management is now provided by the merged Roles UI.
 
 ## Review suggestions intentionally rejected or narrowed
 
@@ -88,6 +88,16 @@ One unavailable socket still refuses a new shared WebSocket connection; one fail
 - Access browser check: passed, including approval/revocation, revision conflicts, stale/error states, light/dark/narrow rendering and no external requests.
 - Auth, Roles and Fleet production-build browser checks: passed. Coverage includes sign-in copy/submit/retry/cancel, Role editing and conflicts, Bot lifecycle, model catalogs, inference admission/unknown outcomes, resumable uploads and light/dark/mobile rendering. All five rendered checks are green.
 - `git diff --check`: clean.
+
+## Merge integration — 2026-09-28
+
+The local Proc/hardening commits (`77c1b8a`, `f055f59`) are combined with the eleven published commits through `000ac52`, preserving both histories. Published Inbox, Signal, Content, Workers and Scrape spaces, Role resource management, remote UIX and Worker diff/list work are retained. ADRs 0105–0107 resolve the decision-number collisions and document the integrated Role read and gateway contracts.
+
+- Combined `pnpm test`: **38/38 Turbo tasks successful; 897 tests passed, 6 existing runtime/credential-gated tests skipped, zero failures or cancellations**, including installer tests.
+- UIX typecheck passed; dependency audit found zero advisories.
+- Roles and API tests passed again after clarifying the complete Role size descriptions.
+- All ten production browser checks passed: Bench, Access, Auth, Roles, Fleet, Inbox, Content, Workers, Scrape and remote UIX. The Roles check exercises real transport selection, retained MCP definition editing, safe ordinary reads and omission of definitions from SSR HTML; the remote gateway test also rejects forged invocation context.
+- `git diff --check` is clean. Builds and lifecycle/browser checks ran in an isolated checkout with disposable fixture state.
 
 ## Deployment
 

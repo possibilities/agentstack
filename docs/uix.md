@@ -1,5 +1,15 @@
 # UIX open bench
 
+The owner still serves Next only on loopback. An explicitly configured Access
+TLS tailnet listener can present `/x/...` to a paired browser on a distinct
+origin ([ADR 0101](adr/0101-remote-uix-through-access.md)). `uix:view` is
+read-only; `uix:control` enables UI mutations. Sign-in, voice, Access approvals
+and headful browser handoff stay local. Remote Content Preview opens a one-use
+handoff for a document, item or immutable Artifact version when that browser
+also has `content:read`; local Content links are unchanged. Use the remote
+browser check against disposable state after building in an isolated checkout:
+`PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs node packages/uix/test/remote-uix-browser-check.mjs`.
+
 The UI entry `/` redirects to `/x`, one continuous bench. Fleet is its initial Canvas space. API
 reference is a global tool attached to the viewport, so opening it does not
 navigate away from the current composition. System is a fourth space; see
@@ -106,6 +116,15 @@ disposable state directory:
 ```sh
 PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
   node packages/uix/test/roles-browser-check.mjs
+```
+
+The Scrape space's check serves the real Scrape API against a disposable state directory and a
+loopback HTTP fixture, so it fetches no public site and never touches a live queue. It uses
+`next dev` unless `SCRAPE_NEXT=start`, and keeps screenshots when `SCRAPE_EVIDENCE_DIR` is set:
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  node packages/uix/test/scrape-browser-check.mjs
 ```
 
 The bench check uses disposable sockets, a fixture snapshot and its own `next start`

@@ -92,6 +92,8 @@ test("role skill and MCP operations support complete create, update, disable, re
     assert.deepEqual(summary.mcpServers, [{ id: http.mcpServers[0]!.id, name: "remote", description: "Remote tools", enabled: true, transport: "http" }]);
     const launch = await socketCall(path, "tools/call", { name: "role_launch_snapshot", arguments: {} }) as { mcpServers: Array<{ definition: unknown }> };
     assert.deepEqual(launch.mcpServers[0]?.definition, definition, "launch state retains the real connection definition");
+    const editor = await socketCall(path, "tools/call", { name: "role_editor_snapshot", arguments: {} });
+    assert.deepEqual(editor, launch, "the operator editor retains complete definitions independently of safe summaries");
     await assert.rejects(call("mcp_server_create", { expectedRevision: http.revision, name: "bots", description: "Collision", definition: { type: "http", url: "https://mcp.example.test/tools" } }), /collides with an internal Package API/);
     const mcpId = http.mcpServers[0]!.id;
     const changed = await call("mcp_server_update", { expectedRevision: http.revision, id: mcpId, enabled: false, definition: { type: "stdio", command: "/usr/bin/env", args: ["private-argument"], env: { TOKEN: "private-env" } } });
@@ -102,5 +104,38 @@ test("role skill and MCP operations support complete create, update, disable, re
     assert.deepEqual(withoutMcp.mcpServers, []);
     const withoutSkill = await call("skill_delete", { expectedRevision: withoutMcp.revision, id });
     assert.deepEqual(withoutSkill.skills, []);
+  } finally { await served.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("role_launch_preview reports enabled resources, trust per working directory, and launch-stopping MCP servers", async () => {
+  const root = await mkdtemp("/tmp/as-role-launch-");
+  const project = join(root, "project");
+  const nested = join(project, "src");
+  await mkdir(nested, { recursive: true });
+  const served = await serveApi({ name: "roles", transport: "socket", env: { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_MCP_PORT: "48743" } });
+  const socket = served.socketPath!;
+  const call = (name: string, args: Record<string, unknown> = {}) => socketCall(socket, "tools/call", { name, arguments: args }) as Promise<any>;
+  try {
+    let state = await call("skill_create", { expectedRevision: 0, name: "review", description: "Review work", body: "# Review",
+      files: [{ path: "check.sh", contentBase64: Buffer.from("true\n").toString("base64") }] });
+    state = await call("skill_create", { expectedRevision: state.revision, name: "draft", description: "Off", body: "# Draft", enabled: false });
+    state = await call("mcp_server_create", { expectedRevision: state.revision, name: "remote", description: "", definition: { type: "http", url: "https://mcp.example.test/tools", bearerTokenEnvVar: "ROLE_TOKEN" } });
+    // The owner's own MCP listener is refused on write, including through a loopback alias.
+    await assert.rejects(call("mcp_server_create", { expectedRevision: state.revision, name: "alias", description: "", definition: { type: "http", url: "http://localhost:48743/mcp/auth" } }), /cannot alias the internal MCP listener/);
+    await assert.rejects(call("mcp_server_update", { expectedRevision: state.revision, id: state.mcpServers[0].id, definition: { type: "http", url: "http://127.0.0.1:48743/mcp/bots" } }), /cannot alias/);
+    state = await call("project_create", { expectedRevision: state.revision, path: project });
+    const preview = await call("role_launch_preview", { cwds: [nested, root, join(root, "missing")] });
+    assert.equal(preview.revision, state.revision);
+    assert.deepEqual(preview.skills.map(({ name, files, bytes }: any) => [name, files, bytes]), [["review", 1, 13]]);
+    assert.deepEqual(preview.mcpServers.map(({ name, type }: any) => [name, type]), [["remote", "http"]]);
+    assert.ok(preview.internalMcpServers.includes("roles"));
+    assert.equal(preview.config, '[mcp_servers.remote]\nurl = "https://mcp.example.test/tools"\nbearer_token_env_var = "ROLE_TOKEN"\nenabled = true\n');
+    const canonical = await realpath(project);
+    assert.deepEqual(preview.trustedProjects.map(({ path }: any) => path), [canonical]);
+    assert.deepEqual(preview.cwds.map(({ path, trustedProjectIds }: any) => [path, trustedProjectIds.length]), [[await realpath(nested), 1], [await realpath(root), 0], [null, 0]]);
+    assert.deepEqual(preview.issues, []);
+    assert.equal(preview.snapshotChars, JSON.stringify(await call("role_editor_snapshot")).length);
+    assert.equal(preview.snapshotLimitChars, 750_000);
+    await assert.rejects(call("role_launch_preview", { cwds: ["relative"] }), /absolute/);
   } finally { await served.close(); await rm(root, { recursive: true, force: true }); }
 });

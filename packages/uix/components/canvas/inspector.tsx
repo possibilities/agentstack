@@ -11,7 +11,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { fieldsOf, findOperation, operationTitle, recordFields, recordOperations, type Field } from "@/lib/stack/catalog";
 import { accountLabels, clockTime, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
 import { scopeTarget } from "@/lib/stack/resources";
-import { findCategory, findFragment } from "@/lib/stack/roles";
+import { base64Bytes, findCategory, findFragment, findResource, projectBots, type ResourceKind } from "@/lib/stack/roles";
 import type { StackState } from "@/lib/stack/store";
 import { nodeKey, type Account, type Bot, type Login, type NodeRef, type OperationDoc, type PackageDoc, type StackEvent, type WorkerAccount } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
@@ -21,11 +21,16 @@ import { BotLifecycleControls } from "./bot-actions";
 import { CatalogRefresh, CatalogStatus } from "./catalog-window";
 import { RecordTree } from "./record-tree";
 import { ObservationStatus } from "./usage-window";
-import { useOperation, useStack, useWorkbench } from "./provider";
+import { useNotifyActions } from "./notify-actions";
+import { useOperation, useStack, useStore, useWorkbench } from "./provider";
 import { useRoleActions } from "./role-actions";
+import { useContentActions } from "./content-actions";
 import { useVoice } from "./voice";
 import { accentBg, accentText, type Accent } from "./window";
 import { OperationBadges, RecoveryWarning } from "./windows";
+import { AttentionItemDetail, AttentionMessageDetail, TraceViewer } from "./signal-windows";
+import { useShowWorker } from "./worker-windows";
+import { workerLabel } from "@/lib/stack/workers";
 
 type View = {
   eyebrow: string;
@@ -201,7 +206,38 @@ function resolve(ref: NodeRef, state: StackState): View | null {
       };
     }
     case "chat":
-      return null; // A chat window is a view onto a Bot, not a record.
+    case "worker-window":
+      return null; // Chat and Worker windows are views onto a record, not records.
+    case "worker": {
+      const worker = state.workerStatuses[ref.id]?.data?.worker ?? state.workerSessions.data?.find((item) => item.id === ref.id);
+      if (!worker) return null;
+      const related: View["related"] = [];
+      if (state.bots.data?.some((bot) => bot.id === worker.botId)) related.push({ ref: { kind: "bot", id: worker.botId }, label: `${worker.botId} · started it` });
+      related.push({ ref: { kind: "worker-account", id: worker.accountId }, label: workerLabels.get(worker.accountId) ?? shortId(worker.accountId) });
+      if (state.workerRuntimes.data?.some((runtime) => runtime.id === worker.accountId)) related.push({ ref: { kind: "worker-runtime", id: worker.accountId }, label: "Runtime" });
+      return {
+        eyebrow: `${providerTitle(worker.provider)} Worker · ${worker.phase.replace("_", " ")}`, accent: "worker", title: workerLabel(worker), record: worker,
+        fields: recordFields(catalog, "worker", "worker_list"), related,
+        // Bots start and steer Workers; only the reads are listed.
+        operations: { pkg: "worker", list: recordOperations(catalog, "worker").filter((operation) => operation.annotations?.readOnlyHint) },
+        controls: <WorkerRecordControls id={worker.id} />,
+        events: state.events.filter((event) => event.pkg === "worker"),
+      };
+    }
+    case "worker-runtime": {
+      const runtime = state.workerRuntimes.data?.find((item) => item.id === ref.id);
+      if (!runtime) return null;
+      const related: View["related"] = [{ ref: { kind: "worker-account", id: runtime.id }, label: "Worker account" }, { ref: { kind: "worker-catalog", id: runtime.id }, label: "Model catalog" }];
+      for (const pid of new Set([...(runtime.pid !== null ? [runtime.pid] : []), ...runtime.pids])) {
+        const process = state.resources.data?.processes.find((item) => item.pid === pid);
+        if (process) related.push({ ref: { kind: "process", id: process.id }, label: `pid ${pid}` });
+      }
+      return {
+        eyebrow: `${providerTitle(runtime.provider)} Worker runtime · ${runtime.state}`, accent: "worker", title: workerLabels.get(runtime.id) ?? shortId(runtime.id), orb: runtime.id, record: runtime,
+        fields: recordFields(catalog, "worker", "worker_runtime_list"), related,
+        events: state.events.filter((event) => event.pkg === "worker"),
+      };
+    }
     case "category": {
       const found = findCategory(state.role.data, ref.id);
       if (!found) return null;
@@ -226,10 +262,194 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         events: state.events.filter((event) => event.pkg === "roles"),
       };
     }
+    case "notification": {
+      const record = state.notificationRecords[ref.id];
+      if (!record) return null;
+      return {
+        eyebrow: record.dismissedAt ? `Notification · ${record.outcome}` : "Notification · open", accent: "notify", title: record.title, record,
+        fields: new Map(fieldsOf(findOperation(catalog, "notify", "notification_get")?.outputSchema).map((field) => [field.name, field])),
+        operations: { pkg: "notify", list: recordOperations(catalog, "notify").filter((operation) => operation.name !== "notification_dismiss") },
+        controls: <NotificationRecordControls id={record.id} />,
+        events: state.events.filter((event) => event.pkg === "notify"),
+      };
+    }
+    case "skill": {
+      const skill = findResource(state.role.data?.skills, ref.id)?.item;
+      if (!skill) return null;
+      // Supporting files are listed by path and size; their base64 bytes would bury the record.
+      return {
+        eyebrow: "Role skill", accent: "roles", title: skill.name, fields: roleResourceFields(catalog, "skills"),
+        record: { ...skill, files: skill.files.map((file) => ({ path: file.path, bytes: base64Bytes(file.contentBase64) })) },
+        operations: { pkg: "roles", list: recordOperations(catalog, "roles").filter((operation) => operation.name.startsWith("skill_")) },
+        controls: <RoleRecordControls target={{ kind: "skill", id: skill.id }} />,
+        events: state.events.filter((event) => event.pkg === "roles"),
+      };
+    }
+    case "mcp-server": {
+      const server = findResource(state.role.data?.mcpServers, ref.id)?.item;
+      if (!server) return null;
+      return {
+        eyebrow: "Role MCP server", accent: "roles", title: server.name, record: server, fields: roleResourceFields(catalog, "mcpServers"),
+        operations: { pkg: "roles", list: recordOperations(catalog, "roles").filter((operation) => operation.name.startsWith("mcp_server_")) },
+        controls: <RoleRecordControls target={{ kind: "mcp-server", id: server.id }} />,
+        events: state.events.filter((event) => event.pkg === "roles"),
+      };
+    }
+    case "trusted-project": {
+      const project = findResource(state.role.data?.trustedProjects, ref.id)?.item;
+      if (!project) return null;
+      const inside = project.enabled && state.roleLaunch.data?.revision === state.role.data?.revision ? projectBots(state.roleLaunch.data, project.id, state.bots.data) : [];
+      return {
+        eyebrow: "Trusted project", accent: "roles", title: project.path, record: project, fields: roleResourceFields(catalog, "trustedProjects"),
+        related: inside.map((bot) => ({ ref: { kind: "bot", id: bot.id } as NodeRef, label: `${bot.id} · runs inside` })),
+        operations: { pkg: "roles", list: recordOperations(catalog, "roles").filter((operation) => operation.name.startsWith("project_")) },
+        controls: <RoleRecordControls target={{ kind: "trusted-project", id: project.id }} />,
+        events: state.events.filter((event) => event.pkg === "roles"),
+      };
+    }
+    case "signal": {
+      const status = state.signalStatus.data;
+      if (!status) return null;
+      return { eyebrow: "Signal processing", accent: "events", title: status.enabled ? "Interpreting" : "Paused", record: status,
+        fields: new Map(fieldsOf(findOperation(catalog, "signal", "attention_status")?.outputSchema).map((field) => [field.name, field])),
+        related: status.lastInference?.runId ? [{ ref: { kind: "attention-run", id: status.lastInference.runId }, label: "Last interpretation" }] : [],
+        operations: { pkg: "signal", list: signalOperations(catalog, ["attention_control", "attention_defaults_set", "attention_models"]) },
+        events: state.events.filter((event) => event.pkg === "signal") };
+    }
+    case "attention-item": {
+      const item = state.signalRecords.items[ref.id];
+      if (!item) return null;
+      const related: View["related"] = [{ ref: { kind: "attention-message", id: item.messageId }, label: "Source message" }, { ref: { kind: "attention-run", id: item.runId }, label: "Interpretation run" }];
+      if (item.botId && state.bots.data?.some((bot) => bot.id === item.botId)) related.push({ ref: { kind: "bot", id: item.botId }, label: item.botId });
+      for (const relation of item.relations) if (relation.targetId) related.push({ ref: { kind: "attention-item", id: relation.targetId }, label: `${relation.type.replace("_", " ")} · ${state.signalRecords.items[relation.targetId]?.summary ?? relation.referenceText}` });
+      return { eyebrow: `Attention · ${item.state}`, accent: "events", title: item.summary, record: item, fields: signalFields(catalog, "attention_list", "item"),
+        body: <AttentionItemDetail item={item} />, related, operations: { pkg: "signal", list: signalOperations(catalog, ["attention_feedback"]) } };
+    }
+    case "attention-message": {
+      // A message not yet listed still resolves: its body reads the immutable record by ID.
+      const message = state.signalRecords.messages[ref.id];
+      const related: View["related"] = message?.botId && state.bots.data?.some((bot) => bot.id === message.botId) ? [{ ref: { kind: "bot", id: message.botId }, label: message.botId }] : [];
+      return { eyebrow: "Captured message", accent: "events", title: message ? `${message.role} · ${message.conversation}` : ref.id.slice(0, 12), record: message ?? { id: ref.id },
+        fields: signalFields(catalog, "attention_message_list"), body: <AttentionMessageDetail id={ref.id} />, related,
+        operations: { pkg: "signal", list: signalOperations(catalog, ["attention_message_read", "attention_blob_read", "attention_feedback"]) } };
+    }
+    case "attention-run": {
+      const run = state.signalRecords.runs[ref.id];
+      const related: View["related"] = [];
+      if (run?.messageId) related.push({ ref: { kind: "attention-message", id: run.messageId }, label: "Interpreted message" });
+      if (run?.replayOf) related.push({ ref: { kind: "attention-run", id: run.replayOf }, label: "Original run" });
+      return { eyebrow: `Interpretation run${run?.replay ? " · replay" : ""}`, accent: "events", title: run ? `${run.state} · ${run.settings.model}` : ref.id.slice(0, 12), record: run ?? { id: ref.id },
+        fields: signalFields(catalog, "attention_run_list"), body: <TraceViewer id={ref.id} state={run?.state} />, related,
+        operations: { pkg: "signal", list: signalOperations(catalog, ["attention_trace_read", "attention_replay", "attention_feedback"]) } };
+    }
+    case "document": {
+      const listed = state.contentDocuments.data?.find((item) => item.slug === ref.id);
+      const record = state.contentRecords[nodeKey(ref)] ?? listed;
+      if (!record) return null;
+      return {
+        eyebrow: "Vault document", accent: "content", title: String(record.title ?? ref.id), record,
+        fields: new Map(fieldsOf(findOperation(catalog, "content", "get")?.outputSchema).map((field) => [field.name, field])),
+        operations: { pkg: "content", list: recordOperations(catalog, "content").filter((operation) => ["get", "document_update", "links", "backlinks", "rm", "restore"].includes(operation.name)) },
+        controls: <ContentRecordControls target={{ kind: "document", slug: ref.id }} />,
+        events: state.events.filter((event) => event.pkg === "content"),
+      };
+    }
+    case "item": {
+      const record = state.contentRecords[nodeKey(ref)] ?? state.contentItems.data?.items.find((item) => item.id === ref.id);
+      if (!record) return null;
+      const collection = typeof record.collection === "string" ? record.collection : null;
+      return {
+        eyebrow: `Content item · ${String(record.kind)}`, accent: "content", title: String(record.name ?? ref.id), record,
+        fields: contentItemFields(catalog),
+        related: collection ? [{ ref: { kind: "collection", id: collection }, label: `${collection} · collection` }] : [],
+        operations: { pkg: "content", list: recordOperations(catalog, "content").filter((operation) => operation.name.startsWith("item_")) },
+        controls: record.kind === "document" ? <ContentRecordControls target={{ kind: "item", id: ref.id }} /> : undefined,
+        events: state.events.filter((event) => event.pkg === "content"),
+      };
+    }
+    case "collection": {
+      const record = state.contentRecords[nodeKey(ref)] ?? state.contentLibrary.data?.collections.find((item) => item.slug === ref.id);
+      if (!record) return null;
+      const count = state.contentLibrary.data?.counts.byCollection[ref.id];
+      return {
+        eyebrow: "Content collection", accent: "content", title: String(record.title ?? ref.id), record: count === undefined ? record : { ...record, items: count },
+        fields: new Map(fieldsOf(findOperation(catalog, "content", "collection_get")?.outputSchema).map((field) => [field.name, field])),
+        operations: { pkg: "content", list: recordOperations(catalog, "content").filter((operation) => operation.name.startsWith("collection_")) },
+        events: state.events.filter((event) => event.pkg === "content"),
+      };
+    }
+    case "artifact": {
+      const record = state.contentRecords[nodeKey(ref)] ?? state.contentArtifacts.data?.find((item) => item.name === ref.id);
+      if (!record) return null;
+      return {
+        eyebrow: "Artifact", accent: "content", title: String(record.name ?? ref.id), record,
+        fields: new Map(fieldsOf(findOperation(catalog, "content", "artifacts_show")?.outputSchema).map((field) => [field.name, field])),
+        operations: { pkg: "content", list: recordOperations(catalog, "content").filter((operation) => operation.name.startsWith("artifacts_")) },
+        events: state.events.filter((event) => event.pkg === "content"),
+      };
+    }
+    case "preset": {
+      const preset = state.scrapePresets.data?.find((item) => item.name === ref.id);
+      if (!preset) return null;
+      const configured = state.scrapeCanaries.data?.includes(preset.name);
+      return {
+        eyebrow: `Scrape preset · ${preset.source}${configured === undefined ? "" : configured ? " · canary configured" : " · no canary"}`, accent: "scrape", title: preset.name,
+        record: preset, fields: scrapeFields(catalog, "scrape_presets_list", "presets"),
+        operations: { pkg: "scrape", list: scrapeOperations(catalog, ["scrape_preset_show", "scrape_corpus_replay", "scrape_presets_check"]) },
+      };
+    }
+    case "scrape-job": {
+      const job = state.scrapeQueue.data?.jobs.find((item) => item.id === ref.id);
+      if (!job) return null;
+      return {
+        eyebrow: `Scrape job · ${job.state}`, accent: "scrape", title: job.url ?? job.file, record: job, fields: scrapeFields(catalog, "scrape_queue_list", "jobs"),
+        operations: { pkg: "scrape", list: scrapeOperations(catalog, ["scrape_queue_list", "scrape_queue_process"]) },
+        events: state.events.filter((event) => event.pkg === "scrape"),
+      };
+    }
     case "package":
     case "operation":
       return null; // Reference destinations are rendered in the shared dock's reading mode.
   }
+}
+
+function scrapeOperations(catalog: PackageDoc[] | null, names: string[]): OperationDoc[] {
+  return catalog?.find((doc) => doc.name === "scrape")?.operations.filter((operation) => names.includes(operation.name)) ?? [];
+}
+
+/** Field notes for one entry of a Scrape list output. */
+function scrapeFields(catalog: PackageDoc[] | null, operation: string, list: string): Map<string, Field> {
+  return new Map((fieldsOf(findOperation(catalog, "scrape", operation)?.outputSchema).find((field) => field.name === list)?.children ?? []).map((field) => [field.name, field]));
+}
+
+function signalOperations(catalog: PackageDoc[] | null, names: string[]): OperationDoc[] {
+  return catalog?.find((doc) => doc.name === "signal")?.operations.filter((operation) => names.includes(operation.name)) ?? [];
+}
+
+/** Field notes for a Signal list's entries, optionally nested one level (attention_list wraps each item). */
+function signalFields(catalog: PackageDoc[] | null, list: string, nested?: string): Map<string, Field> {
+  const entries = fieldsOf(findOperation(catalog, "signal", list)?.outputSchema).find((field) => field.name === "entries")?.children ?? [];
+  const fields = nested ? entries.find((field) => field.name === nested)?.children ?? [] : entries;
+  return new Map(fields.map((field) => [field.name, field]));
+}
+
+/** Field notes for Content items, from item_get's output. */
+function contentItemFields(catalog: PackageDoc[] | null): Map<string, Field> {
+  return new Map(fieldsOf(findOperation(catalog, "content", "item_get")?.outputSchema).map((field) => [field.name, field]));
+}
+
+/** Editing lives in the Content space; the inspector hands documents and document items to its editor. */
+function ContentRecordControls({ target }: { target: { kind: "document"; slug: string } | { kind: "item"; id: string } }) {
+  const actions = useContentActions();
+  const { goTo } = useWorkbench();
+  return (
+    <Button size="sm" variant="outline" className="w-fit" onClick={() => {
+      actions.open(target.kind === "document" ? target : { kind: "item", id: target.id, itemKind: "document" });
+      goTo(target.kind === "document" ? { kind: "document", id: target.slug } : { kind: "item", id: target.id });
+    }}>
+      <PencilIcon data-icon="inline-start" />Edit in Content
+    </Button>
+  );
 }
 
 const accountControls = new Set(["account_set_enabled", "account_remove", "account_login_replace"]);
@@ -244,8 +464,14 @@ function roleFields(catalog: PackageDoc[] | null): { category: Map<string, Field
   return { category: new Map(categories.map((field) => [field.name, field])), fragment: new Map(fragments.map((field) => [field.name, field])) };
 }
 
+/** Field notes for skills, MCP servers and trusted projects, which role_snapshot lists at its top level. */
+function roleResourceFields(catalog: PackageDoc[] | null, list: "skills" | "mcpServers" | "trustedProjects"): Map<string, Field> {
+  const fields = fieldsOf(findOperation(catalog, "roles", "role_snapshot")?.outputSchema).find((field) => field.name === list)?.children ?? [];
+  return new Map(fields.map((field) => [field.name, field]));
+}
+
 /** Editing lives in the Roles space; the inspector hands off to it. */
-function RoleRecordControls({ target }: { target: { kind: "category" | "fragment"; id: string } }) {
+function RoleRecordControls({ target }: { target: { kind: "category" | "fragment" | ResourceKind; id: string } }) {
   const actions = useRoleActions();
   const { goTo } = useWorkbench();
   return (
@@ -255,12 +481,37 @@ function RoleRecordControls({ target }: { target: { kind: "category" | "fragment
   );
 }
 
+/** The Worker window reads the conversation; the inspector hands off to it. */
+function WorkerRecordControls({ id }: { id: string }) {
+  const show = useShowWorker();
+  return (
+    <Button size="sm" variant="outline" className="w-fit" onClick={() => show(id)}>
+      <ArrowRightIcon data-icon="inline-start" />Show in Worker window
+    </Button>
+  );
+}
+
+/** Answering and dismissing live in the Inbox; the inspector hands off to it. */
+function NotificationRecordControls({ id }: { id: string }) {
+  const actions = useNotifyActions();
+  const { goTo } = useWorkbench();
+  return (
+    <Button size="sm" variant="outline" className="w-fit" onClick={() => { actions.open(id); goTo({ kind: "notification", id }); }}>
+      <ArrowRightIcon data-icon="inline-start" />Open in Inbox
+    </Button>
+  );
+}
+
 function referencePackage(ref: NodeRef): string {
   if (ref.kind === "bot") return "bots";
   if (ref.kind === "owner" || ref.kind === "child" || ref.kind === "resource" || ref.kind === "process") return "owner";
-  if (ref.kind === "category" || ref.kind === "fragment") return "roles";
-  if (ref.kind === "worker-catalog") return "worker";
+  if (ref.kind === "category" || ref.kind === "fragment" || ref.kind === "skill" || ref.kind === "mcp-server" || ref.kind === "trusted-project") return "roles";
+  if (ref.kind === "notification") return "notify";
+  if (ref.kind === "document" || ref.kind === "collection" || ref.kind === "item" || ref.kind === "artifact") return "content";
+  if (ref.kind === "worker-catalog" || ref.kind === "worker" || ref.kind === "worker-runtime" || ref.kind === "worker-window") return "worker";
   if (ref.kind === "usage" || ref.kind === "usage-account" || ref.kind === "grok-bot-usage") return "usage";
+  if (ref.kind === "preset" || ref.kind === "scrape-job") return "scrape";
+  if (ref.kind === "signal" || ref.kind === "attention-item" || ref.kind === "attention-message" || ref.kind === "attention-run") return "signal";
   return "auth";
 }
 
@@ -415,6 +666,10 @@ export function Inspector({ hidden = false, onGone, pinned, onPinnedChange }: { 
   const shown = selected ?? last.current;
   const heading = useRef<HTMLHeadingElement>(null);
   const selectedKey = selected ? nodeKey(selected) : null;
+  // A notification may be inspected before any Inbox page lists it.
+  const store = useStore();
+  const watched = selected?.kind === "notification" ? selected.id : null;
+  useEffect(() => watched ? store.watchNotification(watched) : undefined, [store, watched]);
   useLayoutEffect(() => { if (!hidden && selectedKey) heading.current?.focus({ preventScroll: true }); }, [hidden, selectedKey]);
 
   const view = shown ? resolve(shown, state) : null;

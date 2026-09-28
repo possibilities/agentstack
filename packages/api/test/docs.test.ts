@@ -57,11 +57,13 @@ test("the api package serves structured documents for every workspace package", 
     for (const [pkg, internal] of [["roles", ["role_launch_snapshot"]], ["brain", ["share_receive", "share_read_states"]]] as const) {
       const doc = found.get(pkg)!;
       for (const transport of doc.transports.filter((entry) => entry.type === "mcp" || entry.type === "websocket")) {
-        assert.deepEqual([...transport.operations].sort(), doc.operations.map((op) => op.name).filter((name) => !(internal as readonly string[]).includes(name)).sort());
+        const omitted = [...internal, ...(pkg === "roles" && transport.type === "mcp" ? ["role_editor_snapshot", "role_launch_preview"] : [])];
+        assert.deepEqual([...transport.operations].sort(), doc.operations.map((op) => op.name).filter((name) => !omitted.includes(name)).sort());
       }
     }
     assert.deepEqual(snapshot.packages, [...found.values()]);
     const responseLength = JSON.stringify({ id: 1, result: snapshot }).length + 1;
+    // Proc and authenticated UIX add schemas; retain a large margin below the four-million-byte frame limit.
     assert.ok(responseLength < 900_000, `discovery snapshot exceeds the socket response budget: ${responseLength} characters`);
 
     const brainHttp = found.get("brain")!.transports.find((transport) => transport.type === "http")!;
@@ -81,6 +83,8 @@ test("the api package serves structured documents for every workspace package", 
     const accessHttp = access.transports.find(t => t.type === "http")!;
     assert.ok(accessHttp.routes.some(r => r.path === "/v1/access/pair" && r.inputSchema));
     assert.ok(accessHttp.routes.some(r => r.path === "/v1/content/handoff" && r.authentication === "bearer"));
+    assert.ok(accessHttp.routes.some(r => r.surface === "uix" && r.path === "/connect/session" && r.inputSchema));
+    assert.ok(accessHttp.routes.some(r => r.surface === "uix" && r.path === "/websocket"));
     assert.deepEqual(brainHttp.operations, []);
     assert.deepEqual(brainHttp.routes.map(({ surface, kind, method, path, operation }) => [surface, kind, method, path, operation]), [
       ["share", "json", "GET", "/v1/health", "share_health"], ["share", "json", "GET", "/v1/shares", "share_states"],
@@ -123,6 +127,12 @@ test("the api package serves structured documents for every workspace package", 
     const exposed = scrape.transports.find((transport) => transport.type === "mcp")!.operations;
     assert.ok(exposed.includes("scrape_fetch") && exposed.includes("scrape_presets_list"));
     assert.ok(!exposed.includes("scrape_queue_submit") && !exposed.includes("scrape_corpus_capture") && !exposed.includes("scrape_session_close") && !exposed.includes("scrape_fetch_file") && !exposed.includes("scrape_convert_html_directory"));
+    // Agents keep the bounded nine; the local UI additionally operates replay, canaries and the queue (ADR 0103).
+    const agentFacing = ["scrape_canary_inventory", "scrape_convert_html", "scrape_feed_discover", "scrape_feed_parse", "scrape_fetch", "scrape_links", "scrape_preset_show", "scrape_presets_list", "scrape_status"];
+    assert.deepEqual([...exposed].sort(), agentFacing);
+    assert.deepEqual([...scrape.transports.find((transport) => transport.type === "websocket")!.operations].sort(),
+      [...agentFacing, "scrape_corpus_replay", "scrape_presets_check", "scrape_queue_list", "scrape_queue_process", "scrape_queue_submit"].sort());
+    assert.equal(scrape.operations.find((operation) => operation.name === "scrape_queue_list")?.annotations.readOnlyHint, true);
 
     const bots = found.get("bots") as PackageDoc;
     assert.deepEqual(Object.keys(bots.events).sort(), ["bots_changed", "chat_live_changed", "chat_queue_changed", "chats_changed", "defaults_changed", "threads_changed", "voice_changed"]);
@@ -177,7 +187,7 @@ test("the api package serves structured documents for every workspace package", 
     const roles = found.get("roles") as PackageDoc;
     assert.deepEqual(Object.keys(roles.events), ["role_changed"]);
     assert.deepEqual(roles.operations.map((operation) => operation.name).sort(), [
-      "role_preview", "role_snapshot", "role_launch_snapshot", "category_create", "category_delete", "category_reorder", "category_update",
+      "role_preview", "role_launch_preview", "role_snapshot", "role_editor_snapshot", "role_launch_snapshot", "category_create", "category_delete", "category_reorder", "category_update",
       "fragment_create", "fragment_delete", "fragment_move", "fragment_reorder", "fragment_update",
       "skill_create", "skill_delete", "skill_reorder", "skill_update",
       "mcp_server_create", "mcp_server_delete", "mcp_server_reorder", "mcp_server_update",
@@ -214,6 +224,9 @@ test("the api package serves structured documents for every workspace package", 
     assert.deepEqual(Object.keys(content.operations.find((op) => op.name === "content_status")?.outputSchema.properties ?? {}).sort(), ["artifactPath", "documentPath", "itemPath"]);
     assert.equal(JSON.stringify(content.operations.find((op) => op.name === "item_put")?.inputSchema).includes('"path"'), false);
     assert.equal(content.transports.find((transport) => transport.type === "mcp")?.supported, true);
+    assert.deepEqual(Object.keys(content.events), ["content_changed"]);
+    assert.equal(content.eventScope, null);
+    assert.equal(content.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
     const brain = found.get("brain") as PackageDoc;
     assert.ok(brain.operations.length > 0);
     assert.ok(brain.operations.every((operation) => operation.description && operation.inputSchema.type === "object" && operation.outputSchema.type === "object"));
@@ -227,8 +240,8 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(workers.eventScope?.required, false);
     assert.deepEqual(workers.operations.map((operation) => operation.name), ["worker_catalog", "worker_runtime_list", "worker_account_drain",
       "worker_start", "worker_list", "worker_status", "worker_read", "worker_detail", "worker_turn_list", "worker_record_list", "worker_record_read", "worker_tool_list",
-      "worker_send", "worker_respond", "worker_cancel", "worker_resume", "worker_close", "worker_remove"]);
-    for (const name of ["worker_detail", "worker_turn_list", "worker_record_list", "worker_record_read", "worker_tool_list"]) {
+      "worker_diff", "worker_send", "worker_respond", "worker_cancel", "worker_resume", "worker_close", "worker_remove"]);
+    for (const name of ["worker_list", "worker_detail", "worker_turn_list", "worker_record_list", "worker_record_read", "worker_tool_list", "worker_diff"]) {
       assert.equal(workers.operations.find((operation) => operation.name === name)?.annotations.readOnlyHint, true);
     }
     const workerDetail = workers.operations.find((operation) => operation.name === "worker_detail") as OperationDoc;
@@ -243,6 +256,10 @@ test("the api package serves structured documents for every workspace package", 
     const workerTurns = workers.operations.find((operation) => operation.name === "worker_turn_list") as OperationDoc;
     for (const field of ["prompt", "requestedModel", "observedSettings", "dispatchedPromptSeq"]) assert.ok(JSON.stringify(workerTurns.outputSchema).includes(`"${field}"`));
     assert.ok(JSON.stringify(workers.operations.find((operation) => operation.name === "worker_tool_list")?.outputSchema).includes('"hierarchyVerified"'));
+    const workerListSchema = JSON.stringify(workers.operations.find((operation) => operation.name === "worker_list")?.outputSchema);
+    for (const field of ["turn", "pendingPermissions"]) assert.ok(workerListSchema.includes(`"${field}"`));
+    const workerDiff = workers.operations.find((operation) => operation.name === "worker_diff") as OperationDoc;
+    for (const field of ["commits", "files", "uncommitted", "patch", "truncated"]) assert.ok((workerDiff.outputSchema.properties as Record<string, unknown> | undefined)?.[field], field);
 
     const usage = found.get("usage") as PackageDoc;
     assert.deepEqual(Object.keys(usage.events), ["usage_changed"]);
@@ -280,7 +297,7 @@ test("the api package serves structured documents for every workspace package", 
 
     const notify = found.get("notify") as PackageDoc;
     assert.deepEqual(notify.operations.map((operation) => operation.name),
-      ["notification_send", "notification_get", "notification_list", "notification_dismiss", "notification_dismiss_all"]);
+      ["notification_send", "notification_get", "notification_list", "notification_counts", "notification_dismiss", "notification_dismiss_all"]);
     assert.deepEqual(Object.keys(notify.events), ["notify_changed"]);
     assert.deepEqual(notify.transports.map((transport) => transport.type), ["socket", "mcp", "websocket"]);
     assert.equal(notify.transports.find((transport) => transport.type === "socket")?.endpoint, join(stateDir, "sockets", "notify.sock"));

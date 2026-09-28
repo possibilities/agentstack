@@ -47,6 +47,7 @@ import { BotLifecycleControls, BotWindowActions, CreateBotButton } from "./bot-a
 import { useActivity, useNow, useStack } from "./provider";
 import { useVoice } from "./voice";
 import { footerButton, Section, Window } from "./window";
+import { WorkersLink } from "./worker-windows";
 
 const activitySpan = 5 * 60_000;
 
@@ -397,6 +398,7 @@ function WorkerAccountCard({ account, label, className }: { account: WorkerAccou
         </div>
       ) : null}
       {errorFor("availability") ? <p role="alert" className="text-[0.72rem] text-pretty text-destructive">{errorFor("availability")}</p> : null}
+      <WorkersLink filter={{ accountId: account.id }} className="w-fit" />
     </NodeCard>
   );
 }
@@ -634,6 +636,7 @@ export function BotsWindow() {
                   <BotChip icon={FolderIcon} title={bot.cwd} copy={bot.cwd} label="workspace">{workspaceName(bot.cwd)}</BotChip>
                   <BotChip icon={MessageSquareIcon} title={bot.mainThreadId ?? "No main thread yet"} copy={bot.mainThreadId} label="main thread">{bot.mainThreadId ? shortId(bot.mainThreadId) : "No thread"}</BotChip>
                   {bot.url ? <BotChip icon={LinkIcon} title={bot.url} copy={bot.url} label="endpoint">{bot.url.replace(/^\w+:\/\//, "")}</BotChip> : null}
+                  <WorkersLink filter={{ botId: bot.id }} />
                 </div>
                 {bot.recoveryIssue ? <RecoveryWarning message={bot.recoveryIssue} /> : null}
                 {mismatch ? (
