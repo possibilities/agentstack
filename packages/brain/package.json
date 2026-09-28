@@ -16,6 +16,7 @@
   "engines": { "node": ">=24" },
   "dependencies": {
     "@agentstack/api": "workspace:*",
+    "@agentstack/scrape": "workspace:*",
     "fflate": "^0.8.3",
     "mdast-util-from-markdown": "^2.0.2",
     "mdast-util-gfm": "^3.1.0",
