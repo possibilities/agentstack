@@ -67,7 +67,11 @@ sends `frame-ancestors 'none'`, and item and Artifact bytes are never interprete
 UIX origin. A page served remotely shows "open locally" instead of a link, because a Content
 handoff is minted by Access for a paired device credential and the UIX has no such credential.
 Document text, images and file peeks still show everywhere, since they come through the Package
-API.
+API. The owner serves the UIX only on `127.0.0.1`, and the WebSocket gateway admits only loopback
+Host and Origin headers, so no UIX viewer is authenticated through Access. A UIX page on another
+host arises only through operator port forwarding, where the page usually still has a loopback
+hostname. Minting handoffs from the UIX would first need a decision about which principal
+authorizes them.
 
 ## Consequences
 
