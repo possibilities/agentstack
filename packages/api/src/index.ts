@@ -10,6 +10,8 @@ export {
 } from "./operation.js";
 export { publishedJsonSchema } from "./schema.js";
 export { forwardTimeout, mcpToolTimeoutSeconds } from "./forward-timeout.js";
+export { currentMcpCatalog } from "./exposure.js";
+export { scheduledAuthority, operatorInvocation, type ScheduledAuthority } from "./invocation.js";
 export {
   configuredTransports,
   isTransportType,

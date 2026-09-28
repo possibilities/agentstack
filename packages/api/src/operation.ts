@@ -1,5 +1,7 @@
 import type { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { InvocationContext } from "./invocation.js";
+export type { InvocationContext } from "./invocation.js";
 
 export type McpContent = CallToolResult["content"];
 
@@ -9,19 +11,6 @@ export type Annotations = {
   destructiveHint?: boolean;
   idempotentHint?: boolean;
   openWorldHint?: boolean;
-};
-
-/** Transport-supplied context, not part of an operation's public input schema. */
-export type InvocationContext = {
-  transport: "mcp";
-  botId: string | null;
-  instance: string | null;
-  /** Claimed by Codex in MCP _meta; validate lineage before targeting a thread. */
-  threadId: string | null;
-  sessionId: string | null;
-  /** Verified against the exact owned Worker runtime; never a Bot identity. */
-  workerId?: string | null;
-  workerInstance?: string | null;
 };
 
 export type AnyOperation<Ctx> = {

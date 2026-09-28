@@ -71,6 +71,12 @@ test("the api package serves structured documents for every workspace package", 
     const proc = found.get("proc")!;
     assert.deepEqual(proc.transports.map((transport) => transport.type), ["socket", "mcp", "websocket"]);
     assert.ok(proc.operations.some((op) => op.name === "proc_schedule_create"));
+    assert.ok(proc.operations.some((op) => op.name === "proc_schedule_reauthorize"));
+    const schedule = proc.operations.find((op) => op.name === "proc_schedule_get")!;
+    for (const field of ["createdBy", "lastEditedBy", "authority", "blockedReason", "retryAt"])
+      assert.ok(Object.hasOwn(schedule.outputSchema.properties ?? {}, field), `missing Proc schedule field ${field}`);
+    const execution = proc.operations.find((op) => op.name === "proc_execution_get")!;
+    for (const field of ["authority", "action"]) assert.ok(Object.hasOwn(execution.outputSchema.properties ?? {}, field));
     assert.ok(proc.operations.some((op) => op.name === "proc_run_wait"));
     assert.deepEqual(Object.keys(proc.events), ["proc_schedules_changed", "proc_runs_changed", "proc_output_changed"]);
     for (const transport of proc.transports.filter((entry) => entry.type !== "socket")) {

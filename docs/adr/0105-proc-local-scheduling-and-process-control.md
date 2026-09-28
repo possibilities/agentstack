@@ -2,6 +2,8 @@
 
 Status: accepted, 2026-09-28. Extends [ADR 0059](0059-isolated-brain-and-platform-clients.md)'s external Source trigger and [ADR 0096](0096-explicit-transport-exposure.md)'s explicit exposure boundary.
 
+The caller/dispatch policy below is superseded by [ADR 0110](0110-proc-durable-caller-authority.md): schedules now retain explicit durable authority.
+
 ## Decision
 
 `proc` is an owner-supervised Package API with an isolated durable store below AgentStack state. Its operations and events are selected `all` independently on MCP and WebSocket, as on its full local socket. AgentStack is built for agent–human collaboration: Bots already have execution authority, so Proc's ability to schedule mutating Package API calls and run arbitrary local-user programs is not a reason to hide those operations from them. Worker-bound MCP retains the shared read-only tool policy; WebSocket remains loopback. Proc neither impersonates a Bot nor forwards an MCP invocation context to a later scheduled call. It does not grant OS privileges beyond the local owner user, but it is not a sandbox. No HTTP route or dedicated UI is added.

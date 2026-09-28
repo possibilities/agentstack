@@ -1,4 +1,4 @@
-import { botInstance, socketCall, socketPath, type InvocationContext } from "@agentstack/api";
+import { botInstance, operatorInvocation, socketCall, socketPath, type InvocationContext } from "@agentstack/api";
 import { listActiveThreads, type ActiveThread } from "@agentstack/bots";
 import type { WorkerRecord } from "./ledger.js";
 
@@ -11,7 +11,7 @@ function contains(threads: ActiveThread[], id: string): boolean {
 }
 
 export async function workerOwner(invocation: InvocationContext | undefined, env: NodeJS.ProcessEnv): Promise<WorkerOwner> {
-  if (!invocation) return { botId: LOCAL_OPERATOR_ID, threadId: LOCAL_OPERATOR_ID };
+  if (!invocation || operatorInvocation(invocation)) return { botId: LOCAL_OPERATOR_ID, threadId: LOCAL_OPERATOR_ID };
   if (!invocation.botId) throw new Error("worker lifecycle operations require a Bot-bound MCP call or the local socket");
   if (!invocation.instance || !invocation.threadId) throw new Error("worker operations require a verified Bot thread");
   const listed = await socketCall(socketPath("bots", env), "tools/call", { name: "bot_list", arguments: {} }, { timeoutMs: 2_000 }) as {
@@ -20,6 +20,8 @@ export async function workerOwner(invocation: InvocationContext | undefined, env
   const bot = listed.bots.find((entry) => entry.id === invocation.botId);
   if (!bot || bot.state !== "running" || bot.recoveryIssue || !bot.url || botInstance(bot.url) !== invocation.instance || !bot.mainThreadId)
     throw new Error("Bot launch is not verified and running with a main thread");
+  if (invocation.transport === "proc" && (invocation.authority.kind !== "bot" || invocation.authority.mainThreadId !== bot.mainThreadId))
+    throw new Error("scheduled Bot root changed");
   if (!contains(await listActiveThreads(bot.url, bot.mainThreadId), invocation.threadId))
     throw new Error("worker caller is outside the Bot's sanctioned main-thread lineage");
   return { botId: bot.id, threadId: invocation.threadId };

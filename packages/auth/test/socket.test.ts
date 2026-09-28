@@ -12,6 +12,18 @@ import { accountRoot, prepareAccountProfile } from "../src/worker-accounts.js";
 
 const fakeLogin = fileURLToPath(new URL("../../test/fixtures/fake-login.mjs", import.meta.url));
 
+test("a scheduled Bot cannot acquire operator-only account authority", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "as-auth-scheduled-"));
+  const served = await serveApi({ name: "auth", transport: "socket", env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir } });
+  try {
+    await assert.rejects(socketCall(served.socketPath!, "tools/call", { name: "account_set_enabled", arguments: {
+      id: "00000000-0000-4000-8000-000000000001", enabled: false,
+    }, invocation: { transport: "proc", scheduleId: "00000000-0000-4000-8000-000000000002", executionId: "00000000-0000-4000-8000-000000000003",
+      authority: { kind: "bot", botId: "a", mainThreadId: "root", threadId: "child" }, botId: "a", instance: "launch", threadId: "child", sessionId: null } }), /operator-only/);
+    assert.deepEqual(await socketCall(served.socketPath!, "tools/call", { name: "account_list", arguments: {} }), { accounts: [] });
+  } finally { await served.close(); await rm(stateDir, { recursive: true, force: true }); }
+});
+
 type ServedLogin = { id: string; status: string; authUrl: string | null; userCode: string | null; account: string | null; error: string | null; targetAccount: string | null };
 
 function call(socket: string, name: string, args: Record<string, unknown> = {}): Promise<unknown> {

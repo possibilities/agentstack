@@ -4,9 +4,28 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, connect, type Server } from "node:net";
 import test from "node:test";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { operation } from "../src/operation.js";
 import { serveSocket, socketCall } from "../src/socket.js";
+
+test("scheduled invocation provenance crosses the socket and mismatched identities fail before the handler", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "as-scheduled-wire-"));
+  let calls = 0;
+  const served = await serveSocket({ info: { name: "demo", description: "Demo", transportDescription: "Socket", path: join(dir, "demo.sock") }, context: {},
+    operations: [operation({ name: "read", description: "Read", input: z.object({}), output: z.any(), async call(_ctx, _input, invocation) { calls++; return invocation; } })] });
+  const invocation = { transport: "proc", authority: { kind: "bot", botId: "a", mainThreadId: "root", threadId: "child" },
+    scheduleId: randomUUID(), executionId: randomUUID(), botId: "a", threadId: "child", instance: "current-launch", sessionId: null };
+  const call = (value: object) => socketCall(served.path, "tools/call", { name: "read", arguments: {}, invocation: value });
+  try {
+    assert.deepEqual(await call(invocation), invocation);
+    for (const bad of [{ ...invocation, botId: null }, { ...invocation, threadId: "foreign" }, { ...invocation, instance: null },
+      { ...invocation, authority: { kind: "operator" } }, { ...invocation, workerId: "worker" }, { ...invocation, scheduleId: "invalid" }]) {
+      await assert.rejects(call(bad));
+    }
+    assert.equal(calls, 1);
+  } finally { await served.close(); await rm(dir, { recursive: true, force: true }); }
+});
 
 test("socket advertises and calls a typed operation", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agentstack-socket-"));

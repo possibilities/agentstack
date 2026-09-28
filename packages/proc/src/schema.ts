@@ -1,4 +1,13 @@
 import { z } from "zod";
+import { scheduledAuthority } from "@agentstack/api";
+
+export const authority = scheduledAuthority;
+export type Authority = z.infer<typeof authority>;
+export const actor = z.union([authority, z.strictObject({ kind: z.literal("legacy_unknown") })]);
+export type Actor = z.infer<typeof actor>;
+export const operator: Authority = { kind: "operator" };
+export const systemBrainId = "00000000-0000-4000-8000-000000000001";
+export const brainAuthority: Authority = { kind: "system", name: "brain-source-sync" };
 
 const json = z.json().refine((value) => Buffer.byteLength(JSON.stringify(value)) <= 65_536, "JSON input exceeds 64 KiB");
 const id = z.uuid();
@@ -30,14 +39,19 @@ export const scheduleUpdate = scheduleSpec.extend({ id, expectedRevision: z.numb
 export const scheduleId = z.strictObject({ id });
 export const scheduleRevision = scheduleId.extend({ expectedRevision: z.number().int().positive() });
 export const scheduleRecord = scheduleSpec.extend({ id, revision: z.number().int().positive(), system: z.boolean(),
+  createdBy: actor, lastEditedBy: actor, authority: authority.nullable().describe("Null until a legacy schedule is explicitly reauthorized."),
+  blockedReason: z.string().nullable(), retryAt: z.iso.datetime({ offset: true }).nullable(),
   nextAt: z.iso.datetime({ offset: true }).nullable(), createdAt: z.iso.datetime({ offset: true }), updatedAt: z.iso.datetime({ offset: true }) });
+export type Schedule = z.infer<typeof scheduleRecord>;
 export const executionRecord = z.strictObject({
   id, scheduleId: z.string(), dueAt: z.iso.datetime({ offset: true }),
-  state: z.enum(["running", "completed", "failed", "unknown"]),
+  state: z.enum(["running", "completed", "failed", "refused", "unknown"]),
+  authority: authority.nullable(), action: action.nullable().describe("Captured at admission; null for legacy execution history."),
   processId: id.nullable(), result: json.nullable(), error: z.string().nullable(),
   startedAt: z.iso.datetime({ offset: true }), finishedAt: z.iso.datetime({ offset: true }).nullable(),
 });
 export const runRecord = z.strictObject({
+  createdBy: actor,
   id, scheduleExecutionId: id.nullable(), state: z.enum(["starting", "running", "exited", "failed", "cancelled", "unknown"]),
   pid: z.number().int().positive().nullable(), exitCode: z.number().int().nullable(), signal: z.string().nullable(),
   error: z.string().nullable(), lineCount: z.number().int().nonnegative(), outputTruncated: z.boolean(),
@@ -53,3 +67,8 @@ export const runJoin = runId.extend({ waitMs: z.number().int().min(1).max(300_00
 export const runJoinResult = z.strictObject({ run: runRecord, timedOut: z.boolean() });
 export const list = z.strictObject({ limit: z.number().int().min(1).max(100).default(50) });
 export const executionId = z.strictObject({ id });
+
+export function isBrainSchedule(spec: ScheduleSpec): boolean {
+  return spec.enabled && spec.everyMs === 300_000 && spec.action.type === "api" && spec.action.package === "brain"
+    && spec.action.operation === "sources_sync" && JSON.stringify(spec.action.input) === JSON.stringify({ due: true });
+}

@@ -192,7 +192,7 @@ test("failed controller selection reports unknown and fences uncertain profile d
 
 test("MCP management scopes reads and every mutation to a verified live Bot launch", async () => {
   const s = await fixture(); const backend = new Backend(s.system, async () => undefined);
-  const bots = ["a", "b"].map((id) => ({ id, url: `unix:///bot-${id}`, state: "running", recoveryIssue: null as string | null }));
+  const bots = ["a", "b"].map((id) => ({ id, url: `unix:///bot-${id}`, state: "running", mainThreadId: `root-${id}`, recoveryIssue: null as string | null }));
   const profiles = new Profiles(backend, s.system, s.env, async () => bots, fakeGate);
   const ctx = { backend, system: s.system, profiles };
   const invocation: InvocationContext = { transport: "mcp", botId: "a", instance: botInstance(bots[0]!.url), threadId: "main", sessionId: null };
@@ -204,6 +204,13 @@ test("MCP management scopes reads and every mutation to a verified live Bot laun
     for (const p of profiles.list()) await profiles.ensure(p.id);
     assert.deepEqual((await browserProfileList.call(ctx, {}, invocation)).profiles.map((p) => p.id), [own.id]);
     assert.equal((await browserProfileList.call(ctx, {})).profiles.length, 3);
+    const scheduled: InvocationContext = { ...invocation, transport: "proc", scheduleId: "00000000-0000-4000-8000-000000000001",
+      executionId: "00000000-0000-4000-8000-000000000002", authority: { kind: "bot", botId: "a", mainThreadId: "root-a", threadId: "main" } };
+    assert.deepEqual((await browserProfileList.call(ctx, {}, scheduled)).profiles.map((p) => p.id), [own.id]);
+    await assert.rejects(browserProfileCreate.call(ctx, { botId: "b", label: "denied" }, scheduled), /invoking Bot/);
+    await assert.rejects(browserProfileList.call(ctx, {}, { ...scheduled, authority: { ...scheduled.authority, kind: "bot", botId: "a", mainThreadId: "old-root", threadId: "main" } }), /root changed/);
+    const operatorSchedule: InvocationContext = { ...scheduled, authority: { kind: "operator" }, botId: null, instance: null, threadId: null };
+    assert.equal((await browserProfileList.call(ctx, {}, operatorSchedule)).profiles.length, 3);
     for (const bot of bots) receipts.push((await profiles.launch(botMcpUrl("http://127.0.0.1/browser", bot.id, bot.url, s.env), "same-session")).cleanup);
     assert.deepEqual((await browserControllerList.call(ctx, {}, invocation)).controllers.map((c) => c.botId), ["a"]);
     assert.equal((await browserControllerList.call(ctx, {})).controllers.length, 2);

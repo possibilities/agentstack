@@ -3,7 +3,8 @@ import { createServer, connect, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import { z } from "zod";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
-import type { AnyOperation, InvocationContext } from "./operation.js";
+import type { AnyOperation } from "./operation.js";
+import { invocationContext } from "./invocation.js";
 import { publishedJsonSchema } from "./schema.js";
 
 export type SocketServerInfo = {
@@ -517,11 +518,7 @@ async function callTool<Ctx>(
   const operation = options.operations.find((item) => item.name === record.name);
   if (!operation) throw new Error(`unknown operation: ${record.name}`);
   const input = operation.input.parse(record.arguments ?? {});
-  const invocation = record.invocation === undefined ? undefined : z.strictObject({
-    transport: z.literal("mcp"), botId: z.string().nullable(), instance: z.string().nullable(),
-    threadId: z.string().nullable(), sessionId: z.string().nullable(),
-    workerId: z.string().nullable().optional(), workerInstance: z.string().nullable().optional(),
-  }).parse(record.invocation) as InvocationContext;
+  const invocation = record.invocation === undefined ? undefined : invocationContext.parse(record.invocation);
   const output = await operation.call(options.context, input, invocation);
   const result = operation.output.parse(output);
   if (record.resultFormat === undefined) return result;

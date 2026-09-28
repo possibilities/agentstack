@@ -3,7 +3,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { botInstance, parseBotMcpIdentity, socketCall, socketPath, type InvocationContext } from "@agentstack/api";
+import { botInstance, operatorInvocation, parseBotMcpIdentity, socketCall, socketPath, type InvocationContext } from "@agentstack/api";
 import { z } from "zod";
 import { Backend, backendSession } from "./backend.js";
 import { BrowserSystem } from "./system.js";
@@ -27,7 +27,7 @@ export const bindingSchema = z.strictObject({
 });
 type Binding = z.infer<typeof bindingSchema>;
 export type BrowserCaller = { botId: string; instance: string };
-type Bot = { id: string; url: string | null; state: string; recoveryIssue: string | null };
+type Bot = { id: string; url: string | null; state: string; recoveryIssue: string | null; mainThreadId?: string | null };
 const ledgerSchema = z.strictObject({ version: z.literal(1), profiles: z.array(profileSchema), bindings: z.array(bindingSchema), handoffs: z.array(handoffSchema).default([]), actions: z.array(actionReceiptSchema).default([]) });
 type Ledger = z.infer<typeof ledgerSchema>;
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -96,10 +96,15 @@ export class Profiles {
   bindings(): Binding[] { return structuredClone(this.ledger.bindings); }
 
   async caller(invocation?: InvocationContext): Promise<BrowserCaller | null> {
-    if (!invocation) return null; // Local operator socket/WebSocket.
+    if (!invocation || operatorInvocation(invocation)) return null;
     if (!invocation.botId || !invocation.instance || invocation.workerId) throw new Error("browser management requires a Bot-bound MCP invocation");
     const caller = { botId: invocation.botId, instance: invocation.instance };
     await this.verifyCaller(caller);
+    if (invocation.transport === "proc") {
+      const bot = (await this.bots()).find((item) => item.id === caller.botId);
+      if (invocation.authority.kind !== "bot" || bot?.mainThreadId !== invocation.authority.mainThreadId)
+        throw new Error("scheduled Bot root changed");
+    }
     return caller;
   }
 

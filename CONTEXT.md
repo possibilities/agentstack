@@ -256,7 +256,7 @@ _Avoid_: ingress, individual URL job, attempt
 
 ## Proc schedule
 
-A durable, local-control definition for a one-shot or interval invocation of one Package API operation or guarded argv process. Proc owns the wake-up, due admission and execution evidence; the target Package API owns its own effects and idempotency. A missed interval is coalesced, not replayed. An interrupted API call has an unknown outcome, never an automatic retry. _Avoid_: Brain Source cadence, agent turn, cron job
+A durable, attributed definition for a one-shot or interval invocation of one Package API operation or guarded argv process. Its execution authority is the operator, a sanctioned Bot/root/thread, or a protected system task; operator edits do not promote Bot authority. Proc owns the wake-up, authorized due admission and execution evidence; the target Package API owns its own effects and idempotency. A missed interval is coalesced, not replayed. An interrupted API call has an unknown outcome, never an automatic retry. _Avoid_: Brain Source cadence, agent turn, cron job
 
 ## Proc run
 

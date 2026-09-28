@@ -27,13 +27,13 @@ The owner → package socket → transport gateway architecture is worth keeping
 
 ## Proposals needing a product/architecture decision
 
-### 1. Proc's durable caller policy — high priority
+### 1. Proc's durable caller policy — approved and implemented
 
-**Verified:** `packages/proc/src/service.ts` validates targets against the full socket catalog and dispatches without invocation context. Downstream auth/Worker/Browse guards interpret that as the operator. Schedules do not retain their creator. ADR 0105 explicitly permits Bot scheduling and omits Bot invocation forwarding, so changing this is a contract decision, not just a missing conditional.
+**Original finding:** Proc validated targets against the full socket catalog and dispatched without invocation context, so target guards treated Bot schedules as operator calls. Schedules retained no creator. ADR 0105 explicitly permitted that behavior.
 
-**Recommended sketch:** persist a discriminated `createdBy` principal and admission transport on schedules. Introduce a distinct scheduled invocation containing the schedule ID and creator; never synthesize a current Bot launch proof. For Bot-created API actions, require the target's current MCP exposure at admission and dispatch and give targets an explicit scheduled-caller policy. Store refused dispatch as a definite refusal, not an uncertain call. Define migration for existing unattributed schedules before enforcing it. An interim alternative is operator-only API schedule admission, retaining Bot process scheduling.
+**Approved contract:** schedules retain operator, Bot/root/thread or protected system authority, separately from creator/editor attribution. Operator edits cannot promote Bot schedules. Current Bot launch/thread and MCP exposure are checked before dispatch; targets receive explicit scheduled provenance and retain their guards. Stopped Bots hold occurrences with bounded retry. Changed roots and removed Bots block automatic dispatch. Legacy schedules and history are preserved, but unattributed schedules require explicit operator reauthorization. See [ADR 0110](adr/0110-proc-durable-caller-authority.md).
 
-**Decision:** should Bot API schedules retain Bot authority, or intentionally be durable operator delegations? If the latter, define the attribution and delegation record explicitly. Process execution is already same-user authority either way; this is coherent API policy, not a sandbox.
+**Implemented:** schema-v2 transactional migration, server-assigned attribution and authority, schedule/execution/run ownership checks, current-exposure resolution, revision-fenced admission, captured execution action/authority, removal tombstones, restart-safe blocked state, and `proc_schedule_reauthorize`. This is coherent API authorization; same-user process execution remains outside an OS sandbox. Dedicated Proc/reauthorization UI is still a separate decision.
 
 ### 2. Brain/browser egress — high priority
 
@@ -99,6 +99,18 @@ The local Proc/hardening commits (`77c1b8a`, `f055f59`) are combined with the el
 - All ten production browser checks passed: Bench, Access, Auth, Roles, Fleet, Inbox, Content, Workers, Scrape and remote UIX. The Roles check exercises real transport selection, retained MCP definition editing, safe ordinary reads and omission of definitions from SSR HTML; the remote gateway test also rejects forged invocation context.
 - `git diff --check` is clean. Builds and lifecycle/browser checks ran in an isolated checkout with disposable fixture state.
 
+## Proc authority verification — 2026-09-28
+
+Proposal 1 is implemented on the combined tree through `2b29daa`, retaining the Browse and Brain UI merges.
+
+- Full `pnpm test`: **38/38 Turbo tasks successful; 931 tests passed, 6 existing runtime/credential-gated tests skipped, zero failures or cancellations**, including installer tests.
+- All 21 Proc tests passed, covering caller attribution, cross-Bot isolation, live exposure withdrawal, stopped/restarted Bots, replaced roots, revision-fenced dispatch races, captured execution authority, process output ownership, legacy migration/reauthorization and shutdown outcomes.
+- API socket/discovery, Auth operator-only, Worker ownership and Browser ownership regression tests passed.
+- `pnpm --filter @agentstack/uix typecheck` passed. Proc remains represented by the schema-driven API reference; it has no dedicated store reads, subscriptions or record views to migrate.
+- Builds and lifecycle checks ran in an isolated checkout with disposable state. `git diff --check` is clean.
+
 ## Deployment
 
 Source changes are not deployment. The running owner has not been restarted and its checkout's `dist`/`.next` have not been rebuilt by this review. Apply a coordinated rebuild and authorized owner restart to use the matching Role/Worker contracts and browser policies. Development browser clients on another port must configure `AGENTSTACK_WEBSOCKET_ORIGIN` explicitly.
+
+Proc authority also requires a coordinated owner rebuild/restart because its scheduled invocation envelope extends the shared socket contract. On that restart, existing unattributed schedules are disabled pending explicit operator reauthorization; the recognized protected Brain source trigger is preserved.

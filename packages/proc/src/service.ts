@@ -1,13 +1,13 @@
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { forwardTimeout, socketCall, socketPath } from "@agentstack/api";
-import type { Action, ProcessSpec, ScheduleSpec } from "./schema.js";
+import { forwardTimeout, socketCall, socketPath, type InvocationContext } from "@agentstack/api";
+import { operator, systemBrainId, type Action, type Authority, type ProcessSpec, type ScheduleSpec } from "./schema.js";
 import { ProcStore } from "./store.js";
+import { AuthorityBlocked, owns, ProcAuthority } from "./authority.js";
 
-type Call = (pkg: string, operation: string, input: unknown, timeoutMs: number, signal?: AbortSignal) => Promise<unknown>;
+type Call = (pkg: string, operation: string, input: unknown, timeoutMs: number, signal?: AbortSignal, invocation?: InvocationContext) => Promise<unknown>;
 const runnerPath = fileURLToPath(new URL("./runner.js", import.meta.url));
-const systemBrainId = "00000000-0000-4000-8000-000000000001";
 function killGroup(pid: number) {
   try { process.kill(process.platform === "win32" ? pid : -pid, "SIGKILL"); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") console.error("proc group cleanup failed:", error); }
@@ -22,18 +22,74 @@ export class ProcService {
   private readonly listeners = new Set<() => void>();
   private timer?: ReturnType<typeof setInterval>;
   private lastPrune = 0;
-  private checking = false;
+  private sweep?: Promise<void>;
   private closing = false;
+  readonly policy: ProcAuthority;
   constructor(readonly store: ProcStore, private readonly env: NodeJS.ProcessEnv,
-    private readonly call: Call = async (pkg, operation, input, timeoutMs, signal) =>
-      socketCall(socketPath(pkg, env), "tools/call", { name: operation, arguments: input }, { timeoutMs, signal })) {}
+    private readonly call: Call = async (pkg, operation, input, timeoutMs, signal, invocation) =>
+      socketCall(socketPath(pkg, env), "tools/call", { name: operation, arguments: input, invocation }, { timeoutMs, signal }),
+    root?: string) { this.policy = new ProcAuthority(env, root); }
 
-  async validate(action: Action) {
-    if (action.type !== "api") return;
-    if (action.package === "proc") throw new Error("recursive_schedule_refused");
-    const catalog = await socketCall(socketPath(action.package, this.env), "tools/list", {}, { timeoutMs: 5_000 }) as {
-      tools?: Array<{ name: string }> };
-    if (!catalog.tools?.some((item) => item.name === action.operation)) throw new Error("target_operation_unavailable");
+  async validate(action: Action, authority: Authority = operator) { await this.policy.target(action, authority); }
+
+  async createSchedule(id: string, spec: ScheduleSpec, invocation?: InvocationContext) {
+    const actor = await this.policy.actor(invocation);
+    await this.validate(spec.action, actor);
+    if (actor.kind === "bot") await this.policy.resolve(actor, invocation?.instance ?? undefined);
+    const record = this.store.createSchedule(id, spec, actor);
+    this.onSchedulesChanged?.(id);
+    return record;
+  }
+  async updateSchedule(id: string, revision: number, spec: ScheduleSpec, invocation?: InvocationContext, reauthorize = false) {
+    const actor = await this.policy.actor(invocation);
+    const current = this.store.getSchedule(id);
+    owns(actor, current.authority);
+    if (current.system) throw new Error("schedule_revision_conflict_or_protected");
+    if (reauthorize ? current.authority !== null || actor.kind !== "operator" : current.authority === null)
+      throw new Error(reauthorize ? "schedule_reauthorization_refused" : "legacy_reauthorization_required");
+    if (spec.enabled || reauthorize) await this.validate(spec.action, reauthorize ? operator : current.authority!);
+    if (actor.kind === "bot") await this.policy.resolve(actor, invocation?.instance ?? undefined);
+    const record = this.store.updateSchedule(id, revision, spec, actor, reauthorize);
+    this.onSchedulesChanged?.(id);
+    return record;
+  }
+  async schedule(id: string, invocation?: InvocationContext, includeRemoved = false) {
+    const actor = await this.policy.actor(invocation);
+    const record = this.store.getSchedule(id, includeRemoved);
+    owns(actor, record.authority);
+    return record;
+  }
+  async removeSchedule(id: string, revision: number, invocation?: InvocationContext) {
+    const actor = await this.policy.actor(invocation);
+    owns(actor, this.store.getSchedule(id).authority);
+    const result = this.store.removeSchedule(id, revision, actor);
+    this.onSchedulesChanged?.(id);
+    return result;
+  }
+  async schedules(limit: number, invocation?: InvocationContext) {
+    const actor = await this.policy.actor(invocation);
+    return this.store.schedules(limit, actor.kind === "bot" ? actor : undefined);
+  }
+  async execution(id: string, invocation?: InvocationContext) {
+    const actor = await this.policy.actor(invocation);
+    const record = this.store.getExecution(id);
+    owns(actor, record.authority);
+    return record;
+  }
+  async executions(id: string, limit: number, invocation?: InvocationContext) {
+    const actor = await this.policy.actor(invocation);
+    if (actor.kind !== "operator") owns(actor, this.store.getSchedule(id, true).authority);
+    return this.store.executions(id, limit);
+  }
+  async run(id: string, invocation?: InvocationContext) {
+    const actor = await this.policy.actor(invocation);
+    const record = this.store.getRun(id);
+    owns(actor, record.createdBy);
+    return record;
+  }
+  async runs(limit: number, invocation?: InvocationContext) {
+    const actor = await this.policy.actor(invocation);
+    return this.store.runs(limit, actor.kind === "bot" ? actor : undefined);
   }
 
   start() {
@@ -47,57 +103,74 @@ export class ProcService {
     void this.tick().catch((error) => console.error("proc schedule tick:", error));
   }
 
-  async tick() {
-    if (this.checking || this.closing) return;
-    this.checking = true;
-    try {
-      if (Date.now() - this.lastPrune > 86_400_000) { this.store.prune(); this.lastPrune = Date.now(); }
-      // Bounded sweep. The next tick continues if more schedules are due.
-      for (const due of this.store.due(Math.max(0, 16 - this.calls.size))) {
-        this.onSchedulesChanged?.(due.scheduleId);
-        const controller = new AbortController();
-        const task = (async () => {
-          if (due.action.type === "process") {
-            try {
-              const run = this.startRun(due.action.process, due.executionId);
-              this.store.attachProcess(due.executionId, run.id);
-            } catch (error) {
-              this.store.finishExecution(due.executionId, "failed", null,
-                error instanceof Error && error.message === "proc_capacity" ? "proc_capacity" : "process_admission_failed");
-              this.onSchedulesChanged?.(due.scheduleId);
-            }
-            return;
-          }
-          try {
-            await this.validate(due.action);
-          } catch {
-            this.store.finishExecution(due.executionId, "failed", null, "target_unavailable");
-            this.onSchedulesChanged?.(due.scheduleId);
-            return;
-          }
-          try {
-            const result = await this.call(due.action.package, due.action.operation, due.action.input, forwardTimeout(due.action.package, due.action.operation), controller.signal);
-            this.store.finishExecution(due.executionId, "completed", result);
-          } catch {
-            // A socket error or lost reply cannot prove the operation did not run.
-            this.store.finishExecution(due.executionId, "unknown", null, "call_outcome_unknown");
-          }
-          this.onSchedulesChanged?.(due.scheduleId);
-          this.notify();
-        })().catch(() => {
-          this.store.finishExecution(due.executionId, "unknown", null, "dispatch_interrupted");
-          this.onSchedulesChanged?.(due.scheduleId);
-        }).finally(() => this.calls.delete(entry));
-        const entry = { controller, task };
-        this.calls.add(entry);
+  tick(): Promise<void> {
+    if (this.closing) return Promise.resolve();
+    return this.sweep ??= this.sweepOnce().finally(() => { this.sweep = undefined; });
+  }
+  private async sweepOnce() {
+    if (Date.now() - this.lastPrune > 86_400_000) { this.store.prune(); this.lastPrune = Date.now(); }
+    // Bounded sweep. The next tick continues if more schedules are due.
+    for (const schedule of this.store.pending(Math.max(0, 16 - this.calls.size))) {
+      if (this.closing) break;
+      let instance: string | null;
+      try {
+        instance = await this.policy.resolve(schedule.authority!);
+        await this.validate(schedule.action, schedule.authority!);
+        if (schedule.authority!.kind === "bot") instance = await this.policy.resolve(schedule.authority!, instance ?? undefined);
+      } catch (error) {
+        if (this.closing) break;
+        const blocked = error instanceof AuthorityBlocked ? error : new AuthorityBlocked("authorization_unavailable");
+        if (this.store.block(schedule, blocked.reason, blocked.retryMs)) this.onSchedulesChanged?.(schedule.id);
+        continue;
       }
-    } finally { this.checking = false; }
+      if (this.closing) break;
+      // Async authorization may race an edit or removal: admission fences the captured revision and due time.
+      const due = this.store.admit(schedule);
+      if (!due) continue;
+      this.onSchedulesChanged?.(due.scheduleId);
+      const controller = new AbortController();
+      const task = (async () => {
+        if (this.closing) {
+          this.store.finishExecution(due.executionId, "refused", null, "service_closing_before_dispatch");
+          this.onSchedulesChanged?.(due.scheduleId);
+          return;
+        }
+        if (due.action.type === "process") {
+          try {
+            const run = this.startRun(due.action.process, due.executionId, undefined, due.authority);
+            this.store.attachProcess(due.executionId, run.id);
+          } catch (error) {
+            this.store.finishExecution(due.executionId, "failed", null,
+              error instanceof Error && error.message === "proc_capacity" ? "proc_capacity" : "process_admission_failed");
+            this.onSchedulesChanged?.(due.scheduleId);
+          }
+          return;
+        }
+        try {
+          const invocation: InvocationContext = { transport: "proc", scheduleId: due.scheduleId, executionId: due.executionId,
+            authority: due.authority, botId: due.authority.kind === "bot" ? due.authority.botId : null,
+            instance, threadId: due.authority.kind === "bot" ? due.authority.threadId : null, sessionId: null };
+          const result = await this.call(due.action.package, due.action.operation, due.action.input, forwardTimeout(due.action.package, due.action.operation), controller.signal, invocation);
+          this.store.finishExecution(due.executionId, "completed", result);
+        } catch {
+          // A socket error or lost reply cannot prove the operation did not run.
+          this.store.finishExecution(due.executionId, "unknown", null, "call_outcome_unknown");
+        }
+        this.onSchedulesChanged?.(due.scheduleId);
+        this.notify();
+      })().catch(() => {
+        this.store.finishExecution(due.executionId, "unknown", null, "dispatch_interrupted");
+        this.onSchedulesChanged?.(due.scheduleId);
+      }).finally(() => this.calls.delete(entry));
+      const entry = { controller, task };
+      this.calls.add(entry);
+    }
   }
 
-  startRun(spec: ProcessSpec, executionId: string | null = null, requestId?: string) {
+  startRun(spec: ProcessSpec, executionId: string | null = null, requestId?: string, actor: Authority = operator) {
     if (this.closing) throw new Error("proc_closing");
     if (this.active.size >= 16 && (!requestId || !this.store.hasRun(requestId))) throw new Error("proc_capacity");
-    const admitted = this.store.startRun(spec, executionId, requestId);
+    const admitted = this.store.startRun(spec, executionId, requestId, actor);
     if (!admitted.created) return admitted.record;
     const record = admitted.record;
     let guard: ChildProcess;
@@ -193,6 +266,7 @@ export class ProcService {
   }
   async close() {
     this.prepareClose();
+    await this.sweep;
     await Promise.allSettled([...this.calls].map((call) => call.task).concat([...this.active.values()].map((run) => run.task)));
     this.store.close();
   }

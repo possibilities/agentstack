@@ -4,6 +4,8 @@ Status: accepted, 2026-09-28. Extends [ADR 0096](0096-explicit-transport-exposur
 
 Integration with the Roles resource editor and authenticated remote UIX is recorded in [ADR 0107](0107-hardening-and-operator-ui-integration.md).
 
+The Proc authority limitation described below is subsequently addressed by [ADR 0110](0110-proc-durable-caller-authority.md).
+
 ## Decision
 
 `role_snapshot` and all Role edit results return MCP server summaries (`id`, `name`, `description`, `enabled`, `transport`). They omit complete connection definitions, including URLs and argv as well as literal headers and environment values: all can contain credentials. Native Worker launch reads the full Role through `role_launch_snapshot`, selected only on the private socket. Bot launch continues to materialize the authoritative store. This keeps launch behavior intact without copying connection secrets into SSR HTML, inspectors, read-only Worker tools or Bot event turns. Updating a definition still replaces that definition explicitly; metadata-only edits retain it. The live reference documents both schemas.
