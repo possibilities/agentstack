@@ -1,6 +1,7 @@
 # 98. The Roles space manages skills, MCP servers and trusted projects
 
-Status: accepted, 2026-09-28. Extends [ADR 0082](0082-roles-space-for-instruction-fragments.md), replacing its
+Status: accepted, 2026-09-28; extended by [ADR 0120](0120-roles-space-for-named-roles.md), which scopes these windows to a
+selected named Role and adds internal MCP switches. Extends [ADR 0082](0082-roles-space-for-instruction-fragments.md), replacing its
 statement that Role skills, additional MCP servers and trusted projects
 ([ADR 0031](0031-role-resources.md), [ADR 0034](0034-explicit-project-trust-for-role-bots.md)) remain API-only.
 
