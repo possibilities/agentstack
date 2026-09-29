@@ -1,5 +1,5 @@
 description: List, inspect or inject a Role into an isolated Claude, Codex or OpenCode invocation.
 usage: |-
   usage: stack roles list | snapshot [role-id]
-         stack roles inject [default|existing-role-name] -- <claude|codex|opencode> [native args...]
+         stack roles inject [default|existing-role-name] [--with-model VALUE] [--with-harness VALUE] -- <claude|codex|opencode> [native args...]
   Run stack roles inject --help for isolation, authentication and history limits.

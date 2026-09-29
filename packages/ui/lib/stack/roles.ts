@@ -27,9 +27,11 @@ export function formatCount(value: number): string {
 /** Why a fragment does or does not reach SYSTEM_APPEND.md. A disabled category outranks the fragment's own state. */
 export type FragmentState = "renders" | "off" | "category-off" | "empty";
 
-export function fragmentState(fragment: Pick<RoleFragment, "enabled" | "body">, category: Pick<RoleCategory, "enabled">): FragmentState {
+export function fragmentState(fragment: Pick<RoleFragment, "enabled" | "body" | "conditions">, category: Pick<RoleCategory, "enabled">): FragmentState {
   if (!category.enabled) return "category-off";
   if (!fragment.enabled) return "off";
+  // Existing previews have no rendering context. Conditional bodies are skipped.
+  if (Object.keys(fragment.conditions ?? {}).length) return "off";
   return fragment.body.trim() ? "renders" : "empty";
 }
 

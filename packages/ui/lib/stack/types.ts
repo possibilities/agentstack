@@ -479,7 +479,8 @@ export type ChatMessagePage = { cursor: ChatMessageCursor; reset: boolean; hasMo
 }> };
 
 /** A Role Fragment: an ordered developer-instruction body. Title and description are for people and never render. */
-export type RoleFragment = { id: string; categoryId: string; title: string; description: string; body: string; enabled: boolean;
+export type RoleRenderContext = { model?: string; harness?: string };
+export type RoleFragment = { id: string; categoryId: string; title: string; description: string; body: string; enabled: boolean; conditions?: RoleRenderContext;
   createdAt: number | null; updatedAt: number | null };
 export type RoleCategory = { id: string; title: string; description: string; enabled: boolean; fragments: RoleFragment[];
   createdAt: number | null; updatedAt: number | null };

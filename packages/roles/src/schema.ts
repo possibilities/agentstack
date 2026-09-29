@@ -20,7 +20,7 @@ const resources = {
     role_id TEXT NOT NULL REFERENCES roles(id), UNIQUE(role_id, path)`,
 };
 
-/** Initialize a new catalog; an existing store must already have the current shape. */
+/** Initialize the catalog and apply additive fragment metadata upgrades. */
 export function initializeRoles(db: DatabaseSync): void {
   const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(({ name }) => name));
   if (!tables.has("roles")) {
@@ -57,6 +57,9 @@ export function initializeRoles(db: DatabaseSync): void {
       db.prepare("INSERT INTO roles VALUES (?, 'Worker', '', 0, ?, ?)").run(workerId, now, now);
       db.prepare("INSERT INTO role_catalog VALUES (1, 1, ?, ?)").run(managerId, workerId);
     }
+    const fragmentColumns = db.prepare("PRAGMA table_info(fragments)").all() as Array<{ name: string }>;
+    if (!fragmentColumns.some(({ name }) => name === "conditions_json"))
+      db.exec("ALTER TABLE fragments ADD COLUMN conditions_json TEXT NOT NULL DEFAULT '{}'");
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
 }

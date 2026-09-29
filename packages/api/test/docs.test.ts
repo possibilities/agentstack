@@ -63,6 +63,10 @@ test("the api package serves structured documents for every workspace package", 
       }
     }
     assert.deepEqual(snapshot.packages, [...found.values()]);
+    for (const name of ["fragment_create", "fragment_update"])
+      assert.ok(Object.hasOwn(found.get("roles")!.operations.find(op => op.name === name)!.inputSchema.properties ?? {}, "conditions"));
+    for (const name of ["role_preview", "role_launch_preview"])
+      assert.ok(Object.hasOwn(found.get("roles")!.operations.find(op => op.name === name)!.inputSchema.properties ?? {}, "context"));
     for (const doc of found.values()) for (const transport of doc.transports) {
       assert.ok(Array.isArray(transport.workerOperations));
       if (transport.type !== "mcp") assert.deepEqual(transport.workerOperations, []);

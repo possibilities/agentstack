@@ -20,6 +20,39 @@ instruction fragments. Internal MCP connections use local operator authenticatio
 launching a native CLI creates neither a Bot nor a Worker identity. A later Role
 edit affects later invocations, not the captured snapshot.
 
+## Fragment conditionality
+
+Conditionality is first-class fragment metadata, separate from the body and
+enabled state. `conditions: { model?: string, harness?: string }` is its first
+contract. Every present dimension must equal its explicit rendering-context
+value, case-sensitively. Missing context fails a condition; `{}` is unconditional.
+Values are nonblank strings of at most 200 characters, preserved verbatim.
+Unknown dimensions are rejected rather than silently ignored. New dimensions
+can extend this shared contract later; expressions, OR, patterns and negation
+are not part of this version.
+
+`fragment_create` accepts conditions; `fragment_update` replaces the entire
+object, preserves it when omitted, and clears it with `{}`. All snapshot reads
+retain conditions. Current stores always return an object; older captured
+snapshots without it remain unconditional. A transactional additive SQLite
+upgrade gives existing fragments `{}` without changing revisions or content.
+Writes conservatively enforce the instruction byte limit over all enabled
+nonblank fragments regardless of conditions, so every context stays bounded.
+
+The shared renderer and `role_preview` / `role_launch_preview` accept optional
+`context: { model?: string, harness?: string }`. Preview text, spans, byte counts
+and fragment counts reflect that context. Snapshot reads remain complete and
+unfiltered, and `role_changed` continues to invalidate them after writes.
+
+`stack roles inject [role-name] [--with-model VALUE] [--with-harness VALUE] --
+<claude|codex|opencode> ...` supplies this context only to instruction rendering.
+Flags can occur before or after the Role name, accept `=VALUE`, and cannot be
+repeated. Neither value is inferred from the native command or its model flags.
+They neither select an executable/model nor add arguments to the native command.
+All native delivery paths receive the same selected instruction bytes. Existing
+Bot and Worker callers that supply no context render only unconditional bodies;
+automatic context inference for those lifecycles is a separate decision.
+
 Capabilities are private to the invocation. The launcher excludes ambient
 personal configuration and does not install Role resources into ordinary native
 configuration directories. Even an empty Role uses the isolation path. Native

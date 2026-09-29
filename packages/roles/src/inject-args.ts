@@ -1,9 +1,14 @@
+import { renderValue, type RenderContext } from "./conditions.js";
+
 export type Harness = "claude" | "codex" | "opencode";
 
-export const injectUsage = `usage: stack roles inject [default|existing-role-name] -- <claude|codex|opencode> [native args...]
+export const injectUsage = `usage: stack roles inject [default|existing-role-name] [--with-model VALUE] [--with-harness VALUE] -- <claude|codex|opencode> [native args...]
 
 Omitting the Role, or using literal default, selects the catalog's default.
 Other names match SQLite NOCASE (ASCII case-insensitive).
+--with-model and --with-harness supply exact, case-sensitive fragment rendering
+context only. They do not add native arguments or infer values from the command.
+Both conditions must match when both are set; missing context does not match.
 Starts a fresh, foreground native session with a private Role snapshot.
 Resume, attach, background/remote sessions and capability/config overrides are
 not supported. Unrecognized native options fail explicitly. Use -- before a
@@ -48,11 +53,25 @@ const flags: Record<Harness, { boolean: string; value: string; commands: string;
 };
 const words = (text: string) => new Set(text.split(" ").filter(Boolean));
 
-export function injectArguments(args: string[]): { role: string; harness: Harness; native: string[]; command?: string } {
+export function injectArguments(args: string[]): { role: string; harness: Harness; native: string[]; command?: string; context?: RenderContext } {
   const separator = args.indexOf("--");
-  if (separator < 0 || separator > 1 || args.length <= separator + 1) throw new Error(injectUsage);
-  const role = separator === 0 ? "default" : args[0]!;
-  if (!role || role.startsWith("-")) throw new Error(injectUsage);
+  if (separator < 0 || args.length <= separator + 1) throw new Error(injectUsage);
+  let role = "default", hasRole = false;
+  const context: RenderContext = {};
+  for (let i = 0; i < separator; i++) {
+    const token = args[i]!;
+    const [flag, ...inline] = token.split("=");
+    if (flag === "--with-model" || flag === "--with-harness") {
+      const key = flag === "--with-model" ? "model" : "harness";
+      if (context[key] !== undefined) throw new Error(`duplicate ${flag}`);
+      const value = inline.length ? inline.join("=") : ++i < separator ? args[i] : undefined;
+      if (value === undefined || (!inline.length && value.startsWith("-"))) throw new Error(`${flag} needs a value`);
+      context[key] = renderValue.parse(value);
+    } else {
+      if (!token || token.startsWith("-") || hasRole) throw new Error(injectUsage);
+      role = token; hasRole = true;
+    }
+  }
   const harness = args[separator + 1];
   if (harness !== "claude" && harness !== "codex" && harness !== "opencode") throw new Error(injectUsage);
   const native = args.slice(separator + 2);
@@ -95,5 +114,5 @@ export function injectArguments(args: string[]): { role: string; harness: Harnes
   // Native subcommand detection precedes positionals; require the command first
   // so --server/--no-daemon can be placed in its actual parser scope.
   if (command && native[0] !== command) throw new Error(`put ${harness} ${command} before its native options`);
-  return { role, harness, native, ...(command ? { command } : {}) };
+  return { role, harness, native, ...(command ? { command } : {}), ...(Object.keys(context).length ? { context } : {}) };
 }

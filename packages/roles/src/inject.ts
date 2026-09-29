@@ -142,11 +142,11 @@ export async function inject(args: string[]): Promise<number> {
 }
 
 async function launch(args: string[], signal: AbortSignal): Promise<Exit> {
-  const { role, harness, native, command } = injectArguments(args);
+  const { role, harness, native, command, context } = injectArguments(args);
   const binary = await executable(harness);
   const snapshot = await snapshotFor(role);
   const servers = await connections(snapshot);
-  const instructions = renderInstructions(snapshot);
+  const instructions = renderInstructions(snapshot, context);
   const parent = join(stateDir(), "roles", "inject");
   await mkdir(parent, { recursive: true, mode: 0o700 });
   const root = await mkdtemp(join(parent, `${harness}-`));

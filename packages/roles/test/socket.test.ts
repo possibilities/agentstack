@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
+import type { RoleSnapshot } from "../src/store.js";
 import test from "node:test";
 import { serveApi, socketCall, socketSubscribe } from "@stack/api";
 
@@ -8,6 +10,49 @@ async function createRole(socket: string): Promise<string> {
   const result = await socketCall(socket, "tools/call", { name: "roles_snapshot", arguments: {} }) as { defaultRoleId: string };
   return result.defaultRoleId;
 }
+
+test("fragment conditions persist and select exact context in both previews, with revisioned replacement and clearing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "role-cond-"));
+  const env = { ...process.env, STACK_STATE_DIR: root };
+  let served = await serveApi({ name: "roles", transport: "socket", env });
+  const roleId = await createRole(served.socketPath!);
+  const call = (name: string, args: Record<string, unknown> = {}) => socketCall(served.socketPath!, "tools/call", { name, arguments: { roleId, ...args } });
+  try {
+    await call("category_create", { expectedRevision: 0, title: "Rules" });
+    let snapshot = await call("role_snapshot") as RoleSnapshot;
+    const categoryId = snapshot.categories[0]!.id;
+    let revision = 1;
+    for (const [body, conditions] of [["Always", {}], ["Model", { model: "foo" }], ["Harness", { harness: "bar" }], ["Both", { model: "foo", harness: "bar" }]] as const) {
+      await call("fragment_create", { expectedRevision: revision++, categoryId, title: body, body, conditions });
+    }
+    await served.close();
+    served = await serveApi({ name: "roles", transport: "socket", env });
+    snapshot = await call("role_snapshot") as RoleSnapshot;
+    assert.deepEqual(snapshot.categories[0]!.fragments.map((f) => f.conditions), [{}, { model: "foo" }, { harness: "bar" }, { model: "foo", harness: "bar" }]);
+    for (const [context, expected] of [[undefined, "Always"], [{ model: "foo" }, "Always\n\nModel"], [{ harness: "bar" }, "Always\n\nHarness"],
+      [{ model: "foo", harness: "bar" }, "Always\n\nModel\n\nHarness\n\nBoth"], [{ model: "Foo", harness: "BAR" }, "Always"]] as const) {
+      const preview = await call("role_preview", { context }) as { rendered: string; bytes: number; segments: Array<{ start: number; end: number }> };
+      assert.equal(preview.rendered, expected);
+      assert.equal(preview.bytes, Buffer.byteLength(expected));
+      assert.deepEqual(preview.segments.map(({ start, end }) => preview.rendered.slice(start, end)), expected.split("\n\n"));
+      const launch = await call("role_launch_preview", { context }) as { instructions: { bytes: number; fragments: number } };
+      assert.equal(launch.instructions.bytes, preview.bytes);
+      assert.equal(launch.instructions.fragments, preview.segments.length);
+    }
+    const id = snapshot.categories[0]!.fragments[3]!.id;
+    for (const conditions of [{ unknown: "foo" }, { model: "" }, { harness: "  " }, { model: ["foo"] }])
+      await assert.rejects(call("fragment_update", { expectedRevision: revision, id, conditions }));
+    await assert.rejects(call("fragment_update", { expectedRevision: revision - 1, id, conditions: {} }), /stale/);
+    await call("fragment_update", { expectedRevision: revision++, id, conditions: { model: "foo" } });
+    await call("fragment_update", { expectedRevision: revision++, id, title: "Preserves conditions" });
+    snapshot = await call("role_snapshot") as RoleSnapshot;
+    assert.deepEqual(snapshot.categories[0]!.fragments[3]!.conditions, { model: "foo" });
+    await call("fragment_update", { expectedRevision: revision++, id, conditions: {} });
+    assert.equal((await call("role_preview") as { rendered: string }).rendered, "Always\n\nBoth");
+    await assert.rejects(call("fragment_create", { expectedRevision: revision, categoryId, title: "Too big even when unmatched", body: "x".repeat(262_144), conditions: { model: "never" } }), /exceed/);
+    assert.equal((await call("role_snapshot") as RoleSnapshot).revision, revision);
+  } finally { await served.close(); await rm(root, { recursive: true, force: true }); }
+});
 
 /** Resource writes acknowledge a revision; content assertions read the committed state separately. */
 async function roleCall(socket: string, name: string, args: Record<string, unknown>) {

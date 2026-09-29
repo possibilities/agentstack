@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { botMcpUrl } from "@stack/api";
 import { RoleStore, renderInstructions, renderSegments } from "../src/store.js";
@@ -42,6 +43,10 @@ test("categories and fragments are durable, ordered, and rendered without human 
     assert.throws(() => store.updateFragment(state.revision - 1, gamma, { body: "stale" }), /stale role revision/);
     assert.equal(store.snapshot().revision, state.revision);
     store.close();
+    // Reopen the pre-conditions schema: existing bodies and revisions survive the additive upgrade.
+    const legacy = new DatabaseSync(join(root, "roles.sqlite"));
+    legacy.exec("ALTER TABLE fragments DROP COLUMN conditions_json");
+    legacy.close();
     store = openRole(root);
     assert.deepEqual(store.snapshot(), state);
     state = store.deleteFragment(state.revision, gamma);

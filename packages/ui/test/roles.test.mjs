@@ -20,6 +20,7 @@ const category = (id, fragments, fields = {}) => ({ id, title: id, description: 
 test("fragment state names why text does or does not reach a launch", () => {
   assert.equal(roles.fragmentState(fragment("a"), { enabled: true }), "renders");
   assert.equal(roles.fragmentState(fragment("a", { enabled: false }), { enabled: true }), "off");
+  assert.equal(roles.fragmentState(fragment("a", { conditions: { model: "foo" } }), { enabled: true }), "off");
   assert.equal(roles.fragmentState(fragment("a", { body: " \n " }), { enabled: true }), "empty");
   // A disabled category outranks the fragment's own state.
   assert.equal(roles.fragmentState(fragment("a", { enabled: false }), { enabled: false }), "category-off");

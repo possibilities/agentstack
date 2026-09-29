@@ -168,7 +168,7 @@ The headless `signal` Package API's revisioned model, reasoning effort and optio
 
 ## Fragment
 
-A durable, ordered developer-instruction body with a stable ID and human-only title and description. Only enabled fragments in enabled categories enter `SYSTEM_APPEND.md`.
+A durable, ordered developer-instruction body with a stable ID, human-only title and description, and first-class conditions. Only enabled, nonblank fragments in enabled categories whose conditions match the explicit rendering context enter the instructions. Conditions initially support exact, case-sensitive model and harness values, combined with AND; an empty condition object is unconditional, and missing context never satisfies a condition. `roles inject --with-model VALUE --with-harness VALUE` supplies rendering context without configuring native harness arguments.
 
 ## Role skill
 

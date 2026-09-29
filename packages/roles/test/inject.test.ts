@@ -133,15 +133,21 @@ async function populate(f: Awaited<ReturnType<typeof setup>>) {
 test("inject launches each native boundary with the selected bytes, private credentials, argv and stdio; ordinary launch stays unchanged", async () => {
   const f = await setup();
   try {
-    await populate(f);
+    const roleId = await populate(f);
+    const snapshot = await f.call("role_snapshot", { roleId });
+    await f.call("fragment_update", { roleId, expectedRevision: snapshot.revision, id: snapshot.categories[0].fragments[0].id,
+      conditions: { model: "render-only-model", harness: "render-only-harness" } });
+    await f.call("fragment_create", { roleId, expectedRevision: snapshot.revision + 1, categoryId: snapshot.categories[0].id,
+      title: "Nonmatching", body: "DO NOT INJECT", conditions: { model: "other" } });
     for (const harness of ["claude", "codex", "opencode"]) {
       const ordinaryBefore = await f.run(["--", "ordinary prompt"], { CODEX_HOME: undefined, OPENCODE_CONFIG_DIR: undefined }, harness);
       const native = harness === "opencode" ? ["run", "-mtest/model#high", "--auto", "--format=json", "--", "--settings", "two words"]
         : harness === "codex" ? ["exec", "--model", "test/model", '-cmodel_reasoning_effort="high"', "--sandbox", "read-only", "--json", "--", "--settings", "two words"]
         : ["--model", "test/model", "--effort", "high", "--permission-mode", "plan", "--allowed-tools", "Read", "--output-format", "json", "--max-turns", "2", "--debug", "--", "--settings", "two words"];
-      const result = await f.run(["inject", "rESEARCH É", "--", harness, ...native], { FIXTURE_EXIT: "7" });
+      const result = await f.run(["inject", "--with-model", "render-only-model", "rESEARCH É", "--with-harness=render-only-harness", "--", harness, ...native], { FIXTURE_EXIT: "7" });
       assert.equal(result.code, 7, result.stderr);
       const report = JSON.parse(result.stdout);
+      assert.ok(!report.argv.some((arg: string) => /with-model|with-harness|render-only/.test(arg)));
       assert.deepEqual(harness === "opencode" ? [report.argv[0], ...report.argv.slice(3)] : report.argv.slice(-native.length), native);
       assert.equal(report.input, "piped input\n");
       assert.deepEqual(Object.keys(report.skills).sort(), ["role-skill/SKILL.md", "role-skill/assets/bytes.txt"]);
@@ -222,6 +228,9 @@ test("default selection is catalog-marked; empty Roles still isolate; invalid na
     }
     for (const args of [
       ["inject"], ["inject", "extra", "role", "--", "claude"], ["inject", "--", "unsupported-harness"],
+      ["inject", "--with-model", "--", "claude"], ["inject", "--with-harness=", "--", "claude"],
+      ["inject", "--with-model", "foo", "--with-model", "bar", "--", "claude"],
+      ["inject", "--with-harness", "--with-model", "foo", "--", "claude"],
       ["inject", "missing", "--", "claude"], ["inject", "research é", "--", "claude"],
       ...["--settings=x", "--plugin-dir", "--resume", "-r123", "--bg", "--bare", "--safe-mode", "--system-prompt=x", "attach"].map(flag => ["inject", "--", "claude", flag]),
       ...["--remote=x", "--profile=x", "-cdeveloper_instructions=x", "--enable", "resume", "app-server"].map(flag => ["inject", "--", "codex", flag]),

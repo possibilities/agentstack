@@ -4,11 +4,12 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { initializeRoles } from "./schema.js";
+import { fragmentConditions, matchesConditions, renderContext, type FragmentConditions, type RenderContext } from "./conditions.js";
 import { mcpRecord, skillRecord, trustedProjectRecord, type RoleMcpServer, type Skill, type TrustedProject } from "./resources.js";
 
 /** Unix milliseconds; null on records written before the store kept timestamps. */
 type Stamps = { createdAt: number | null; updatedAt: number | null };
-export type Fragment = { id: string; categoryId: string; title: string; description: string; body: string; enabled: boolean } & Stamps;
+export type Fragment = { id: string; categoryId: string; title: string; description: string; body: string; enabled: boolean; conditions?: FragmentConditions } & Stamps;
 export type Category = { id: string; title: string; description: string; enabled: boolean; fragments: Fragment[] } & Stamps;
 export const roleName = z.string().trim().min(1).max(200).describe("Human-readable role name; unique case-insensitively.");
 export const roleDescription = z.string().max(4_000);
@@ -28,13 +29,14 @@ export const snapshotLimitChars = 750_000;
 export type RenderedSegment = { categoryId: string; fragmentId: string; start: number; end: number };
 
 /** The rendered developer instructions and each contributing fragment's span; blank-line separators belong to no segment. */
-export function renderSegments(snapshot: Pick<RoleSnapshot, "categories">): { rendered: string; segments: RenderedSegment[] } {
+export function renderSegments(snapshot: Pick<RoleSnapshot, "categories">, context: RenderContext = {}): { rendered: string; segments: RenderedSegment[] } {
+  context = renderContext.parse(context);
   const segments: RenderedSegment[] = [];
   let rendered = "";
   for (const category of snapshot.categories) {
     if (!category.enabled) continue;
     for (const fragment of category.fragments) {
-      if (!fragment.enabled || !fragment.body.trim()) continue;
+      if (!fragment.enabled || !fragment.body.trim() || !matchesConditions(fragment.conditions, context)) continue;
       if (rendered) rendered += "\n\n";
       segments.push({ categoryId: category.id, fragmentId: fragment.id, start: rendered.length, end: rendered.length + fragment.body.length });
       rendered += fragment.body;
@@ -44,8 +46,8 @@ export function renderSegments(snapshot: Pick<RoleSnapshot, "categories">): { re
   return { rendered, segments };
 }
 
-export function renderInstructions(snapshot: Pick<RoleSnapshot, "categories">): string {
-  return renderSegments(snapshot).rendered;
+export function renderInstructions(snapshot: Pick<RoleSnapshot, "categories">, context: RenderContext = {}): string {
+  return renderSegments(snapshot, context).rendered;
 }
 
 export class RoleStore {
@@ -193,15 +195,15 @@ export class RoleContents {
     const rows = this.db.prepare("SELECT id, title, description, enabled, created_at, updated_at FROM categories WHERE role_id = ? ORDER BY position, id").all(this.roleId) as Array<{
       id: string; title: string; description: string; enabled: number; created_at: number | null; updated_at: number | null;
     }>;
-    const fragments = this.db.prepare("SELECT id, category_id, title, description, body, enabled, created_at, updated_at FROM fragments WHERE role_id = ? ORDER BY category_id, position, id").all(this.roleId) as Array<{
-      id: string; category_id: string; title: string; description: string; body: string; enabled: number; created_at: number | null; updated_at: number | null;
+    const fragments = this.db.prepare("SELECT id, category_id, title, description, body, enabled, conditions_json, created_at, updated_at FROM fragments WHERE role_id = ? ORDER BY category_id, position, id").all(this.roleId) as Array<{
+      id: string; category_id: string; title: string; description: string; body: string; enabled: number; conditions_json: string; created_at: number | null; updated_at: number | null;
     }>;
     const categories = rows.map(({ enabled, created_at, updated_at, ...row }): Category => ({
       ...row, enabled: Boolean(enabled), fragments: [], createdAt: created_at, updatedAt: updated_at,
     }));
     const byId = new Map(categories.map((category) => [category.id, category]));
-    for (const { category_id, enabled, created_at, updated_at, ...fragment } of fragments) {
-      byId.get(category_id)?.fragments.push({ ...fragment, categoryId: category_id, enabled: Boolean(enabled), createdAt: created_at, updatedAt: updated_at });
+    for (const { category_id, enabled, conditions_json, created_at, updated_at, ...fragment } of fragments) {
+      byId.get(category_id)?.fragments.push({ ...fragment, conditions: fragmentConditions.parse(JSON.parse(conditions_json)), categoryId: category_id, enabled: Boolean(enabled), createdAt: created_at, updatedAt: updated_at });
     }
     const skills = (this.db.prepare("SELECT id, name, description, body, files_json, enabled FROM skills WHERE role_id = ? ORDER BY position, id").all(this.roleId) as Array<{
       id: string; name: string; description: string; body: string; files_json: string; enabled: number;
@@ -248,22 +250,23 @@ export class RoleContents {
   }
 
   /** Appends by default; `index` inserts at that zero-based position in the category. */
-  createFragment(expectedRevision: number, categoryId: string, title: string, body: string, description = "", enabled = true, index?: number): RoleSnapshot {
+  createFragment(expectedRevision: number, categoryId: string, title: string, body: string, description = "", enabled = true, index?: number, conditions: FragmentConditions = {}): RoleSnapshot {
     return this.change(expectedRevision, () => {
       this.category(categoryId);
       const siblings = this.ids("fragments", categoryId);
       if (index !== undefined) this.insertionIndex(index, siblings.length);
       const id = randomUUID();
       const now = Date.now();
-      this.db.prepare("INSERT INTO fragments (id, category_id, title, description, body, enabled, position, created_at, updated_at, role_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(id, categoryId, title, description, body, Number(enabled), siblings.length, now, now, this.roleId);
+      this.db.prepare("INSERT INTO fragments (id, category_id, title, description, body, enabled, position, created_at, updated_at, role_id, conditions_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(id, categoryId, title, description, body, Number(enabled), siblings.length, now, now, this.roleId, JSON.stringify(fragmentConditions.parse(conditions)));
       if (index !== undefined) this.place("fragments", [...siblings.slice(0, index), id, ...siblings.slice(index)]);
     });
   }
 
-  updateFragment(expectedRevision: number, id: string, fields: { categoryId?: string; title?: string; body?: string; description?: string; enabled?: boolean }): RoleSnapshot {
+  updateFragment(expectedRevision: number, id: string, fields: { categoryId?: string; title?: string; body?: string; description?: string; enabled?: boolean; conditions?: FragmentConditions }): RoleSnapshot {
     return this.change(expectedRevision, () => {
       const existing = this.fragment(id);
+      if (fields.conditions !== undefined) this.db.prepare("UPDATE fragments SET conditions_json = ? WHERE id = ?").run(JSON.stringify(fragmentConditions.parse(fields.conditions)), id);
       const categoryId = fields.categoryId ?? existing.categoryId;
       if (categoryId !== existing.categoryId) this.category(categoryId);
       const position = categoryId === existing.categoryId ? existing.position : this.count("fragments", categoryId);
@@ -384,7 +387,8 @@ export class RoleContents {
       this.db.prepare("UPDATE roles SET revision = revision + 1, updated_at = ? WHERE id = ?").run(Date.now(), this.roleId);
       this.db.exec("UPDATE role_catalog SET revision = revision + 1 WHERE singleton = 1");
       const snapshot = this.readSnapshot();
-      renderInstructions(snapshot);
+      // Conservative bound across every context, including mutually exclusive conditions.
+      renderInstructions({ categories: snapshot.categories.map((category) => ({ ...category, fragments: category.fragments.map((fragment) => ({ ...fragment, conditions: {} })) })) });
       if (JSON.stringify(snapshot).length > snapshotLimitChars) throw new Error("role snapshot exceeds the socket response budget");
       if (JSON.stringify(readCatalog(this.db)).length > snapshotLimitChars) throw new Error("role catalog exceeds the socket response budget");
       return snapshot;

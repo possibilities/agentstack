@@ -2,6 +2,7 @@ import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
+import { fragmentConditions, renderContext } from "./src/conditions.js";
 import { configuredMcpPackages, mcpPort, operation, workspaceRoot, type PackageApi } from "@stack/api";
 import { matchingProjects, serverMcpOrigins, roleMcpConfig, roleMcpConflict } from "./src/bundle.js";
 import { RoleStore, instructionLimitBytes, renderSegments, snapshotLimitChars, roleName, roleDescription } from "./src/store.js";
@@ -17,7 +18,7 @@ const description = z.string().max(4_000);
 const body = z.string().max(262_144).describe("Verbatim developer instruction body; metadata never renders.");
 const stamp = z.number().int().nullable().describe("Unix milliseconds; null for records written before timestamps were kept.");
 const stamps = { createdAt: stamp, updatedAt: stamp.describe("Unix milliseconds of the last change to this record's own fields; reordering does not count. Null for older records.") };
-const fragment = z.strictObject({ id, categoryId: id, title, description, body, enabled: z.boolean(), ...stamps });
+const fragment = z.strictObject({ id, categoryId: id, title, description, body, enabled: z.boolean(), conditions: fragmentConditions.optional().describe("Fragment conditions; absent on older snapshots means unconditional. Current store reads always include an object."), ...stamps });
 const category = z.strictObject({ id, title, description, enabled: z.boolean(), fragments: z.array(fragment), ...stamps });
 const index = z.number().int().nonnegative().describe("Zero-based position within the category.");
 const role = z.strictObject({ id: roleId, name: roleName, description: roleDescription, revision, ...stamps });
@@ -132,22 +133,22 @@ export const roleEditorSnapshot = operation({
   async call(ctx: RolesContext, { roleId }) { return ctx.store.role(roleId).snapshot(); },
 });
 export const rolePreview = operation({
-  name: "role_preview", description: "Preview the selected Role's exact developer instructions; descriptions and titles are excluded. Bots and Workers have separate launch defaults.",
-  input: selection, output: preview, annotations: { title: "Preview role", readOnlyHint: true },
-  async call(ctx: RolesContext, { roleId }) {
+  name: "role_preview", description: "Preview the selected Role's exact developer instructions for explicit rendering context; omitted context includes only unconditional fragments. Descriptions and titles are excluded. Context does not configure a native runtime.",
+  input: selection.extend({ context: renderContext.optional() }), output: preview, annotations: { title: "Preview role", readOnlyHint: true },
+  async call(ctx: RolesContext, { roleId, context }) {
     const value = ctx.store.role(roleId).snapshot();
-    const { rendered, segments } = renderSegments(value);
+    const { rendered, segments } = renderSegments(value, context);
     return { roleId, revision: value.revision, rendered, segments, bytes: Buffer.byteLength(rendered), limitBytes: instructionLimitBytes };
   },
 });
 export const roleLaunchPreview = operation({
-  name: "role_launch_preview", description: "Preview the selected Role's enabled skills, MCP servers and config.toml, trusted project roots, and launch issues. Bots and Workers have separate launch defaults.",
-  input: selection.extend({ cwds: z.array(z.string().max(4_096).refine(isAbsolute, "working directory must be an absolute path")).max(64).optional()
+  name: "role_launch_preview", description: "Preview the selected Role's enabled skills, MCP servers and config.toml, trusted project roots, and launch issues. Instruction counts use explicit rendering context; omitted context includes only unconditional fragments.",
+  input: selection.extend({ context: renderContext.optional(), cwds: z.array(z.string().max(4_096).refine(isAbsolute, "working directory must be an absolute path")).max(64).optional()
     .describe("Working directories to match against trusted project roots, such as each Bot's cwd.") }),
   output: launchPreview, annotations: { title: "Preview role launch", readOnlyHint: true },
-  async call(ctx: RolesContext, { roleId, cwds = [] }) {
+  async call(ctx: RolesContext, { roleId, cwds = [], context }) {
     const value = ctx.store.role(roleId).snapshot();
-    const { rendered, segments } = renderSegments(value);
+    const { rendered, segments } = renderSegments(value, context);
     const internal = await internalMcpNames();
     const serverNames = new Set(internal.map((name) => name.toLowerCase()));
     const origins = new Set(ctx.mcpOrigins ?? []);
@@ -199,14 +200,14 @@ export const categoryReorder = operation({
   async call(ctx: RolesContext, { roleId, ids, expectedRevision }) { return changed(ctx, ctx.store.role(roleId).reorderCategories(expectedRevision, ids)); },
 });
 export const fragmentCreate = operation({
-  name: "fragment_create", description: "Create a fragment at the end of a category, or at index. Only enabled bodies in enabled categories render.",
-  input: write.extend({ categoryId: id, title, body, description: description.optional(), enabled: z.boolean().optional(), index: index.optional() }), output: receipt,
+  name: "fragment_create", description: "Create a fragment at the end of a category, or at index. Only enabled nonblank bodies in enabled categories whose conditions all match render. Omitted conditions are unconditional.",
+  input: write.extend({ categoryId: id, title, body, description: description.optional(), enabled: z.boolean().optional(), index: index.optional(), conditions: fragmentConditions.optional() }), output: receipt,
   annotations: { title: "Create instruction fragment" },
-  async call(ctx: RolesContext, input) { return changed(ctx, ctx.store.role(input.roleId).createFragment(input.expectedRevision, input.categoryId, input.title, input.body, input.description, input.enabled, input.index)); },
+  async call(ctx: RolesContext, input) { return changed(ctx, ctx.store.role(input.roleId).createFragment(input.expectedRevision, input.categoryId, input.title, input.body, input.description, input.enabled, input.index, input.conditions)); },
 });
 export const fragmentUpdate = operation({
-  name: "fragment_update", description: "Update content or metadata, enable/disable, or move to another category (appended there). Reorder separately if needed.",
-  input: write.extend({ id, categoryId: id.optional(), title: title.optional(), body: body.optional(), description: description.optional(), enabled: z.boolean().optional() }), output: receipt,
+  name: "fragment_update", description: "Update content or metadata, enable/disable, or move to another category (appended there). Conditions replace the whole condition object; {} clears them; omission preserves them. Reorder separately if needed.",
+  input: write.extend({ id, categoryId: id.optional(), title: title.optional(), body: body.optional(), description: description.optional(), enabled: z.boolean().optional(), conditions: fragmentConditions.optional() }), output: receipt,
   annotations: { title: "Update instruction fragment" },
   async call(ctx: RolesContext, { roleId, id, expectedRevision, ...fields }) { return changed(ctx, ctx.store.role(roleId).updateFragment(expectedRevision, id, fields)); },
 });
