@@ -44,22 +44,29 @@ test("Worker callers read only their own records and never gain lifecycle author
   const runtime = supervisor.runtime(worker.accountId)!;
   const invocation: InvocationContext = { transport: "mcp", botId: null, instance: null, threadId: null, sessionId: null,
     workerId: worker.id, workerInstance: runtime.instance };
-  const sibling = manager.ledger.reserve({ ...intent(worker.accountId), botId: worker.botId }).worker;
-  const otherBot = manager.ledger.reserve({ ...intent(), botId: "other-bot" }).worker;
+  const workItemId = randomUUID();
+  const workContext = { workItemId, scopeRevision: 1, source: "explicit" as const };
+  const sibling = manager.ledger.reserve({ ...intent(worker.accountId), botId: worker.botId }, workContext).worker;
+  const otherBot = manager.ledger.reserve({ ...intent(), botId: "other-bot" }, workContext).worker;
+  manager.ledger.setWorkerPhase(worker.id, "idle");
+  manager.ledger.reserveTurn(worker.id, randomUUID(), "Associated follow-up", worker.model, worker.effort, workItemId, workContext);
   const seq = manager.ledger.history.append(worker.id, turn.id, "fixture", "live", { body: "self data" })!;
   const reads = (id: string, caller = invocation) => [
     () => manager.status(id, caller), () => manager.read(id, 0, 10, caller), () => manager.detail(id, caller),
     () => manager.turns(id, undefined, 10, caller), () => manager.records(id, 0, 10, undefined, caller),
-    () => manager.recordChunk(id, seq, 0, 100, caller), () => manager.tools(id, 0, 10, caller),
+    () => manager.recordChunk(id, seq, 0, 100, caller), () => manager.tools(id, 0, 10, caller), () => manager.turnContext(id, turn.id, caller),
   ];
   try {
     assert.deepEqual((await manager.list(invocation)).map(entry => entry.id), [worker.id]);
+    assert.deepEqual((await manager.workAdmissions(workItemId, 0, 50, invocation)).entries.map(entry => entry.workerId), [worker.id]);
+    assert.equal((await manager.workAdmissions(workItemId, 0, 50)).entries.length, 3, "operator sees all captured associations");
     for (const read of reads(worker.id)) await read();
     for (const target of [sibling.id, otherBot.id, randomUUID()]) {
       for (const read of reads(target)) await assert.rejects(read, /limited to the calling Worker/);
       await assert.rejects(manager.diff(target, {}, invocation), /limited to the calling Worker/);
     }
     await assert.rejects(manager.records(worker.id, 0, 10, sibling.currentTurnId!, invocation), /turn does not belong/);
+    await assert.rejects(manager.turnContext(worker.id, sibling.currentTurnId!, invocation), /turn does not belong/);
     const siblingSeq = manager.ledger.history.append(sibling.id, sibling.currentTurnId, "fixture", "live", { body: "sibling data" })!;
     await assert.rejects(manager.recordChunk(worker.id, siblingSeq, 0, 100, invocation), /unknown worker record/);
     for (const read of reads(worker.id, { ...invocation, workerInstance: randomUUID() })) await assert.rejects(read, /exact live runtime/);
@@ -69,6 +76,7 @@ test("Worker callers read only their own records and never gain lifecycle author
     manager.ledger.setWorkerPhase(worker.id, "closed");
     for (const read of reads(worker.id)) await assert.rejects(read, /exact live runtime/);
     await assert.rejects(manager.list(invocation), /exact live runtime/);
+    await assert.rejects(manager.workAdmissions(workItemId, 0, 50, invocation), /exact live runtime/);
     assert.equal((await manager.status(worker.id)).worker.id, worker.id, "operator can inspect historical records");
   } finally { await manager.close(); await rm(root, { recursive: true, force: true }); }
 });

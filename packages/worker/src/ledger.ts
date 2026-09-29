@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { WorkerHistory, type ObservedSettings } from "./history.js";
 import { SettingsStore } from "@stack/settings";
+import type { WorkContext } from "@stack/hud/schema";
+import type { WorkAdmission } from "@stack/hud/client";
 
 export type WorkerPhase = "preparing" | "idle" | "running" | "awaiting_input" | "cancelling" | "closed" | "failed" | "needs_recovery";
 export type TurnPhase = "queued" | "running" | "awaiting_input" | "cancelling" | "completed" | "cancelled" | "failed" | "unknown";
@@ -15,6 +17,7 @@ export type WorkerRecord = {
   currentTurnId: string | null; issue: string | null; createdAt: number; updatedAt: number;
 };
 export type TurnRecord = { id: string; workerId: string; phase: TurnPhase; stopReason: string | null; issue: string | null;
+  workContext: WorkContext | null;
   requestId: string; prompt: string | null; requestedModel: string | null; requestedEffort: string | null;
   observedSettings: ObservedSettings | null; dispatchedAt: number | null; dispatchedPromptSeq: number | null;
   createdAt: number; updatedAt: number };
@@ -73,13 +76,14 @@ export class WorkerLedger {
     if (!columns.some((column) => column.name === "role_id")) this.db.exec("ALTER TABLE workers ADD COLUMN role_id TEXT");
     if (!columns.some((column) => column.name === "runtime_instance")) this.db.exec("ALTER TABLE workers ADD COLUMN runtime_instance TEXT");
     for (const [table, additions] of Object.entries({ turns: { prompt: "TEXT", requested_model: "TEXT", requested_effort: "TEXT",
-      observed_settings_json: "TEXT", dispatched_at: "INTEGER", dispatched_prompt_seq: "INTEGER" },
+      observed_settings_json: "TEXT", dispatched_at: "INTEGER", dispatched_prompt_seq: "INTEGER", work_context_json: "TEXT" },
     pending_requests: { runtime_instance: "TEXT", tool_call_id: "TEXT", record_seq: "INTEGER" } })) {
       const existing = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
       for (const [name, type] of Object.entries(additions)) if (!existing.some((column) => column.name === name))
         this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
     }
     this.history = new WorkerHistory(this.db);
+    this.db.exec("CREATE INDEX IF NOT EXISTS turns_work_item ON turns(json_extract(work_context_json,'$.workItemId'))");
     this.settings = new SettingsStore(this.db);
     for (const provider of ["codex", "grok", "devin", "claude"]) this.settings.seed(`worker-defaults:${provider}`, {}, "Native Worker selection");
     this.db.prepare("UPDATE workers SET phase = 'needs_recovery', issue = 'Owner restarted during a worker operation; inspect before resuming', updated_at = ? WHERE phase IN ('preparing','running','awaiting_input','cancelling')").run(Date.now());
@@ -132,7 +136,8 @@ export class WorkerLedger {
   }
 
   reserve(input: { requestId: string; botId: string; threadId: string; accountId: string; provider: WorkerRecord["provider"];
-    model: string; effort: string | null; repo: string; baseRef: string | null; task: string; roleId?: string }): { worker: WorkerRecord; turn: TurnRecord; duplicate: boolean } {
+    model: string; effort: string | null; repo: string; baseRef: string | null; task: string; roleId?: string; workItemId?: string | null },
+    workContext: WorkContext | null = null): { worker: WorkerRecord; turn: TurnRecord; duplicate: boolean } {
     const inputDigest = digest(input);
     const prior = this.db.prepare("SELECT id, input_digest FROM workers WHERE request_id = ?").get(input.requestId) as { id: string; input_digest: string } | undefined;
     if (prior) {
@@ -152,6 +157,7 @@ export class WorkerLedger {
           join(this.stateDir, "workers", "worktrees", id), `stack-worker-${id}`, turnId, now, now);
       this.db.prepare("INSERT INTO turns (id, worker_id, request_id, input_digest, phase, created_at, updated_at, prompt, requested_model, requested_effort) VALUES (?,?,?,?, 'queued',?,?,?,?,?)")
         .run(turnId, id, input.requestId, inputDigest, now, now, input.task, input.model, input.effort);
+      this.db.prepare("UPDATE turns SET work_context_json=? WHERE id=?").run(workContext ? JSON.stringify(workContext) : null, turnId);
       this.append(id, turnId, "user", input.task);
       this.history.append(id, null, "launch", "submitted", { repo: input.repo, baseRef: input.baseRef, roleId: input.roleId ?? null, model: input.model, effort: input.effort });
       this.db.exec("COMMIT");
@@ -196,6 +202,7 @@ export class WorkerLedger {
   turn(id: string): TurnRecord | null {
     const row = this.db.prepare("SELECT * FROM turns WHERE id = ?").get(id) as Record<string, unknown> | undefined;
     return row ? { id: row.id as string, workerId: row.worker_id as string, phase: row.phase as TurnPhase,
+      workContext: row.work_context_json ? JSON.parse(row.work_context_json as string) as WorkContext : null,
       stopReason: row.stop_reason as string | null, issue: row.issue as string | null,
       requestId: row.request_id as string, prompt: row.prompt as string | null,
       requestedModel: row.requested_model as string | null, requestedEffort: row.requested_effort as string | null,
@@ -231,17 +238,18 @@ export class WorkerLedger {
     const rows = this.db.prepare("SELECT id FROM turns WHERE worker_id = ? ORDER BY created_at, rowid").all(workerId) as Array<{ id: string }>;
     return rows.map(({ id }) => this.turn(id)!);
   }
-  findTurnRequest(workerId: string, requestId: string, message: string, model: string | null, effort: string | null): TurnRecord | null {
+  findTurnRequest(workerId: string, requestId: string, message: string, model: string | null, effort: string | null, workItemId?: string | null): TurnRecord | null {
     const row = this.db.prepare("SELECT id, worker_id, input_digest FROM turns WHERE request_id = ?").get(requestId) as {
       id: string; worker_id: string; input_digest: string;
     } | undefined;
     if (!row) return null;
-    if (row.worker_id !== workerId || row.input_digest !== digest([workerId, message, model, effort]))
+    if (row.worker_id !== workerId || row.input_digest !== digest([workerId, message, model, effort, ...(workItemId !== undefined ? [workItemId] : [])]))
       throw new Error("requestId was reused for another turn");
     return this.turn(row.id);
   }
-  reserveTurn(workerId: string, requestId: string, message: string, model: string | null, effort: string | null): { turn: TurnRecord; duplicate: boolean } {
-    const hash = digest([workerId, message, model, effort]);
+  reserveTurn(workerId: string, requestId: string, message: string, model: string | null, effort: string | null,
+    workItemId?: string | null, workContext: WorkContext | null = null): { turn: TurnRecord; duplicate: boolean } {
+    const hash = digest([workerId, message, model, effort, ...(workItemId !== undefined ? [workItemId] : [])]);
     const prior = this.db.prepare("SELECT id, worker_id, input_digest FROM turns WHERE request_id = ?").get(requestId) as { id: string; worker_id: string; input_digest: string } | undefined;
     if (prior) {
       if (prior.worker_id !== workerId || prior.input_digest !== hash) throw new Error("requestId was reused for another turn");
@@ -255,11 +263,27 @@ export class WorkerLedger {
     try {
       this.db.prepare("INSERT INTO turns (id, worker_id, request_id, input_digest, phase, created_at, updated_at, prompt, requested_model, requested_effort) VALUES (?,?,?,?, 'queued',?,?,?,?,?)")
         .run(id, workerId, requestId, hash, now, now, message, model, effort);
+      this.db.prepare("UPDATE turns SET work_context_json=? WHERE id=?").run(workContext ? JSON.stringify(workContext) : null, id);
       this.db.prepare("UPDATE workers SET current_turn_id = ?, phase = 'running', updated_at = ? WHERE id = ?").run(id, now, workerId);
       this.append(workerId, id, "user", message);
       this.db.exec("COMMIT");
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
     return { turn: this.turn(id)!, duplicate: false };
+  }
+  workAdmissions(workItemId: string, after: number, limit: number, owner?: { botId?: string; workerId?: string }) {
+    const where = ["json_extract(t.work_context_json,'$.workItemId')=?", "t.rowid>?"];
+    const params: Array<string | number> = [workItemId, after];
+    if (owner?.botId) { where.push("w.bot_id=?"); params.push(owner.botId); }
+    if (owner?.workerId) { where.push("w.id=?"); params.push(owner.workerId); }
+    const rows = this.db.prepare(`SELECT t.rowid AS sequence,t.id FROM turns t JOIN workers w ON w.id=t.worker_id WHERE ${where.join(" AND ")} ORDER BY t.rowid LIMIT ?`)
+      .all(...params, limit + 1) as Array<{ sequence: number; id: string }>;
+    const entries: WorkAdmission[] = rows.slice(0, limit).map(row => {
+      const turn = this.turn(row.id)!, worker = this.worker(turn.workerId)!;
+      return { sequence: row.sequence, workerId: worker.id, turnId: turn.id, context: turn.workContext!, botId: worker.botId, threadId: worker.threadId,
+        accountId: worker.accountId, provider: worker.provider, model: turn.requestedModel, effort: turn.requestedEffort,
+        workerPhase: worker.phase, turnPhase: turn.phase, current: worker.currentTurnId === turn.id, createdAt: turn.createdAt, updatedAt: turn.updatedAt };
+    });
+    return { entries, nextCursor: rows.length > entries.length ? entries.at(-1)!.sequence : null };
   }
   setTurnPhase(id: string, phase: TurnPhase, stopReason: string | null = null, issue: string | null = null): TurnRecord {
     this.db.prepare("UPDATE turns SET phase = ?, stop_reason = ?, issue = ?, updated_at = ? WHERE id = ?")

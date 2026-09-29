@@ -111,6 +111,34 @@ An Stack-owned native session started by a Bot (or the local operator) under one
 
 One admitted prompt on an existing Worker, dispatched through its native backend. Admission returns durable Worker and turn IDs before completion; status and transcript reads establish the outcome. A lost response is `unknown`, never a reason to resubmit the turn automatically. A subsequent turn can request corrections in the same native session after it is idle or explicitly loaded for recovery.
 
+A turn can capture a HUD Work context: exact Work item ID, observed scope revision
+and explicit, Chat-focus or continuation provenance. The Worker owner stores this
+with admission; retries and runtime recovery preserve it. Native completion never
+completes the Work item.
+
+## Work item
+
+A shared, durable objective owned by the `hud` Package API, with ordered nested
+children, semantic state, dependencies, next action, human/agent attention and
+typed resource links. Optimistic revisions coordinate human/agent edits; a separate
+scope revision identifies the objective, parent and dependency epoch. Namespaced
+agent metadata is available through explicit reads and correlation queries, outside
+ordinary human projections. _Avoid_: Worker turn, native task, runtime phase
+
+## Work context
+
+A Work item ID and scope revision captured for one Worker admission. It comes from
+an explicit selector, verified Chat focus or continuation of the preceding turn.
+It is historical association evidence, not a lease, dispatch permission or proof of
+completion. _Avoid_: inferred ownership by title, account or working directory
+
+## Chat focus
+
+An explicit, revisioned Work selection keyed by a Bot's sanctioned main thread and
+one exact Chat. Descendants inherit the nearest selected ancestor; saved null blocks
+inheritance. Changing focus never reassigns previously admitted Worker turns.
+_Avoid_: native activity, UI selection, global Bot current task
+
 ## Worker MCP invocation context
 
 Transport-supplied Worker ID and exact native runtime instance from a private signed MCP URL. The server checks both against the durable Worker and live account backend. A manifest's positive `mcp.workerOperations` list, intersected with MCP exposure, selects disclosed reads; omission denies all. Read-only hints alone grant no access. Worker record reads are self-only, and Worker calls cannot subscribe Bot threads. It is not an OS sandbox. _Avoid_: Bot identity, operator authority

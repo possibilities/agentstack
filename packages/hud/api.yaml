@@ -1,0 +1,13 @@
+name: hud
+description: Shared durable work hierarchy, dependencies, collaboration history, agent metadata and exact Stack resource associations. Semantic work state is independent of native execution. Chat focus supplies context captured by Worker admissions.
+socket:
+  description: Full local work collaboration API and internal Worker context resolution.
+mcp:
+  workerOperations: []
+  operations: [work_create, work_update, work_batch, work_get, work_list, work_tree, work_metadata_get, work_metadata_set, work_note_add, work_activity_list, work_focus_get, work_focus_set, work_context_resolve, work_resources]
+  events: [hud_changed, work_changed]
+  description: Bot-managed shared work with verified Chat provenance, durable edits, focus and change subscriptions.
+websocket:
+  operations: [work_create, work_update, work_batch, work_get, work_list, work_tree, work_metadata_get, work_metadata_set, work_note_add, work_activity_list, work_focus_get, work_focus_set, work_resources]
+  events: [hud_changed, work_changed]
+  description: Human collaboration and bounded projections for the Stack UI, with explicit metadata reads.

@@ -174,7 +174,11 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
       async call() { return { mcpUrls: { roles: "http://127.0.0.1:8743/mcp/roles", notify: "http://127.0.0.1:8743/mcp/notify" } }; } })] });
   const bots = await serveSocket({ info: { name: "bots", description: "Bots", transportDescription: "Socket", path: socketPath("bots", env) },
     context: {}, operations: [operation({ name: "bot_list", description: "List", input: z.object({}), output: z.any(),
-      async call() { return { bots: [] }; } })] });
+       async call() { return { bots: [] }; } })] });
+  const hud = await serveApi({ name: "hud", transport: "socket", env });
+  const hudCall = (name: string, args: object) => socketCall(socketPath("hud", env), "tools/call", { name, arguments: args });
+  const workItemId = randomUUID();
+  await hudCall("work_create", { requestId: randomUUID(), id: workItemId, title: "Fixture work", objective: "Keep admissions associated", state: "active" });
   let manager: WorkerManager | undefined;
   let workerSocket: Awaited<ReturnType<typeof serveSocket>> | undefined;
   const scopedChanges: string[] = [];
@@ -195,7 +199,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     await supervisor.reconcile();
     const catalog = await supervisor.catalog(accountId, true);
     assert.deepEqual(catalog.models[0]?.efforts, ["low", "high"]);
-    const start = { accountId, model: "xai/grok-build", effort: "low", repo, task: "Write an output file", requestId: randomUUID() };
+    const start = { accountId, model: "xai/grok-build", effort: "low", repo, task: "Write an output file", requestId: randomUUID(), workItemId };
     await assert.rejects(manager.start(start, { transport: "mcp", botId: null, instance: null, threadId: null, sessionId: null }), /Bot-bound MCP/);
     await assert.rejects(manager.start(start, { transport: "mcp", botId: "foreign-bot", instance: "old", threadId: "other", sessionId: null }), /verified Bot thread|Bot launch/);
     assert.deepEqual(manager.ledger.workers(), []);
@@ -205,6 +209,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     assert.equal(failed.turn.dispatchedAt, null); assert.equal(failed.turn.requestedModel, start.model);
     const started = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_start", arguments: start }) as Awaited<ReturnType<WorkerManager["start"]>>;
     assert.equal(started.duplicate, false);
+    assert.deepEqual(started.turn.workContext, { workItemId, scopeRevision: 1, source: "explicit" });
     assert.equal(started.worker.roleId, roleId);
     assert.equal(started.worker.roleRevision, applied.revision);
     await assert.rejects(manager.start({ ...start, task: "Different task" }), /requestId was reused/);
@@ -219,6 +224,13 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     const listed = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_list", arguments: {} }) as { workers: Awaited<ReturnType<WorkerManager["list"]>> };
     const row = listed.workers.find((worker) => worker.id === id)!;
     assert.equal(row.turn?.phase, "completed"); assert.equal(row.turn?.stopReason, "end_turn"); assert.equal(row.pendingPermissions, 0);
+    const resources = await hudCall("work_resources", { id: workItemId }) as { workers: { entries: Array<{ workerId: string; turnPhase: string; context: { scopeRevision: number } }> }; observation: { state: string } };
+    assert.equal(resources.observation.state, "available");
+    assert.equal(resources.workers.entries.find(entry => entry.workerId === id)?.turnPhase, "completed");
+    assert.equal((await hudCall("work_get", { id: workItemId }) as { state: string }).state, "active", "native completion cannot complete semantic work");
+    await hudCall("work_update", { requestId: randomUUID(), id: workItemId, expectedRevision: 1, patch: { objective: "Revised work" } });
+    assert.equal((await manager.start(start)).turn.workContext?.scopeRevision, 1, "admission retry retains its original scope");
+    await assert.rejects(manager.start({ ...start, workItemId: null }), /requestId was reused/);
     assert.equal("prompt" in (row.turn ?? {}), false, "list turns stay compact");
     const changes = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_diff", arguments: { id } }) as Awaited<ReturnType<WorkerManager["diff"]>>;
     assert.equal(changes.baseCommit, started.worker.baseCommit); assert.equal(changes.uncommitted, true);
@@ -282,6 +294,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     assert.equal(await readFile(join(started.worker.cwd!, "output.txt"), "utf8"), output);
     const followed = { id, message: "ASK to write approval", requestId: randomUUID() };
     const sent = await manager.send(followed);
+    assert.deepEqual(sent.turn.workContext, { workItemId, scopeRevision: 2, source: "continuation" });
     assert.equal((await manager.send(followed)).turn.id, sent.turn.id);
     await assert.rejects(manager.send({ ...followed, message: "Different follow-up" }), /requestId was reused/);
     for (let i = 0; i < 100 && (await manager.status(id)).worker.phase !== "awaiting_input"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
@@ -329,6 +342,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     const reopenedSupervisor = new WorkerSupervisor(root, env);
     manager = new WorkerManager(root, reopenedSupervisor, env);
     assert.equal((await manager.start(start)).worker.id, id, "a retry keeps its original Worker after the default changes");
+    assert.equal((await manager.turnContext(id, started.turn.id)).workContext?.scopeRevision, 1, "restart preserves prior work evidence");
     assert.equal((await manager.status(id)).worker.phase, "needs_recovery");
     await reopenedSupervisor.reconcile();
     assert.equal((await manager.resume(id, false)).phase, "idle");
@@ -359,10 +373,14 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     assert.equal(await readFile(join(chosen.worker.cwd!, "output.txt"), "utf8"), `Check your work.\n\n${start.task}`);
     await manager.closeWorker(chosen.worker.id);
     await manager.remove(chosen.worker.id, true);
+    await hudCall("work_update", { requestId: randomUUID(), id: workItemId, expectedRevision: 2, patch: { state: "completed" } });
+    const beforeClosedAdmission = manager.ledger.workers().length;
+    await assert.rejects(manager.start({ ...start, requestId: randomUUID() }), /work_closed/);
+    assert.equal(manager.ledger.workers().length, beforeClosedAdmission, "closed work is refused before Worker admission or native dispatch");
   } finally {
     await workerSocket?.close();
     await manager?.close();
-    await bots.close(); await server.close(); await roles.close(); await auth.close();
+    await hud.close(); await bots.close(); await server.close(); await roles.close(); await auth.close();
     roleStore.close();
     await rm(root, { recursive: true, force: true });
   }

@@ -11,6 +11,7 @@
 - `pnpm test` builds the packages and runs their compiled tests. Use a disposable `STACK_STATE_DIR` for lifecycle checks; never claim or remove a live server's socket to make a test pass.
 - `scripts/install.sh --check` prints the installation plan. `--install` installs the pinned codexnk runtime, builds, and links the command; neither command restarts a running server.
 - A Bot's `mainThreadId` is its sanctioned root. Stack thread and future subagent views must include only that root and its descendants. Other top-level Codex threads on the same socket are not Bot threads; `threads_changed` is an invalidation notice, not evidence that a sanctioned thread changed.
+- `packages/hud` owns semantic Work, metadata, collaboration history and Chat focus. Worker admissions capture Work context in the Worker ledger; native completion never completes Work. Resource views refresh from HUD and Worker events independently. See [ADR 0132](docs/adr/0132-native-hud-work-collaboration.md).
 
 ## Brain and device clients
 

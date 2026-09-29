@@ -36,7 +36,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.deepEqual(
       docs.packages.map((item) => item.name),
-       ["access", "api", "auth", "bots", "brain", "browse", "content", "infer", "notify", "proc", "roles", "scrape", "serve", "signal", "usage", "worker", "xcom"],
+       ["access", "api", "auth", "bots", "brain", "browse", "content", "hud", "infer", "notify", "proc", "roles", "scrape", "serve", "signal", "usage", "worker", "xcom"],
     );
     assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@stack/${item.name}`));
 
@@ -75,7 +75,7 @@ test("the api package serves structured documents for every workspace package", 
         assert.equal(doc.operations.find(op => op.name === name)?.annotations.readOnlyHint, true);
       }
     }
-    for (const pkg of ["auth", "bots", "browse", "notify", "serve", "proc", "scrape", "usage", "xcom"])
+    for (const pkg of ["auth", "bots", "browse", "hud", "notify", "serve", "proc", "scrape", "usage", "xcom"])
       assert.deepEqual(found.get(pkg)!.transports.find(t => t.type === "mcp")!.workerOperations, []);
     assert.deepEqual(found.get("api")!.transports.find(t => t.type === "mcp")!.workerOperations, ["docs_list", "docs_get", "docs_snapshot"]);
     assert.deepEqual(found.get("roles")!.transports.find(t => t.type === "mcp")!.workerOperations, ["roles_snapshot", "role_internal_mcp_list", "role_snapshot", "role_preview"]);
@@ -90,8 +90,8 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok(Object.hasOwn(xcom.operations.find(op => op.name === "xcom_users")?.outputSchema.properties ?? {}, "results"));
     assert.ok(xcom.transports.find(t => t.type === "mcp")!.operations.includes("xcom_articles_pending"));
     const responseLength = Buffer.byteLength(JSON.stringify({ id: 1, result: snapshot })) + 1;
-    // Include managed settings discovery while keeping at least 75% of the four-MB frame limit free.
-    assert.ok(responseLength < 1_000_000, `discovery snapshot exceeds the socket response budget: ${responseLength} bytes`);
+    // Include HUD's typed collaboration contract while keeping over two-thirds of the four-MB frame free.
+    assert.ok(responseLength < 1_250_000, `discovery snapshot exceeds the socket response budget: ${responseLength} bytes`);
 
     const brainHttp = found.get("brain")!.transports.find((transport) => transport.type === "http")!;
     const proc = found.get("proc")!;
@@ -288,6 +288,13 @@ test("the api package serves structured documents for every workspace package", 
       assert.equal(patch.annotations.idempotentHint, true);
     }
     assert.ok(Object.hasOwn(workerStart.inputSchema.properties ?? {}, "roleId"));
+    assert.ok(Object.hasOwn(workerStart.inputSchema.properties ?? {}, "workItemId"));
+    const hud = found.get("hud")!;
+    assert.equal(existsSync(join(stateDir, "hud")), false, "discovery must not initialize the work store");
+    assert.equal(Object.hasOwn(hud.operations.find(op => op.name === "work_get")!.outputSchema.properties ?? {}, "metadata"), false);
+    assert.ok(hud.transports.find(t => t.type === "mcp")!.operations.includes("work_context_resolve"));
+    assert.ok(!hud.transports.find(t => t.type === "websocket")!.operations.includes("work_context_resolve"));
+    assert.deepEqual(hud.transports.find(t => t.type === "websocket")!.events, ["hud_changed", "work_changed"]);
     assert.equal((workerStart.inputSchema.required as string[]).includes("roleId"), false);
     const launchRole = roles.operations.find((operation) => operation.name === "role_launch_snapshot")!;
     assert.ok(Object.hasOwn(launchRole.inputSchema.properties ?? {}, "roleId"));
@@ -317,7 +324,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(workers.eventScope?.required, false);
     assert.deepEqual(workers.operations.map((operation) => operation.name), ["worker_settings_catalog", "worker_settings_read", "worker_settings_preview", "worker_settings_patch", "worker_settings_apply", "worker_catalog", "worker_runtime_list", "worker_account_drain",
       "worker_start", "worker_list", "worker_status", "worker_read", "worker_detail", "worker_turn_list", "worker_record_list", "worker_record_read", "worker_tool_list",
-      "worker_diff", "worker_send", "worker_respond", "worker_cancel", "worker_resume", "worker_close", "worker_remove"]);
+      "worker_diff", "worker_send", "worker_respond", "worker_cancel", "worker_resume", "worker_close", "worker_remove", "worker_work_list", "worker_turn_context"]);
     for (const name of ["worker_list", "worker_detail", "worker_turn_list", "worker_record_list", "worker_record_read", "worker_tool_list", "worker_diff"]) {
       assert.equal(workers.operations.find((operation) => operation.name === name)?.annotations.readOnlyHint, true);
     }
@@ -331,7 +338,7 @@ test("the api package serves structured documents for every workspace package", 
       assert.ok(JSON.stringify(workers.operations.find((operation) => operation.name === name)?.outputSchema).includes('"claude"'));
     }
     const workerTurns = workers.operations.find((operation) => operation.name === "worker_turn_list") as OperationDoc;
-    for (const field of ["prompt", "requestedModel", "observedSettings", "dispatchedPromptSeq"]) assert.ok(JSON.stringify(workerTurns.outputSchema).includes(`"${field}"`));
+    for (const field of ["prompt", "requestedModel", "observedSettings", "dispatchedPromptSeq", "workContext"]) assert.ok(JSON.stringify(workerTurns.outputSchema).includes(`"${field}"`));
     assert.ok(JSON.stringify(workers.operations.find((operation) => operation.name === "worker_tool_list")?.outputSchema).includes('"hierarchyVerified"'));
     const workerListSchema = JSON.stringify(workers.operations.find((operation) => operation.name === "worker_list")?.outputSchema);
     for (const field of ["turn", "pendingPermissions"]) assert.ok(workerListSchema.includes(`"${field}"`));

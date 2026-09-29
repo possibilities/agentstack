@@ -67,6 +67,11 @@ export function notifyChild(): OwnedChild {
   return { name: "notify", command: process.execPath,
     args: [join(dirname(apiPackage), "dist", "src", "transport-main.js"), "notify", "socket"] };
 }
+export function hudChild(): OwnedChild {
+  const apiPackage = require.resolve("@stack/api/package.json");
+  return { name: "hud", command: process.execPath,
+    args: [join(dirname(apiPackage), "dist", "src", "transport-main.js"), "hud", "socket"] };
+}
 export function contentChild(): OwnedChild {
   const apiPackage = require.resolve("@stack/api/package.json");
   return {

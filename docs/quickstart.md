@@ -26,6 +26,13 @@ To create an account, call `account_login_start` with `{}` on the auth Package A
 
 For Workers, prefer `worker_account_login_start` for Grok, Devin or Claude and follow its native sign-in state. Creating a Codex Bot account also creates its paired Codex Worker; pass that Worker's ID to sign it in separately with the same ChatGPT login. `worker_account_prepare` and `worker_account_confirm` provide a terminal fallback. `worker_catalog({accountId})` lists account-bound model/effort choices. A Bot can call `worker_start` with that exact selection, an absolute Git repository root, a task, and a fresh `requestId`; the returned Worker retains its own Git worktree and native session. Read status and transcript while it works, then send a follow-up turn in the same session. See [operations](operations.md) for recovery and cleanup.
 
+HUD tracks shared nested work through `work_create`, `work_update`, `work_tree` and
+its collaboration journal. A Bot can select `work_focus_set` for its verified Chat;
+Worker starts inherit that focus. Explicit `workItemId` selects a different Work
+item and null opts out. Follow-ups preserve the preceding turn's association unless
+changed. Each admitted turn retains its observed scope revision. See the
+[HUD API workflow](../packages/hud/README.md); its dedicated UI space is separate.
+
 Browser control defaults to the exact UI origins `http://127.0.0.1:<STACK_UI_PORT>` and `http://localhost:<STACK_UI_PORT>` (port 8745 by default). For `next dev`, configure `STACK_WEBSOCKET_ORIGIN=http://localhost:3000` on the server before an authorized restart, use the same state directory for Next, then run `stack serve open ui http://localhost:3000`. This replaces the default browser-origin allowance. UI obtains a fresh single-use ticket for every WebSocket connection; Origin-less native clients instead supply their operator bearer header.
 
 Structured documents for every package API — operations with their JSON Schemas, event topics, and configured transports — come from the `api` socket: `docs_list` names the packages, `docs_get` returns one package's document, and `docs_snapshot` returns one consistent catalog for a full reference. MCP and WebSocket URLs are included when their ports are fixed.

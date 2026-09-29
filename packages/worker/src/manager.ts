@@ -11,12 +11,13 @@ import { safeValue } from "./history.js";
 import { readWorktreeDiff, type DiffOptions } from "./diff.js";
 import { evidence, settingsState, type SettingsPatch, type SettingsBackend, type SettingsSnapshot } from "@stack/settings";
 import { randomUUID } from "node:crypto";
+import { resolveWorkContext } from "@stack/hud/client";
 
 /** worker_list's compact most recent turn; worker_status and worker_turn_list carry the rest. */
-export type ListedTurn = Pick<TurnSummary, "id" | "phase" | "stopReason" | "issue" | "dispatchedAt" | "createdAt" | "updatedAt">;
+export type ListedTurn = Pick<TurnSummary, "id" | "phase" | "stopReason" | "issue" | "dispatchedAt" | "createdAt" | "updatedAt" | "workContext">;
 
-export type StartInput = { accountId: string; model?: string; effort?: string; repo: string; baseRef?: string; roleId?: string; task: string; requestId: string };
-export type SendInput = { id: string; message: string; requestId: string; model?: string; effort?: string };
+export type StartInput = { accountId: string; model?: string; effort?: string; repo: string; baseRef?: string; roleId?: string; task: string; requestId: string; workItemId?: string | null };
+export type SendInput = { id: string; message: string; requestId: string; model?: string; effort?: string; workItemId?: string | null };
 
 export class WorkerManager {
   readonly ledger: WorkerLedger;
@@ -235,7 +236,7 @@ export class WorkerManager {
       : this.ledger.workers(owner!.botId === LOCAL_OPERATOR_ID ? undefined : owner!.botId);
     return workers.map((worker) => {
       const turn = worker.currentTurnId ? this.ledger.turn(worker.currentTurnId) : null;
-      return { ...worker, turn: turn && { id: turn.id, phase: turn.phase, stopReason: turn.stopReason, issue: turn.issue,
+      return { ...worker, turn: turn && { id: turn.id, workContext: turn.workContext, phase: turn.phase, stopReason: turn.stopReason, issue: turn.issue,
         dispatchedAt: turn.dispatchedAt, createdAt: turn.createdAt, updatedAt: turn.updatedAt }, pendingPermissions: this.ledger.pending(worker.id).length };
     });
   }
@@ -248,6 +249,20 @@ export class WorkerManager {
     const worker = await this.readable(id, invocation);
     const turn = worker.currentTurnId ? this.ledger.turn(worker.currentTurnId) : null;
     return { worker, turn: turn ? summarizeTurn(turn) : null, pending: this.ledger.pending(id) };
+  }
+  async workAdmissions(workItemId: string, after: number, limit: number, invocation?: InvocationContext) {
+    if (invocation?.workerId) {
+      await this.readable(invocation.workerId, invocation);
+      return this.ledger.workAdmissions(workItemId, after, limit, { workerId: invocation.workerId });
+    }
+    const owner = await this.owner(invocation);
+    return this.ledger.workAdmissions(workItemId, after, limit, owner.botId === LOCAL_OPERATOR_ID ? undefined : { botId: owner.botId });
+  }
+  async turnContext(id: string, turnId: string, invocation?: InvocationContext) {
+    await this.readable(id, invocation);
+    const turn = this.ledger.turn(turnId);
+    if (!turn || turn.workerId !== id) throw new Error("turn does not belong to this worker");
+    return { workerId: id, turnId, workContext: turn.workContext };
   }
   async read(id: string, afterSeq: number, limit: number, invocation?: InvocationContext) {
     await this.readable(id, invocation);
@@ -348,7 +363,7 @@ export class WorkerManager {
     const owner = await this.owner(invocation);
     const intent = { requestId: input.requestId, botId: owner.botId, threadId: owner.threadId, accountId: input.accountId,
       provider: "" as WorkerRecord["provider"], model: input.model, effort: input.effort ?? null, repo: input.repo,
-      baseRef: input.baseRef ?? null, task: input.task, ...(input.roleId ? { roleId: input.roleId } : {}) };
+      baseRef: input.baseRef ?? null, task: input.task, ...(input.roleId ? { roleId: input.roleId } : {}), ...(input.workItemId !== undefined ? { workItemId: input.workItemId } : {}) };
     const existing = this.ledger.startByRequestId(input.requestId);
     if (existing) {
       ownsWorker(owner, existing);
@@ -366,7 +381,8 @@ export class WorkerManager {
     if (!model) throw new Error("Select a model from worker_catalog or save a provider Worker default");
     intent.model = model; intent.effort = effort;
     await this.checkChoice(input.accountId, model, effort);
-    const reserved = this.ledger.reserve({ ...intent, model });
+    const workContext = await resolveWorkContext(this.env, input.workItemId, invocation);
+    const reserved = this.ledger.reserve({ ...intent, model }, workContext);
     if (reserved.duplicate) return { ...reserved, turn: summarizeTurn(reserved.turn) };
     const id = reserved.worker.id;
     const selection = this.ledger.settings.seed(`worker:${id}`, { model, ...(effort ? { effort } : {}) }, "Worker admission selection", defaults.revision);
@@ -461,12 +477,14 @@ export class WorkerManager {
     const selected = input.model ?? (previous?.workerId === worker.id ? previous.requestedModel ?? worker.model : String(snapshot.values.model ?? worker.model));
     const effort = input.effort ?? (previous?.workerId === worker.id ? previous.requestedEffort : input.model && input.model !== worker.model ? null : typeof snapshot.values.effort === "string" ? snapshot.values.effort : worker.effort);
     // Check an existing request before requiring a currently fresh catalog or an idle worker.
-    const prior = this.ledger.findTurnRequest(worker.id, input.requestId, input.message, selected, effort);
+    const prior = this.ledger.findTurnRequest(worker.id, input.requestId, input.message, selected, effort, input.workItemId);
     if (prior) return { worker: this.ledger.worker(worker.id)!, turn: summarizeTurn(prior), duplicate: true };
     await this.checkChoice(worker.accountId, selected, effort);
     const runtime = this.supervisor.runtime(worker.accountId);
     if (!runtime || runtime.instance !== worker.runtimeInstance || !worker.sessionId) throw new Error("worker session is not loaded; use worker_resume");
-    const reserved = this.ledger.reserveTurn(worker.id, input.requestId, input.message, selected, effort);
+    const previousContext = worker.currentTurnId ? this.ledger.turn(worker.currentTurnId)?.workContext ?? null : null;
+    const workContext = await resolveWorkContext(this.env, input.workItemId, invocation, previousContext);
+    const reserved = this.ledger.reserveTurn(worker.id, input.requestId, input.message, selected, effort, input.workItemId, workContext);
     if (reserved.duplicate) return { worker, turn: summarizeTurn(reserved.turn), duplicate: true };
     let applied = snapshot;
     try {

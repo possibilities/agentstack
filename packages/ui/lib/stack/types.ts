@@ -189,7 +189,7 @@ export type WorkerSession = { id: string; botId: string; threadId: string; accou
   currentTurnId: string | null; issue: string | null; createdAt: number; updatedAt: number };
 
 /** worker_list's compact most recent turn. */
-export type WorkerListTurn = Pick<WorkerTurn, "id" | "phase" | "stopReason" | "issue" | "dispatchedAt" | "createdAt" | "updatedAt">;
+export type WorkerListTurn = Pick<WorkerTurn, "id" | "phase" | "stopReason" | "issue" | "dispatchedAt" | "createdAt" | "updatedAt" | "workContext">;
 /** A worker_list row: the Worker plus its latest turn and pending permission count. */
 export type WorkerListItem = WorkerSession & { turn: WorkerListTurn | null; pendingPermissions: number };
 export type WorkerDiffFile = { path: string; oldPath: string | null;
@@ -202,11 +202,41 @@ export type WorkerDiff = { workerId: string; branch: string | null; baseCommit: 
 /** Worker conversation details, read by the Workers space. */
 export type WorkerObservedSettings = { model: string | null; effort: string | null; mode: string | null; at: number; recordSeq: number };
 export type WorkerTurn = { id: string; workerId: string;
+  workContext: WorkContext | null;
   phase: "queued" | "running" | "awaiting_input" | "cancelling" | "completed" | "cancelled" | "failed" | "unknown";
   stopReason: string | null; issue: string | null; requestId: string; prompt: string | null;
   requestedModel: string | null; requestedEffort: string | null; observedSettings: WorkerObservedSettings | null;
   dispatchedAt: number | null; dispatchedPromptSeq: number | null; createdAt: number; updatedAt: number };
 export type WorkerTurnSummary = Omit<WorkerTurn, "prompt"> & { promptChars: number | null };
+
+/** HUD semantic work is separate from Worker/Bot runtime phase. No HUD space is registered yet. */
+export type WorkContext = { workItemId: string; scopeRevision: number; source: "explicit" | "focus" | "continuation" };
+export type WorkState = "planned" | "active" | "blocked" | "waiting" | "paused" | "review" | "completed" | "cancelled";
+export type WorkActor = { kind: "operator" } | { kind: "bot"; botId: string; mainThreadId: string; threadId: string };
+export type WorkReference = { kind: "operator" } | { kind: "bot"; botId: string; mainThreadId: string }
+  | { kind: "chat"; botId: string; mainThreadId: string; threadId: string }
+  | { kind: "worker"; workerId: string; turnId: string | null }
+  | { kind: "work"; workItemId: string }
+  | { kind: "resource"; package: string; resource: string; id: string; version: string | null }
+  | { kind: "url"; url: string };
+export type WorkLink = { relation: "lead" | "contributor" | "context" | "evidence" | "output" | "related"; target: WorkReference; label: string };
+export type WorkItem = { id: string; sequence: number; revision: number; scopeRevision: number; title: string; objective: string; summary: string;
+  state: WorkState; parentId: string | null; order: number; priority: "low" | "normal" | "high" | "urgent";
+  nextAction: string; attention: "none" | "human" | "agent"; dependencies: string[]; labels: string[]; links: WorkLink[];
+  createdBy: WorkActor; updatedBy: WorkActor; createdAt: number; updatedAt: number };
+export type WorkTree = { rows: Array<{ item: WorkItem; depth: number; childCount: number; openDescendants: number; unmetDependencies: string[] }>;
+  total: number; nextOffset: number | null; snapshot: number };
+export type WorkFocus = { botId: string; mainThreadId: string; threadId: string; revision: number; workItemId: string | null; updatedAt: number | null; updatedBy: WorkActor | null };
+export type WorkActivity = { sequence: number; workItemId: string; revision: number; scopeRevision: number; requestId: string; actor: WorkActor; at: number;
+  kind: "created" | "updated" | "metadata" | "note" | "progress" | "result" | "decision" | "handoff" | "focus";
+  fields: string[]; changes: Array<{ field: string; before: unknown; after: unknown }>; body: string | null; references: WorkReference[] };
+export type WorkReceipt = { requestId: string; duplicate: boolean; cursor: number; items: Array<{ id: string; revision: number; scopeRevision: number }> };
+export type WorkAdmission = { sequence: number; workerId: string; turnId: string; context: WorkContext; botId: string; threadId: string; accountId: string;
+  provider: WorkerAccount["provider"]; model: string | null; effort: string | null; workerPhase: WorkerSession["phase"]; turnPhase: WorkerTurn["phase"];
+  current: boolean; createdAt: number; updatedAt: number };
+export type WorkResources = { workItemId: string; scopeRevision: number; links: WorkLink[]; focuses: { entries: WorkFocus[]; total: number; truncated: boolean };
+  workers: { entries: WorkAdmission[]; nextCursor: number | null } | null;
+  observation: { state: "available" | "unavailable"; at: number; issue: string | null; visibility: "all" | "own_bot" } };
 export type WorkerTurnPage = { turns: WorkerTurn[]; nextId: string | null; hasMore: boolean };
 export type WorkerRecord = { seq: number; workerId: string; turnId: string | null; kind: string;
   source: "live" | "replay" | "response" | "submitted"; at: number; data: Record<string, unknown> | null; dataChars: number; oversized: boolean };

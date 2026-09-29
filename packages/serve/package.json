@@ -29,6 +29,7 @@
     "@stack/proc": "workspace:*",
     "@stack/scrape": "workspace:*",
     "@stack/infer": "workspace:*",
+    "@stack/hud": "workspace:*",
     "@stack/notify": "workspace:*",
     "@stack/ui": "workspace:*",
     "@stack/usage": "workspace:*",

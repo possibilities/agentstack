@@ -23,6 +23,7 @@
         "@stack/roles#build",
         "@stack/serve#build",
         "@stack/worker#build",
+        "@stack/hud#build",
         "@stack/brain#build",
         "@stack/xcom#build",
         "@stack/browse#build",
