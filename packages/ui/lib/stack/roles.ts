@@ -183,7 +183,7 @@ export function previewPieces(preview: RolePreview, role: Pick<RoleSnapshot, "ca
   }));
 }
 
-/** How a session's applied Role relates to the catalog's default. */
+/** How a Bot's applied Role relates to the Bot default, which its next launch resolves. */
 export type LaunchState =
   /** The default Role at its current revision: a launch now would apply the same thing. */
   | "current"
@@ -198,16 +198,16 @@ export type LaunchState =
 export type Launch = { state: LaunchState; roleId: string | null; roleRevision: number; name: string | null };
 
 /**
- * Classify what a Bot or Worker launched with against its audience's default.
- * Null before a launch has applied anything, or before the catalog has loaded.
+ * Classify what a Bot launched with against the Bot default, since restarting it resolves that default again.
+ * Null before a launch has applied anything, or before the catalog has loaded. Workers use `classifyWorkerRole`.
  */
-export function classifyLaunch(session: { roleId: string | null; roleRevision: number | null }, catalog: RoleCatalog | null, subject: "bot" | "worker" = "bot"): Launch | null {
+export function classifyLaunch(session: { roleId: string | null; roleRevision: number | null }, catalog: RoleCatalog | null): Launch | null {
   // Older records may omit the ID altogether; like a null one it names no Role, so it is never taken for the default.
   if (typeof session.roleRevision !== "number" || !catalog) return null;
   if (!session.roleId) return { state: "unknown", roleId: null, roleRevision: session.roleRevision, name: null };
   const role = catalog.roles.find((item) => item.id === session.roleId) ?? null;
   const launch = { roleId: session.roleId, roleRevision: session.roleRevision, name: role?.name ?? null };
-  if (session.roleId !== (subject === "worker" ? catalog.workerDefaultRoleId : catalog.defaultRoleId)) return { ...launch, state: "other" };
+  if (session.roleId !== catalog.defaultRoleId) return { ...launch, state: "other" };
   // A launch newer than the catalog's read means the catalog is a step behind; that is not "older".
   return { ...launch, state: role && session.roleRevision < role.revision ? "older" : "current" };
 }
@@ -216,30 +216,86 @@ export function classifyLaunch(session: { roleId: string | null; roleRevision: n
 export const launchLabel = (launch: Launch): string => `${launch.state === "unknown" ? "Unknown role" : launch.name ?? "Deleted role"} r${launch.roleRevision}`;
 
 /**
- * What to do to get the default, worded so it never claims a running process changed. Null when a launch now
- * would apply what this one did. A Bot restart resolves the default again; a Worker keeps its snapshot for good,
- * so only new Workers use a changed default.
+ * What a restart would change, worded so it never claims a running Bot changed. Null when a launch now would
+ * apply what this one did.
  */
-export function launchHint(launch: Launch, defaultRole: Pick<Role, "name" | "revision"> | null, subject: "bot" | "worker"): string | null {
+export function launchHint(launch: Launch, defaultRole: Pick<Role, "name" | "revision"> | null): string | null {
   if (launch.state === "current") return null;
   const target = launch.state === "older" ? `r${defaultRole?.revision}` : defaultRole?.name ?? "a Role";
-  return `${subject === "bot" ? "Launched" : "Started"} with ${launchLabel(launch)} · ${subject === "bot" ? "restart to use" : "new Workers use"} ${target}`;
+  return `Launched with ${launchLabel(launch)} · restart to use ${target}`;
 }
 
-/** Running Bots and open Workers keep the Role they launched with; a changed default reaches only later launches. */
+/**
+ * How a Worker's captured Role relates to that same Role now. A Worker may select any Role and keeps its snapshot
+ * for good, so it is never judged against a default.
+ */
+export type WorkerRoleState =
+  /** The captured Role at its current revision. */
+  | "current"
+  /** The captured Role has been edited since; the Worker keeps its older snapshot. */
+  | "older"
+  /** The captured Role ID is not in the loaded catalog. */
+  | "deleted"
+  /** A legacy record with a revision but no Role ID. */
+  | "unknown"
+  /** No catalog to name the captured ID against. */
+  | "unavailable";
+
+/**
+ * `name` and `currentRevision` are the captured Role's while the catalog lists it. `workerDefault` says whether it
+ * is the Worker default now, which is what an unselected new Worker would get, not how this one started.
+ */
+export type WorkerRole = { state: WorkerRoleState; roleId: string | null; roleRevision: number; name: string | null; currentRevision: number | null; workerDefault: boolean };
+
+/** Null until the Worker has captured a Role. */
+export function classifyWorkerRole(worker: { roleId?: string | null; roleRevision: number | null }, catalog: RoleCatalog | null): WorkerRole | null {
+  if (typeof worker.roleRevision !== "number") return null;
+  const base = { roleId: worker.roleId ?? null, roleRevision: worker.roleRevision, name: null, currentRevision: null, workerDefault: false };
+  if (!base.roleId) return { ...base, state: "unknown" };
+  if (!catalog) return { ...base, state: "unavailable" };
+  const role = catalog.roles.find((item) => item.id === base.roleId);
+  if (!role) return { ...base, state: "deleted" };
+  // A capture newer than the catalog's read means the catalog is a step behind; that is not "older".
+  return { ...base, name: role.name, currentRevision: role.revision, workerDefault: catalog.workerDefaultRoleId === role.id,
+    state: worker.roleRevision < role.revision ? "older" : "current" };
+}
+
+/** “Researcher r5”, “Deleted role r5”, “Unknown role r5”, or “Role r5” when the catalog is unavailable. */
+export const workerRoleLabel = (role: WorkerRole): string =>
+  `${role.name ?? { current: "Role", older: "Role", deleted: "Deleted role", unknown: "Unknown role", unavailable: "Role" }[role.state]} r${role.roleRevision}`;
+
+/**
+ * Explains a Worker's captured Role without implying anything changes it. The Worker default is mentioned only as
+ * what a new Worker without a selected Role would get.
+ */
+export function workerRoleHint(role: WorkerRole, workerDefault: Pick<Role, "id" | "name"> | null): string {
+  const label = workerRoleLabel(role);
+  const captured = {
+    current: `Started with ${label}, that Role's current revision.`,
+    older: `Started with ${label}; ${role.name} is now r${role.currentRevision}. This Worker keeps its r${role.roleRevision} snapshot, including through recovery.`,
+    deleted: `Started with a Role deleted since, at r${role.roleRevision}. This Worker keeps that snapshot.`,
+    unknown: `A legacy record with no Role ID, captured at r${role.roleRevision}; its Role is unknown.`,
+    unavailable: `Started with Role r${role.roleRevision}; the Roles catalog is unavailable to name it.`,
+  }[role.state];
+  const unselected = !workerDefault || role.state === "unknown" || role.state === "unavailable" ? ""
+    : role.workerDefault ? " It is also the current Worker default." : ` New Workers without a selected Role use “${workerDefault.name}”.`;
+  return `${captured}${unselected} Editing a Role never changes a running Worker.`;
+}
+
+/** Running Bots are compared with the Bot default; open Workers with the Role each captured. */
 export function roleLaunches(bots: Bot[] | null, workers: WorkerSession[] | null, catalog: RoleCatalog | null): {
   bots: Array<{ bot: Bot; launch: Launch }>;
-  workers: Record<LaunchState, number> & { total: number };
+  workers: Record<WorkerRoleState, number> & { total: number };
 } {
   const running = (bots ?? []).filter((bot) => bot.state === "running").flatMap((bot) => {
     const launch = classifyLaunch(bot, catalog);
     return launch ? [{ bot, launch }] : [];
   });
-  const counts = { current: 0, older: 0, other: 0, unknown: 0, total: 0 };
+  const counts = { current: 0, older: 0, deleted: 0, unknown: 0, unavailable: 0, total: 0 };
   for (const worker of workers ?? []) {
-    const launch = ["closed", "failed"].includes(worker.phase) ? null : classifyLaunch(worker, catalog, "worker");
-    if (!launch) continue;
-    counts[launch.state]++;
+    const role = ["closed", "failed"].includes(worker.phase) ? null : classifyWorkerRole(worker, catalog);
+    if (!role) continue;
+    counts[role.state]++;
     counts.total++;
   }
   return { bots: running, workers: counts };
@@ -330,8 +386,24 @@ export function roleNameIssue(name: string, catalog: RoleCatalog | null, selfId?
 export const roleErrorText = (message: string): string =>
   /UNIQUE constraint failed: roles\.name/i.test(message) ? "Another Role already uses this name; letter case is ignored" : message;
 
-/** How a Role reads in a window subtitle: “Researcher · default” or “Researcher”. */
-export const roleLabel = (role: Pick<Role, "name"> | null, isDefault: boolean): string | null => role ? `${role.name}${isDefault ? " · default" : ""}` : null;
+/** Which launch defaults a Role is: “Bot default”, “Worker default”, “Bot and Worker default”, or null. */
+export const defaultsLabel = (bot: boolean, worker: boolean): string | null =>
+  bot && worker ? "Bot and Worker default" : bot ? "Bot default" : worker ? "Worker default" : null;
+
+/**
+ * Why a launch default cannot be deleted and how to free it. Make default reassigns the Bot default; the Worker
+ * default is reassigned only through `role_set_worker_default`. Null for a Role that is neither.
+ */
+export function defaultDeleteHint(bot: boolean, worker: boolean): string | null {
+  if (bot && worker) return "Make another Role the Bot default, and reassign the Worker default with role_set_worker_default, first";
+  if (bot) return "Make another Role the Bot default first";
+  if (worker) return "Reassign the Worker default with role_set_worker_default first";
+  return null;
+}
+
+/** How a Role reads in a window subtitle: “Manager · Bot default”, “Worker · Worker default” or “Researcher”. */
+export const roleLabel = (role: Pick<Role, "id" | "name"> | null, catalog: Pick<RoleCatalog, "defaultRoleId" | "workerDefaultRoleId"> | null): string | null =>
+  role ? [role.name, defaultsLabel(catalog?.defaultRoleId === role.id, catalog?.workerDefaultRoleId === role.id)].filter(Boolean).join(" · ") : null;
 
 /* ─── Internal Stack MCP servers ─────────────────────────────────────── */
 

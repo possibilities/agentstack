@@ -196,7 +196,7 @@ type RoleKey = typeof roleKeys[number];
 type RoleData = RoleSnapshot | RolePreview | RoleLaunchPreview | RoleInternalMcp;
 const isRoleKey = (key: ResourceKey): key is RoleKey => (roleKeys as readonly string[]).includes(key);
 /** Catalog operations answer with the whole catalog, which replaces the held one when it is not older. */
-const catalogReplies = new Set(["roles_snapshot", "role_create", "role_set_default", "role_delete"]);
+const catalogReplies = new Set(["roles_snapshot", "role_create", "role_set_default", "role_set_worker_default", "role_delete"]);
 
 const maxEvents = 250;
 

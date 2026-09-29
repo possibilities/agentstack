@@ -15,6 +15,8 @@ import {
   blankRoleText,
   categoryText,
   copyTitle,
+  defaultDeleteHint,
+  defaultsLabel,
   descriptionLimit,
   draftChanges,
   draftConflicts,
@@ -115,7 +117,7 @@ function TextFields({ id, value, set, body }: { id: string; value(field: string)
             placeholder="Write the developer instructions exactly as Bots should read them."
             onChange={(event) => set("body", event.target.value)}
             className="min-h-64 resize-y font-mono text-[0.78rem] leading-relaxed md:text-[0.78rem]" />
-          <p id={`${id}-body-hint`} className={hintClass}>Sent verbatim in each new Bot’s SYSTEM_APPEND.md. Blank text renders nothing.</p>
+          <p id={`${id}-body-hint`} className={hintClass}>Sent verbatim to each new Bot and Worker that uses this Role. Blank text renders nothing.</p>
         </div>
       ) : null}
     </>
@@ -212,7 +214,7 @@ function FragmentEditor({ id }: { id: string }) {
           <label htmlFor={`${formId}-enabled`} className="text-[0.78rem]">
             Enabled
             <span className="ml-1.5 text-[0.68rem] text-muted-foreground">
-              {state === "renders" ? "Reaches new Bots" : state === "category-off" ? `Its category, ${category.title}, is off` : state === "empty" ? "Nothing to render yet" : "Skipped in new launches"}
+              {state === "renders" ? "Reaches new launches" : state === "category-off" ? `Its category, ${category.title}, is off` : state === "empty" ? "Nothing to render yet" : "Skipped in new launches"}
             </span>
           </label>
           <FolderIcon className="size-3.5 justify-self-center text-muted-foreground" aria-hidden />
@@ -286,7 +288,7 @@ function CategoryEditor({ id }: { id: string }) {
             onCheckedChange={(enabled) => actions.act("category_update", (snapshot) => findCategory(snapshot, id) ? { id, enabled } : "This category was deleted elsewhere.", `enable:${id}`)} />
           <label htmlFor={`${formId}-enabled`} className="text-[0.78rem]">
             Enabled
-            <span className="ml-1.5 text-[0.68rem] text-muted-foreground">{category.enabled ? "Its enabled fragments reach new Bots" : "None of its fragments reach new Bots"}</span>
+            <span className="ml-1.5 text-[0.68rem] text-muted-foreground">{category.enabled ? "Its enabled fragments reach new launches" : "None of its fragments reach new launches"}</span>
           </label>
         </div>
         <TextFields id={formId} value={draft.value} set={draft.set} />
@@ -365,7 +367,7 @@ function NewFragmentEditor({ target }: { target: Extract<RoleTarget, { kind: "ne
           <Switch id={`${formId}-enabled`} size="sm" checked={target.enabled} onCheckedChange={(enabled) => actions.open({ ...target, enabled })} />
           <label htmlFor={`${formId}-enabled`} className="text-[0.78rem]">
             Enabled
-            <span className="ml-1.5 text-[0.68rem] text-muted-foreground">{target.enabled ? (category && !category.enabled ? "Its category is off" : "Reaches new Bots once created") : "Created switched off"}</span>
+            <span className="ml-1.5 text-[0.68rem] text-muted-foreground">{target.enabled ? (category && !category.enabled ? "Its category is off" : "Reaches new launches once created") : "Created switched off"}</span>
           </label>
         </div>
         <TextFields id={formId} value={draft.value} set={draft.set} body />
@@ -474,10 +476,10 @@ function RoleDetailsEditor({ id }: { id: string }) {
     <EditorFrame subtitle="details"
       footer={<SaveBar dirty={dirty} conflicts={draft.conflicts.length} pending={saving} invalid={issue} saveLabel="Save" onSave={save} onRevert={() => { draft.clear(); setError(null); }} />}
       actions={<RecordMenu label={found.name} onInspect={() => select({ kind: "role", id })} onDelete={() => actions.confirmDeleteRole(id)}
-        deleteBlocked={view.isDefault ? "Make another Role default first" : undefined} />}>
+        deleteBlocked={defaultDeleteHint(view.isDefault, view.isWorkerDefault) ?? undefined} />}>
       <form className="flex flex-col gap-3" aria-label={`Edit Role ${found.name}`} onSubmit={(event) => { event.preventDefault(); save(); }} onKeyDown={saveKeys(save)}>
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className={cn("rounded px-1.5 py-px text-[0.64rem] font-medium", view.isDefault ? "bg-success/15 text-success" : "bg-muted text-muted-foreground")}>{view.isDefault ? "Default" : "Not the default"}</span>
+          <span className={cn("rounded px-1.5 py-px text-[0.64rem] font-medium", view.isDefault || view.isWorkerDefault ? "bg-success/15 text-success" : "bg-muted text-muted-foreground")}>{defaultsLabel(view.isDefault, view.isWorkerDefault) ?? "Not a launch default"}</span>
           <span className="text-[0.68rem] text-muted-foreground tabular-nums">revision {found.revision}</span>
           <span className="ml-auto"><Stamps record={found} /></span>
         </div>

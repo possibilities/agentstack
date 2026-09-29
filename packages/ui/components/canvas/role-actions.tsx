@@ -117,9 +117,13 @@ export type RoleView = {
   roleId: string | null;
   /** The selected Role, while the catalog lists it. */
   role: Role | null;
+  /** The Bot default, which Make default changes. */
   defaultRole: Role | null;
   isDefault: boolean;
-  /** “Researcher · default”, for window subtitles. */
+  /** The default for Workers started without a Role; set only through the Roles API. */
+  workerDefaultRole: Role | null;
+  isWorkerDefault: boolean;
+  /** “Manager · Bot default”, for window subtitles. */
   label: string | null;
   /** The placeholder title for a window with no Role to show, or null when it has one or is still loading. */
   blank: string | null;
@@ -134,10 +138,12 @@ export function useRoleView(): RoleView {
   const role = (roleId && catalog?.roles.find((item) => item.id === roleId)) || null;
   const defaultRole = catalog?.roles.find((item) => item.id === catalog.defaultRoleId) ?? null;
   const isDefault = Boolean(role && role.id === defaultRole?.id);
+  const workerDefaultRole = catalog?.roles.find((item) => item.id === catalog.workerDefaultRoleId) ?? null;
+  const isWorkerDefault = Boolean(role && role.id === workerDefaultRole?.id);
   // A vanished Role without edits is about to fall back to the default; only one holding edits stays for review.
   const state = !catalog ? "loading" : !catalog.roles.length ? "empty" : role ? "ready" : roleId && draftedRoles.has(roleId) ? "missing" : "loading";
   const blank = state === "empty" ? "No Role yet" : state === "missing" ? "Role deleted" : null;
-  return { state, catalog, roleId, role, defaultRole, isDefault, label: roleLabel(role, isDefault), blank,
+  return { state, catalog, roleId, role, defaultRole, isDefault, workerDefaultRole, isWorkerDefault, label: roleLabel(role, catalog), blank,
     placeholder: (loaded, error, none) => blank ?? (loaded ? none : error ? "Role unavailable" : "Reading Role…") };
 }
 
@@ -185,7 +191,7 @@ export function RoleActionsProvider({ children }: { children: React.ReactNode })
     const next = resolveSelection(selected, catalog, drafted);
     if (next.roleId !== selected) store.selectRole(next.roleId);
     const name = next.fellBack && !quiet.current.has(next.fellBack) ? names.current.get(next.fellBack) : null;
-    if (name) toast.info(`“${name}” was deleted in another window`, { description: next.roleId ? "Now editing the default Role." : undefined });
+    if (name) toast.info(`“${name}” was deleted in another window`, { description: next.roleId ? "Now editing the Bot default Role." : undefined });
   }, [store, roleId, catalog, drafted]);
 
   // A record's delete confirmation belongs to the Role it was opened for.
@@ -318,7 +324,7 @@ export function RoleActionsProvider({ children }: { children: React.ReactNode })
     const id = defaulting;
     const label = names.current.get(id) ?? "The Role";
     catalogWrite("role_set_default", (held) => !held.roles.some((item) => item.id === id) ? "That Role was deleted." : held.defaultRoleId === id ? null : { roleId: id }, `default:${id}`)
-      .then(() => { setDefaulting(null); toast.success(`“${label}” is now the default`); }, (error) => toast.error(errorMessage(error)));
+      .then(() => { setDefaulting(null); toast.success(`“${label}” is now the Bot default`); }, (error) => toast.error(errorMessage(error)));
   };
 
   const removeRole = () => {
@@ -394,9 +400,10 @@ export function RoleActionsProvider({ children }: { children: React.ReactNode })
         </AlertDialogContent>
       </AlertDialog>
       <DefaultDialog role={defaultTarget ?? null} current={catalog?.roles.find((item) => item.id === catalog.defaultRoleId) ?? null}
+        workerDefault={catalog?.roles.find((item) => item.id === catalog.workerDefaultRoleId) ?? null}
         pending={defaulting !== null && pending.has(`${catalogScope}:default:${defaulting}`)} onConfirm={makeDefault} onClose={() => setDefaulting(null)} />
-       <DeleteRoleDialog role={removeTarget ?? null} defaultFor={removeTarget && (removeTarget.id === catalog?.defaultRoleId || removeTarget.id === catalog?.workerDefaultRoleId)
-         ? [removeTarget.id === catalog?.defaultRoleId ? "Bot" : null, removeTarget.id === catalog?.workerDefaultRoleId ? "Worker" : null].filter(Boolean).join(" and ") : null} edits={removing !== null && drafted.has(removing)}
+      <DeleteRoleDialog role={removeTarget ?? null} defaults={{ bot: Boolean(removeTarget && removeTarget.id === catalog?.defaultRoleId), worker: Boolean(removeTarget && removeTarget.id === catalog?.workerDefaultRoleId) }}
+        edits={removing !== null && drafted.has(removing)}
         pending={removing !== null && pending.has(`${catalogScope}:delete-role:${removing}`)} onConfirm={removeRole} onClose={() => setRemoving(null)} />
     </RoleActionsContext>
   );
@@ -409,11 +416,11 @@ function deleteCopy(kind: RoleRecord["kind"], record: unknown): { noun: string; 
   const running = "Running Bots keep what they launched with.";
   switch (kind) {
     case "category": return { noun: "category", title: `Delete category${named(field("title"))}?`, description: `New Bots stop seeing it. ${running}`, action: "Delete" };
-    case "fragment": return { noun: "fragment", title: `Delete fragment${named(field("title"))}?`, description: `Its instructions leave the next Bot launches. ${running} This can’t be undone.`, action: "Delete" };
+    case "fragment": return { noun: "fragment", title: `Delete fragment${named(field("title"))}?`, description: `Its instructions leave later launches. ${running} This can’t be undone.`, action: "Delete" };
     case "skill": {
       const files = record && typeof record === "object" && "files" in record && Array.isArray(record.files) ? record.files.length : 0;
       return { noun: "skill", title: `Delete skill${named(field("name"))}?`,
-        description: `It${files ? ` and its ${files} supporting file${files === 1 ? "" : "s"}` : ""} leave the next Bot launches. ${running} This can’t be undone.`, action: "Delete" };
+        description: `It${files ? ` and its ${files} supporting file${files === 1 ? "" : "s"}` : ""} leave later launches. ${running} This can’t be undone.`, action: "Delete" };
     }
     case "mcp-server": return { noun: "MCP server", title: `Delete MCP server${named(field("name"))}?`,
       description: `New Bots stop connecting to it. Running Bots keep their connections until restarted. This can’t be undone.`, action: "Delete" };

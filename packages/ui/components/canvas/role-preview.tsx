@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { FileTextIcon, TriangleAlertIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { approxTokens, fallbackLimitBytes, fallbackSnapshotLimit, formatBytes, formatCount, internalCounts, launchHint, launchLabel, previewBytes, previewPieces, projectBots, roleLaunches, type LaunchState } from "@/lib/stack/roles";
+import { approxTokens, fallbackLimitBytes, fallbackSnapshotLimit, formatBytes, formatCount, internalCounts, launchHint, launchLabel, previewBytes, previewPieces, projectBots, roleLaunches, type LaunchState, type WorkerRoleState } from "@/lib/stack/roles";
 import type { RoleLaunchPreview } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { BotTile, CopyButton, Empty, Meter, NodeLink } from "./primitives";
@@ -16,12 +16,16 @@ import { Section, Window } from "./window";
 type View = "instructions" | "launch";
 const launchWord: Record<LaunchState, string> = { current: "Current", older: "Older revision", other: "Other Role", unknown: "Unknown" };
 const launchTone: Record<LaunchState, string> = { current: "bg-success/15 text-success", older: "bg-warning/15 text-warning", other: "bg-muted text-muted-foreground", unknown: "bg-muted text-muted-foreground" };
+/** Open Workers by how their captured Role relates to that same Role now; current and unavailable say nothing about change. */
+const workerWords: Array<[WorkerRoleState, string, string]> = [["older", "on an older revision of its Role", "on older revisions of their Roles"],
+  ["deleted", "with a deleted Role", "with deleted Roles"], ["unknown", "with an unknown legacy Role", "with unknown legacy Roles"], ["unavailable", "whose Role is not yet readable", "whose Roles are not yet readable"]];
 const resourceKinds = new Set(["skill", "mcp-server", "trusted-project", "new-skill", "new-mcp-server", "new-trusted-project"]);
 
 /**
- * What the next Bot launch receives. Instructions: exactly what it appends, from `role_preview`, cut at each
- * fragment's span; fragment titles come from the Role and only label it. Launch: skills, MCP servers and
- * trusted projects from `role_launch_preview`.
+ * What the next launch using this Role receives. Instructions: exactly what it appends, from `role_preview`, cut at
+ * each fragment's span; fragment titles come from the Role and only label it. Launch: skills, MCP servers and
+ * trusted projects from `role_launch_preview`. Bots and Workers both receive instructions, skills and MCP servers;
+ * trusted projects configure Bots only.
  */
 export function RolePreviewWindow() {
   const { role, rolePreview, roleLaunch, roleCatalog, bots, workerSessions, status, endpoints } = useStack();
@@ -51,24 +55,22 @@ export function RolePreviewWindow() {
     if (top < 0 || top > scroller.getBoundingClientRect().height - 48) scroller.scrollTop += top / scale - 12;
   }, [focused, preview?.revision]);
 
-  const workerDefault = roleCatalog.data?.roles.find(({ id }) => id === roleCatalog.data?.workerDefaultRoleId) ?? null;
-  const hint = (launch: Parameters<typeof launchHint>[0], subject: "bot" | "worker") =>
-    launchHint(launch, subject === "bot" ? current.defaultRole : workerDefault, subject) ?? `${subject === "bot" ? "Launched" : "Started"} with ${launchLabel(launch)}, which is what a launch now would apply`;
-  const stale = [launches.workers.older && `${launches.workers.older} older revision${launches.workers.older === 1 ? "" : "s"}`, launches.workers.other && `${launches.workers.other} other Role${launches.workers.other === 1 ? "" : "s"}`, launches.workers.unknown && `${launches.workers.unknown} unknown Role${launches.workers.unknown === 1 ? "" : "s"}`].filter(Boolean).join(", ");
+  const hint = (launch: Parameters<typeof launchHint>[0]) => launchHint(launch, current.defaultRole) ?? `Launched with ${launchLabel(launch)}, which is what a launch now would apply`;
+  const differing = workerWords.flatMap(([state, one, many]) => launches.workers[state] ? [`${launches.workers[state]} ${launches.workers[state] === 1 ? one : many}`] : []).join(", ");
   const launched = launches.bots.length || launches.workers.total ? (
-    <Section title="Launched" aside={<span className="text-[0.65rem] text-muted-foreground">Compared with each launch default</span>}>
+    <Section title="Launched" aside={<span className="text-[0.65rem] text-muted-foreground">Bots against the Bot default · Workers against their own Role</span>}>
       <ul className="flex flex-col gap-1">
         {launches.bots.map(({ bot, launch }) => (
           <li key={bot.id} className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-[0.78rem]">
             <BotTile bot={bot} className="size-6 rounded-md text-[0.7rem] [&_svg]:size-3" />
             <NodeLink node={{ kind: "bot", id: bot.id }} label={bot.id} className="font-mono text-[0.75rem]">{bot.id}</NodeLink>
-            <span className="min-w-0 truncate text-[0.68rem] text-muted-foreground tabular-nums" title={hint(launch, "bot")}>{launchLabel(launch)}</span>
-            <span className={cn("ml-auto shrink-0 rounded px-1.5 py-px text-[0.64rem] font-medium", launchTone[launch.state])} title={hint(launch, "bot")}>{launchWord[launch.state]}</span>
+            <span className="min-w-0 truncate text-[0.68rem] text-muted-foreground tabular-nums" title={hint(launch)}>{launchLabel(launch)}</span>
+            <span className={cn("ml-auto shrink-0 rounded px-1.5 py-px text-[0.64rem] font-medium", launchTone[launch.state])} title={hint(launch)}>{launchWord[launch.state]}</span>
           </li>
         ))}
         {launches.workers.total ? (
-          <li className="px-1.5 py-1 text-[0.7rem] text-muted-foreground" title="Open Workers keep the snapshot they started with; new Workers use the Worker default Role">
-            {launches.workers.total} open Worker{launches.workers.total === 1 ? "" : "s"}{stale ? ` · ${stale}` : " · all current"}
+          <li className="px-1.5 py-1 text-[0.7rem] text-muted-foreground" title="Each Worker keeps the Role snapshot it started with, whichever Role it selected; editing a Role changes no open Worker">
+            {launches.workers.total} open Worker{launches.workers.total === 1 ? "" : "s"}{differing ? ` · ${differing}` : " · each on its Role’s current revision"}
           </li>
         ) : null}
       </ul>
@@ -110,6 +112,7 @@ export function RolePreviewWindow() {
             <span>{formatBytes(bytes)} of {formatBytes(limit)} · ≈{formatCount(approxTokens(bytes))} tokens{pieces ? ` · ${pieces.length} fragment${pieces.length === 1 ? "" : "s"}` : ""}</span>
             <span className="ml-auto">{updating ? "Updating…" : `Revision ${preview.revision}`}</span>
           </p>
+          <p className="px-0.5 text-[0.66rem] text-pretty text-muted-foreground">Bots append this to SYSTEM_APPEND.md; Workers that use this Role receive it when they start. Native and repository guidance still apply.</p>
         </div>
       ) : null}
       {launched}
@@ -184,7 +187,7 @@ function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating:
             ))}
           </ul>
         ) : <p className="px-1.5 text-[0.7rem] text-muted-foreground">No Role skills are enabled.</p>}
-        <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">Bots also discover project and bundled skills; the Role adds to them.</p>
+        <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">Bots and Workers that use this Role receive these skills, alongside any project and bundled skills they discover.</p>
       </Section>
       <Section title="MCP servers" aside={<span className="text-[0.65rem] text-muted-foreground tabular-nums">{on} of {total} Stack server{total === 1 ? "" : "s"} on · {launch.mcpServers.length} from the Role</span>}>
         <div className="flex flex-wrap gap-1 px-1.5">
@@ -226,6 +229,7 @@ function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating:
             })}
           </ul>
         ) : <p className="px-1.5 text-[0.7rem] text-muted-foreground">No project is trusted; Bots load no project config.</p>}
+        <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">Bots only. Workers that use this Role get no native project trust from these records.</p>
       </Section>
     </>
   );

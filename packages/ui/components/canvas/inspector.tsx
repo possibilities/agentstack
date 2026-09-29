@@ -11,7 +11,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { fieldsOf, findOperation, operationTitle, recordFields, recordOperations, type Field } from "@/lib/stack/catalog";
 import { accountLabels, clockTime, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
 import { scopeTarget } from "@/lib/stack/resources";
-import { base64Bytes, findCategory, findFragment, findResource, projectBots, type ResourceKind } from "@/lib/stack/roles";
+import { base64Bytes, defaultsLabel, findCategory, findFragment, findResource, projectBots, type ResourceKind } from "@/lib/stack/roles";
 import type { StackState } from "@/lib/stack/store";
 import { nodeKey, type Account, type Bot, type Login, type NodeRef, type OperationDoc, type PackageDoc, type StackEvent, type WorkerAccount } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
@@ -245,9 +245,11 @@ function resolve(ref: NodeRef, state: StackState): View | null {
       const roles = state.roleCatalog.data;
       const role = roles?.roles.find((item) => item.id === ref.id);
       if (!role) return null;
-      const isDefault = roles?.defaultRoleId === role.id;
+      const botDefault = roles?.defaultRoleId === role.id;
+      const workerDefault = roles?.workerDefaultRoleId === role.id;
+      const which = defaultsLabel(botDefault, workerDefault);
       return {
-        eyebrow: isDefault ? "Role · default" : "Role", accent: "roles", title: role.name, record: { ...role, default: isDefault }, fields: roleCatalogFields(catalog),
+        eyebrow: which ? `Role · ${which}` : "Role", accent: "roles", title: role.name, record: { ...role, botDefault, workerDefault }, fields: roleCatalogFields(catalog),
         operations: { pkg: "roles", list: roleOperations(catalog) },
         controls: <RoleCatalogControls id={role.id} />,
         events: state.events.filter((event) => event.pkg === "roles"),

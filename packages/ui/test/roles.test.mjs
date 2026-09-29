@@ -106,13 +106,16 @@ test("preview pieces label spans from the Role and sizes fall back for an older 
 const role = (id, name, revision = 1) => ({ id, name, description: "", revision, createdAt: null, updatedAt: null });
 const catalog = (defaultRoleId, roleList, revision = 1, workerDefaultRoleId = defaultRoleId) => ({ revision, defaultRoleId, workerDefaultRoleId, roles: roleList });
 
-test("a launch is classified by Role identity and revision against the default, never by revision alone", () => {
-  const two = catalog("A", [role("A", "Default", 5), role("B", "Researcher", 5)]);
+test("a Bot launch is classified by Role identity and revision against the Bot default, never by revision alone", () => {
+  // Provisioned catalogs have separate defaults: Manager for Bots, Worker for Workers.
+  const two = catalog("A", [role("A", "Manager", 5), role("B", "Researcher", 5), role("W", "Worker", 5)], 1, "W");
   const at = (roleId, roleRevision) => roles.classifyLaunch({ roleId, roleRevision }, two);
   assert.equal(at("A", 5).state, "current");
   assert.equal(at("A", 3).state, "older");
   // Equal revision numbers across Roles are unrelated: the other Role is not "current" at r5.
   assert.deepEqual(at("B", 5), { state: "other", roleId: "B", roleRevision: 5, name: "Researcher" });
+  // The Worker default is not the Bot default.
+  assert.equal(at("W", 5).state, "other");
   // A launch newer than the catalog's read means the catalog is a step behind, which is not "older".
   assert.equal(at("A", 6).state, "current");
   // A deleted Role is still named as one, with the revision it launched at.
@@ -127,30 +130,76 @@ test("a launch is classified by Role identity and revision against the default, 
   assert.equal(roles.classifyLaunch({ roleRevision: 5 }, two).state, "unknown");
   assert.equal(roles.classifyLaunch({ roleId: "A", roleRevision: 5 }, null), null);
 
-  // Making B the default turns A's running Bot from "current" into "other", and B's into "current": neither changed.
-  const swapped = catalog("B", two.roles, 2);
+  // Making B the Bot default turns A's running Bot from "current" into "other", and B's into "current": neither changed.
+  const swapped = catalog("B", two.roles, 2, "W");
   assert.equal(roles.classifyLaunch({ roleId: "A", roleRevision: 5 }, swapped).state, "other");
   assert.equal(roles.classifyLaunch({ roleId: "B", roleRevision: 5 }, swapped).state, "current");
-  const defaultRole = swapped.roles[1];
-  const hint = roles.launchHint(roles.classifyLaunch({ roleId: "A", roleRevision: 5 }, swapped), defaultRole, "bot");
-  assert.equal(hint, "Launched with Default r5 · restart to use Researcher");
+  const hint = roles.launchHint(roles.classifyLaunch({ roleId: "A", roleRevision: 5 }, swapped), swapped.roles[1]);
+  assert.equal(hint, "Launched with Manager r5 · restart to use Researcher");
   assert.doesNotMatch(hint, /changed|updated/);
-  assert.equal(roles.launchHint(at("A", 3), two.roles[0], "bot"), "Launched with Default r3 · restart to use r5");
-  assert.equal(roles.launchHint(at("A", 5), two.roles[0], "bot"), null);
-  // A Worker never restarts into a new default; only new Workers use it.
-  assert.equal(roles.launchHint(at("B", 5), two.roles[0], "worker"), "Started with Researcher r5 · new Workers use Default");
+  assert.equal(roles.launchHint(at("A", 3), two.roles[0]), "Launched with Manager r3 · restart to use r5");
+  assert.equal(roles.launchHint(at("A", 5), two.roles[0]), null);
+});
 
+test("a Worker is compared with the Role it captured, never with either default", () => {
+  const cat = catalog("M", [role("M", "Manager", 7), role("W", "Worker", 2), role("R", "Researcher", 5)], 1, "W");
+  const at = (roleId, roleRevision, held = cat) => roles.classifyWorkerRole({ roleId, roleRevision }, held);
+  // The Worker default at its current revision.
+  assert.deepEqual(at("W", 2), { state: "current", roleId: "W", roleRevision: 2, name: "Worker", currentRevision: 2, workerDefault: true });
+  // An explicitly selected Role that is neither default is current against itself, not flagged.
+  assert.deepEqual(at("R", 5), { state: "current", roleId: "R", roleRevision: 5, name: "Researcher", currentRevision: 5, workerDefault: false });
+  // Selecting the Bot default for a Worker is equally ordinary.
+  assert.equal(at("M", 7).state, "current");
+  // Older content is judged by that same Role's revision: r2 is older for Researcher even though the Worker default is at r2.
+  assert.deepEqual(at("R", 2), { state: "older", roleId: "R", roleRevision: 2, name: "Researcher", currentRevision: 5, workerDefault: false });
+  // A capture newer than the catalog read is not older; the catalog is a step behind.
+  assert.equal(at("R", 6).state, "current");
+  // Deleted, legacy and unavailable are distinct.
+  assert.equal(at("Z", 3).state, "deleted");
+  assert.equal(at(null, 3).state, "unknown");
+  assert.equal(roles.classifyWorkerRole({ roleRevision: 3 }, cat).state, "unknown");
+  assert.equal(at("R", 3, null).state, "unavailable");
+  assert.equal(at("R", null), null, "nothing captured yet");
+  assert.deepEqual([at("R", 5), at("R", 2), at("Z", 3), at(null, 3), at("R", 3, null)].map(roles.workerRoleLabel),
+    ["Researcher r5", "Researcher r2", "Deleted role r3", "Unknown role r3", "Role r3"]);
+
+  // Changing the Worker default never changes how an existing Worker reads, only which Role is called the default.
+  const moved = catalog("M", cat.roles, 2, "R");
+  assert.equal(at("W", 2, moved).state, "current");
+  assert.equal(at("R", 5, moved).workerDefault, true);
+
+  const workerDefault = cat.roles[1];
+  const hints = { selected: roles.workerRoleHint(at("R", 5), workerDefault), older: roles.workerRoleHint(at("R", 2), workerDefault),
+    isDefault: roles.workerRoleHint(at("W", 2), workerDefault), deleted: roles.workerRoleHint(at("Z", 3), workerDefault), legacy: roles.workerRoleHint(at(null, 3), workerDefault) };
+  assert.equal(hints.selected, "Started with Researcher r5, that Role's current revision. New Workers without a selected Role use “Worker”. Editing a Role never changes a running Worker.");
+  assert.equal(hints.older, "Started with Researcher r2; Researcher is now r5. This Worker keeps its r2 snapshot, including through recovery. New Workers without a selected Role use “Worker”. Editing a Role never changes a running Worker.");
+  assert.match(hints.isDefault, /It is also the current Worker default\./);
+  assert.match(hints.deleted, /^Started with a Role deleted since, at r3\./);
+  assert.doesNotMatch(hints.legacy, /Worker”/, "a legacy record says nothing about defaults");
+  for (const hint of Object.values(hints)) assert.doesNotMatch(hint, /restart|not default|error/i);
+});
+
+test("Launched compares running Bots with the Bot default and open Workers with their own Role", () => {
+  const cat = catalog("A", [role("A", "Manager", 5), role("B", "Researcher", 5), role("W", "Worker", 1)], 1, "W");
   const bot = (id, state, roleId, roleRevision) => ({ id, state, roleId, roleRevision });
   const worker = (phase, roleId, roleRevision) => ({ phase, roleId, roleRevision });
   const launches = roles.roleLaunches(
     [bot("bot-1", "running", "A", 5), bot("bot-2", "running", "B", 5), bot("bot-3", "stopped", "A", 1), bot("bot-4", "running", null, null), bot("bot-5", "running", null, 2)],
-    [worker("idle", "A", 5), worker("running", "A", 3), worker("closed", "A", 1), worker("idle", null, null), worker("idle", "B", 5), worker("failed", "B", 1), worker("idle", null, 4)], two);
+    [worker("idle", "W", 1), worker("running", "B", 5), worker("idle", "B", 3), worker("closed", "A", 1), worker("idle", null, null), worker("idle", "Z", 5), worker("failed", "B", 1), worker("idle", null, 4)], cat);
   assert.deepEqual(launches.bots.map(({ bot, launch }) => [bot.id, launch.state]), [["bot-1", "current"], ["bot-2", "other"], ["bot-5", "unknown"]]);
-  assert.deepEqual(launches.workers, { current: 1, older: 1, other: 1, unknown: 1, total: 4 });
-  const split = catalog("A", two.roles, 3, "B");
-  assert.equal(roles.classifyLaunch({ roleId: "A", roleRevision: 5 }, split, "bot").state, "current");
-  assert.equal(roles.classifyLaunch({ roleId: "B", roleRevision: 5 }, split, "worker").state, "current");
-  assert.equal(roles.classifyLaunch({ roleId: "A", roleRevision: 5 }, split, "worker").state, "other");
+  // The selected Researcher at r5 is current; only its r3 Worker is older. Neither default is consulted.
+  assert.deepEqual(launches.workers, { current: 2, older: 1, deleted: 1, unknown: 1, unavailable: 0, total: 5 });
+  assert.deepEqual(roles.roleLaunches(null, [worker("idle", "B", 5)], null).workers, { current: 0, older: 0, deleted: 0, unknown: 0, unavailable: 1, total: 1 });
+});
+
+test("launch default labels name which audience each default serves", () => {
+  assert.equal(roles.defaultsLabel(true, false), "Bot default");
+  assert.equal(roles.defaultsLabel(false, true), "Worker default");
+  assert.equal(roles.defaultsLabel(true, true), "Bot and Worker default");
+  assert.equal(roles.defaultsLabel(false, false), null);
+  assert.equal(roles.defaultDeleteHint(true, false), "Make another Role the Bot default first");
+  assert.match(roles.defaultDeleteHint(false, true), /role_set_worker_default/);
+  assert.equal(roles.defaultDeleteHint(false, false), null);
 });
 
 test("a Role response is fenced by Role ID first and revision second", () => {
@@ -217,9 +266,12 @@ test("the selection follows the default until a Role is chosen, and a deleted Ro
   assert.deepEqual(roles.resolveSelection("Z", cat, new Set(["B"])), { roleId: "A", deleted: false, fellBack: "Z" });
   // An empty catalog has no default to fall back to.
   assert.deepEqual(roles.resolveSelection("Z", catalog(null, []), none), { roleId: null, deleted: false, fellBack: "Z" });
-  assert.equal(roles.roleLabel(role("A", "Default"), true), "Default · default");
-  assert.equal(roles.roleLabel(role("B", "Researcher"), false), "Researcher");
-  assert.equal(roles.roleLabel(null, false), null);
+  const split = catalog("A", [role("A", "Manager"), role("B", "Researcher"), role("W", "Worker")], 1, "W");
+  assert.equal(roles.roleLabel(role("A", "Manager"), split), "Manager · Bot default");
+  assert.equal(roles.roleLabel(role("W", "Worker"), split), "Worker · Worker default");
+  assert.equal(roles.roleLabel(role("A", "Default"), catalog("A", [])), "Default · Bot and Worker default");
+  assert.equal(roles.roleLabel(role("B", "Researcher"), split), "Researcher");
+  assert.equal(roles.roleLabel(null, split), null);
 });
 
 test("Role names mirror the API's limits and its ASCII-case uniqueness", () => {

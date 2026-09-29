@@ -1,5 +1,6 @@
 // Optional rendered check of the read-only Workers space after pnpm test and a ui build. Worker, auth,
-// Bots, server and discovery are fixtures on a disposable state directory. No live server or provider calls.
+// Bots, server and discovery are fixtures on a disposable state directory; the real Roles API provisions its
+// Manager and Worker Roles there. No live server or provider calls.
 // PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs node test/workers-browser-check.mjs
 // CHROME_BIN may override the local headless Chrome executable.
 import assert from "node:assert/strict";
@@ -7,10 +8,11 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { publishedJsonSchema, serveSocket, serveWebSocket, socketPath } from "@stack/api";
+import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath } from "@stack/api";
 import { api as botsApi } from "../../bots/dist/api.js";
+import { api as rolesApi } from "../../roles/dist/api.js";
 import { api as workerApi } from "../../worker/dist/api.js";
-import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, ui, authorizeBrowser } from "./browser-fixture.mjs";
+import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -19,7 +21,8 @@ const require = createRequire(import.meta.url);
 const dir = await mkdtemp(join("/tmp", "as-workers-ui-"));
 const evidence = process.env.WORKERS_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
-const env = { ...process.env, STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
+// Nothing of the live Stack environment reaches the fixture: only the disposable state directory is named.
+const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("STACK_"))), STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
 
 const account = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const wid = (c) => `${c.repeat(8)}-0000-4000-8000-000000000000`;
@@ -129,19 +132,36 @@ const handlers = {
     freshness: { connected: true, stale: false, readAt: now, reason: null },
     subagents: { coverage: "partial", hierarchyAvailable: false, childTranscriptsAvailable: false, reason: "The native runtime reports task references only." } }),
 };
+// The gateway admits serve only with every operation its manifest selects; this check reads none of the resource ones.
+handlers.serve_resources = handlers.serve_resource_history = () => { throw new Error("not part of this fixture"); };
 // Any Worker write reaching the fixture is a failure of the read-only contract.
 for (const name of ["worker_start", "worker_send", "worker_respond", "worker_cancel", "worker_resume", "worker_close", "worker_remove", "worker_account_drain"])
   handlers[name] = (input) => { writes.push(name, input); throw new Error("read-only UI must not write"); };
 const sockets = new Map();
-let websocket, next, browser;
+let websocket, next, browser, rolesServer;
 let log = "";
 
 try {
-  websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["worker", "auth", "serve", "bots", "api"]), port: 0 });
+  // Workers capture Roles by ID. The provisioned catalog has a Bot default and a separate Worker default; a third
+  // Role is selected explicitly and edited after one Worker captured it.
+  rolesServer = await serveApi({ name: "roles", transport: "socket", env, root });
+  const rolesCall = (name, args = {}) => socketCall(socketPath("roles", env), "tools/call", { name, arguments: args });
+  let roleCatalog = await rolesCall("roles_snapshot");
+  assert.notEqual(roleCatalog.defaultRoleId, roleCatalog.workerDefaultRoleId, "a fresh catalog provisions separate Bot and Worker defaults");
+  const workerDefault = roleCatalog.roles.find((role) => role.id === roleCatalog.workerDefaultRoleId);
+  roleCatalog = await rolesCall("role_create", { expectedRevision: roleCatalog.revision, name: "Researcher" });
+  const researcher = roleCatalog.roles.find((role) => role.name === "Researcher");
+  const edited = await rolesCall("role_update", { roleId: researcher.id, expectedRevision: researcher.revision, description: "Reads sources" });
+  Object.assign(workers[0], { roleId: researcher.id, roleRevision: researcher.revision });
+  Object.assign(workers[1], { roleId: researcher.id, roleRevision: edited.revision });
+  Object.assign(workers[2], { roleId: workerDefault.id, roleRevision: workerDefault.revision });
+  Object.assign(workers[3], { roleId: account(77), roleRevision: 4 });
+
+  websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["worker", "auth", "serve", "bots", "roles", "api"]), port: 0 });
   const doc = (name, api) => fixtureDoc(name, api, websocket.url, publishedJsonSchema);
-  const catalog = [doc("worker", workerApi), doc("bots", botsApi), doc("auth"), doc("serve"), doc("api")];
+  const catalog = [doc("worker", workerApi), doc("bots", botsApi), doc("roles", rolesApi), doc("auth"), doc("serve"), doc("api")];
   handlers.docs_snapshot = () => ({ packages: catalog });
-  const definitions = { serve: ["serve_status"], auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"],
+  const definitions = { serve: ["serve_status", "serve_resources", "serve_resource_history"], auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"],
     bots: ["bot_list", "bot_defaults_get", "voice_status"], worker: workerApi.operations.map((operation) => operation.name), api: ["docs_snapshot"] };
   const topics = { serve: { pids_changed: "Fixture" }, auth: { accounts_changed: "Fixture", worker_accounts_changed: "Fixture" }, bots: botsApi.events.topics, worker: workerApi.events.topics, api: {} };
   for (const [name, names] of Object.entries(definitions)) {
@@ -202,6 +222,10 @@ try {
   }
   assert.equal(await worker.locator("textarea, input[type=text]").count(), 0, "no composer");
   await worker.getByText("observed claude-sonnet-5 · high").waitFor();
+  // The captured Role is compared with that same Role: this Worker selected Researcher, which has been edited since.
+  const roleChip = worker.getByTitle(/^Started with Researcher r/);
+  await roleChip.getByText(`Researcher r${researcher.revision} · now r${edited.revision}`, { exact: true }).waitFor();
+  assert.equal(await roleChip.getAttribute("title"), `Started with Researcher r${researcher.revision}; Researcher is now r${edited.revision}. This Worker keeps its r${researcher.revision} snapshot, including through recovery. New Workers without a selected Role use “${workerDefault.name}”. Editing a Role never changes a running Worker.`);
   await page.screenshot({ path: join(evidence, "worker-conversation.png"), animations: "disabled" });
 
   // A progress notice scoped to this Worker continues the transcript from its last sequence.
@@ -234,13 +258,32 @@ try {
   await worker.getByText("all tests passed", { exact: true }).waitFor();
   await worker.getByRole("tab", { name: "Session" }).click();
   await worker.getByText(/Coverage partial\. The native runtime reports task references only\./).waitFor();
+  const roleRows = worker.locator("section").filter({ has: page.getByRole("heading", { name: "Role", exact: true }) });
+  await roleRows.getByText(`Researcher r${researcher.revision}`, { exact: true }).waitFor();
+  await roleRows.getByText(`r${edited.revision} · older revision`, { exact: true }).waitFor();
+  await roleRows.getByText(workerDefault.name, { exact: true }).waitFor();
+  await roleRows.getByText(/Recovery reuses this snapshot, and follow-up turns cannot change it\./).waitFor();
+  assert.equal(await roleRows.locator("button:not([aria-label^='Copy']), select, input, [role=combobox]").count(), 0, "the Role section offers no Role control");
   await page.screenshot({ path: join(evidence, "worker-session.png"), animations: "disabled" });
 
-  // A Worker whose last turn is unknown says so; its Bot recovers it.
+  // A Role selected explicitly and still current is ordinary, not a warning, though it is not the Worker default.
+  await row("brain · bbbbbb").click();
+  const selected = worker.getByTitle(/^Started with Researcher r/);
+  await selected.getByText(`Researcher r${edited.revision}`, { exact: true }).waitFor();
+  assert.doesNotMatch(await selected.getAttribute("class"), /warning/, "a selected non-default Role is not flagged");
+  await worker.getByRole("tab", { name: "Session" }).click();
+  await roleRows.getByText(`r${edited.revision} · current revision`, { exact: true }).waitFor();
+
+  // A Worker whose last turn is unknown says so; its Bot recovers it. It started with the Worker default.
   await row("stack · cccccc").click();
   await worker.getByText(/Turn outcome is unknown after server restart/).waitFor();
+  await worker.getByTitle(/It is also the current Worker default\./).getByText(`${workerDefault.name} r${workerDefault.revision}`, { exact: true }).waitFor();
+  await worker.getByRole("tab", { name: "Session" }).click();
+  await roleRows.getByText(`${workerDefault.name} · this Role`, { exact: true }).waitFor();
+  await page.screenshot({ path: join(evidence, "worker-role.png"), animations: "disabled" });
   // A removed worktree reads as an error in Changes, not a crash.
   await row("stack · dddddd").click();
+  await worker.getByTitle(/^Started with a Role deleted since, at r4\./).getByText("Deleted role r4", { exact: true }).waitFor();
   await worker.getByRole("tab", { name: "Changes" }).click();
   await worker.getByText("the Worker's worktree is no longer available", { exact: false }).waitFor();
   await worker.getByRole("tab", { name: "Conversation" }).click();
@@ -290,5 +333,6 @@ try {
   next?.kill();
   await websocket?.close();
   for (const socket of sockets.values()) await socket.close();
+  await rolesServer?.close();
   if (!process.env.WORKERS_EVIDENCE_DIR) await rm(dir, { recursive: true, force: true });
 }

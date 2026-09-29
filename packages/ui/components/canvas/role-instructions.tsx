@@ -272,7 +272,7 @@ function CategoryCard({ category, fragments, role, collapsed, onToggle, drag, dr
         <p className="line-clamp-2 px-9 pb-1 text-[0.7rem] text-pretty text-muted-foreground">{category.description}</p>
       ) : null}
       {!category.enabled && !collapsed ? (
-        <p className="px-9 pb-1 text-[0.68rem] text-muted-foreground">Off · none of these reach new Bots</p>
+        <p className="px-9 pb-1 text-[0.68rem] text-muted-foreground">Off · none of these reach new launches</p>
       ) : null}
       {collapsed ? null : (
         <div className="flex flex-col px-1 pb-1">

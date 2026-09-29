@@ -8,10 +8,10 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
-import { classifyLaunch, launchHint, launchLabel } from "@/lib/stack/roles";
+import { classifyWorkerRole, workerRoleHint, workerRoleLabel, type WorkerRole } from "@/lib/stack/roles";
 import { primaryWorker } from "@/lib/stack/worker-windows";
 import type { StackStore } from "@/lib/stack/store";
-import type { WorkerDiff, WorkerDiffFile, WorkerDetail, WorkerPermission, WorkerRecord, WorkerRecordChunk, WorkerRecordPage, WorkerSession, WorkerStatus, WorkerTool, WorkerToolPage, WorkerTranscriptEntry, WorkerTranscriptPage, WorkerTurn, WorkerTurnPage } from "@/lib/stack/types";
+import type { RoleCatalog, WorkerDiff, WorkerDiffFile, WorkerDetail, WorkerPermission, WorkerRecord, WorkerRecordChunk, WorkerRecordPage, WorkerSession, WorkerStatus, WorkerTool, WorkerToolPage, WorkerTranscriptEntry, WorkerTranscriptPage, WorkerTurn, WorkerTurnPage } from "@/lib/stack/types";
 import { appendBySeq, conversation, localOperator, settingsMismatch, span, workerAttention, workerLabel, workerOrigin, type ConversationItem, type PlanEntry } from "@/lib/stack/workers";
 import { cn } from "@/lib/utils";
 import { Markdown } from "./chat-window";
@@ -267,8 +267,7 @@ function Summary({ worker, status, statusError }: { worker: WorkerSession; statu
   const attention = workerAttention(worker);
   const pending = (status?.pending ?? []).filter((request) => request.state === "pending");
   const bot = bots.data?.some((item) => item.id === worker.botId);
-  const launch = classifyLaunch(worker, roleCatalog.data, "worker");
-  const defaultRole = roleCatalog.data?.roles.find((item) => item.id === roleCatalog.data?.workerDefaultRoleId) ?? null;
+  const role = classifyWorkerRole(worker, roleCatalog.data);
   const active = turn && ["queued", "running", "awaiting_input", "cancelling"].includes(turn.phase);
   const started = turn ? turn.dispatchedAt ?? turn.createdAt : null;
   return (
@@ -293,10 +292,9 @@ function Summary({ worker, status, statusError }: { worker: WorkerSession; statu
         <Chip icon={FolderGitIcon} title={worker.cwd ?? worker.repo} copy={worker.cwd ?? worker.repo} label="worktree path">{worker.repo.split("/").filter(Boolean).at(-1) ?? worker.repo}</Chip>
         {worker.branch ? <Chip icon={GitBranchIcon} title={worker.branch} copy={worker.branch} label="branch">{worker.baseCommit ? `from ${worker.baseCommit.slice(0, 7)}` : worker.branch}</Chip> : null}
         {worker.sourceDirty ? <Chip icon={TriangleAlertIcon} tone="warning" title="The source checkout had uncommitted changes when this Worker started; its worktree does not include them">source was dirty</Chip> : null}
-        {launch ? (
-          <Chip icon={ScrollTextIcon} tone={launch.state === "older" ? "warning" : undefined}
-            title={launchHint(launch, defaultRole, "worker") ?? `Started with ${launchLabel(launch)}, the default Role at its current revision`}>
-            {launchLabel(launch)}{launch.state === "older" ? " · older" : launch.state === "other" ? " · selected" : ""}
+        {role ? (
+          <Chip icon={ScrollTextIcon} tone={role.state === "older" ? "warning" : undefined} title={workerRoleHint(role, workerDefaultOf(roleCatalog.data))}>
+            {workerRoleLabel(role)}{role.state === "older" ? ` · now r${role.currentRevision}` : ""}
           </Chip>
         ) : null}
       </div>
@@ -708,6 +706,39 @@ function RecordData({ worker, record }: { worker: WorkerSession; record: WorkerR
   );
 }
 
+const workerDefaultOf = (catalog: RoleCatalog | null) => catalog?.roles.find((item) => item.id === catalog.workerDefaultRoleId) ?? null;
+
+const roleState: Record<WorkerRole["state"], string> = {
+  current: "current revision", older: "older revision", deleted: "Role deleted since", unknown: "legacy record without a Role ID", unavailable: "Roles catalog unavailable",
+};
+
+/** The Role snapshot this Worker captured at creation, compared only with that same Role. Nothing here changes it. */
+function RoleSection({ worker }: { worker: WorkerSession }) {
+  const { roleCatalog } = useStack();
+  const role = classifyWorkerRole(worker, roleCatalog.data);
+  const workerDefault = workerDefaultOf(roleCatalog.data);
+  return (
+    <section className="flex flex-col gap-1">
+      <h3 className="px-0.5 text-[0.68rem] font-medium tracking-[0.08em] text-muted-foreground uppercase">Role</h3>
+      {role ? (
+        <>
+          <dl className="flex flex-col">
+            <Row label="Captured">{workerRoleLabel(role)}</Row>
+            <Row label="Now" className={role.state === "older" ? "text-warning" : undefined}>
+              {role.state === "current" || role.state === "older" ? `r${role.currentRevision} · ${roleState[role.state]}` : roleState[role.state]}
+            </Row>
+            {role.roleId ? <Row label="Role ID" mono copy={role.roleId}>{shortId(role.roleId, 13)}</Row> : null}
+            {workerDefault ? <Row label="Worker default">{workerDefault.name}{role.workerDefault ? " · this Role" : ""}</Row> : null}
+          </dl>
+          <p className="px-0.5 text-[0.72rem] text-pretty text-muted-foreground">
+            {workerRoleHint(role, null)} Recovery reuses this snapshot, and follow-up turns cannot change it. The Worker default only decides what a new Worker gets when it selects no Role.
+          </p>
+        </>
+      ) : <p className="px-0.5 text-[0.72rem] text-pretty text-muted-foreground">No Role captured yet.</p>}
+    </section>
+  );
+}
+
 function SessionTab({ worker, generation }: { worker: WorkerSession; generation: number }) {
   const store = useStore();
   const detail = useSnapshot(worker.id, generation, () => store.call<WorkerDetail>("worker", "worker_detail", { id: worker.id }));
@@ -728,6 +759,7 @@ function SessionTab({ worker, generation }: { worker: WorkerSession; generation:
             <Row label="Source repo" mono copy={worker.repo}>{worker.repo}</Row>
             <Row label="Started"><Time at={worker.createdAt} /></Row>
           </dl>
+          <RoleSection worker={worker} />
           <section className="flex flex-col gap-1">
             <h3 className="px-0.5 text-[0.68rem] font-medium tracking-[0.08em] text-muted-foreground uppercase">Capture</h3>
             <dl className="flex flex-col">
