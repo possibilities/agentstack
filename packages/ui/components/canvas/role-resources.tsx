@@ -231,7 +231,7 @@ function ResourceList<T extends Item>({ spec }: { spec: ListSpec<T> }) {
     </>
   ) : (
     <div className="flex flex-col gap-2">
-      <Empty icon={spec.icon} title={view.placeholder(role.data, role.error, `No ${spec.title.toLowerCase()}`)} />
+      <Empty icon={spec.icon} title={view.placeholder(role.data, role.error, `No ${spec.noun}s`)} />
       {role.data && spec.note ? <p className="px-2 text-center text-[0.68rem] text-pretty text-muted-foreground">{spec.note}</p> : null}
     </div>
   );

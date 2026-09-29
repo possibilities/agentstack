@@ -53,7 +53,7 @@ export function RolePreviewWindow() {
 
   const hint = (launch: Parameters<typeof launchHint>[0], subject: "bot" | "worker") =>
     launchHint(launch, current.defaultRole, subject) ?? `${subject === "bot" ? "Launched" : "Started"} with ${launchLabel(launch)}, which is what a launch now would apply`;
-  const stale = [launches.workers.older && `${launches.workers.older} older revision`, launches.workers.other && `${launches.workers.other} other Role`, launches.workers.unknown && `${launches.workers.unknown} unknown Role`].filter(Boolean).join(", ");
+  const stale = [launches.workers.older && `${launches.workers.older} older revision${launches.workers.older === 1 ? "" : "s"}`, launches.workers.other && `${launches.workers.other} other Role${launches.workers.other === 1 ? "" : "s"}`, launches.workers.unknown && `${launches.workers.unknown} unknown Role${launches.workers.unknown === 1 ? "" : "s"}`].filter(Boolean).join(", ");
   const launched = launches.bots.length || launches.workers.total ? (
     <Section title="Launched" aside={<span className="text-[0.65rem] text-muted-foreground">Compared with the default Role</span>}>
       <ul className="flex flex-col gap-1">
