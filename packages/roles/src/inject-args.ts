@@ -82,7 +82,10 @@ export function injectArguments(args: string[]): { role: string; harness: Harnes
     if (booleans.has(key) && inline === undefined) continue;
     if (!values.has(key)) throw new Error(`${harness} option ${long ? `--${key}` : `-${key}`} is not supported by roles inject (capability overrides and session attachment are excluded)`);
     const value = inline ?? native[++i];
-    if (value === undefined) throw new Error(`${harness} option ${token} needs a value`);
+    // Native parsers can interpret an option-looking next token as another
+    // switch, rather than this value. Never let it escape the isolation checks.
+    if (value === undefined || (inline === undefined && value.startsWith("-") && value !== "-"))
+      throw new Error(`${harness} option ${token} needs a value (use = for a value beginning with a dash)`);
     if (harness === "codex" && (key === "c" || key === "config")) {
       const setting = value.split("=", 1)[0]!.trim();
       if (!value.includes("=") || !["model", "model_reasoning_effort", "model_reasoning_summary", "model_verbosity", "service_tier"].includes(setting))

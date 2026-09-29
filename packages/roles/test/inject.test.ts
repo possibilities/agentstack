@@ -221,6 +221,9 @@ test("default selection is catalog-marked; empty Roles still isolate; invalid na
       ...["--settings=x", "--plugin-dir", "--resume", "-r123", "--bg", "--bare", "--safe-mode", "--system-prompt=x", "attach"].map(flag => ["inject", "--", "claude", flag]),
       ...["--remote=x", "--profile=x", "-cdeveloper_instructions=x", "--enable", "resume", "app-server"].map(flag => ["inject", "--", "codex", flag]),
       ["inject", "--", "codex", "exec", "resume"],
+      ["inject", "--", "claude", "--model", "--settings=ambient.json"],
+      ["inject", "--", "codex", "--model", "--profile=ambient"],
+      ["inject", "--", "opencode", "--model", "--server=http://127.0.0.1:9"],
       ...["--server=x", "--standalone", "--session=x", "-c", "attach", "acp", "serve"].map(flag => ["inject", "--", "opencode", flag]),
     ]) {
       const result = await f.run(args);
