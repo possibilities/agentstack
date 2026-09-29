@@ -15,3 +15,49 @@ Use `project_create`, `project_update`, `project_delete`, and `project_reorder` 
 `role_launch_preview {roleId}` reports the selected Role's launch resources: enabled skills with file counts and sizes, the internal and Role MCP server names, the `config.toml` tables the Role contributes to Bot launches, enabled trusted project roots, and for each absolute path in `cwds` the enabled roots that contain it. Its `issues` name any enabled Role MCP server that would stop a launch, and `snapshotChars` measures the complete Role against the `snapshotLimitChars` write budget. Because its configuration can contain credentials, this preview is available over socket/WebSocket but excluded from MCP. Workers receive the selected Role's skills and MCP connections but not its instruction fragments or Bot-specific trusted-project config.
 
 For Bots, Stack materializes `SYSTEM_APPEND.md`, the enabled Role and internal MCP entries in `config.toml`, and enabled Role skills under `skills/` in a private per-launch path passed to codexnk's `--capabilities`. For Workers, Stack passes the captured MCP definitions to ACP `session/new` (or the Claude SDK) and stages only enabled skills in the private worktree or SDK plugin; it does not deliver Role instruction fragments. Worker recovery reuses its saved Role snapshot. Codexnk also discovers project skills, bundled skills, and explicitly added roots; home-level `~/.agents/skills` and personal plugin marketplaces are excluded for a three-axis Bot launch. The Role is not an exclusive allowlist for project or system capabilities.
+
+## Inject into a native CLI
+
+With Stack running, launch a fresh native session using the default or a named Role:
+
+```sh
+stack roles inject -- claude
+stack roles inject default -- codex
+stack roles inject "Research" -- opencode
+stack roles inject "Research" -- codex exec --model gpt-5.6-sol "Review this change"
+```
+
+Omission and literal `default` select the catalog-marked default. Other names
+match ASCII case-insensitively; an unknown name fails. Executables resolve from
+`PATH`. The invocation receives the selected Role's enabled skills, supporting
+files, internal and additional MCP connections, and rendered instruction
+fragments. It uses local operator authority for internal MCPs and does not create
+a Bot or Worker. MCP environment references resolve from the launching process.
+
+Role resources are materialized privately and removed after the native processes
+exit. Ambient personal capabilities are excluded; ordinary harness configuration
+is not rewritten. Native built-ins and administrator policy remain applicable.
+Codex can still discover project resources, and its private `HOME` changes home
+expansion and home-based tool configuration. This is capability isolation, not a
+sandbox or a restriction on what the agent can read with its tools.
+
+Authentication remains independent of the selected Role. Claude retains native
+keychain/environment authentication, but settings-based auth helpers are not
+imported. Codex requires an existing file-backed `CODEX_HOME/auth.json` (normally
+`~/.codex/auth.json`); an auth-only symlink preserves native refresh writes.
+Keyring-only Codex login is unsupported. OpenCode retains its ordinary native
+credential database, selection and refresh handling. Its private server uses
+pinned native packages and requires the matching stable **OpenCode 2.0.16** CLI;
+a mismatch fails before the server opens the database.
+
+Only fresh foreground launches are supported. Resume, attachment, background
+modes and capability/configuration overrides are refused, as are unrecognized
+native options. Normal model, effort, prompt, output and permission options are
+supported; use `stack roles inject --help` for the current contract. Native UI
+history selection after startup is still possible. Claude and OpenCode retain
+their ordinary native history; Codex history is retained under
+`<STACK_STATE_DIR>/roles/inject`, whose path is printed on exit. SIGKILL cannot
+guarantee cleanup of generated files.
+
+The design and OpenCode's pre-boot configuration boundary are recorded in
+[ADR 0123](adr/0123-role-injection-for-native-clis.md).
