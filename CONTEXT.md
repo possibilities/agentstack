@@ -12,7 +12,11 @@ _Avoid_: MCP server, endpoint, route
 
 ## Access client
 
-A durable phone, extension, browser or future cloud consumer identity owned by the `access` Package API. A tailnet client pairs through an expiring request approved on trusted local control. Its human approval code is distinct from its high-entropy redemption secret. One client may receive Brain and Content scopes. _Avoid_: Brain token, Bot, Worker, Tailscale node identity
+A durable phone, extension, browser, desktop or future cloud consumer identity owned by the `access` Package API. A tailnet client pairs through manual local approval, a one-use local QR invitation, or an offline QR request explicitly approved by a permitted enrollment sponsor. Its human approval code or request QR is distinct from its private high-entropy redemption secret. One client may receive multiple Stack resource scopes. _Avoid_: Brain token, Bot, Worker, Tailscale node identity
+
+## Access enrollment sponsor
+
+A non-browser Access client explicitly granted `access:enroll` by trusted local control. Its access-audience token can inspect and approve a new device's offline QR request for a subset of its own resource scopes, never delegate enrollment authority. A credential-free receipt returns the server destination to the new device; only that device can redeem using its retained secret and destination-bound Ed25519 proof. Sponsor authority is checked again before issuance; issued clients are independent and retain durable sponsor provenance. _Avoid_: forwarded phone credential, automatic QR approval, remote Access administrator
 
 ## Access grant
 

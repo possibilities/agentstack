@@ -14,6 +14,7 @@ Configure these in the server's environment before a separately authorized resta
 ```sh
 STACK_ACCESS_HOST=100.x.y.z
 STACK_ACCESS_PORT=8943
+STACK_ACCESS_ORIGIN=https://machine.example-tailnet.ts.net:8943 # QR enrollment destination
 STACK_ACCESS_ARTIFACT_PORT=8944
 # Optional: enable a distinct, authenticated remote UI origin. Existing
 # Access Brain/Content device ingress runs without these two settings.
@@ -82,6 +83,13 @@ than opening an unauthenticated local link. Loopback Preview remains unchanged.
 
 ## Pair and approve
 
+The [QR enrollment APIs](access-enrollment.md) additionally support one-use local
+invitations for a phone and phone-approved enrollment of an extension or future
+desktop client with no server setup. A locally granted `access:enroll` permission
+and an `access`-audience token authorize the latter; the permission cannot itself
+be delegated. Android scanning, Chrome QR screens and local invitation controls
+remain API-first follow-up work. The manual workflow below is available today.
+
 1. In Chrome or Android settings enter the HTTPS Access URL and select **Pair**.
    Chrome requests host permission for that exact origin. The connection is
    Stack-wide; current requested scopes are Brain admission, own share
@@ -112,7 +120,8 @@ dependent credentials. These are trusted local operations, never ingress routes.
 
 Approval may supply `scopes:["brain:share"]` (or any subset of the requested
 `brain:share`, `brain:status`, `content:read`, `ui:view`, `ui:control` scopes); omission approves the full
-requested set. An exact approval replay must select the same scopes. Use
+requested set. Native clients may also request `access:enroll`; only trusted local
+approval or grant updates may give them that permission. An exact approval replay must select the same scopes. Use
 `grant_update` with `{id,expectedRevision,scopes,operations}` to replace policy.
 Tailnet grants accept scopes and an empty operations array; cloud grants accept
 operations and an empty scopes array. Narrowing affects existing access tokens,
@@ -127,7 +136,7 @@ The live `docs_snapshot` reference describes request/response schemas.
 | `GET /v1/access/identity` | Verified tailnet; stable server UUID only, no bearer needed |
 | `POST /v1/access/pair` | Verified tailnet; UUID request ID and client-generated 32-byte base64url redemption secret, label, kind and explicit scopes |
 | `POST /v1/access/redeem` | Verified tailnet; pairing ID and redemption secret |
-| `POST /v1/access/refresh` | Verified tailnet; refresh token, persisted UUID request ID, `brain` or `content` audience |
+| `POST /v1/access/refresh` | Verified tailnet; refresh token, persisted UUID request ID, `brain`, `content` or `access` audience |
 | `POST /v1/share` | Brain audience token and `brain:share` |
 | `GET /v1/shares?job_ids=…` | Brain audience token, `brain:status`, and durable admission receipts for those IDs |
 | `GET /v1/health` | Brain audience token and `brain:status` |

@@ -115,6 +115,15 @@ test("the api package serves structured documents for every workspace package", 
     assert.deepEqual(Object.keys(access.events), ["access_changed"]);
     const accessHttp = access.transports.find(t => t.type === "http")!;
     assert.ok(accessHttp.routes.some(r => r.path === "/v1/access/pair" && r.inputSchema));
+    for (const path of ["claim", "inspect", "approve", "cancel", "redeem"]) {
+      const route = accessHttp.routes.find(r => r.path === `/v1/access/enrollment/${path}`)!;
+      assert.ok(route.inputSchema && route.outputSchema && route.errorSchema, `missing enrollment contract: ${path}`);
+      assert.equal(route.surface, "private");
+    }
+    assert.ok(JSON.stringify(accessHttp.routes.find(r => r.path === "/v1/access/refresh")!.inputSchema).includes('"access"'));
+    const accessSnapshot = access.operations.find(op => op.name === "access_snapshot")!;
+    for (const field of ["invitations", "enrollments"]) assert.ok(Object.hasOwn(accessSnapshot.outputSchema.properties ?? {}, field));
+    assert.ok(access.operations.some(op => op.name === "enrollment_invite_create" && op.outputSchema));
     assert.ok(accessHttp.routes.some(r => r.path === "/v1/content/handoff" && r.authentication === "bearer"));
     assert.ok(accessHttp.routes.some(r => r.surface === "ui" && r.path === "/connect/session" && r.inputSchema));
     assert.ok(accessHttp.routes.some(r => r.surface === "ui" && r.path === "/" && r.authentication === "bearer"));

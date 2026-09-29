@@ -1,8 +1,36 @@
 {
-  "name": "@stack/access", "version": "0.0.0", "private": true, "type": "module",
-  "exports": { ".": { "types": "./dist/api.d.ts", "default": "./dist/api.js" }, "./package.json": "./package.json" },
-  "scripts": { "build": "node ../../scripts/clean-dist.mjs && tsc", "test": "node --test dist/test/*.test.js" },
-  "engines": { "node": ">=24" },
-  "dependencies": { "@stack/api": "workspace:*", "zod": "^4.6.5" },
-  "devDependencies": { "@types/node": "^26.6.2", "@types/ws": "^8.18.1", "typescript": "^7.0.2", "ws": "^8.21.3" }
+  "name": "@stack/access",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/api.d.ts",
+      "default": "./dist/api.js"
+    },
+    "./package.json": "./package.json",
+    "./enrollment-client": { "types": "./dist/src/enrollment-client.d.ts", "default": "./dist/src/enrollment-client.js" },
+    "./enrollment-protocol": { "types": "./dist/src/enrollment-protocol.d.ts", "default": "./dist/src/enrollment-protocol.js" },
+    "./qr": { "types": "./dist/src/qr.d.ts", "default": "./dist/src/qr.js" }
+  },
+  "scripts": {
+    "build": "node ../../scripts/clean-dist.mjs && tsc",
+    "test": "node --test dist/test/*.test.js"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@stack/api": "workspace:*",
+    "qrcode": "1.5.4",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "@types/qrcode": "1.5.6",
+    "@types/ws": "^8.18.1",
+    "jsqr": "1.4.0",
+    "typescript": "^7.0.2",
+    "ws": "^8.21.3"
+  }
 }

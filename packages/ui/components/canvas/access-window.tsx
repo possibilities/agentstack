@@ -18,6 +18,7 @@ const permissions = [
   { id: "content:read", label: "Read Content" },
   { id: "ui:view", label: "View remote UI" },
   { id: "ui:control", label: "Control remote UI" },
+  { id: "access:enroll", label: "Enroll other devices (cannot delegate this permission)" },
 ] as const;
 const date = (at: number) => new Date(at).toLocaleString();
 const scopeLabel = (id: string) => permissions.find((permission) => permission.id === id)?.label ?? id;

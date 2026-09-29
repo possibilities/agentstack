@@ -45,8 +45,8 @@ Access optionally supplies a third, distinct direct-tailnet TLS origin for
 authenticated browser-kind clients ([ADR 0101](adr/0101-remote-uix-through-access.md)).
 It verifies kernel peers and Tailscale evidence per HTTP request and WebSocket
 upgrade, refuses forwarded identity, requires an exact Origin for unsafe requests
-and upgrades, and admits short-lived HttpOnly cookie sessions only after local
-pairing approval. The remote Next render has no trusted-local socket snapshot;
+and upgrades, and admits short-lived HttpOnly cookie sessions only for an approved
+browser-kind Access credential. The remote Next render has no trusted-local socket snapshot;
 the Access-owned gateway intersects live WebSocket exposure with `ui:view` or
 `ui:control`, closes on grant changes and revocation, and never exposes `access`,
 `auth`, voice or headful browser controls remotely. Remote Artifact scripts run
@@ -61,6 +61,21 @@ The Roles resource editor explicitly reads complete MCP definitions through `rol
 Brain's research database and content-addressed bytes are private Stack state under `<state>/brain`. Its backend liveness credential is ephemeral and is not written to a token file. The package initializes empty storage; it does not discover or import an earlier research application's files or credentials. Research content may itself be sensitive, and ordinary search/retrieval intentionally returns that content to an authorized local caller. Job summaries redact content by default; explicit content inspection and operator dispositions retain their audit semantics.
 
 Chrome and Android pair through Access's authenticated tailnet ingress. Brain's backend Share listener is loopback-only (8877 by default); non-loopback binding is refused, and legacy shared tokens are not imported. Access verifies remote provenance and client scopes, stamps share attribution and filters status reads through client-bound receipts. Its `share_receive` and `share_read_states` socket seams are excluded from MCP and WebSocket. Client settings, Share outboxes and Share history use Stack application namespaces.
+
+QR enrollment adds one-use local invitations and explicit phone-sponsored device
+induction ([ADR 0127](adr/0127-qr-device-enrollment.md)). Native sponsors need the
+locally assigned `access:enroll` scope and a separate access-audience bearer.
+They can grant only requested scopes they hold, never enrollment authority. The
+target keeps its own secret and ephemeral signing key; request/receipt QRs contain no device credential.
+An invitation QR **does** carry short-lived one-use authority and must be kept
+private. Revocation or a sponsor grant change fences pending redemption; already
+issued devices remain independently revocable with durable sponsor provenance.
+The receipt return channel establishes the new device's initially unknown server
+destination. All network calls still require direct-tailnet TLS; no public relay
+or remote UI Access control is introduced.
+Redemption additionally requires an Ed25519 proof bound to the actual server
+origin, installation UUID, enrollment ID and request commitment. A substituted
+return destination cannot harvest proof usable at the legitimate server.
 
 URL extraction and source discovery remain delegated to Agentscrape. Admission is durable and offline; accepting a URL does not assert that it was fetched, indexed or permitted by the extractor's network policy. An unavailable extractor leaves inspectable ingestion state rather than silently dropping the accepted share.
 

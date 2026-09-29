@@ -2,7 +2,9 @@ export type AccessSnapshot = {
   serverId: string;
   clients: { id: string; label: string; kind: string; created: number; revoked: number | null }[];
   pairings: { id: string; code: string; label: string; kind: string; scopes: string[]; created: number; expires: number; state: string }[];
-  grants: { id: string; client_id: string; network: "tailnet" | "public-cloud"; scopes: string[]; operations: string[]; created: number; revoked: number | null; revision: number }[];
+  grants: { id: string; client_id: string; network: "tailnet" | "public-cloud"; scopes: string[]; operations: string[]; created: number; revoked: number | null; revision: number; enrollment_id: string | null; sponsor_credential_id: string | null }[];
+  invitations: { id: string; kind: string; scopes: string[]; created: number; expires: number; revoked: number | null; request_id: string | null }[];
+  enrollments: { id: string; request_id: string; label: string; kind: string; scopes: string[]; created: number; expires: number; sponsor: string | null; invitation_id: string | null; credential_id: string | null; cancelled: number | null }[];
   credentials: { id: string; client_id: string; grant_id: string; generation: number; created: number; expires: number; revoked: number | null }[];
   audit: { seq: number; time: number; action: string; subject: string }[];
   ingress: { host: string; port: number; artifactPort: number; uiPort: number | null } | null;

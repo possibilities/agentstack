@@ -1,7 +1,7 @@
 name: access
-description: Shared Stack client pairing, grants, revocable credentials and audit. Device ingress requires verified direct tailnet traffic on every request.
+description: Shared Stack client pairing, one-use QR invitations, scoped device enrollment, grants, revocable credentials and audit. Device ingress requires verified direct tailnet traffic on every request.
 socket:
-  description: Same-user trusted approval, inventory and revocation authority.
+  description: Same-user trusted approval, QR invitations, enrollment, inventory and revocation authority.
 websocket:
   operations: all
   events: all

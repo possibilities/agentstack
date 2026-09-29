@@ -4,17 +4,20 @@ import { z } from "zod";
 import { AccessError, AccessStore, scopes, type Principal } from "./store.js";
 import { tailnetAddress, verifier, localApi, type Peer } from "./network.js";
 import { startRemoteUi } from "./remote-ui.js";
+import { clientKinds } from "./policy.js";
+import { approvalInput, claimInput, enrollmentRedeemInput, qrTextSchema } from "./enrollment-protocol.js";
+import { enrollmentOrigin, enrollmentResponse } from "./enrollment.js";
 
-export const pairInput = z.strictObject({ requestId: z.uuid(), label: z.string().trim().min(1).max(100), kind: z.enum(["chrome", "android", "browser"]), scopes: z.array(z.enum(scopes)).min(1).max(scopes.length), redemptionSecret: z.string().regex(/^[A-Za-z0-9_-]{43}$/) });
+export const pairInput = z.strictObject({ requestId: z.uuid(), label: z.string().trim().min(1).max(100), kind: z.enum(clientKinds), scopes: z.array(z.enum(scopes)).min(1).max(scopes.length), redemptionSecret: z.string().regex(/^[A-Za-z0-9_-]{43}$/) });
 export const redeemInput = z.strictObject({ id: z.uuid(), redemptionSecret: pairInput.shape.redemptionSecret });
-export const refreshInput = z.strictObject({ refreshToken: pairInput.shape.redemptionSecret, requestId: z.uuid(), audience: z.enum(["brain", "content"]) });
+export const refreshInput = z.strictObject({ refreshToken: pairInput.shape.redemptionSecret, requestId: z.uuid(), audience: z.enum(["brain", "content", "access"]) });
 export const handoffInput = z.strictObject({ path: z.string().max(512), origin: z.enum(["documents", "artifacts"]) });
 const json = (data: unknown, status = 200) => new Response(JSON.stringify({ schema_version: 1, ok: true, data }), { status, headers: { "content-type": "application/json", "cache-control": "no-store", "referrer-policy": "no-referrer" } });
-async function body(request: Request) {
+async function body(request: Request, limit = 1024 * 1024) {
   if (!request.headers.get("content-type")?.startsWith("application/json")) throw new AccessError("json_required", 415);
   const reader = request.body?.getReader(); if (!reader) throw new AccessError("bad_payload", 400);
   let length = 0; const chunks: Uint8Array[] = [];
-  try { for (;;) { const { value, done } = await reader.read(); if (done) break; length += value.length; if (length > 1024 * 1024) { void reader.cancel(); throw new AccessError("payload_too_large", 413); } chunks.push(value); } }
+  try { for (;;) { const { value, done } = await reader.read(); if (done) break; length += value.length; if (length > limit) { void reader.cancel(); throw new AccessError("payload_too_large", 413); } chunks.push(value); } }
   finally { reader.releaseLock(); }
   try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { throw new AccessError("bad_payload", 400); }
 }
@@ -60,7 +63,29 @@ export function handler(options: IngressOptions) {
         throw new AccessError("server_identity_mismatch", 409);
       }
       let response: Response;
-       if (origin === "documents" && request.method === "GET" && path === "/v1/access/identity") {
+       if (origin === "documents" && path.startsWith("/v1/access/enrollment/")) {
+         const destination = enrollmentOrigin(env);
+         if (request.headers.get("host") !== new URL(destination).host) throw new AccessError("enrollment_host_refused", 403);
+         if (requestOrigin && !requestOrigin.match(/^chrome-extension:\/\/[a-p]{32}$/) && requestOrigin !== destination) throw new AccessError("origin_refused", 403);
+         if (request.method !== "POST") throw new AccessError("method_not_allowed", 405);
+         const input = await body(request, 8192);
+         if (path === "/v1/access/enrollment/claim") {
+           const value = claimInput.parse(input);
+           response = json(enrollmentResponse(store.claimInvitation(value.inviteId, value.secret, value.request), store.now()));
+         } else if (path === "/v1/access/enrollment/redeem") {
+           const value = enrollmentRedeemInput.parse(input);
+           response = json(store.redeemEnrollment(value.id, value.redemptionSecret, value.requestHash, value.signature));
+         } else if (path === "/v1/access/enrollment/inspect") {
+           const value = z.strictObject({ request: qrTextSchema }).parse(input);
+           response = json(store.previewEnrollment(value.request, bearer(request)));
+         } else if (path === "/v1/access/enrollment/approve") {
+           const value = approvalInput.parse(input);
+           response = json(enrollmentResponse(store.approveEnrollment(value.request, value.scopes, destination, bearer(request)), store.now()));
+         } else if (path === "/v1/access/enrollment/cancel") {
+           const value = z.strictObject({ id: z.uuid() }).parse(input);
+           response = json(store.cancelEnrollment(value.id, bearer(request)));
+         } else throw new AccessError("not_found", 404);
+       } else if (origin === "documents" && request.method === "GET" && path === "/v1/access/identity") {
          response = json({ serverId: store.serverId });
        } else if (origin === "documents" && request.method === "GET" && path === "/v1/access/me") {
         const principal = store.authorize(bearer(request), "brain");
@@ -142,6 +167,7 @@ export async function startIngress(store: AccessStore, env: NodeJS.ProcessEnv) {
   const host = env.STACK_ACCESS_HOST;
   if (!host) return null;
   if (!tailnetAddress(host)) throw new Error("STACK_ACCESS_HOST must be a direct Tailscale IP; proxies and wildcard binds are refused");
+  if (env.STACK_ACCESS_ORIGIN) enrollmentOrigin(env);
   if (!env.STACK_ACCESS_TLS_KEY || !env.STACK_ACCESS_TLS_CERT) throw new Error("Access requires operator-provisioned TLS key and certificate paths");
   const tls = { key: readFileSync(env.STACK_ACCESS_TLS_KEY), cert: readFileSync(env.STACK_ACCESS_TLS_CERT) };
   const port = Number(env.STACK_ACCESS_PORT ?? 8943), artifactPort = Number(env.STACK_ACCESS_ARTIFACT_PORT ?? 8944), uiPort = Number(env.STACK_ACCESS_UI_PORT ?? 8945);
