@@ -1,6 +1,6 @@
-# 120. The Roles space manages named Roles and per-Role internal MCP switches
+# 121. The Roles space manages named Roles and per-Role internal MCP switches
 
-Status: accepted, 2026-09-28. Extends [ADR 0082](0082-roles-space-for-instruction-fragments.md) and
+Status: accepted, 2026-09-29. Extends [ADR 0082](0082-roles-space-for-instruction-fragments.md) and
 [ADR 0098](0098-roles-space-for-launch-resources.md), and is the UI for
 [ADR 0118](0118-multiple-roles-and-default.md) and [ADR 0119](0119-per-role-internal-mcp.md).
 Keeps the Editor as the one editing surface and the draft, immediate-switch and rebuild-once behavior
