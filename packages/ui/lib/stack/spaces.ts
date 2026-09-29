@@ -3,13 +3,16 @@ import { workerAttention, workerLabel } from "./workers";
 import { browseAttention } from "./browse";
 import { statusIssues } from "./brain";
 import { procAttention } from "./proc";
+import { hudAttention } from "./hud";
 import type { StackState } from "./store";
 import { nodeKey, type NodeRef } from "./types";
 
-export type SpaceId = "fleet" | "accounts" | "lab" | "system" | "roles" | "inbox" | "signal" | "content" | "workers" | "scrape" | "browse" | "brain" | "proc";
+export type SpaceId = "fleet" | "accounts" | "lab" | "system" | "roles" | "inbox" | "signal" | "content" | "workers" | "scrape" | "browse" | "brain" | "proc" | "hud";
 
 export const spaces: { id: SpaceId; title: string; description: string; key: string }[] = [
   { id: "fleet", title: "Fleet", description: "Bots and their controls", key: "1" },
+  // The digits are taken; h is free on the bench.
+  { id: "hud", title: "HUD", description: "Shared work: what we're trying to accomplish, where each piece stands, what needs someone next and what is deployed on it", key: "h" },
   { id: "accounts", title: "Accounts", description: "Accounts, usage limits, and model catalogs", key: "2" },
   { id: "lab", title: "Lab", description: "Experimental windows for tinkering", key: "3" },
   { id: "system", title: "System", description: "Server, processes, packages, host resources and activity", key: "4" },
@@ -130,6 +133,8 @@ export function homeOf(ref: NodeRef): NodeHome {
       return { kind: "space", space: "proc", window: "proc-runs" };
     case "proc-run-window":
       return { kind: "space", space: "proc", window: ref.id };
+    case "work-item":
+      return { kind: "space", space: "hud", window: "hud-work" };
     case "package":
     case "operation":
       return { kind: "reference" };
@@ -150,8 +155,8 @@ export function parseSpacePath(pathname: string): SpaceId | null {
 }
 
 /** Human-readable reasons each space needs attention; an empty list means all quiet. Only "closed" channels count — idle and connecting are normal. */
-export function spaceAttention(state: Pick<StackState, "status" | "server" | "resources" | "accounts" | "workerAccounts" | "workerSessions" | "workerRuntimes" | "bots" | "attempt" | "catalog" | "endpoints" | "notifyCounts" | "signalStatus"> & Partial<Pick<StackState, "contentUploads" | "scrapeStatus" | "browserHandoffs" | "browserProfiles" | "browserToolchain" | "brainStatus" | "brainJobStats" | "brainSources" | "procSchedules" | "procStatus" | "codexTools">>): Record<SpaceId | "api", string[]> {
-  const attention: Record<SpaceId | "api", string[]> = { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], brain: [], proc: [], api: [] };
+export function spaceAttention(state: Pick<StackState, "status" | "server" | "resources" | "accounts" | "workerAccounts" | "workerSessions" | "workerRuntimes" | "bots" | "attempt" | "catalog" | "endpoints" | "notifyCounts" | "signalStatus"> & Partial<Pick<StackState, "contentUploads" | "scrapeStatus" | "browserHandoffs" | "browserProfiles" | "browserToolchain" | "brainStatus" | "brainJobStats" | "brainSources" | "procSchedules" | "procStatus" | "codexTools" | "hudTree">>): Record<SpaceId | "api", string[]> {
+  const attention: Record<SpaceId | "api", string[]> = { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], brain: [], proc: [], hud: [], api: [] };
   for (const bot of state.bots.data ?? []) if (bot.recoveryIssue) attention.fleet.push(`${bot.id} needs inspection`);
   const labels = accountLabels(state.accounts.data);
   for (const account of state.accounts.data ?? []) if (account.removing) attention.accounts.push(`${labels.get(account.id) ?? account.id} removal unfinished`);
@@ -199,6 +204,8 @@ export function spaceAttention(state: Pick<StackState, "status" | "server" | "re
   }
   for (const source of state.brainSources?.data ?? []) if (source.enabled && !source.paused && source.health.state === "unhealthy") attention.brain.push(`${source.display_name} unhealthy`);
   attention.proc.push(...procAttention(state));
+  if (state.status.hud === "closed") attention.hud.push("hud reconnecting");
+  attention.hud.push(...hudAttention(state.hudTree?.data ?? null));
   for (const name of ["auth", "usage", "worker"] as const) if (state.status[name] === "closed") attention.accounts.push(`${name} reconnecting`);
   for (const child of state.server.data?.children ?? []) if (!child.running) attention.system.push(`${child.name} stopped`);
   if (state.status.serve === "closed") attention.system.push("server reconnecting");
@@ -245,5 +252,6 @@ export function parseNodeKey(key: string): NodeRef | null {
   if (kind === "browser-profile" || kind === "browser-handoff" || kind === "browser-controller" || kind === "browser-viewer") return { kind, id: rest };
   if (kind === "research-document" || kind === "ingestion-job" || kind === "research-source") return { kind, id: rest };
   if (kind === "proc-schedule" || kind === "proc-execution" || kind === "proc-run" || kind === "proc-run-window") return { kind, id: rest };
+  if (kind === "work-item") return { kind, id: rest };
   return null;
 }

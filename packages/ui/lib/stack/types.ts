@@ -209,7 +209,7 @@ export type WorkerTurn = { id: string; workerId: string;
   dispatchedAt: number | null; dispatchedPromptSeq: number | null; createdAt: number; updatedAt: number };
 export type WorkerTurnSummary = Omit<WorkerTurn, "prompt"> & { promptChars: number | null };
 
-/** HUD semantic work is separate from Worker/Bot runtime phase. No HUD space is registered yet. */
+/** HUD semantic work is separate from Worker/Bot runtime phase; the HUD space presents it. */
 export type WorkContext = { workItemId: string; scopeRevision: number; source: "explicit" | "focus" | "continuation" };
 export type WorkState = "planned" | "active" | "blocked" | "waiting" | "paused" | "review" | "completed" | "cancelled";
 export type WorkActor = { kind: "operator" } | { kind: "bot"; botId: string; mainThreadId: string; threadId: string };
@@ -224,8 +224,8 @@ export type WorkItem = { id: string; sequence: number; revision: number; scopeRe
   state: WorkState; parentId: string | null; order: number; priority: "low" | "normal" | "high" | "urgent";
   nextAction: string; attention: "none" | "human" | "agent"; dependencies: string[]; labels: string[]; links: WorkLink[];
   createdBy: WorkActor; updatedBy: WorkActor; createdAt: number; updatedAt: number };
-export type WorkTree = { rows: Array<{ item: WorkItem; depth: number; childCount: number; openDescendants: number; unmetDependencies: string[] }>;
-  total: number; nextOffset: number | null; snapshot: number };
+export type WorkTreeRow = { item: WorkItem; depth: number; childCount: number; openDescendants: number; unmetDependencies: string[] };
+export type WorkTree = { rows: WorkTreeRow[]; total: number; nextOffset: number | null; snapshot: number };
 export type WorkFocus = { botId: string; mainThreadId: string; threadId: string; revision: number; workItemId: string | null; updatedAt: number | null; updatedBy: WorkActor | null };
 export type WorkActivity = { sequence: number; workItemId: string; revision: number; scopeRevision: number; requestId: string; actor: WorkActor; at: number;
   kind: "created" | "updated" | "metadata" | "note" | "progress" | "result" | "decision" | "handoff" | "focus";
@@ -905,6 +905,8 @@ export type NodeRef =
   | { kind: "proc-schedule" | "proc-execution" | "proc-run"; id: string }
   /** A Run window on the bench, by window ID; it has no inspectable record. */
   | { kind: "proc-run-window"; id: string }
+  /** A shared HUD Work item, by its UUID. */
+  | { kind: "work-item"; id: string }
   | { kind: "package"; id: string }
   | { kind: "operation"; id: string; pkg: string }
   /** Content records: a Vault document by slug, a collection by slug, an item by stable ID, an Artifact by name. */

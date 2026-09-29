@@ -55,6 +55,7 @@ test("homeOf distinguishes spatial records from reference destinations", () => {
   assert.deepEqual(homeOf({ kind: "proc-execution", id: "e1" }), { kind: "space", space: "proc", window: "proc-schedule" });
   assert.deepEqual(homeOf({ kind: "proc-run", id: "r1" }), { kind: "space", space: "proc", window: "proc-runs" });
   assert.deepEqual(homeOf({ kind: "proc-run-window", id: "proc-run-2" }), { kind: "space", space: "proc", window: "proc-run-2" });
+  assert.deepEqual(homeOf({ kind: "work-item", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" }), { kind: "space", space: "hud", window: "hud-work" });
   assert.deepEqual(homeOf({ kind: "package", id: "bots" }), { kind: "reference" });
   assert.deepEqual(homeOf({ kind: "operation", id: "bot_start", pkg: "bots" }), { kind: "reference" });
   assert.deepEqual(homeOf({ kind: "usage" }), { kind: "space", space: "accounts", window: "usage" });
@@ -147,6 +148,7 @@ test("parseNodeKey inverts nodeKey for every kind and rejects malformed keys", (
     { kind: "proc-execution", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d3" },
     { kind: "proc-run", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d4" },
     { kind: "proc-run-window", id: "proc-run-2" },
+    { kind: "work-item", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" },
   ];
   for (const ref of refs) assert.deepEqual(parseNodeKey(nodeKey(ref)), ref);
   for (const bad of ["", "bogus", "account:", "operation:bots"]) assert.equal(parseNodeKey(bad), null);
@@ -167,7 +169,7 @@ const quiet = {
 };
 
 test("spaceAttention reports human reasons per space and ignores healthy state", () => {
-  assert.deepEqual(spaceAttention(quiet), { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], brain: [], proc: [], api: [] });
+  assert.deepEqual(spaceAttention(quiet), { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], brain: [], proc: [], hud: [], api: [] });
   assert.deepEqual(spaceAttention({ ...quiet, notifyCounts: { data: { open: 0, total: 4, sources: [] }, error: null, at: null } }).inbox, []);
   assert.deepEqual(spaceAttention({ ...quiet, notifyCounts: { data: { open: 1, total: 4, sources: [] }, error: null, at: null } }).inbox, ["1 open notification"]);
   const inbox = spaceAttention({ ...quiet, notifyCounts: { data: { open: 3, total: 4, sources: [] }, error: null, at: null }, status: { notify: "closed" } });
@@ -244,7 +246,7 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
 
   // Idle and connecting channels are normal, not attention.
   const waiting = spaceAttention({ ...quiet, status: { auth: "connecting", bots: "idle", serve: "connecting", api: "idle" } });
-  assert.deepEqual(waiting, { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], brain: [], proc: [], api: [] });
+  assert.deepEqual(waiting, { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], brain: [], proc: [], hud: [], api: [] });
 });
 
 test("spaceAttention flags Proc's legacy and held schedules, operator failures, capacity and channel — but never Bot-owned failures", () => {
@@ -294,6 +296,14 @@ test("spaceAttention flags Signal's unreadable sources, failed interpretation an
     signalStatus: { data: status({ sourceErrors: [{ source: "bot:bot-1", error: "socket refused" }], lastInference: { at: 1, error: "no_available_codex_account" } }), error: null, at: 1 } });
   assert.deepEqual(noisy.signal, ["signal reconnecting", "bot:bot-1 unreadable", "Last interpretation failed: no_available_codex_account"]);
   assert.ok(noisy.system.includes("signal reconnecting"));
+});
+
+test("spaceAttention counts HUD human markers on open work and a closed channel, never closed or agent-marked work", () => {
+  const row = (state, attention) => ({ item: { state, attention }, depth: 0, childCount: 0, openDescendants: 0, unmetDependencies: [] });
+  const tree = (rows) => ({ data: { rows, total: rows.length, snapshot: 1, complete: true }, error: null, at: 1 });
+  assert.deepEqual(spaceAttention({ ...quiet, hudTree: tree([row("completed", "human"), row("active", "agent"), row("blocked", "none")]) }).hud, []);
+  assert.deepEqual(spaceAttention({ ...quiet, status: { hud: "closed" }, hudTree: tree([row("waiting", "human"), row("review", "human"), row("cancelled", "human")]) }).hud,
+    ["hud reconnecting", "2 items marked for a human"]);
 });
 
 test("spaceAttention flags Scrape's closed channel and missing browser runtime, but not other optional tools", () => {

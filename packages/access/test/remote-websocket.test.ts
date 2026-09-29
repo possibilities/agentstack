@@ -240,3 +240,66 @@ test("remote UI sessions receive no Proc operations or events at all", async () 
     ws?.terminate(); await remote.close(); await backend.close(); store.close(); rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("remote HUD sessions read work under ui:view and collaborate only under a live ui:control grant", async () => {
+  const root = mkdtempSync(join(tmpdir(), "stack-remote-hud-"));
+  const store = new AccessStore(root);
+  const env = { STACK_STATE_DIR: root };
+  const directory = join(root, "packages", "hud"); mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, "api.yaml"), "name: hud\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: [work_get, work_update, work_note_add]\n  events: [hud_changed]\n  description: WebSocket.\n");
+  const writes: string[] = [];
+  const ok = z.object({ ok: z.boolean() });
+  const backend = await serveSocket({ info: { name: "hud", description: "Demo.", transportDescription: "Socket.", path: socketPath("hud", env) }, context: {},
+    operations: [
+      operation({ name: "work_get", description: "Read.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { return { ok: true }; } }),
+      operation({ name: "work_update", description: "Write.", input: z.strictObject({}), output: ok, annotations: { idempotentHint: true }, async call() { writes.push("work_update"); return { ok: true }; } }),
+      operation({ name: "work_note_add", description: "Write.", input: z.strictObject({}), output: ok, annotations: { idempotentHint: true }, async call() { writes.push("work_note_add"); return { ok: true }; } }),
+      // Selected for the socket only: Worker admission context resolution never reaches a browser.
+      operation({ name: "work_context_resolve", description: "Internal.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { return { ok: true }; } }),
+    ], events: { topics: { hud_changed: "Changed." } } });
+  const key = join(root, "key.pem"), cert = join(root, "cert.pem");
+  execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "1", "-subj", "/CN=localhost"], { stdio: "ignore" });
+  const port = await freePort();
+  const remote = await startRemoteUi({ store, env, host: "127.0.0.1", port, root, verify: async () => {} }, { key: readFileSync(key), cert: readFileSync(cert) });
+  const origin = `https://127.0.0.1:${port}`, url = `wss://127.0.0.1:${port}/websocket`;
+  const keyMaterial = randomBytes(32).toString("base64url");
+  const pairing = store.pair({ requestId: randomUUID(), label: "browser", kind: "browser", scopes: ["ui:view", "ui:control"], redemptionSecret: keyMaterial });
+  store.approve(pairing.id, pairing.code, true, ["ui:view"]);
+  const credential = store.redeem(pairing.id, keyMaterial);
+  const viewing = store.startUi(credential.refreshToken, randomUUID());
+  let ws: WebSocket | undefined;
+  const send = async (method: string, params: Record<string, unknown>) => {
+    const response = frame(ws!);
+    ws!.send(JSON.stringify({ id: 1, method, params: { package: "hud", ...params } }));
+    return response;
+  };
+  const tools = async () => (await send("tools/list", {})).result.tools.map((tool: { name: string }) => tool.name).sort();
+  try {
+    ws = await open(url, origin, `__Host-stack_ui=${viewing.accessToken}`);
+    assert.deepEqual(await tools(), ["work_get"]);
+    assert.equal((await send("tools/call", { name: "work_get", arguments: {} })).result.ok, true);
+    for (const name of ["work_update", "work_note_add", "work_context_resolve"])
+      assert.match((await send("tools/call", { name, arguments: {} })).error.message, /not available/);
+    assert.deepEqual(writes, [], "a viewer never reaches a HUD write");
+
+    const upgraded = new Promise<void>(resolve => ws!.once("close", () => resolve()));
+    store.updateGrant(store.inventory().grants[0]!.id, 1, ["ui:view", "ui:control"], []);
+    await upgraded;
+    const controlling = store.startUi(viewing.refreshToken, randomUUID());
+    ws = await open(url, origin, `__Host-stack_ui=${controlling.accessToken}`);
+    assert.deepEqual(await tools(), ["work_get", "work_note_add", "work_update"]);
+    assert.equal((await send("tools/call", { name: "work_update", arguments: {} })).result.ok, true);
+    assert.equal((await send("tools/call", { name: "work_note_add", arguments: {} })).result.ok, true);
+    assert.match((await send("tools/call", { name: "work_context_resolve", arguments: {} })).error.message, /not available/);
+    assert.deepEqual(writes, ["work_update", "work_note_add"]);
+    assert.ok(store.inventory().audit.some((item: any) => item.action === "ui_mutation" && /:hud\.work_update$/.test(item.subject)));
+
+    const revoked = new Promise<void>(resolve => ws!.once("close", () => resolve()));
+    store.revoke("credential", credential.credentialId);
+    await revoked;
+    await assert.rejects(open(url, origin, `__Host-stack_ui=${controlling.accessToken}`), /403/);
+    assert.deepEqual(writes, ["work_update", "work_note_add"], "a revoked grant admits no further writes");
+  } finally {
+    ws?.terminate(); await remote.close(); await backend.close(); store.close(); rmSync(root, { recursive: true, force: true });
+  }
+});

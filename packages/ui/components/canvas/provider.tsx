@@ -6,6 +6,7 @@ import { ChatWindowStore, type ChatWindows } from "@/lib/stack/chat-windows";
 import { WorkerWindowStore, type WorkerWindows } from "@/lib/stack/worker-windows";
 import { ViewerWindowStore, type ControlGrants, type HandoffActions, type ViewerWindows } from "@/lib/stack/browse-viewers";
 import { ProcWindowStore, type ProcRunWindows } from "@/lib/stack/proc-windows";
+import { HudViewStore, type HudView } from "@/lib/stack/hud-view";
 import type { ProcRunFilter, ProcScheduleFilter } from "@/lib/stack/proc";
 import type { WorkerFilter } from "@/lib/stack/workers";
 import { StackStore, type StackConnections, type StackState } from "@/lib/stack/store";
@@ -16,6 +17,7 @@ const ChatWindowsContext = createContext<ChatWindowStore | null>(null);
 const WorkerWindowsContext = createContext<WorkerWindowStore | null>(null);
 const ViewerWindowsContext = createContext<ViewerWindowStore | null>(null);
 const ProcWindowsContext = createContext<ProcWindowStore | null>(null);
+const HudViewContext = createContext<HudViewStore | null>(null);
 
 export function StackProvider({ snapshot, children, connections }: { snapshot: Snapshot; children: React.ReactNode; connections?: StackConnections }) {
   const [store] = useState(() => new StackStore(snapshot));
@@ -23,6 +25,7 @@ export function StackProvider({ snapshot, children, connections }: { snapshot: S
   const [workerWindows] = useState(() => new WorkerWindowStore());
   const [viewers] = useState(() => new ViewerWindowStore());
   const [procWindows] = useState(() => new ProcWindowStore());
+  const [hudView] = useState(() => new HudViewStore());
   useEffect(() => {
     store.start(connections);
     return () => store.stop();
@@ -48,7 +51,8 @@ export function StackProvider({ snapshot, children, connections }: { snapshot: S
     workerWindows.attach(storage);
     viewers.attach(storage);
     procWindows.attach(storage);
-  }, [chats, workerWindows, viewers, procWindows]);
+    hudView.attach(storage);
+  }, [chats, workerWindows, viewers, procWindows, hudView]);
   const bots = useSyncExternalStore(store.subscribe, () => store.getState().bots.data, () => store.getServerState().bots.data);
   useEffect(() => { if (bots) chats.prune(new Set(bots.map((bot) => bot.id))); }, [bots, chats]);
   const workers = useSyncExternalStore(store.subscribe, () => store.getState().workerSessions.data, () => store.getServerState().workerSessions.data);
@@ -58,7 +62,7 @@ export function StackProvider({ snapshot, children, connections }: { snapshot: S
   // A grant ends when its handoff leaves human control; the API has revoked it by then.
   const handoffs = useSyncExternalStore(store.subscribe, () => store.getState().browserHandoffs.data, () => store.getServerState().browserHandoffs.data);
   useEffect(() => { if (handoffs) viewers.pruneGrants(new Set(handoffs.filter((item) => item.state === "human_controlling").map((item) => item.id))); }, [handoffs, viewers]);
-  return <StoreContext value={store}><ChatWindowsContext value={chats}><WorkerWindowsContext value={workerWindows}><ViewerWindowsContext value={viewers}><ProcWindowsContext value={procWindows}>{children}</ProcWindowsContext></ViewerWindowsContext></WorkerWindowsContext></ChatWindowsContext></StoreContext>;
+  return <StoreContext value={store}><ChatWindowsContext value={chats}><WorkerWindowsContext value={workerWindows}><ViewerWindowsContext value={viewers}><ProcWindowsContext value={procWindows}><HudViewContext value={hudView}>{children}</HudViewContext></ProcWindowsContext></ViewerWindowsContext></WorkerWindowsContext></ChatWindowsContext></StoreContext>;
 }
 
 /** Fleet chat windows and the store that arranges them. */
@@ -87,6 +91,14 @@ export function useProcWindows(): { windows: ProcRunWindows; selectedScheduleId:
   const scheduleFilter = useSyncExternalStore(procWindows.subscribe, procWindows.getScheduleFilter, procWindows.getScheduleFilter);
   const runFilter = useSyncExternalStore(procWindows.subscribe, procWindows.getRunFilter, procWindows.getRunFilter);
   return { windows, selectedScheduleId, scheduleFilter, runFilter, procWindows };
+}
+
+/** The HUD space's selected Work item, collapsed branches, subtree focus and tree filter. */
+export function useHudView(): { view: HudView; hudView: HudViewStore } {
+  const hudView = use(HudViewContext);
+  if (!hudView) throw new Error("useHudView requires StackProvider");
+  const view = useSyncExternalStore(hudView.subscribe, hudView.getView, hudView.getServerView);
+  return { view, hudView };
 }
 
 /** Browse viewer windows, this page's human control grants, and the store that arranges them. */

@@ -49,6 +49,12 @@ import { ProcScheduleWindow } from "./proc-schedule";
 import { ProcRunsWindow } from "./proc-runs";
 import { ProcRunWindow } from "./proc-run";
 import { ProcTimelineWindow } from "./proc-timeline";
+import { GoalIcon, HandIcon, NetworkIcon } from "lucide-react";
+import { WorkWindow } from "./hud-work";
+import { ItemWindow } from "./hud-item";
+import { TimelineWindow } from "./hud-timeline";
+import { ResourcesWindow as WorkResourcesWindow } from "./hud-resources";
+import { AttentionWindow as WorkAttentionWindow } from "./hud-attention";
 
 export type WindowDef = {
   /** Globally unique across spaces; also used by Window and node destinations. */
@@ -78,6 +84,18 @@ export const spaceViews: Record<SpaceId, {
       // The primary chat sits beside Bots; each additional chat opens in the next column.
       ...chats.map((chat, index) => ({ id: chat.id, title: "Chat", icon: SquareTerminalIcon, accent: "bots" as const, width: 640, height: 720, column: index + 1, fixed: true,
         element: <ChatWindow id={chat.id} /> })),
+    ],
+  },
+  hud: {
+    icon: GoalIcon,
+    accent: "hud",
+    // Overview and attention on the left; the selected item's detail, history and deployed resources follow it.
+    windows: () => [
+      { id: "hud-attention", title: "Needs attention", icon: HandIcon, accent: "hud", width: 460, height: 380, column: 0, element: <WorkAttentionWindow /> },
+      { id: "hud-work", title: "Work", icon: ListTreeIcon, accent: "hud", width: 460, height: 760, column: 0, fixed: true, element: <WorkWindow /> },
+      { id: "hud-item", title: "Work item", icon: FileTextIcon, accent: "hud", width: 540, height: 820, column: 1, element: <ItemWindow /> },
+      { id: "hud-timeline", title: "Timeline", icon: HistoryIcon, accent: "hud", width: 460, height: 820, column: 2, fixed: true, element: <TimelineWindow /> },
+      { id: "hud-resources", title: "Resources", icon: NetworkIcon, accent: "hud", width: 460, height: 720, column: 3, element: <WorkResourcesWindow /> },
     ],
   },
   accounts: {

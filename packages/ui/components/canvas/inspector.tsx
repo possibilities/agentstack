@@ -560,6 +560,26 @@ function resolve(ref: NodeRef, state: StackState): View | null {
     }
     case "proc-run-window":
       return null; // Run windows are views onto a run, not records.
+    case "work-item": {
+      // The public projection only: agent metadata is never part of an ordinary record view.
+      const row = state.hudTree.data?.rows.find((entry) => entry.item.id === ref.id);
+      if (!row) return null;
+      const { item } = row;
+      const related: View["related"] = [];
+      if (item.parentId) related.push({ ref: { kind: "work-item", id: item.parentId }, label: "Parent" });
+      for (const id of item.dependencies) related.push({ ref: { kind: "work-item", id }, label: `Depends on ${state.hudTree.data?.rows.find((entry) => entry.item.id === id)?.item.title ?? id.slice(0, 8)}` });
+      for (const link of item.links) {
+        if (link.target.kind === "bot" && state.bots.data?.some((bot) => bot.id === (link.target as { botId: string }).botId)) related.push({ ref: { kind: "bot", id: link.target.botId }, label: `${link.target.botId} · ${link.relation}` });
+        if (link.target.kind === "worker") related.push({ ref: { kind: "worker", id: link.target.workerId }, label: `Worker · ${link.relation}` });
+        if (link.target.kind === "work") related.push({ ref: { kind: "work-item", id: link.target.workItemId }, label: `Work · ${link.relation}` });
+      }
+      return {
+        eyebrow: `Work item · ${item.state}`, accent: "hud", title: item.title, record: { ...item },
+        fields: new Map(fieldsOf(findOperation(catalog, "hud", "work_get")?.outputSchema).map((field) => [field.name, field])), related,
+        operations: { pkg: "hud", list: catalog?.find((doc) => doc.name === "hud")?.operations.filter((operation) => operation.annotations?.readOnlyHint) ?? [] },
+        events: state.events.filter((event) => event.pkg === "hud"),
+      };
+    }
     case "package":
     case "operation":
       return null; // Reference destinations are rendered in the shared dock's reading mode.
@@ -776,6 +796,7 @@ function referencePackage(ref: NodeRef): string {
   if (ref.kind === "document" || ref.kind === "collection" || ref.kind === "item" || ref.kind === "artifact") return "content";
   if (ref.kind === "worker-catalog" || ref.kind === "worker" || ref.kind === "worker-runtime" || ref.kind === "worker-window") return "worker";
   if (ref.kind === "proc-schedule" || ref.kind === "proc-execution" || ref.kind === "proc-run" || ref.kind === "proc-run-window") return "proc";
+  if (ref.kind === "work-item") return "hud";
   if (ref.kind === "usage" || ref.kind === "usage-account" || ref.kind === "grok-bot-usage") return "usage";
   if (ref.kind === "preset" || ref.kind === "scrape-job") return "scrape";
   if (ref.kind === "browser-profile" || ref.kind === "browser-handoff" || ref.kind === "browser-controller" || ref.kind === "browser-viewer") return "browse";

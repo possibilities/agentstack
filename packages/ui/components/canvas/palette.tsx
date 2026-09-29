@@ -22,11 +22,13 @@ import { useShowWorker } from "./worker-windows";
 import { useShowProcRun } from "./proc-runs";
 import { workerAttention, workerLabel, workerOrigin } from "@/lib/stack/workers";
 import { ownerLabel, ownerOf, runTitle, runView, scheduleTitle } from "@/lib/stack/proc";
+import { isTerminal, stateView } from "@/lib/stack/hud";
+import { StateMark } from "./hud-shared";
 
 export type PaletteAction = { id: string; label: string; shortcut?: string; icon: React.ComponentType; run(): void };
 
 export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpenChange(open: boolean): void; actions: PaletteAction[] }) {
-  const { bots, accounts, workerAccounts, workerSessions, server, catalog, attempt, role, roleCatalog, notificationRecords, contentDocuments, contentItems, contentArtifacts, status, brainSources, procSchedules, procRuns } = useStack();
+  const { bots, accounts, workerAccounts, workerSessions, server, catalog, attempt, role, roleCatalog, notificationRecords, contentDocuments, contentItems, contentArtifacts, status, brainSources, procSchedules, procRuns, hudTree } = useStack();
   const store = useStore();
   const notify = useNotifyActions();
   // Notifications the page has loaded, newest first; the palette never pages the ledger itself.
@@ -139,6 +141,18 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
                   <span className="truncate text-xs text-muted-foreground">{workerOrigin(worker.botId)}</span>
                   <StatusDot tone={workerAttention(worker) ? "warning" : worker.phase === "running" ? "success" : "muted"} />
                   <CommandShortcut className="tracking-normal">{worker.phase.replace("_", " ")}</CommandShortcut>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          ) : null}
+          {hudTree.data?.rows.length ? (
+            <CommandGroup heading="Work">
+              {hudTree.data.rows.filter((row) => !isTerminal(row.item.state)).slice(0, 60).map(({ item }) => (
+                <CommandItem key={item.id} value={`work ${item.title} ${item.nextAction} ${item.labels.join(" ")} ${item.id}`}
+                  onSelect={() => go({ kind: "work-item", id: item.id })}>
+                  <StateMark state={item.state} />
+                  <span className="truncate">{item.title}</span>
+                  <CommandShortcut className="tracking-normal">{stateView[item.state].word}</CommandShortcut>
                 </CommandItem>
               ))}
             </CommandGroup>

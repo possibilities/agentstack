@@ -109,9 +109,9 @@ to `worker/workers_changed`, and use Bots' scoped topics for Bot/Chat observatio
 HUD does not relay native activity into agent wakeups or semantic state changes.
 Clients subscribe before reading and resnapshot on reconnect. The UI data contract
 includes the new Worker context; the existing generic inspector shows it. A new HUD
-Canvas space is a separate UI implementation, with its handoff outside the repository.
+Canvas space is a separate UI implementation; [ADR 0133](0133-hud-space.md) records it.
 
-Remote Access currently exposes HUD's selected read-only WebSocket operations under
-`ui:view`; new HUD mutations and a `/hud` route need explicit UI/Access integration.
+Remote Access exposes HUD's selected read-only WebSocket operations under `ui:view`;
+[ADR 0133](0133-hud-space.md) adds the `/hud` route and `ui:control` collaboration writes.
 The local WebSocket exposes the declared collaboration mutations already. No new
 UI controls or runtime restart are part of this API change.

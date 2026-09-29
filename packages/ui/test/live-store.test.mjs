@@ -609,3 +609,100 @@ test("both previews read with the page's rendering context, and an answer for an
     globalThis.WebSocket = original;
   }
 });
+
+test("hud subscribes before its first read, resnapshots after reconnecting, and scopes item notices", async () => {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { randomUUID } = await import("node:crypto");
+  // The real HUD store answers reads, so tree and snapshot semantics are the API's own.
+  const { HudStore } = await import("../../hud/dist/src/store.js");
+  const { change } = await import("../../hud/dist/src/schema.js");
+  const root = mkdtempSync(join(tmpdir(), "stack-ui-hud-live-"));
+  const hud = new HudStore(root);
+  const create = (title) => { const id = randomUUID(); hud.apply(randomUUID(), [change.parse({ action: "create", id, title, objective: title })], { kind: "operator" }); return id; };
+  const first = create("First");
+  const original = globalThis.WebSocket;
+  const sockets = new Set();
+  const trace = [];
+  const results = { work_tree: (args) => hud.tree(args), worker_list: () => ({ workers: [] }), worker_runtime_list: () => ({ runtimes: [] }) };
+
+  class FakeWebSocket {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    readyState = FakeWebSocket.CONNECTING;
+    subscriptions = new Map();
+    constructor(url) {
+      this.url = url;
+      sockets.add(this);
+      queueMicrotask(() => { this.readyState = FakeWebSocket.OPEN; this.onopen?.(); });
+    }
+    send(raw) {
+      const { id, method, params } = JSON.parse(raw);
+      if (params?.package === "hud") trace.push(method === "tools/call" ? params.name : `${method}:${params.topics?.join(",") ?? ""}`);
+      if (method === "events/subscribe") this.subscriptions.set(params.subscription, params);
+      if (method === "events/unsubscribe") this.subscriptions.delete(params.subscription);
+      let result, error;
+      try {
+        result = method.startsWith("events/") ? params : results[params.name]?.(params.arguments);
+      } catch (cause) {
+        error = { message: cause instanceof Error ? cause.message : String(cause) };
+      }
+      queueMicrotask(() => this.onmessage?.({ data: JSON.stringify({ id, ...(error ? { error } : { result }) }) }));
+    }
+    close() { this.readyState = 3; sockets.delete(this); this.onclose?.(); }
+  }
+  const subscriptions = () => [...sockets].flatMap((socket) => [...socket.subscriptions.values()]);
+  const publish = (pkg, topic, scope) => {
+    for (const socket of sockets) for (const subscription of socket.subscriptions.values()) {
+      if (subscription.package !== pkg || !subscription.topics.includes(topic) || subscription.scope && subscription.scope !== scope) continue;
+      socket.onmessage?.({ data: JSON.stringify({ method: "events/changed", params: { package: pkg, subscription: subscription.subscription, topic } }) });
+    }
+  };
+
+  globalThis.WebSocket = FakeWebSocket;
+  const snapshot = {
+    server: resource(null), resources: resource(null), accounts: resource([]), workerAccounts: resource([]), workerRuntimes: resource([]),
+    login: resource(null), workerLogins: resource([]), bots: resource([]), voice: resource(null), catalog: resource(null),
+    endpoints: { hud: "ws://fixture.invalid/websocket", worker: "ws://fixture.invalid/websocket" },
+  };
+  const store = new StackStore(snapshot);
+  try {
+    store.start();
+    await until(store, () => store.getState().hudTree.data?.rows.length === 1);
+    assert.equal(trace[0], "events/subscribe:hud_changed", "the invalidation subscription precedes the first snapshot");
+    assert.deepEqual(subscriptions().find((item) => item.package === "hud" && !item.scope).topics, ["hud_changed"]);
+
+    const second = create("Second");
+    const generation = store.getState().hudGeneration;
+    publish("hud", "hud_changed");
+    await until(store, () => store.getState().hudTree.data?.rows.length === 2);
+    assert.ok(store.getState().hudGeneration > generation, "views re-read their own projections on the notice");
+
+    // A change made while disconnected produces no notice; reconnecting resnapshots anyway.
+    [...sockets][0].close();
+    create("Made while offline");
+    await until(store, () => store.getState().hudTree.data?.rows.length === 3);
+
+    const release = store.watchWorkItem(first);
+    await until(store, () => subscriptions().some((item) => item.package === "hud" && item.scope === first));
+    assert.deepEqual(subscriptions().find((item) => item.scope === first).topics, ["work_changed"]);
+    const seen = store.getState().hudItemGenerations[first] ?? 0;
+    publish("hud", "work_changed", second);
+    publish("hud", "work_changed", first);
+    await until(store, () => (store.getState().hudItemGenerations[first] ?? 0) === seen + 1);
+    assert.equal(store.getState().hudItemGenerations[second], undefined, "another item's notice doesn't reach this watcher");
+
+    const resources = store.getState().hudResourceGeneration;
+    publish("worker", "workers_changed");
+    await until(store, () => store.getState().hudResourceGeneration > resources);
+
+    release();
+    assert.ok(!subscriptions().some((item) => item.scope === first), "the scoped subscription closes with its last watcher");
+  } finally {
+    store.stop();
+    globalThis.WebSocket = original;
+    hud.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

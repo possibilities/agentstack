@@ -9,7 +9,7 @@ import { localApi, verifier, type Peer } from "./network.js";
 const cookieName = "__Host-stack_ui";
 const refreshName = "__Host-stack_ui_refresh";
 const token = /^[A-Za-z0-9_-]{43}$/;
-const uiPagePath = /^\/(?:$|(?:accounts|lab|system|roles|inbox|signal|content|workers|scrape|browse|brain|proc)\/?$)/;
+const uiPagePath = /^\/(?:$|(?:accounts|lab|system|roles|inbox|signal|content|workers|scrape|browse|brain|proc|hud)\/?$)/;
 const json = (data: unknown, status = 200) => new Response(JSON.stringify({ schema_version: 1, ok: true, data }),
   { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
 const cookie = (header: string | null | undefined, name: string) =>
@@ -45,6 +45,8 @@ const controls: Record<string, (name: string) => boolean> = {
   infer: name => ["infer_start", "infer_discover"].includes(name),
   notify: name => ["notification_dismiss", "notification_dismiss_all"].includes(name),
   signal: name => ["attention_control", "attention_defaults_set", "attention_feedback", "attention_replay"].includes(name),
+  // Shared Work collaboration. Metadata stays an explicit write; none of these dispatch native execution.
+  hud: name => ["work_create", "work_update", "work_batch", "work_note_add", "work_metadata_set", "work_focus_set"].includes(name),
 };
 
 export type RemoteUiOptions = { store: AccessStore; env: NodeJS.ProcessEnv; host: string; port: number;

@@ -116,5 +116,6 @@ semantic changes or automatically wake agents for their own runtime progress.
 
 MCP is for verified Bots; Workers receive no HUD operations by default and retain
 self-only Worker context reads. Local WebSocket clients can collaborate on Work.
-Access remote clients currently receive selected reads, with mutation policy and
-the future HUD Canvas space left to explicit UI integration.
+Access remote clients receive selected reads under `ui:view` and the collaboration
+writes under `ui:control`. The UI's HUD space is described in
+[ADR 0133](../../docs/adr/0133-hud-space.md).

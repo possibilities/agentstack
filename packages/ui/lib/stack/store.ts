@@ -15,6 +15,7 @@ import type { BrainAdmission, BrainJob, BrainJobRecord, BrainJobStats, BrainShar
 import type { ProcRun, ProcScheduleListItem, ProcStatus } from "./types";
 import type { SettingsCatalog, SettingsView } from "./types";
 import { catalogRequest, readRequest, settingsKey, settingsPackage, type SettingsTarget } from "./settings";
+import { loadTree, type HudTree } from "./hud";
 
 export type StackState = Snapshot & {
   access: Resource<AccessSnapshot>;
@@ -140,6 +141,15 @@ export type StackState = Snapshot & {
   settingsViews: Record<string, Resource<SettingsView>>;
   /** Managed settings catalogs editors watch: `bots`, or `worker:<provider>`. */
   settingsCatalogs: Record<string, Resource<SettingsCatalog>>;
+  /** The whole Work hierarchy up to `hudTreeBudget` rows, read as one snapshot-fenced generation. */
+  hudTree: Resource<HudTree>;
+  hudTreeBudget: number;
+  /** Bumped on every hud_changed notice and (re)subscription; HUD views re-read their own projections on it. */
+  hudGeneration: number;
+  /** Bumped on Worker and Bot invalidations; Work resource views re-read from their first page on it. HUD never relays these. */
+  hudResourceGeneration: number;
+  /** Bumped on a watched item's scoped work_changed notices and (re)subscription, which include derived ancestors and dependents. */
+  hudItemGenerations: Record<string, number>;
 };
 
 export type BrainSubmission = { key: string; label: string; kind: "url" | "text"; at: number; pending: boolean; admission: BrainAdmission | null; error: CallError | null; share: BrainShareState | null };
@@ -176,7 +186,7 @@ export const contentDocumentLimit = 200;
 type ResourceKey = ContentKey | "access" | "server" | "codexTools" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "roleCatalog" | "role" | "rolePreview" | "roleLaunch" | "roleInternal" | "roleShims" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts" | "signalStatus" | "scrapeStatus" | "scrapePresets" | "scrapeCanaries" | "scrapeQueue"
   | "browserProfiles" | "browserControllers" | "browserHandoffs" | "browserToolchain"
   | "brainStatus" | "brainStats" | "brainTags" | "brainJobStats" | "brainJobs" | "brainSources"
-  | "procSchedules" | "procRuns" | "procStatus";
+  | "procSchedules" | "procRuns" | "procStatus" | "hudTree";
 
 /** Which reads each browse write can change; each is re-read afterwards, since a lost acknowledgement may still have acted. */
 function browseReads(name: string): ResourceKey[] {
@@ -222,6 +232,8 @@ const isPreviewKey = (key: ResourceKey): key is PreviewKey => key === "rolePrevi
 const catalogReplies = new Set(["roles_snapshot", "role_create", "role_set_default", "role_set_worker_default", "role_delete"]);
 
 const maxEvents = 250;
+/** Work rows the tree reads before offering to load more. */
+export const hudTreePage = 1_000;
 
 /** Distinct absolute Bot working directories, newline-joined so a change is one string comparison. */
 function botCwds(bots: Bot[] | null): string {
@@ -258,6 +270,8 @@ export class StackStore {
   private workerChannels = new Map<string, Channel>();
   private procRunWatchers = new Map<string, number>();
   private procChannels = new Map<string, Channel>();
+  private workItemWatchers = new Map<string, number>();
+  private workItemChannels = new Map<string, Channel>();
   private statusInflight = new Map<string, Promise<void>>();
   private statusDirty = new Set<string>();
   private settingsWatchers = new Map<string, { target: SettingsTarget; count: number }>();
@@ -297,6 +311,7 @@ export class StackStore {
       procSchedules: { data: null, error: null, at: null }, procRuns: { data: null, error: null, at: null },
       procStatus: { data: null, error: null, at: null }, procScheduleGeneration: 0, procRunGenerations: {},
       settingsViews: {}, settingsCatalogs: {},
+      hudTree: { data: null, error: null, at: null }, hudTreeBudget: hudTreePage, hudGeneration: 0, hudResourceGeneration: 0, hudItemGenerations: {},
     };
     this.serverState = this.state;
     for (const account of snapshot.workerAccounts.data ?? []) if (this.catalogAccountAvailable(account.id)) this.catalogAvailable.add(account.id);
@@ -344,15 +359,15 @@ export class StackStore {
       if (topic === "login_changed") this.refresh("login");
       if (topic === "worker_login_changed") this.refresh("workerLogins");
     }, ["accounts_changed", "login_changed", "worker_accounts_changed", "worker_login_changed"]);
-    open("bots", () => { this.refresh("bots"); this.refresh("botDefaults"); this.refresh("voice"); this.refreshSettings("bots"); }, (topic) => {
-      if (topic === "bots_changed") { this.refresh("bots"); this.refreshSettings("bots", "bot"); }
+    open("bots", () => { this.refresh("bots"); this.refresh("botDefaults"); this.refresh("voice"); this.refreshSettings("bots"); this.bumpHudResources(); }, (topic) => {
+      if (topic === "bots_changed") { this.refresh("bots"); this.refreshSettings("bots", "bot"); this.bumpHudResources(); }
       if (topic === "defaults_changed") { this.refresh("botDefaults"); this.refreshSettings("bots"); }
       if (topic === "voice_changed") { this.refresh("voice"); this.refreshSettings("bots", "bot"); }
     }, ["bots_changed", "defaults_changed", "voice_changed"]);
     // Cards and the Workers list use the global inventory invalidation. Worker windows
     // subscribe to worker_progress + worker_changed scoped by Worker ID (watchWorker).
-    open("worker", () => { this.refresh("workerRuntimes"); this.refresh("workerSessions"); this.reconcileCatalogs(true); this.refreshSettings("worker"); }, () => {
-      this.refresh("workerRuntimes"); this.refresh("workerSessions"); this.reconcileCatalogs(true); this.refreshSettings("worker");
+    open("worker", () => { this.refresh("workerRuntimes"); this.refresh("workerSessions"); this.reconcileCatalogs(true); this.refreshSettings("worker"); this.bumpHudResources(); }, () => {
+      this.refresh("workerRuntimes"); this.refresh("workerSessions"); this.reconcileCatalogs(true); this.refreshSettings("worker"); this.bumpHudResources();
     }, ["workers_changed"]);
     open("usage", () => this.refresh("usage"), () => this.refresh("usage"), ["usage_changed"]);
     // Reads only: discovery (infer_discover) and requests (infer_start) are explicit actions.
@@ -402,19 +417,24 @@ export class StackStore {
         this.refresh("procStatus");
       }
     }, ["proc_schedules_changed", "proc_runs_changed"], { silent: ["proc_schedules_changed"] });
+    // hud_changed invalidates the whole shared view; (re)subscription resnapshots it, since notices are not replayed.
+    // Item-scoped work_changed subscriptions belong to the views that watch one item (watchWorkItem).
+    open("hud", () => this.invalidateHud(), () => this.invalidateHud(), ["hud_changed"]);
     this.reconcileScoped();
     for (const id of this.workerWatchers.keys()) this.openWorkerChannel(id);
     for (const id of this.procRunWatchers.keys()) this.openProcChannel(id);
+    for (const id of this.workItemWatchers.keys()) this.openWorkItemChannel(id);
   }
 
   stop(): void {
     this.catalogDirty.clear();
     for (const id of this.catalogAvailable) this.catalogGeneration.set(id, (this.catalogGeneration.get(id) ?? 0) + 1);
-    for (const channel of [...this.main.values(), ...this.scopedChannels.values(), ...this.workerChannels.values(), ...this.procChannels.values()]) channel.dispose();
+    for (const channel of [...this.main.values(), ...this.scopedChannels.values(), ...this.workerChannels.values(), ...this.procChannels.values(), ...this.workItemChannels.values()]) channel.dispose();
     this.main.clear();
     this.scopedChannels.clear();
     this.workerChannels.clear();
     this.procChannels.clear();
+    this.workItemChannels.clear();
   }
   syncRemote = (): Promise<void> => {
     if (!this.state.remote) return Promise.resolve();
@@ -1213,6 +1233,64 @@ export class StackStore {
       });
   }
 
+  /**
+   * A HUD collaboration write. The hierarchy is re-read either way, since a lost acknowledgement may
+   * still have applied it. Nothing is resent here: the caller keeps the requestId and input for an
+   * explicit retry of the same request.
+   */
+  hud = <T>(name: string, args: Record<string, unknown>): Promise<T> =>
+    this.call<T>("hud", name, args).finally(() => this.refresh("hudTree"));
+
+  /** Read more of a hierarchy larger than the loaded rows; the whole tree is re-read as one generation. */
+  loadMoreHudTree = (): void => {
+    this.set({ hudTreeBudget: this.state.hudTreeBudget + hudTreePage });
+    this.refresh("hudTree");
+  };
+
+  private invalidateHud(): void {
+    this.refresh("hudTree");
+    this.set({ hudGeneration: this.state.hudGeneration + 1 });
+  }
+
+  private bumpHudResources(): void {
+    this.set({ hudResourceGeneration: this.state.hudResourceGeneration + 1 });
+  }
+
+  /**
+   * Reference-counted scoped subscription to one Work item's work_changed notices. Every notice and
+   * (re)subscription bumps its generation, since missed notices are not replayed. An ancestor or
+   * dependent notice need not mean the item's stored revision changed; readers compare revisions.
+   */
+  watchWorkItem = (id: string): (() => void) => {
+    const watchers = (this.workItemWatchers.get(id) ?? 0) + 1;
+    this.workItemWatchers.set(id, watchers);
+    if (watchers === 1) this.openWorkItemChannel(id);
+    return () => {
+      const remaining = (this.workItemWatchers.get(id) ?? 0) - 1;
+      if (remaining > 0) { this.workItemWatchers.set(id, remaining); return; }
+      this.workItemWatchers.delete(id);
+      this.workItemChannels.get(id)?.dispose();
+      this.workItemChannels.delete(id);
+      if (this.state.hudItemGenerations[id]) {
+        const hudItemGenerations = { ...this.state.hudItemGenerations };
+        delete hudItemGenerations[id];
+        this.set({ hudItemGenerations });
+      }
+    };
+  };
+
+  private openWorkItemChannel(id: string): void {
+    const url = this.state.endpoints.hud;
+    if (!url || this.workItemChannels.has(id)) return;
+    const bump = () => {
+      if (this.workItemChannels.get(id) !== channel) return;
+      this.set({ hudItemGenerations: { ...this.state.hudItemGenerations, [id]: (this.state.hudItemGenerations[id] ?? 0) + 1 } });
+    };
+    const channel = new Channel(url, "hud", { onOpen: bump, onNotice: bump });
+    this.workItemChannels.set(id, channel);
+    channel.subscribe(["work_changed"], id).connect();
+  }
+
   dismissWorkerAttempt = (accountId: string): void => {
     if (!this.state.workerAttempts[accountId]) return;
     const workerAttempts = { ...this.state.workerAttempts };
@@ -1359,6 +1437,7 @@ export class StackStore {
       case "procSchedules": return call<{ schedules: ProcScheduleListItem[] }>("proc", "proc_schedule_list", { limit: 100, includeRemoved: true }).then((result) => result.schedules);
       case "procRuns": return call<{ runs: ProcRun[]; nextCursor: string | null }>("proc", "proc_run_list", { limit: 100 });
       case "procStatus": return call<ProcStatus>("proc", "proc_status");
+      case "hudTree": return loadTree((name, args) => call("hud", name, args), this.state.hudTreeBudget);
     }
   }
 

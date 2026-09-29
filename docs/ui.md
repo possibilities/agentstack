@@ -160,6 +160,19 @@ PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
   node packages/ui/test/proc-browser-check.mjs
 ```
 
+The HUD space's check serves the real HUD API against a disposable state directory, with a fixture
+`worker_work_list` giving one Worker turns on two Work items and an unavailable owner for a third. It
+covers the open view's context ancestors and hidden counts, attention groups, earlier-scope results and
+turns, a concurrent agent edit against an open draft (kept through the conflict, then saved over the new
+revision), live notes, on-demand metadata, child creation, Chat focus, the unavailable-not-empty Worker
+state, the subtree-completion batch prompt and `?focus=` arrival. It uses `next dev` unless
+`HUD_NEXT=start`, and keeps screenshots when `HUD_EVIDENCE_DIR` is set:
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  node packages/ui/test/hud-browser-check.mjs
+```
+
 The bench check uses disposable sockets, a fixture snapshot and its own `next start`
 process. `CHROME_EXECUTABLE` overrides the default macOS Chrome path;
 `NEXT_MODE=dev` selects development verification instead. Screenshots are written
