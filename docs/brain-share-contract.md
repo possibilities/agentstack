@@ -10,10 +10,10 @@ liveness credential. It is not a device connection URL. See
 [ADR 0091](adr/0091-shared-access-and-direct-tailnet-ingress.md).
 
 The share ingress is shared by every paired device client. Its remote routes are
-declared by the owner-managed `access` Package API; Brain owns admission and job
+declared by the server-managed `access` Package API; Brain owns admission and job
 state through `packages/brain/api.ts` and `packages/brain/src/share-server.ts`;
 the common HTTP listener implementation lives in `packages/api/src/http.ts`.
-The live `docs_snapshot` Package API and UIX API reference publish the HTTP
+The live `docs_snapshot` Package API and UI API reference publish the HTTP
 wire schemas (including the `idempotency_key` request spelling, query string,
 success/error envelopes), formats and per-origin authentication policy. These
 are distinct from the share operations' normalized internal inputs.

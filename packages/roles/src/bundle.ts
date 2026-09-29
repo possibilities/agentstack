@@ -25,7 +25,7 @@ function mcpLines(server: RoleMcpServer): string[] {
 }
 
 /** The owner's MCP listener as its loopback origins; a role MCP server must never address it. */
-export function ownerMcpOrigins(port: number): string[] {
+export function serverMcpOrigins(port: number): string[] {
   return ["127.0.0.1", "localhost", "[::1]"].map((host) => `http://${host}:${port}`);
 }
 

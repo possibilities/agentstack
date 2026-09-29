@@ -120,7 +120,7 @@ test("optional Bot scopes cannot bypass chat and thread wakeup feedback fencing"
     await assert.rejects(service.subscribe("bots", { topic: "chat_live_changed", scope: "bot-1", readOperation: "chat_tree" },
       { ...caller, botId: "bot-2" }), /cross-Bot turn feedback loop/);
     await service.close();
-    // Simulate subscriptions admitted by an older owner, before the chat and
+    // Simulate subscriptions admitted by an older server, before the chat and
     // optional-scope guard. Restart must fence them before any delivery too.
     const db = new DatabaseSync(join(root, "event-subscriptions.sqlite"));
     try {
@@ -140,7 +140,7 @@ test("optional Bot scopes cannot bypass chat and thread wakeup feedback fencing"
   }
 });
 
-test("subscriptions survive owner-process recreation and rebind to the current Bot launch", { timeout: 10_000 }, async () => {
+test("subscriptions survive server-process recreation and rebind to the current Bot launch", { timeout: 10_000 }, async () => {
   const root = await mkdtemp("/tmp/as-events-durable-");
   await manifest(root, "sample");
   const env = { AGENTSTACK_STATE_DIR: root };

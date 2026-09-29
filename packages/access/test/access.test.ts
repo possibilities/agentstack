@@ -75,6 +75,28 @@ test("expiry, denial, independent credentials and resource-scoped one-use browse
     assert.throws(() => f.store.authorize(token.accessToken, "content", "content:read"));
   } finally { f.close(); }
 });
+test("existing UIX grants and pairings migrate to UI scopes once", () => {
+  const f = fixture();
+  try {
+    const redemptionSecret = key();
+    const request = f.store.pair({ requestId: randomUUID(), label: "browser", kind: "browser", scopes: ["ui:view", "ui:control"], redemptionSecret });
+    f.store.approve(request.id, request.code, true);
+    const grant = f.store.inventory().grants[0]!;
+    const credential = f.store.redeem(request.id, redemptionSecret);
+    f.store.db.exec("CREATE TABLE uix_sessions(hash TEXT PRIMARY KEY,credential_id TEXT NOT NULL,expires INTEGER NOT NULL)");
+    f.store.db.prepare("INSERT INTO uix_sessions VALUES(?,?,?)").run("legacy-session", credential.credentialId, Date.now() + 60_000);
+    f.store.db.prepare("UPDATE pairings SET scopes=? WHERE id=?").run('["uix:view","uix:control"]', request.id);
+    f.store.db.prepare("UPDATE grants SET scopes=? WHERE id=?").run('["uix:view","uix:control"]', grant.id);
+    f.reopen();
+    assert.deepEqual(f.store.inventory().pairings[0]?.scopes, ["ui:view", "ui:control"]);
+    assert.deepEqual(f.store.inventory().grants[0]?.scopes, ["ui:view", "ui:control"]);
+    assert.equal(f.store.inventory().grants[0]?.revision, 2);
+    assert.equal(f.store.db.prepare("SELECT credential_id FROM ui_sessions WHERE hash='legacy-session'").get()?.credential_id, credential.credentialId);
+    assert.equal(f.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='uix_sessions'").get(), undefined);
+    f.reopen();
+    assert.equal(f.store.inventory().grants[0]?.revision, 2);
+  } finally { f.close(); }
+});
 test("direct peer provenance rejects proxies, spoofed addresses, stopped tailscaled and unknown peers", async () => {
   const peer = { remoteAddress: "100.80.0.2", localAddress: "100.80.0.1", remotePort: 1234 };
   const verify = verifier("unused", async args => args[0] === "status" ? { BackendState: "Running", Self: { Online: true }, TailscaleIPs: [peer.localAddress] } : { Node: { ID: 42, Addresses: [`${peer.remoteAddress}/32`] } });

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { stateDir } from "./workspace.js";
 
-export type LocalAudience = "uix" | "inspector";
+export type LocalAudience = "ui" | "inspector";
 const tokenPattern = /^[A-Za-z0-9_-]{43}$/;
 const fresh = () => randomBytes(32).toString("base64url");
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -57,7 +57,7 @@ export class LocalAuth {
   session(token: string, origin: string, audience: LocalAudience): Capability { return this.read(token, "session", origin, audience); }
   ticket(session: string, origin: string): string {
     return this.transaction(() => {
-      const parent = this.session(session, origin, "uix");
+      const parent = this.session(session, origin, "ui");
       return this.issue("ticket", origin, "websocket", parent.digest, Math.min(parent.expires, Date.now() + 30_000));
     });
   }
@@ -70,7 +70,7 @@ export class LocalAuth {
     });
   }
   sessionDigest(digest: string, origin: string): Capability {
-    const value = this.db.prepare("SELECT * FROM capabilities WHERE digest=? AND kind='session' AND audience='uix' AND origin=? AND expires>?").get(digest, origin, Date.now()) as Capability | undefined;
+    const value = this.db.prepare("SELECT * FROM capabilities WHERE digest=? AND kind='session' AND audience='ui' AND origin=? AND expires>?").get(digest, origin, Date.now()) as Capability | undefined;
     if (!value) throw new LocalAuthError();
     return value;
   }
@@ -88,7 +88,7 @@ export class LocalAuth {
     const expires = Number(match?.[1]);
     if (!match || expires < Date.now() || expires > Date.now() + 30_000 || !same(match[2]!, this.remoteMac(expires, method, path, origin, scope, scopes))) throw new LocalAuthError();
   }
-  private remoteMac(expires: number, ...values: string[]): string { return createHmac("sha256", this.credential()).update(JSON.stringify(["access-uix-v1", expires, ...values])).digest("hex"); }
+  private remoteMac(expires: number, ...values: string[]): string { return createHmac("sha256", this.credential()).update(JSON.stringify(["access-ui-v1", expires, ...values])).digest("hex"); }
   private read(token: string, kind: string, origin: string, audience: string): Capability {
     if (!tokenPattern.test(token)) throw new LocalAuthError();
     const value = this.db.prepare("SELECT * FROM capabilities WHERE digest=? AND kind=? AND origin=? AND audience=? AND expires>?").get(hash(token), kind, origin, audience, Date.now()) as Capability | undefined;

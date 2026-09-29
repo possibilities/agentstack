@@ -2,7 +2,7 @@
 set -eu
 script=$(realpath "$0")
 root=$(CDPATH= cd -- "$(dirname -- "$script")/.." && pwd)
-cli="$root/packages/owner/dist/src/cli.js"
+cli="$root/packages/serve/dist/src/cli.js"
 # Help is read-only: it never builds, and says so when there is nothing built to ask.
 case "${1:-}" in
   -h|--help|help)

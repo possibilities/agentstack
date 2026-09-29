@@ -6,7 +6,7 @@ import { chatMessagePage, messageCursor } from "./src/chat-messages.js";
 import { operation, workspaceRoot, botInstance, socketCall, socketPath, type PackageApi } from "@agentstack/api";
 import { prepareBotBrowserConfig, browserNamespace } from "@agentstack/browse";
 import { BotLedger } from "./src/ledger.js";
-import { ownerMcpUrls } from "./src/owner-mcp.js";
+import { serverMcpUrls } from "./src/server-mcp.js";
 import { stateDir } from "./src/paths.js";
 import { StateStore } from "./src/store.js";
 import { Supervisor, type ServerView } from "./src/supervisor.js";
@@ -529,8 +529,8 @@ export const api: PackageApi<BotsContext, BotsTopic> = {
   },
   async createContext(env) {
     const dir = stateDir(env);
-    const ownerMcpPort = env.AGENTSTACK_OWNER_MCP_PORT;
-    if (ownerMcpPort !== undefined && (!/^[1-9][0-9]*$/.test(ownerMcpPort) || Number(ownerMcpPort) > 65535)) throw new Error("AGENTSTACK_OWNER_MCP_PORT must be a bound TCP port");
+    const serverMcpPort = env.AGENTSTACK_SERVER_MCP_PORT;
+    if (serverMcpPort !== undefined && (!/^[1-9][0-9]*$/.test(serverMcpPort) || Number(serverMcpPort) > 65535)) throw new Error("AGENTSTACK_SERVER_MCP_PORT must be a bound TCP port");
     await mkdir(dir, { recursive: true, mode: 0o700 });
     await chmod(dir, 0o700);
     const store = new StateStore(dir);
@@ -538,10 +538,10 @@ export const api: PackageApi<BotsContext, BotsTopic> = {
     const ledger = new BotLedger(root);
     const supervisor = new Supervisor({ stateDir: dir, store,
       browserEnv: (id, endpoint) => ({ AGENTSTACK_STATE_DIR: dir, AGENT_BROWSER_CONFIG: prepareBotBrowserConfig(env, id, endpoint), AGENT_BROWSER_NAMESPACE: browserNamespace(env, id, botInstance(endpoint)), AGENT_BROWSER_IDLE_TIMEOUT_MS: "0" }),
-      browserReleased: ownerMcpPort === undefined ? undefined : async (botId) => {
+      browserReleased: serverMcpPort === undefined ? undefined : async (botId) => {
         await socketCall(socketPath("browse", env), "tools/call", { name: "browser_bot_release", arguments: { botId } }, { timeoutMs: 65_000 });
       },
-      mcpServers: ownerMcpPort === undefined ? undefined : (id, endpoint) => ownerMcpUrls(workspaceRoot(import.meta.dirname), Number(ownerMcpPort), id, endpoint, env) });
+      mcpServers: serverMcpPort === undefined ? undefined : (id, endpoint) => serverMcpUrls(workspaceRoot(import.meta.dirname), Number(serverMcpPort), id, endpoint, env) });
     await supervisor.load();
     await supervisor.reap();
     await supervisor.resumeAll();

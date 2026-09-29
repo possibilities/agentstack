@@ -31,7 +31,7 @@ new controllers on its default profile.
 
 ## Management
 
-Bots discover a signed `browser` MCP connection through the owner's launch
+Bots discover a signed `browser` MCP connection through the server's launch
 catalog. It exposes exactly the five operations below. MCP callers must be a
 verified live Bot launch: requested `botId` never supplies identity. Reads are
 scoped to the caller's profiles and current-launch controllers. Creation must
@@ -53,12 +53,12 @@ The local operator socket/WebSocket retain broad management access.
   an unselected non-default profile, VM and volume after exact ownership checks.
 
 `browser_controller_launch` and `browser_controller_close` are socket-only
-provider internals. `browser_bot_release` is the owner-local deletion/ID-reuse
+provider internals. `browser_bot_release` is the server-local deletion/ID-reuse
 fence, so a removed Bot's ID cannot inherit its old profiles between supervision
 cycles. `browser_session_*` inspection/cleanup handles disposable receipts and
 cannot delete durable profiles. `browser_research_acquire` is a socket-only
 Scrape lifecycle seam for fresh research guests; it is not exposed to agents.
-The local UIX Browse space ([ADR 0108](adr/0108-browse-space.md)) answers handoffs, views and manages profiles and runs the toolchain; controller selection stays with Bots;
+The local UI Browse space ([ADR 0108](adr/0108-browse-space.md)) answers handoffs, views and manages profiles and runs the toolchain; controller selection stays with Bots;
 the dynamic API reference continues to describe them.
 
 ## Constrained research browsers
@@ -76,7 +76,7 @@ unavailable inventory never triggers orphaning. A failed profile reports its
 error rather than claiming readiness. Current admission remains bounded to
 sixteen native reservations and the host's available capacity.
 
-Planned owner shutdown drains Bot clients first, then the browser lifecycle
+Planned server shutdown drains Bot clients first, then the browser lifecycle
 process closes controllers and Chrome before stopping exact VMs. Profiles remain
 on disk. Restart refreshes guest IP and CDP relays; old relay URLs are not durable
 identities. Sudden power/process loss is not a clean Chrome flush guarantee.
@@ -91,7 +91,7 @@ A missing recorded VM also stays failed with a specific retained-volume error.
 Exact-volume VM reconstruction and guest process remediation need an intentional
 operator recovery workflow; they are not implemented automatic recovery paths.
 
-Observation URLs address an owner-managed loopback gateway. Neko follows the
+Observation URLs address a server-managed loopback gateway. Neko follows the
 visible tab. The guest advertises its current address for ICE on every boot,
 not the viewer's loopback.
 The integration probe decoded 1920×1080 VP8 video at 25 fps over WebRTC after
@@ -146,7 +146,7 @@ a new request ID to retry uncertain work. `browser_handoff_finish` accepts
 from `awaiting_human`. The originating Chat can cancel only before human take.
 
 Closing the viewer or losing a connection never returns control. An unresolved
-handoff remains held across owner restart. If the owner lost track of accepted
+handoff remains held across server restart. If the server lost track of accepted
 CDP work before confirming drain, the hold remains with an issue; this release
 does not provide a force-release operation. A missing starting tab is reported
 explicitly. Human completion is a report, not proof the requested task succeeded.
@@ -169,4 +169,4 @@ pointing to an installed 0.38.1 toolchain. It creates an isolated state director
 fake Bot inventory, exact tagged resources and its own controllers. It checks
 selection, isolation, ref invalidation, clean cold persistence and orphan
 retention, attempts Neko video observation, and deletes only its exact receipts.
-It never starts or restarts a production owner or changes production selection.
+It never starts or restarts a production server or changes production selection.

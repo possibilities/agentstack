@@ -130,7 +130,7 @@ test("Claude SDK workers preserve account/session continuity, exact permission a
   });
   const auth = await socket("auth", "worker_account_list", { accounts });
   const roles = await socket("roles", "role_launch_snapshot", role);
-  const owner = await socket("owner", "owner_status", { mcpUrls: { roles: "http://127.0.0.1:12345/mcp/roles" } });
+  const server = await socket("serve", "serve_status", { mcpUrls: { roles: "http://127.0.0.1:12345/mcp/roles" } });
   const sdk = sdkFixture();
   let supervisor = new WorkerSupervisor(root, env, { claudeQuery: sdk.factory });
   let manager = new WorkerManager(root, supervisor, env);
@@ -232,7 +232,7 @@ test("Claude SDK workers preserve account/session continuity, exact permission a
     assert.equal(sdk.calls.at(-1)!.inputs.length, 0);
     await manager.closeWorker(id); assert.equal(sdk.calls.at(-1)!.closed, true);
     assert.equal((await manager.status(id)).worker.phase, "closed");
-  } finally { await manager.close(); await owner.close(); await roles.close(); await auth.close(); await rm(root, { recursive: true, force: true }); }
+  } finally { await manager.close(); await server.close(); await roles.close(); await auth.close(); await rm(root, { recursive: true, force: true }); }
 });
 
 test("native Claude SDK no-turn catalog in a credential-free disposable profile", {

@@ -223,7 +223,7 @@ export const api: PackageApi<BrainContext, BrainTopic> = {
         try { return await shareAdmit.call({ store: ctx.store, artifactStore: ctx.artifacts, token: ctx.shareToken }, shareAdmit.input.parse(parseShareRequest(input.payload))); }
         catch (error) { if (error instanceof CliError) throw new Error(error.code); throw error; }
       } }),
-    operation({ name: "share_read_states", description: "Trusted same-user read of bounded ingestion states, available to the local UIX for its own admissions. Remote clients use Access, which filters IDs through durable client admission receipts.",
+    operation({ name: "share_read_states", description: "Trusted same-user read of bounded ingestion states, available to the local UI for its own admissions. Remote clients use Access, which filters IDs through durable client admission receipts.",
       input: shareStates.input, output: shareStates.output, annotations: { readOnlyHint: true },
       async call(ctx, input) { return shareStates.call({ store: ctx.store, token: ctx.shareToken }, input); } }),
     operation({

@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 
-export const scopes = ["brain:share", "brain:status", "content:read", "uix:view", "uix:control"] as const;
+export const scopes = ["brain:share", "brain:status", "content:read", "ui:view", "ui:control"] as const;
 export type Scope = typeof scopes[number];
 export class AccessError extends Error {
   constructor(public code: string, public status = 401) { super(code); }
@@ -29,7 +29,7 @@ export class AccessStore {
   readonly db: DatabaseSync;
   readonly serverId: string;
   changed?: () => void;
-  private readonly uixListeners = new Set<() => void>();
+  private readonly uiListeners = new Set<() => void>();
   constructor(root: string, readonly now = () => Date.now()) {
     const directory = join(root, "access");
     mkdirSync(directory, { recursive: true, mode: 0o700 }); chmodSync(directory, 0o700);
@@ -47,11 +47,32 @@ export class AccessStore {
       CREATE TABLE IF NOT EXISTS handoffs(hash TEXT PRIMARY KEY,credential_id TEXT NOT NULL REFERENCES credentials(id),path TEXT NOT NULL,origin TEXT NOT NULL,expires INTEGER NOT NULL,used INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS sessions(hash TEXT PRIMARY KEY,credential_id TEXT NOT NULL REFERENCES credentials(id),path TEXT NOT NULL,origin TEXT NOT NULL,expires INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS audit(seq INTEGER PRIMARY KEY AUTOINCREMENT,time INTEGER NOT NULL,action TEXT NOT NULL,subject TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS uix_sessions(hash TEXT PRIMARY KEY,credential_id TEXT NOT NULL REFERENCES credentials(id),expires INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS ui_sessions(hash TEXT PRIMARY KEY,credential_id TEXT NOT NULL REFERENCES credentials(id),expires INTEGER NOT NULL);
     `);
     const grantColumns = this.db.prepare("PRAGMA table_info(grants)").all();
     if (!grantColumns.some(column => column.name === "revision")) {
       this.db.exec("ALTER TABLE grants ADD COLUMN revision INTEGER NOT NULL DEFAULT 1");
+    }
+    // Preserve existing browser grants when the UI scope names change. Bump
+    // affected grant revisions so old sessions cannot silently retain authority.
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='uix_sessions'").get()) {
+        this.db.exec("INSERT OR IGNORE INTO ui_sessions SELECT * FROM uix_sessions; DROP TABLE uix_sessions");
+      }
+      for (const table of ["pairings", "grants"] as const) {
+        const rows = this.db.prepare(`SELECT id,scopes FROM ${table}`).all() as Array<{ id: string; scopes: string }>;
+        for (const row of rows) {
+          const previous = JSON.parse(row.scopes) as string[];
+          const next = previous.map(scope => scope === "uix:view" ? "ui:view" : scope === "uix:control" ? "ui:control" : scope);
+          if (next.every((scope, index) => scope === previous[index])) continue;
+          this.db.prepare(`UPDATE ${table} SET scopes=?${table === "grants" ? ",revision=revision+1" : ""} WHERE id=?`).run(JSON.stringify([...new Set(next)]), row.id);
+        }
+      }
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
     }
     this.db.prepare("INSERT OR IGNORE INTO instance VALUES(1,?)").run(randomUUID());
     this.serverId = this.get("SELECT uuid FROM instance WHERE id=1")!.uuid;
@@ -64,13 +85,13 @@ export class AccessStore {
     try { this.cleanup(); value = run(); this.db.exec("COMMIT"); }
     catch (error) { this.db.exec("ROLLBACK"); throw error; }
     try { this.changed?.(); } catch { /* a notification failure cannot undo a committed transition */ }
-    for (const listener of this.uixListeners) { try { listener(); } catch { /* one closed socket cannot break a committed write */ } }
+    for (const listener of this.uiListeners) { try { listener(); } catch { /* one closed socket cannot break a committed write */ } }
     return value;
   }
   private cleanup() {
     // Expired secrets cannot recover an exchange. Retain durable identities and
     // admission receipts, but bound abandoned requests and ephemeral material.
-    for (const table of ["pairings", "refreshes", "tokens", "handoffs", "sessions", "uix_sessions"]) {
+    for (const table of ["pairings", "refreshes", "tokens", "handoffs", "sessions", "ui_sessions"]) {
       this.db.prepare(`DELETE FROM ${table} WHERE expires<=?`).run(this.now());
     }
     this.db.exec("DELETE FROM audit WHERE seq < (SELECT coalesce(max(seq),0)-999 FROM audit)");
@@ -82,7 +103,7 @@ export class AccessStore {
       pairings: all<PairingRow>(`SELECT id,code,label,kind,scopes,created,expires,CASE WHEN expires<=${this.now()} AND state IN ('pending','approved') THEN 'expired' ELSE state END AS state FROM pairings ORDER BY created DESC LIMIT 100`).map(row => ({ ...row, scopes: JSON.parse(row.scopes) as Scope[] })),
       grants: all<GrantRow>("SELECT * FROM grants ORDER BY created DESC").map(row => ({ ...row, scopes: JSON.parse(row.scopes) as Scope[], operations: JSON.parse(row.operations) as string[] })),
       credentials: all("SELECT id,client_id,grant_id,generation,created,expires,revoked FROM credentials ORDER BY created DESC"),
-      uixSessions: all("SELECT credential_id,expires FROM uix_sessions ORDER BY expires DESC LIMIT 100"),
+      uiSessions: all("SELECT credential_id,expires FROM ui_sessions ORDER BY expires DESC LIMIT 100"),
       audit: all("SELECT * FROM audit ORDER BY seq DESC LIMIT 100") };
   }
   pair(input: { requestId: string; label: string; kind: string; scopes: Scope[]; redemptionSecret: string }) {
@@ -145,7 +166,7 @@ export class AccessStore {
     if (row.expires <= this.now()) return fail("credential_expired");
     return row;
   }
-  refresh(refreshToken: string, requestId: string, audience: "brain" | "content" | "uix") {
+  refresh(refreshToken: string, requestId: string, audience: "brain" | "content" | "ui") {
     return this.transaction(() => {
       const digest = hash(refreshToken);
       const current = this.get("SELECT * FROM credentials WHERE refresh_hash=?", digest);
@@ -170,7 +191,7 @@ export class AccessStore {
       return { accessToken: token, refreshToken: derive(refreshToken, `refresh:${requestId}:${audience}`), audience, expiresAt: expiresAt as number, credentialId: row.id as string, serverId: this.serverId };
     });
   }
-  authorize(token: string, audience: "brain" | "content" | "uix", scope?: Scope): Principal {
+  authorize(token: string, audience: "brain" | "content" | "ui", scope?: Scope): Principal {
     const record = this.get("SELECT * FROM tokens WHERE hash=?", hash(token));
     if (!record || record.expires <= this.now() || record.audience !== audience) return fail();
     const row = this.active(record.credential_id), allowed = JSON.parse(row.scopes) as Scope[];
@@ -178,45 +199,45 @@ export class AccessStore {
     return { clientId: row.client_id, kind: row.kind, grantId: row.grant_id, credentialId: row.id, scopes: allowed };
   }
   /** A browser session is distinct from API access tokens and may only belong to a browser-kind client. */
-  startUix(refreshToken: string, requestId: string) {
+  startUi(refreshToken: string, requestId: string) {
     const credential = this.get("SELECT id FROM credentials WHERE refresh_hash=?", hash(refreshToken))
-      ?? this.get("SELECT credential_id AS id FROM refreshes WHERE old_hash=? AND request=?", hash(refreshToken), `${requestId}:uix`);
+      ?? this.get("SELECT credential_id AS id FROM refreshes WHERE old_hash=? AND request=?", hash(refreshToken), `${requestId}:ui`);
     if (!credential) fail();
-    this.uixCheck(credential.id);
-    const issued = this.refresh(refreshToken, requestId, "uix");
-    const principal = this.authorize(issued.accessToken, "uix", "uix:view");
+    this.uiCheck(credential.id);
+    const issued = this.refresh(refreshToken, requestId, "ui");
+    const principal = this.authorize(issued.accessToken, "ui", "ui:view");
     if (principal.kind !== "browser") fail("browser_required", 403);
     this.transaction(() => {
-      this.db.prepare("INSERT OR REPLACE INTO uix_sessions VALUES(?,?,?)").run(hash(issued.accessToken), principal.credentialId, issued.expiresAt);
-      this.audit("uix_session_admitted", principal.clientId);
+      this.db.prepare("INSERT OR REPLACE INTO ui_sessions VALUES(?,?,?)").run(hash(issued.accessToken), principal.credentialId, issued.expiresAt);
+      this.audit("ui_session_admitted", principal.clientId);
     });
     return issued;
   }
-  uix(token: string): Principal {
-    const row = this.get("SELECT 1 FROM uix_sessions WHERE hash=? AND expires>?", hash(token), this.now());
+  ui(token: string): Principal {
+    const row = this.get("SELECT 1 FROM ui_sessions WHERE hash=? AND expires>?", hash(token), this.now());
     if (!row) fail();
-    const principal = this.authorize(token, "uix", "uix:view");
+    const principal = this.authorize(token, "ui", "ui:view");
     if (principal.kind !== "browser") fail("browser_required", 403);
     return principal;
   }
-  uixExpires(token: string): number {
-    this.uix(token);
-    return this.get("SELECT expires FROM uix_sessions WHERE hash=?", hash(token))!.expires;
+  uiExpires(token: string): number {
+    this.ui(token);
+    return this.get("SELECT expires FROM ui_sessions WHERE hash=?", hash(token))!.expires;
   }
-  uixMutation(principal: Principal, pkg: string, operation: string) {
-    this.uixCheck(principal.credentialId, "uix:control");
-    this.transaction(() => this.audit("uix_mutation", `${principal.clientId}:${pkg}.${operation}`));
+  uiMutation(principal: Principal, pkg: string, operation: string) {
+    this.uiCheck(principal.credentialId, "ui:control");
+    this.transaction(() => this.audit("ui_mutation", `${principal.clientId}:${pkg}.${operation}`));
   }
-  uixCheck(credentialId: string, scope: Scope = "uix:view") {
+  uiCheck(credentialId: string, scope: Scope = "ui:view") {
     const row = this.active(credentialId);
     if (row.kind !== "browser" || !JSON.parse(row.scopes).includes(scope)) fail("insufficient_scope", 403);
   }
-  uixHandoff(token: string, path: string, origin: "documents" | "artifacts") {
-    const principal = this.uix(token);
-    this.uixCheck(principal.credentialId, "content:read");
+  uiHandoff(token: string, path: string, origin: "documents" | "artifacts") {
+    const principal = this.ui(token);
+    this.uiCheck(principal.credentialId, "content:read");
     return this.handoff(principal, path, origin);
   }
-  watchUix(listener: () => void) { this.uixListeners.add(listener); return () => this.uixListeners.delete(listener); }
+  watchUi(listener: () => void) { this.uiListeners.add(listener); return () => this.uiListeners.delete(listener); }
   updateGrant(id: string, expectedRevision: number, selected: Scope[], operations: string[]) {
     return this.transaction(() => {
       const row = this.get("SELECT * FROM grants WHERE id=?", id);

@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { configuredMcpPackages, mcpPort, operation, workspaceRoot, type PackageApi } from "@agentstack/api";
-import { matchingProjects, ownerMcpOrigins, roleMcpConfig, roleMcpConflict } from "./src/bundle.js";
+import { matchingProjects, serverMcpOrigins, roleMcpConfig, roleMcpConflict } from "./src/bundle.js";
 import { RoleStore, instructionLimitBytes, renderSegments, snapshotLimitChars } from "./src/store.js";
 import { mcpDefinition, mcpRecord, projectPath, resourceName, resourceDescription, skillBody, skillFiles, skillRecord, trustedProjectRecord } from "./src/resources.js";
 
@@ -30,7 +30,7 @@ const launchPreview = z.strictObject({
   instructions: z.strictObject({ bytes: count.describe("UTF-8 size of SYSTEM_APPEND.md."), limitBytes: count, fragments: count.describe("Fragments that render.") }),
   skills: z.array(z.strictObject({ id, name: resourceName, description: resourceDescription, files: count.describe("Supporting files beside SKILL.md."),
     bytes: count.describe("Decoded size of the body and supporting files.") })).describe("Enabled role skills in order; each becomes skills/<name>/SKILL.md."),
-  internalMcpServers: z.array(z.string()).describe("Owner-provided Package API MCP servers every Bot receives; each launch binds their URLs to that Bot."),
+  internalMcpServers: z.array(z.string()).describe("Server-provided Package API MCP servers every Bot receives; each launch binds their URLs to that Bot."),
   mcpServers: z.array(z.strictObject({ id, name: resourceName, type: z.enum(["http", "stdio"]) })).describe("Enabled role MCP servers in order."),
   config: z.string().describe("The config.toml tables the Role contributes for its enabled MCP servers, exactly as launches write them."),
   trustedProjects: z.array(z.strictObject({ id, path: projectPath })).describe("Enabled trusted project roots in order."),
@@ -90,10 +90,10 @@ export const roleLaunchPreview = operation({
     const value = ctx.store.snapshot();
     const { rendered, segments } = renderSegments(value);
     const internal = await internalMcpNames();
-    const ownerNames = new Set(internal.map((name) => name.toLowerCase()));
+    const serverNames = new Set(internal.map((name) => name.toLowerCase()));
     const origins = new Set(ctx.mcpOrigins ?? []);
     const issues = value.mcpServers.flatMap((server) => {
-      const message = roleMcpConflict(server, ownerNames, origins);
+      const message = roleMcpConflict(server, serverNames, origins);
       return message ? [{ id: server.id, name: server.name, message }] : [];
     });
     const enabledProjects = value.trustedProjects.filter((project) => project.enabled);
@@ -191,7 +191,7 @@ export const skillReorder = operation({
 });
 
 export const mcpServerCreate = operation({
-  name: "mcp_server_create", description: "Add an HTTP or stdio MCP server to the role. It joins the owner-provided internal MCP servers only on later bot launches.",
+  name: "mcp_server_create", description: "Add an HTTP or stdio MCP server to the role. It joins the server-provided internal MCP servers only on later bot launches.",
   input: write.extend({ name: resourceName, description: resourceDescription, definition: mcpDefinition, enabled: z.boolean().optional() }),
   output: snapshot, annotations: { title: "Create role MCP server" },
   async call(ctx: RolesContext, input) {
@@ -209,7 +209,7 @@ export const mcpServerUpdate = operation({
   },
 });
 export const mcpServerDelete = operation({
-  name: "mcp_server_delete", description: "Delete an additional role MCP server from later launches; internal owner MCP connections are unaffected.",
+  name: "mcp_server_delete", description: "Delete an additional role MCP server from later launches; internal server MCP connections are unaffected.",
   input: write.extend({ id }), output: snapshot, annotations: { title: "Delete role MCP server", destructiveHint: true },
   async call(ctx: RolesContext, { id, expectedRevision }) { return changed(ctx, ctx.store.deleteMcpServer(expectedRevision, id)); },
 });
@@ -254,9 +254,9 @@ export const api: PackageApi<RolesContext, keyof typeof topics> = {
     start(ctx, publish) { ctx.changed = () => publish("role_changed"); return () => { ctx.changed = undefined; }; },
   },
   async createContext(env) {
-    // The owner serves MCP on its configured port; Bots also report the bound one.
-    const ports = [mcpPort(env), Number(env.AGENTSTACK_OWNER_MCP_PORT)].filter((port) => Number.isInteger(port) && port > 0);
-    return { store: new RoleStore(env.AGENTSTACK_STATE_DIR ?? join(homedir(), ".local", "state", "agentstack")), mcpOrigins: ports.flatMap(ownerMcpOrigins) };
+    // The server serves MCP on its configured port; Bots also report the bound one.
+    const ports = [mcpPort(env), Number(env.AGENTSTACK_SERVER_MCP_PORT)].filter((port) => Number.isInteger(port) && port > 0);
+    return { store: new RoleStore(env.AGENTSTACK_STATE_DIR ?? join(homedir(), ".local", "state", "agentstack")), mcpOrigins: ports.flatMap(serverMcpOrigins) };
   },
   async closeContext(ctx) { ctx.store.close(); },
 };

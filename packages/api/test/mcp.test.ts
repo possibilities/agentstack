@@ -20,16 +20,16 @@ import { botMcpUrl, workerMcpUrl, parseWorkerMcpIdentity } from "../src/bot-mcp-
 import type { InvocationContext } from "../src/operation.js";
 import { McpEventSubscriptions, type EventValue } from "../src/mcp-subscriptions.js";
 
-test("one HTTP process exposes each configured Package API and forwards operations to socket owners", { timeout: 30_000 }, async () => {
+test("one HTTP process exposes each configured Package API and forwards operations to socket servers", { timeout: 30_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-mcp-"));
   const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0" };
   const seen: string[] = [];
-  for (const name of ["auth", "bots", "brain", "browse", "content", "notify", "roles", "owner", "scrape", "usage", "worker"]) {
+  for (const name of ["auth", "bots", "brain", "browse", "content", "notify", "roles", "serve", "scrape", "usage", "worker"]) {
     const dir = join(stateDir, "packages", name);
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "api.yaml"), `name: ${name}\ndescription: Test.\nmcp:\n  description: Test.\n  operations: all\n  events: all\n`);
   }
-  const sockets = await Promise.all(["auth", "bots", "brain", "browse", "content", "notify", "roles", "owner", "scrape", "usage", "worker"].map((name) => serveSocket({
+  const sockets = await Promise.all(["auth", "bots", "brain", "browse", "content", "notify", "roles", "serve", "scrape", "usage", "worker"].map((name) => serveSocket({
     info: { name, description: `${name}.`, transportDescription: "Socket.", path: socketPath(name, env) },
     context: {},
     operations: [name === "auth" ? operation({
@@ -44,7 +44,7 @@ test("one HTTP process exposes each configured Package API and forwards operatio
   try {
     assert.equal((await fetch(served.urls.auth!, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status, 401);
     assert.equal((await fetch(served.urls.auth!, { method: "POST", headers: { authorization: "Bearer wrong" }, body: "{}" })).status, 401);
-    assert.deepEqual(Object.keys(served.urls), ["auth", "bots", "brain", "browse", "content", "notify", "owner", "roles", "scrape", "usage", "worker"]);
+    assert.deepEqual(Object.keys(served.urls), ["auth", "bots", "brain", "browse", "content", "notify", "roles", "scrape", "serve", "usage", "worker"]);
     for (const [name, url] of Object.entries(served.urls)) {
       const client = new Client({ name: "test", version: "1.0.0" });
       await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: operatorHeaders(env) } }));

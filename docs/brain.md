@@ -6,7 +6,7 @@ Brain is AgentStack's research collection and retrieval Package API. It keeps an
 
 Brain initializes fresh storage below `<AGENTSTACK_STATE_DIR>/brain`; the default is `~/.local/state/agentstack/brain`. No prior research database, artifact store, token, source subscriptions or device preferences are adopted. The retained SQLite schema makes a later deliberate import more practical, but copying or migrating existing data is a separate operation.
 
-The AgentStack owner starts Brain with the other Package APIs. It owns the ingestion loop and device-share listener and stops them at shutdown. Use a disposable `AGENTSTACK_STATE_DIR` and ephemeral ports for development. A package rebuild does not reload an already running owner.
+The AgentStack server starts Brain with the other Package APIs. It owns the ingestion loop and device-share listener and stops them at shutdown. Use a disposable `AGENTSTACK_STATE_DIR` and ephemeral ports for development. A package rebuild does not reload an already running server.
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
@@ -14,7 +14,7 @@ The AgentStack owner starts Brain with the other Package APIs. It owns the inges
 | `AGENTSTACK_BRAIN_SHARE_HOST` | `127.0.0.1` | Internal backend; remote binds are refused. |
 | `AGENTSTACK_BRAIN_SHARE_PORT` | `8877` | Internal HTTP port; `0` requests an ephemeral test port. |
 
-The local Package API is available through the same socket, MCP and WebSocket mechanisms as other packages. Read `docs_get` for `brain`, or the live `/docs` reference, for operation inputs and outputs. The UIX **Brain** space ([ADR 0104](adr/0109-brain-space.md)) searches and reads the index, submits URLs and text, and follows the ingestion ledger and Research sources. It re-reads after Brain's `jobs_changed`, `sources_changed` and `index_changed` notices, which the WebSocket carries and MCP does not.
+The local Package API is available through the same socket, MCP and WebSocket mechanisms as other packages. Read `docs_get` for `brain`, or the live `/docs` reference, for operation inputs and outputs. The UI **Brain** space ([ADR 0104](adr/0109-brain-space.md)) searches and reads the index, submits URLs and text, and follows the ingestion ledger and Research sources. It re-reads after Brain's `jobs_changed`, `sources_changed` and `index_changed` notices, which the WebSocket carries and MCP does not.
 
 ## Ingestion and retrieval
 
@@ -51,7 +51,7 @@ Every share, share-status and health request authenticates. The [share v1 contra
 
 Shared-token reveal and rotation have been removed. Access grants and credentials are individually revocable through **System → Access**. Every remote request requires verified tailnet traffic, the expected server identity, and an appropriate audience token. Existing clients must pair again; held shares never silently change destination.
 
-Client build, installation and platform-specific setup instructions live in `packages/chrome` and `packages/android`. These are new AgentStack application identities. Browser extension installation, Android device installation, and changing an active owner's bind address are explicit deployment steps.
+Client build, installation and platform-specific setup instructions live in `packages/chrome` and `packages/android`. These are new AgentStack application identities. Browser extension installation, Android device installation, and changing an active server's bind address are explicit deployment steps.
 
 ## Offline behavior
 
@@ -61,6 +61,6 @@ Share outboxes are bounded to 200 entries and seven days. Expired, rejected or a
 
 ## Verification and retained compatibility
 
-`pnpm test` covers the repository's compiled tests, including Brain and client contract checks. Run `pnpm --filter @agentstack/uix typecheck` for catalog maintenance. Android's platform build additionally requires its documented JDK and Android SDK; a JavaScript workspace test is not evidence that an APK was assembled or run on a device.
+`pnpm test` covers the repository's compiled tests, including Brain and client contract checks. Run `pnpm --filter @agentstack/ui typecheck` for catalog maintenance. Android's platform build additionally requires its documented JDK and Android SDK; a JavaScript workspace test is not evidence that an APK was assembled or run on a device.
 
 Schema v13 additively extends Brain's own database with network scopes, grants and attempt evidence; migration grants no private access. Durable ingestion semantics and the version-1 share protocol are preserved. New backup manifests use `agentstack_brain_backup`; older application-specific backup discriminators need a future explicit migration. A database snapshot alone does not include its external research artifact bytes. Browser extraction requires the separately configured Browse runtime and agent-browser toolchain. Neither setup nor tests read the previous application's live research store.

@@ -1,0 +1,219 @@
+#!/usr/bin/env node
+import { mcpPort, runApi, runMcp, runWebSocket, serveApi, serveMcp, socketCall, socketPath, websocketPort, withLocalAuth } from "@agentstack/api";
+import { spawn } from "node:child_process";
+import { contentNetworkConfig } from "@agentstack/content";
+import { lookup } from "node:dns/promises";
+import { connect } from "node:net";
+import { accessChild, apiChild, signalChild, authChild, brainChild, xcomChild, browseChild, contentChild, inferChild, notifyChild, procChild, rolesChild, scrapeChild, usageChild, workerChild, websocketChild } from "./children.js";
+import { botsChild } from "./bots.js";
+import { createMcpEventSubscriptions } from "./mcp-delivery.js";
+import { serveInspectorCatalog } from "./inspector-catalog.js";
+import { inspectorChild, inspectorPort } from "./inspector.js";
+import { startServer } from "./server.js";
+import { startWithServerSocketRecovery } from "./server-socket.js";
+import { statusSource } from "./status.js";
+import { uiChild, uiPort } from "./ui.js";
+
+const command = process.argv[2];
+
+if (command === "open") {
+  const target = process.argv[3] ?? "ui";
+  if (!["ui", "inspector"].includes(target) || process.argv.length > 5) throw new Error("usage: agentstack open [ui|inspector] [configured-development-origin]");
+  const result = await socketCall(socketPath("serve"), "tools/call", { name: "serve_local_connect", arguments: { target, ...(process.argv[4] ? { origin: process.argv[4] } : {}) } }) as { url: string };
+  const child = spawn(process.platform === "darwin" ? "open" : "xdg-open", [result.url], { stdio: "ignore" });
+  await new Promise<void>((resolve, reject) => { child.once("error", reject); child.once("exit", code => code === 0 ? resolve() : reject(new Error("browser opener failed"))); });
+  process.exit(0);
+}
+if (command === "revoke-local") {
+  await socketCall(socketPath("serve"), "tools/call", { name: "serve_local_revoke", arguments: {} });
+  console.error("Local sessions and operator credentials revoked. Run agentstack open to reconnect.");
+  process.exit(0);
+}
+
+if (command === "api") {
+  await runApi(process.argv.slice(3));
+} else if (command === "mcp") {
+  await runMcp();
+} else if (command === "websocket") {
+  await runWebSocket();
+} else if (command !== "serve") {
+  console.error("usage: agentstack serve\nusage: agentstack open [ui|inspector] [configured-development-origin]\nusage: agentstack revoke-local\nusage: agentstack api <package> <transport>\nusage: agentstack mcp\nusage: agentstack websocket");
+  process.exit(1);
+}
+
+// Check server identity and fixed listeners before creating any
+// sockets or starting children. A second invocation must not partially start
+// and then fail after trying to claim the first server's ports.
+const existing = await socketCall(socketPath("serve"), "tools/call", {
+  name: "serve_status", arguments: {},
+}, { timeoutMs: 1_000 }).catch(() => null) as { pid?: unknown; indexUrl?: unknown; uiUrl?: unknown } | null;
+if (existing && typeof existing.pid === "number") {
+  console.error(`AgentStack is already running (pid ${existing.pid}).${typeof existing.indexUrl === "string" ? ` UI entry: ${existing.indexUrl}` : ""}${typeof existing.uiUrl === "string" ? ` UI canvas: ${existing.uiUrl}` : ""}`);
+  process.exit(0);
+}
+
+const inspectorListenPort = inspectorPort(process.env);
+const uiListenPort = uiPort(process.env);
+const contentPort = Number(process.env.AGENTSTACK_CONTENT_PORT ?? process.env.AGENTSTACK_WIKI_PORT ?? 8777);
+const contentArtifactPort = Number(process.env.AGENTSTACK_CONTENT_ARTIFACT_PORT ?? process.env.AGENTSTACK_WIKI_ARTIFACT_PORT ?? 8778);
+const accessHost = process.env.AGENTSTACK_ACCESS_HOST;
+const accessPort = Number(process.env.AGENTSTACK_ACCESS_PORT ?? 8943);
+const accessArtifactPort = Number(process.env.AGENTSTACK_ACCESS_ARTIFACT_PORT ?? 8944);
+const accessUiPort = Number(process.env.AGENTSTACK_ACCESS_UI_PORT ?? 8945);
+if (accessHost) {
+  const origin = process.env.AGENTSTACK_ACCESS_UI_ORIGIN;
+  let validOrigin = origin === undefined && process.env.AGENTSTACK_ACCESS_UI_PORT === undefined;
+  try {
+    if (origin) {
+      const parsed = new URL(origin);
+      validOrigin = parsed.protocol === "https:" && parsed.origin === origin && Number(parsed.port) === accessUiPort && !parsed.username && !parsed.password;
+    }
+  } catch { /* fail closed below */ }
+  if (!validOrigin || !process.env.AGENTSTACK_ACCESS_TLS_CERT || !process.env.AGENTSTACK_ACCESS_TLS_KEY
+    || ![accessPort, accessArtifactPort, ...(origin ? [accessUiPort] : [])].every(value => Number.isInteger(value) && value > 0 && value <= 65535)
+    || new Set([accessPort, accessArtifactPort, ...(origin ? [accessUiPort] : [])]).size !== (origin ? 3 : 2)) {
+    console.error("Access needs distinct valid ports and TLS key/cert; remote UI also needs AGENTSTACK_ACCESS_UI_ORIGIN matching its port");
+    process.exit(1);
+  }
+}
+let contentHost: string;
+try { contentHost = contentNetworkConfig(process.env).host; }
+catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); }
+const brainSharePort = Number(process.env.AGENTSTACK_BRAIN_SHARE_PORT ?? 8877);
+const brainShareHost = process.env.AGENTSTACK_BRAIN_SHARE_HOST ?? "127.0.0.1";
+for (const [name, value] of [["AGENTSTACK_CONTENT_PORT", contentPort], ["AGENTSTACK_CONTENT_ARTIFACT_PORT", contentArtifactPort], ["AGENTSTACK_BRAIN_SHARE_PORT", brainSharePort]] as const) {
+  if (!Number.isInteger(value) || value < 0 || value > 65535 || process.env[name] === "" || (name === "AGENTSTACK_CONTENT_PORT" && process.env.AGENTSTACK_CONTENT_PORT === undefined && process.env.AGENTSTACK_WIKI_PORT === "") || (name === "AGENTSTACK_CONTENT_ARTIFACT_PORT" && process.env.AGENTSTACK_CONTENT_ARTIFACT_PORT === undefined && process.env.AGENTSTACK_WIKI_ARTIFACT_PORT === "")) {
+    console.error(`${name} must be a port from 0 to 65535`);
+    process.exit(1);
+  }
+}
+if (brainShareHost !== "127.0.0.1") {
+  console.error("Brain backend must bind 127.0.0.1; configure remote clients through Access");
+  process.exit(1);
+}
+let brainShareAddress: string;
+try {
+  ({ address: brainShareAddress } = await lookup(brainShareHost));
+} catch {
+  console.error(`AGENTSTACK_BRAIN_SHARE_HOST could not be resolved: ${brainShareHost}`);
+  process.exit(1);
+}
+if (contentPort !== 0 && contentPort === contentArtifactPort) {
+  console.error("content document and artifact ports must differ");
+  process.exit(1);
+}
+const listeners: Array<readonly [string, number, string, string]> = [
+  ["MCP", mcpPort(process.env), "AGENTSTACK_MCP_PORT", "127.0.0.1"],
+  ["WebSocket", websocketPort(process.env), "AGENTSTACK_WEBSOCKET_PORT", "127.0.0.1"],
+  ["Inspector", inspectorListenPort, "AGENTSTACK_INSPECTOR_PORT", "127.0.0.1"],
+  ["UI canvas", uiListenPort, "AGENTSTACK_UI_PORT", "127.0.0.1"],
+  ["Content documents", contentPort, "AGENTSTACK_CONTENT_PORT", contentHost],
+  ["Content artifacts", contentArtifactPort, "AGENTSTACK_CONTENT_ARTIFACT_PORT", contentHost],
+  ["Brain share", brainSharePort, "AGENTSTACK_BRAIN_SHARE_PORT", brainShareHost],
+  ...(accessHost ? [
+    ["Access documents", accessPort, "AGENTSTACK_ACCESS_PORT", accessHost],
+    ["Access artifacts", accessArtifactPort, "AGENTSTACK_ACCESS_ARTIFACT_PORT", accessHost],
+    ...(process.env.AGENTSTACK_ACCESS_UI_ORIGIN ? [["Access UI", accessUiPort, "AGENTSTACK_ACCESS_UI_PORT", accessHost]] as const : []),
+  ] as const : []),
+];
+// Resolve the share host as net.Server.listen does so aliases and wildcard
+// binds cannot conceal a collision with the server's IPv4 loopback listeners.
+const contentAddress = contentHost === "127.0.0.1" ? contentHost : (await lookup(contentHost).catch(() => {
+  console.error("AGENTSTACK_CONTENT_HOST could not be resolved"); process.exit(1);
+})).address;
+const bindAddress = (host: string) => host === brainShareHost ? brainShareAddress : host === contentHost ? contentAddress : host;
+const loopbackBinds = new Set(["127.0.0.1", "0.0.0.0", "::", "::ffff:127.0.0.1"]);
+for (const [index, [, port, setting, host]] of listeners.entries()) {
+  const conflict = listeners.slice(0, index).find(([, otherPort, , otherHost]) =>
+    port !== 0 && port === otherPort && (bindAddress(host) === bindAddress(otherHost) || loopbackBinds.has(bindAddress(host)) && loopbackBinds.has(bindAddress(otherHost))));
+  if (conflict) {
+    console.error(`${setting} and ${conflict[2]} must use different ports on ${host} (both use ${port})`);
+    process.exit(1);
+  }
+}
+for (const [transport, port, setting, host] of listeners) {
+  if (port !== 0 && await new Promise<boolean>((resolve) => {
+    const probe = connect({ host: bindAddress(host), port });
+    const finish = (listening: boolean) => { probe.destroy(); resolve(listening); };
+    probe.setTimeout(1_000, () => finish(false));
+    probe.once("connect", () => finish(true));
+    probe.once("error", () => finish(false));
+  })) {
+    console.error(`${transport} port ${port} is already in use on ${host}. An AgentStack server may already be running; check its server socket or choose another ${setting}.`);
+    process.exit(1);
+  }
+}
+
+// Browser configuration is issued per Bot launch, not inherited as a global
+// provider selection by account-level Worker processes.
+
+let events: Awaited<ReturnType<typeof serveApi>>;
+try {
+  events = await startWithServerSocketRecovery(socketPath("serve"), () => serveApi({ name: "serve", transport: "socket", env: process.env }));
+  // Rotate only after successfully claiming the server socket; duplicate starts
+  // must never invalidate the live server's sessions.
+  withLocalAuth(process.env, auth => auth.rotate());
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+
+let mcp: Awaited<ReturnType<typeof serveMcp>> | undefined;
+let catalog: Awaited<ReturnType<typeof serveInspectorCatalog>> | undefined;
+const subscriptions = createMcpEventSubscriptions(process.env);
+try {
+  mcp = await serveMcp({ env: process.env, subscriptions });
+  statusSource.setMcpUrls(mcp.urls);
+  catalog = await serveInspectorCatalog({ env: process.env, mcpPort: mcp.port });
+} catch (error) {
+  await Promise.allSettled([subscriptions.close(), catalog?.close(), mcp?.close(), events.close()]);
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+
+let server: ReturnType<typeof startServer>;
+let closing = false;
+let childFailed = false;
+const shutdown = () => {
+  if (closing) process.exit(1);
+  closing = true;
+  const force = setTimeout(() => process.exit(1), 240_000);
+  force.unref();
+  void (async () => {
+    // Refuse new requests first. The remaining socket Servers drain their
+    // active calls while the dependencies they call are still running.
+    const ingress = await Promise.allSettled([subscriptions.close(), server.stop(["access", "websocket", "inspector", "ui"]), events.close(), mcp?.close(), catalog?.close()]);
+    const children = await Promise.allSettled([server.close()]);
+    return [...ingress, ...children];
+  })().then((results) => {
+    const failed = results.some((result) => result.status === "rejected");
+    for (const result of results) {
+      if (result.status === "rejected") console.error(result.reason);
+    }
+    process.exit(childFailed || failed ? 1 : 0);
+  });
+};
+server = startServer([apiChild(), accessChild(), authChild(), rolesChild(), browseChild(), botsChild(mcp.port), workerChild(), usageChild(), inferChild(), signalChild(), notifyChild(), contentChild(), scrapeChild(), brainChild(), xcomChild(), procChild(), websocketChild(), inspectorChild(catalog.path, inspectorListenPort), uiChild(uiListenPort)], process.env, () => {
+  statusSource.notify();
+  if (!closing && server.children().some((child) => !child.running)) {
+    childFailed = true;
+    console.error("a required child stopped; shutting down agentstack");
+    shutdown();
+  }
+}, [["access"], ["proc"], ["signal"], ["infer"], ["auth"], ["worker"], ["bots"], ["usage"], ["brain"], ["xcom"], ["scrape"], ["browse"], ["content"], ["roles"], ["notify"], ["api"]]);
+statusSource.attach(server);
+subscriptions.resume();
+const indexUrl = `http://127.0.0.1:${uiListenPort}/`;
+const uiUrl = `http://127.0.0.1:${uiListenPort}/x`;
+statusSource.setIndexUrl(indexUrl);
+statusSource.setUiUrl(uiUrl);
+statusSource.setInspectorUrl(`http://127.0.0.1:${inspectorListenPort}/`);
+
+if (events.socketPath) console.error(events.socketPath);
+console.error(`AgentStack UI entry: ${indexUrl}`);
+console.error(`AgentStack UI canvas: ${uiUrl}`);
+for (const [name, url] of Object.entries(mcp.urls)) console.error(`${name} MCP: ${url}`);
+console.error(`AgentStack Inspector: http://127.0.0.1:${inspectorListenPort}/`);
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);

@@ -3,7 +3,7 @@ import { serveHttp, socketCall, socketPath } from "@agentstack/api";
 import { z } from "zod";
 import { AccessError, AccessStore, scopes, type Principal } from "./store.js";
 import { tailnetAddress, verifier, localApi, type Peer } from "./network.js";
-import { startRemoteUix } from "./remote-uix.js";
+import { startRemoteUi } from "./remote-ui.js";
 
 export const pairInput = z.strictObject({ requestId: z.uuid(), label: z.string().trim().min(1).max(100), kind: z.enum(["chrome", "android", "browser"]), scopes: z.array(z.enum(scopes)).min(1).max(scopes.length), redemptionSecret: z.string().regex(/^[A-Za-z0-9_-]{43}$/) });
 export const redeemInput = z.strictObject({ id: z.uuid(), redemptionSecret: pairInput.shape.redemptionSecret });
@@ -144,23 +144,23 @@ export async function startIngress(store: AccessStore, env: NodeJS.ProcessEnv) {
   if (!tailnetAddress(host)) throw new Error("AGENTSTACK_ACCESS_HOST must be a direct Tailscale IP; proxies and wildcard binds are refused");
   if (!env.AGENTSTACK_ACCESS_TLS_KEY || !env.AGENTSTACK_ACCESS_TLS_CERT) throw new Error("Access requires operator-provisioned TLS key and certificate paths");
   const tls = { key: readFileSync(env.AGENTSTACK_ACCESS_TLS_KEY), cert: readFileSync(env.AGENTSTACK_ACCESS_TLS_CERT) };
-  const port = Number(env.AGENTSTACK_ACCESS_PORT ?? 8943), artifactPort = Number(env.AGENTSTACK_ACCESS_ARTIFACT_PORT ?? 8944), uixPort = Number(env.AGENTSTACK_ACCESS_UIX_PORT ?? 8945);
+  const port = Number(env.AGENTSTACK_ACCESS_PORT ?? 8943), artifactPort = Number(env.AGENTSTACK_ACCESS_ARTIFACT_PORT ?? 8944), uiPort = Number(env.AGENTSTACK_ACCESS_UI_PORT ?? 8945);
   if (![port, artifactPort].every(p => Number.isInteger(p) && p > 0 && p <= 65535) || port === artifactPort) throw new Error("Access ports must be distinct nonzero TCP ports");
-  if (env.AGENTSTACK_ACCESS_UIX_PORT !== undefined && !env.AGENTSTACK_ACCESS_UIX_ORIGIN)
-    throw new Error("AGENTSTACK_ACCESS_UIX_ORIGIN is required when configuring a remote UIX port");
-  if (env.AGENTSTACK_ACCESS_UIX_ORIGIN) {
-    const uixOrigin = new URL(env.AGENTSTACK_ACCESS_UIX_ORIGIN);
-    if (!Number.isInteger(uixPort) || uixPort < 1 || uixPort > 65535 || port === uixPort || artifactPort === uixPort
-      || uixOrigin.protocol !== "https:" || uixOrigin.origin !== env.AGENTSTACK_ACCESS_UIX_ORIGIN || Number(uixOrigin.port) !== uixPort || !uixOrigin.hostname || uixOrigin.username || uixOrigin.password)
-      throw new Error("AGENTSTACK_ACCESS_UIX_ORIGIN must be the exact HTTPS origin on a distinct AGENTSTACK_ACCESS_UIX_PORT");
+  if (env.AGENTSTACK_ACCESS_UI_PORT !== undefined && !env.AGENTSTACK_ACCESS_UI_ORIGIN)
+    throw new Error("AGENTSTACK_ACCESS_UI_ORIGIN is required when configuring a remote UI port");
+  if (env.AGENTSTACK_ACCESS_UI_ORIGIN) {
+    const uiOrigin = new URL(env.AGENTSTACK_ACCESS_UI_ORIGIN);
+    if (!Number.isInteger(uiPort) || uiPort < 1 || uiPort > 65535 || port === uiPort || artifactPort === uiPort
+      || uiOrigin.protocol !== "https:" || uiOrigin.origin !== env.AGENTSTACK_ACCESS_UI_ORIGIN || Number(uiOrigin.port) !== uiPort || !uiOrigin.hostname || uiOrigin.username || uiOrigin.password)
+      throw new Error("AGENTSTACK_ACCESS_UI_ORIGIN must be the exact HTTPS origin on a distinct AGENTSTACK_ACCESS_UI_PORT");
   }
   const documents = await serveHttp({ host, port, tls, handle: handler({ store, env, origin: "documents" }), requestTimeout: 30_000, headersTimeout: 10_000, forceCloseConnections: true });
   try {
     const artifacts = await serveHttp({ host, port: artifactPort, tls, handle: handler({ store, env, origin: "artifacts" }), requestTimeout: 30_000, headersTimeout: 10_000, forceCloseConnections: true });
     try {
-      const uix = env.AGENTSTACK_ACCESS_UIX_ORIGIN ? await startRemoteUix({ store, env, host, port: uixPort }, tls) : null;
-      return { host, port, artifactPort, uixPort: uix ? uixPort : null,
-        close: async () => { await Promise.all([uix?.close(), documents.close(), artifacts.close()]); } };
+      const ui = env.AGENTSTACK_ACCESS_UI_ORIGIN ? await startRemoteUi({ store, env, host, port: uiPort }, tls) : null;
+      return { host, port, artifactPort, uiPort: ui ? uiPort : null,
+        close: async () => { await Promise.all([ui?.close(), documents.close(), artifacts.close()]); } };
     } catch (error) { await artifacts.close(); throw error; }
   } catch (error) { await documents.close(); throw error; }
 }

@@ -5,7 +5,7 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**"]
     },
-    "@agentstack/uix#build": {
+    "@agentstack/ui#build": {
       "dependsOn": ["^build"],
       "outputs": [".next/**", "!.next/cache/**"]
     },
@@ -21,7 +21,7 @@
         "@agentstack/infer#build",
         "@agentstack/bots#build",
         "@agentstack/roles#build",
-        "@agentstack/owner#build",
+        "@agentstack/serve#build",
         "@agentstack/worker#build",
         "@agentstack/brain#build",
         "@agentstack/xcom#build",

@@ -18,13 +18,13 @@ A durable phone, extension, browser or future cloud consumer identity owned by t
 
 An explicit set of scopes or selected operations for one Access client and one network policy. Tailnet device grants and public-cloud grants are distinct; a device credential never authorizes public ingress. Client, grant and individual credential revocation fence dependent short-lived tokens and browser sessions on subsequent requests. Public-cloud credentials and remote MCP admission are not yet implemented. _Avoid_: network reachability, approval code, internal MCP context
 
-## Remote UIX session
+## Remote UI session
 
-A five-minute Access session for one locally approved browser-kind client on the dedicated direct-tailnet UIX TLS origin. `uix:view` selects read-only WebSocket operations and events; `uix:control` adds UIX mutations, never Access, sign-in, voice or headful browser authority. The HttpOnly cookie and rotating refresh are distinct from Content resource handoffs. Revocation and grant changes fence the next HTTP request and close existing WebSockets. _Avoid_: forwarded local UIX port, internal MCP identity, public share link
+A five-minute Access session for one locally approved browser-kind client on the dedicated direct-tailnet UI TLS origin. `ui:view` selects read-only WebSocket operations and events; `ui:control` adds UI mutations, never Access, sign-in, voice or headful browser authority. The HttpOnly cookie and rotating refresh are distinct from Content resource handoffs. Revocation and grant changes fence the next HTTP request and close existing WebSockets. _Avoid_: forwarded local UI port, internal MCP identity, public share link
 
 ## Local operator session
 
-An eight-hour local UIX or Inspector browser session established by a one-use capability minted through the private owner socket and opened by `agentstack open`. It is bound to one exact origin and audience. UIX server renders require it; each local WebSocket reconnect exchanges it for a one-use 30-second ticket. Owner restart or explicit local revocation invalidates sessions and the native operator bearer credential. Bot/Worker identities and remote Access sessions remain independent. _Avoid_: anonymous loopback authority, OS sandbox, Access grant
+An eight-hour local UI or Inspector browser session established by a one-use capability minted through the private server socket and opened by `agentstack open`. It is bound to one exact origin and audience. UI server renders require it; each local WebSocket reconnect exchanges it for a one-use 30-second ticket. Server restart or explicit local revocation invalidates sessions and the native operator bearer credential. Bot/Worker identities and remote Access sessions remain independent. _Avoid_: anonymous loopback authority, OS sandbox, Access grant
 
 ## Content handoff
 
@@ -32,7 +32,7 @@ A one-use, one-minute secret for opening one document, Content item or immutable
 
 ## Browser profile
 
-A durable, empty-at-creation Chrome user-data volume with one owner-supervised Kernel/Hypeman browser while AgentStack runs. Each Bot has an exclusive default; additional profiles may belong exclusively to that Bot or remain unassigned. Deleting a Bot retains its profiles unassigned. Only explicit profile deletion discards their data. Planned owner shutdown closes Chrome before stopping the exact VM; restart retains the volume and refreshes its guest address and CDP relay. _Avoid_: disposable task, shared account profile, sleeping browser
+A durable, empty-at-creation Chrome user-data volume with one server-supervised Kernel/Hypeman browser while AgentStack runs. Each Bot has an exclusive default; additional profiles may belong exclusively to that Bot or remain unassigned. Deleting a Bot retains its profiles unassigned. Only explicit profile deletion discards their data. Planned server shutdown closes Chrome before stopping the exact VM; restart retains the volume and refreshes its guest address and CDP relay. _Avoid_: disposable task, shared account profile, sleeping browser
 
 ## Browser controller
 
@@ -44,19 +44,19 @@ A durable request from a verified Bot Chat for human help with an entire Browser
 
 ## Transport
 
-A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are the local control transports. Socket is the full internal superset. Each MCP and WebSocket declaration independently requires `operations` and `events`: `all`, a positive name list, or `[]` for none; an absent transport is disabled. MCP forwards over loopback HTTP using a request-time selection and, under the owner, offers generated Bot event tools for selected topics and exposed read-only operations. WebSocket forwards over one shared loopback listener and package-addressed connection, retaining its operation/topic selection from handshake; each subscription has its own identifier and optional scope. An optional `http` Transport declares explicit JSON or static routes on separate owner-lifecycle listeners; it does not expose other Package API operations.
+A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are the local control transports. Socket is the full internal superset. Each MCP and WebSocket declaration independently requires `operations` and `events`: `all`, a positive name list, or `[]` for none; an absent transport is disabled. MCP forwards over loopback HTTP using a request-time selection and, under the server, offers generated Bot event tools for selected topics and exposed read-only operations. WebSocket forwards over one shared loopback listener and package-addressed connection, retaining its operation/topic selection from handshake; each subscription has its own identifier and optional scope. An optional `http` Transport declares explicit JSON or static routes on separate server-lifecycle listeners; it does not expose other Package API operations.
 
 _Avoid_: protocol, binding
 
 ## Event
 
-A named change notice a Package API publishes on an event-capable transport. Topics and descriptions are declared in TypeScript on the PackageApi (`events`); the socket transport delivers them to connections that call `events/subscribe`. A Package API can require a subscription scope (such as a bot ID), which filters notices without adding data to them. A notice carries only the topic name — never a payload or credentials — so callers snapshot state after (re)subscribing. The owner-managed MCP event tools turn notices into fresh read-only operation values for subscribed Bot threads.
+A named change notice a Package API publishes on an event-capable transport. Topics and descriptions are declared in TypeScript on the PackageApi (`events`); the socket transport delivers them to connections that call `events/subscribe`. A Package API can require a subscription scope (such as a bot ID), which filters notices without adding data to them. A notice carries only the topic name — never a payload or credentials — so callers snapshot state after (re)subscribing. The server-managed MCP event tools turn notices into fresh read-only operation values for subscribed Bot threads.
 
 _Avoid_: stream, feed, pubsub
 
 ## MCP event subscription
 
-A durable, revisionless request by a verified Bot thread to watch one MCP-selected Package API topic and re-read one exposed read-only operation after each invalidation. The owner records the request, reconnects and resnapshots after interruptions, coalesces unchanged values, and starts a Codex turn on that same sanctioned thread for a changed value. Current exposure is checked around reads and before delivery, including after queued or idle waits; removed or invalid configuration fences subsequent work. The initial value is returned to the subscribing tool call; event notices themselves carry no values.
+A durable, revisionless request by a verified Bot thread to watch one MCP-selected Package API topic and re-read one exposed read-only operation after each invalidation. The server records the request, reconnects and resnapshots after interruptions, coalesces unchanged values, and starts a Codex turn on that same sanctioned thread for a changed value. Current exposure is checked around reads and before delivery, including after queued or idle waits; removed or invalid configuration fences subsequent work. The initial value is returned to the subscribing tool call; event notices themselves carry no values.
 
 ## Codex account
 
@@ -68,7 +68,7 @@ A stable account ID for an isolated, native sign-in managed through `auth`. Code
 
 ## ACP runtime
 
-An owner-supervised stdio ACP process for one ready Worker account: OpenCode for Grok or Codex, Devin CLI for Devin. Its pipe is private to AgentStack and is not itself a Package API Transport. The `worker` Package API reports health and account-bound capabilities.
+An server-supervised stdio ACP process for one ready Worker account: OpenCode for Grok or Codex, Devin CLI for Devin. Its pipe is private to AgentStack and is not itself a Package API Transport. The `worker` Package API reports health and account-bound capabilities.
 
 ## Claude runtime
 
@@ -82,13 +82,13 @@ A no-turn observation of model and dependent effort choices actually offered by 
 
 ## Usage observation
 
-A read-only, scope-and-account-ID-bound measurement of provider quota or billing, collected by the owner-managed `usage` Package API. Bot Codex and Worker Codex observations read their own credentials. Links repeat auth's Codex Bot–Worker pairing by ID. It retains the last good value with an explicit observation time, freshness and sanitized failure code. A subscription end, where a provider exposes one, is account-level evidence with its own source and check time; it says nothing about renewal. It is evidence for a human or agent, not an eligibility verdict or a balancing recommendation; Grok Bot is the machine's separate CLI login rather than a Worker account, observed only while a signed-in Grok Worker account exists.
+A read-only, scope-and-account-ID-bound measurement of provider quota or billing, collected by the server-managed `usage` Package API. Bot Codex and Worker Codex observations read their own credentials. Links repeat auth's Codex Bot–Worker pairing by ID. It retains the last good value with an explicit observation time, freshness and sanitized failure code. A subscription end, where a provider exposes one, is account-level evidence with its own source and check time; it says nothing about renewal. It is evidence for a human or agent, not an eligibility verdict or a balancing recommendation; Grok Bot is the machine's separate CLI login rather than a Worker account, observed only while a signed-in Grok Worker account exists.
 
 _Avoid_: account score, capacity decision, balance action
 
 ## Resource observation
 
-A cached, timestamped census of the owner's observed process ancestry with OS CPU and memory measurements, domain attribution, availability and sampling limits. The owner Package API exposes process self/subtree and overlapping component, Bot, account and ACP-runtime rollups plus bounded recent history. Shared process costs are not allocated to Worker sessions, chats or turns; these observations are independent of provider quota and billing Usage observations.
+A cached, timestamped census of the server's observed process ancestry with OS CPU and memory measurements, domain attribution, availability and sampling limits. The server Package API exposes process self/subtree and overlapping component, Bot, account and ACP-runtime rollups plus bounded recent history. Shared process costs are not allocated to Worker sessions, chats or turns; these observations are independent of provider quota and billing Usage observations.
 
 _Avoid_: per-chat cost, unique RAM, complete accounting
 
@@ -102,7 +102,7 @@ One admitted prompt on an existing Worker, dispatched through its native backend
 
 ## Worker MCP invocation context
 
-Transport-supplied Worker ID and exact native runtime instance from a private signed MCP URL. The owner checks both against the durable Worker and live account backend. A manifest's positive `mcp.workerOperations` list, intersected with MCP exposure, selects disclosed reads; omission denies all. Read-only hints alone grant no access. Worker record reads are self-only, and Worker calls cannot subscribe Bot threads. It is not an OS sandbox. _Avoid_: Bot identity, operator authority
+Transport-supplied Worker ID and exact native runtime instance from a private signed MCP URL. The server checks both against the durable Worker and live account backend. A manifest's positive `mcp.workerOperations` list, intersected with MCP exposure, selects disclosed reads; omission denies all. Read-only hints alone grant no access. Worker record reads are self-only, and Worker calls cannot subscribe Bot threads. It is not an OS sandbox. _Avoid_: Bot identity, operator authority
 
 ## Inference request
 
@@ -136,7 +136,7 @@ A Codex app-server process with, after its first turn, a durable main thread. By
 
 ## Role
 
-The single AgentStack-owned configuration shared by every new Bot launch: ordered developer-instruction fragments, enabled skills, internal owner MCP connections, and additional enabled MCP servers. Each Bot receives a private launch snapshot through codexnk's required `--capabilities` directory. Edits affect later launches, not a running process. _Avoid_: capability profile, system-prompt flag, live prompt file
+The single AgentStack-owned configuration shared by every new Bot launch: ordered developer-instruction fragments, enabled skills, internal server MCP connections, and additional enabled MCP servers. Each Bot receives a private launch snapshot through codexnk's required `--capabilities` directory. Edits affect later launches, not a running process. _Avoid_: capability profile, system-prompt flag, live prompt file
 
 ## Trusted project
 
@@ -164,7 +164,7 @@ A named, enabled or disabled skill record containing Markdown instructions and o
 
 ## Role MCP server
 
-An additional named, enabled or disabled HTTP or stdio MCP definition in the Role. Enabled definitions join the owner's internal Package API connections only in the Bot's private launch configuration. They do not change ambient Codex configuration or running Bots.
+An additional named, enabled or disabled HTTP or stdio MCP definition in the Role. Enabled definitions join the server's internal Package API connections only in the Bot's private launch configuration. They do not change ambient Codex configuration or running Bots.
 
 ## MCP invocation context
 
@@ -194,7 +194,7 @@ A named, optional group of Content items. Items exist independently of collectio
 
 ## Canvas space
 
-A named collection of related windows on its own UIX open bench, addressed as `/x/<space>`. Fleet (Bots) is the default space, Accounts holds accounts, usage limits and model catalogs, Lab holds experimental windows, and System holds the owner, its processes, package channels, host resources and sampling; a relationship between cards in different spaces is a link, not a wire. Spaces retain independent window arrangements and cameras. Navigating switches the visible bench; panning and zooming cannot reveal another space. API reference is a global dock rather than a space.
+A named collection of related windows on its own UI open bench, addressed as `/x/<space>`. Fleet (Bots) is the default space, Accounts holds accounts, usage limits and model catalogs, Lab holds experimental windows, and System holds the server, its processes, package channels, host resources and sampling; a relationship between cards in different spaces is a link, not a wire. Spaces retain independent window arrangements and cameras. Navigating switches the visible bench; panning and zooming cannot reveal another space. API reference is a global dock rather than a space.
 
 _Avoid_: page, tab, workspace (a Bot's working directory)
 
@@ -202,7 +202,7 @@ Roles is the fifth Canvas space, managing the Role's instruction Categories and 
 
 ## Open bench
 
-UIX's continuous canvas for one Canvas space, with its own camera and window arrangement. Only the selected space's bench is visible and interactive. API reference and record inspection are global tools attached to the viewport; their destinations need not name a canvas card.
+UI's continuous canvas for one Canvas space, with its own camera and window arrangement. Only the selected space's bench is visible and interactive. API reference and record inspection are global tools attached to the viewport; their destinations need not name a canvas card.
 
 _Avoid_: shared world, space tabs
 
@@ -218,7 +218,7 @@ The `xcom` Package API's best-effort, private cache of observed posts from the a
 
 ## Scrape
 
-The `scrape` Package API's extraction, preset, link and source-discovery engine. Brain consumes its typed library interface for Ingestion jobs; standalone scrape-to-file jobs live under isolated AgentStack state and are not Brain jobs. A preset's failure to match the provider's current content shape is a classified failure requiring a preset update, not permission for generic extraction. Browser page actions still belong to agent-browser. The local UIX operates its canary checks and queue over the WebSocket; agents do not receive them over MCP. _Avoid_: Brain ingestion worker, browser lifecycle, separate Agentscrape service
+The `scrape` Package API's extraction, preset, link and source-discovery engine. Brain consumes its typed library interface for Ingestion jobs; standalone scrape-to-file jobs live under isolated AgentStack state and are not Brain jobs. A preset's failure to match the provider's current content shape is a classified failure requiring a preset update, not permission for generic extraction. Browser page actions still belong to agent-browser. The local UI operates its canary checks and queue over the WebSocket; agents do not receive them over MCP. _Avoid_: Brain ingestion worker, browser lifecycle, separate Agentscrape service
 
 ## Admission
 

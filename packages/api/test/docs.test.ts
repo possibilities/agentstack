@@ -36,7 +36,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.deepEqual(
       docs.packages.map((item) => item.name),
-       ["access", "api", "auth", "bots", "brain", "browse", "content", "infer", "notify", "owner", "proc", "roles", "scrape", "signal", "usage", "worker", "xcom"],
+       ["access", "api", "auth", "bots", "brain", "browse", "content", "infer", "notify", "proc", "roles", "scrape", "serve", "signal", "usage", "worker", "xcom"],
     );
     assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@agentstack/${item.name}`));
 
@@ -71,7 +71,7 @@ test("the api package serves structured documents for every workspace package", 
         assert.equal(doc.operations.find(op => op.name === name)?.annotations.readOnlyHint, true);
       }
     }
-    for (const pkg of ["auth", "bots", "browse", "notify", "owner", "proc", "scrape", "usage", "xcom"])
+    for (const pkg of ["auth", "bots", "browse", "notify", "serve", "proc", "scrape", "usage", "xcom"])
       assert.deepEqual(found.get(pkg)!.transports.find(t => t.type === "mcp")!.workerOperations, []);
     assert.deepEqual(found.get("api")!.transports.find(t => t.type === "mcp")!.workerOperations, ["docs_list", "docs_get", "docs_snapshot"]);
     assert.deepEqual(found.get("roles")!.transports.find(t => t.type === "mcp")!.workerOperations, ["role_snapshot", "role_preview"]);
@@ -86,7 +86,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok(Object.hasOwn(xcom.operations.find(op => op.name === "xcom_users")?.outputSchema.properties ?? {}, "results"));
     assert.ok(xcom.transports.find(t => t.type === "mcp")!.operations.includes("xcom_articles_pending"));
     const responseLength = JSON.stringify({ id: 1, result: snapshot }).length + 1;
-    // Proc and authenticated UIX add schemas; retain a large margin below the four-million-byte frame limit.
+    // Proc and authenticated UI add schemas; retain a large margin below the four-million-byte frame limit.
     assert.ok(responseLength < 900_000, `discovery snapshot exceeds the socket response budget: ${responseLength} characters`);
 
     const brainHttp = found.get("brain")!.transports.find((transport) => transport.type === "http")!;
@@ -112,8 +112,8 @@ test("the api package serves structured documents for every workspace package", 
     const accessHttp = access.transports.find(t => t.type === "http")!;
     assert.ok(accessHttp.routes.some(r => r.path === "/v1/access/pair" && r.inputSchema));
     assert.ok(accessHttp.routes.some(r => r.path === "/v1/content/handoff" && r.authentication === "bearer"));
-    assert.ok(accessHttp.routes.some(r => r.surface === "uix" && r.path === "/connect/session" && r.inputSchema));
-    assert.ok(accessHttp.routes.some(r => r.surface === "uix" && r.path === "/websocket"));
+    assert.ok(accessHttp.routes.some(r => r.surface === "ui" && r.path === "/connect/session" && r.inputSchema));
+    assert.ok(accessHttp.routes.some(r => r.surface === "ui" && r.path === "/websocket"));
     assert.deepEqual(brainHttp.operations, []);
     assert.deepEqual(brainHttp.routes.map(({ surface, kind, method, path, operation }) => [surface, kind, method, path, operation]), [
       ["share", "json", "GET", "/v1/health", "share_health"], ["share", "json", "GET", "/v1/shares", "share_states"],
@@ -320,7 +320,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(inferOperation("infer_start").annotations.idempotentHint, true);
     assert.ok(Object.keys(inferOperation("infer_start").outputSchema.properties ?? {}).includes("state"));
     for (const name of ["infer_model_list", "infer_request_list", "infer_request_get"]) assert.equal(inferOperation(name).annotations.readOnlyHint, true);
-    // The UIX Lab reaches inference over the loopback WebSocket; agents get no MCP route to spend allowance.
+    // The UI Lab reaches inference over the loopback WebSocket; agents get no MCP route to spend allowance.
     assert.deepEqual(infer.transports.map((transport) => transport.type), ["socket", "websocket"]);
     assert.equal(infer.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
     assert.equal(infer.transports[0]?.endpoint, join(stateDir, "sockets", "infer.sock"));
@@ -350,21 +350,21 @@ test("the api package serves structured documents for every workspace package", 
       required: false,
     });
 
-    const owner = found.get("owner") as PackageDoc;
-    assert.deepEqual(Object.keys(owner.operations[0]?.outputSchema.properties ?? {}).sort(), ["children", "indexUrl", "inspectorUrl", "mcpUrls", "nodeVersion", "pid", "startedAt", "uixUrl"]);
-    for (const name of ["owner_local_connect", "owner_local_revoke"]) {
-      assert.ok(owner.operations.some(op => op.name === name));
-      assert.ok(owner.transports.filter(transport => transport.type !== "socket").every(transport => !transport.operations.includes(name)));
+    const server = found.get("serve") as PackageDoc;
+    assert.deepEqual(Object.keys(server.operations[0]?.outputSchema.properties ?? {}).sort(), ["children", "indexUrl", "inspectorUrl", "mcpUrls", "nodeVersion", "pid", "startedAt", "uiUrl"]);
+    for (const name of ["serve_local_connect", "serve_local_revoke"]) {
+      assert.ok(server.operations.some(op => op.name === name));
+      assert.ok(server.transports.filter(transport => transport.type !== "socket").every(transport => !transport.operations.includes(name)));
     }
-    assert.deepEqual(Object.keys(owner.events), ["pids_changed", "resources_changed"]);
-    assert.deepEqual(owner.operations.map((operation) => operation.name), ["owner_status", "owner_resources", "owner_resource_history", "owner_local_connect", "owner_local_revoke"]);
-    assert.equal(owner.operations[1].annotations.readOnlyHint, true);
-    assert.equal(owner.operations[2].annotations.readOnlyHint, true);
-    assert.ok(JSON.stringify(owner.operations[1].outputSchema).includes("cpuMeasuredProcessCount"));
-    assert.ok(JSON.stringify(owner.operations[2].outputSchema).includes("retention"));
-    const ownerSocket = owner.transports.find((transport) => transport.type === "socket") as TransportDoc;
-    assert.equal(ownerSocket.subscriptions, true);
-    assert.equal(ownerSocket.endpoint, join(stateDir, "sockets", "owner.sock"));
+    assert.deepEqual(Object.keys(server.events), ["pids_changed", "resources_changed"]);
+    assert.deepEqual(server.operations.map((operation) => operation.name), ["serve_status", "serve_resources", "serve_resource_history", "serve_local_connect", "serve_local_revoke"]);
+    assert.equal(server.operations[1].annotations.readOnlyHint, true);
+    assert.equal(server.operations[2].annotations.readOnlyHint, true);
+    assert.ok(JSON.stringify(server.operations[1].outputSchema).includes("cpuMeasuredProcessCount"));
+    assert.ok(JSON.stringify(server.operations[2].outputSchema).includes("retention"));
+    const serverSocket = server.transports.find((transport) => transport.type === "socket") as TransportDoc;
+    assert.equal(serverSocket.subscriptions, true);
+    assert.equal(serverSocket.endpoint, join(stateDir, "sockets", "serve.sock"));
 
     const api = found.get("api") as PackageDoc;
     assert.deepEqual(api.events, {});

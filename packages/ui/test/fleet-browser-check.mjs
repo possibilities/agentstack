@@ -1,0 +1,497 @@
+// Optional rendered smoke check after pnpm test. No live server or provider calls.
+// PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs node test/fleet-browser-check.mjs
+// CHROME_BIN may override the local headless Chrome executable.
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { createServer } from "node:net";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { publishedJsonSchema, serveSocket, serveWebSocket, socketPath } from "@agentstack/api";
+import { api as botsApi } from "../../bots/dist/api.js";
+import { api as inferApi } from "../../infer/dist/api.js";
+import { ChatUploads } from "../../bots/dist/src/chats.js";
+import { api as usageApi } from "../../usage/dist/api.js";
+import { api as workerApi } from "../../worker/dist/api.js";
+import { anyObject, fixtureWorkspace, transport, z, authorizeBrowser } from "./browser-fixture.mjs";
+
+if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
+const require = createRequire(import.meta.url);
+const ui = dirname(dirname(fileURLToPath(import.meta.url)));
+const root = dirname(dirname(ui));
+const base = process.env.TMPDIR ?? "/tmp";
+const dir = await mkdtemp(join(base, "agentstack-fleet-browser-"));
+const evidence = process.env.FLEET_EVIDENCE_DIR ?? join(dir, "evidence");
+await mkdir(evidence, { recursive: true });
+const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
+const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+// Each Codex Bot account is paired with a Codex Worker account; one awaits its own sign-in.
+const botAccounts = [{ id: id(1), enabled: true, removing: false, linkedAccounts: [{ scope: "worker", id: id(3) }] }, { id: id(2), enabled: false, removing: false, linkedAccounts: [] },
+  { id: id(6), enabled: true, removing: false, linkedAccounts: [{ scope: "worker", id: id(7) }] }];
+const workerAccounts = ["codex", "grok", "devin"].map((provider, index) => ({ id: id(index + 3), provider, enabled: true, ready: true, removing: false,
+  linkedAccounts: provider === "codex" ? [{ scope: "bot", id: id(1) }] : [] }));
+workerAccounts.push({ id: id(7), provider: "codex", enabled: true, ready: false, removing: false, linkedAccounts: [{ scope: "bot", id: id(6) }] });
+let defaults = { model: "gpt-6-sol", reasoningEffort: "medium", sandboxMode: "danger-full-access", approvalPolicy: "never" };
+const bot = (name, state = "stopped") => ({ id: name, state, pid: state === "running" ? 321 : null, cwd: "/fixture/private/workspace", url: null,
+  account: id(1), runningAccount: state === "running" ? id(1) : null, mainThreadId: id(10), recoveryIssue: null, roleRevision: 1, settings: defaults });
+let bots = [bot("bot-1", "running"), bot("bot-2")];
+let stamp = Date.now();
+const observation = { observedAtMs: stamp, lastAttemptAtMs: stamp, fresh: true, error: null };
+const usage = { atMs: stamp, inventoryAtMs: stamp, inventoryError: null, accounts: [
+  { ...botAccounts[0], scope: "bot", provider: "codex", ready: true, ...observation, usage: { planType: "Pro", limitReached: false, resetCreditsAvailable: 2, resetCreditExpirations: ["2026-10-01"], lanes: [{ id: "primary", title: "Standard", windows: [{ role: "primary", label: "5 hours", windowSeconds: 18000, usedPercent: 24, remainingPercent: 76, resetsAt: "2026-09-26T00:00:00Z", limitName: null, meteredFeature: null }] }] } },
+  { ...workerAccounts[1], scope: "worker", ...observation, fresh: false, error: "provider_unavailable", usage: { subscriptionTier: "SuperGrok", included: { usedPercent: 50, remainingPercent: 50, periodType: "monthly", periodStart: "2026-09-01", resetsAt: "2026-10-01", allocatedUsd: 300 }, prepaidBalanceUsd: 12.5, paygEnabled: false, paygUsedUsd: 10, paygCapUsd: 50, paygRemainingUsd: 40 } },
+  { ...workerAccounts[2], scope: "worker", ...observation, usage: { planLabel: "Pro", billing: "monthly", dailyRemainingPercent: null, weeklyRemainingPercent: 55, dailyResetsAt: null, weeklyResetsAt: "2026-09-28", periodStart: "2026-09-01", periodEnd: "2026-10-01", promptCreditsMonthly: 100, promptCreditsAvailable: 72, weeklyQuotaHidden: false, displayName: "Fixture" } },
+], grokBot: { ...observation, usage: { usedPercent: 33, periodStart: "2026-09-01", resetsAt: "2026-10-01", hasAvailableUsage: true, planLabel: "Grok Bot", fundingPlan: null, onDemandEligible: true, onDemandEnabled: false, trial: false, teamSeat: false } } };
+const calls = [];
+const uploads = new ChatUploads(dir);
+let interruptChunk = true;
+const chunkWritten = Promise.withResolvers();
+const releaseChunk = Promise.withResolvers();
+let chatReadGate;
+let inferOutcome = "completed";
+let inferAck = "ok";
+let inferObservation = null;
+const inferLedger = [];
+const inferGates = [];
+const inferModelsFixture = [{ id: "gpt-fixture", defaultEffort: "medium", supportedEfforts: ["low", "medium", "high"] }, { id: "gpt-fixture-mini", defaultEffort: "low", supportedEfforts: ["minimal", "low"] }];
+const inferChanged = () => served.get("infer").publish("infer_changed");
+const inferSummary = ({ instructions: _, input, text, ...fields }) => ({ ...fields, inputPreview: input.slice(0, 160), textPreview: text?.slice(0, 160) ?? null, textChars: text?.length ?? null });
+const activeCall = { sessionId: id(30), botId: "bot-1", threadId: id(10), phase: "connected" };
+const served = new Map();
+let websocket, next, browser;
+let log = "";
+const mutations = new Set(["bot_start", "bot_stop", "bot_assign", "bot_remove"]);
+const handlers = {
+  serve_status: () => ({ pid: process.pid, startedAt: new Date().toISOString(), nodeVersion: process.version, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
+  account_list: () => ({ accounts: botAccounts }), worker_account_list: () => ({ accounts: workerAccounts }),
+  account_login_current: () => ({ login: null }), worker_account_login_current: () => ({ logins: [] }),
+  bot_list: () => ({ bots }), bot_defaults_get: () => defaults, voice_status: () => ({ call: activeCall }),
+  voice_speak: ({ sessionId }) => ({ sessionId, status: "submitted" }),
+  bot_defaults_set: (input) => { defaults = { ...defaults, ...input }; served.get("bots").publish("defaults_changed"); return defaults; },
+  bot_start: (input) => { let item = bots.find((bot) => bot.id === input.id); if (!item) { item = bot(input.id ?? "bot-3"); bots.push(item); } Object.assign(item, { state: "running", pid: 456, account: input.account, runningAccount: input.account, cwd: input.cwd ?? item.cwd, settings: { ...item.settings, ...input.settings } }); return item; },
+  bot_stop: (input) => { const item = bots.find((bot) => bot.id === input.id); Object.assign(item, { state: "stopped", pid: null, runningAccount: null }); return item; },
+  bot_assign: (input) => { const item = bots.find((bot) => bot.id === input.id); item.account = input.account; return item; },
+  bot_remove: (input) => { bots = bots.filter((bot) => bot.id !== input.id); return input; },
+  usage_snapshot: () => ({ ...usage, atMs: ++stamp }),
+  worker_list: () => ({ workers: [] }), worker_runtime_list: () => ({ runtimes: workerAccounts.map((account) => ({ id: account.id, provider: account.provider, state: "running", instance: id(20), pid: 100, error: null })) }),
+  worker_catalog: ({ accountId }) => ({ accountId, provider: workerAccounts.find((account) => account.id === accountId).provider, observedAt: new Date().toISOString(), source: "acp-session", runtimeVersion: "2.1.0", modelConfigId: "model", models: [{ id: "model-native-1", name: "Native model one", efforts: ["low", "medium", "high"], effortConfigId: "effort" }], nativeModelIds: accountId === id(5) ? ["devin-native-model"] : [], stale: false, error: null }),
+  chat_list: async ({ botId }) => { await chatReadGate?.promise; return { chats: [{ botId, threadId: id(10), parentThreadId: null, title: "Main thread fixture", cwd: "/fixture", createdAt: "2026-09-25", updatedAt: "2026-09-25", messageCount: 2 }] }; },
+  chat_send: () => ({ turn: { id: "fixture-turn", status: "inProgress" } }),
+  chat_enqueue: (input) => ({ ...input, state: "pending", turnId: null, issue: null }),
+  chat_upload_start: ({ botId, id, name, bytes, sha256 }) => uploads.start(botId, id, name, bytes, sha256),
+  chat_upload_status: ({ botId, id }) => uploads.status(botId, id),
+  chat_upload_chunk: async ({ botId, id, offset, data }) => {
+    const receipt = await uploads.append(botId, id, offset, data);
+    if (interruptChunk) { chunkWritten.resolve(); await releaseChunk.promise; interruptChunk = false; throw new Error("Fixture acknowledgement interrupted after writing bytes"); }
+    return receipt;
+  },
+  chat_upload_finish: ({ botId, id }) => uploads.finish(botId, id),
+  infer_model_list: () => ({ accounts: inferObservation ? [inferObservation] : [] }),
+  infer_discover: ({ accountId }) => {
+    inferObservation = { accountId, models: null, observedAt: null, discovering: true, error: null };
+    setTimeout(() => { inferObservation = { accountId, models: inferModelsFixture, observedAt: new Date().toISOString(), discovering: false, error: null }; inferChanged(); }, 50);
+    queueMicrotask(inferChanged);
+    return inferObservation;
+  },
+  infer_start: (input) => {
+    if (inferAck === "lost-before-admit") { inferAck = "ok"; throw new Error("connection closed"); }
+    const existing = inferLedger.find((record) => record.requestId === input.requestId);
+    if (existing) return existing;
+    const record = { requestId: input.requestId, accountId: input.accountId, model: input.model, effort: input.effort, maxOutputTokens: input.maxOutputTokens,
+      state: "running", error: null, reportedModel: null, usage: null, createdAt: new Date().toISOString(), finishedAt: null, instructions: input.instructions, input: input.input, text: null };
+    inferLedger.push(record);
+    const outcome = inferOutcome, gate = Promise.withResolvers();
+    inferGates.push(gate);
+    void gate.promise.then(() => {
+      Object.assign(record, outcome === "completed" ? { state: "completed", text: "Hello from the fixture", reportedModel: input.model, usage: { inputTokens: 21, outputTokens: 5, totalTokens: 26, reasoningTokens: 0 } }
+        : { state: "unknown", error: `infer_outcome_unknown:${input.requestId}` }, { finishedAt: new Date().toISOString() });
+      inferChanged();
+    });
+    // A lost acknowledgement loses its notice too; the store's re-read must find the admission.
+    if (inferAck === "lost-after-admit") { inferAck = "ok"; throw new Error("connection closed"); }
+    queueMicrotask(inferChanged);
+    return record;
+  },
+  infer_request_list: () => ({ requests: inferLedger.toReversed().map(inferSummary), nextBefore: null }),
+  infer_request_get: ({ requestId }) => { const record = inferLedger.find((item) => item.requestId === requestId); if (!record) throw new Error("unknown_request"); return record; },
+};
+function operations(names, api) {
+  return names.map((name) => ({ name, description: name, input: api?.operations.find((operation) => operation.name === name)?.input ?? anyObject, output: z.any(),
+    async call(_, input) { calls.push({ name, input }); const value = await handlers[name](input); if (mutations.has(name)) served.get("bots").publish("bots_changed", input.id ?? value.id); return value; } }));
+}
+async function port() { const server = createServer(); await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve)); const value = server.address().port; await new Promise((resolve) => server.close(resolve)); return value; }
+try {
+  websocket = await serveWebSocket({ env, root: await fixtureWorkspace(dir, ["serve", "auth", "bots", "usage", "worker", "infer", "api"]), port: 0 });
+  const catalog = Object.entries({ bots: botsApi, usage: usageApi, worker: workerApi, infer: inferApi }).map(([name, api]) => ({ name, packageName: `@agentstack/${name}`, description: `${name} fixture`, events: api.events?.topics ?? {}, eventScope: null,
+    transports: [transport(websocket.url, api.operations.map((operation) => operation.name), Object.keys(api.events?.topics ?? {}))],
+    operations: api.operations.map((operation) => ({ name: operation.name, title: operation.annotations?.title ?? null, description: operation.description, annotations: operation.annotations ?? {}, inputSchema: publishedJsonSchema(operation.input), outputSchema: publishedJsonSchema(operation.output) })) }));
+  for (const name of ["auth", "serve", "api"]) catalog.push({ name, packageName: `@agentstack/${name}`, description: "Fixture", events: {}, eventScope: null, operations: [], transports: [transport(websocket.url)] });
+  handlers.docs_snapshot = () => ({ packages: catalog });
+  const definitions = { serve: ["serve_status"], auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"], bots: Object.keys(handlers).filter((name) => /^(bot_|voice_|chat_)/.test(name)), usage: ["usage_snapshot"], worker: ["worker_list", "worker_runtime_list", "worker_catalog"], infer: ["infer_model_list", "infer_discover", "infer_start", "infer_request_list", "infer_request_get"], api: ["docs_snapshot"] };
+  const topics = { serve: { pids_changed: "Fixture" }, auth: Object.fromEntries(["accounts_changed", "worker_accounts_changed", "login_changed", "worker_login_changed"].map((name) => [name, "Fixture"])), bots: botsApi.events.topics, worker: workerApi.events.topics, usage: usageApi.events.topics, infer: inferApi.events.topics, api: {} };
+  for (const [name, names] of Object.entries(definitions)) served.set(name, await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {}, operations: operations(names, { bots: botsApi, infer: inferApi }[name]), events: { topics: topics[name], scope: name === "bots" ? { valid: () => true, description: "Fixture", example: "bot-1" } : undefined } }));
+  const nextPort = await port();
+  env.AGENTSTACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${nextPort}`;
+  next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), process.env.NEXT_MODE === "dev" ? "dev" : "start", "--hostname", "127.0.0.1", "--port", String(nextPort)], { cwd: ui, env, stdio: ["ignore", "pipe", "pipe"] });
+  next.stdout.on("data", (chunk) => { log += chunk; }); next.stderr.on("data", (chunk) => { log += chunk; });
+  const origin = `http://127.0.0.1:${nextPort}`;
+  for (let attempt = 0; ; attempt++) {
+    try { if ((await fetch(`${origin}/connect/local`)).ok) break; } catch { /* bounded readiness check */ }
+    if (attempt > 1800 || next.exitCode !== null) throw new Error(log);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_BIN ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1100 }, reducedMotion: "reduce" });
+  await authorizeBrowser(page, origin, env);
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(`${origin}/x/fleet`);
+  const jump = async (query, name) => {
+    await page.keyboard.press("Meta+k");
+    await page.getByRole("combobox").fill(query);
+    await page.getByRole("option", { name, exact: typeof name === "string" }).first().click();
+    await page.getByRole("dialog", { name: "Jump to", exact: true }).waitFor({ state: "hidden" });
+  };
+  // The Models window's bench is hidden until Accounts is visited; mounted still proves the catalog read arrived.
+  await page.getByText("Native model one", { exact: true }).first().waitFor({ state: "attached" });
+  await page.screenshot({ path: join(evidence, "fleet-light.png"), fullPage: true, animations: "disabled" });
+  // Bot and account cards link across the Fleet and Accounts spaces; the Spaces menu follows.
+  await page.locator('[data-node="bot:bot-1"]').getByRole("link", { name: /codex-bot-account-1/ }).click();
+  await page.waitForURL((url) => url.pathname === "/x/accounts" && url.searchParams.get("focus") === `account:${id(1)}`);
+  await page.getByRole("button", { name: "Spaces · Accounts" }).waitFor();
+  await page.locator(`[data-node="account:${id(1)}"]`).getByRole("link", { name: /bot-1$/ }).click();
+  await page.waitForURL((url) => url.pathname === "/x/fleet" && url.searchParams.get("focus") === "bot:bot-1");
+  await page.getByRole("button", { name: "Spaces · Fleet" }).waitFor();
+  await jump("bot bot-1", /bot-1/);
+  await page.getByRole("button", { name: "Create Bot", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  assert.equal(await dialog.getByRole("button", { name: "Create and start" }).isDisabled(), true);
+  await dialog.getByRole("radio", { name: "codex-bot-account-1", exact: true }).check();
+  await dialog.getByLabel("Name", { exact: true }).fill("smoke-bot");
+  await dialog.getByRole("button", { name: "Settings", exact: true }).click();
+  await dialog.getByLabel("Model", { exact: true }).fill("fixture-model");
+  // Every inherit choice names the value it inherits.
+  await dialog.getByRole("radio", { name: "Default · medium", exact: true }).waitFor();
+  assert.equal(await dialog.getByLabel("Arguments", { exact: true }).getAttribute("placeholder"), "-c key=value");
+  await dialog.getByLabel("Arguments", { exact: true }).fill(`-c "unclosed`);
+  await dialog.getByRole("button", { name: "Create and start" }).click();
+  await dialog.getByText("Arguments have an unclosed quote.").waitFor();
+  assert.equal(calls.filter((call) => call.name === "bot_start").length, 0);
+  await dialog.getByLabel("Arguments", { exact: true }).fill(`-c 'model_verbosity=low'`);
+  await page.screenshot({ path: join(evidence, "create-bot.png"), animations: "disabled" });
+  await dialog.getByRole("button", { name: "Create and start" }).click();
+  await dialog.waitFor({ state: "hidden" });
+  assert.deepEqual(calls.find((call) => call.name === "bot_start").input, { id: "smoke-bot", account: id(1), settings: { model: "fixture-model" }, args: ["-c", "model_verbosity=low"] });
+  const card = page.locator('[data-node="bot:smoke-bot"]');
+  await card.getByRole("button", { name: "Tools", exact: true }).click();
+  await dialog.getByLabel("Operation", { exact: true }).selectOption("voice_speak");
+  await dialog.getByLabel("text", { exact: true }).fill("Must not reach another Bot");
+  assert.equal(await dialog.getByRole("button", { name: "Speak on voice call", exact: true }).isDisabled(), true);
+  assert.equal(await dialog.getByLabel("sessionId", { exact: true }).inputValue(), "");
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await card.getByRole("button", { name: "Stop…", exact: true }).click();
+  await dialog.getByRole("button", { name: "Stop Bot", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+  await card.getByRole("button", { name: "Start…", exact: true }).waitFor();
+  await card.getByRole("button", { name: "smoke-bot actions", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Assign account…", exact: true }).click();
+  await dialog.getByRole("radio", { name: "codex-bot-account-3", exact: true }).check();
+  await dialog.getByRole("button", { name: "Assign", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+  await card.getByRole("button", { name: "Start…", exact: true }).click();
+  assert.equal(await dialog.getByRole("radio", { name: "codex-bot-account-3", exact: true }).isChecked(), true);
+  // Starting keeps saved arguments unless they are replaced or cleared.
+  await dialog.getByRole("button", { name: "Settings", exact: true }).click();
+  await dialog.getByRole("radio", { name: "Current · medium", exact: true }).waitFor();
+  assert.equal(await dialog.getByLabel("Arguments", { exact: true }).getAttribute("placeholder"), "Keep saved arguments");
+  await dialog.getByRole("button", { name: "Clear", exact: true }).click();
+  assert.equal(await dialog.getByLabel("Arguments", { exact: true }).getAttribute("placeholder"), "None");
+  await dialog.getByRole("button", { name: "Undo", exact: true }).click();
+  await dialog.getByRole("button", { name: "Start Bot", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+  assert.deepEqual(calls.filter((call) => call.name === "bot_start").at(-1).input, { id: "smoke-bot", account: id(6) });
+  await card.getByRole("button", { name: "Stop…", exact: true }).click();
+  await dialog.getByRole("button", { name: "Stop Bot", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+  await card.getByRole("button", { name: "Tools", exact: true }).click();
+  await dialog.getByLabel("Operation", { exact: true }).selectOption("chat_list");
+  chatReadGate = Promise.withResolvers();
+  await dialog.getByRole("button", { name: "Read", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('[role="dialog"] select')?.disabled);
+  assert.equal(await dialog.getByLabel("limit (optional)", { exact: true }).isDisabled(), true);
+  await page.keyboard.press("Escape");
+  assert.equal(await dialog.isVisible(), true, "pending operation cannot be dismissed");
+  chatReadGate.resolve();
+  await dialog.getByText("Main thread fixture", { exact: true }).waitFor();
+  assert.deepEqual(calls.find((call) => call.name === "chat_list").input, { botId: "smoke-bot", limit: 25, offset: 0 });
+  served.get("bots").publish("chats_changed", "smoke-bot");
+  await dialog.getByText("May be stale · read again", { exact: true }).waitFor();
+  await page.screenshot({ path: join(evidence, "bot-tools.png"), animations: "disabled" });
+  await dialog.getByLabel("Operation", { exact: true }).selectOption("chat_enqueue");
+  await dialog.getByLabel("input", { exact: true }).fill('[{"type":"text","text":"Queue while stopped"}]');
+  await dialog.getByRole("button", { name: "Queue chat message", exact: true }).click();
+  await dialog.getByText("pending", { exact: true }).waitFor();
+  assert.equal(calls.find((call) => call.name === "chat_enqueue").input.botId, "smoke-bot");
+  await dialog.getByText("Upload a file", { exact: true }).click();
+  const content = Buffer.alloc(300_000, "u");
+  await dialog.getByLabel("File (up to 20 MB)").setInputFiles({ name: "fixture.txt", mimeType: "text/plain", buffer: content });
+  await dialog.getByRole("button", { name: "Upload file", exact: true }).click();
+  await chunkWritten.promise;
+  const uploadId = calls.find((call) => call.name === "chat_upload_start").input.id;
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await card.getByRole("button", { name: "Tools", exact: true }).click();
+  await dialog.getByText("Upload a file", { exact: true }).click();
+  await dialog.getByText(uploadId, { exact: true }).waitFor();
+  assert.equal(await dialog.getByLabel("File (up to 20 MB)").isDisabled(), true);
+  assert.equal(await dialog.getByRole("button", { name: /Upload file$/ }).isDisabled({ timeout: 2_000 }), true);
+  releaseChunk.resolve();
+  await dialog.getByText(/Fixture acknowledgement interrupted/).waitFor();
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await card.getByRole("button", { name: "Tools", exact: true }).click();
+  await dialog.getByText("Upload a file", { exact: true }).click();
+  await dialog.getByText(uploadId, { exact: true }).waitFor();
+  await dialog.getByRole("button", { name: "Resume upload", exact: true }).click();
+  await dialog.getByRole("button", { name: "Copy verified upload path", exact: true }).waitFor();
+  const uploaded = await uploads.status("smoke-bot", uploadId);
+  assert.deepEqual(await readFile(uploaded.path), content);
+  assert.deepEqual(calls.filter((call) => call.name === "chat_upload_chunk").map((call) => call.input.offset), [0, 262_144]);
+  assert.equal(calls.filter((call) => call.name === "chat_send").length, 0, "upload never sends a message");
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await card.getByRole("button", { name: "Tools", exact: true }).click();
+  await dialog.getByText("Upload a file", { exact: true }).click();
+  await dialog.getByText(uploaded.path, { exact: true }).waitFor();
+  assert.equal(await dialog.getByRole("button", { name: "Upload file", exact: true }).isDisabled(), true);
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await card.getByRole("button", { name: "smoke-bot actions", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Remove…", exact: true }).click();
+  await dialog.getByRole("button", { name: "Remove Bot", exact: true }).click();
+  await card.waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: "Edit Bot defaults", exact: true }).click();
+  await dialog.getByLabel("Model", { exact: true }).fill("future-bot-model");
+  await dialog.getByRole("button", { name: "Save defaults", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+  assert.equal(defaults.model, "future-bot-model");
+  assert.equal(bots.find((bot) => bot.id === "bot-1").settings.model, "gpt-6-sol");
+  await page.locator('[data-node="bot:bot-1"]').getByRole("button", { name: "Tools", exact: true }).click();
+  await dialog.getByLabel("Operation", { exact: true }).selectOption("voice_speak");
+  assert.equal(await dialog.getByLabel("sessionId", { exact: true }).getAttribute("readonly"), "");
+  await dialog.getByLabel("text", { exact: true }).fill("Fixture speech");
+  await dialog.getByRole("button", { name: "Speak on voice call", exact: true }).click();
+  await dialog.getByText("submitted", { exact: true }).waitFor();
+  assert.deepEqual(calls.find((call) => call.name === "voice_speak").input, { sessionId: activeCall.sessionId, text: "Fixture speech" });
+  activeCall.sessionId = id(31);
+  served.get("bots").publish("voice_changed");
+  await dialog.getByRole("button", { name: "Use current connected call", exact: true }).waitFor();
+  assert.equal(await dialog.getByRole("button", { name: "Speak on voice call", exact: true }).isDisabled(), true);
+  await dialog.getByRole("button", { name: "Use current connected call", exact: true }).click();
+  await dialog.getByRole("button", { name: "Speak on voice call", exact: true }).click();
+  await dialog.getByText(id(31), { exact: true }).waitFor();
+  assert.equal(calls.filter((call) => call.name === "voice_speak").at(-1).input.sessionId, id(31));
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  // The Lab's Call speech window shows the open call and speaks into it; Enter sends the trimmed text once.
+  await jump("space lab", /Lab/);
+  await page.waitForURL((url) => url.pathname === "/x/lab");
+  const speech = page.locator('[data-window="call-speech"]');
+  await speech.getByText(`call ${id(31).slice(0, 8)}`, { exact: false }).waitFor();
+  const say = speech.getByRole("button", { name: "Say", exact: true });
+  assert.equal(await say.isDisabled(), true, "empty text cannot be sent");
+  await speech.getByLabel("Text for bot-1 to say").fill("  Lab speech  ");
+  await speech.getByLabel("Text for bot-1 to say").press("Enter");
+  // A controlled textarea mirrors its value into its text, so wait on the submitted list, not bare text.
+  await speech.getByRole("listitem").getByText("Lab speech", { exact: true }).waitFor();
+  assert.deepEqual(calls.filter((call) => call.name === "voice_speak").at(-1).input, { sessionId: id(31), text: "Lab speech" });
+  assert.equal(await speech.getByLabel("Text for bot-1 to say").inputValue(), "");
+  await page.screenshot({ path: join(evidence, "lab-call-speech.png"), animations: "disabled" });
+  const previous = { ...activeCall };
+  activeCall.phase = "dialing";
+  served.get("bots").publish("voice_changed");
+  await speech.getByText("Call still connecting", { exact: true }).waitFor();
+  Object.assign(activeCall, previous);
+  served.get("bots").publish("voice_changed");
+  await speech.getByText("Enter to send · Shift+Enter for a new line", { exact: true }).waitFor();
+  // The Lab's Inference window reads infer's ledger; discovery and requests are explicit actions.
+  const inference = page.locator('[data-window="inference"]');
+  const named = (name) => calls.filter((call) => call.name === name);
+  const rowFor = (requestId) => inference.getByRole("listitem").filter({ hasText: `request ${requestId}` });
+  assert.equal(named("infer_discover").length + named("infer_start").length, 0, "loading the bench discovers and spends nothing");
+  const run = inference.getByRole("button", { name: "Run", exact: true });
+  assert.equal(await run.isDisabled(), true, "nothing runs before an account is chosen");
+  await inference.getByLabel("Account", { exact: true }).selectOption({ label: "codex-bot-account-1" });
+  await inference.getByText("2 models · observed", { exact: false }).waitFor();
+  assert.deepEqual(named("infer_discover").map((call) => call.input), [{ accountId: id(1) }]);
+  assert.equal(await inference.getByLabel("Model", { exact: true }).inputValue(), "gpt-fixture");
+  assert.equal(await inference.getByLabel("Effort", { exact: true }).inputValue(), "medium");
+  await inference.getByLabel("Effort", { exact: true }).selectOption("high");
+  await inference.getByLabel("Token threshold", { exact: true }).fill("64");
+  await inference.getByLabel("Prompt", { exact: true }).fill("  Say hello  ");
+  await inference.getByLabel("Prompt", { exact: true }).press("Meta+Enter");
+  // Admission returns a running record; the account stays busy until the ledger records its outcome.
+  await inference.getByText("A request is running on this account", { exact: true }).waitFor();
+  const first = named("infer_start")[0].input;
+  assert.match(first.requestId, /^[0-9a-f-]{36}$/);
+  assert.deepEqual({ ...first, requestId: null }, { requestId: null, accountId: id(1), model: "gpt-fixture", effort: "high", instructions: "Answer concisely.", input: "Say hello", maxOutputTokens: 64 });
+  inferGates.shift().resolve();
+  await rowFor(first.requestId).locator("p", { hasText: "Hello from the fixture" }).waitFor();
+  await rowFor(first.requestId).getByText("21 in · 5 out", { exact: false }).waitFor();
+  // A model without the chosen effort falls back to its own default.
+  await inference.getByLabel("Model", { exact: true }).selectOption("gpt-fixture-mini");
+  assert.equal(await inference.getByLabel("Effort", { exact: true }).inputValue(), "low");
+  // A lost acknowledgement after admission reconciles from the ledger; no resend is offered.
+  inferAck = "lost-after-admit";
+  inferOutcome = "unknown";
+  await run.click();
+  const second = named("infer_start").at(-1).input.requestId;
+  await rowFor(second).getByText("Running", { exact: true }).waitFor();
+  assert.equal(await inference.getByRole("button", { name: "Resend", exact: true }).count(), 0, "the ledger confirms the admission");
+  inferGates.shift().resolve();
+  await rowFor(second).getByText("Outcome unknown", { exact: true }).waitFor();
+  await rowFor(second).getByText("may have been charged and was not retried", { exact: false }).waitFor();
+  // An unconfirmed admission is resent with the same request ID and starts once.
+  inferAck = "lost-before-admit";
+  inferOutcome = "completed";
+  await inference.getByLabel("Prompt", { exact: true }).fill("Say goodbye");
+  await run.click();
+  await inference.getByRole("button", { name: "Resend", exact: true }).click();
+  const [lost, resent] = named("infer_start").slice(-2).map((call) => call.input.requestId);
+  assert.equal(lost, resent, "a resend reuses the request ID");
+  await rowFor(resent).getByText("Running", { exact: true }).waitFor();
+  assert.equal(inferLedger.length, 3);
+  inferGates.shift().resolve();
+  await rowFor(resent).getByText("Completed", { exact: true }).waitFor();
+  await page.screenshot({ path: join(evidence, "lab-inference.png"), animations: "disabled" });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.screenshot({ path: join(evidence, "lab-inference-dark.png"), animations: "disabled" });
+  await page.emulateMedia({ colorScheme: "light" });
+  const usageWindow = page.locator('[data-window="usage"]');
+  await jump("usage", "Usage");
+  await usageWindow.getByRole("meter", { name: "codex-bot-account-1 5 hours remaining", exact: true }).waitFor();
+  assert.match(await usageWindow.innerText(), /\$300 included/);
+  await usageWindow.getByRole("button", { name: "Inspect Grok Bot usage", exact: true }).waitFor();
+  await usageWindow.getByRole("button", { name: "Inspect grok-worker-account-1 usage", exact: true }).click();
+  await page.getByRole("complementary", { name: "Inspector" }).getByText("allocatedUsd", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Package API reference", exact: true }).click();
+  assert.equal(new URL(page.url()).searchParams.get("reference"), "package:usage");
+  await page.getByRole("button", { name: "Inspector", exact: true }).click();
+  await page.getByRole("complementary", { name: "Inspector" }).getByText("allocatedUsd", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Close inspector" }).click();
+  const models = page.locator('[data-window="model-catalogs"]');
+  await jump("model catalog codex-worker-account-1", "codex-worker-account-1 models");
+  await models.getByLabel("Filter models").fill("no-such-model");
+  await models.getByText("No matches", { exact: true }).waitFor();
+  await models.getByLabel("Filter models").fill("");
+  await models.getByRole("tab", { name: /devin-worker-account-1/ }).click();
+  await models.getByRole("button", { name: "Refresh catalog" }).click();
+  await models.getByRole("button", { name: "Refresh catalog" }).waitFor();
+  assert.ok(calls.some((call) => call.name === "worker_catalog" && call.input.refresh === true && call.input.accountId === id(5)));
+  await models.getByText("1 native ID", { exact: true }).waitFor();
+  const onGrid = (value) => Math.abs(Math.round(value / 22) * 22 - value) < 0.5;
+  const frame = () => models.evaluate((el) => ({ left: parseFloat(el.style.left), top: parseFloat(el.style.top), width: parseFloat(el.style.width) }));
+  const initial = await frame();
+  assert.ok(onGrid(initial.left) && onGrid(initial.top), "a default window lands on the grid");
+  const before = await models.boundingBox();
+  const grip = models.locator('[title="Resize Models"]').first();
+  const edge = await grip.boundingBox();
+  await page.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(edge.x + 80, edge.y + edge.height / 2, { steps: 4 });
+  await page.mouse.up();
+  assert.ok((await models.boundingBox()).width > before.width + 40, "dragging a window edge widens it");
+  const resized = await frame();
+  assert.ok(onGrid(resized.left + resized.width), "a resized right edge snaps to the grid");
+  assert.ok(onGrid(resized.width), "a snapped resize is a whole number of cells");
+  const header = await models.locator("header").boundingBox();
+  await page.mouse.move(header.x + 40, header.y + header.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(header.x + 77, header.y + header.height / 2 + 29, { steps: 4 });
+  // Mid-drag the window follows the pointer freely while an outline marks its grid landing spot.
+  const midDrag = await frame();
+  const landing = await page.locator('[data-drop-target="model-catalogs"]').evaluate((el) => ({ left: parseFloat(el.style.left), top: parseFloat(el.style.top) }));
+  assert.ok(!(onGrid(midDrag.left) && onGrid(midDrag.top)), "a dragged window follows the pointer between grid dots");
+  assert.ok(onGrid(landing.left) && onGrid(landing.top), "the landing outline sits on the grid");
+  await page.screenshot({ path: join(evidence, "drag-landing.png"), animations: "disabled" });
+  await page.mouse.up();
+  assert.equal(await page.locator("[data-drop-target]").count(), 0, "the landing outline leaves on release");
+  const moved = await frame();
+  assert.ok(onGrid(moved.left) && onGrid(moved.top), "a dragged window snaps to the grid");
+  await page.keyboard.down("Alt");
+  await page.mouse.move(header.x + 77, header.y + header.height / 2 + 29);
+  await page.mouse.down();
+  await page.mouse.move(header.x + 88, header.y + header.height / 2 + 29, { steps: 4 });
+  await page.mouse.up();
+  await page.keyboard.up("Alt");
+  assert.ok(!onGrid((await frame()).left), "Alt places a window freely");
+  await grip.dblclick();
+  assert.ok(Math.abs((await models.boundingBox()).width - before.width) < 2, "double-click restores the default width");
+  // Content grows a window past its footprint, and a window placed below it is pushed clear.
+  const accountsWindow = page.locator('[data-window="accounts"]');
+  const grownAccounts = await accountsWindow.evaluate((el) => { const body = el.querySelector("[data-scroll]"); return { height: el.offsetHeight, overflow: body.scrollHeight - body.clientHeight }; });
+  assert.ok(grownAccounts.height > 760 && grownAccounts.overflow <= 1, `Accounts grows to fit its content (${JSON.stringify(grownAccounts)})`);
+  await page.getByRole("button", { name: "Spaces · Accounts" }).click();
+  await page.getByRole("menuitem", { name: /Accounts/ }).click();
+  await page.waitForTimeout(400);
+  const scale = (await accountsWindow.boundingBox()).height / grownAccounts.height;
+  const accountsBox = await accountsWindow.boundingBox();
+  const modelsHeader = await models.locator("header").boundingBox();
+  await page.mouse.move(modelsHeader.x + 20, modelsHeader.y + modelsHeader.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(accountsBox.x + 20, accountsBox.y + (760 + 60) * scale + modelsHeader.height / 2, { steps: 6 });
+  await page.mouse.up();
+  const below = await models.boundingBox();
+  const accountsBottom = (await accountsWindow.boundingBox()).y + (await accountsWindow.boundingBox()).height;
+  assert.ok(below.y >= accountsBottom + 20 * scale, `a window dropped inside a grown window's reach is pushed below it (${below.y} vs ${accountsBottom})`);
+  await page.screenshot({ path: join(evidence, "pushed.png"), animations: "disabled" });
+  await page.keyboard.press("t");
+  // A window sized taller than its content gives the extra height to its body; the footer keeps its natural height at the bottom.
+  const bottomGrip = accountsWindow.locator('[title="Resize Accounts"]').nth(1);
+  const gripBox = await bottomGrip.boundingBox();
+  await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + 300, { steps: 4 });
+  await page.mouse.up();
+  const tall = await accountsWindow.evaluate((el) => {
+    const footer = el.querySelector("footer").getBoundingClientRect(), frame = el.getBoundingClientRect(), button = el.querySelector("footer button").getBoundingClientRect();
+    return { footer: footer.height, button: button.height, gap: frame.bottom - footer.bottom, frame: frame.height };
+  });
+  assert.ok(tall.footer < 60 && tall.button < 40 && tall.gap < 4, `footer keeps its natural height at the bottom (${JSON.stringify(tall)})`);
+  await page.screenshot({ path: join(evidence, "tall-window.png"), animations: "disabled" });
+  await bottomGrip.dblclick();
+  // Resizing toward the content's height falls into a groove; released there, the window stores no height and keeps fitting its content.
+  const natural = await accountsWindow.evaluate((el) => el.offsetHeight);
+  const fitGrip = await bottomGrip.boundingBox();
+  const gripX = fitGrip.x + fitGrip.width / 2, gripY = fitGrip.y + fitGrip.height / 2;
+  await page.mouse.move(gripX, gripY);
+  await page.mouse.down();
+  await page.mouse.move(gripX, gripY + 200 * scale, { steps: 4 });
+  await page.mouse.move(gripX, gripY + 8 * scale, { steps: 4 });
+  await page.waitForFunction((height) => document.querySelector('[data-window="accounts"]')?.offsetHeight === height, natural);
+  await page.screenshot({ path: join(evidence, "fit-groove.png"), animations: "disabled" });
+  assert.equal(await page.getByText("Fits content", { exact: true }).count(), 0, "the groove is felt, not drawn");
+  await page.mouse.up();
+  const fitted = await accountsWindow.evaluate((el) => ({ height: el.offsetHeight, style: el.style.height }));
+  assert.deepEqual(fitted, { height: natural, style: "" }, "released in the groove, the window keeps fitting its content");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.screenshot({ path: join(evidence, "fleet-dark.png"), fullPage: true, animations: "disabled" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await jump("bot bot-1", /bot-1/);
+  await page.screenshot({ path: join(evidence, "fleet-mobile.png"), fullPage: true, animations: "disabled" });
+  await jump("create bot", "Create Bot");
+  const bounds = await dialog.boundingBox();
+  assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 391, "mobile dialog fits the viewport");
+  await page.screenshot({ path: join(evidence, "create-mobile.png"), animations: "disabled" });
+  assert.deepEqual(errors, [], "browser has no uncaught application errors");
+  console.log(JSON.stringify({ ok: true, evidence, assertions: "live discovery defaults, catalog tabs/filter/refresh, usage meters/inspection, create validation/payload, stop/assign/restart/remove/defaults, scoped history/speech, Lab call speech, Lab inference discovery/ledger/unknown outcome/idempotent resend, stopped queue admission, interrupted upload reopening/resume, light/dark/mobile", actions: calls.filter((call) => mutations.has(call.name)) }, null, 2));
+} catch (error) {
+  const page = browser?.contexts()[0]?.pages()[0];
+  if (page) await page.screenshot({ path: join(evidence, "failure.png"), animations: "disabled" }).catch(() => undefined);
+  throw error;
+} finally {
+  chatReadGate?.resolve();
+  releaseChunk.resolve();
+  await browser?.close();
+  if (next && next.exitCode === null) { next.kill("SIGTERM"); await new Promise((resolve) => next.once("exit", resolve)); }
+  await websocket?.close();
+  await Promise.all([...served.values()].map((socket) => socket.close()));
+  if (process.env.FLEET_EVIDENCE_DIR) await rm(dir, { recursive: true, force: true });
+}

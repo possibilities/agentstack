@@ -1,7 +1,7 @@
 # Headless conversation attention
 
-`attention` runs under the AgentStack owner. It starts paused on a new installation;
-its enabled state, defaults and source checkpoints survive owner restarts.
+`attention` runs under the AgentStack server. It starts paused on a new installation;
+its enabled state, defaults and source checkpoints survive server restarts.
 
 ## Configuration and activation
 

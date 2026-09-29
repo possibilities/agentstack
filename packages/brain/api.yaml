@@ -71,6 +71,6 @@ websocket:
     - doctor
     - share_read_states
   events: all
-  description: Loopback WebSocket operations forwarded to the Brain socket, with ledger, source and index change notices for the UIX Brain space.
+  description: Loopback WebSocket operations forwarded to the Brain socket, with ledger, source and index change notices for the UI Brain space.
 http:
   description: Authenticated versioned JSON routes for device shares on a separate listener; only the declared share operations are available.

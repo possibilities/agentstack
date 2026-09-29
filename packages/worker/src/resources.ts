@@ -22,14 +22,14 @@ export async function roleSnapshot(env: NodeJS.ProcessEnv): Promise<RoleSnapshot
 
 export async function sessionMcpServers(snapshot: RoleSnapshot, env: NodeJS.ProcessEnv, supportsHttp: boolean, cwd: string,
   worker: { id: string; instance: string }): Promise<AcpMcp[]> {
-  const owner = await socketCall(socketPath("owner", env), "tools/call", { name: "owner_status", arguments: {} }, { timeoutMs: 5_000 }) as { mcpUrls: Record<string, string> };
+  const server = await socketCall(socketPath("serve", env), "tools/call", { name: "serve_status", arguments: {} }, { timeoutMs: 5_000 }) as { mcpUrls: Record<string, string> };
   const names = new Set<string>();
   const output: AcpMcp[] = [];
-  for (const [name, url] of Object.entries(owner.mcpUrls)) {
-    if (!supportsHttp) throw new Error("ACP agent cannot connect to the owner's HTTP Package APIs");
+  for (const [name, url] of Object.entries(server.mcpUrls)) {
+    if (!supportsHttp) throw new Error("ACP agent cannot connect to the server's HTTP Package APIs");
     const parsed = new URL(url);
     if (parsed.protocol !== "http:" || parsed.hostname !== "127.0.0.1" || parsed.pathname !== `/mcp/${name}` || parsed.search)
-      throw new Error("owner reported an invalid internal MCP URL");
+      throw new Error("server reported an invalid internal MCP URL");
     names.add(name.toLowerCase());
     output.push({ type: "http", name, url: workerMcpUrl(url, worker.id, worker.instance, env), headers: [] });
   }

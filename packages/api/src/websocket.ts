@@ -250,7 +250,7 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
 function originAllowed(header: string | undefined, env: NodeJS.ProcessEnv): boolean {
   if (header === undefined) return true;
   if (env.AGENTSTACK_WEBSOCKET_ORIGIN) return header === env.AGENTSTACK_WEBSOCKET_ORIGIN;
-  const port = env.AGENTSTACK_UIX_PORT ?? "8745";
+  const port = env.AGENTSTACK_UI_PORT ?? "8745";
   return [`http://127.0.0.1:${port}`, `http://localhost:${port}`].includes(header);
 }
 

@@ -62,7 +62,7 @@ stops local redelivery; it cannot undo a request whose server receipt was lost.
 `pnpm --filter @agentstack/chrome icons` regenerates 16/32/48/128 PNGs using
 `rsvg-convert` (librsvg); ordinary builds use checked-in PNGs. The reproducible
 vector source and license are in `assets/`. The Layers geometry matches the
-canvas’s Lucide icon; light/dark neutrals follow `packages/uix/app/globals.css`.
+canvas’s Lucide icon; light/dark neutrals follow `packages/ui/app/globals.css`.
 
 Node tests cover inherited outbox/history behavior, delivery ambiguity,
 destination isolation, concurrency, and the wire contract with fake browser

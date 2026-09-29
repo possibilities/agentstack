@@ -139,7 +139,7 @@ process.stdin.on('data', (chunk) => {
   }
 });`;
 
-test("durable ACP workers dispatch, follow up, answer permissions, and load after owner restart", { timeout: 30_000 }, async () => {
+test("durable ACP workers dispatch, follow up, answer permissions, and load after server restart", { timeout: 30_000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), "agentstack-worker-execution-"));
   const repo = await repoFixture(root);
   const binary = join(root, "acp-fixture");
@@ -150,8 +150,8 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
   const roles = await serveSocket({ info: { name: "roles", description: "Roles", transportDescription: "Socket", path: socketPath("roles", env) },
     context: {}, operations: [operation({ name: "role_launch_snapshot", description: "Role", input: z.object({}), output: z.any(),
       async call() { return role; } })] });
-  const owner = await serveSocket({ info: { name: "owner", description: "Owner", transportDescription: "Socket", path: socketPath("owner", env) },
-    context: {}, operations: [operation({ name: "owner_status", description: "Status", input: z.object({}), output: z.any(),
+  const server = await serveSocket({ info: { name: "serve", description: "Server", transportDescription: "Socket", path: socketPath("serve", env) },
+    context: {}, operations: [operation({ name: "serve_status", description: "Status", input: z.object({}), output: z.any(),
       async call() { return { mcpUrls: { roles: "http://127.0.0.1:8743/mcp/roles" } }; } })] });
   const bots = await serveSocket({ info: { name: "bots", description: "Bots", transportDescription: "Socket", path: socketPath("bots", env) },
     context: {}, operations: [operation({ name: "bot_list", description: "List", input: z.object({}), output: z.any(),
@@ -288,7 +288,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
   } finally {
     await workerSocket?.close();
     await manager?.close();
-    await bots.close(); await owner.close(); await roles.close(); await auth.close();
+    await bots.close(); await server.close(); await roles.close(); await auth.close();
     await rm(root, { recursive: true, force: true });
   }
 });

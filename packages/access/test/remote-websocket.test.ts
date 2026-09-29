@@ -10,7 +10,7 @@ import WebSocket from "ws";
 import { operation, serveSocket, socketPath } from "@agentstack/api";
 import { z } from "zod";
 import { AccessStore } from "../src/store.js";
-import { startRemoteUix } from "../src/remote-uix.js";
+import { startRemoteUi } from "../src/remote-ui.js";
 
 const freePort = async () => {
   const server = createServer();
@@ -50,15 +50,15 @@ test("TLS WebSocket intersects live exposure, refuses cross-origin, and closes i
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "1", "-subj", "/CN=localhost"], { stdio: "ignore" });
   const port = await freePort();
   let online = true;
-  const remote = await startRemoteUix({ store, env, host: "127.0.0.1", port, root,
+  const remote = await startRemoteUi({ store, env, host: "127.0.0.1", port, root,
     verify: async () => { if (!online) throw new Error("not verified"); } }, { key: readFileSync(key), cert: readFileSync(cert) });
   const origin = `https://127.0.0.1:${port}`, url = `wss://127.0.0.1:${port}/websocket`;
   const keyMaterial = randomBytes(32).toString("base64url");
-  const pairing = store.pair({ requestId: randomUUID(), label: "browser", kind: "browser", scopes: ["uix:view", "uix:control"], redemptionSecret: keyMaterial });
-  store.approve(pairing.id, pairing.code, true, ["uix:view"]);
+  const pairing = store.pair({ requestId: randomUUID(), label: "browser", kind: "browser", scopes: ["ui:view", "ui:control"], redemptionSecret: keyMaterial });
+  store.approve(pairing.id, pairing.code, true, ["ui:view"]);
   const credential = store.redeem(pairing.id, keyMaterial);
-  const issued = store.startUix(credential.refreshToken, randomUUID());
-  const cookie = `__Host-agentstack_uix=${issued.accessToken}`;
+  const issued = store.startUi(credential.refreshToken, randomUUID());
+  const cookie = `__Host-agentstack_ui=${issued.accessToken}`;
   let viewer: WebSocket | undefined, controller: WebSocket | undefined;
   try {
     await assert.rejects(open(url, origin), /403/);
@@ -70,10 +70,10 @@ test("TLS WebSocket intersects live exposure, refuses cross-origin, and closes i
     assert.equal(writes, 0);
     // A new control session sees a new grant, but the old view connection is
     // terminated instead of inheriting powers when its grant changes.
-    store.updateGrant(store.inventory().grants[0]!.id, 1, ["uix:view", "uix:control"], []);
+    store.updateGrant(store.inventory().grants[0]!.id, 1, ["ui:view", "ui:control"], []);
     await new Promise<void>(resolve => viewer!.once("close", () => resolve()));
-    const next = store.startUix(issued.refreshToken, randomUUID());
-    controller = await open(url, origin, `__Host-agentstack_uix=${next.accessToken}`);
+    const next = store.startUi(issued.refreshToken, randomUUID());
+    controller = await open(url, origin, `__Host-agentstack_ui=${next.accessToken}`);
     const forged = frame(controller);
     controller.send(JSON.stringify({ id: "forged", method: "tools/call", params: {
       package: "notify", name: "notification_dismiss", arguments: {}, invocation: {},
@@ -83,18 +83,18 @@ test("TLS WebSocket intersects live exposure, refuses cross-origin, and closes i
     assert.equal((await call(controller, "notification_dismiss")).result.ok, true);
     assert.equal(writes, 1);
     const closed = new Promise<void>(resolve => controller!.once("close", () => resolve()));
-    store.updateGrant(store.inventory().grants[0]!.id, 2, ["uix:view"], []);
+    store.updateGrant(store.inventory().grants[0]!.id, 2, ["ui:view"], []);
     await closed;
-    const narrowed = store.startUix(next.refreshToken, randomUUID());
-    controller = await open(url, origin, `__Host-agentstack_uix=${narrowed.accessToken}`);
+    const narrowed = store.startUi(next.refreshToken, randomUUID());
+    controller = await open(url, origin, `__Host-agentstack_ui=${narrowed.accessToken}`);
     assert.match((await call(controller, "notification_dismiss")).error.message, /not available/);
     const revoked = new Promise<void>(resolve => controller!.once("close", () => resolve()));
     store.revoke("credential", credential.credentialId);
     await revoked;
-    await assert.rejects(open(url, origin, `__Host-agentstack_uix=${next.accessToken}`), /403/);
+    await assert.rejects(open(url, origin, `__Host-agentstack_ui=${next.accessToken}`), /403/);
     online = false;
     await assert.rejects(open(url, origin, cookie), /403/);
-    assert.ok(store.inventory().audit.some((item: any) => item.action === "uix_mutation"));
+    assert.ok(store.inventory().audit.some((item: any) => item.action === "ui_mutation"));
   } finally {
     viewer?.terminate(); controller?.terminate(); await remote.close(); await backend.close(); store.close(); rmSync(root, { recursive: true, force: true });
   }
@@ -117,11 +117,11 @@ test("remote control sessions receive only Scrape's read-only operations; fetchi
   const key = join(root, "key.pem"), cert = join(root, "cert.pem");
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "1", "-subj", "/CN=localhost"], { stdio: "ignore" });
   const port = await freePort();
-  const remote = await startRemoteUix({ store, env, host: "127.0.0.1", port, root, verify: async () => {} }, { key: readFileSync(key), cert: readFileSync(cert) });
+  const remote = await startRemoteUi({ store, env, host: "127.0.0.1", port, root, verify: async () => {} }, { key: readFileSync(key), cert: readFileSync(cert) });
   const keyMaterial = randomBytes(32).toString("base64url");
-  const pairing = store.pair({ requestId: randomUUID(), label: "browser", kind: "browser", scopes: ["uix:view", "uix:control"], redemptionSecret: keyMaterial });
-  store.approve(pairing.id, pairing.code, true, ["uix:view", "uix:control"]);
-  const issued = store.startUix(store.redeem(pairing.id, keyMaterial).refreshToken, randomUUID());
+  const pairing = store.pair({ requestId: randomUUID(), label: "browser", kind: "browser", scopes: ["ui:view", "ui:control"], redemptionSecret: keyMaterial });
+  store.approve(pairing.id, pairing.code, true, ["ui:view", "ui:control"]);
+  const issued = store.startUi(store.redeem(pairing.id, keyMaterial).refreshToken, randomUUID());
   let ws: WebSocket | undefined;
   const send = async (method: string, params: Record<string, unknown>) => {
     const response = frame(ws!);
@@ -129,7 +129,7 @@ test("remote control sessions receive only Scrape's read-only operations; fetchi
     return response;
   };
   try {
-    ws = await open(`wss://127.0.0.1:${port}/websocket`, `https://127.0.0.1:${port}`, `__Host-agentstack_uix=${issued.accessToken}`);
+    ws = await open(`wss://127.0.0.1:${port}/websocket`, `https://127.0.0.1:${port}`, `__Host-agentstack_ui=${issued.accessToken}`);
     assert.deepEqual((await send("tools/list", {})).result.tools.map((tool: { name: string }) => tool.name), ["scrape_queue_list"]);
     assert.equal((await send("tools/call", { name: "scrape_queue_list", arguments: {} })).result.ok, true);
     for (const name of ["scrape_queue_submit", "scrape_fetch"])
@@ -140,7 +140,7 @@ test("remote control sessions receive only Scrape's read-only operations; fetchi
   }
 });
 
-test("remote UIX cannot read arbitrary Brain share job IDs even with control scope", async () => {
+test("remote UI cannot read arbitrary Brain share job IDs even with control scope", async () => {
   const root = mkdtempSync(join(tmpdir(), "agentstack-remote-brain-"));
   const store = new AccessStore(root);
   const env = { AGENTSTACK_STATE_DIR: root };
@@ -156,11 +156,11 @@ test("remote UIX cannot read arbitrary Brain share job IDs even with control sco
   const key = join(root, "key.pem"), cert = join(root, "cert.pem");
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "1", "-subj", "/CN=localhost"], { stdio: "ignore" });
   const port = await freePort();
-  const remote = await startRemoteUix({ store, env, host: "127.0.0.1", port, root, verify: async () => {} }, { key: readFileSync(key), cert: readFileSync(cert) });
+  const remote = await startRemoteUi({ store, env, host: "127.0.0.1", port, root, verify: async () => {} }, { key: readFileSync(key), cert: readFileSync(cert) });
   const secret = randomBytes(32).toString("base64url");
-  const pairing = store.pair({ requestId: randomUUID(), label: "browser", kind: "browser", scopes: ["uix:view", "uix:control"], redemptionSecret: secret });
-  store.approve(pairing.id, pairing.code, true, ["uix:view", "uix:control"]);
-  const issued = store.startUix(store.redeem(pairing.id, secret).refreshToken, randomUUID());
+  const pairing = store.pair({ requestId: randomUUID(), label: "browser", kind: "browser", scopes: ["ui:view", "ui:control"], redemptionSecret: secret });
+  store.approve(pairing.id, pairing.code, true, ["ui:view", "ui:control"]);
+  const issued = store.startUi(store.redeem(pairing.id, secret).refreshToken, randomUUID());
   let ws: WebSocket | undefined;
   const send = async (method: string, params: Record<string, unknown>) => {
     const response = frame(ws!);
@@ -168,7 +168,7 @@ test("remote UIX cannot read arbitrary Brain share job IDs even with control sco
     return response;
   };
   try {
-    ws = await open(`wss://127.0.0.1:${port}/websocket`, `https://127.0.0.1:${port}`, `__Host-agentstack_uix=${issued.accessToken}`);
+    ws = await open(`wss://127.0.0.1:${port}/websocket`, `https://127.0.0.1:${port}`, `__Host-agentstack_ui=${issued.accessToken}`);
     assert.deepEqual((await send("tools/list", {})).result.tools.map((tool: { name: string }) => tool.name), ["jobs_show"]);
     assert.equal((await send("tools/call", { name: "jobs_show", arguments: {} })).result.ok, true);
     assert.match((await send("tools/call", { name: "share_read_states", arguments: {} })).error.message, /not available/);
@@ -178,7 +178,7 @@ test("remote UIX cannot read arbitrary Brain share job IDs even with control sco
   }
 });
 
-test("remote UIX sessions receive no Proc operations or events at all", async () => {
+test("remote UI sessions receive no Proc operations or events at all", async () => {
   const root = mkdtempSync(join(tmpdir(), "agentstack-remote-proc-"));
   const store = new AccessStore(root);
   const env = { AGENTSTACK_STATE_DIR: root };
@@ -195,11 +195,11 @@ test("remote UIX sessions receive no Proc operations or events at all", async ()
   const key = join(root, "key.pem"), cert = join(root, "cert.pem");
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "1", "-subj", "/CN=localhost"], { stdio: "ignore" });
   const port = await freePort();
-  const remote = await startRemoteUix({ store, env, host: "127.0.0.1", port, root, verify: async () => {} }, { key: readFileSync(key), cert: readFileSync(cert) });
+  const remote = await startRemoteUi({ store, env, host: "127.0.0.1", port, root, verify: async () => {} }, { key: readFileSync(key), cert: readFileSync(cert) });
   const secret = randomBytes(32).toString("base64url");
-  const pairing = store.pair({ requestId: randomUUID(), label: "browser", kind: "browser", scopes: ["uix:view", "uix:control"], redemptionSecret: secret });
-  store.approve(pairing.id, pairing.code, true, ["uix:view", "uix:control"]);
-  const issued = store.startUix(store.redeem(pairing.id, secret).refreshToken, randomUUID());
+  const pairing = store.pair({ requestId: randomUUID(), label: "browser", kind: "browser", scopes: ["ui:view", "ui:control"], redemptionSecret: secret });
+  store.approve(pairing.id, pairing.code, true, ["ui:view", "ui:control"]);
+  const issued = store.startUi(store.redeem(pairing.id, secret).refreshToken, randomUUID());
   let ws: WebSocket | undefined;
   const send = async (method: string, params: Record<string, unknown>) => {
     const response = frame(ws!);
@@ -207,8 +207,8 @@ test("remote UIX sessions receive no Proc operations or events at all", async ()
     return response;
   };
   try {
-    ws = await open(`wss://127.0.0.1:${port}/websocket`, `https://127.0.0.1:${port}`, `__Host-agentstack_uix=${issued.accessToken}`);
-    // Proc output and schedule input are owner-local secrets; nothing crosses
+    ws = await open(`wss://127.0.0.1:${port}/websocket`, `https://127.0.0.1:${port}`, `__Host-agentstack_ui=${issued.accessToken}`);
+    // Proc output and schedule input are server-local secrets; nothing crosses
     // the remote boundary even for a read-only operation or control grant.
     assert.deepEqual((await send("tools/list", {})).result.tools, []);
     for (const name of ["proc_run_list", "proc_run_read", "proc_run_start"])

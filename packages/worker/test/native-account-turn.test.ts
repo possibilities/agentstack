@@ -42,8 +42,8 @@ test("isolated native Grok and Devin accounts finish Worker turns in owned workt
     context: {}, operations: [operation({ name: "role_launch_snapshot", description: "Role", input: z.object({}), output: z.any(),
       async call() { return role; } })] });
   let mcpUrls: Record<string, string> = {};
-  const owner = await serveSocket({ info: { name: "owner", description: "Owner", transportDescription: "Socket", path: socketPath("owner", env) },
-    context: {}, operations: [operation({ name: "owner_status", description: "Status", input: z.object({}), output: z.any(),
+  const server = await serveSocket({ info: { name: "serve", description: "Server", transportDescription: "Socket", path: socketPath("serve", env) },
+    context: {}, operations: [operation({ name: "serve_status", description: "Status", input: z.object({}), output: z.any(),
       async call() { return { mcpUrls }; } })] });
   const supervisor = new WorkerSupervisor(root, env);
   const manager = new WorkerManager(root, supervisor, env);
@@ -141,7 +141,7 @@ test("isolated native Grok and Devin accounts finish Worker turns in owned workt
   } finally {
     await manager.close();
     await mcp.close(); await workers.close();
-    await owner.close(); await roles.close(); await auth.close();
+    await server.close(); await roles.close(); await auth.close();
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -30,4 +30,4 @@ The [port decision](adr/0059-isolated-brain-and-platform-clients.md) establishes
 
 ## Verification
 
-Use disposable AgentStack state and stub external extraction. Never point a regression test at a live database, token, source manifest or owner socket. Exercise the public Package API and actual share listener as well as domain helpers; a passing TypeScript build does not establish lifecycle or wire compatibility. Platform build and device/runtime verification are separate evidence.
+Use disposable AgentStack state and stub external extraction. Never point a regression test at a live database, token, source manifest or server socket. Exercise the public Package API and actual share listener as well as domain helpers; a passing TypeScript build does not establish lifecycle or wire compatibility. Platform build and device/runtime verification are separate evidence.

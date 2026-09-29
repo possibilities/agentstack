@@ -6,7 +6,7 @@ const headers = { "cache-control": "no-store", "referrer-policy": "no-referrer",
 /** Public bootstrap shell has no operator data or credentials. The capability is
  * delivered in a fragment by the private CLI, erased before its one-time POST. */
 export function localConnectPage(audience: LocalAudience): Response {
-  const script = `function connect(){const token=location.hash.slice(1);history.replaceState(null,'',location.pathname);if(token)fetch('/connect/local/session',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({token}),credentials:'same-origin',cache:'no-store'}).then(async r=>{if(!r.ok)throw Error('Link expired or already used. Run the command again.');location.replace(${JSON.stringify(audience === "uix" ? "/x" : "/")})}).catch(e=>document.getElementById('status').textContent=e.message)}addEventListener('hashchange',connect);connect();`;
+  const script = `function connect(){const token=location.hash.slice(1);history.replaceState(null,'',location.pathname);if(token)fetch('/connect/local/session',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({token}),credentials:'same-origin',cache:'no-store'}).then(async r=>{if(!r.ok)throw Error('Link expired or already used. Run the command again.');location.replace(${JSON.stringify(audience === "ui" ? "/x" : "/")})}).catch(e=>document.getElementById('status').textContent=e.message)}addEventListener('hashchange',connect);connect();`;
   const digest = createHash("sha256").update(script).digest("base64");
   return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect to AgentStack</title><h1>Connect to AgentStack</h1><p id="status">On this machine, run <code>agentstack open${audience === "inspector" ? " inspector" : ""}</code> to open an authenticated session.</p><script>${script}</script></html>`, { headers: { ...headers, "content-type": "text/html; charset=utf-8", "content-security-policy": `default-src 'none'; script-src 'sha256-${digest}'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'` } });
 }
@@ -46,7 +46,7 @@ export async function localBrowserResponse(request: Request, env: NodeJS.Process
       }
       const cookie = localCookie(request.headers.get("cookie"), audience);
       auth.session(cookie, url.origin, audience);
-      if (url.pathname === `${localConnectPath}/ticket` && audience === "uix") return json({ ticket: auth.ticket(cookie, url.origin) });
+      if (url.pathname === `${localConnectPath}/ticket` && audience === "ui") return json({ ticket: auth.ticket(cookie, url.origin) });
       if (url.pathname === `${localConnectPath}/logout`) {
         auth.revokeSession(cookie, url.origin, audience);
         const response = json({ closed: true });

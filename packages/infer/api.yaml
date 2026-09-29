@@ -5,4 +5,4 @@ socket:
 websocket:
   operations: all
   events: all
-  description: Loopback WebSocket for the UIX Lab's model discovery, request admission, ledger reads and change events, forwarded to the infer socket. There is deliberately no MCP transport.
+  description: Loopback WebSocket for the UI Lab's model discovery, request admission, ledger reads and change events, forwarded to the infer socket. There is deliberately no MCP transport.

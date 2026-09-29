@@ -19,7 +19,7 @@ function connect(url: string, origin?: string, headers?: Record<string, string>)
     const env = credentials.get(url);
     let protocols: string[] = [];
     if (env && origin && /^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin)) {
-      protocols = [withLocalAuth(env, auth => `agentstack-local.${auth.ticket(auth.redeem(auth.bootstrap(origin, "uix"), origin, "uix").token, origin)}`)];
+      protocols = [withLocalAuth(env, auth => `agentstack-local.${auth.ticket(auth.redeem(auth.bootstrap(origin, "ui"), origin, "ui").token, origin)}`)];
     }
     const ws = new WebSocket(url, protocols, { ...(origin ? { origin } : {}), headers: { ...(!origin && env ? operatorHeaders(env) : {}), ...headers } });
     ws.once("open", () => resolve(ws));
@@ -43,7 +43,7 @@ async function fixture(overrides: NodeJS.ProcessEnv = {}) {
   const dir = join(root, "packages", "demo");
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n  operations: all\n  events: all\n");
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_UIX_PORT: "8745", AGENTSTACK_WEBSOCKET_ORIGIN: undefined, ...overrides };
+  const env = { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_UI_PORT: "8745", AGENTSTACK_WEBSOCKET_ORIGIN: undefined, ...overrides };
   const socket = await serveSocket<{ allowed: string }>({
     info: { name: "demo", description: "Demo.", transportDescription: "Socket.", path: socketPath("demo", env) },
     context: { allowed: "bot-1" },
@@ -314,7 +314,7 @@ test("anonymous sockets, replayed tickets and revoked operator/browser connectio
   try {
     await assert.rejects(raw(), /403/);
     await assert.rejects(raw([], { origin }), /403/);
-    const token = withLocalAuth(setup.env, auth => auth.redeem(auth.bootstrap(origin, "uix"), origin, "uix").token);
+    const token = withLocalAuth(setup.env, auth => auth.redeem(auth.bootstrap(origin, "ui"), origin, "ui").token);
     const ticket = withLocalAuth(setup.env, auth => auth.ticket(token, origin));
     await assert.rejects(raw([`agentstack-local.${ticket}`], { origin: "http://localhost:8745" }), /403/);
     browser = await raw([`agentstack-local.${ticket}`], { origin });
