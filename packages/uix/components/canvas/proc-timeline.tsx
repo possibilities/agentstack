@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChartGanttIcon } from "lucide-react";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { relativeTime, untilTime } from "@/lib/stack/derive";
-import { executionView, scheduleGroup, scheduleTitle } from "@/lib/stack/proc";
+import { cadence, executionView, scheduleGroup, scheduleTitle } from "@/lib/stack/proc";
 import { nodeKey, type ProcExecution, type ProcExecutionState, type ProcRun, type ProcScheduleListItem } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { ProcPlaceholder, procUnavailable } from "./proc-shared";
@@ -140,10 +140,11 @@ export function ProcTimelineWindow() {
     goTo({ kind: "proc-run-window", id: procWindows.showRun(run.id) });
   };
 
-  // Axis labels: hourly for six hours, every two hours for a day.
-  const tickStep = range <= 6 ? hourMs : 2 * hourMs;
+  // Axis labels: the smallest whole-hour step that keeps 56 px between ticks.
+  const spanMs = end - start;
+  const tickStep = [1, 2, 3, 6, 12].find((hours) => track > 0 && (track * hours * hourMs) / spanMs >= 56) ?? 12;
   const ticks: number[] = [];
-  for (let at = Math.ceil(start / tickStep) * tickStep; at <= end; at += tickStep) ticks.push(at);
+  for (let at = Math.ceil(start / (tickStep * hourMs)) * tickStep * hourMs; at <= end; at += tickStep * hourMs) ticks.push(at);
   const at = (time: number) => `${((time - start) / (end - start)) * 100}%`;
 
   return (
@@ -219,8 +220,14 @@ function LaneMarks({ lane, start, end, now, width, onPick }: {
     }
   }
   const held = schedule?.blockedReason && schedule.retryAt && schedule.nextAt ? { from: Date.parse(schedule.nextAt), to: now } : null;
+  // A projection denser than 6 px per tick is a dashed band instead of dots.
+  const projectedBand = future.length > 0 && schedule?.everyMs != null && width > 0 && (width * schedule.everyMs) / (end - start) < 6;
   return (
     <>
+      {projectedBand ? (
+        <span title={`projected every ${cadence(schedule!.everyMs)}`} className="absolute inset-y-1.5 rounded-sm border border-dashed border-muted-foreground/50 bg-muted/20"
+          style={{ left: at(Date.parse(schedule!.nextAt!)), width: `${((end - Date.parse(schedule!.nextAt!)) / (end - start)) * 100}%` }} />
+      ) : null}
       {held && held.from < held.to ? (
         <span title={`held · ${relativeTime(held.from, now)} overdue`} className="absolute inset-y-1.5 rounded-sm bg-[repeating-linear-gradient(45deg,var(--warning)_0_2px,transparent_2px_6px)] opacity-40"
           style={{ left: at(held.from), width: `${((held.to - held.from) / (end - start)) * 100}%` }} />

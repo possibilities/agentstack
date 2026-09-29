@@ -21,27 +21,12 @@ export function useShowProcRun(): (runId: string) => void {
   return useCallback((runId: string) => goTo({ kind: "proc-run-window", id: procWindows.showRun(runId) }), [procWindows, goTo]);
 }
 
-/** A run's origin: its schedule, or "direct" when a caller admitted it. An anchor so it can nest inside the row's button. */
+/** A run's origin in words — the schedule title or "direct". Rows are one button, so no link here. */
 function Origin({ run }: { run: ProcRun }) {
   const { procSchedules } = useStack();
-  const { procWindows } = useProcWindows();
-  const { goTo } = useWorkbench();
   if (!run.scheduleId) return <span className="shrink-0 text-muted-foreground">direct</span>;
   const schedule = procSchedules.data?.find((item) => item.id === run.scheduleId);
-  return (
-    <a href="/x/proc"
-      onClick={(event) => {
-        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-        event.preventDefault();
-        event.stopPropagation();
-        procWindows.selectSchedule(run.scheduleId);
-        goTo({ kind: "proc-schedule", id: run.scheduleId! });
-      }}
-      title={`Schedule ${run.scheduleId}`}
-      className="min-w-0 truncate rounded-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring">
-      {schedule ? scheduleTitle(schedule) : `schedule ${run.scheduleId.slice(0, 8)}`}
-    </a>
-  );
+  return <span className="min-w-0 truncate text-muted-foreground" title={`Schedule ${run.scheduleId}`}>{schedule ? scheduleTitle(schedule) : `schedule ${run.scheduleId.slice(0, 8)}`}</span>;
 }
 
 /** Every run in proc_run_list's newest page, grouped by what it needs; older pages load on request. */
@@ -167,7 +152,7 @@ function RunRow({ run, onSelect }: { run: ProcRun; onSelect(): void }) {
           </span>
           {titled && run.command ? <span className="min-w-0 truncate font-mono text-[0.68rem] text-muted-foreground">{run.command}</span> : null}
           <span className="flex min-w-0 items-center gap-1.5 text-[0.68rem] text-muted-foreground">
-            <OwnerChip actor={run.createdBy} />
+            <OwnerChip actor={run.createdBy} static />
             <Origin run={run} />
             <RunAge run={run} className="shrink-0" />
             <span className="shrink-0 tabular-nums">{run.lineCount.toLocaleString()} lines</span>

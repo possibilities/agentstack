@@ -101,7 +101,8 @@ try {
 
   // Operator fixtures through the real API: a secret-bearing schedule, a schedule to remove,
   // a noisy failed run, a long-lived run for Stop, and a run that keeps no output.
-  const secret = await call("proc_schedule_create", { label: "Secret keeper", firstAt: ago(60_000), everyMs: null, enabled: false,
+  // Enabled so it runs once at startup — the execution record carries the captured env for the masking checks.
+  const secret = await call("proc_schedule_create", { label: "Secret keeper", firstAt: ago(60_000), everyMs: null, enabled: true,
     action: { type: "process", process: { command: "/bin/echo", args: ["hello"], cwd: "/tmp", env: { API_TOKEN: "s3cret" }, timeoutMs: null, retainOutput: true } } });
   const removable = await call("proc_schedule_create", { label: "Drop me", firstAt: ago(60_000), everyMs: null, enabled: false,
     action: processAction(["drop"], { DROP_KEY: "dropvalue" }) });
@@ -114,6 +115,12 @@ try {
     process: { command: "/bin/sh", args: ["-c", "echo once; echo twice >&2"], cwd: "/tmp", timeoutMs: 60_000, retainOutput: false } });
   await call("proc_run_join", { id: noisy.id, waitMs: 30_000 });
   await call("proc_run_join", { id: forgotten.id, waitMs: 30_000 });
+  // The secret schedule runs its one shot on startup; wait for its execution record.
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const { executions } = await call("proc_execution_list", { id: secret.id, limit: 10 });
+    if (executions.length) break;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
 
   browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_BIN ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });
   const context = await browser.newContext({ viewport: { width: 2600, height: 1300 }, reducedMotion: "reduce" });
@@ -123,6 +130,8 @@ try {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("dialog", (dialog) => { errors.push(`dialog: ${dialog.message()}`); void dialog.dismiss(); });
+  const consoleErrors = [];
+  page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
   await page.goto(`${origin}/x/proc`);
   const schedules = page.locator('[data-window="proc-schedules"]');
   const schedule = page.locator('[data-window="proc-schedule"]');
@@ -138,8 +147,8 @@ try {
   await schedules.getByRole("button", { name: /Needs you/ }).waitFor();
   await schedules.getByRole("button", { name: /Upcoming/ }).waitFor();
   await row("Bot nightly sync").waitFor();
-  // Off starts collapsed; the disabled operator schedules hide there.
-  assert.equal(await row("Secret keeper").count(), 0, "disabled schedules start collapsed under Off");
+  // Off starts collapsed; the idle operator schedules hide there.
+  assert.equal(await row("Secret keeper").count(), 0, "idle schedules start collapsed under Off");
   await schedules.getByRole("button", { name: /Off/ }).click();
   await row("Secret keeper").waitFor();
   await page.screenshot({ path: join(evidence, "proc-schedules.png"), animations: "disabled" });
@@ -153,6 +162,19 @@ try {
   await schedule.getByText("s3cret").waitFor();
   await schedule.getByRole("button", { name: "Hide" }).first().click();
   assert.ok(!(await schedule.innerText()).includes("s3cret"), "Hide masks the value again");
+
+  // Inspecting the schedule or one of its executions never leaks env values.
+  await schedule.getByRole("button", { name: "Inspect Secret keeper" }).click();
+  const inspector = page.getByRole("region", { name: "Inspector" });
+  await inspector.getByText("action", { exact: true }).waitFor();
+  await inspector.getByText("••••••").first().waitFor();
+  assert.ok(!(await inspector.innerText()).includes("s3cret"), "the inspector masks schedule env values");
+  await page.screenshot({ path: join(evidence, "proc-inspector.png"), animations: "disabled" });
+  const executionRow = schedule.locator('[data-node^="proc-execution:"]').first();
+  await executionRow.waitFor();
+  await executionRow.getByRole("button", { name: /Inspect execution/ }).click();
+  await inspector.getByText("processId").waitFor();
+  assert.ok(!(await inspector.innerText()).includes("s3cret"), "the inspector masks execution env values");
 
   // Enable then Disable on the same schedule (one-shot API schedule to avoid launching a process).
   await row("Drop me").click();
@@ -237,6 +259,9 @@ try {
   await page.emulateMedia({ colorScheme: "light" });
   await page.setViewportSize({ width: 900, height: 1000 });
   await page.screenshot({ path: join(evidence, "proc-narrow.png"), animations: "disabled" });
+
+  assert.equal(consoleErrors.filter((text) => /cannot be a descendant|hydration/i.test(text)).length, 0,
+    `no invalid-nesting or hydration console errors: ${consoleErrors.join(" | ")}`);
 
   assert.deepEqual(errors, []);
   console.log(`proc rendered check passed; evidence in ${evidence}`);

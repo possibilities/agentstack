@@ -328,7 +328,7 @@ function OutputLog({ run, generation }: { run: ProcRunDetail; generation: number
         {visible.length ? visible.map((line) => (
           <OutputRow key={line.seq} line={line} wrap={wrap} find={query} gaps={gapMarks.before.get(line.seq)}
             match={Boolean(query && matchRows[matchIndex]?.seq === line.seq)} />
-        )) : !missingBanner ? <p className="py-4 text-center text-muted-foreground">{isActiveRun(run) ? "Waiting for output…" : "No output retained"}</p> : null}
+        )) : !missingBanner ? <p className="py-4 text-center text-muted-foreground">{isActiveRun(run) ? "Waiting for output…" : run.lineCount === 0 ? "No output" : "No output retained"}</p> : null}
         {gapMarks.tail.map((gap, index) => <GapBanner key={`tail-${index}`} gap={gap} />)}
         {run.outputTruncated ? (
           <p className="mt-2 rounded-md bg-warning/10 px-2 py-1.5 font-sans text-[0.72rem] text-pretty text-warning">
@@ -358,8 +358,7 @@ function OutputRow({ line, wrap, find, gaps, match }: { line: ProcDisplayLine; w
         <span className={cn("w-7 shrink-0 text-[0.6rem] leading-5 select-none", line.stream === "stderr" ? "text-destructive/80" : "text-muted-foreground/40")}>
           {line.stream === "stderr" ? "err" : ""}
         </span>
-        <span className={cn("min-w-0 flex-1", wrap ? "break-words whitespace-pre-wrap" : "whitespace-pre",
-          line.stream === "stderr" && "text-destructive/80")}>
+        <span className={cn("min-w-0 flex-1", wrap ? "break-words whitespace-pre-wrap" : "whitespace-pre")}>
           <Marked text={stripAnsi(line.text)} find={find} />
           {line.partial ? <span title="Line continues in the next chunk" className="text-muted-foreground/50">…</span> : null}
         </span>

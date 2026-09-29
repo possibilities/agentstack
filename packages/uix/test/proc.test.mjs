@@ -15,7 +15,7 @@ registerHooks({
 });
 
 const { blockedCopy, cadence, errorCopy, executionView, filterRuns, filterSchedules, formatLimitBytes, groupRuns, groupSchedules,
-  joinPartials, lineGaps, ownerLabel, ownerOf, procAttention, runTitle, runView, scheduleTitle, stripAnsi } = await import("../lib/stack/proc.ts");
+  joinPartials, lineGaps, maskActionEnv, ownerLabel, ownerOf, procAttention, runTitle, runView, scheduleTitle, stripAnsi } = await import("../lib/stack/proc.ts");
 
 const operator = { kind: "operator" };
 const system = { kind: "system", name: "brain-source-sync" };
@@ -238,4 +238,17 @@ test("formatLimitBytes writes the bound in words", () => {
   assert.equal(formatLimitBytes(2_000_000), "2 MB");
   assert.equal(formatLimitBytes(1_048_576), "1.048576 MB");
   assert.equal(formatLimitBytes(10_000), "10 KB");
+});
+
+test("maskActionEnv masks process env values but keeps keys and other actions", () => {
+  const schedule = { id: "s1", action: { type: "process", process: { command: "/bin/echo", args: [], env: { API_TOKEN: "s3cret", OTHER: "x" }, timeoutMs: null, retainOutput: true } } };
+  const masked = maskActionEnv(schedule);
+  assert.deepEqual(masked.action.process.env, { API_TOKEN: "••••••", OTHER: "••••••" });
+  assert.equal(masked.action.process.command, "/bin/echo");
+  assert.equal(masked.action.type, "process");
+  assert.equal(schedule.action.process.env.API_TOKEN, "s3cret", "the input record is untouched");
+  const api = { id: "s2", action: { type: "api", package: "notify", operation: "notify_push", input: {} } };
+  assert.equal(maskActionEnv(api), api, "api actions return the same object");
+  const nullAction = { id: "e1", action: null };
+  assert.equal(maskActionEnv(nullAction), nullAction, "legacy executions have no action");
 });

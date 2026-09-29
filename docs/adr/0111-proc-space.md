@@ -27,8 +27,9 @@ windows, ordered what needs a person, what runs, when it all happened:
   arguments and cwd — plus its execution history, paged with "Load older". API
   results show as collapsed JSON; `{truncated:true}` says the 32 KB bound hit.
   Process environment variable values are masked to `••••••` until a per-key
-  **Reveal**; the summary API of [ADR 0110](0110-proc-durable-caller-authority.md)
-  sends values only for the schedule's own spec, and runs keep environment names only.
+  **Reveal**; `proc_schedule_get` returns the schedule's own environment values,
+  which the window and the inspector mask until Reveal, and runs retain environment
+  variable names only (schema v3).
 - **Runs** (`proc-runs`) lists `proc_run_list` as **Running**, **Needs a look**
   (failed, unknown or non-zero exit within a day) and **Finished**, each row with its
   state word, label, owner, origin (schedule link or "direct"), elapsed time and line
@@ -85,7 +86,7 @@ window shows "Available only on the local UIX" remotely and hides its controls.
 
 ## API additions that made the space possible
 
-Part 1 of this change added what the UI needs without widening the agent surface:
+This change also adds what the UI needs without widening the agent surface:
 short labels on schedules and runs (`label`, the spec's first key), a safe run
 summary in schema v3 (executable, arguments, cwd and environment variable *names*,
 never values), `recent` outcome strips on list items, `includeRemoved` tombstone

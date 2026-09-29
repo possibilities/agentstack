@@ -342,7 +342,7 @@ function ControlButton({ icon: Icon, verb, title, body, destructive, onRun, onDo
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       onError(controlError(message));
-      if (message === "schedule_revision_conflict_or_protected") setOpen(false);
+      if (message === "schedule_revision_conflict_or_protected") { setOpen(false); onDone(); }
     } finally {
       setPending(false);
     }
@@ -396,7 +396,7 @@ function ReauthorizeControl({ schedule, title, spec, onDone, onError }: {
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       onError(controlError(message));
-      if (message === "schedule_revision_conflict_or_protected") setOpen(false);
+      if (message === "schedule_revision_conflict_or_protected") { setOpen(false); onDone(); }
     } finally {
       setPending(false);
     }

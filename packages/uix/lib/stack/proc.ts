@@ -1,5 +1,5 @@
 import { shortId } from "./derive";
-import type { ProcActor, ProcAuthority, ProcExecutionState, ProcOutputLine, ProcRun, ProcScheduleListItem, ProcStatus } from "./types";
+import type { ProcAction, ProcActor, ProcAuthority, ProcExecutionState, ProcOutputLine, ProcRun, ProcScheduleListItem, ProcStatus } from "./types";
 
 /** The one protected system schedule: Brain's due-Source wake-up. */
 export const brainScheduleId = "00000000-0000-4000-8000-000000000001";
@@ -279,4 +279,14 @@ export function lineGaps(after: number, lines: readonly ProcOutputLine[], flagge
 /** Byte counts in words for the output-limit banner. */
 export function formatLimitBytes(bytes: number): string {
   return bytes >= 1_000_000 ? `${bytes / 1_000_000} MB` : bytes >= 1_000 ? `${bytes / 1_000} KB` : `${bytes} B`;
+}
+
+/** A record copy whose process environment values are masked; the keys stay. */
+export function maskActionEnv<T extends { action?: unknown }>(record: T): T {
+  const action = record.action;
+  if (!action || typeof action !== "object" || (action as ProcAction).type !== "process") return record;
+  const process = (action as { process?: Record<string, unknown> }).process;
+  const env = process?.env;
+  if (!process || !env || typeof env !== "object") return record;
+  return { ...record, action: { ...action, process: { ...process, env: Object.fromEntries(Object.keys(env).map((key) => [key, "••••••"])) } } };
 }

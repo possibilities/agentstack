@@ -31,7 +31,7 @@ import { OperationBadges, RecoveryWarning } from "./windows";
 import { AttentionItemDetail, AttentionMessageDetail, TraceViewer } from "./signal-windows";
 import { useShowWorker } from "./worker-windows";
 import { workerLabel } from "@/lib/stack/workers";
-import { ownerOf, runTitle, scheduleTitle } from "@/lib/stack/proc";
+import { maskActionEnv, ownerOf, runTitle, scheduleTitle } from "@/lib/stack/proc";
 import { controllerKey, handoffOutcomes, handoffStates, heldBy, profileName } from "@/lib/stack/browse";
 
 type View = {
@@ -489,7 +489,7 @@ function resolve(ref: NodeRef, state: StackState): View | null {
       if (schedule.action.type === "api") related.push({ ref: { kind: "operation", pkg: schedule.action.package, id: schedule.action.operation }, label: `${schedule.action.package}.${schedule.action.operation}` });
       return {
         eyebrow: `Schedule · ${schedule.removedAt ? "removed" : schedule.enabled ? "enabled" : "disabled"}`, accent: "proc", title: scheduleTitle(schedule),
-        record: { ...schedule }, fields: procFields(catalog, "proc_schedule_get"), related,
+        record: maskActionEnv({ ...schedule }), fields: procFields(catalog, "proc_schedule_get"), related,
         operations: { pkg: "proc", list: procOperations(catalog) },
         events: state.events.filter((event) => event.pkg === "proc"),
       };
@@ -534,6 +534,7 @@ function procOperations(catalog: PackageDoc[] | null): OperationDoc[] {
 
 /** Explanations the Proc space writes in words; appended to the schema's own descriptions. */
 const procFieldNotes: Record<string, string> = {
+  action: "Environment values are masked here; reveal them per key in the Schedule window.",
   state: "\"failed\" is a reported failure; \"refused\" was never sent; \"unknown\" was interrupted before the outcome was proven and is not a proven failure.",
   removedAt: "Set when the schedule was removed: admissions stop, and its executions and history are kept.",
   envKeys: "Environment variable names only; values are never recorded and cannot be shown.",
@@ -560,7 +561,7 @@ function ProcRecordBody({ operation, id }: { operation: "proc_run_get" | "proc_e
   const [record, setRecord] = useState<Record<string, unknown> | null>(null);
   useEffect(() => {
     let live = true;
-    void call.run({ id }).then((result) => { if (live) setRecord(result); }, () => undefined);
+    void call.run({ id }).then((result) => { if (live) setRecord(maskActionEnv(result)); }, () => undefined);
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [operation, id]);

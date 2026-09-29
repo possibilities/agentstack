@@ -27,9 +27,10 @@ export function ProcPlaceholder({ title, hint }: { title: string; hint?: string 
 }
 
 /** Who a Proc record belongs to: a Bot links to its Fleet card; the rest are words. */
-export function OwnerChip({ actor, className }: { actor: ProcAuthority | ProcActor | null; className?: string }) {
+export function OwnerChip({ actor, className, static: asText }: { actor: ProcAuthority | ProcActor | null; className?: string; static?: boolean }) {
   const owner = ownerOf(actor);
   if (owner.kind === "bot") {
+    if (asText) return <span className={cn("inline-flex h-5 items-center rounded-md bg-muted/70 px-1.5 font-mono text-[0.66rem] text-foreground/80", className)}>{owner.botId}</span>;
     return (
       <NodeLink node={{ kind: "bot", id: owner.botId }} label={`Bot ${owner.botId}`}
         className={cn("inline-flex h-5 items-center rounded-md bg-muted/70 px-1.5 font-mono text-[0.66rem] text-foreground/80", className)}>

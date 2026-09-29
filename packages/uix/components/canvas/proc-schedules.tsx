@@ -172,7 +172,7 @@ function ScheduleRow({ schedule, now, selected, onSelect }: { schedule: ProcSche
             <span className="min-w-0 truncate font-mono">{scheduleTarget(schedule)}</span>
           </span>
           <span className="flex min-w-0 items-center gap-1.5 text-[0.68rem] text-muted-foreground">
-            <OwnerChip actor={schedule.authority ?? schedule.createdBy} />
+            <OwnerChip actor={schedule.authority ?? schedule.createdBy} static />
             <span className="shrink-0">{cadence(schedule.everyMs)}</span>
             {schedule.blockedReason && schedule.retryAt ? (
               <span className="min-w-0 truncate text-warning">{blockedCopy(schedule.blockedReason)} · retry <RetryIn at={schedule.retryAt} /></span>
