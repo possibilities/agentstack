@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { publishedJsonSchema, serveSocket, serveWebSocket, socketPath } from "@agentstack/api";
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as workerApi } from "../../worker/dist/api.js";
-import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, uix } from "./browser-fixture.mjs";
+import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, uix, authorizeBrowser } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -154,13 +154,14 @@ try {
   next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "start", "--hostname", "127.0.0.1", "--port", String(nextPort)], { cwd: uix, env, stdio: ["ignore", "pipe", "pipe"] });
   next.stdout.on("data", (chunk) => { log += chunk; }); next.stderr.on("data", (chunk) => { log += chunk; });
   for (let attempt = 0; ; attempt++) {
-    try { if ((await fetch(origin)).ok) break; } catch { /* bounded readiness check */ }
+    try { if ((await fetch(`${origin}/connect/local`)).ok) break; } catch { /* bounded readiness check */ }
     if (attempt > 100 || next.exitCode !== null) throw new Error(log);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_BIN ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, reducedMotion: "reduce" });
   const page = await context.newPage();
+  await authorizeBrowser(page, origin, env);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(`${origin}/x/workers`);

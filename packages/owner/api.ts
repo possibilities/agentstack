@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { operation, type PackageApi } from "@agentstack/api";
+import { operation, withLocalAuth, localOrigin, type PackageApi } from "@agentstack/api";
 import { statusSource, type StatusSource } from "./src/status.js";
 import { ResourceMonitor } from "./src/resources/monitor.js";
 import { ownerResourcesInput, ownerResourcesOutput, ownerResourceHistoryInput, ownerResourceHistoryOutput } from "./src/resources/schema.js";
@@ -18,7 +18,32 @@ const childStatusSchema = z.object({
 export type OwnerContext = {
   source: StatusSource;
   resources: ResourceMonitor;
+  env?: NodeJS.ProcessEnv;
 };
+
+export const ownerLocalConnect = operation({
+  name: "owner_local_connect", description: "Private-socket-only operator bootstrap. Mint a 60-second single-use browser capability, bound to the exact local UIX or Inspector origin. The returned fragment URL is a secret; never log or put it in discovery. The CLI opens it directly. An explicit UIX origin is allowed only for the configured development WebSocket origin.",
+  input: z.strictObject({ target: z.enum(["uix", "inspector"]).default("uix"), origin: z.string().optional() }),
+  output: z.strictObject({ url: z.string(), expiresInSeconds: z.literal(60) }),
+  async call(ctx: OwnerContext, input, invocation) {
+    if (invocation) throw new Error("local bootstrap requires private socket authority");
+    const env = ctx.env ?? process.env;
+    const origin = input.origin ?? `http://127.0.0.1:${input.target === "uix" ? env.AGENTSTACK_UIX_PORT ?? 8745 : env.AGENTSTACK_INSPECTOR_PORT ?? 6274}`;
+    localOrigin(origin);
+    if (input.origin && !(input.target === "uix" && input.origin === env.AGENTSTACK_WEBSOCKET_ORIGIN)) throw new Error("development origin is not configured");
+    const token = withLocalAuth(env, auth => auth.bootstrap(origin, input.target));
+    return { url: `${origin}/connect/local#${token}`, expiresInSeconds: 60 as const };
+  },
+});
+export const ownerLocalRevoke = operation({
+  name: "owner_local_revoke", description: "Private-socket-only operator reset of local TCP authority. Rotates the operator bearer credential and invalidates all local browser sessions, bootstrap links and WebSocket tickets. Active local connections are fenced. Remote Access grants and signed Bot/Worker identities remain independently authorized. Native operator clients must reload their private credential.",
+  input: z.strictObject({}), output: z.strictObject({ revoked: z.literal(true) }),
+  async call(ctx: OwnerContext, _input, invocation) {
+    if (invocation) throw new Error("local revocation requires private socket authority");
+    withLocalAuth(ctx.env ?? process.env, auth => auth.rotate());
+    return { revoked: true as const };
+  },
+});
 
 export const ownerStatus = operation({
   name: "owner_status",
@@ -64,7 +89,7 @@ export const topics = {
 export type OwnerTopic = keyof typeof topics;
 
 export const api: PackageApi<OwnerContext, OwnerTopic> = {
-  operations: [ownerStatus, ownerResources, ownerResourceHistory],
+  operations: [ownerStatus, ownerResources, ownerResourceHistory, ownerLocalConnect, ownerLocalRevoke],
   events: {
     topics,
     start(ctx: OwnerContext, publish: (topic: OwnerTopic) => void) {
@@ -79,7 +104,7 @@ export const api: PackageApi<OwnerContext, OwnerTopic> = {
   async createContext(env) {
     const resources = new ResourceMonitor({ roots: () => statusSource.resourceRoots(), env });
     resources.start();
-    return { source: statusSource, resources };
+    return { source: statusSource, resources, env };
   },
   async closeContext(ctx) {
     await ctx.resources.close();

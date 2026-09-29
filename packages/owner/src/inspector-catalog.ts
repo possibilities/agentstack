@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { watch, type FSWatcher } from "node:fs";
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { configuredMcpPackages, socketPath, workspaceRoot } from "@agentstack/api";
+import { configuredMcpPackages, socketPath, workspaceRoot, operatorHeaders } from "@agentstack/api";
 
 export type InspectorCatalog = { path: string; close(): Promise<void> };
 
@@ -31,6 +31,7 @@ export async function serveInspectorCatalog(options: {
         type: "http",
         url: `http://127.0.0.1:${options.mcpPort}/mcp/${name}`,
         suppressNotificationStream: true,
+        headers: operatorHeaders(env),
         ...(name === "auth" ? { requestTimeout: 300_000 } : {}),
       }])),
     }, null, 2)}\n`;

@@ -90,7 +90,7 @@ test("package notices keep bot membership and worker accounts live", async () =>
   const snapshot = {
     owner: resource(null), resources: resource(null), accounts: resource([]), workerAccounts: resource([]), workerRuntimes: resource([]),
     login: resource(null), workerLogins: resource([]), bots: resource([]), voice: resource(null), catalog: resource(null),
-    endpoints: { bots: "ws://localhost/websocket", auth: "ws://localhost/websocket" },
+    endpoints: { bots: "ws://fixture.invalid/websocket", auth: "ws://fixture.invalid/websocket" },
   };
   const store = new StackStore(snapshot);
   let indexStore;
@@ -192,7 +192,7 @@ test("worker sign-in attempts merge, resolve, and dismiss", async () => {
   const snapshot = {
     owner: resource(null), resources: resource(null), accounts: resource([]), workerAccounts: resource([]), workerRuntimes: resource([]),
     login: resource(null), workerLogins: resource([]), bots: resource([]), voice: resource(null), catalog: resource(null),
-    endpoints: { auth: "ws://localhost/websocket" },
+    endpoints: { auth: "ws://fixture.invalid/websocket" },
   };
   const store = new StackStore(snapshot);
   try {

@@ -9,7 +9,7 @@ import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serveSocket, serveWebSocket, socketPath } from "@agentstack/api";
-import { fixtureWorkspace, anyObject, transport, z } from "./browser-fixture.mjs";
+import { fixtureWorkspace, anyObject, transport, z, authorizeBrowser } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -105,7 +105,7 @@ try {
   const origin = `http://127.0.0.1:${nextPort}`;
   const deadline = Date.now() + 90_000;
   for (;;) {
-    try { if ((await fetch(origin)).ok) break; } catch { /* bounded readiness check */ }
+    try { if ((await fetch(`${origin}/connect/local`)).ok) break; } catch { /* bounded readiness check */ }
     if (Date.now() > deadline || next.exitCode !== null) throw new Error(log);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -118,6 +118,7 @@ try {
     return route.continue();
   });
   const page = await context.newPage();
+  await authorizeBrowser(page, origin, env);
   context.on("page", (popup) => popups.push(popup.url()));
   page.on("pageerror", (error) => errors.push(error.message));
   await page.addInitScript(() => {

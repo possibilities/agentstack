@@ -11,6 +11,7 @@ import WebSocket from "ws";
 import { z } from "zod";
 import { operation } from "../src/operation.js";
 import { serveMcp } from "../src/mcp.js";
+import { operatorHeaders } from "../src/local-auth.js";
 import { serveSocket, socketCall } from "../src/socket.js";
 import { serveApi } from "../src/serve.js";
 import { serveWebSocket } from "../src/websocket.js";
@@ -41,10 +42,12 @@ test("one HTTP process exposes each configured Package API and forwards operatio
   })));
   const served = await serveMcp({ env, root: stateDir });
   try {
+    assert.equal((await fetch(served.urls.auth!, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status, 401);
+    assert.equal((await fetch(served.urls.auth!, { method: "POST", headers: { authorization: "Bearer wrong" }, body: "{}" })).status, 401);
     assert.deepEqual(Object.keys(served.urls), ["auth", "bots", "brain", "browse", "content", "notify", "owner", "roles", "scrape", "usage", "worker"]);
     for (const [name, url] of Object.entries(served.urls)) {
       const client = new Client({ name: "test", version: "1.0.0" });
-      await client.connect(new StreamableHTTPClientTransport(new URL(url)));
+      await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: operatorHeaders(env) } }));
       try {
         const tools = (await client.listTools()).tools;
         assert.deepEqual(tools.map((tool) => tool.name), [name === "auth" ? "account_list" : name === "scrape" ? "scrape_fetch" : "ping"]);
@@ -73,14 +76,14 @@ test("one HTTP process exposes each configured Package API and forwards operatio
       })],
     });
     const refreshed = new Client({ name: "test", version: "1.0.0" });
-    await refreshed.connect(new StreamableHTTPClientTransport(new URL(served.urls.auth!)));
+    await refreshed.connect(new StreamableHTTPClientTransport(new URL(served.urls.auth!), { requestInit: { headers: operatorHeaders(env) } }));
     try {
       assert.deepEqual((await refreshed.listTools()).tools.map((tool) => tool.name), ["new_operation"]);
     } finally {
       await refreshed.close();
     }
     const rejected = await fetch(served.urls.auth!, {
-      method: "POST", headers: { Origin: "https://evil.example", "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+      method: "POST", headers: { ...operatorHeaders(env), Origin: "https://evil.example", "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
     });
     assert.equal(rejected.status, 403);
@@ -104,7 +107,7 @@ test("Proc admits mutating calls over MCP and WebSocket with all event topics se
   const client = new Client({ name: "proc-test", version: "1" });
   let ws: WebSocket | undefined;
   try {
-    await client.connect(new StreamableHTTPClientTransport(new URL(mcp.urls.proc!)));
+    await client.connect(new StreamableHTTPClientTransport(new URL(mcp.urls.proc!), { requestInit: { headers: operatorHeaders(env) } }));
     const names = (await client.listTools()).tools.map((tool) => tool.name);
     assert.ok(names.includes("proc_schedule_create") && names.includes("proc_run_start"));
     const scheduleId = randomUUID();
@@ -115,7 +118,7 @@ test("Proc admits mutating calls over MCP and WebSocket with all event topics se
     assert.equal(created.isError, undefined);
     assert.equal((created.structuredContent as { id: string }).id, scheduleId);
     ws = await new Promise<WebSocket>((resolve, reject) => {
-      const conn = new WebSocket(websocket.url);
+      const conn = new WebSocket(websocket.url, { headers: operatorHeaders(env) });
       conn.once("open", () => resolve(conn)); conn.once("error", reject);
     });
     const exchange = async (id: number, method: string, params: object) => {
@@ -166,12 +169,12 @@ test("any Package API can present native MCP media without changing its socket o
     await assert.rejects(socketCall(socket.path, "tools/call", { name: "media", arguments: {}, resultFormat: "unknown" }), /unknown result format/);
     assert.equal(calls, 0);
     assert.deepEqual(await socketCall(socket.path, "tools/call", { name: "media", arguments: {} }), payload);
-    await client.connect(new StreamableHTTPClientTransport(new URL(mcp.urls.demo!)));
+    await client.connect(new StreamableHTTPClientTransport(new URL(mcp.urls.demo!), { requestInit: { headers: operatorHeaders(env) } }));
     const result = await client.callTool({ name: "media", arguments: {} });
     assert.deepEqual(result.structuredContent, payload);
     assert.deepEqual(result.content, [{ type: "audio", mimeType: payload.mimeType, data: payload.base64 }]);
     ws = await new Promise<WebSocket>((resolve, reject) => {
-      const conn = new WebSocket(websocket.url);
+      const conn = new WebSocket(websocket.url, { headers: operatorHeaders(env) });
       conn.once("open", () => resolve(conn)); conn.once("error", reject);
     });
     const frame = new Promise<unknown>((resolve, reject) => {
@@ -200,7 +203,7 @@ test("content items keep portable JSON on socket and WebSocket and gain native M
   const websocket = await serveWebSocket({ env, root: state, port: 0 });
   const client = new Client({ name: "test", version: "1" });
   try {
-    await client.connect(new StreamableHTTPClientTransport(new URL(mcp.urls.content!)));
+    await client.connect(new StreamableHTTPClientTransport(new URL(mcp.urls.content!), { requestInit: { headers: operatorHeaders(env) } }));
     for (const [kind, name, mediaType, bytes] of [
       ["document", "note.md", "text/markdown", Buffer.from("# Note")],
       ["image", "pic.png", "image/png", Buffer.from("89504e470d0a1a0a", "hex")],
@@ -242,7 +245,7 @@ test("content items keep portable JSON on socket and WebSocket and gain native M
     assert.equal((large.structuredContent as { content: string }).content, escaped);
     assert.equal(large.content[1]?.type, "resource");
     if (large.content[1]?.type === "resource") assert.equal("text" in large.content[1].resource && large.content[1].resource.text, escaped);
-    const ws = new WebSocket(websocket.url);
+    const ws = new WebSocket(websocket.url, { headers: operatorHeaders(env) });
     try {
       await new Promise<void>((resolve, reject) => { ws.once("open", () => resolve()); ws.once("error", reject); });
       const image = await socketCall(content.socketPath!, "tools/call", { name: "item_list", arguments: {} }) as { items: Array<{ id: string; kind: string }> };
@@ -282,7 +285,7 @@ test("MCP allowlists hide and reject direct calls to excluded socket operations"
   const served = await serveMcp({ root, env, port: 0 });
   const client = new Client({ name: "test", version: "1" });
   try {
-    await client.connect(new StreamableHTTPClientTransport(new URL(served.urls.demo!)));
+    await client.connect(new StreamableHTTPClientTransport(new URL(served.urls.demo!), { requestInit: { headers: operatorHeaders(env) } }));
     assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), ["read"]);
     const denied = await client.callTool({ name: "secret", arguments: {} });
     assert.equal(denied.isError, true);
@@ -368,8 +371,7 @@ test("a bot-bound MCP URL forwards verified bot and Codex thread context without
     }
     await configure("[who, snapshot]", "[sample_changed]");
     endpoint = "unix:///tmp/bot-instance-2.sock";
-    const stale = await client.callTool({ name: "who", arguments: { value: "stale" }, _meta: { threadId: "thread-1" } });
-    assert.equal(stale.isError, true);
+    await assert.rejects(client.callTool({ name: "who", arguments: { value: "stale" }, _meta: { threadId: "thread-1" } }), /401|Unauthorized/);
     assert.equal(seen.length, 1);
     assert.equal((await lstat(join(env.AGENTSTACK_STATE_DIR, "mcp-bot-identity.key"))).mode & 0o777, 0o600);
   } finally {
@@ -422,7 +424,7 @@ test("a Worker-bound MCP URL exposes only read operations and fences a replaced 
     const tampered = new URL(url); tampered.searchParams.set("proof", "0".repeat(64));
     assert.equal((await fetch(tampered, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" }, body: "{}" })).status, 403);
     instance = "44444444-4444-4444-8444-444444444444";
-    assert.equal((await client.callTool({ name: "read", arguments: {} })).isError, true);
+    await assert.rejects(client.callTool({ name: "read", arguments: {} }), /401|Unauthorized/);
     assert.equal(seen.length, 1);
   } finally {
     await client.close(); await served.close(); await sample.close(); await workers.close();
@@ -435,7 +437,7 @@ test("MCP paths follow configured packages after startup", async () => {
   const dir = join(root, "packages", "alpha");
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "api.yaml"), "name: alpha\ndescription: Alpha.\nmcp:\n  description: Alpha HTTP.\n  operations: all\n  events: all\n");
-  const served = await serveMcp({ root, port: 0 });
+  const served = await serveMcp({ root, port: 0, env: { ...process.env, AGENTSTACK_STATE_DIR: root } });
   try {
     const url = `http://127.0.0.1:${served.port}/mcp/beta`;
     assert.equal((await fetch(url, { method: "POST" })).status, 404);

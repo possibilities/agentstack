@@ -10,6 +10,8 @@ export {
 } from "./operation.js";
 export { publishedJsonSchema } from "./schema.js";
 export { forwardTimeout, mcpToolTimeoutSeconds } from "./forward-timeout.js";
+export { LocalAuth, LocalAuthError, withLocalAuth, operatorHeaders, localOrigin, localCookie, localCookieName, type LocalAudience } from "./local-auth.js";
+export { localBrowserResponse, localConnectPage, localConnectPath } from "./local-browser.js";
 export { currentMcpCatalog } from "./exposure.js";
 export { scheduledAuthority, operatorInvocation, type ScheduledAuthority } from "./invocation.js";
 export {

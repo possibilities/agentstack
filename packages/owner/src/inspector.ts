@@ -23,8 +23,8 @@ export function inspectorChild(configPath: string, port: number): OwnedChild {
       MCP_AUTO_OPEN_ENABLED: "false",
       MCP_SANDBOX_PORT: "0",
       MCP_APP_ORIGIN_PORT: "0",
-      DANGEROUSLY_BIND_ALL_INTERFACES: "false",
-      DANGEROUSLY_OMIT_AUTH: "false",
+      DANGEROUSLY_BIND_ALL_INTERFACES: "",
+      DANGEROUSLY_OMIT_AUTH: "",
     },
   };
 }

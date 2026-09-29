@@ -9,12 +9,19 @@ import { operation } from "../src/operation.js";
 import { serveSocket } from "../src/socket.js";
 import { serveWebSocket } from "../src/websocket.js";
 import { socketPath, websocketPort } from "../src/workspace.js";
+import { operatorHeaders, withLocalAuth } from "../src/local-auth.js";
 
 type Frame = { id?: number; result?: any; error?: { message: string }; method?: string; params?: { topic: string } };
 
+const credentials = new Map<string, NodeJS.ProcessEnv>();
 function connect(url: string, origin?: string, headers?: Record<string, string>): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url, { ...(origin ? { origin } : {}), ...(headers ? { headers } : {}) });
+    const env = credentials.get(url);
+    let protocols: string[] = [];
+    if (env && origin && /^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin)) {
+      protocols = [withLocalAuth(env, auth => `agentstack-local.${auth.ticket(auth.redeem(auth.bootstrap(origin, "uix"), origin, "uix").token, origin)}`)];
+    }
+    const ws = new WebSocket(url, protocols, { ...(origin ? { origin } : {}), headers: { ...(!origin && env ? operatorHeaders(env) : {}), ...headers } });
     ws.once("open", () => resolve(ws));
     ws.once("error", reject);
   });
@@ -47,7 +54,8 @@ async function fixture(overrides: NodeJS.ProcessEnv = {}) {
     events: { topics: { changed: "A change." }, scope: { description: "Bot ID", example: "bot-1", required: true, valid: (ctx, scope) => scope === ctx.allowed } },
   });
   const served = await serveWebSocket({ root, env });
-  return { root, env, socket, served, url: served.url, async close() { await served.close(); await socket.close(); await rm(root, { recursive: true, force: true }); } };
+  credentials.set(served.url, env);
+  return { root, env, socket, served, url: served.url, async close() { credentials.delete(served.url); await served.close(); await socket.close(); await rm(root, { recursive: true, force: true }); } };
 }
 
 test("one WebSocket routes operations and scoped subscriptions to socket owners", async () => {
@@ -293,6 +301,32 @@ test("WebSocket port configuration rejects invalid values", () => {
   for (const value of ["", "-1", "65536", "123.5", "abc"]) {
     assert.throws(() => websocketPort({ AGENTSTACK_WEBSOCKET_PORT: value }), /AGENTSTACK_WEBSOCKET_PORT/);
   }
+});
+
+test("anonymous sockets, replayed tickets and revoked operator/browser connections are refused", async () => {
+  const setup = await fixture();
+  const origin = "http://127.0.0.1:8745";
+  const raw = (protocols: string[] = [], headers: Record<string, string> = {}) => new Promise<WebSocket>((resolve, reject) => {
+    const ws = new WebSocket(setup.url, protocols, { headers });
+    ws.once("open", () => resolve(ws)); ws.once("error", reject);
+  });
+  let native: WebSocket | undefined, browser: WebSocket | undefined;
+  try {
+    await assert.rejects(raw(), /403/);
+    await assert.rejects(raw([], { origin }), /403/);
+    const token = withLocalAuth(setup.env, auth => auth.redeem(auth.bootstrap(origin, "uix"), origin, "uix").token);
+    const ticket = withLocalAuth(setup.env, auth => auth.ticket(token, origin));
+    await assert.rejects(raw([`agentstack-local.${ticket}`], { origin: "http://localhost:8745" }), /403/);
+    browser = await raw([`agentstack-local.${ticket}`], { origin });
+    await assert.rejects(raw([`agentstack-local.${ticket}`], { origin }), /403/);
+    const headers = operatorHeaders(setup.env);
+    native = await raw([], headers);
+    const closed = [native, browser].map(ws => new Promise<void>(resolve => ws.once("close", () => resolve())));
+    withLocalAuth(setup.env, auth => auth.rotate());
+    await Promise.all(closed);
+    await assert.rejects(raw([], headers), /403/);
+    assert.throws(() => withLocalAuth(setup.env, auth => auth.ticket(token, origin)));
+  } finally { native?.terminate(); browser?.terminate(); await setup.close(); }
 });
 
 test("WebSocket explicit development origin replaces the default UI origins", async () => {

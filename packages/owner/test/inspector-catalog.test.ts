@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { serveInspectorCatalog } from "../src/inspector-catalog.js";
+import { withLocalAuth, operatorHeaders } from "@agentstack/api";
 
 test("Inspector's read-only server file follows Package API configuration", { timeout: 15_000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), "agentstack-inspector-catalog-"));
@@ -19,9 +20,13 @@ test("Inspector's read-only server file follows Package API configuration", { ti
     await mkdir(beta);
     await writeFile(join(beta, "api.yaml"), "name: beta\ndescription: Beta.\nmcp:\n  description: Beta HTTP.\n  operations: all\n  events: all\n");
     await waitFor(async () => (await names()).join() === "alpha,beta");
-    const config = JSON.parse(await readFile(catalog.path, "utf8")) as { mcpServers: Record<string, { url: string; suppressNotificationStream: boolean }> };
+    const config = JSON.parse(await readFile(catalog.path, "utf8")) as { mcpServers: Record<string, { url: string; suppressNotificationStream: boolean; headers: Record<string, string> }> };
     assert.equal(config.mcpServers.beta?.url, "http://127.0.0.1:7823/mcp/beta");
     assert.equal(config.mcpServers.beta?.suppressNotificationStream, true);
+    const env = { AGENTSTACK_STATE_DIR: join(root, "state") };
+    assert.deepEqual(config.mcpServers.beta?.headers, operatorHeaders(env));
+    withLocalAuth(env, auth => auth.rotate());
+    await waitFor(async () => JSON.parse(await readFile(catalog.path, "utf8")).mcpServers.beta.headers.authorization === operatorHeaders(env).authorization);
     await writeFile(join(alpha, "api.yaml"), "name: alpha\ndescription: Alpha.\nsocket:\n  description: Alpha socket.\n");
     await waitFor(async () => (await names()).join() === "beta");
   } finally {

@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serveSocket, socketPath } from "@agentstack/api";
-import { passthrough as pass, transport } from "./browser-fixture.mjs";
+import { passthrough as pass, transport, authorizeBrowser } from "./browser-fixture.mjs";
 
 const require = createRequire(import.meta.url);
 const uixDir = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -80,7 +80,7 @@ try {
   let ready = false;
   for (let i = 0; i < 150; i++) {
     if (next.exitCode !== null) throw new Error(output);
-    try { ready = (await fetch(`${origin}/x`)).ok; } catch {}
+    try { ready = (await fetch(`${origin}/connect/local`)).ok; } catch {}
     if (ready) break;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -91,6 +91,7 @@ try {
   assert.equal(rebound, 403, "UIX must reject rebound Hosts before rendering the operator snapshot");
   browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_EXECUTABLE ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, reducedMotion: "reduce" });
+  await authorizeBrowser(page, origin, env);
   page.on("pageerror", (error) => issues.push(error.message));
   await page.goto(`${origin}/x`);
   await page.getByRole("main", { name: "Open bench" }).waitFor();

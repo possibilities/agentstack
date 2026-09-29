@@ -2,12 +2,13 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const config = process.argv[2];
 if (!config) throw new Error("Inspector catalog path is required");
 const packageRoot = dirname(require.resolve("@modelcontextprotocol/inspector/package.json"));
-const inspector = spawn(process.execPath, [join(packageRoot, "clients", "launcher", "build", "index.js"), "--web", "--config", config], {
+const inspector = spawn(process.execPath, ["--import", fileURLToPath(new URL("./inspector-guard.js", import.meta.url)), join(packageRoot, "clients", "web", "build", "index.js"), "--config", config], {
   env: process.env,
   stdio: ["ignore", "ignore", "inherit"],
 });

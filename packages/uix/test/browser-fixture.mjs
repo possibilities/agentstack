@@ -4,6 +4,13 @@ import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { withLocalAuth, localCookieName } from "@agentstack/api";
+
+/** Authenticate a disposable rendered fixture; production bootstrap is tested separately. */
+export async function authorizeBrowser(page, origin, env) {
+  const session = withLocalAuth(env, auth => auth.redeem(auth.bootstrap(origin, "uix"), origin, "uix"));
+  await page.context().addCookies([{ name: localCookieName("uix"), value: session.token, url: origin, httpOnly: true, sameSite: "Strict" }]);
+}
 
 export const uix = dirname(dirname(fileURLToPath(import.meta.url)));
 export const root = dirname(dirname(uix));

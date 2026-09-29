@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { serveMcp, serveSocket, socketPath } from "@agentstack/api";
+import { serveMcp, serveSocket, socketPath, operatorHeaders } from "@agentstack/api";
 import { api, createBrainContext, closeBrainContext } from "../api.js";
 
 test("real MCP handshake, discovery and calls preserve Brain object outputs over its socket", { timeout: 15_000 }, async () => {
@@ -22,7 +22,7 @@ test("real MCP handshake, discovery and calls preserve Brain object outputs over
     const request = async (method: string, params: object = {}, notification = false): Promise<any> => {
       const requestId = notification ? undefined : ++id;
       const response = await fetch(mcp!.urls.brain, {
-        method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...(version ? { "mcp-protocol-version": version } : {}) },
+        method: "POST", headers: { ...operatorHeaders(env), "content-type": "application/json", accept: "application/json, text/event-stream", ...(version ? { "mcp-protocol-version": version } : {}) },
         body: JSON.stringify({ jsonrpc: "2.0", id: requestId, method, params }),
       });
       if (notification) { assert.equal(response.status, 202); await response.text(); return; }

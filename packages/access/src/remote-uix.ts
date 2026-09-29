@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { IncomingMessage } from "node:http";
-import { serveHttp, serveWebSocket, type RemoteWebSocketAdmission } from "@agentstack/api";
+import { serveHttp, serveWebSocket, withLocalAuth, type RemoteWebSocketAdmission } from "@agentstack/api";
 import { z } from "zod";
 import { AccessError, AccessStore } from "./store.js";
 import { pairInput, redeemInput, resourcePath } from "./ingress.js";
@@ -19,7 +19,7 @@ const remoteHeaders = (request: Request | IncomingMessage, expected: string, met
   const headers = request.headers;
   const keys = headers instanceof Headers ? [...headers.keys()] : Object.keys(headers);
   if (host !== new URL(expected).host || keys.some(key => key === "forwarded" || key.startsWith("x-forwarded-") || key.startsWith("tailscale-")
-    || key === "x-agentstack-remote-uix" || key === "x-agentstack-uix-scope" || key === "x-agentstack-uix-scopes" || key === "x-agentstack-uix-origin")) throw new AccessError("untrusted_request", 403);
+    || key.startsWith("x-agentstack-uix-") || key === "x-agentstack-remote-uix")) throw new AccessError("untrusted_request", 403);
   if (origin && origin !== expected || !["GET", "HEAD"].includes(method) && origin !== expected) throw new AccessError("origin_refused", 403);
 };
 
@@ -112,6 +112,8 @@ export function remoteUixHandler({ store, env, host, port, verify, fetchBackend 
       headers.set("x-agentstack-uix-origin", expected);
       headers.set("x-agentstack-uix-scope", principal.scopes.includes("uix:control") ? "control" : "view");
       headers.set("x-agentstack-uix-scopes", principal.scopes.join(","));
+      headers.set("x-agentstack-uix-proof", withLocalAuth(env, auth => auth.signRemote(request.method, path + url.search, expected,
+        headers.get("x-agentstack-uix-scope")!, headers.get("x-agentstack-uix-scopes")!)));
       const nonce = randomBytes(16).toString("base64");
       const csp = `default-src 'none'; script-src 'nonce-${nonce}' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ${expected.replace(/^https:/, "wss:")}; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; object-src 'none'`;
       headers.set("content-security-policy", csp);

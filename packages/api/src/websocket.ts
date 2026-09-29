@@ -4,6 +4,7 @@ import { listPackages, socketPath, websocketPort, workspaceRoot } from "./worksp
 import { socketCall, socketSubscribe, type SocketSubscription } from "./socket.js";
 import { exposeCatalog, socketExposure, type Exposure, type SocketCatalog } from "./exposure.js";
 import { forwardTimeout } from "./forward-timeout.js";
+import { LocalAuth, LocalAuthError } from "./local-auth.js";
 
 export type ServedWebSocket = { url: string; close(): Promise<void> };
 /** An ingress-authenticated connection. The gateway still resolves live socket
@@ -27,6 +28,27 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("WebSocket port must be an integer from 0 to 65535");
   const root = options.root ?? workspaceRoot(import.meta.dirname);
   if ((await listPackages(root)).every((item) => !item.config.websocket)) throw new Error("no Package APIs configure websocket");
+  const auth = options.server ? null : new LocalAuth(env);
+  const localAdmission = (request: IncomingMessage): RemoteWebSocketAdmission => {
+    if (!auth) throw new LocalAuthError();
+    const header = request.headers["sec-websocket-protocol"];
+    let check: () => void;
+    let expiresAt: number;
+    if (request.headers.authorization && !header && !request.headers.origin) {
+      const credential = auth.operator(request.headers.authorization);
+      check = () => { auth.operator(`Bearer ${credential}`); };
+      expiresAt = Date.now() + 8 * 60 * 60_000;
+    } else {
+      if (request.headers.authorization || !request.headers.origin || typeof header !== "string") throw new LocalAuthError();
+      const match = /^agentstack-local\.([A-Za-z0-9_-]{43})$/.exec(header);
+      if (!match) throw new LocalAuthError();
+      const session = auth.consumeTicket(match[1]!, request.headers.origin);
+      check = () => { auth.sessionDigest(session.digest, session.origin); };
+      expiresAt = session.expires;
+    }
+    return { check, expiresAt, select: (_pkg, exposure) => exposure, mutation: () => check(),
+      onChange(close) { const timer = setInterval(() => { try { check(); } catch { close(); } }, 250); timer.unref(); return () => clearInterval(timer); } };
+  };
 
   const clients = new Set<WebSocket>();
   const admitted = new WeakMap<WebSocket, { operations: Map<string, Exposure>; remote?: RemoteWebSocketAdmission }>();
@@ -119,7 +141,7 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
           let acknowledged = false;
           const pending: string[] = [];
           const envelope = { package: name, subscription: key };
-          const notice = (topic: string) => send(client, { method: "events/changed", params: { ...envelope, topic } });
+          const notice = (topic: string) => { try { admission.remote?.check(); send(client, { method: "events/changed", params: { ...envelope, topic } }); } catch { client.terminate(); } };
           const next = await socketSubscribe(socketPath(name, env), topics, (topic) => {
             if (acknowledged) notice(topic);
             else pending.push(topic);
@@ -178,7 +200,7 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
       let operations: Map<string, Exposure>;
       let remote: RemoteWebSocketAdmission | undefined;
       try {
-        remote = await options.authenticate?.(request);
+        remote = options.server ? await options.authenticate!(request) : localAdmission(request);
         const configured = await listPackages(root);
         operations = new Map(await Promise.all(configured.filter((item) => item.config.websocket).map(async (item) =>
           { const { exposure, catalog } = await socketExposure(item.config, "websocket", env);
@@ -187,7 +209,7 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
         remote?.check();
       } catch (error) {
         console.error(`WebSocket configuration unavailable: ${error instanceof Error ? error.message : String(error)}`);
-        if (!socket.destroyed) { socket.write(`HTTP/1.1 ${options.server ? "403 Forbidden" : "503 Service Unavailable"}\r\n\r\n`); socket.destroy(); }
+        if (!socket.destroyed) { socket.write(`HTTP/1.1 ${options.server || error instanceof LocalAuthError ? "403 Forbidden" : "503 Service Unavailable"}\r\n\r\n`); socket.destroy(); }
         return;
       }
       if (closing || socket.destroyed) { socket.destroy(); return; }
@@ -207,7 +229,7 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
   if (!options.server) await new Promise<void>((resolve, reject) => {
     http.once("error", reject);
     http.listen(port, "127.0.0.1", () => { http.off("error", reject); resolve(); });
-  });
+  }).catch((error) => { auth?.close(); throw error; });
   const address = http.address();
   if (!address || typeof address === "string") throw new Error("WebSocket server has no TCP address");
   return {
@@ -218,6 +240,7 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
         await new Promise<void>((resolve, reject) => wss.close((error) => error ? reject(error) : resolve()));
         http.off("upgrade", upgrade);
         if (!options.server) await new Promise<void>((resolve, reject) => http.close((error) => error ? reject(error) : resolve()));
+        auth?.close();
       })();
       return closing;
     },

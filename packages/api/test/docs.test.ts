@@ -337,8 +337,12 @@ test("the api package serves structured documents for every workspace package", 
 
     const owner = found.get("owner") as PackageDoc;
     assert.deepEqual(Object.keys(owner.operations[0]?.outputSchema.properties ?? {}).sort(), ["children", "indexUrl", "inspectorUrl", "mcpUrls", "nodeVersion", "pid", "startedAt", "uixUrl"]);
+    for (const name of ["owner_local_connect", "owner_local_revoke"]) {
+      assert.ok(owner.operations.some(op => op.name === name));
+      assert.ok(owner.transports.filter(transport => transport.type !== "socket").every(transport => !transport.operations.includes(name)));
+    }
     assert.deepEqual(Object.keys(owner.events), ["pids_changed", "resources_changed"]);
-    assert.deepEqual(owner.operations.map((operation) => operation.name), ["owner_status", "owner_resources", "owner_resource_history"]);
+    assert.deepEqual(owner.operations.map((operation) => operation.name), ["owner_status", "owner_resources", "owner_resource_history", "owner_local_connect", "owner_local_revoke"]);
     assert.equal(owner.operations[1].annotations.readOnlyHint, true);
     assert.equal(owner.operations[2].annotations.readOnlyHint, true);
     assert.ok(JSON.stringify(owner.operations[1].outputSchema).includes("cpuMeasuredProcessCount"));

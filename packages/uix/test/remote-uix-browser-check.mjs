@@ -51,7 +51,7 @@ try {
     { cwd: uix, env, stdio: ["ignore", "pipe", "pipe"] });
   next.stdout.on("data", chunk => { log += chunk; }); next.stderr.on("data", chunk => { log += chunk; });
   for (let attempt = 0;; attempt++) {
-    try { if ((await fetch(`http://127.0.0.1:${nextPort}/x/content`)).ok) break; } catch { /* readiness */ }
+    try { if ((await fetch(`http://127.0.0.1:${nextPort}/connect/local`)).ok) break; } catch { /* readiness */ }
     if (attempt > 200 || next.exitCode !== null) throw new Error(log);
     await new Promise(resolve => setTimeout(resolve, 100));
   }

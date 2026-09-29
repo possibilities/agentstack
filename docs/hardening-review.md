@@ -43,11 +43,13 @@ The owner → package socket → transport gateway architecture is worth keeping
 
 **UI follow-up:** dedicated private-grant and revocation controls are not yet present; the existing inspector shows effective job policy. New controls require a separate request.
 
-### 3. Authenticate ordinary loopback clients
+### 3. Authenticate ordinary loopback clients — approved and implemented
 
-**Verified:** anonymous MCP and Origin-less WebSocket clients retain operator authority. Other OS users can reach TCP loopback even though they cannot read private sockets. Signed Bot/Worker URLs are correlation and stale-instance fences, not mandatory credentials for all clients.
+**Original finding:** anonymous MCP and Origin-less WebSocket clients retained operator authority. Other OS users can reach TCP loopback even though they cannot read private sockets.
 
-**Recommended sketch:** add a private per-owner operator credential, require either that or an existing signed runtime identity on MCP, and bootstrap the UI's WebSocket session through the same-origin UIX server with a short-lived token. Integrate Inspector and native tooling before disabling anonymous admission. This prevents accidental cross-user/cross-app access; mutually hostile same-UID agents still require OS-level isolation.
+**Implemented:** private operator credentials or live signed runtime identity at MCP; native bearer or session-bound single-use WebSocket tickets; socket-only CLI browser bootstrap; authenticated UIX SSR and Inspector HTML/API admission; local revocation and restart rotation; and authenticated Access-to-Next assertions. Inspector/native clients and browser fixtures migrate together. UIX builds now depend on the shared API build, preventing stale authentication bundles. See [ADR 0113](adr/0113-authenticated-local-control.md). Same-UID processes and hostile same-hostname HTTP servers remain outside this boundary.
+
+**UI follow-up:** local session revocation is available through `agentstack revoke-local`; no dedicated session control was added. Brain grant/revocation and Proc schedules/runs/reauthorization UI also remain separate decisions.
 
 ### 4. Explicit Worker-visible read policy
 
@@ -120,6 +122,16 @@ Proposal 2 is implemented on the combined tree through `8ea23b1`, preserving the
 - `pnpm --filter @agentstack/uix typecheck` and `git diff --check` passed. Effective policy is visible through existing job inspection; dedicated grant controls remain a separate UI decision.
 - Builds and lifecycle tests used an isolated checkout and disposable state. The running owner's build and runtime were not changed.
 
+## Local-control authentication verification — 2026-09-28
+
+Proposal 3 replaces anonymous local TCP authority with authenticated admission and a private-socket browser bootstrap.
+
+- Full `pnpm test`: **40/40 Turbo tasks successful; 957 tests passed, 7 skipped, zero failures or cancellations**. The skips remain six credential/runtime-gated tests and the Linux-only netfilter test.
+- UIX typecheck passed. Coverage includes missing/invalid credentials, stale Bot/Worker proofs, single-use capability and ticket replay, expiry, exact origin/audience binding, active revocation, forged Access headers, protected SSR/Inspector HTML, authenticated native MCP and WebSocket clients, and credential/catalog refresh.
+- Verification builds and lifecycle checks use an isolated checkout with disposable state. A discovered stale UIX build dependency was fixed; the live owner's build and runtime were not changed.
+- The owner lifecycle test passed again after adding persisted-authority startup rotation checks. The real remote UIX browser check passed, covering TLS pairing, rendering, scope changes, reconnect, revocation and resource-scoped Content handoffs.
+- The real local UIX browser check passed: anonymous SSR refusal, fragment bootstrap and CSP, HttpOnly session, consumed-link/ticket replay rejection, fresh connection tickets, active revocation and reauthentication. It caught and now covers receiving a bootstrap fragment while the connection-instructions page is already open.
+
 ## Deployment
 
 Source changes are not deployment. The running owner has not been restarted and its checkout's `dist`/`.next` have not been rebuilt by this review. Apply a coordinated rebuild and authorized owner restart to use the matching Role/Worker contracts and browser policies. Development browser clients on another port must configure `AGENTSTACK_WEBSOCKET_ORIGIN` explicitly.
@@ -127,3 +139,5 @@ Source changes are not deployment. The running owner has not been restarted and 
 Proc authority also requires a coordinated owner rebuild/restart because its scheduled invocation envelope extends the shared socket contract. On that restart, existing unattributed schedules are disabled pending explicit operator reauthorization; the recognized protected Brain source trigger is preserved.
 
 Research egress requires the matching Brain/Scrape/Browse packages. Its additive schema-v13 migration creates no grants. Existing private sources need explicit operator grants, and browser-only/authenticated sources need a capable isolated provider; existing signed-in profiles are not reused. A provider lacking working guest IPv4/IPv6 netfilter fails closed. Live Hypeman enforcement has not been exercised by the macOS verification environment.
+
+Local authentication requires matching API/owner/Access/UIX packages and the owner-scoped Inspector preloader. After deployment, use `agentstack open` or `agentstack open inspector`; native operator clients must supply `operatorHeaders(env)`. Existing anonymous clients will be refused. Local sessions and operator credentials rotate on owner start; remote Access sessions and signed Bot/Worker launch identities remain independently authorized.

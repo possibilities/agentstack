@@ -8,7 +8,7 @@ import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serveSocket, serveWebSocket, socketPath } from "@agentstack/api";
-import { fixtureWorkspace, passthrough, transport } from "./browser-fixture.mjs";
+import { fixtureWorkspace, passthrough, transport, authorizeBrowser } from "./browser-fixture.mjs";
 
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const require = createRequire(import.meta.url);
@@ -70,7 +70,7 @@ try {
   next.stdout.on("data", (chunk) => { log += chunk; }); next.stderr.on("data", (chunk) => { log += chunk; });
   const origin = `http://127.0.0.1:${port}`, deadline = Date.now() + 90000;
   for (;;) {
-    try { if ((await fetch(origin)).ok) break; } catch {}
+    try { if ((await fetch(`${origin}/connect/local`)).ok) break; } catch {}
     if (Date.now() > deadline || next.exitCode !== null) throw new Error(log);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -78,6 +78,7 @@ try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1100 }, reducedMotion: "reduce", colorScheme: "light" });
   await context.route("**/*", (route) => { if (new URL(route.request().url()).origin !== origin) { external.push(route.request().url()); return route.abort(); } return route.continue(); });
   const page = await context.newPage();
+  await authorizeBrowser(page, origin, env);
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(`${origin}/x/system?focus=access-pairing:request`);
   await page.addStyleTag({ content: "nextjs-portal { display: none; }" });

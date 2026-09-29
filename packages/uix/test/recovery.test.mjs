@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { serveSocket, socketPath } from "@agentstack/api";
+import { serveSocket, socketPath, withLocalAuth, localCookieName } from "@agentstack/api";
 
 const require = createRequire(import.meta.url);
 const uixDir = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -99,6 +99,8 @@ test("the UI entry redirects to the canvas without losing local links, processes
     });
     for (const stream of [next.stdout, next.stderr]) stream?.on("data", (chunk) => { output = (output + chunk.toString()).slice(-8_000); });
     const origin = `http://127.0.0.1:${port}`;
+    const session = withLocalAuth(env, auth => auth.redeem(auth.bootstrap(origin, "uix"), origin, "uix"));
+    const fetch = (url, options = {}) => globalThis.fetch(url, { ...options, headers: { cookie: `${localCookieName("uix")}=${session.token}` } });
     let ready = false;
     for (let attempt = 0; attempt < 100; attempt += 1) {
       if (next.exitCode !== null || next.signalCode !== null) throw new Error(`Next exited before ready: ${output}`);
@@ -107,6 +109,9 @@ test("the UI entry redirects to the canvas without losing local links, processes
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     assert.ok(ready, `Next did not become ready: ${output}`);
+    const refused = await globalThis.fetch(`${origin}/x`);
+    assert.equal(refused.status, 401);
+    assert.ok(!(await refused.text()).includes(bot.cwd));
     const entry = await fetch(`${origin}/`, { redirect: "manual" });
     assert.equal(entry.status, 308);
     assert.equal(new URL(entry.headers.get("location"), origin).href, `${origin}/x`);
@@ -170,6 +175,8 @@ test("the UI entry redirects to the canvas without losing local links, processes
     assert.equal((await fetch(`${origin}/x/api`)).status, 404);
     assert.equal((await fetch(`${origin}/x.md`)).status, 404);
     assert.equal((await fetch(`${origin}/index.md`)).status, 404);
+    withLocalAuth(env, auth => auth.rotate());
+    assert.equal((await fetch(`${origin}/x`)).status, 401);
   } finally {
     if (next?.pid) {
       try { process.kill(process.platform === "win32" ? next.pid : -next.pid, "SIGTERM"); } catch (error) { if (error.code !== "ESRCH") throw error; }

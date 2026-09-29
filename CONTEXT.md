@@ -22,6 +22,10 @@ An explicit set of scopes or selected operations for one Access client and one n
 
 A five-minute Access session for one locally approved browser-kind client on the dedicated direct-tailnet UIX TLS origin. `uix:view` selects read-only WebSocket operations and events; `uix:control` adds UIX mutations, never Access, sign-in, voice or headful browser authority. The HttpOnly cookie and rotating refresh are distinct from Content resource handoffs. Revocation and grant changes fence the next HTTP request and close existing WebSockets. _Avoid_: forwarded local UIX port, internal MCP identity, public share link
 
+## Local operator session
+
+An eight-hour local UIX or Inspector browser session established by a one-use capability minted through the private owner socket and opened by `agentstack open`. It is bound to one exact origin and audience. UIX server renders require it; each local WebSocket reconnect exchanges it for a one-use 30-second ticket. Owner restart or explicit local revocation invalidates sessions and the native operator bearer credential. Bot/Worker identities and remote Access sessions remain independent. _Avoid_: anonymous loopback authority, OS sandbox, Access grant
+
 ## Content handoff
 
 A one-use, one-minute secret for opening one document, Content item or immutable Artifact version on its designated origin. The browser exchanges a URL fragment for a short-lived, resource-scoped HttpOnly cookie. Broad Access credentials never enter a URL; every subsequent request still needs verified tailnet provenance. _Avoid_: public share link, broad browser login, Artifact identity

@@ -60,7 +60,7 @@ test("Fleet snapshots reconnect, retain failed reads, deduplicate catalogs and p
   const store = new StackStore({ owner: resource(null), resources: resource(null), accounts: resource([]), workerAccounts: resource([]),
     workerRuntimes: resource([]), workerSessions: resource([]), login: resource(null), workerLogins: resource([]),
     bots: resource([]), botDefaults: resource({}), voice: resource(null), catalog: resource([]), usage: resource(null),
-    endpoints: Object.fromEntries(["auth", "worker", "bots", "usage"].map((name) => [name, "ws://localhost/websocket"])) });
+    endpoints: Object.fromEntries(["auth", "worker", "bots", "usage"].map((name) => [name, "ws://fixture.invalid/websocket"])) });
   try {
     store.start({ scopedBots: false });
     await until(store, () => store.getState().usage.data && store.getState().workerCatalogs[account.id]?.data && !store.getState().catalogPending[account.id]);
@@ -138,7 +138,7 @@ function harness({ accounts = [], bots = [] } = {}) {
   const store = new StackStore({ owner: resource(null), resources: resource(null), accounts: resource([]), workerAccounts: resource([]),
     workerRuntimes: resource([]), workerSessions: resource([]), login: resource(null), workerLogins: resource([]),
     bots: resource(bots), botDefaults: resource({}), voice: resource(null), catalog: resource([]), usage: resource(null),
-    endpoints: Object.fromEntries(["auth", "worker", "bots", "usage"].map((name) => [name, "ws://localhost/websocket"])) });
+    endpoints: Object.fromEntries(["auth", "worker", "bots", "usage"].map((name) => [name, "ws://fixture.invalid/websocket"])) });
   const publish = (pkg, topic, scope) => {
     for (const socket of sockets) for (const subscription of socket.subscriptions.values()) if (subscription.package === pkg && subscription.topics.includes(topic) && (!subscription.scope || subscription.scope === scope))
       socket.onmessage?.({ data: JSON.stringify({ method: "events/changed", params: { package: pkg, subscription: subscription.subscription, topic } }) });

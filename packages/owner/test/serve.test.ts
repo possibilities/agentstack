@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { socketCall, socketSubscribe, type SocketSubscription } from "@agentstack/api";
+import { socketCall, socketSubscribe, operatorHeaders, withLocalAuth, type SocketSubscription } from "@agentstack/api";
+import WebSocket from "ws";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { ownerResourcesOutput, ownerResourceHistoryOutput } from "../src/resources/schema.js";
@@ -21,6 +22,8 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
   const inspectorPort = await availablePort();
   const uixPort = await availablePort();
   const retiredDocsPort = await availablePort();
+  const previousHeaders = operatorHeaders({ AGENTSTACK_STATE_DIR: stateDir });
+  const previousSession = withLocalAuth({ AGENTSTACK_STATE_DIR: stateDir }, auth => auth.redeem(auth.bootstrap(`http://127.0.0.1:${uixPort}`, "uix"), `http://127.0.0.1:${uixPort}`, "uix"));
   const child = spawn(process.execPath, [cli, "serve"], {
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, ...brainEnv, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_AGENTGROK_BIN: join(stateDir, "missing-agentgrok"),
@@ -32,6 +35,20 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     stderr += chunk;
   });
   const ownerSock = join(stateDir, "sockets", "owner.sock");
+  const env = { AGENTSTACK_STATE_DIR: stateDir };
+  const authenticate = async (target: "uix" | "inspector") => {
+    const bootstrap = await socketCall(ownerSock, "tools/call", { name: "owner_local_connect", arguments: { target } }) as { url: string };
+    const url = new URL(bootstrap.url);
+    let response: Response | undefined;
+    for (let i = 0; i < 200; i++) {
+      try { response = await fetch(`${url.origin}/connect/local/session`, { method: "POST", headers: { origin: url.origin, "content-type": "application/json" }, body: JSON.stringify({ token: url.hash.slice(1) }) }); break; }
+      catch { await new Promise(resolve => setTimeout(resolve, 50)); }
+    }
+    assert.equal(response?.status, 200, stderr);
+    assert.match(response!.headers.get("set-cookie")!, /HttpOnly; SameSite=Strict/);
+    assert.equal((await fetch(`${url.origin}/connect/local/session`, { method: "POST", headers: { origin: url.origin, "content-type": "application/json" }, body: JSON.stringify({ token: url.hash.slice(1) }) })).status, 401);
+    return response!.headers.get("set-cookie")!.split(";")[0]!;
+  };
   let websocket: WebSocket | undefined;
   let subscription: SocketSubscription | undefined;
   try {
@@ -77,8 +94,11 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     }
     const url = /owner MCP: (http:\/\/\S+)/.exec(stderr)?.[1];
     assert.ok(url, stderr);
+    assert.notDeepEqual(operatorHeaders(env), previousHeaders, "startup rotates persisted operator authority");
+    assert.throws(() => withLocalAuth(env, auth => auth.session(previousSession.token, `http://127.0.0.1:${uixPort}`, "uix")));
     const client = new Client({ name: "owner-test", version: "1.0.0" });
-    await client.connect(new StreamableHTTPClientTransport(new URL(url)));
+    assert.equal((await fetch(url, { method: "POST" })).status, 401);
+    await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: operatorHeaders(env) } }));
     try {
       assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), ["owner_status", "owner_resources", "owner_resource_history", "events_catalog", "events_subscribe", "events_status", "events_unsubscribe"]);
       const result = await client.callTool({ name: "owner_status", arguments: {} });
@@ -95,7 +115,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     const wsUrl = /WebSocket: (ws:\/\/\S+)/.exec(stderr)?.[1];
     assert.ok(wsUrl, stderr);
     assert.match(wsUrl, /^ws:\/\/127\.0\.0\.1:\d+\/websocket$/);
-    const ws = websocket = new WebSocket(wsUrl);
+    const ws = websocket = new WebSocket(wsUrl, { headers: operatorHeaders(env) });
     await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = () => reject(new Error("WebSocket did not open")); });
     const frame = () => new Promise<any>((resolve) => { ws.onmessage = (event) => resolve(JSON.parse(String(event.data))); });
     const call = frame();
@@ -119,7 +139,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
 
     const procUrl = url.replace(/\/mcp\/owner(?:\?.*)?$/, "/mcp/proc");
     const procClient = new Client({ name: "proc-test", version: "1.0.0" });
-    await procClient.connect(new StreamableHTTPClientTransport(new URL(procUrl)));
+    await procClient.connect(new StreamableHTTPClientTransport(new URL(procUrl), { requestInit: { headers: operatorHeaders(env) } }));
     try {
       const tools = (await procClient.listTools()).tools.map((tool) => tool.name);
       assert.ok(tools.includes("proc_schedule_create") && tools.includes("proc_run_start") && tools.includes("events_subscribe"));
@@ -127,11 +147,13 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       assert.ok((schedules.structuredContent as { schedules: Array<{ system: boolean }> }).schedules.some((schedule) => schedule.system));
     } finally { await procClient.close(); }
 
+    const inspectorCookie = await authenticate("inspector");
+    const inspectorHeaders = { cookie: inspectorCookie, "x-mcp-remote-auth": "Bearer test-token" };
     let servers: Response | undefined;
     for (let i = 0; i < 200; i += 1) {
       try {
         servers = await fetch(`http://127.0.0.1:${inspectorPort}/api/servers`, {
-          headers: { "x-mcp-remote-auth": "Bearer test-token" },
+          headers: inspectorHeaders,
         });
         if (servers.ok) break;
       } catch {
@@ -142,7 +164,10 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     assert.equal(servers?.status, 200, stderr);
     assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["auth", "bots", "brain", "browse", "content", "notify", "owner", "proc", "roles", "scrape", "usage", "worker", "xcom"]);
     const inspectorUrl = `http://127.0.0.1:${inspectorPort}/`;
-    assert.equal((await fetch(inspectorUrl)).status, 200);
+    assert.equal((await fetch(inspectorUrl, { redirect: "manual" })).status, 303);
+    assert.equal((await fetch(`${inspectorUrl}api/servers`, { headers: { "x-mcp-remote-auth": "Bearer test-token" } })).status, 401);
+    assert.ok(!(await (await fetch(inspectorUrl)).text()).includes("test-token"));
+    assert.equal((await fetch(inspectorUrl, { headers: inspectorHeaders })).status, 200);
     const catalogDir = (await readdir(stateDir)).find((entry) => entry.startsWith("inspector-"));
     assert.ok(catalogDir);
     const catalogPath = join(stateDir, catalogDir, "mcp.json");
@@ -151,7 +176,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     await writeFile(catalogPath, JSON.stringify(config));
     let refreshed = false;
     for (let i = 0; i < 100 && !refreshed; i += 1) {
-      const response = await fetch(`${inspectorUrl}api/servers`, { headers: { "x-mcp-remote-auth": "Bearer test-token" } });
+      const response = await fetch(`${inspectorUrl}api/servers`, { headers: inspectorHeaders });
       const current = await response.json() as { mcpServers: Record<string, unknown> };
       refreshed = current.mcpServers.sample !== undefined;
       if (!refreshed) await new Promise((resolve) => setTimeout(resolve, 50));
@@ -165,6 +190,10 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     const indexUrl = `http://127.0.0.1:${uixPort}/`;
     const uixUrl = `http://127.0.0.1:${uixPort}/x`;
     const referenceUrl = `http://127.0.0.1:${uixPort}/x/fleet?reference=overview`;
+    const uixCookie = await authenticate("uix");
+    const uiFetch = (url: string | URL, init: RequestInit = {}) => fetch(url, { ...init, headers: { cookie: uixCookie } });
+    assert.equal((await fetch(uixUrl)).status, 401);
+    assert.equal((await fetch(uixUrl, { headers: { "x-agentstack-remote-uix": "1", "x-agentstack-uix-origin": "https://evil.example", "x-agentstack-uix-scope": "control" } })).status, 401);
     assert.ok(stderr.includes(`AgentStack UI entry: ${indexUrl}`), stderr);
     assert.ok(stderr.includes(`AgentStack UI canvas: ${uixUrl}`), stderr);
     const ownerStatus = await socketCall(ownerSock, "tools/call", { name: "owner_status", arguments: {} }) as {
@@ -191,7 +220,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     let entry: Response | undefined;
     for (let i = 0; i < 200; i += 1) {
       try {
-        entry = await fetch(indexUrl, { redirect: "manual" });
+        entry = await uiFetch(indexUrl, { redirect: "manual" });
         if (entry.status === 308) break;
       } catch {
         // Next.js may still be starting.
@@ -200,7 +229,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     }
     assert.equal(entry?.status, 308, stderr);
     assert.equal(new URL(entry.headers.get("location")!, indexUrl).href, uixUrl);
-    const system = await fetch(new URL("/x/system", uixUrl));
+    const system = await uiFetch(new URL("/x/system", uixUrl));
     assert.equal(system.status, 200);
     const systemHtml = await system.text();
     assert.match(systemHtml, /MCP Inspector/);
@@ -208,13 +237,13 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     assert.ok(!systemHtml.includes(referenceUrl), "System links only MCP Inspector as a surface");
     assert.ok(systemHtml.includes(ownerStatus.inspectorUrl));
     assert.ok(systemHtml.includes(ownerStatus.mcpUrls.owner));
-    const canvas = await fetch(uixUrl);
+    const canvas = await uiFetch(uixUrl);
     assert.equal(canvas.status, 200);
     const canvasHtml = await canvas.text();
     assert.match(canvasHtml, /<main[^>]*data-canvas="workbench"/);
     assert.match(canvasHtml, /<h1[^>]*>AgentStack open bench<\/h1>/);
     assert.match(canvasHtml, /No bots</);
-    const accounts = await fetch(new URL("/x/accounts", uixUrl));
+    const accounts = await uiFetch(new URL("/x/accounts", uixUrl));
     assert.equal(accounts.status, 200);
     assert.match(await accounts.text(), /No accounts</);
     // The integrated discovery reader retains the retired reference's coverage of concurrent APIs.
@@ -225,7 +254,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       ["xcom", ["@agentstack/xcom", "xcom_status", "xcom_search", "xcom_users"]],
       ["worker", ["worker_record_list", "worker_tool_list", "worker_progress"]],
     ] as const) {
-      const response = await fetch(new URL(`/x/fleet?reference=package%3A${pkg}`, uixUrl));
+      const response = await uiFetch(new URL(`/x/fleet?reference=package%3A${pkg}`, uixUrl));
       assert.equal(response.status, 200);
       const html = await response.text();
       const reference = html.match(/<aside\b[^>]*data-dock="right"[^>]*>[\s\S]*?<\/aside>/)?.[0];
@@ -237,7 +266,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     const stylesheets = [...new Set([...canvasHtml.matchAll(/href="(\/_next\/static\/[^"]+\.css)"/g)].map((match) => match[1]))];
     assert.ok(stylesheets.length > 0);
     const css = await Promise.all(stylesheets.map(async (stylesheet) => {
-      const response = await fetch(new URL(stylesheet, uixUrl));
+      const response = await uiFetch(new URL(stylesheet, uixUrl));
       assert.equal(response.status, 200);
       return response.text();
     }));
@@ -246,6 +275,19 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     assert.ok(!stderr.includes("https://"), stderr);
     assert.ok(!stderr.includes("token="), stderr);
     assert.ok(stderr.includes("owner.sock"), stderr);
+
+    const staleHeaders = operatorHeaders(env);
+    await socketCall(ownerSock, "tools/call", { name: "owner_local_revoke", arguments: {} });
+    assert.equal((await fetch(url, { method: "POST", headers: staleHeaders, body: "{}" })).status, 401);
+    assert.equal((await uiFetch(uixUrl)).status, 401);
+    assert.equal((await fetch(`${inspectorUrl}api/servers`, { headers: inspectorHeaders })).status, 401);
+    const reconnectedCookie = await authenticate("uix");
+    assert.equal((await fetch(uixUrl, { headers: { cookie: reconnectedCookie } })).status, 200);
+    const reconnectedInspector = await authenticate("inspector");
+    assert.equal((await fetch(`${inspectorUrl}api/servers`, { headers: { ...inspectorHeaders, cookie: reconnectedInspector } })).status, 200);
+    const reconnected = new Client({ name: "rotated-operator", version: "1" });
+    await reconnected.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: operatorHeaders(env) } }));
+    await reconnected.listTools(); await reconnected.close();
 
     child.kill("SIGTERM");
     const code = await new Promise<number | null>((resolve) => child.once("exit", (exitCode) => resolve(exitCode)));

@@ -28,11 +28,11 @@ test("late package and scoped channels share a socket, resnapshot, and unsubscri
   try {
     const openings = [];
     const notices = [];
-    first = new Channel("ws://localhost/websocket", "bots", {
+    first = new Channel("ws://fixture.invalid/websocket", "bots", {
       onOpen: () => openings.push("bots"), onNotice: (topic) => notices.push(`bots:${topic}`),
     }).subscribe(["bots_changed"], "bot-1").connect();
     await new Promise((resolve) => setImmediate(resolve));
-    second = new Channel("ws://localhost/websocket", "auth", {
+    second = new Channel("ws://fixture.invalid/websocket", "auth", {
       onOpen: () => openings.push("auth"), onNotice: (topic) => notices.push(`auth:${topic}`),
     }).subscribe(["accounts_changed"]).connect();
     await new Promise((resolve) => setImmediate(resolve));
@@ -53,4 +53,39 @@ test("late package and scoped channels share a socket, resnapshot, and unsubscri
     second.dispose();
     assert.equal(ws.readyState, 3);
   } finally { first?.dispose(); second?.dispose(); globalThis.WebSocket = original; }
+});
+
+test("local connections fetch fresh tickets on reconnect and dispose during admission safely", async () => {
+  const originalSocket = globalThis.WebSocket, originalFetch = globalThis.fetch;
+  const sockets = [], requests = [];
+  let resolveTicket;
+  globalThis.fetch = (url, options) => {
+    requests.push({ url, options });
+    return new Promise(resolve => { resolveTicket = () => resolve(Response.json({ ticket: String(requests.length).repeat(43) })); });
+  };
+  class Socket {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    readyState = 1;
+    constructor(url, protocols) { this.protocols = protocols; sockets.push(this); queueMicrotask(() => this.onopen?.()); }
+    send() {}
+    close() { this.readyState = 3; this.onclose?.(); }
+  }
+  globalThis.WebSocket = Socket;
+  let channel;
+  try {
+    channel = new Channel("ws://127.0.0.1:8746/websocket", "bots").connect();
+    channel.dispose(); resolveTicket();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(sockets.length, 0);
+    channel = new Channel("ws://127.0.0.1:8746/websocket", "bots").connect();
+    resolveTicket(); await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(sockets[0].protocols, [`agentstack-local.${"2".repeat(43)}`]);
+    sockets[0].close();
+    await new Promise(resolve => setTimeout(resolve, 550));
+    assert.equal(requests.length, 3);
+    resolveTicket(); await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(sockets[1].protocols, [`agentstack-local.${"3".repeat(43)}`]);
+    assert.ok(requests.every(({ url, options }) => url === "/connect/local/ticket" && options.method === "POST" && options.credentials === "same-origin" && options.cache === "no-store"));
+  } finally { channel?.dispose(); globalThis.WebSocket = originalSocket; globalThis.fetch = originalFetch; }
 });

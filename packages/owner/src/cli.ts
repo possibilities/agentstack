@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { mcpPort, runApi, runMcp, runWebSocket, serveApi, serveMcp, socketCall, socketPath, websocketPort } from "@agentstack/api";
+import { mcpPort, runApi, runMcp, runWebSocket, serveApi, serveMcp, socketCall, socketPath, websocketPort, withLocalAuth } from "@agentstack/api";
+import { spawn } from "node:child_process";
 import { contentNetworkConfig } from "@agentstack/content";
 import { lookup } from "node:dns/promises";
 import { connect } from "node:net";
@@ -15,6 +16,20 @@ import { uixChild, uixPort } from "./uix.js";
 
 const command = process.argv[2];
 
+if (command === "open") {
+  const target = process.argv[3] ?? "uix";
+  if (!["uix", "inspector"].includes(target) || process.argv.length > 5) throw new Error("usage: agentstack open [uix|inspector] [configured-development-origin]");
+  const result = await socketCall(socketPath("owner"), "tools/call", { name: "owner_local_connect", arguments: { target, ...(process.argv[4] ? { origin: process.argv[4] } : {}) } }) as { url: string };
+  const child = spawn(process.platform === "darwin" ? "open" : "xdg-open", [result.url], { stdio: "ignore" });
+  await new Promise<void>((resolve, reject) => { child.once("error", reject); child.once("exit", code => code === 0 ? resolve() : reject(new Error("browser opener failed"))); });
+  process.exit(0);
+}
+if (command === "revoke-local") {
+  await socketCall(socketPath("owner"), "tools/call", { name: "owner_local_revoke", arguments: {} });
+  console.error("Local sessions and operator credentials revoked. Run agentstack open to reconnect.");
+  process.exit(0);
+}
+
 if (command === "api") {
   await runApi(process.argv.slice(3));
 } else if (command === "mcp") {
@@ -22,7 +37,7 @@ if (command === "api") {
 } else if (command === "websocket") {
   await runWebSocket();
 } else if (command !== "serve") {
-  console.error("usage: agentstack serve\nusage: agentstack api <package> <transport>\nusage: agentstack mcp\nusage: agentstack websocket");
+  console.error("usage: agentstack serve\nusage: agentstack open [uix|inspector] [configured-development-origin]\nusage: agentstack revoke-local\nusage: agentstack api <package> <transport>\nusage: agentstack mcp\nusage: agentstack websocket");
   process.exit(1);
 }
 
@@ -135,6 +150,9 @@ for (const [transport, port, setting, host] of listeners) {
 let events: Awaited<ReturnType<typeof serveApi>>;
 try {
   events = await startWithOwnerSocketRecovery(socketPath("owner"), () => serveApi({ name: "owner", transport: "socket", env: process.env }));
+  // Rotate only after successfully claiming the owner socket; duplicate starts
+  // must never invalidate the live owner's sessions.
+  withLocalAuth(process.env, auth => auth.rotate());
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);

@@ -92,7 +92,7 @@ test("Signal notices re-read status; only a new changeSeq re-reads records, and 
   globalThis.WebSocket = Socket;
   const empty = { data: null, error: null, at: null };
   const store = new StackStore({ owner: empty, resources: empty, accounts: empty, workerAccounts: empty, workerRuntimes: empty, workerSessions: empty, login: empty,
-    workerLogins: empty, bots: empty, botDefaults: empty, voice: empty, role: empty, rolePreview: empty, catalog: empty, usage: empty, endpoints: { signal: "ws://localhost/websocket" } });
+    workerLogins: empty, bots: empty, botDefaults: empty, voice: empty, role: empty, rolePreview: empty, catalog: empty, usage: empty, endpoints: { signal: "ws://fixture.invalid/websocket" } });
   try {
     store.start({ packages: ["signal"], scopedBots: false });
     await until(store, () => store.getState().signalStatus.data?.changeSeq === 1);

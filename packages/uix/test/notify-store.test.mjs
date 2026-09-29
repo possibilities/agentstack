@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
-import { registerHooks } from "node:module";
+import { registerHooks, createRequire } from "node:module";
 import { dirname, extname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { serveApi, serveWebSocket, socketCall, socketPath } from "@agentstack/api";
+import { serveApi, serveWebSocket, socketCall, socketPath, withLocalAuth } from "@agentstack/api";
 import { gatewayRoot } from "./browser-fixture.mjs";
 
 // Load the browser store directly without a Next build. Its bundler-style
@@ -41,6 +41,13 @@ test("the Inbox store pages, filters, follows notify_changed and applies dismiss
   const env = { ...process.env, AGENTSTACK_STATE_DIR: dir };
   const notify = await serveApi({ name: "notify", transport: "socket", env, root });
   const websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["notify"]), port: 0 });
+  const originalFetch = globalThis.fetch, originalWebSocket = globalThis.WebSocket;
+  const { WebSocket } = createRequire(join(root, "packages/api/package.json"))("ws");
+  const origin = "http://127.0.0.1:8745";
+  const session = withLocalAuth(env, auth => auth.redeem(auth.bootstrap(origin, "uix"), origin, "uix"));
+  globalThis.fetch = async (url, options) => url === "/connect/local/ticket"
+    ? Response.json({ ticket: withLocalAuth(env, auth => auth.ticket(session.token, origin)) }) : originalFetch(url, options);
+  globalThis.WebSocket = class extends WebSocket { constructor(url, protocols) { super(url, protocols, { origin }); } };
   const call = (name, args = {}) => socketCall(socketPath("notify", env), "tools/call", { name, arguments: args });
   const store = new StackStore({ owner: empty, resources: empty, accounts: empty, workerAccounts: empty, workerRuntimes: empty, workerSessions: empty,
     usage: empty, login: empty, workerLogins: empty, bots: empty, botDefaults: empty, voice: empty, role: empty, rolePreview: empty, catalog: empty,
@@ -92,6 +99,7 @@ test("the Inbox store pages, filters, follows notify_changed and applies dismiss
     await until(store, (next) => next.notifyCounts.data?.open === 0 && next.notifications.data?.entries.length === 0);
   } finally {
     store.stop();
+    globalThis.fetch = originalFetch; globalThis.WebSocket = originalWebSocket;
     await websocket.close();
     await notify.close();
     await rm(dir, { recursive: true, force: true });

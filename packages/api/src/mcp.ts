@@ -11,6 +11,7 @@ import { z } from "zod";
 import type { PackageConfig } from "./config.js";
 import { socketExposure } from "./exposure.js";
 import { forwardTimeout } from "./forward-timeout.js";
+import { LocalAuth } from "./local-auth.js";
 
 export type ServedMcp = { port: number; urls: Record<string, string>; close(): Promise<void> };
 
@@ -34,6 +35,15 @@ export async function configuredMcpPackages(root: string): Promise<Array<{ name:
   }));
 }
 
+async function verifiedBot(botId: string, instance: string, env: NodeJS.ProcessEnv): Promise<void> {
+  const listed = await socketCall(socketPath("bots", env), "tools/call", { name: "bot_list", arguments: {} }, { timeoutMs: 2_000 }) as {
+    bots: Array<{ id: string; url: string | null; state: string; recoveryIssue: string | null }>;
+  };
+  const bot = listed.bots.find((entry) => entry.id === botId);
+  if (!bot || bot.state !== "running" || bot.recoveryIssue || !bot.url || botInstance(bot.url) !== instance)
+    throw new Error("bot MCP connection is no longer bound to a running instance");
+}
+
 async function verifiedWorker(workerId: string, instance: string, env: NodeJS.ProcessEnv): Promise<void> {
   const [status, runtimes] = await Promise.all([
     socketCall(socketPath("worker", env), "tools/call", { name: "worker_status", arguments: { id: workerId } }, { timeoutMs: 2_000 }) as Promise<{
@@ -55,9 +65,12 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
   const root = options.root ?? workspaceRoot(import.meta.dirname);
   const packages = await configuredMcpPackages(root);
   if (packages.length === 0) throw new Error("no Package APIs configure mcp");
+  const auth = new LocalAuth(env);
 
   const server = createServer(async (request, response) => {
-    const target = new URL(request.url ?? "/", "http://127.0.0.1");
+    let target: URL;
+    try { target = new URL(request.url ?? "/", "http://127.0.0.1"); }
+    catch { response.writeHead(400).end(); return; }
     const name = target.origin === "http://127.0.0.1" ? /^\/mcp\/([a-z][a-z0-9-]{0,31})$/.exec(target.pathname)?.[1] : undefined;
     let definition: { name: string; description: string } | undefined;
     let config: PackageConfig | undefined;
@@ -85,6 +98,15 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
       identity = workerIdentity ? null : parseBotMcpIdentity(target, env);
     }
     catch { response.writeHead(403).end(); return; }
+    const checkAuthority = async () => {
+      if (identity) await verifiedBot(identity.botId, identity.instance, env);
+      else if (workerIdentity) await verifiedWorker(workerIdentity.workerId, workerIdentity.instance, env);
+      else auth.operator(request.headers.authorization);
+    };
+    try {
+      if ((identity || workerIdentity) && request.headers.authorization) throw new Error("ambiguous identity");
+      await checkAuthority();
+    } catch { response.writeHead(401, { "www-authenticate": "Bearer", "cache-control": "no-store" }).end("Unauthorized"); return; }
     let selection: Awaited<ReturnType<typeof socketExposure>>;
     try { selection = await socketExposure(config, "mcp", env); }
     catch (error) {
@@ -108,7 +130,7 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
     const mcp = new Server({ name, version: "0.0.0" }, { capabilities: { tools: {} }, instructions: definition.description });
     const eventTools = (topics: string[]) => !workerIdentity && options.subscriptions && topics.length > 0 ? subscriptionTools : [];
     mcp.setRequestHandler(ListToolsRequestSchema, async () => {
-      if (workerIdentity) await verifiedWorker(workerIdentity.workerId, workerIdentity.instance, env);
+      await checkAuthority();
       const { catalog: listed, exposure } = selection;
       const extra = eventTools(exposure.events);
       if (extra.some((tool) => listed.tools.some((item) => item.name === tool.name))) throw new Error(`${name} has an operation reserved for MCP event subscriptions`);
@@ -116,18 +138,9 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
     });
     mcp.setRequestHandler(CallToolRequestSchema, async ({ params }, extra) => {
       try {
+        await checkAuthority();
         const { catalog: listed, exposure } = selection;
-        if (identity) {
-          const listed = await socketCall(socketPath("bots", env), "tools/call", { name: "bot_list", arguments: {} }, { timeoutMs: 2_000 }) as {
-            bots: Array<{ id: string; url: string | null; state: string; recoveryIssue: string | null }>;
-          };
-          const bot = listed.bots.find((entry) => entry.id === identity.botId);
-          if (!bot || bot.state !== "running" || bot.recoveryIssue || !bot.url || botInstance(bot.url) !== identity.instance) {
-            throw new Error("bot MCP connection is no longer bound to a running instance");
-          }
-        }
         if (workerIdentity) {
-          await verifiedWorker(workerIdentity.workerId, workerIdentity.instance, env);
           if (params.name.startsWith("events_")) throw new Error("worker MCP connections cannot subscribe Bot threads");
           if (!listed.tools.some((tool) => tool.name === params.name && tool.annotations?.readOnlyHint))
             throw new Error("worker MCP connections may call only read-only Package API operations");
@@ -156,6 +169,7 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
           else if (params.name === "events_status") result = service.status(invocation);
           else if (params.name === "events_unsubscribe") result = await service.unsubscribe(z.strictObject({ id: z.uuid() }).parse(params.arguments ?? {}).id, invocation);
           else throw new Error(`unknown event tool: ${params.name}`);
+          await checkAuthority();
           return resultOf(result);
         }
         if (!exposure.operations.includes(params.name)) throw new Error(`operation ${params.name} is not available over mcp`);
@@ -165,6 +179,7 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
           invocation,
           resultFormat: "mcp",
         }, { signal: extra.signal, timeoutMs: forwardTimeout(name, params.name) });
+        await checkAuthority();
         if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("operation returned a non-object result");
         return result as CallToolResult;
       } catch (error) {
@@ -184,7 +199,7 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, "127.0.0.1", () => { server.off("error", reject); resolve(); });
-  });
+  }).catch((error) => { auth.close(); throw error; });
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("MCP server has no TCP address");
   const urls = Object.fromEntries(packages.map(({ name }) => [name, `http://127.0.0.1:${address.port}/mcp/${name}`]));
@@ -194,7 +209,7 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
     urls,
     close() {
       closing ??= new Promise<void>((resolve, reject) => {
-        server.close((error) => error ? reject(error) : resolve());
+        server.close((error) => { auth.close(); error ? reject(error) : resolve(); });
       });
       return closing;
     },

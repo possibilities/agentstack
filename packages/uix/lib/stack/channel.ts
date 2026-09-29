@@ -21,6 +21,8 @@ class Connection {
   private seq = 0;
   private attempt = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private connecting = false;
+  private generation = 0;
   status: ChannelStatus = "idle";
 
   constructor(url: string) { this.url = url; }
@@ -33,7 +35,7 @@ class Connection {
     if (this.status === "open") queueMicrotask(() => {
       if (this.status === "open" && this.channels.get(channel.subscriptionId) === channel) channel.opened();
     });
-    else if (!this.ws && !this.timer) this.connect();
+    else if (!this.ws && !this.timer && !this.connecting) void this.connect();
   }
 
   remove(channel: Channel): void {
@@ -49,6 +51,7 @@ class Connection {
       return;
     }
     connections.delete(this.url);
+    this.generation++;
     if (this.timer) clearTimeout(this.timer);
     const ws = this.ws;
     this.ws = null;
@@ -70,9 +73,32 @@ class Connection {
     });
   }
 
-  private connect(): void {
+  private async connect(): Promise<void> {
+    if (!this.channels.size || this.connecting) return;
+    this.connecting = true;
+    const generation = ++this.generation;
     this.setStatus("connecting");
-    const ws = new WebSocket(this.url);
+    let protocols: string[] = [];
+    try {
+      const target = new URL(this.url);
+      if (target.protocol === "ws:" && ["127.0.0.1", "localhost", "[::1]"].includes(target.hostname)) {
+        const response = await fetch("/connect/local/ticket", { method: "POST", credentials: "same-origin", cache: "no-store",
+          headers: { "content-type": "application/json" }, body: "{}" });
+        if (!response.ok) throw new Error("Local session expired. Run agentstack open to reconnect.");
+        const { ticket } = await response.json() as { ticket: string };
+        if (!/^[A-Za-z0-9_-]{43}$/.test(ticket)) throw new Error("Invalid WebSocket ticket");
+        protocols = [`agentstack-local.${ticket}`];
+      }
+    } catch (error) {
+      if (generation === this.generation && this.channels.size) {
+        this.setStatus("closed");
+        for (const channel of this.channels.values()) channel.error(error instanceof Error ? error.message : String(error));
+        this.schedule();
+      }
+      return;
+    } finally { this.connecting = false; }
+    if (generation !== this.generation || !this.channels.size) return;
+    const ws = new WebSocket(this.url, protocols);
     this.ws = ws;
     ws.onopen = () => {
       this.attempt = 0;
@@ -110,7 +136,7 @@ class Connection {
 
   private schedule(): void {
     const delay = Math.min(10_000, 500 * 2 ** this.attempt++);
-    this.timer = setTimeout(() => { this.timer = null; this.connect(); }, delay);
+    this.timer = setTimeout(() => { this.timer = null; void this.connect(); }, delay);
   }
 
   private setStatus(status: ChannelStatus): void {
