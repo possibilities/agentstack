@@ -99,6 +99,16 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         related,
       };
     }
+    case "codex-tool": {
+      const connection = state.codexTools.data?.connections.find((item) => item.name === ref.id);
+      if (!connection) return null;
+      const fields = fieldsOf(findOperation(catalog, "serve", "serve_codex_tools")?.outputSchema).find((field) => field.name === "connections");
+      return {
+        eyebrow: "Codex tool", accent: "server", title: connection.title, record: { ...connection }, fields: new Map(fields?.children.map((field) => [field.name, field])),
+        related: [{ ref: { kind: "package", id: "serve" }, label: "serve Package API" }],
+        events: state.events.filter((event) => event.pkg === "serve" && event.topic === "codex_tools_changed"),
+      };
+    }
     case "resource": {
       const scope = state.resources.data?.scopes.find((item) => item.id === ref.id);
       if (!scope) return null;
@@ -760,7 +770,7 @@ function NotificationRecordControls({ id }: { id: string }) {
 
 function referencePackage(ref: NodeRef): string {
   if (ref.kind === "bot") return "bots";
-  if (ref.kind === "server" || ref.kind === "child" || ref.kind === "resource" || ref.kind === "process") return "server";
+  if (ref.kind === "server" || ref.kind === "child" || ref.kind === "codex-tool" || ref.kind === "resource" || ref.kind === "process") return "server";
   if (ref.kind === "role" || ref.kind === "category" || ref.kind === "fragment" || ref.kind === "skill" || ref.kind === "mcp-server" || ref.kind === "trusted-project" || ref.kind === "role-shim") return "roles";
   if (ref.kind === "notification") return "notify";
   if (ref.kind === "document" || ref.kind === "collection" || ref.kind === "item" || ref.kind === "artifact") return "content";

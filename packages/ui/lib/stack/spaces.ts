@@ -48,6 +48,8 @@ export function homeOf(ref: NodeRef): NodeHome {
     case "server":
     case "child":
       return { kind: "space", space: "system", window: "server" };
+    case "codex-tool":
+      return { kind: "space", space: "system", window: "codex-tools" };
     case "resource":
       return { kind: "space", space: "system", window: "resources" };
     case "process":
@@ -148,7 +150,7 @@ export function parseSpacePath(pathname: string): SpaceId | null {
 }
 
 /** Human-readable reasons each space needs attention; an empty list means all quiet. Only "closed" channels count — idle and connecting are normal. */
-export function spaceAttention(state: Pick<StackState, "status" | "server" | "resources" | "accounts" | "workerAccounts" | "workerSessions" | "workerRuntimes" | "bots" | "attempt" | "catalog" | "endpoints" | "notifyCounts" | "signalStatus"> & Partial<Pick<StackState, "contentUploads" | "scrapeStatus" | "browserHandoffs" | "browserProfiles" | "browserToolchain" | "brainStatus" | "brainJobStats" | "brainSources" | "procSchedules" | "procStatus">>): Record<SpaceId | "api", string[]> {
+export function spaceAttention(state: Pick<StackState, "status" | "server" | "resources" | "accounts" | "workerAccounts" | "workerSessions" | "workerRuntimes" | "bots" | "attempt" | "catalog" | "endpoints" | "notifyCounts" | "signalStatus"> & Partial<Pick<StackState, "contentUploads" | "scrapeStatus" | "browserHandoffs" | "browserProfiles" | "browserToolchain" | "brainStatus" | "brainJobStats" | "brainSources" | "procSchedules" | "procStatus" | "codexTools">>): Record<SpaceId | "api", string[]> {
   const attention: Record<SpaceId | "api", string[]> = { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], brain: [], proc: [], api: [] };
   for (const bot of state.bots.data ?? []) if (bot.recoveryIssue) attention.fleet.push(`${bot.id} needs inspection`);
   const labels = accountLabels(state.accounts.data);
@@ -202,6 +204,7 @@ export function spaceAttention(state: Pick<StackState, "status" | "server" | "re
   if (state.status.serve === "closed") attention.system.push("server reconnecting");
   if (state.server.error) attention.system.push(`Server status: ${state.server.error}`);
   if (state.resources.error) attention.system.push(`Resources: ${state.resources.error}`);
+  if (state.codexTools?.error) attention.system.push(`Codex tools: ${state.codexTools.error}`);
   if (state.resources.data?.observation.error) attention.system.push(`Resource sampling: ${state.resources.data.observation.error}`);
   for (const domain of state.resources.data?.observation.coverage?.domains ?? []) {
     if (domain.state === "stale" || domain.state === "unavailable") attention.system.push(`${domain.source} attribution ${domain.state}`);
@@ -238,6 +241,7 @@ export function parseNodeKey(key: string): NodeRef | null {
   if (kind === "document" || kind === "collection" || kind === "item" || kind === "artifact") return { kind, id: rest };
   if (kind === "worker" || kind === "worker-runtime" || kind === "worker-window") return { kind, id: rest };
   if (kind === "preset" || kind === "scrape-job") return { kind, id: rest };
+  if (kind === "codex-tool") return { kind, id: rest };
   if (kind === "browser-profile" || kind === "browser-handoff" || kind === "browser-controller" || kind === "browser-viewer") return { kind, id: rest };
   if (kind === "research-document" || kind === "ingestion-job" || kind === "research-source") return { kind, id: rest };
   if (kind === "proc-schedule" || kind === "proc-execution" || kind === "proc-run" || kind === "proc-run-window") return { kind, id: rest };

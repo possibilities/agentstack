@@ -26,6 +26,7 @@ import { CallSpeechWindow } from "./call-speech-window";
 import { InferenceWindow } from "./inference-window";
 import { HostWindow, ProcessesWindow, ResourcesWindow, SamplingWindow } from "./resource-windows";
 import { ActivityWindow, ServerWindow, PackagesWindow } from "./system-windows";
+import { CodexToolsWindow } from "./codex-tools";
 import { ChatWindow } from "./chat-window";
 import { RoleCatalogWindow } from "./role-catalog";
 import { RoleEditorWindow } from "./role-editor";
@@ -105,6 +106,7 @@ export const spaceViews: Record<SpaceId, {
       { id: "packages", title: "Packages", icon: PackageIcon, accent: "server", width: 400, height: 420, column: 0, element: <PackagesWindow /> },
       { id: "resources", title: "Resources", icon: ChartLineIcon, accent: "server", width: 460, height: 640, column: 1, element: <ResourcesWindow /> },
       { id: "host", title: "Host", icon: ServerIcon, accent: "server", width: 400, height: 460, column: 1, element: <HostWindow /> },
+      { id: "codex-tools", title: "Codex tools", icon: WrenchIcon, accent: "server", width: 460, height: 620, column: 2, element: <CodexToolsWindow /> },
       { id: "processes", title: "Processes", icon: ListTreeIcon, accent: "server", width: 560, height: 760, column: 2, element: <ProcessesWindow /> },
       { id: "sampling", title: "Sampling", icon: ScanLineIcon, accent: "server", width: 400, height: 560, column: 3, element: <SamplingWindow /> },
       { id: "activity", title: "Activity", icon: RadioIcon, accent: "events", width: 400, height: 460, column: 3, element: <ActivityWindow /> },

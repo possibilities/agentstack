@@ -13,7 +13,6 @@ import {
   PencilIcon,
   PlugIcon,
   PlusIcon,
-  RefreshCwIcon,
   ScanSearchIcon,
   SearchIcon,
   Trash2Icon,
@@ -30,13 +29,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
-import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import {
   addedIds,
-  chromeBrowserLabel,
   codexAvailability,
-  codexStaleMs,
   draftDirty,
   findResource,
   formatBytes,
@@ -49,15 +45,14 @@ import {
   skillBytes,
   skillText,
   uniqueName,
-  type CodexAvailability,
   type ResourceKind,
 } from "@/lib/stack/roles";
-import { relativeTime } from "@/lib/stack/derive";
-import { nodeKey, type CodexToolsProblem, type RoleInternalServer, type RoleMcpServer, type RoleSkill, type RoleSnapshot, type RoleTrustedProject } from "@/lib/stack/types";
+import { nodeKey, type RoleInternalServer, type RoleMcpServer, type RoleSkill, type RoleSnapshot, type RoleTrustedProject } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { errorMessage } from "./auth-actions";
-import { Empty } from "./primitives";
-import { useNow, useStack, useStore, useWorkbench } from "./provider";
+import { Empty, NodeLink } from "./primitives";
+import { AvailabilityDot, CheckButton, ConnectionDetails, ProblemText, availabilityText, useCodexTools } from "./codex-tools";
+import { useNow, useStack, useWorkbench } from "./provider";
 import type { StackState } from "@/lib/stack/store";
 import { resourceOperation, useRoleActions, useRoleView } from "./role-actions";
 import { footerButton, Section, Window } from "./window";
@@ -178,54 +173,24 @@ function StackServers() {
   );
 }
 
-const dotTone: Record<CodexAvailability["tone"], string> = {
-  ok: "bg-emerald-500", warn: "bg-amber-500", error: "bg-destructive", unknown: "border border-muted-foreground/60 bg-transparent",
-};
-
-function AvailabilityDot({ availability }: { availability: CodexAvailability }) {
-  const label = `${availability.label}${availability.stale ? " (may be out of date)" : ""}`;
-  return <span role="img" aria-label={label} title={label} className={cn("size-1.5 shrink-0 rounded-full", dotTone[availability.tone], availability.stale && "opacity-50")} />;
-}
-
-const runtimeSource: Record<string, string> = { override: "STACK_CODEX_TOOLS_BIN", standalone: "standalone Codex", "chatgpt-app": "ChatGPT app", "codex-app": "Codex app" };
-
 /**
  * Server-wide observations of the Codex tool bridges, with each one's recovery guidance. Reading shows
  * the cached result; only the Check buttons start the server's bounded, single-flight check.
  */
 function CodexToolsAvailability({ servers, now }: { servers: RoleInternalServer[]; now: number }) {
-  const { codexTools, status, remote } = useStack();
-  const store = useStore();
-  const [asking, setAsking] = useState(false);
-  const data = codexTools.data;
-  const readable = status.serve === "open" && !!data && !codexTools.error;
-  const checking = !!data?.checking;
-  // Checks start a desktop runtime, so they stay with local operators.
-  const canCheck = status.serve === "open" && !remote && !checking && !asking;
-  const check = (chromeBrowser: boolean) => {
-    setAsking(true);
-    store.checkCodexTools(chromeBrowser).catch((error) => toast.error(errorMessage(error))).finally(() => setAsking(false));
-  };
-  const checkedAt = data?.checkedAt ? Date.parse(data.checkedAt) : null;
-  const summary = !readable
-    ? codexTools.error ? `Availability unknown: ${codexTools.error}` : status.serve !== "open" ? "Availability unknown while the server connection is closed." : "Reading availability…"
-    : checking ? "Checking the selected Codex installation…"
-      : checkedAt === null ? "Not checked since the server started."
-        : `Checked ${relativeTime(checkedAt, now)}${now - checkedAt > codexStaleMs ? ", may be out of date" : ""}${data.runtime.source ? ` · ${runtimeSource[data.runtime.source]}` : ""}.`;
+  const tools = useCodexTools(now);
   return (
     <div className="flex flex-col gap-1 border-t pt-2">
       <div className="flex items-center gap-2 px-1.5">
         <h4 className="text-[0.7rem] font-medium">Codex tools availability</h4>
-        <span role="status" className="min-w-0 flex-1 truncate text-[0.66rem] text-muted-foreground" title={summary}>{summary}</span>
-        <Button size="xs" variant="outline" disabled={!canCheck} onClick={() => check(false)} title={remote ? "Checks run only from the local UI" : "List each upstream tool catalog in a temporary Codex runtime"}>
-          {checking || asking ? <Spinner /> : <RefreshCwIcon />}Check
-        </Button>
+        <span role="status" className="min-w-0 flex-1 truncate text-[0.66rem] text-muted-foreground" title={tools.summary}>{tools.summary}</span>
+        <CheckButton tools={tools} />
       </div>
-      {readable && data.runtime.problem ? <ProblemText problem={data.runtime.problem} /> : null}
+      {tools.readable && tools.data?.runtime.problem ? <div className="px-1.5 text-[0.68rem]"><ProblemText problem={tools.data.runtime.problem} /></div> : null}
       <ul aria-label="Codex tools availability" className="flex flex-col">
         {servers.map((server) => {
-          const connection = data?.connections.find((item) => item.name === server.name);
-          const availability = codexAvailability(connection, readable, checking, now);
+          const connection = tools.data?.connections.find((item) => item.name === server.name);
+          const { availability, text } = availabilityText(connection, tools, now);
           return (
             <li key={server.name}>
               <details className="group rounded-md px-1.5 py-0.5 open:bg-muted/40">
@@ -234,35 +199,13 @@ function CodexToolsAvailability({ servers, now }: { servers: RoleInternalServer[
                   <span className="font-medium">{server.title}</span>
                   <span className="font-mono text-[0.64rem] text-muted-foreground">{server.name}</span>
                   <span className="ml-auto flex items-center gap-1.5 text-[0.66rem] text-muted-foreground">
-                    <AvailabilityDot availability={availability} />{availability.label}
-                    {server.name === "chrome" && readable && !checking && connection?.catalog.state === "available" ? ` · ${chromeBrowserLabel(connection.browser)}` : ""}
-                    {server.enabled ? "" : " · off for this Role"}
+                    <AvailabilityDot availability={availability} />{text}{server.enabled ? "" : " · off for this Role"}
                   </span>
                 </summary>
                 <div className="flex flex-col gap-1 pt-1 pb-1.5 pl-5 text-[0.68rem] text-pretty text-muted-foreground">
                   <p>{server.description}</p>
-                  {connection ? <p>Upstream: {connection.upstream}.</p> : null}
-                  {readable && !checking && connection ? (
-                    <>
-                      {connection.catalog.evidence ? <p>{connection.catalog.evidence}{connection.catalog.checkedAt ? ` (${relativeTime(Date.parse(connection.catalog.checkedAt), now)})` : ""}</p> : null}
-                      {connection.catalog.problem ? <ProblemText problem={connection.catalog.problem} /> : null}
-                      {connection.catalog.state === "available" ? <p>A listed catalog does not show that a Bot or Worker connected, that an app or site is approved, or that approvals can be answered.</p> : null}
-                      {connection.browser && connection.catalog.state === "available" ? (
-                        <div className="flex flex-col gap-1 rounded-md border bg-background/60 px-2 py-1.5">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium text-foreground">{chromeBrowserLabel(connection.browser)}</span>
-                            <Button size="xs" variant="outline" className="ml-auto" disabled={!canCheck} onClick={() => check(true)} title="Ask the Chrome extension which browsers are connected; no page is read">
-                              Check browser
-                            </Button>
-                          </div>
-                          {connection.browser.evidence ? <p>{connection.browser.evidence}{connection.browser.checkedAt ? ` (${relativeTime(Date.parse(connection.browser.checkedAt), now)})` : ""}</p> : null}
-                          {/* The heading already states the observation; add only the next step. */}
-                          {connection.browser.problem ? <p className="text-foreground">{connection.browser.problem.recovery}</p> : null}
-                          <p>Stack&rsquo;s managed Browser profiles in Browse are separate from this browser.</p>
-                        </div>
-                      ) : null}
-                    </>
-                  ) : null}
+                  {connection ? <p>Upstream: {connection.upstream}. <NodeLink node={{ kind: "codex-tool", id: server.name }} label={`${server.title} Codex tool`}>Open in System</NodeLink></p> : null}
+                  {connection ? <ConnectionDetails connection={connection} tools={tools} now={now} /> : null}
                 </div>
               </details>
             </li>
@@ -274,10 +217,6 @@ function CodexToolsAvailability({ servers, now }: { servers: RoleInternalServer[
       </p>
     </div>
   );
-}
-
-function ProblemText({ problem }: { problem: CodexToolsProblem }) {
-  return <p className="text-foreground"><span className="font-medium">{problem.message}</span> {problem.recovery}</p>;
 }
 
 export function RoleProjectsWindow() {

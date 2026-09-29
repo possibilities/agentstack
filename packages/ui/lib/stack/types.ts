@@ -833,6 +833,8 @@ export type NodeRef =
   | { kind: "access-client" | "access-pairing" | "access-grant" | "access-credential"; id: string }
   | { kind: "server" }
   | { kind: "child"; id: string }
+  /** A Codex tool bridge's server-wide availability observation, by connection key. */
+  | { kind: "codex-tool"; id: string }
   | { kind: "resource"; id: string }
   | { kind: "process"; id: string }
   | { kind: "account"; id: string }

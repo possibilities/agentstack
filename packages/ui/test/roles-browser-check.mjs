@@ -879,8 +879,24 @@ try {
   await shot("roles-dark");
   await page.setViewportSize({ width: 390, height: 844 });
   await shot("roles-mobile");
+  // System shows the same observations server-wide; a Roles row links to its System card and inspector record.
+  await page.setViewportSize({ width: 2400, height: 1400 });
+  await page.emulateMedia({ colorScheme: "light" });
+  const messages = servers.getByRole("list", { name: "Codex tools availability" }).locator("li").filter({ has: page.getByText("Messages", { exact: true }) });
+  if (!(await messages.locator("details").evaluate((node) => node.open))) await tap(messages.locator("summary"));
+  await tap(messages.getByRole("link", { name: "Open in System" }));
+  const system = page.locator('[data-window="codex-tools"]');
+  await system.getByText("3/5", { exact: false }).waitFor();
+  const card = system.locator('[data-node="codex-tool:messages"]');
+  await card.getByText("Unavailable", { exact: true }).waitFor();
+  await card.getByText(/Install and enable this plugin/).waitFor();
+  await system.locator('[data-node="codex-tool:chrome"]').getByText(/No Chrome browser connected/).first().waitFor();
+  await card.getByRole("button", { name: "Inspect Messages Codex tool" }).click();
+  await page.getByRole("region", { name: "Inspector" }).getByText("Codex tool", { exact: false }).first().waitFor();
+  assert.equal(await system.getByRole("switch").count(), 0, "System observes; selection stays in Roles");
+  await shot("system-codex-tools");
   assert.deepEqual(errors, [], "browser has no uncaught application errors");
-  console.log(JSON.stringify({ ok: true, evidence, assertions: "provisioned Manager and Worker defaults, per-audience notes, Make Worker default from the note and the row menu with its dialog, cancel and delete guard, new Role made Bot default, second Role and case-insensitive name hint, per-Role content, Bot launch comparison by Role identity and revision against the Bot default, Worker comparison against each captured Role, default switch with drafts on both Roles, delayed write outrun by selection, rename and API uniqueness refusal, stale catalog and stale Role and stale internal-switch rebuilds, internal switches per Role and all off, reserved internal names, Bot and Worker default delete refused, delete with drafts, Role deleted elsewhere with and without drafts, remembered selection, Role inspector and palette, category and fragment creation, preview order and segments, launch revisions, switches, cross-category drag, keyboard move, drafts, conflict keep-mine, stale-revision rebuild, search, category off, inspector hand-off, palette, delete guard and delete, skill files and duplicate/reorder/switch, MCP name guard, TOML and stdio split, trusted-project Bot matching, resource inspect and delete, light/dark/mobile" }, null, 2));
+  console.log(JSON.stringify({ ok: true, evidence, assertions: "provisioned Manager and Worker defaults, per-audience notes, Make Worker default from the note and the row menu with its dialog, cancel and delete guard, new Role made Bot default, second Role and case-insensitive name hint, per-Role content, Bot launch comparison by Role identity and revision against the Bot default, Worker comparison against each captured Role, default switch with drafts on both Roles, delayed write outrun by selection, rename and API uniqueness refusal, stale catalog and stale Role and stale internal-switch rebuilds, internal switches per Role and all off, reserved internal names, Bot and Worker default delete refused, delete with drafts, Role deleted elsewhere with and without drafts, remembered selection, Role inspector and palette, category and fragment creation, preview order and segments, launch revisions, switches, cross-category drag, keyboard move, drafts, conflict keep-mine, stale-revision rebuild, search, category off, inspector hand-off, palette, delete guard and delete, skill files and duplicate/reorder/switch, MCP name guard, TOML and stdio split, trusted-project Bot matching, resource inspect and delete, light/dark/mobile, Codex tool availability checks and the linked System card and inspector" }, null, 2));
 } catch (error) {
   failed = true;
   const page = browser?.contexts()[0]?.pages()[0];

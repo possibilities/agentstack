@@ -16,6 +16,8 @@ Chrome has a second observation. With `chromeBrowser: true`, a check asks the ex
 
 Role switches remain selection for later launches. The Roles MCP window marks each bridge's availability beside its switch and explains each result, with its evidence and recovery step, under “Codex tools availability”. Unavailable connections stay selectable, and no check changes a switch. `role_internal_mcp_list` and `role_launch_preview` carry each server's title, description and kind (`package` or `codex`) from the shared catalog. The UI shows friendly titles while writes keep stable keys.
 
+System has a Codex tools card showing the same observations server-wide. It has the runtime, one inspectable `codex-tool` node per connection, and the same Check actions, but no switches. Each Roles availability row links to that connection's System card.
+
 Checks start a process on the operator's desktop, so the operation is not read-only. It is exposed on the local WebSocket and socket, not on MCP, and remote UI selection excludes it. Agents may read observations over MCP.
 
 ## Not decided here
