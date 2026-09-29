@@ -506,6 +506,20 @@ test("owner's private agent-browser config leaves global settings alone", async 
   } finally { await s.close(); }
 });
 
+test("private provider config migrates only the former managed identity", async () => {
+  const s = await fixture();
+  try {
+    const path = prepareBrowserConfig(s.env);
+    const old = { provider: "agentstack", plugins: [{ name: "agentstack", command: "/Users/operator/.nvm/versions/node/v24.16.0/bin/node",
+      args: ["/Users/operator/code/agentstack/packages/browser/dist/src/provider.js"], capabilities: ["browser.provider"] }] };
+    await writeFile(path, JSON.stringify(old));
+    prepareBrowserConfig(s.env);
+    assert.equal(JSON.parse(await readFile(path, "utf8")).provider, "stack");
+    await writeFile(path, JSON.stringify({ ...old, plugins: [{ ...old.plugins[0], command: "/foreign/node" }] }));
+    assert.throws(() => prepareBrowserConfig(s.env), /differs from the managed provider/);
+  } finally { await s.close(); }
+});
+
 test("manual release observation requires exact acceptance; automatic checks only upgrade", async () => {
   const dir = await mkdtemp(join(tmpdir(), "stack-browser-updates-"));
   const bin = join(dir, "bin");

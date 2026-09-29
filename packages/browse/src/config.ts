@@ -38,7 +38,25 @@ export function prepareBrowserConfig(env: NodeJS.ProcessEnv): string {
   }] }, null, 2)}\n`;
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   if (existsSync(path)) {
-    if (readFileSync(path, "utf8") !== content) throw new Error(`Stack browser config differs from the managed provider: ${path}`);
+    const previous = readFileSync(path, "utf8");
+    if (previous !== content) {
+      let legacy: unknown;
+      try { legacy = JSON.parse(previous); } catch { /* preserve unknown configuration */ }
+      const old = legacy as { provider?: unknown; plugins?: unknown } | undefined;
+      const plugin = Array.isArray(old?.plugins) && old.plugins.length === 1 ? old.plugins[0] as Record<string, unknown> : null;
+      const args = plugin?.args;
+      const node = plugin?.command;
+      const managedNode = node === process.execPath || (typeof node === "string" &&
+        /^\/Users\/[^/]+\/\.nvm\/versions\/node\/v\d+\.\d+\.\d+\/bin\/node$/.test(node));
+      const managed = old?.provider === "agentstack" && plugin?.name === "agentstack" &&
+        managedNode && Array.isArray(args) && args.length === 1 &&
+        typeof args[0] === "string" && /\/code\/agentstack\/packages\/(browse|browser)\/dist\/src\/provider\.js$/.test(args[0]) &&
+        JSON.stringify(plugin.capabilities) === JSON.stringify(["browser.provider"]);
+      if (!managed) throw new Error(`Stack browser config differs from the managed provider: ${path}`);
+      const temp = `${path}.${process.pid}.tmp`;
+      try { writeFileSync(temp, content, { flag: "wx", mode: 0o600 }); renameSync(temp, path); }
+      finally { rmSync(temp, { force: true }); }
+    }
   } else {
     const temp = `${path}.${process.pid}.tmp`;
     try { writeFileSync(temp, content, { flag: "wx", mode: 0o600 }); renameSync(temp, path); }
