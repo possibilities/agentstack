@@ -434,3 +434,19 @@ test("a trusted project lists the Bots whose working directory the launch previe
   assert.deepEqual(roles.projectBots(launch, "p1", bots).map((bot) => bot.id), ["bot-1"]);
   assert.deepEqual(roles.projectBots(null, "p1", bots), []);
 });
+
+test("Codex availability is its own axis, and uncertain observations never read as the last result", () => {
+  const now = Date.parse("2026-09-29T12:00:00Z");
+  const connection = (state, checkedAt = "2026-09-29T11:59:00Z") => ({ name: "messages", title: "Messages", description: "", upstream: "",
+    catalog: { state, checkedAt, tools: null, evidence: null, problem: null }, browser: null });
+  const label = (...args) => roles.codexAvailability(...args).label;
+  assert.equal(label(connection("available"), true, false, now), "Catalog available");
+  assert.equal(label(connection("unavailable"), true, false, now), "Unavailable");
+  assert.equal(label(connection("failed"), true, false, now), "Check failed");
+  assert.equal(label(connection("not_checked", null), true, false, now), "Not checked");
+  assert.equal(label(connection("available"), false, false, now), "Unknown", "a failed read does not keep showing availability");
+  assert.equal(label(connection("available"), true, true, now), "Checking…", "a running check supersedes the previous result");
+  assert.equal(label(undefined, true, false, now), "Unknown", "an older server without the connection");
+  assert.equal(roles.codexAvailability(connection("available", "2026-09-29T10:00:00Z"), true, false, now).stale, true);
+  assert.equal(roles.codexAvailability(connection("available"), true, false, now).stale, false);
+});

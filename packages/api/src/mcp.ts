@@ -37,10 +37,12 @@ export async function configuredMcpPackages(root: string): Promise<Array<{ name:
   }));
 }
 
-export async function configuredMcpServers(root: string): Promise<Array<{ name: string; description: string }>> {
+/** The default MCP fleet: Package APIs, then the Codex tool bridges, each with a display title. */
+export async function configuredMcpServers(root: string): Promise<Array<{ name: string; title: string; description: string; kind: "package" | "codex" }>> {
   const packages = await configuredMcpPackages(root);
   if (packages.some(pkg => codexMcpDefinition(pkg.name))) throw new Error("Package API name collides with a built-in Codex MCP server");
-  return [...packages, ...codexMcpServers.map(({ name, description }) => ({ name, description }))];
+  return [...packages.map((pkg) => ({ ...pkg, title: pkg.name, kind: "package" as const })),
+    ...codexMcpServers.map(({ name, title, description }) => ({ name, title, description, kind: "codex" as const }))];
 }
 
 async function verifiedBot(botId: string, instance: string, env: NodeJS.ProcessEnv): Promise<void> {

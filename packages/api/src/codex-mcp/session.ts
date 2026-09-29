@@ -4,6 +4,7 @@ import type { CodexMcpDefinition } from "./catalog.js";
 import { browserModule, codexInstallation } from "./install.js";
 import { projectedProgram, projectedTools } from "./projections.js";
 import { CodexRpc, record, type Elicitation } from "./rpc.js";
+import { selectUpstream, startToolThread, upstreamServers } from "./upstream.js";
 
 /** Per HTTP MCP session; serialized calls keep REPL state and approval routing coherent. */
 export class CodexMcpSession {
@@ -26,11 +27,7 @@ export class CodexMcpSession {
       if (this.closed) throw new Error("Codex tools session closed");
       const rpc = this.rpc = new CodexRpc(installation.binary, installation.home, this.env);
       try {
-        await rpc.request("initialize", { clientInfo: { name: "stack-codex-tools", version: "0.0.0" }, capabilities: { mcpServerOpenaiFormElicitation: true, extensions: { "openai/form": {}, "openai/standard-form-input": {} } } }, signal);
-        rpc.notify("initialized");
-        const started = await rpc.request("thread/start", { ephemeral: true, approvalPolicy: "on-request", sessionStartSource: "startup" }, signal);
-        if (!record(started) || !record(started.thread) || typeof started.thread.id !== "string") throw new Error("Invalid Codex tool thread response");
-        this.threadId = started.thread.id;
+        this.threadId = await startToolThread(rpc, signal);
       } catch (error) { await rpc.close(); throw error; }
     })();
     await this.starting;
@@ -38,23 +35,8 @@ export class CodexMcpSession {
 
   private async tools(signal?: AbortSignal): Promise<Tool[]> {
     await this.start(signal);
-    const servers: Record<string, any>[] = [];
-    let cursor: string | undefined;
-    const cursors = new Set<string>();
-    for (let page = 0; page < 32; page++) {
-      const result = await this.rpc!.request("mcpServerStatus/list", { threadId: this.threadId, detail: "toolsAndAuthOnly", ...(cursor ? { cursor } : {}) }, signal);
-      if (!record(result) || !Array.isArray(result.data) || !result.data.every(record)) throw new Error("Invalid Codex tool catalog");
-      servers.push(...result.data);
-      if (result.nextCursor == null) break;
-      if (typeof result.nextCursor !== "string" || cursors.has(result.nextCursor) || page === 31) throw new Error("Invalid Codex tool catalog pagination");
-      cursor = result.nextCursor; cursors.add(cursor);
-    }
-    const projected = "surface" in this.definition;
-    // Both runtime generations still support the bundled trusted module imports.
-    const upstream = projected
-      ? servers.find((s) => s.name === "node_repl" && record(s.tools) && s.tools.js) ?? servers.find((s) => s.name === "cua_repl" && record(s.tools) && s.tools.js)
-      : servers.find((s) => s.name === this.definition.server);
-    if (!upstream || !record(upstream.tools) || !Object.keys(upstream.tools).length || upstream.runtimeStatus === "disabled" || upstream.runtimeStatus === "failed") {
+    const upstream = selectUpstream(this.definition, await upstreamServers(this.rpc!, this.threadId!, signal));
+    if (!upstream) {
       throw new Error(`${this.definition.name} is unavailable in the selected Codex installation. Install and enable its plugin in Codex/ChatGPT, then reconnect this MCP server. Computer History additionally needs recording enabled.`);
     }
     this.server = upstream.name;

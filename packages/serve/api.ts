@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { operation, withLocalAuth, localOrigin, type PackageApi } from "@stack/api";
+import { CodexToolsDiagnostics, operation, withLocalAuth, localOrigin, type PackageApi } from "@stack/api";
 import { statusSource, type StatusSource } from "./src/status.js";
 import { ResourceMonitor } from "./src/resources/monitor.js";
 import { serverResourcesInput, serverResourcesOutput, serverResourceHistoryInput, serverResourceHistoryOutput } from "./src/resources/schema.js";
@@ -18,8 +18,38 @@ const childStatusSchema = z.object({
 export type ServerContext = {
   source: StatusSource;
   resources: ResourceMonitor;
+  codexTools: CodexToolsDiagnostics;
   env?: NodeJS.ProcessEnv;
 };
+
+const at = z.iso.datetime().nullable().describe("When this observation was recorded; null when it has not been checked since the server started.");
+const problem = z.object({
+  code: z.enum(["runtime_missing", "config_invalid", "plugin_unavailable", "browser_module_missing", "no_browser", "multiple_browsers", "approval_required", "probe_failed", "probe_timeout"]),
+  message: z.string().describe("What was observed, without paths, credentials or raw runtime output."),
+  recovery: z.string().describe("The next useful step."),
+}).nullable();
+const codexToolsStatus = z.object({
+  checking: z.object({ startedAt: z.iso.datetime(), chromeBrowser: z.boolean() }).nullable().describe("The check in progress, if any. Observations below are from the previous check until it finishes."),
+  checkedAt: at.describe("When the last check finished, successfully or not."),
+  runtime: z.object({
+    state: z.enum(["not_checked", "found", "missing", "invalid"]),
+    source: z.enum(["override", "standalone", "chatgpt-app", "codex-app"]).nullable().describe("Which runtime candidate was selected, from STACK_CODEX_TOOLS_BIN or the desktop installations."),
+    checkedAt: at, problem,
+  }).describe("The selected desktop installation's tool runtime."),
+  connections: z.array(z.object({
+    name: z.string().describe("Stable connection key, as in Role MCP switches."),
+    title: z.string(), description: z.string(), upstream: z.string().describe("The upstream Codex source this bridge forwards to."),
+    catalog: z.object({
+      state: z.enum(["not_checked", "available", "unavailable", "failed"]).describe("available means the upstream catalog listed the connection; it does not prove a consumer connected, an app or site is approved, or Computer History is recording. failed means the check itself failed."),
+      checkedAt: at, tools: z.number().int().nullable().describe("Tools this bridge exposes when available."),
+      evidence: z.string().nullable().describe("What was actually observed."), problem,
+    }),
+    browser: z.object({
+      state: z.enum(["not_checked", "connected", "none", "multiple", "failed"]).describe("connected means the Chrome extension listed exactly one Chrome browser. Only a check with chromeBrowser asks."),
+      checkedAt: at, evidence: z.string().nullable(), problem,
+    }).nullable().describe("Chrome only; null for other connections."),
+  })),
+});
 
 export const serverLocalConnect = operation({
   name: "serve_local_connect", description: "Private-socket-only operator bootstrap. Mint a 60-second single-use browser capability, bound to the exact local UI or Inspector origin. The returned fragment URL is a secret; never log or put it in discovery. The CLI opens it directly. An explicit UI origin is allowed only for the configured development WebSocket origin.",
@@ -65,6 +95,23 @@ export const serverStatus = operation({
   },
 });
 
+export const serverCodexTools = operation({
+  name: "serve_codex_tools",
+  description: "Read cached observations of the Codex tool bridges: the selected desktop runtime, each upstream catalog and Chrome's last browser discovery. Reading starts nothing. They describe the installation, not whether a Bot or Worker connected or can answer approvals, and reset when the server restarts.",
+  input: z.strictObject({}), output: codexToolsStatus,
+  annotations: { title: "Codex tools status", readOnlyHint: true },
+  async call(ctx: ServerContext) { return ctx.codexTools.snapshot(); },
+});
+
+export const serverCodexToolsCheck = operation({
+  name: "serve_codex_tools_check",
+  description: "Start one bounded check and return on admission; codex_tools_changed follows. A temporary app-server lists upstream catalogs on an ephemeral thread, starts no model turn, cancels any approval and exits. chromeBrowser also lists Chrome extension browsers without reading a page. A request during a check joins it. A failed check replaces earlier results.",
+  input: z.strictObject({ chromeBrowser: z.boolean().default(false).describe("Also ask the Chrome extension which Chrome browsers are connected.") }),
+  output: z.object({ admitted: z.boolean().describe("False when a check was already running."), status: codexToolsStatus }),
+  annotations: { title: "Check Codex tools", openWorldHint: true },
+  async call(ctx: ServerContext, input) { return ctx.codexTools.check(input); },
+});
+
 export const serverResources = operation({
   name: "serve_resources",
   description: "Read cached CPU, memory and process-tree observations for Stack, components, Bots, accounts, observed Worker runtimes or individual processes/subtrees. Pin snapshotId when paging. Costs overlap across scope kinds; RSS is not unique RAM. Unknown/expired IDs are errors. No collection is triggered by a read.",
@@ -83,31 +130,34 @@ export const serverResourceHistory = operation({
 
 export const topics = {
   pids_changed: "Published when the set of owned child process ids changes.",
+  codex_tools_changed: "Published when a Codex tools check starts or finishes. Refresh serve_codex_tools.",
   resources_changed: "Published after a resource sampling attempt, including failures. Refresh serve_resources or serve_resource_history; notices carry no metrics.",
 } as const;
 
 export type ServerTopic = keyof typeof topics;
 
 export const api: PackageApi<ServerContext, ServerTopic> = {
-  operations: [serverStatus, serverResources, serverResourceHistory, serverLocalConnect, serverLocalRevoke],
+  operations: [serverStatus, serverCodexTools, serverCodexToolsCheck, serverResources, serverResourceHistory, serverLocalConnect, serverLocalRevoke],
   events: {
     topics,
     start(ctx: ServerContext, publish: (topic: ServerTopic) => void) {
       ctx.source.onChange = () => publish("pids_changed");
       ctx.resources.onChange = () => publish("resources_changed");
+      ctx.codexTools.onChange = () => publish("codex_tools_changed");
       return () => {
         ctx.source.onChange = undefined;
         ctx.resources.onChange = undefined;
+        ctx.codexTools.onChange = undefined;
       };
     },
   },
   async createContext(env) {
     const resources = new ResourceMonitor({ roots: () => statusSource.resourceRoots(), env });
     resources.start();
-    return { source: statusSource, resources, env };
+    return { source: statusSource, resources, codexTools: new CodexToolsDiagnostics(env), env };
   },
   async closeContext(ctx) {
-    await ctx.resources.close();
+    await Promise.all([ctx.resources.close(), ctx.codexTools.close()]);
     ctx.source.detach();
   },
 };

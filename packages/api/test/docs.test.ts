@@ -398,12 +398,17 @@ test("the api package serves structured documents for every workspace package", 
       assert.ok(server.operations.some(op => op.name === name));
       assert.ok(server.transports.filter(transport => transport.type !== "socket").every(transport => !transport.operations.includes(name)));
     }
-    assert.deepEqual(Object.keys(server.events), ["pids_changed", "resources_changed"]);
-    assert.deepEqual(server.operations.map((operation) => operation.name), ["serve_status", "serve_resources", "serve_resource_history", "serve_local_connect", "serve_local_revoke"]);
-    assert.equal(server.operations[1].annotations.readOnlyHint, true);
-    assert.equal(server.operations[2].annotations.readOnlyHint, true);
-    assert.ok(JSON.stringify(server.operations[1].outputSchema).includes("cpuMeasuredProcessCount"));
-    assert.ok(JSON.stringify(server.operations[2].outputSchema).includes("retention"));
+    assert.deepEqual(Object.keys(server.events), ["pids_changed", "codex_tools_changed", "resources_changed"]);
+    assert.deepEqual(server.operations.map((operation) => operation.name), ["serve_status", "serve_codex_tools", "serve_codex_tools_check", "serve_resources", "serve_resource_history", "serve_local_connect", "serve_local_revoke"]);
+    const serveOperation = (name: string) => server.operations.find((operation) => operation.name === name)!;
+    assert.equal(serveOperation("serve_codex_tools").annotations.readOnlyHint, true);
+    assert.notEqual(serveOperation("serve_codex_tools_check").annotations.readOnlyHint, true, "a check starts a runtime, so remote read-only selection excludes it");
+    // Agents may read the observations; only the operator's WebSocket can start a check.
+    assert.deepEqual(server.transports.filter((transport) => transport.operations.includes("serve_codex_tools_check")).map((transport) => transport.type).sort(), ["socket", "websocket"]);
+    assert.equal(serveOperation("serve_resources").annotations.readOnlyHint, true);
+    assert.equal(serveOperation("serve_resource_history").annotations.readOnlyHint, true);
+    assert.ok(JSON.stringify(serveOperation("serve_resources").outputSchema).includes("cpuMeasuredProcessCount"));
+    assert.ok(JSON.stringify(serveOperation("serve_resource_history").outputSchema).includes("retention"));
     const serverSocket = server.transports.find((transport) => transport.type === "socket") as TransportDoc;
     assert.equal(serverSocket.subscriptions, true);
     assert.equal(serverSocket.endpoint, join(stateDir, "sockets", "serve.sock"));

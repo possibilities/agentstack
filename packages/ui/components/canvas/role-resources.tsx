@@ -5,6 +5,7 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   BlocksIcon,
+  ChevronRightIcon,
   CopyPlusIcon,
   EllipsisIcon,
   FolderLockIcon,
@@ -12,6 +13,7 @@ import {
   PencilIcon,
   PlugIcon,
   PlusIcon,
+  RefreshCwIcon,
   ScanSearchIcon,
   SearchIcon,
   Trash2Icon,
@@ -28,9 +30,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
+import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import {
   addedIds,
+  chromeBrowserLabel,
+  codexAvailability,
+  codexStaleMs,
   draftDirty,
   findResource,
   formatBytes,
@@ -43,13 +49,15 @@ import {
   skillBytes,
   skillText,
   uniqueName,
+  type CodexAvailability,
   type ResourceKind,
 } from "@/lib/stack/roles";
-import { nodeKey, type RoleMcpServer, type RoleSkill, type RoleSnapshot, type RoleTrustedProject } from "@/lib/stack/types";
+import { relativeTime } from "@/lib/stack/derive";
+import { nodeKey, type CodexToolsProblem, type RoleInternalServer, type RoleMcpServer, type RoleSkill, type RoleSnapshot, type RoleTrustedProject } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { errorMessage } from "./auth-actions";
 import { Empty } from "./primitives";
-import { useStack, useWorkbench } from "./provider";
+import { useNow, useStack, useStore, useWorkbench } from "./provider";
 import type { StackState } from "@/lib/stack/store";
 import { resourceOperation, useRoleActions, useRoleView } from "./role-actions";
 import { footerButton, Section, Window } from "./window";
@@ -125,28 +133,38 @@ export function RoleMcpServersWindow() {
 /**
  * The default MCP fleet this Role's later launches connect to, one switch each. They come from the
  * shared fleet catalog, so they are neither created nor deleted here; a switch changes only this Role.
+ * Codex tool bridges also show the server's availability observation, a separate axis from the switch.
  */
 function StackServers() {
-  const { roleInternal, status, remote } = useStack();
+  const { roleInternal, codexTools, status, remote } = useStack();
   const actions = useRoleActions();
   const view = useRoleView();
+  const now = useNow(30_000);
   const list = roleInternal.data;
   const connected = status.roles === "open" && remote?.scope !== "view";
   const { on, total } = internalCounts(list?.servers ?? []);
+  const readable = status.serve === "open" && !!codexTools.data && !codexTools.error;
+  const checking = !!codexTools.data?.checking;
+  const observed = (name: string) => codexTools.data?.connections.find((item) => item.name === name);
   // With no Role in view there are no switches to show; the window's own placeholder says why.
   if (view.blank) return null;
   return (
     <Section title="Stack servers" aside={list ? <span className="text-[0.65rem] text-muted-foreground tabular-nums">{on} of {total} on</span> : undefined}>
       {list?.servers.length ? (
         <ul aria-label="Stack servers" className="grid grid-cols-2 gap-x-1">
-          {list.servers.map((server) => (
-            <li key={server.name} className="flex min-w-0 items-center gap-2 rounded-lg py-1 pr-1.5 pl-2 transition-colors hover:bg-muted/70">
-              <Switch size="sm" checked={server.enabled} disabled={!connected || actions.pending.has(`internal:${server.name}`)} aria-label={`${server.name} on`}
-                onCheckedChange={(enabled) => { actions.setInternalMcp(server.name, enabled).catch((error) => toast.error(errorMessage(error))); }} />
-              <span className={cn("min-w-0 flex-1 truncate font-mono text-[0.78rem] font-medium", !server.enabled && "text-muted-foreground")} title={server.name}>{server.name}</span>
-              {!server.enabled ? <span className={cn(chip, "bg-muted text-muted-foreground")}>Off</span> : null}
-            </li>
-          ))}
+          {list.servers.map((server) => {
+            const availability = server.kind === "codex" ? codexAvailability(observed(server.name), readable, checking, now) : null;
+            return (
+              <li key={server.name} className="flex min-w-0 items-center gap-2 rounded-lg py-1 pr-1.5 pl-2 transition-colors hover:bg-muted/70">
+                <Switch size="sm" checked={server.enabled} disabled={!connected || actions.pending.has(`internal:${server.name}`)} aria-label={`${server.title} on`}
+                  onCheckedChange={(enabled) => { actions.setInternalMcp(server.name, enabled).catch((error) => toast.error(errorMessage(error))); }} />
+                <span className={cn("min-w-0 flex-1 truncate text-[0.78rem] font-medium", server.kind === "package" && "font-mono", !server.enabled && "text-muted-foreground")}
+                  title={server.description ? `${server.name}: ${server.description}` : server.name}>{server.title}</span>
+                {availability ? <AvailabilityDot availability={availability} /> : null}
+                {!server.enabled ? <span className={cn(chip, "bg-muted text-muted-foreground")}>Off</span> : null}
+              </li>
+            );
+          })}
         </ul>
       ) : (
         <p className="px-1.5 text-[0.7rem] text-muted-foreground">{list ? "No Stack servers are configured." : roleInternal.error ? `Stack servers unavailable: ${roleInternal.error}` : "Reading Stack servers…"}</p>
@@ -155,8 +173,111 @@ function StackServers() {
       <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">
         Switches apply to later Bot launches and new Workers; running sessions keep their connections. New Stack servers start on.
       </p>
+      {list?.servers.some((server) => server.kind === "codex") ? <CodexToolsAvailability servers={list.servers.filter((server) => server.kind === "codex")} now={now} /> : null}
     </Section>
   );
+}
+
+const dotTone: Record<CodexAvailability["tone"], string> = {
+  ok: "bg-emerald-500", warn: "bg-amber-500", error: "bg-destructive", unknown: "border border-muted-foreground/60 bg-transparent",
+};
+
+function AvailabilityDot({ availability }: { availability: CodexAvailability }) {
+  const label = `${availability.label}${availability.stale ? " (may be out of date)" : ""}`;
+  return <span role="img" aria-label={label} title={label} className={cn("size-1.5 shrink-0 rounded-full", dotTone[availability.tone], availability.stale && "opacity-50")} />;
+}
+
+const runtimeSource: Record<string, string> = { override: "STACK_CODEX_TOOLS_BIN", standalone: "standalone Codex", "chatgpt-app": "ChatGPT app", "codex-app": "Codex app" };
+
+/**
+ * Server-wide observations of the Codex tool bridges, with each one's recovery guidance. Reading shows
+ * the cached result; only the Check buttons start the server's bounded, single-flight check.
+ */
+function CodexToolsAvailability({ servers, now }: { servers: RoleInternalServer[]; now: number }) {
+  const { codexTools, status, remote } = useStack();
+  const store = useStore();
+  const [asking, setAsking] = useState(false);
+  const data = codexTools.data;
+  const readable = status.serve === "open" && !!data && !codexTools.error;
+  const checking = !!data?.checking;
+  // Checks start a desktop runtime, so they stay with local operators.
+  const canCheck = status.serve === "open" && !remote && !checking && !asking;
+  const check = (chromeBrowser: boolean) => {
+    setAsking(true);
+    store.checkCodexTools(chromeBrowser).catch((error) => toast.error(errorMessage(error))).finally(() => setAsking(false));
+  };
+  const checkedAt = data?.checkedAt ? Date.parse(data.checkedAt) : null;
+  const summary = !readable
+    ? codexTools.error ? `Availability unknown: ${codexTools.error}` : status.serve !== "open" ? "Availability unknown while the server connection is closed." : "Reading availability…"
+    : checking ? "Checking the selected Codex installation…"
+      : checkedAt === null ? "Not checked since the server started."
+        : `Checked ${relativeTime(checkedAt, now)}${now - checkedAt > codexStaleMs ? ", may be out of date" : ""}${data.runtime.source ? ` · ${runtimeSource[data.runtime.source]}` : ""}.`;
+  return (
+    <div className="flex flex-col gap-1 border-t pt-2">
+      <div className="flex items-center gap-2 px-1.5">
+        <h4 className="text-[0.7rem] font-medium">Codex tools availability</h4>
+        <span role="status" className="min-w-0 flex-1 truncate text-[0.66rem] text-muted-foreground" title={summary}>{summary}</span>
+        <Button size="xs" variant="outline" disabled={!canCheck} onClick={() => check(false)} title={remote ? "Checks run only from the local UI" : "List each upstream tool catalog in a temporary Codex runtime"}>
+          {checking || asking ? <Spinner /> : <RefreshCwIcon />}Check
+        </Button>
+      </div>
+      {readable && data.runtime.problem ? <ProblemText problem={data.runtime.problem} /> : null}
+      <ul aria-label="Codex tools availability" className="flex flex-col">
+        {servers.map((server) => {
+          const connection = data?.connections.find((item) => item.name === server.name);
+          const availability = codexAvailability(connection, readable, checking, now);
+          return (
+            <li key={server.name}>
+              <details className="group rounded-md px-1.5 py-0.5 open:bg-muted/40">
+                <summary className="flex cursor-pointer list-none items-center gap-2 py-0.5 text-[0.72rem] [&::-webkit-details-marker]:hidden">
+                  <ChevronRightIcon className="size-3 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
+                  <span className="font-medium">{server.title}</span>
+                  <span className="font-mono text-[0.64rem] text-muted-foreground">{server.name}</span>
+                  <span className="ml-auto flex items-center gap-1.5 text-[0.66rem] text-muted-foreground">
+                    <AvailabilityDot availability={availability} />{availability.label}
+                    {server.name === "chrome" && readable && !checking && connection?.catalog.state === "available" ? ` · ${chromeBrowserLabel(connection.browser)}` : ""}
+                    {server.enabled ? "" : " · off for this Role"}
+                  </span>
+                </summary>
+                <div className="flex flex-col gap-1 pt-1 pb-1.5 pl-5 text-[0.68rem] text-pretty text-muted-foreground">
+                  <p>{server.description}</p>
+                  {connection ? <p>Upstream: {connection.upstream}.</p> : null}
+                  {readable && !checking && connection ? (
+                    <>
+                      {connection.catalog.evidence ? <p>{connection.catalog.evidence}{connection.catalog.checkedAt ? ` (${relativeTime(Date.parse(connection.catalog.checkedAt), now)})` : ""}</p> : null}
+                      {connection.catalog.problem ? <ProblemText problem={connection.catalog.problem} /> : null}
+                      {connection.catalog.state === "available" ? <p>A listed catalog does not show that a Bot or Worker connected, that an app or site is approved, or that approvals can be answered.</p> : null}
+                      {connection.browser && connection.catalog.state === "available" ? (
+                        <div className="flex flex-col gap-1 rounded-md border bg-background/60 px-2 py-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-foreground">{chromeBrowserLabel(connection.browser)}</span>
+                            <Button size="xs" variant="outline" className="ml-auto" disabled={!canCheck} onClick={() => check(true)} title="Ask the Chrome extension which browsers are connected; no page is read">
+                              Check browser
+                            </Button>
+                          </div>
+                          {connection.browser.evidence ? <p>{connection.browser.evidence}{connection.browser.checkedAt ? ` (${relativeTime(Date.parse(connection.browser.checkedAt), now)})` : ""}</p> : null}
+                          {/* The heading already states the observation; add only the next step. */}
+                          {connection.browser.problem ? <p className="text-foreground">{connection.browser.problem.recovery}</p> : null}
+                          <p>Stack&rsquo;s managed Browser profiles in Browse are separate from this browser.</p>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
+              </details>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">
+        Availability describes the server&rsquo;s selected desktop installation. It never changes a switch; unavailable connections stay selectable.
+      </p>
+    </div>
+  );
+}
+
+function ProblemText({ problem }: { problem: CodexToolsProblem }) {
+  return <p className="text-foreground"><span className="font-medium">{problem.message}</span> {problem.recovery}</p>;
 }
 
 export function RoleProjectsWindow() {

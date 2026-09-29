@@ -47,6 +47,15 @@ const browserTools: Projection[] = [
   browser("export_content", "Export readable page content to a local file and return its path.", { tab_id }, "await tab.content.export()"),
 ];
 
+/** Exactly one Chrome extension browser is usable; other families and managed profiles never substitute. */
+const chromeBrowser = `b => b.type === "extension" && (b.family === "chrome" || /^(Google )?Chrome$/i.test(b.name))`;
+
+/** Counts Chrome extension browsers without reading or acting on any page. */
+export function chromeBrowserProbe(modulePath: string): string {
+  return ["await (async () => {", `const { setupBrowserRuntime } = await import(${JSON.stringify(modulePath)});`, "const agent = await setupBrowserRuntime();",
+    `const matches = (await agent.browsers.list()).filter(${chromeBrowser});`, "nodeRepl.write(JSON.stringify({ chromeBrowsers: matches.length }));", "})();"].join("\n");
+}
+
 function projections(surface: "computer" | "chrome") { return surface === "computer" ? computerTools : browserTools; }
 export function projectedTools(surface: "computer" | "chrome"): Tool[] {
   return projections(surface).map(({ name, description, schema, readOnly }) => ({
@@ -65,7 +74,7 @@ export function projectedProgram(surface: "computer" | "chrome", name: string, i
     `globalThis.__stackChrome ??= await (async () => {`,
     `  const { setupBrowserRuntime } = await import(${JSON.stringify(modulePath)});`,
     `  const agent = await setupBrowserRuntime();`,
-    `  const matches = (await agent.browsers.list()).filter(b => b.type === "extension" && (b.family === "chrome" || /^(Google )?Chrome$/i.test(b.name)));`,
+    `  const matches = (await agent.browsers.list()).filter(${chromeBrowser});`,
     `  if (matches.length !== 1) throw new Error("Chrome extension must expose exactly one browser; select the intended Chrome profile in the desktop app.");`,
     `  return await agent.browsers.get(matches[0].id);`,
     `})();`,

@@ -76,7 +76,7 @@ not add a UI approval workflow.
 ## Consequences
 
 The existing Roles switches express selection without a separate integration
-category. Installation readiness is distinct from selection and currently
-appears as MCP discovery/call errors rather than a dedicated UI status. Changes
+category. Installation readiness is distinct from selection; explicit checks and
+their cached observations are described in [ADR 0131](0131-codex-tools-availability.md). Changes
 take effect in the server-served app after the normal authorized rebuild/restart;
 existing Bot and Worker launches keep their connection snapshots.

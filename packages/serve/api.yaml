@@ -1,13 +1,13 @@
 name: serve
-description: Owns stack child processes and reports status, cached process-tree CPU and memory observations, and bounded resource history.
+description: Owns stack child processes and reports status, cached process-tree CPU and memory observations, bounded resource history, and Codex tool bridge diagnostics.
 socket:
-  description: Unix socket for server status, paged resource snapshots, recent history and payload-free change events, namespaced as serve.
+  description: Unix socket for server status, Codex tool diagnostics and checks, paged resource snapshots, recent history and payload-free change events, namespaced as serve.
 mcp:
   workerOperations: []
-  operations: [serve_status, serve_resources, serve_resource_history]
+  operations: [serve_status, serve_codex_tools, serve_resources, serve_resource_history]
   events: all
-  description: HTTP MCP tools for owned-process status and read-only resource observations, forwarded to the server socket.
+  description: HTTP MCP tools for owned-process status, cached Codex tool diagnostics and read-only resource observations, forwarded to the server socket.
 websocket:
-  operations: [serve_status, serve_resources, serve_resource_history]
+  operations: [serve_status, serve_codex_tools, serve_codex_tools_check, serve_resources, serve_resource_history]
   events: all
-  description: Loopback WebSocket for owned-process status, resource snapshots/history and change events, forwarded to the server socket.
+  description: Loopback WebSocket for owned-process status, Codex tool diagnostics and checks, resource snapshots/history and change events, forwarded to the server socket.

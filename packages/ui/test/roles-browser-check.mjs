@@ -37,11 +37,38 @@ const handlers = {
   bot_defaults_get: () => ({ model: "fixture", reasoningEffort: "medium", sandboxMode: "danger-full-access", approvalPolicy: "never" }),
   voice_status: () => ({ call: null }),
   // The gateway admits serve only with every operation its manifest selects; this check reads none of them.
+  serve_codex_tools: () => structuredClone(codexTools),
+  // A check is admitted at once and reports through codex_tools_changed, like the server's single-flight check.
+  serve_codex_tools_check: ({ chromeBrowser = false }) => {
+    if (codexTools.checking) return { admitted: false, status: structuredClone(codexTools) };
+    codexTools.checking = { startedAt: new Date().toISOString(), chromeBrowser };
+    setTimeout(() => {
+      const at = new Date().toISOString();
+      for (const connection of codexTools.connections) {
+        connection.catalog = codexResults[connection.name](at);
+        if (connection.browser && chromeBrowser) connection.browser = { state: "none", checkedAt: at, evidence: "The Chrome extension listed 0 Chrome browsers. No tab or page was read.",
+          problem: { code: "no_browser", message: "No Chrome browser is connected through the ChatGPT extension.", recovery: "Open Chrome with the ChatGPT extension signed in, then check the browser again." } };
+      }
+      Object.assign(codexTools, { checking: null, checkedAt: at, runtime: { state: "found", source: "chatgpt-app", checkedAt: at, problem: null } });
+      serveFixture.publish("codex_tools_changed");
+    }, 300);
+    queueMicrotask(() => serveFixture.publish("codex_tools_changed"));
+    return { admitted: true, status: structuredClone(codexTools) };
+  },
   serve_resources: () => { throw new Error("not part of this fixture"); },
   serve_resource_history: () => { throw new Error("not part of this fixture"); },
   worker_list: () => ({ workers: workerList }),
   worker_runtime_list: () => ({ runtimes: [] }),
 };
+const notChecked = { state: "not_checked", checkedAt: null, tools: null, evidence: null, problem: null };
+const codexTools = { checking: null, checkedAt: null, runtime: { state: "not_checked", source: null, checkedAt: null, problem: null },
+  connections: [["computer-use", "Computer Use"], ["chrome", "Chrome"], ["messages", "Messages"], ["computer-history", "Computer History"], ["openai-developer-docs", "OpenAI Developer Docs"]]
+    .map(([name, title]) => ({ name, title, description: `${title} fixture`, upstream: "Fixture upstream", catalog: notChecked, browser: name === "chrome" ? { state: "not_checked", checkedAt: null, evidence: null, problem: null } : null })) };
+const available = (tools) => (at) => ({ state: "available", checkedAt: at, tools, evidence: "Fixture catalog listed. No tool was called.", problem: null });
+const missing = (at) => ({ state: "unavailable", checkedAt: at, tools: null, evidence: "The live catalog has no usable server.",
+  problem: { code: "plugin_unavailable", message: "Messages is not in the selected installation's live tool catalog.", recovery: "Install and enable this plugin in the desktop app, then check again." } });
+const codexResults = { "computer-use": available(11), chrome: available(15), messages: missing, "computer-history": missing, "openai-developer-docs": available(3) };
+let serveFixture;
 const fixture = (names) => fixtureOperations(names, handlers);
 /** Lets the page miss change notices, or lag one write, so stale-revision paths are exercised deterministically. */
 const wrapSockets = () => {
@@ -77,12 +104,13 @@ try {
   const doc = (name, api) => fixtureDoc(name, api, websocket.url, publishedJsonSchema);
   const catalog = [doc("roles", rolesApi), doc("bots", botsApi), doc("serve"), doc("worker"), doc("api")];
   handlers.docs_snapshot = () => ({ packages: catalog });
-  for (const [name, names, topics] of [["serve", ["serve_status", "serve_resources", "serve_resource_history"], { pids_changed: "Fixture" }], ["bots", ["bot_list", "bot_defaults_get", "voice_status"], botsApi.events.topics],
+  for (const [name, names, topics] of [["serve", ["serve_status", "serve_codex_tools", "serve_codex_tools_check", "serve_resources", "serve_resource_history"], { pids_changed: "Fixture", codex_tools_changed: "Fixture", resources_changed: "Fixture" }], ["bots", ["bot_list", "bot_defaults_get", "voice_status"], botsApi.events.topics],
     ["worker", ["worker_list", "worker_runtime_list"], { workers_changed: "Fixture" }], ["api", ["docs_snapshot"], {}]]) {
     const served = await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {}, operations: fixture(names),
       events: { topics, scope: name === "bots" ? { valid: () => true, description: "Fixture", example: "bot-1" } : undefined } });
     sockets.push(served);
     if (name === "bots") botsSocket = served;
+    if (name === "serve") serveFixture = served;
     if (name === "worker") workerSocket = served;
   }
   const nextPort = await port();
@@ -118,7 +146,9 @@ try {
   const tap = (locator) => locator.click({ timeout: 2_000 }).catch(async () => { await page.getByRole("button", { name: /Fit bench/ }).click(); await locator.click(); });
   const selectRole = (name) => tap(roleRow(name).getByRole("button").first());
   const toast = (text) => page.locator("[data-sonner-toast]").filter({ hasText: text }).first();
-  const stackSwitch = (name) => servers.getByRole("switch", { name: `${name} on`, exact: true });
+  // Switches are named by display title; Package API titles are their keys.
+  const titles = Object.fromEntries((await rolesCall("role_internal_mcp_list", { roleId: (await rolesCall("roles_snapshot")).defaultRoleId })).servers.map((server) => [server.name, server.title]));
+  const stackSwitch = (name) => servers.getByRole("switch", { name: `${titles[name] ?? name} on`, exact: true });
 
   // A fresh installation provisions Manager as the Bot default and Worker as the Worker default; the page edits the Bot default first.
   const provisioned = await rolesCall("roles_snapshot");
@@ -676,7 +706,7 @@ try {
   await count(total).waitFor();
   assert.deepEqual(Object.values(await enabledNow(A)).every(Boolean), true, "every server is on in a newly created Role");
   assert.deepEqual(Object.values(await enabledNow(B)).every(Boolean), true);
-  await servers.getByText("Switches apply to later Bot launches and new Workers; running sessions keep their connections. New Stack packages start on.").waitFor();
+  await servers.getByText("Switches apply to later Bot launches and new Workers; running sessions keep their connections. New Stack servers start on.").waitFor();
   await preview.getByRole("button", { name: "Launch", exact: false }).click();
   await preview.getByText(`${total} of ${total} Stack servers on · 1 from the Role`).waitFor();
   // Off for this Role only, and the preview tells enabled from configured.
@@ -686,9 +716,26 @@ try {
   await count(total - 1).waitFor();
   await servers.locator("li").filter({ has: page.getByText("bots", { exact: true }) }).getByText("Off", { exact: true }).waitFor();
   await preview.getByText(`${total - 1} of ${total} Stack servers on · 1 from the Role`).waitFor();
-  assert.equal(await preview.locator('[title="Off for this Role"]').count(), 1);
+  assert.equal(await preview.locator('[title$="Off for this Role"]').count(), 1);
   assert.deepEqual((await rolesCall("role_launch_preview", { roleId: A })).internalMcpServers.filter((server) => !server.enabled).map((server) => server.name), ["bots"]);
   await shot("roles-internal-off");
+  // Codex bridge availability is a separate axis: an unchecked server is explicit, and a check never moves a switch.
+  const availability = servers.getByRole("list", { name: "Codex tools availability" });
+  await servers.getByText("Not checked since the server started.").waitFor();
+  assert.equal(await availability.getByText("Not checked", { exact: true }).count(), 5);
+  await servers.getByRole("button", { name: "Check", exact: true }).click();
+  await servers.getByText(/^Checked (just now|\d+s ago) · ChatGPT app\.$/).waitFor();
+  const codexRow = (title) => availability.locator("li").filter({ has: page.getByText(title, { exact: true }) });
+  await codexRow("Messages").getByText("Unavailable", { exact: true }).waitFor();
+  await codexRow("Chrome").getByText(/Catalog available · Browser connection not checked/).waitFor();
+  await codexRow("Messages").locator("summary").click();
+  await codexRow("Messages").getByText(/Install and enable this plugin/).waitFor();
+  await codexRow("Chrome").locator("summary").click();
+  await codexRow("Chrome").getByRole("button", { name: "Check browser" }).click();
+  await codexRow("Chrome").getByText(/Catalog available · No Chrome browser connected/).waitFor();
+  assert.equal(await servers.getByRole("img", { name: "Unavailable" }).count() >= 2, true, "unavailable bridges keep their rows and switches");
+  assert.ok(Object.values(await enabledNow(B)).every(Boolean), "checks change no switch");
+  await shot("roles-codex-availability");
   await stackSwitch("bots").click();
   await until(() => enabledNow(A), (value) => value.bots === true, "bots to switch on");
   await count(total).waitFor();

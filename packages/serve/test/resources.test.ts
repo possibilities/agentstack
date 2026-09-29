@@ -5,7 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { operation, serveSocket, socketCall, socketSubscribe } from "@stack/api";
+import { CodexToolsDiagnostics, operation, serveSocket, socketCall, socketSubscribe } from "@stack/api";
 import { z } from "zod";
 import { api, serverResources, serverResourceHistory, type ServerContext } from "../api.js";
 import { StatusSource } from "../src/status.js";
@@ -351,7 +351,7 @@ test("Claude session process roots share account attribution without fabricating
 test("resource operations and payload-free invalidations work on the existing socket transport", async () => {
   const state = await mkdtemp(join(tmpdir(), "resource-api-"));
   const resources = new ResourceMonitor({ roots: () => roots, collect: async () => collection(tree()), domains: async () => domains() });
-  const context: ServerContext = { source: new StatusSource(), resources };
+  const context: ServerContext = { source: new StatusSource(), resources, codexTools: new CodexToolsDiagnostics({}) };
   const socket = await serveSocket({ info: { path: join(state, "serve.sock"), name: "serve", description: "test", transportDescription: "test" },
     context, operations: [serverResources, serverResourceHistory], events: { topics: api.events!.topics! } });
   const stop = await api.events!.start(context, (topic) => socket.publish!(topic));

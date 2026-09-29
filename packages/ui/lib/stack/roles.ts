@@ -1,4 +1,4 @@
-import type { Bot, Role, RoleCatalog, RoleCategory, RoleFragment, RoleInternalMcp, RoleInternalServer, RoleLaunchPreview, RoleMcpDefinition, RoleMcpServer, RolePreview, RoleRenderContext, RoleSkill, RoleSkillFile, RoleSnapshot, RoleTrustedProject, WorkerSession } from "./types";
+import type { Bot, CodexToolsConnection, Role, RoleCatalog, RoleCategory, RoleFragment, RoleInternalMcp, RoleInternalServer, RoleLaunchPreview, RoleMcpDefinition, RoleMcpServer, RolePreview, RoleRenderContext, RoleSkill, RoleSkillFile, RoleSnapshot, RoleTrustedProject, WorkerSession } from "./types";
 
 /** Mirrors the Roles API's title limit. */
 export const titleLimit = 200;
@@ -752,4 +752,37 @@ export function mcpTarget(definition: RoleMcpDefinition): string {
 export function projectBots(launch: RoleLaunchPreview | null, projectId: string, bots: Bot[] | null): Bot[] {
   const cwds = new Set((launch?.cwds ?? []).filter((entry) => entry.trustedProjectIds.includes(projectId)).map((entry) => entry.cwd));
   return (bots ?? []).filter((bot) => cwds.has(bot.cwd));
+}
+
+/** Past this age a Codex tools observation is shown as possibly out of date. */
+export const codexStaleMs = 60 * 60_000;
+export type CodexAvailability = { label: string; tone: "ok" | "warn" | "error" | "unknown"; stale: boolean };
+
+/**
+ * A Codex bridge's catalog availability, separate from the Role switch. Anything that makes the held
+ * observation uncertain (a failed read, a check in progress, no check yet) reads as such, never as the
+ * last result.
+ */
+export function codexAvailability(connection: CodexToolsConnection | undefined, readable: boolean, checking: boolean, now: number): CodexAvailability {
+  if (!connection || !readable) return { label: "Unknown", tone: "unknown", stale: false };
+  if (checking) return { label: "Checking…", tone: "unknown", stale: false };
+  const { state, checkedAt } = connection.catalog;
+  const stale = checkedAt !== null && now - Date.parse(checkedAt) > codexStaleMs;
+  switch (state) {
+    case "available": return { label: "Catalog available", tone: "ok", stale };
+    case "unavailable": return { label: "Unavailable", tone: "warn", stale };
+    case "failed": return { label: "Check failed", tone: "error", stale };
+    default: return { label: "Not checked", tone: "unknown", stale: false };
+  }
+}
+
+/** Chrome's extension browser observation, which catalog availability does not imply. */
+export function chromeBrowserLabel(browser: CodexToolsConnection["browser"]): string {
+  switch (browser?.state) {
+    case "connected": return "One Chrome browser connected";
+    case "none": return "No Chrome browser connected";
+    case "multiple": return "Several Chrome browsers connected";
+    case "failed": return "Browser check failed";
+    default: return "Browser connection not checked";
+  }
 }

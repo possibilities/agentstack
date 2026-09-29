@@ -34,12 +34,14 @@ const preview = z.strictObject({ roleId, revision, rendered: z.string(), segment
   bytes: z.number().int().nonnegative().describe("UTF-8 size of rendered."), limitBytes: z.number().int().positive().describe("Largest rendered size an edit may produce.") });
 const write = selection.extend({ expectedRevision: revision });
 const count = z.number().int().nonnegative();
+const internalServer = z.strictObject({ name: z.string().describe("Stable connection key."), title: z.string().describe("Display name; the key for Package APIs."),
+  description: z.string(), kind: z.enum(["package", "codex"]).describe("A Package API, or a Codex tool bridge whose availability serve_codex_tools reports."), enabled: z.boolean() });
 const launchPreview = z.strictObject({
   roleId, revision,
   instructions: z.strictObject({ bytes: count.describe("UTF-8 size of SYSTEM_APPEND.md."), limitBytes: count, fragments: count.describe("Fragments that render.") }),
   skills: z.array(z.strictObject({ id, name: resourceName, description: resourceDescription, files: count.describe("Supporting files beside SKILL.md."),
     bytes: count.describe("Decoded size of the body and supporting files.") })).describe("Enabled role skills in order; each becomes skills/<name>/SKILL.md."),
-  internalMcpServers: z.array(z.strictObject({ name: z.string(), enabled: z.boolean() })).describe("The default MCP fleet and its enablement for this Role. Only enabled servers enter new Bot and Worker launches."),
+  internalMcpServers: z.array(internalServer).describe("The default MCP fleet and its enablement for this Role. Only enabled servers enter new Bot and Worker launches."),
   mcpServers: z.array(z.strictObject({ id, name: resourceName, type: z.enum(["http", "stdio"]) })).describe("Enabled role MCP servers in order."),
   config: z.string().describe("The config.toml tables the Role contributes for its enabled MCP servers, exactly as launches write them."),
   trustedProjects: z.array(z.strictObject({ id, path: projectPath })).describe("Enabled trusted project roots in order."),
@@ -58,7 +60,10 @@ function summarize(result: z.infer<typeof launchSnapshot>): z.infer<typeof snaps
   return { ...result, mcpServers: result.mcpServers.map(({ definition, ...record }) => ({ ...record, transport: definition.type })) };
 }
 function changed(ctx: RolesContext, result: z.infer<typeof launchSnapshot>) { ctx.changed?.(); return { roleId: result.id, revision: result.revision }; }
-const internalMcpNames = async () => (await configuredMcpServers(workspaceRoot(import.meta.dirname))).map((pkg) => pkg.name);
+const internalMcpServers = () => configuredMcpServers(workspaceRoot(import.meta.dirname));
+const internalMcpNames = async () => (await internalMcpServers()).map((pkg) => pkg.name);
+const internalRows = (servers: Awaited<ReturnType<typeof internalMcpServers>>, disabled: string[]) =>
+  servers.map(({ name, title, description, kind }) => ({ name, title, description, kind, enabled: !disabled.includes(name) }));
 /** Refuse a role MCP server a launch would refuse, whether or not it is enabled now. */
 async function ensureRoleMcp(ctx: RolesContext, name?: string, definition?: z.infer<typeof mcpDefinition>): Promise<void> {
   const origins = new Set(ctx.mcpOrigins ?? []);
@@ -100,12 +105,12 @@ export const roleDelete = operation({
 });
 export const roleInternalMcpList = operation({
   name: "role_internal_mcp_list", description: "List Stack's default MCP fleet (Package APIs and Codex tool bridges) and whether each is enabled in this Role. All are on unless explicitly disabled; new servers are on by default. These switches control launch connections, not tool availability or running sessions.",
-  input: selection, output: z.strictObject({ roleId, revision, servers: z.array(z.strictObject({ name: z.string(), enabled: z.boolean() })) }),
+  input: selection, output: z.strictObject({ roleId, revision, servers: z.array(internalServer) }),
   annotations: { title: "List internal role MCP servers", readOnlyHint: true },
   async call(ctx: RolesContext, { roleId }) {
-    const names = await internalMcpNames();
+    const servers = await internalMcpServers();
     const value = ctx.store.role(roleId).snapshot();
-    return { roleId, revision: value.revision, servers: names.map((name) => ({ name, enabled: !value.disabledInternalMcpServers.includes(name) })) };
+    return { roleId, revision: value.revision, servers: internalRows(servers, value.disabledInternalMcpServers) };
   },
 });
 export const roleInternalMcpUpdate = operation({
@@ -150,8 +155,8 @@ export const roleLaunchPreview = operation({
   async call(ctx: RolesContext, { roleId, cwds = [], context }) {
     const value = ctx.store.role(roleId).snapshot();
     const { rendered, segments } = renderSegments(value, context);
-    const internal = await internalMcpNames();
-    const serverNames = new Set(internal.map((name) => name.toLowerCase()));
+    const internal = await internalMcpServers();
+    const serverNames = new Set(internal.map(({ name }) => name.toLowerCase()));
     const origins = new Set(ctx.mcpOrigins ?? []);
     const issues = value.mcpServers.flatMap((server) => {
       const message = roleMcpConflict(server, serverNames, origins);
@@ -164,7 +169,7 @@ export const roleLaunchPreview = operation({
       instructions: { bytes: Buffer.byteLength(rendered), limitBytes: instructionLimitBytes, fragments: segments.length },
       skills: value.skills.filter((skill) => skill.enabled).map((skill) => ({ id: skill.id, name: skill.name, description: skill.description, files: skill.files.length,
         bytes: Buffer.byteLength(skill.body) + skill.files.reduce((sum, file) => sum + Buffer.from(file.contentBase64, "base64").length, 0) })),
-      internalMcpServers: internal.map((name) => ({ name, enabled: !value.disabledInternalMcpServers.includes(name) })),
+      internalMcpServers: internalRows(internal, value.disabledInternalMcpServers),
       mcpServers: value.mcpServers.filter((server) => server.enabled).map((server) => ({ id: server.id, name: server.name, type: server.definition.type })),
       config: roleMcpConfig(value),
       trustedProjects: enabledProjects.map((project) => ({ id: project.id, path: project.path })),

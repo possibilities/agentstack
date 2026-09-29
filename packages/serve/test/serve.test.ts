@@ -100,7 +100,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     assert.equal((await fetch(url, { method: "POST" })).status, 401);
     await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: operatorHeaders(env) } }));
     try {
-      assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), ["serve_status", "serve_resources", "serve_resource_history", "events_catalog", "events_subscribe", "events_status", "events_unsubscribe"]);
+      assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), ["serve_status", "serve_codex_tools", "serve_resources", "serve_resource_history", "events_catalog", "events_subscribe", "events_status", "events_unsubscribe"]);
       const result = await client.callTool({ name: "serve_status", arguments: {} });
       assert.equal((result.structuredContent as { pid?: number } | undefined)?.pid, child.pid);
       const resources = await client.callTool({ name: "serve_resources", arguments: {} });

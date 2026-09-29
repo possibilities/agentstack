@@ -274,6 +274,23 @@ export type ServerStatus = {
   children: ServerChild[];
 };
 
+/** `serve_codex_tools`: sanitized server-wide observations of the Codex tool bridges; they reset on server restart. */
+export type CodexToolsProblem = { code: "runtime_missing" | "config_invalid" | "plugin_unavailable" | "browser_module_missing" | "no_browser" | "multiple_browsers"
+  | "approval_required" | "probe_failed" | "probe_timeout"; message: string; recovery: string };
+export type CodexToolsConnection = {
+  name: string; title: string; description: string; upstream: string;
+  /** available: the upstream catalog listed it. Not proof a consumer connected, a site/app is approved, or recording is on. */
+  catalog: { state: "not_checked" | "available" | "unavailable" | "failed"; checkedAt: string | null; tools: number | null; evidence: string | null; problem: CodexToolsProblem | null };
+  /** Chrome only: the extension's browser list when last asked. */
+  browser: { state: "not_checked" | "connected" | "none" | "multiple" | "failed"; checkedAt: string | null; evidence: string | null; problem: CodexToolsProblem | null } | null;
+};
+export type CodexToolsStatus = {
+  checking: { startedAt: string; chromeBrowser: boolean } | null;
+  checkedAt: string | null;
+  runtime: { state: "not_checked" | "found" | "missing" | "invalid"; source: "override" | "standalone" | "chatgpt-app" | "codex-app" | null; checkedAt: string | null; problem: CodexToolsProblem | null };
+  connections: CodexToolsConnection[];
+};
+
 /** Mirror of the server resource API's wire shapes (packages/serve resources schema). */
 export type ResourceMetrics = {
   processCount: number;
@@ -541,8 +558,8 @@ export type RoleReceipt = { roleId: string; revision: number };
 /** `role_preview`: the exact SYSTEM_APPEND.md text for the next launch, with each fragment's [start, end) span. */
 export type RolePreview = { roleId: string; revision: number; rendered: string; bytes: number; limitBytes: number;
   segments: Array<{ categoryId: string; fragmentId: string; start: number; end: number }> };
-/** A configured internal Stack MCP server and whether the Role's later launches connect to it. */
-export type RoleInternalServer = { name: string; enabled: boolean };
+/** A configured internal Stack MCP server and whether the Role's later launches connect to it. `title` is the key for Package APIs. */
+export type RoleInternalServer = { name: string; title: string; description: string; kind: "package" | "codex"; enabled: boolean };
 /** `role_internal_mcp_list`: the servers configured now, each with this Role's switch. */
 export type RoleInternalMcp = { roleId: string; revision: number; servers: RoleInternalServer[] };
 

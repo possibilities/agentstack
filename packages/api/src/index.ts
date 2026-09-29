@@ -48,3 +48,4 @@ export { runWebSocket } from "./run-websocket.js";
 export { serveApi, type ServedApi } from "./serve.js";
 export { runApi } from "./run.js";
 export { api, docsGet, docsList, docsSnapshot, type DocsContext } from "../api.js";
+export { CodexToolsDiagnostics, type CodexToolsStatus, type CodexToolsConnection, type CodexToolsCatalog, type CodexToolsBrowser, type CodexToolsRuntime, type CodexToolsProblem, type CodexToolsProblemCode } from "./codex-mcp/diagnostics.js";

@@ -9,6 +9,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { CallToolResultSchema, ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { serveMcp } from "../src/mcp.js";
+import { CodexToolsDiagnostics } from "../src/codex-mcp/diagnostics.js";
 import { operatorHeaders } from "../src/local-auth.js";
 import { botMcpUrl, workerMcpUrl } from "../src/bot-mcp-identity.js";
 import { serveSocket } from "../src/socket.js";
@@ -121,4 +122,77 @@ test("Codex HTTP MCP isolates sessions, preserves upstream tools/media/approvals
     await listener.close();
     for (const pid of (await readFile(join(root, "starts"), "utf8")).trim().split("\n").map(Number)) assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
   } finally { await Promise.all(clients.map(client => client.close())); await listener.close(); await bots.close(); await workers.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("Codex tools diagnostics observe the installation only on an explicit, single-flight check", { timeout: 30_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "stack-codex-diagnostics-"));
+  const binary = join(root, "codex");
+  const log = join(root, "methods");
+  // node_repl and messages are listed; computer-history and openaiDeveloperDocs are absent.
+  await writeFile(binary, `#!${process.execPath}
+import {createInterface} from 'node:readline';
+import {appendFileSync} from 'node:fs';
+const send = value => process.stdout.write(JSON.stringify(value)+'\\n');
+createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method) appendFileSync(${JSON.stringify(log)}, process.pid+' '+m.method+'\\n');
+ if(m.method==='initialize') send({id:m.id,result:{}});
+ else if(m.method==='thread/start') send({id:m.id,result:{thread:{id:'probe'}}});
+ else if(m.method==='mcpServerStatus/list') send({id:m.id,result:{data:[{name:'node_repl',runtimeStatus:'ready',tools:{js:{name:'js',inputSchema:{type:'object'}}}},{name:'messages',runtimeStatus:'ready',tools:{a:{},b:{}}},{name:'computer-history',runtimeStatus:'disabled',tools:{c:{}}}],nextCursor:null}});
+ else if(m.method==='mcpServer/tool/call') send({id:m.id,result:{content:[{type:'text',text:JSON.stringify({chromeBrowsers:m.params.arguments.code.includes('browser-client.mjs')?2:-1})}],isError:false}});
+});
+`);
+  await chmod(binary, 0o700);
+  const plugin = join(root, "plugins", "cache", "openai-bundled", "chrome", "latest", "scripts");
+  await mkdir(plugin, { recursive: true });
+  await writeFile(join(plugin, "browser-client.mjs"), "");
+  const env: NodeJS.ProcessEnv = { STACK_CODEX_TOOLS_HOME: root, STACK_CODEX_TOOLS_BIN: binary };
+  const diagnostics = new CodexToolsDiagnostics(env);
+  const catalog = (name: string) => diagnostics.snapshot().connections.find((item) => item.name === name)!;
+  const methods = async () => (await readFile(log, "utf8").catch(() => "")).trim().split("\n").filter(Boolean).map((line) => line.split(" "));
+  try {
+    assert.equal(diagnostics.snapshot().runtime.state, "not_checked");
+    assert.ok(diagnostics.snapshot().connections.every((item) => item.catalog.state === "not_checked"));
+    assert.deepEqual(await methods(), [], "reading never starts a runtime");
+
+    const first = diagnostics.check();
+    const joined = diagnostics.check({ chromeBrowser: true });
+    assert.equal(first.admitted, true);
+    assert.equal(joined.admitted, false);
+    assert.ok(joined.status.checking);
+    await diagnostics.settled();
+    const status = diagnostics.snapshot();
+    assert.equal(status.checking, null);
+    assert.deepEqual([status.runtime.state, status.runtime.source], ["found", "override"]);
+    assert.deepEqual(Object.fromEntries(status.connections.map((item) => [item.name, item.catalog.state])), {
+      "computer-use": "available", chrome: "available", messages: "available", "computer-history": "unavailable", "openai-developer-docs": "unavailable" });
+    assert.equal(catalog("messages").catalog.tools, 2);
+    assert.equal(catalog("computer-history").catalog.problem?.code, "plugin_unavailable");
+    assert.equal(catalog("chrome").browser?.state, "not_checked", "catalog availability is not a connected browser");
+    const firstRun = await methods();
+    assert.equal(new Set(firstRun.map(([pid]) => pid)).size, 1, "joined checks share one runtime");
+    assert.deepEqual(firstRun.map(([, method]) => method), ["initialize", "initialized", "thread/start", "mcpServerStatus/list"]);
+
+    assert.equal(diagnostics.check({ chromeBrowser: true }).admitted, true);
+    await diagnostics.settled();
+    assert.deepEqual([catalog("chrome").browser?.state, catalog("chrome").browser?.problem?.code], ["multiple", "multiple_browsers"]);
+    assert.ok(!(await methods()).some(([, method]) => method.startsWith("turn/")), "no model turn starts");
+    for (const pid of new Set((await methods()).map(([pid]) => Number(pid)))) assert.throws(() => process.kill(pid, 0), /ESRCH/, "probe runtimes are reaped");
+
+    // A failed refresh replaces earlier availability instead of leaving it current.
+    const before = catalog("messages").catalog.checkedAt!;
+    await writeFile(binary, `#!${process.execPath}\nprocess.exit(3);\n`);
+    diagnostics.check();
+    await diagnostics.settled();
+    assert.ok(diagnostics.snapshot().connections.every((item) => item.catalog.state === "failed" && item.catalog.problem?.code === "probe_failed"));
+    assert.ok(catalog("messages").catalog.checkedAt! >= before);
+    assert.equal(catalog("chrome").browser?.state, "not_checked");
+
+    env.STACK_CODEX_TOOLS_BIN = join(root, "missing");
+    diagnostics.check();
+    await diagnostics.settled();
+    assert.equal(diagnostics.snapshot().runtime.state, "missing");
+    assert.ok(diagnostics.snapshot().connections.every((item) => item.catalog.state === "unavailable" && item.catalog.problem?.code === "runtime_missing"));
+    assert.doesNotMatch(JSON.stringify(diagnostics.snapshot()), new RegExp(root), "observations carry no local paths");
+  } finally { await diagnostics.close(); await rm(root, { recursive: true, force: true }); }
 });

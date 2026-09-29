@@ -211,8 +211,8 @@ function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating:
             </button>
           ))}
           {launch.internalMcpServers.map((server) => server.enabled
-            ? <span key={server.name} className={cn(chip, "bg-muted text-muted-foreground")} title="Stack server, bound to each launch">{server.name}</span>
-            : <span key={server.name} className={cn(chip, "bg-muted/40 text-muted-foreground/70 line-through")} title="Off for this Role">{server.name}<span className="sr-only"> (off for this Role)</span></span>)}
+            ? <span key={server.name} className={cn(chip, "bg-muted text-muted-foreground")} title={`${server.name} · Stack server, bound to each launch. ${server.description}`}>{server.title}</span>
+            : <span key={server.name} className={cn(chip, "bg-muted/40 text-muted-foreground/70 line-through")} title={`${server.name} · Off for this Role`}>{server.title}<span className="sr-only"> (off for this Role)</span></span>)}
         </div>
         {launch.config ? (
           <div className="flex flex-col gap-1">

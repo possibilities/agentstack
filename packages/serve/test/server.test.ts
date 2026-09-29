@@ -299,8 +299,8 @@ test("server api serves status and pids_changed on its socket", async () => {
       events: { topics: Record<string, string> } | null;
       tools: Array<{ name: string }>;
     };
-    assert.deepEqual(listed.tools.map((tool) => tool.name), ["serve_status", "serve_resources", "serve_resource_history", "serve_local_connect", "serve_local_revoke"]);
-    assert.deepEqual(Object.keys(listed.events?.topics ?? {}), ["pids_changed", "resources_changed"]);
+    assert.deepEqual(listed.tools.map((tool) => tool.name), ["serve_status", "serve_codex_tools", "serve_codex_tools_check", "serve_resources", "serve_resource_history", "serve_local_connect", "serve_local_revoke"]);
+    assert.deepEqual(Object.keys(listed.events?.topics ?? {}), ["pids_changed", "codex_tools_changed", "resources_changed"]);
 
     const empty = (await socketCall(served.socketPath, "tools/call", { name: "serve_status", arguments: {} })) as {
       pid: number;
@@ -363,3 +363,32 @@ async function waitFor(check: () => boolean, timeoutMs: number): Promise<void> {
   }
   assert.ok(check(), "condition was not met before the deadline");
 }
+
+test("serve socket checks Codex tools only on request and announces the finished observation", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-codex-tools-"));
+  // An absent runtime keeps the check off the desktop while exercising the real context and event path.
+  const env = { ...process.env, STACK_STATE_DIR: stateDir, STACK_CODEX_TOOLS_HOME: stateDir, STACK_CODEX_TOOLS_BIN: join(stateDir, "absent-codex") };
+  const served = await serveApi({ name: "serve", transport: "socket", env });
+  const received: string[] = [];
+  const subscription = await socketSubscribe(served.socketPath!, ["codex_tools_changed"], (topic) => received.push(topic));
+  type Status = { checking: unknown; runtime: { state: string }; connections: Array<{ name: string; catalog: { state: string; problem: { code: string } | null } }> };
+  const read = () => socketCall(served.socketPath!, "tools/call", { name: "serve_codex_tools", arguments: {} }) as Promise<Status>;
+  try {
+    assert.equal((await read()).runtime.state, "not_checked");
+    assert.deepEqual(received, [], "reading starts no check");
+    const admitted = await socketCall(served.socketPath!, "tools/call", { name: "serve_codex_tools_check", arguments: {} }) as { admitted: boolean };
+    assert.equal(admitted.admitted, true);
+    for (let i = 0; i < 200 && (await read()).checking; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    for (let i = 0; i < 100 && received.length < 2; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    const status = await read();
+    assert.equal(status.runtime.state, "missing");
+    assert.deepEqual(status.connections.map((item) => [item.name, item.catalog.state, item.catalog.problem?.code]), [
+      ["computer-use", "unavailable", "runtime_missing"], ["chrome", "unavailable", "runtime_missing"], ["messages", "unavailable", "runtime_missing"],
+      ["computer-history", "unavailable", "runtime_missing"], ["openai-developer-docs", "unavailable", "runtime_missing"]]);
+    assert.deepEqual(received, ["codex_tools_changed", "codex_tools_changed"], "start and finish are announced");
+  } finally {
+    await subscription.close();
+    await served.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});

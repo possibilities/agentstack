@@ -1,4 +1,4 @@
-export { api, serverStatus, serverResources, serverResourceHistory, serverLocalConnect, serverLocalRevoke, topics, type ServerContext, type ServerTopic } from "../api.js";
+export { api, serverStatus, serverCodexTools, serverCodexToolsCheck, serverResources, serverResourceHistory, serverLocalConnect, serverLocalRevoke, topics, type ServerContext, type ServerTopic } from "../api.js";
 export { serverResourcesInput, serverResourcesOutput, serverResourceHistoryInput, serverResourceHistoryOutput,
   type ResourceMetrics, type ResourceScope, type ResourceProcess, type ResourceHost, type ResourceCoverage, type ServerRuntime,
   type ResourcesInput, type ResourcesOutput, type HistoryInput, type HistoryOutput } from "./resources/schema.js";

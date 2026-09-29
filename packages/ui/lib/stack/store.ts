@@ -1,5 +1,5 @@
 import { loadCatalog } from "./catalog";
-import type { AccessSnapshot } from "./types";
+import type { AccessSnapshot, CodexToolsStatus } from "./types";
 import { Channel } from "./channel";
 import { loadResources, mergeHistory } from "./resources";
 import { asText, itemKindFor, itemLimit, scopeKey, sha256Hex } from "./content";
@@ -63,6 +63,8 @@ export type StackState = Snapshot & {
   roleContextShown: Partial<Record<PreviewKey, string>>;
   /** The internal Stack MCP servers configured now, each with the selected Role's switch. */
   roleInternal: Resource<RoleInternalMcp>;
+  /** Cached Codex tool bridge observations; only `checkCodexTools` starts a runtime. */
+  codexTools: Resource<CodexToolsStatus>;
   /** Local-only PATH inventory; no Roles window consumes it until the shim UI is requested. */
   roleShims: Resource<RoleShims>;
   signalStatus: Resource<AttentionStatus>;
@@ -171,7 +173,7 @@ const itemPage = 100;
 const settingsWrites = new Set(["bot_settings_patch", "bot_settings_apply", "worker_settings_patch", "worker_settings_apply"]);
 export const contentDocumentLimit = 200;
 
-type ResourceKey = ContentKey | "access" | "server" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "roleCatalog" | "role" | "rolePreview" | "roleLaunch" | "roleInternal" | "roleShims" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts" | "signalStatus" | "scrapeStatus" | "scrapePresets" | "scrapeCanaries" | "scrapeQueue"
+type ResourceKey = ContentKey | "access" | "server" | "codexTools" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "roleCatalog" | "role" | "rolePreview" | "roleLaunch" | "roleInternal" | "roleShims" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts" | "signalStatus" | "scrapeStatus" | "scrapePresets" | "scrapeCanaries" | "scrapeQueue"
   | "browserProfiles" | "browserControllers" | "browserHandoffs" | "browserToolchain"
   | "brainStatus" | "brainStats" | "brainTags" | "brainJobStats" | "brainJobs" | "brainSources"
   | "procSchedules" | "procRuns" | "procStatus";
@@ -275,6 +277,7 @@ export class StackStore {
       notifyCounts: { data: null, error: null, at: null }, notificationRecords: {},
       roleId: null, role: { data: null, error: null, at: null }, rolePreview: { data: null, error: null, at: null },
       roleLaunch: { data: null, error: null, at: null }, roleInternal: { data: null, error: null, at: null }, roleShims: { data: null, error: null, at: null },
+      codexTools: { data: null, error: null, at: null },
       roleContext: {}, roleContextShown: {},
       signalStatus: { data: null, error: null, at: null }, signalGeneration: 0, signalRecords: { items: {}, messages: {}, runs: {} },
       contentDocuments: { data: null, error: null, at: null }, contentTags: { data: null, error: null, at: null },
@@ -330,10 +333,11 @@ export class StackStore {
       this.main.set(pkg, channel.connect());
     };
     // resources_changed is a five-second sampling tick: refreshing state must not flood the activity log.
-    open("serve", () => { this.refresh("server"); this.refresh("resources"); this.refreshWatchedHistories(); }, (topic) => {
+    open("serve", () => { this.refresh("server"); this.refresh("codexTools"); this.refresh("resources"); this.refreshWatchedHistories(); }, (topic) => {
       if (topic === "pids_changed") this.refresh("server");
+      if (topic === "codex_tools_changed") this.refresh("codexTools");
       if (topic === "resources_changed") { this.refresh("resources"); this.refreshWatchedHistories(); }
-    }, ["pids_changed", "resources_changed"], { silent: ["resources_changed"] });
+    }, ["pids_changed", "codex_tools_changed", "resources_changed"], { silent: ["resources_changed"] });
     open("auth", () => { this.refresh("accounts"); this.refresh("workerAccounts"); this.refresh("login"); this.refresh("workerLogins"); }, (topic) => {
       this.refresh("accounts");
       if (topic === "worker_accounts_changed") this.refresh("workerAccounts");
@@ -553,6 +557,15 @@ export class StackStore {
   refreshBrowse = (): void => {
     for (const key of ["browserProfiles", "browserControllers", "browserHandoffs", "browserToolchain"] as const) this.refresh(key);
   };
+
+  /**
+   * Start one server-side check of the Codex tool bridges. It returns on admission; the result arrives
+   * with `codex_tools_changed`. A check already running is joined, never repeated.
+   */
+  checkCodexTools = (chromeBrowser = false): Promise<void> =>
+    this.call<{ admitted: boolean; status: CodexToolsStatus }>("serve", "serve_codex_tools_check", { chromeBrowser })
+      .then((result) => { this.set({ codexTools: { data: result.status, error: null, at: Date.now() } }); })
+      .finally(() => this.refresh("codexTools"));
 
   /** Re-read Scrape's status, presets and canary inventory. */
   refreshScrape = (): void => {
@@ -1288,6 +1301,7 @@ export class StackStore {
     switch (key) {
       case "access": return call<AccessSnapshot>("access", "access_snapshot");
       case "server": return call<ServerStatus>("serve", "serve_status");
+      case "codexTools": return call<CodexToolsStatus>("serve", "serve_codex_tools");
       case "resources": return loadResources((name, args) => call<never>("serve", name, args)) as Promise<ServerResources>;
       case "accounts": return call<{ accounts: Account[] }>("auth", "account_list").then((result) => result.accounts);
       case "workerAccounts": return call<{ accounts: WorkerAccount[] }>("auth", "worker_account_list").then((result) => result.accounts);
