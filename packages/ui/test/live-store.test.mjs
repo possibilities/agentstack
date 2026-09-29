@@ -335,7 +335,7 @@ test("Role reads follow the selected Role: another Role's response never lands, 
   const original = globalThis.WebSocket;
   const sockets = new Set();
   const role = (id, revision) => ({ id, name: `Role ${id}`, description: "", revision, createdAt: null, updatedAt: null });
-  let catalog = { revision: 4, defaultRoleId: "A", roles: [role("A", 3), role("B", 1)] };
+  let catalog = { revision: 4, defaultRoleId: "A", workerDefaultRoleId: "B", roles: [role("A", 3), role("B", 1)] };
   const revisions = { A: 3, B: 1 };
   const calls = [];
   const gates = new Map();
@@ -475,7 +475,7 @@ test("Role reads follow the selected Role: another Role's response never lands, 
     await until(store, () => calls.filter((call) => call === "internal:B").length > internalReads && store.getState().roleInternal.data?.revision === 6);
 
     // The selected Role is deleted elsewhere: its data is dropped at once and nothing more is read for it.
-    catalog = { revision: 5, defaultRoleId: "A", roles: [role("A", 120)] };
+    catalog = { revision: 5, defaultRoleId: "A", workerDefaultRoleId: "A", roles: [role("A", 120)] };
     publish("roles", "role_changed");
     await until(store, () => store.getState().roleCatalog.data?.revision === 5 && store.getState().role.data === null);
     await settle();

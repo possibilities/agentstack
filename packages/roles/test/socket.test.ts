@@ -5,7 +5,7 @@ import test from "node:test";
 import { serveApi, socketCall, socketSubscribe } from "@stack/api";
 
 async function createRole(socket: string): Promise<string> {
-  const result = await socketCall(socket, "tools/call", { name: "role_create", arguments: { expectedRevision: 0, name: "Default" } }) as { defaultRoleId: string };
+  const result = await socketCall(socket, "tools/call", { name: "roles_snapshot", arguments: {} }) as { defaultRoleId: string };
   return result.defaultRoleId;
 }
 

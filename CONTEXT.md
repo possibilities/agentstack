@@ -94,7 +94,7 @@ _Avoid_: per-chat cost, unique RAM, complete accounting
 
 ## Worker
 
-An Stack-owned native session started by a Bot (or the local operator) under one enabled Worker account in an owned Git worktree. Its backend is ACP or the Claude Agent SDK. It retains its account, model/effort, selected Role ID and revision, transcript and origin across turns. A new Worker uses the current default Role unless creation selects another; it receives enabled skills and MCP connections, never Role instruction fragments. Closing a Worker retains the worktree and branch for review. _Avoid_: Bot, active account, disposable prompt
+An Stack-owned native session started by a Bot (or the local operator) under one enabled Worker account in an owned Git worktree. Its backend is ACP or the Claude Agent SDK. It retains its account, model/effort, selected Role ID and revision, transcript and origin across turns. A new Worker uses the Worker default Role unless creation selects another; it receives its enabled instructions, skills and MCP connections. The initial Worker Role has no instruction fragments, but later edits can add them. Closing a Worker retains the worktree and branch for review. _Avoid_: Bot, active account, disposable prompt
 
 ## Worker turn
 

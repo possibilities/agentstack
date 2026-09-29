@@ -13,7 +13,7 @@ export type Category = { id: string; title: string; description: string; enabled
 export const roleName = z.string().trim().min(1).max(200).describe("Human-readable role name; unique case-insensitively.");
 export const roleDescription = z.string().max(4_000);
 export type Role = { id: string; name: string; description: string; revision: number } & Stamps;
-export type RoleCatalog = { revision: number; defaultRoleId: string | null; roles: Role[] };
+export type RoleCatalog = { revision: number; defaultRoleId: string | null; workerDefaultRoleId: string | null; roles: Role[] };
 export type RoleSnapshot = Role & { categories: Category[]; skills: Skill[]; mcpServers: RoleMcpServer[]; trustedProjects: TrustedProject[]; disabledInternalMcpServers: string[] };
 
 function canonicalProjectRoot(path: string): string {
@@ -81,13 +81,14 @@ export class RoleStore {
     return readCatalog(this.db);
   }
 
-  /** Resolve an explicit Role or the default and read its content in the same SQLite snapshot. */
-  launchSnapshot(roleId?: string): RoleSnapshot {
+  /** Resolve an explicit Role or the audience's default in the same SQLite snapshot. */
+  launchSnapshot(roleId?: string, audience: "bot" | "worker" = "bot"): RoleSnapshot {
     return transaction(this.db, false, () => {
       if (roleId) return this.role(roleId).readSnapshot();
-      const { default_role_id } = this.db.prepare("SELECT default_role_id FROM role_catalog WHERE singleton = 1").get() as { default_role_id: string | null };
-      if (!default_role_id) throw new Error("no default role; create the first role before launching");
-      return this.role(default_role_id).readSnapshot();
+      const catalog = this.readCatalog();
+      const selected = audience === "worker" ? catalog.workerDefaultRoleId : catalog.defaultRoleId;
+      if (!selected) throw new Error(`no ${audience} default role; provision Roles before launching`);
+      return this.role(selected).readSnapshot();
     });
   }
 
@@ -109,10 +110,19 @@ export class RoleStore {
     });
   }
 
+  setWorkerDefault(expectedRevision: number, roleId: string): RoleCatalog {
+    return this.changeCatalog(expectedRevision, () => {
+      this.role(roleId).metadata();
+      this.db.prepare("UPDATE role_catalog SET worker_default_role_id = ? WHERE singleton = 1").run(roleId);
+    });
+  }
+
   deleteRole(expectedRevision: number, roleId: string): RoleCatalog {
     return this.changeCatalog(expectedRevision, () => {
       this.role(roleId).metadata();
-      if (this.readCatalog().defaultRoleId === roleId) throw new Error("cannot delete the default role; mark another role as default first");
+      const catalog = this.readCatalog();
+      if (catalog.defaultRoleId === roleId) throw new Error("cannot delete the default role; mark another role as default first");
+      if (catalog.workerDefaultRoleId === roleId) throw new Error("cannot delete the Worker default role; select another Worker default first");
       for (const table of ["fragments", "categories", "skills", "role_mcp_servers", "trusted_projects", "disabled_internal_mcp"]) {
         this.db.prepare(`DELETE FROM ${table} WHERE role_id = ?`).run(roleId);
       }
@@ -134,9 +144,11 @@ export class RoleStore {
 }
 
 function readCatalog(db: DatabaseSync): RoleCatalog {
-  const row = db.prepare("SELECT revision, default_role_id FROM role_catalog WHERE singleton = 1").get() as { revision: number; default_role_id: string | null };
+  const row = db.prepare("SELECT revision, default_role_id, worker_default_role_id FROM role_catalog WHERE singleton = 1").get() as {
+    revision: number; default_role_id: string | null; worker_default_role_id: string | null;
+  };
   const roles = db.prepare("SELECT id, name, description, revision, created_at AS createdAt, updated_at AS updatedAt FROM roles ORDER BY rowid").all() as Role[];
-  return { revision: row.revision, defaultRoleId: row.default_role_id, roles };
+  return { revision: row.revision, defaultRoleId: row.default_role_id, workerDefaultRoleId: row.worker_default_role_id, roles };
 }
 
 function transaction<T>(db: DatabaseSync, write: boolean, action: () => T): T {

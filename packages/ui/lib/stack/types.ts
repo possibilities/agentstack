@@ -497,7 +497,7 @@ export type RoleTrustedProject = { id: string; path: string; description: string
 /** A named Role in `roles_snapshot`. `revision` is the Role's own; names are unique ignoring ASCII case. */
 export type Role = { id: string; name: string; description: string; revision: number; createdAt: number | null; updatedAt: number | null };
 /** `roles_snapshot`: Roles in creation order. `revision` is the catalog-wide edit fence, not any Role's. */
-export type RoleCatalog = { revision: number; defaultRoleId: string | null; roles: Role[] };
+export type RoleCatalog = { revision: number; defaultRoleId: string | null; workerDefaultRoleId: string | null; roles: Role[] };
 /** `role_editor_snapshot`: operator-only definitions; ordinary snapshots and write replies use MCP summaries. */
 export type RoleSnapshot = Role & { categories: RoleCategory[]; skills: RoleSkill[]; mcpServers: RoleMcpServer[]; trustedProjects: RoleTrustedProject[];
   /** Internal Package API names switched off for this Role. Not an inventory: an empty list means every configured server is on. */

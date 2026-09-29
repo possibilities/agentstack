@@ -163,7 +163,7 @@ test("Claude SDK workers preserve account/session continuity, exact permission a
     assert.equal(native.options.env!.ANTHROPIC_API_KEY, undefined); assert.equal(native.options.env!.CLAUDE_CODE_OAUTH_TOKEN, undefined);
     assert.equal(native.options.env!.CLAUDE_CODE_RESUME_INTERRUPTED_TURN, undefined);
     assert.deepEqual(native.options.settingSources, []); assert.equal(native.options.strictMcpConfig, true);
-    assert.deepEqual(native.options.systemPrompt, { type: "preset", preset: "claude_code" });
+    assert.deepEqual(native.options.systemPrompt, { type: "preset", preset: "claude_code", append: "Check your work." });
     const plugin = native.options.plugins![0]!;
     assert.match(await readFile(join(plugin.path, "skills", "fixture", "SKILL.md"), "utf8"), /Review carefully/);
     const internal = native.options.mcpServers!.roles!;
@@ -210,7 +210,7 @@ test("Claude SDK workers preserve account/session continuity, exact permission a
     assert.equal(resumed.sessionId, first.worker.sessionId); assert.notEqual(resumed.runtimeInstance, first.worker.runtimeInstance);
     const resumedNative = sdk.calls.at(-1)!;
     assert.equal(resumedNative.options.resume, first.worker.sessionId);
-    assert.deepEqual(resumedNative.options.systemPrompt, { type: "preset", preset: "claude_code" });
+    assert.deepEqual(resumedNative.options.systemPrompt, { type: "preset", preset: "claude_code", append: "Check your work." });
     assert.equal(resumedNative.options.sessionId, undefined); assert.equal(resumedNative.inputs.length, 0);
     assert.equal(native.inputs.length, beforeLoss + 1); assert.equal(manager.ledger.turn(lost.turn!.id)?.phase, "unknown");
     await manager.send({ id, message: "Explicit correction", requestId: randomUUID() }); await wait(manager, id, "idle");

@@ -327,7 +327,7 @@ export function RoleActionsProvider({ children }: { children: React.ReactNode })
     const label = names.current.get(id) ?? "The Role";
     quiet.current.add(id);
     catalogWrite("role_delete", (held) => !held.roles.some((item) => item.id === id) ? null
-      : held.defaultRoleId === id ? "This Role became the default. Make another Role default first." : { roleId: id }, `delete-role:${id}`)
+      : held.defaultRoleId === id || held.workerDefaultRoleId === id ? "This Role is a launch default. Reassign that default before deleting it." : { roleId: id }, `delete-role:${id}`)
       .then(() => { setRemoving(null); discardDrafts(id); toast.success(`Deleted “${label}”`); }, (error) => { quiet.current.delete(id); toast.error(errorMessage(error)); });
   };
 
@@ -395,7 +395,8 @@ export function RoleActionsProvider({ children }: { children: React.ReactNode })
       </AlertDialog>
       <DefaultDialog role={defaultTarget ?? null} current={catalog?.roles.find((item) => item.id === catalog.defaultRoleId) ?? null}
         pending={defaulting !== null && pending.has(`${catalogScope}:default:${defaulting}`)} onConfirm={makeDefault} onClose={() => setDefaulting(null)} />
-      <DeleteRoleDialog role={removeTarget ?? null} isDefault={Boolean(removeTarget && removeTarget.id === catalog?.defaultRoleId)} edits={removing !== null && drafted.has(removing)}
+       <DeleteRoleDialog role={removeTarget ?? null} defaultFor={removeTarget && (removeTarget.id === catalog?.defaultRoleId || removeTarget.id === catalog?.workerDefaultRoleId)
+         ? [removeTarget.id === catalog?.defaultRoleId ? "Bot" : null, removeTarget.id === catalog?.workerDefaultRoleId ? "Worker" : null].filter(Boolean).join(" and ") : null} edits={removing !== null && drafted.has(removing)}
         pending={removing !== null && pending.has(`${catalogScope}:delete-role:${removing}`)} onConfirm={removeRole} onClose={() => setRemoving(null)} />
     </RoleActionsContext>
   );

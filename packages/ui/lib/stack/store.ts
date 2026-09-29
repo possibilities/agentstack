@@ -181,7 +181,7 @@ function isRoleSnapshot(value: unknown): value is RoleSnapshot {
 }
 
 function isRoleCatalog(value: unknown): value is RoleCatalog {
-  return typeof value === "object" && value !== null && "revision" in value && "roles" in value && "defaultRoleId" in value;
+  return typeof value === "object" && value !== null && "revision" in value && "roles" in value && "defaultRoleId" in value && "workerDefaultRoleId" in value;
 }
 
 function isRoleInternal(value: unknown): value is RoleInternalMcp {

@@ -103,7 +103,7 @@ test("preview pieces label spans from the Role and sizes fall back for an older 
 });
 
 const role = (id, name, revision = 1) => ({ id, name, description: "", revision, createdAt: null, updatedAt: null });
-const catalog = (defaultRoleId, roleList, revision = 1) => ({ revision, defaultRoleId, roles: roleList });
+const catalog = (defaultRoleId, roleList, revision = 1, workerDefaultRoleId = defaultRoleId) => ({ revision, defaultRoleId, workerDefaultRoleId, roles: roleList });
 
 test("a launch is classified by Role identity and revision against the default, never by revision alone", () => {
   const two = catalog("A", [role("A", "Default", 5), role("B", "Researcher", 5)]);
@@ -146,6 +146,10 @@ test("a launch is classified by Role identity and revision against the default, 
     [worker("idle", "A", 5), worker("running", "A", 3), worker("closed", "A", 1), worker("idle", null, null), worker("idle", "B", 5), worker("failed", "B", 1), worker("idle", null, 4)], two);
   assert.deepEqual(launches.bots.map(({ bot, launch }) => [bot.id, launch.state]), [["bot-1", "current"], ["bot-2", "other"], ["bot-5", "unknown"]]);
   assert.deepEqual(launches.workers, { current: 1, older: 1, other: 1, unknown: 1, total: 4 });
+  const split = catalog("A", two.roles, 3, "B");
+  assert.equal(roles.classifyLaunch({ roleId: "A", roleRevision: 5 }, split, "bot").state, "current");
+  assert.equal(roles.classifyLaunch({ roleId: "B", roleRevision: 5 }, split, "worker").state, "current");
+  assert.equal(roles.classifyLaunch({ roleId: "A", roleRevision: 5 }, split, "worker").state, "other");
 });
 
 test("a Role response is fenced by Role ID first and revision second", () => {

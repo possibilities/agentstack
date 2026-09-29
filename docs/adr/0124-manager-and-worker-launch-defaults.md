@@ -1,0 +1,13 @@
+# 124. Separate Manager and Worker launch defaults with instruction-capable Workers
+
+Status: accepted, 2026-09-29. Revises the shared-default decision in [ADR 0118](0118-multiple-roles-and-default.md) and the capability-only Worker rule in [ADR 0122](0122-worker-role-selection-without-instructions.md). Their selected-Role and immutable recovery contracts remain.
+
+## Decision
+
+Roles have two independently selected launch defaults. `defaultRoleId` applies to Bots and native `stack roles inject default`; `workerDefaultRoleId` applies when `worker_start.roleId` is omitted. Explicit selection still resolves the named Role regardless of either default, and idempotent retries retain the original Worker. The two defaults are stable IDs, not name lookups. `role_set_default` changes only Bot launches; `role_set_worker_default` changes only omitted-Role Worker starts. A Role used by either default cannot be deleted until reassigned.
+
+On initialization, a fresh catalog provisions Manager and Worker, with Manager marked as the Bot default and Worker as the Worker default. An older catalog retains its default Role's ID and owned contents, renames it Manager, then creates an independent Worker Role. Worker copies the Manager's skills, additional MCP definitions, internal MCP switches and trusted projects with new resource IDs, but does not copy Categories or Fragments. Existing Role names that conflict with Manager or Worker block this one-time migration transaction rather than silently renaming or overwriting another Role. Once provisioned, edits to either Role never propagate to the other. The migration runs once and is atomic across SQLite catalog and resource writes.
+
+All Worker sessions now receive the selected Role's rendered enabled instruction fragments. ACP sessions prefix their first task once; Claude SDK appends to its native `claude_code` system-prompt preset. The initial Worker Role renders nothing, but later edits or an explicit different selection can supply instructions. Follow-up turns are not prefixed; recovery loads the original private snapshot and the native session rather than resolving a new Role. Bot trusted-project configuration is still Bot-specific; the Worker Role's project records do not grant Worker-native trust.
+
+The Roles catalog and socket-only launch snapshot expose the Worker default, with `audience: "worker"` selecting it when no explicit `roleId` is supplied; the default audience remains Bot. The Roles UI keeps its existing interactions and updates its reads and labels. A new Worker-default control and creation-time picker are deferred to a requested UI design handoff.

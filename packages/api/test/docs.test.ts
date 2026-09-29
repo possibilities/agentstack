@@ -230,7 +230,7 @@ test("the api package serves structured documents for every workspace package", 
     const roles = found.get("roles") as PackageDoc;
     assert.deepEqual(Object.keys(roles.events), ["role_changed"]);
     assert.deepEqual(roles.operations.map((operation) => operation.name).sort(), [
-      "roles_snapshot", "role_create", "role_update", "role_set_default", "role_delete", "role_internal_mcp_list", "role_internal_mcp_update",
+      "roles_snapshot", "role_create", "role_update", "role_set_default", "role_set_worker_default", "role_delete", "role_internal_mcp_list", "role_internal_mcp_update",
       "role_preview", "role_launch_preview", "role_snapshot", "role_editor_snapshot", "role_launch_snapshot", "category_create", "category_delete", "category_reorder", "category_update",
       "fragment_create", "fragment_delete", "fragment_move", "fragment_reorder", "fragment_update",
       "skill_create", "skill_delete", "skill_reorder", "skill_update",
@@ -239,6 +239,7 @@ test("the api package serves structured documents for every workspace package", 
     ].sort());
     const roleView = roles.operations.find((operation) => operation.name === "role_snapshot") as OperationDoc;
     assert.deepEqual(Object.keys(roleView.outputSchema.properties as object).sort(), ["id", "name", "description", "createdAt", "updatedAt", "categories", "mcpServers", "revision", "skills", "trustedProjects", "disabledInternalMcpServers"].sort());
+    assert.ok((roles.operations.find((operation) => operation.name === "roles_snapshot")?.outputSchema.properties as Record<string, unknown>).workerDefaultRoleId);
     assert.equal(roles.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
     assert.deepEqual(Object.keys(auth.events).sort(), ["accounts_changed", "login_changed", "worker_accounts_changed", "worker_login_changed"]);
     assert.deepEqual(

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import { skillRecord, type RoleSnapshot } from "@stack/roles";
+import { renderInstructions, skillRecord, type RoleSnapshot } from "@stack/roles";
 
 export type ClaimedWorktree = { repo: string; cwd: string; branch: string; baseCommit: string; sourceDirty: boolean;
   roleId: string; roleRevision: number };
@@ -111,8 +111,8 @@ export async function saveWorkerRole(stateDir: string, id: string, snapshot: Rol
   await mkdir(join(stateDir, "workers", "roles"), { recursive: true, mode: 0o700 });
   await writeFile(rolePath(stateDir, id), JSON.stringify(snapshot), { mode: 0o600, flag: "wx" });
 }
-/** SDK plugins deliver only Role skills without importing ambient/project Claude settings. */
-export async function claudeRole(stateDir: string, id: string, snapshot: RoleSnapshot): Promise<{ pluginPath: string }> {
+/** SDK plugins deliver Role skills without importing ambient/project Claude settings. */
+export async function claudeRole(stateDir: string, id: string, snapshot: RoleSnapshot): Promise<{ pluginPath: string; roleInstructions: string }> {
   const pluginPath = join(stateDir, "workers", "roles", id, "claude-plugin");
   // The snapshot is immutable; recreation on explicit recovery never changes ambient configuration.
   await rm(pluginPath, { recursive: true, force: true });
@@ -120,7 +120,7 @@ export async function claudeRole(stateDir: string, id: string, snapshot: RoleSna
   await writeFile(join(pluginPath, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "stack-role", version: "1.0.0" }), { mode: 0o600 });
   await mkdir(join(pluginPath, "skills"), { mode: 0o700 });
   for (const skill of snapshot.skills) await writeSkill(join(pluginPath, "skills"), skill);
-  return { pluginPath };
+  return { pluginPath, roleInstructions: renderInstructions(snapshot) };
 }
 export async function loadWorkerRole(stateDir: string, id: string): Promise<RoleSnapshot> {
   const snapshot = JSON.parse(await readFile(rolePath(stateDir, id), "utf8")) as RoleSnapshot;

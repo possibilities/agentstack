@@ -15,7 +15,7 @@ import { Section, Window } from "./window";
 
 type View = "instructions" | "launch";
 const launchWord: Record<LaunchState, string> = { current: "Current", older: "Older revision", other: "Other Role", unknown: "Unknown" };
-const launchTone: Record<LaunchState, string> = { current: "bg-success/15 text-success", older: "bg-warning/15 text-warning", other: "bg-warning/15 text-warning", unknown: "bg-muted text-muted-foreground" };
+const launchTone: Record<LaunchState, string> = { current: "bg-success/15 text-success", older: "bg-warning/15 text-warning", other: "bg-muted text-muted-foreground", unknown: "bg-muted text-muted-foreground" };
 const resourceKinds = new Set(["skill", "mcp-server", "trusted-project", "new-skill", "new-mcp-server", "new-trusted-project"]);
 
 /**
@@ -51,11 +51,12 @@ export function RolePreviewWindow() {
     if (top < 0 || top > scroller.getBoundingClientRect().height - 48) scroller.scrollTop += top / scale - 12;
   }, [focused, preview?.revision]);
 
+  const workerDefault = roleCatalog.data?.roles.find(({ id }) => id === roleCatalog.data?.workerDefaultRoleId) ?? null;
   const hint = (launch: Parameters<typeof launchHint>[0], subject: "bot" | "worker") =>
-    launchHint(launch, current.defaultRole, subject) ?? `${subject === "bot" ? "Launched" : "Started"} with ${launchLabel(launch)}, which is what a launch now would apply`;
+    launchHint(launch, subject === "bot" ? current.defaultRole : workerDefault, subject) ?? `${subject === "bot" ? "Launched" : "Started"} with ${launchLabel(launch)}, which is what a launch now would apply`;
   const stale = [launches.workers.older && `${launches.workers.older} older revision${launches.workers.older === 1 ? "" : "s"}`, launches.workers.other && `${launches.workers.other} other Role${launches.workers.other === 1 ? "" : "s"}`, launches.workers.unknown && `${launches.workers.unknown} unknown Role${launches.workers.unknown === 1 ? "" : "s"}`].filter(Boolean).join(", ");
   const launched = launches.bots.length || launches.workers.total ? (
-    <Section title="Launched" aside={<span className="text-[0.65rem] text-muted-foreground">Compared with the default Role</span>}>
+    <Section title="Launched" aside={<span className="text-[0.65rem] text-muted-foreground">Compared with each launch default</span>}>
       <ul className="flex flex-col gap-1">
         {launches.bots.map(({ bot, launch }) => (
           <li key={bot.id} className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-[0.78rem]">
@@ -66,7 +67,7 @@ export function RolePreviewWindow() {
           </li>
         ))}
         {launches.workers.total ? (
-          <li className="px-1.5 py-1 text-[0.7rem] text-muted-foreground" title="Open Workers keep the snapshot they started with; new Workers use the default Role">
+          <li className="px-1.5 py-1 text-[0.7rem] text-muted-foreground" title="Open Workers keep the snapshot they started with; new Workers use the Worker default Role">
             {launches.workers.total} open Worker{launches.workers.total === 1 ? "" : "s"}{stale ? ` · ${stale}` : " · all current"}
           </li>
         ) : null}

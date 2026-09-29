@@ -24,12 +24,10 @@ test("Bot launches resolve the current default and apply its internal MCP switch
   try {
     await supervisor.load();
     const account = supervisor.store.addAccount(JSON.stringify({ tokens: { refresh_token: "fixture", access_token: "fixture", id_token: "fixture.jwt.signature" } })).id;
-    await assert.rejects(supervisor.start({ id: "one", cwd: root, account }), /no default role/);
-    assert.equal(launches.length, 0);
-    let catalog = supervisor.role.createRole(0, "First");
+    let catalog = supervisor.role.catalog();
     const first = catalog.defaultRoleId!;
     catalog = supervisor.role.createRole(catalog.revision, "Second");
-    const second = catalog.roles[1]!.id;
+    const second = catalog.roles.at(-1)!.id;
     const started = await supervisor.start({ id: "one", cwd: root, account });
     assert.equal(started.roleId, first);
     assert.equal(started.roleRevision, 0);

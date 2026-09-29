@@ -126,8 +126,8 @@ test("a database from before timestamps keeps its records with unknown times", a
     const store = openRole(root);
     try {
       let state = store.snapshot();
-      assert.equal(state.revision, 4);
-      assert.equal(state.name, "Default");
+      assert.equal(state.revision, 5);
+      assert.equal(state.name, "Manager");
       assert.deepEqual(state.disabledInternalMcpServers, []);
       assert.equal(state.createdAt, null);
       assert.deepEqual(state.skills.map(({ name, body, files, enabled }) => ({ name, body, files, enabled })), [

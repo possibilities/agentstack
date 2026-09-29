@@ -1,6 +1,7 @@
 # 122. Select a Worker's Role at creation and deliver capabilities without Role instructions
 
 Status: accepted, 2026-09-29. Extends [ADR 0118](0118-multiple-roles-and-default.md)'s default selection and revises its no-per-Worker-selector decision. Supersedes the Worker instruction-delivery portions of [ADR 0038](0038-durable-acp-worker-execution.md) and [ADR 0060](0060-claude-sdk-workers.md). Their session, snapshot, permission and recovery contracts remain.
+The shared-default and no-instruction portions below were revised by [ADR 0124](0124-manager-and-worker-launch-defaults.md).
 
 ## Decision
 

@@ -1,4 +1,5 @@
 import { socketCall, socketPath, type InvocationContext } from "@stack/api";
+import { renderInstructions } from "@stack/roles";
 import { record, type AcpRequest } from "./acp.js";
 import { currentOption, effortOption, modelOption, optionsOf } from "./catalog.js";
 import { WorkerLedger, summarizeTurn, type WorkerRecord, type TurnSummary, type PendingRequest } from "./ledger.js";
@@ -307,7 +308,8 @@ export class WorkerManager {
         this.response(id, reserved.turn.id, "session/new", value);
       } finally { if (--creating.count === 0) this.creating.delete(runtime.instance); }
       await this.select(id, reserved.turn.id, runtime, result.sessionId as string, result, input.model, input.effort ?? null);
-      this.prompt(id, reserved.turn.id, input.task);
+      const instructions = renderInstructions(snapshot);
+      this.prompt(id, reserved.turn.id, account.provider !== "claude" && instructions ? `${instructions}\n\n${input.task}` : input.task);
     } catch {
       const issue = `${stage} preparation failed; inspect the owned worktree and account runtime`;
       this.ledger.setTurnPhase(reserved.turn.id, "failed", null, issue);

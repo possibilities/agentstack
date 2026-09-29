@@ -29,7 +29,7 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
   const otherAccount = store.addAccount(JSON.stringify({ tokens: { refresh_token: "other", access_token: "access", id_token: "fixture.jwt.signature" } })).id;
   store.close();
   const roles = new RoleStore(stateDir);
-  roles.createRole(0, "Fixture");
+  roles.role(roles.catalog().defaultRoleId!).update(0, { name: "Fixture" });
   roles.close();
   const env = { ...process.env, STACK_STATE_DIR: stateDir };
   const auth = await serveApi({ name: "auth", transport: "socket", env });

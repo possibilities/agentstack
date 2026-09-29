@@ -13,7 +13,7 @@ test("stack roles snapshot reads the Role from its package socket", async () => 
   let server: Awaited<ReturnType<typeof serveApi>> | undefined;
   try {
     server = await serveApi({ name: "roles", transport: "socket", env });
-    await socketCall(server.socketPath!, "tools/call", { name: "role_create", arguments: { expectedRevision: 0, name: "Default" } });
+    const catalog = await socketCall(server.socketPath!, "tools/call", { name: "roles_snapshot", arguments: {} }) as { defaultRoleId: string };
     const cli = fileURLToPath(new URL("../../../cli/dist/src/main.js", import.meta.url));
     const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
       const child = spawn(process.execPath, [cli, "roles", "snapshot"], { env });
@@ -25,7 +25,8 @@ test("stack roles snapshot reads the Role from its package socket", async () => 
       child.once("exit", code => resolve({ code, stdout, stderr }));
     });
     assert.equal(result.code, 0, result.stderr);
-    const snapshot = JSON.parse(result.stdout) as { revision: number };
+    const snapshot = JSON.parse(result.stdout) as { id: string; revision: number };
+    assert.equal(snapshot.id, catalog.defaultRoleId);
     assert.equal(typeof snapshot.revision, "number");
   } finally {
     await server?.close();

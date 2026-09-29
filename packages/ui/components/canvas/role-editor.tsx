@@ -518,8 +518,8 @@ function NewRoleEditor() {
       <form className="flex flex-col gap-3" aria-label="New role" onSubmit={(event) => { event.preventDefault(); create(); }} onKeyDown={saveKeys(create)}>
         <p className={hintClass}>
           {catalog && !catalog.roles.length
-            ? "This will be the default Role: every Bot launch and new Worker uses it once it exists."
-            : "A new Role starts empty and is not the default. Make it default when it is ready; nothing already running changes."}
+            ? "A new Role starts empty. Bots and Workers have separate launch defaults."
+            : "A new Role starts empty and is not a launch default. Existing sessions keep their Role."}
         </p>
         <RoleFields id={formId} value={draft.value} set={draft.set} issue={issue} hint={nameHint} />
         {error ? <p role="alert" className="px-0.5 text-[0.72rem] text-pretty text-destructive">{error}</p> : null}

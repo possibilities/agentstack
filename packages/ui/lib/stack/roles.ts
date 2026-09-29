@@ -196,16 +196,16 @@ export type LaunchState =
 export type Launch = { state: LaunchState; roleId: string | null; roleRevision: number; name: string | null };
 
 /**
- * Classify what a Bot or Worker launched with by comparing `(roleId, roleRevision)` with the catalog's default.
+ * Classify what a Bot or Worker launched with against its audience's default.
  * Null before a launch has applied anything, or before the catalog has loaded.
  */
-export function classifyLaunch(session: { roleId: string | null; roleRevision: number | null }, catalog: RoleCatalog | null): Launch | null {
+export function classifyLaunch(session: { roleId: string | null; roleRevision: number | null }, catalog: RoleCatalog | null, subject: "bot" | "worker" = "bot"): Launch | null {
   // Older records may omit the ID altogether; like a null one it names no Role, so it is never taken for the default.
   if (typeof session.roleRevision !== "number" || !catalog) return null;
   if (!session.roleId) return { state: "unknown", roleId: null, roleRevision: session.roleRevision, name: null };
   const role = catalog.roles.find((item) => item.id === session.roleId) ?? null;
   const launch = { roleId: session.roleId, roleRevision: session.roleRevision, name: role?.name ?? null };
-  if (session.roleId !== catalog.defaultRoleId) return { ...launch, state: "other" };
+  if (session.roleId !== (subject === "worker" ? catalog.workerDefaultRoleId : catalog.defaultRoleId)) return { ...launch, state: "other" };
   // A launch newer than the catalog's read means the catalog is a step behind; that is not "older".
   return { ...launch, state: role && session.roleRevision < role.revision ? "older" : "current" };
 }
@@ -235,7 +235,7 @@ export function roleLaunches(bots: Bot[] | null, workers: WorkerSession[] | null
   });
   const counts = { current: 0, older: 0, other: 0, unknown: 0, total: 0 };
   for (const worker of workers ?? []) {
-    const launch = ["closed", "failed"].includes(worker.phase) ? null : classifyLaunch(worker, catalog);
+    const launch = ["closed", "failed"].includes(worker.phase) ? null : classifyLaunch(worker, catalog, "worker");
     if (!launch) continue;
     counts[launch.state]++;
     counts.total++;

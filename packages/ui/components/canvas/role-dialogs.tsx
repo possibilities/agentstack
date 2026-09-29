@@ -41,24 +41,24 @@ export function DefaultDialog({ role, current, pending, onConfirm, onClose }: {
 }
 
 /** Confirms deleting a Role and everything it owns; the default is never deletable, so it only explains. */
-export function DeleteRoleDialog({ role, isDefault, edits, pending, onConfirm, onClose }: {
-  role: Role | null; isDefault: boolean; edits: boolean; pending: boolean; onConfirm(): void; onClose(): void;
+export function DeleteRoleDialog({ role, defaultFor, edits, pending, onConfirm, onClose }: {
+  role: Role | null; defaultFor: string | null; edits: boolean; pending: boolean; onConfirm(): void; onClose(): void;
 }) {
   return (
     <AlertDialog open={role !== null} onOpenChange={(open) => { if (!open && !pending) onClose(); }}>
       <AlertDialogContent size="sm">
         <AlertDialogHeader>
           <AlertDialogMedia><Trash2Icon /></AlertDialogMedia>
-          <AlertDialogTitle>{isDefault ? `“${role?.name}” is the default` : `Delete “${role?.name}”?`}</AlertDialogTitle>
+           <AlertDialogTitle>{defaultFor ? `“${role?.name}” is the ${defaultFor} default` : `Delete “${role?.name}”?`}</AlertDialogTitle>
           <AlertDialogDescription>
-            {isDefault
-              ? "Make another Role default first. The default cannot be deleted."
+             {defaultFor
+               ? `Reassign the ${defaultFor} default before deleting this Role.`
               : <>This removes its instructions, skills, MCP servers and trusted projects{edits ? ", and discards its unsaved edits" : ""}. Bots and Workers that already launched keep their snapshots. This can’t be undone.</>}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={pending}>{isDefault ? "Close" : "Cancel"}</AlertDialogCancel>
-          {isDefault ? null : (
+           <AlertDialogCancel disabled={pending}>{defaultFor ? "Close" : "Cancel"}</AlertDialogCancel>
+           {defaultFor ? null : (
             <Button variant="destructive" disabled={!role || pending} onClick={onConfirm}>
               {pending ? <Spinner data-icon="inline-start" /> : <Trash2Icon data-icon="inline-start" />}Delete Role
             </Button>

@@ -163,7 +163,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
   const env = { ...process.env, STACK_STATE_DIR: root, STACK_OPENCODE_BIN: binary };
   const auth = await serveApi({ name: "auth", transport: "socket", env });
   const roleStore = new RoleStore(root);
-  const roleId = roleStore.createRole(0, "Worker fixture").defaultRoleId!;
+  const roleId = roleStore.catalog().workerDefaultRoleId!;
   const contents = roleStore.role(roleId);
   let applied = contents.createCategory(0, "Guidance");
   applied = contents.createFragment(applied.revision, applied.categories[0]!.id, "Brief", "Check your work.");
@@ -217,6 +217,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     const id = started.worker.id;
     for (let i = 0; i < 100 && (await manager.status(id)).worker.phase !== "idle"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal((await manager.status(id)).turn?.stopReason, "end_turn");
+    assert.equal(await readFile(join(started.worker.cwd!, "output.txt"), "utf8"), `Check your work.\n\n${start.task}`);
     const listed = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_list", arguments: {} }) as { workers: Awaited<ReturnType<WorkerManager["list"]>> };
     const row = listed.workers.find((worker) => worker.id === id)!;
     assert.equal(row.turn?.phase, "completed"); assert.equal(row.turn?.stopReason, "end_turn"); assert.equal(row.pendingPermissions, 0);
@@ -244,7 +245,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     assert.ok(turnHistory.turns[0]?.dispatchedPromptSeq);
     const chunk = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_record_read", arguments: { id, seq: turnHistory.turns[0]!.dispatchedPromptSeq! } }) as { data: string };
     assert.match(chunk.data, /Write an output file/);
-    assert.equal(chunk.data.includes("Check your work"), false);
+    assert.equal(chunk.data.includes("Check your work"), true);
     assert.ok(scopedChanges.includes(id));
     assert.deepEqual(JSON.parse(await readFile(join(started.worker.cwd!, "mcp-names.json"), "utf8")), ["roles", "fixture-mcp"]);
     const wiring = JSON.parse(await readFile(join(started.worker.cwd!, "mcp-urls.json"), "utf8")) as Array<{ name: string; url: string }>;
@@ -252,7 +253,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     assert.deepEqual(parseWorkerMcpIdentity(new URL(wiring[0]!.url), env), { workerId: id, instance: started.worker.runtimeInstance });
     assert.equal(JSON.stringify(await manager.status(id)).includes("fixture-secret"), false);
     const output = await readFile(join(started.worker.cwd!, "output.txt"), "utf8");
-    assert.equal(output, "Write an output file");
+    assert.equal(output, `Check your work.\n\n${start.task}`);
     const beforePrompt = manager.send({ id, message: "NEVER WRITE THIS", effort: "high", requestId: randomUUID() });
     for (let i = 0; i < 100 && (await manager.status(id)).turn?.phase !== "queued"; i++) await new Promise((resolve) => setTimeout(resolve, 5));
     assert.equal((await manager.status(id)).turn?.phase, "queued");
@@ -303,8 +304,8 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     // Recovery must retain the captured Role and its MCP selection, even after default/content edits.
     contents.setInternalMcp(applied.revision, "roles", false);
     const roleCatalog = roleStore.createRole(roleStore.catalog().revision, "Next worker");
-    const nextRoleId = roleCatalog.roles[1]!.id;
-    roleStore.setDefault(roleCatalog.revision, nextRoleId);
+    const nextRoleId = roleCatalog.roles.at(-1)!.id;
+    roleStore.setWorkerDefault(roleCatalog.revision, nextRoleId);
 
     const reopenedSupervisor = new WorkerSupervisor(root, env);
     manager = new WorkerManager(root, reopenedSupervisor, env);
@@ -331,7 +332,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     assert.equal(chosen.worker.roleRevision, roleStore.role(roleId).snapshot().revision);
     assert.deepEqual(JSON.parse(await readFile(join(chosen.worker.cwd!, "mcp-names.json"), "utf8")), ["fixture-mcp"]);
     assert.match(await readFile(join(chosen.worker.cwd!, ".opencode", "skills", "review", "SKILL.md"), "utf8"), /Review the diff/);
-    assert.equal(await readFile(join(chosen.worker.cwd!, "output.txt"), "utf8"), start.task);
+    assert.equal(await readFile(join(chosen.worker.cwd!, "output.txt"), "utf8"), `Check your work.\n\n${start.task}`);
     await manager.closeWorker(chosen.worker.id);
     await manager.remove(chosen.worker.id, true);
   } finally {

@@ -129,7 +129,7 @@ export class ClaudeBackend implements WorkerBackend {
         cwd: String(params.cwd), env, ...(resume ? { resume: id } : { sessionId: id }), persistSession: true,
         settingSources: [], strictMcpConfig: true, mcpServers, permissionMode: "default", canUseTool: this.canUseTool(session),
         includePartialMessages: true, verbatimPrompts: true,
-        systemPrompt: { type: "preset", preset: "claude_code" },
+        systemPrompt: { type: "preset", preset: "claude_code", ...(typeof params.roleInstructions === "string" && params.roleInstructions ? { append: params.roleInstructions } : {}) },
         ...(typeof params.pluginPath === "string" ? { plugins: [{ type: "local" as const, path: params.pluginPath }], skills: "all" as const } : {}),
         spawnClaudeCodeProcess: (options) => {
           const child = spawn(options.command, options.args, { cwd: options.cwd, env: options.env, signal: options.signal, stdio: ["pipe", "pipe", "pipe"] });

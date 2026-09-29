@@ -267,8 +267,8 @@ function Summary({ worker, status, statusError }: { worker: WorkerSession; statu
   const attention = workerAttention(worker);
   const pending = (status?.pending ?? []).filter((request) => request.state === "pending");
   const bot = bots.data?.some((item) => item.id === worker.botId);
-  const launch = classifyLaunch(worker, roleCatalog.data);
-  const defaultRole = roleCatalog.data?.roles.find((item) => item.id === roleCatalog.data?.defaultRoleId) ?? null;
+  const launch = classifyLaunch(worker, roleCatalog.data, "worker");
+  const defaultRole = roleCatalog.data?.roles.find((item) => item.id === roleCatalog.data?.workerDefaultRoleId) ?? null;
   const active = turn && ["queued", "running", "awaiting_input", "cancelling"].includes(turn.phase);
   const started = turn ? turn.dispatchedAt ?? turn.createdAt : null;
   return (
@@ -294,9 +294,9 @@ function Summary({ worker, status, statusError }: { worker: WorkerSession; statu
         {worker.branch ? <Chip icon={GitBranchIcon} title={worker.branch} copy={worker.branch} label="branch">{worker.baseCommit ? `from ${worker.baseCommit.slice(0, 7)}` : worker.branch}</Chip> : null}
         {worker.sourceDirty ? <Chip icon={TriangleAlertIcon} tone="warning" title="The source checkout had uncommitted changes when this Worker started; its worktree does not include them">source was dirty</Chip> : null}
         {launch ? (
-          <Chip icon={ScrollTextIcon} tone={launch.state === "current" ? undefined : launch.state === "unknown" ? undefined : "warning"}
+          <Chip icon={ScrollTextIcon} tone={launch.state === "older" ? "warning" : undefined}
             title={launchHint(launch, defaultRole, "worker") ?? `Started with ${launchLabel(launch)}, the default Role at its current revision`}>
-            {launchLabel(launch)}{launch.state === "older" ? " · older" : launch.state === "other" ? " · not default" : ""}
+            {launchLabel(launch)}{launch.state === "older" ? " · older" : launch.state === "other" ? " · selected" : ""}
           </Chip>
         ) : null}
       </div>

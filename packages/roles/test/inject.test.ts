@@ -112,8 +112,9 @@ async function setup() {
 }
 
 async function populate(f: Awaited<ReturnType<typeof setup>>) {
-  const catalog = await f.call("role_create", { expectedRevision: 0, name: "Research É" });
-  const roleId = catalog.defaultRoleId;
+  const initial = await f.call("roles_snapshot");
+  const catalog = await f.call("role_create", { expectedRevision: initial.revision, name: "Research É" });
+  const roleId = catalog.roles.at(-1).id;
   await f.call("category_create", { roleId, expectedRevision: 0, title: "Human-only category" });
   const snapshot = await f.call("role_snapshot", { roleId });
   let revision = 1;
@@ -199,8 +200,9 @@ test("inject launches each native boundary with the selected bytes, private cred
 test("default selection is catalog-marked; empty Roles still isolate; invalid names and bypass modes fail before launch", async () => {
   const f = await setup();
   try {
-    const absent = await f.run(["inject", "--", "claude"]);
-    assert.equal(absent.code, 1); assert.match(absent.stderr, /no default role/);
+    const initiallyDefault = await f.run(["inject", "--", "claude"]);
+    assert.equal(initiallyDefault.code, 0, initiallyDefault.stderr);
+    assert.equal(JSON.parse(initiallyDefault.stdout).instructions, "");
     await populate(f);
     const catalog = await f.call("roles_snapshot");
     const created = await f.call("role_create", { expectedRevision: catalog.revision, name: "Empty" });
@@ -306,7 +308,7 @@ test("the production OpenCode host uses ordinary native credentials without admi
     await writeFile(join(f.home, "ambient-plugin", "index.ts"), `import {writeFileSync} from 'node:fs'; writeFileSync(${JSON.stringify(sentinel)},'imported'); export default {id:'ambient.fixture',setup(){}};`);
     await writeFile(join(f.env.XDG_CONFIG_HOME, "opencode", "opencode.json"), JSON.stringify({ plugins: [join(f.home, "ambient-plugin")] }));
     await writeFile(join(f.home, "AGENTS.md"), "AMBIENT_HOME_INSTRUCTIONS");
-    const catalog = await f.call("role_create", { expectedRevision: 0, name: "Native fixture" });
+    const catalog = await f.call("roles_snapshot");
     const roleId = catalog.defaultRoleId;
     await f.call("skill_create", { roleId, expectedRevision: 0, name: "role-skill", description: "Role fixture", body: "Role body" });
     await f.call("role_internal_mcp_update", { roleId, expectedRevision: 1, name: "notify", enabled: false });

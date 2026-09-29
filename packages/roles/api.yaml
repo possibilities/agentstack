@@ -1,5 +1,5 @@
 name: roles
-description: Manage named Roles and their instructions, skills, MCP servers and trusted projects. The default Role supplies every Bot launch and Workers that do not choose another Role at creation.
+description: Manage named Roles and their instructions, skills, MCP servers and trusted projects. Bots and Workers have independent launch defaults.
 socket:
   description: Unix socket for role operations and change events.
 mcp:
@@ -9,6 +9,7 @@ mcp:
     - role_create
     - role_update
     - role_set_default
+    - role_set_worker_default
     - role_delete
     - role_internal_mcp_list
     - role_internal_mcp_update
@@ -43,6 +44,7 @@ websocket:
     - role_create
     - role_update
     - role_set_default
+    - role_set_worker_default
     - role_delete
     - role_internal_mcp_list
     - role_internal_mcp_update

@@ -21,7 +21,7 @@ const fragment = z.strictObject({ id, categoryId: id, title, description, body, 
 const category = z.strictObject({ id, title, description, enabled: z.boolean(), fragments: z.array(fragment), ...stamps });
 const index = z.number().int().nonnegative().describe("Zero-based position within the category.");
 const role = z.strictObject({ id: roleId, name: roleName, description: roleDescription, revision, ...stamps });
-const catalog = z.strictObject({ revision: catalogRevision, defaultRoleId: roleId.nullable(), roles: z.array(role) });
+const catalog = z.strictObject({ revision: catalogRevision, defaultRoleId: roleId.nullable(), workerDefaultRoleId: roleId.nullable(), roles: z.array(role) });
 const launchSnapshot = role.extend({ categories: z.array(category), skills: z.array(skillRecord), mcpServers: z.array(mcpRecord), trustedProjects: z.array(trustedProjectRecord),
   disabledInternalMcpServers: z.array(z.string()).describe("Internal Package API names disabled for this Role. Other configured internal MCP servers are enabled, including newly added ones.") });
 const snapshot = launchSnapshot.extend({ mcpServers: z.array(mcpRecord.omit({ definition: true }).extend({ transport: z.enum(["http", "stdio"]) })) });
@@ -65,12 +65,12 @@ async function ensureRoleMcp(ctx: RolesContext, name?: string, definition?: z.in
 }
 
 export const rolesSnapshot = operation({
-  name: "roles_snapshot", description: "List Role metadata, per-role revisions, the default Role ID, and the catalog revision. An empty catalog has no default. Every successful write advances the catalog revision.",
+  name: "roles_snapshot", description: "List Role metadata, per-role revisions, Bot and Worker default Role IDs, and the catalog revision. Every successful write advances the catalog revision.",
   input: z.strictObject({}), output: catalog, annotations: { title: "List roles", readOnlyHint: true },
   async call(ctx: RolesContext) { return ctx.store.catalog(); },
 });
 export const roleCreate = operation({
-  name: "role_create", description: "Create an empty named Role. The first created Role becomes default automatically; later Roles do not change the default. Pass the catalog revision from roles_snapshot. Names are unique case-insensitively.",
+  name: "role_create", description: "Create an empty named Role without changing the Bot or Worker defaults. Pass the catalog revision from roles_snapshot. Names are unique case-insensitively.",
   input: z.strictObject({ expectedRevision: catalogRevision, name: roleName, description: roleDescription.optional() }), output: catalog,
   annotations: { title: "Create role" },
   async call(ctx: RolesContext, { expectedRevision, name, description }) { const result = ctx.store.createRole(expectedRevision, name, description); ctx.changed?.(); return result; },
@@ -82,12 +82,17 @@ export const roleUpdate = operation({
   async call(ctx: RolesContext, { roleId, expectedRevision, ...fields }) { return changed(ctx, ctx.store.role(roleId).update(expectedRevision, fields)); },
 });
 export const roleSetDefault = operation({
-  name: "role_set_default", description: "Atomically mark an existing Role as default for every later Bot and Worker launch. Running sessions keep their launch snapshots. Pass the catalog revision from roles_snapshot. Role content revisions do not change.",
+  name: "role_set_default", description: "Atomically mark an existing Role as the Bot default. Worker defaults are independent. Running sessions keep their launch snapshots. Pass the catalog revision from roles_snapshot.",
   input: selection.extend({ expectedRevision: catalogRevision }), output: catalog, annotations: { title: "Set default role" },
   async call(ctx: RolesContext, { roleId, expectedRevision }) { const result = ctx.store.setDefault(expectedRevision, roleId); ctx.changed?.(); return result; },
 });
+export const roleSetWorkerDefault = operation({
+  name: "role_set_worker_default", description: "Atomically mark an existing Role as the default for Workers started without roleId. Bot launches are unchanged. Running Workers keep their captured snapshots. Pass the catalog revision from roles_snapshot.",
+  input: selection.extend({ expectedRevision: catalogRevision }), output: catalog, annotations: { title: "Set Worker default role" },
+  async call(ctx: RolesContext, { roleId, expectedRevision }) { const result = ctx.store.setWorkerDefault(expectedRevision, roleId); ctx.changed?.(); return result; },
+});
 export const roleDelete = operation({
-  name: "role_delete", description: "Delete a non-default Role and all its instructions, skills, MCP definitions and trusted projects. Mark another Role as default before deleting the default. Pass the catalog revision from roles_snapshot. Private snapshots of existing sessions are retained.",
+  name: "role_delete", description: "Delete a Role that is neither the Bot nor Worker default and all its owned resources. Reassign either default before deleting its Role. Pass the catalog revision from roles_snapshot. Existing sessions keep private snapshots.",
   input: selection.extend({ expectedRevision: catalogRevision }), output: catalog, annotations: { title: "Delete role", destructiveHint: true },
   async call(ctx: RolesContext, { roleId, expectedRevision }) { const result = ctx.store.deleteRole(expectedRevision, roleId); ctx.changed?.(); return result; },
 });
@@ -116,10 +121,10 @@ export const roleSnapshot = operation({
   async call(ctx: RolesContext, { roleId }) { return summarize(ctx.store.role(roleId).snapshot()); },
 });
 export const roleLaunchSnapshot = operation({
-  name: "role_launch_snapshot", description: "Atomically read the selected Role, or resolve the default when roleId is omitted, for a native launch. Includes credential-bearing MCP definitions; keep this private snapshot out of model transcripts. An unknown selected Role or missing default fails.",
-  input: z.strictObject({ roleId: roleId.optional().describe("Choose a Role for this launch; omit to use the current default.") }),
+  name: "role_launch_snapshot", description: "Atomically read a selected Role or resolve the Bot or Worker default for a native launch. Includes credential-bearing MCP definitions; keep this private snapshot out of model transcripts. An unknown Role fails.",
+  input: z.strictObject({ roleId: roleId.optional().describe("Explicit Role; omit for the audience's default."), audience: z.enum(["bot", "worker"]).optional().describe("Audience whose default to use; bot when omitted.") }),
   output: launchSnapshot, annotations: { title: "Read launch role", readOnlyHint: true },
-  async call(ctx: RolesContext, { roleId }) { return ctx.store.launchSnapshot(roleId); },
+  async call(ctx: RolesContext, { roleId, audience }) { return ctx.store.launchSnapshot(roleId, audience); },
 });
 export const roleEditorSnapshot = operation({
   name: "role_editor_snapshot", description: "Read the complete Role for the operator's resource editor, including credential-bearing MCP connection definitions. Keep this result out of model transcripts.",
@@ -127,7 +132,7 @@ export const roleEditorSnapshot = operation({
   async call(ctx: RolesContext, { roleId }) { return ctx.store.role(roleId).snapshot(); },
 });
 export const rolePreview = operation({
-  name: "role_preview", description: "Preview the selected Role's exact developer instructions; descriptions and titles are excluded. Only the default Role is used for new launches.",
+  name: "role_preview", description: "Preview the selected Role's exact developer instructions; descriptions and titles are excluded. Bots and Workers have separate launch defaults.",
   input: selection, output: preview, annotations: { title: "Preview role", readOnlyHint: true },
   async call(ctx: RolesContext, { roleId }) {
     const value = ctx.store.role(roleId).snapshot();
@@ -136,7 +141,7 @@ export const rolePreview = operation({
   },
 });
 export const roleLaunchPreview = operation({
-  name: "role_launch_preview", description: "Preview the selected Role's enabled skills, MCP servers and config.toml, trusted project roots, and launch issues. Only the default Role is used for new launches.",
+  name: "role_launch_preview", description: "Preview the selected Role's enabled skills, MCP servers and config.toml, trusted project roots, and launch issues. Bots and Workers have separate launch defaults.",
   input: selection.extend({ cwds: z.array(z.string().max(4_096).refine(isAbsolute, "working directory must be an absolute path")).max(64).optional()
     .describe("Working directories to match against trusted project roots, such as each Bot's cwd.") }),
   output: launchPreview, annotations: { title: "Preview role launch", readOnlyHint: true },
@@ -300,7 +305,7 @@ export const projectReorder = operation({
 export const topics = { role_changed: "The role catalog, default, or any Role changed. Read roles_snapshot and refresh the selected Role after (re)subscribing." } as const;
 
 export const api: PackageApi<RolesContext, keyof typeof topics> = {
-  operations: [rolesSnapshot, roleCreate, roleUpdate, roleSetDefault, roleDelete, roleInternalMcpList, roleInternalMcpUpdate, roleSnapshot, roleLaunchSnapshot, roleEditorSnapshot, rolePreview, roleLaunchPreview, categoryCreate, categoryUpdate, categoryDelete, categoryReorder,
+  operations: [rolesSnapshot, roleCreate, roleUpdate, roleSetDefault, roleSetWorkerDefault, roleDelete, roleInternalMcpList, roleInternalMcpUpdate, roleSnapshot, roleLaunchSnapshot, roleEditorSnapshot, rolePreview, roleLaunchPreview, categoryCreate, categoryUpdate, categoryDelete, categoryReorder,
     fragmentCreate, fragmentUpdate, fragmentDelete, fragmentReorder, fragmentMove, skillCreate, skillUpdate, skillDelete, skillReorder,
     mcpServerCreate, mcpServerUpdate, mcpServerDelete, mcpServerReorder,
     projectCreate, projectUpdate, projectDelete, projectReorder],

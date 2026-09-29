@@ -30,8 +30,8 @@ export function initializeRoles(db: DatabaseSync): void {
         CREATE TABLE roles (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, description TEXT NOT NULL,
           revision INTEGER NOT NULL, created_at INTEGER, updated_at INTEGER);
         CREATE TABLE role_catalog (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), revision INTEGER NOT NULL,
-          default_role_id TEXT REFERENCES roles(id));
-        INSERT INTO role_catalog VALUES (1, 0, NULL);
+          default_role_id TEXT REFERENCES roles(id), worker_default_role_id TEXT REFERENCES roles(id));
+        INSERT INTO role_catalog VALUES (1, 0, NULL, NULL);
       `);
       const legacy = tables.has("revision");
       const roleId = randomUUID();
@@ -63,6 +63,36 @@ export function initializeRoles(db: DatabaseSync): void {
     db.exec(`CREATE TABLE IF NOT EXISTS disabled_internal_mcp (
       role_id TEXT NOT NULL REFERENCES roles(id), name TEXT NOT NULL, PRIMARY KEY(role_id, name)
     )`);
+    const columns = new Set((db.prepare("PRAGMA table_info(role_catalog)").all() as Array<{ name: string }>).map(({ name }) => name));
+    if (!columns.has("worker_default_role_id")) db.exec("ALTER TABLE role_catalog ADD COLUMN worker_default_role_id TEXT REFERENCES roles(id)");
+    const catalog = db.prepare("SELECT default_role_id, worker_default_role_id FROM role_catalog WHERE singleton = 1").get() as {
+      default_role_id: string | null; worker_default_role_id: string | null;
+    };
+    if (!catalog.worker_default_role_id) {
+      const managerId = catalog.default_role_id ?? randomUUID();
+      const workerId = randomUUID();
+      const conflicting = db.prepare("SELECT name FROM roles WHERE name IN ('Manager', 'Worker') COLLATE NOCASE AND id != ?").all(managerId) as Array<{ name: string }>;
+      if (conflicting.length) throw new Error(`cannot provision Manager and Worker Roles: existing ${conflicting.map(({ name }) => name).join(", ")} Role; resolve the name conflict before starting Stack`);
+      const now = Date.now();
+      if (catalog.default_role_id) {
+        db.prepare("UPDATE roles SET name = 'Manager', revision = revision + 1, updated_at = ? WHERE id = ?").run(now, managerId);
+      } else {
+        db.prepare("INSERT INTO roles VALUES (?, 'Manager', '', 0, ?, ?)").run(managerId, now, now);
+      }
+      db.prepare("INSERT INTO roles VALUES (?, 'Worker', '', 0, ?, ?)").run(workerId, now, now);
+      // Resource IDs are globally unique, while names and order belong to each Role.
+      for (const row of db.prepare("SELECT name, description, body, files_json, enabled, position FROM skills WHERE role_id = ? ORDER BY position").all(managerId) as Array<{
+        name: string; description: string; body: string; files_json: string; enabled: number; position: number;
+      }>) db.prepare("INSERT INTO skills VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(randomUUID(), row.name, row.description, row.body, row.files_json, row.enabled, row.position, workerId);
+      for (const row of db.prepare("SELECT name, description, definition_json, enabled, position FROM role_mcp_servers WHERE role_id = ? ORDER BY position").all(managerId) as Array<{
+        name: string; description: string; definition_json: string; enabled: number; position: number;
+      }>) db.prepare("INSERT INTO role_mcp_servers VALUES (?, ?, ?, ?, ?, ?, ?)").run(randomUUID(), row.name, row.description, row.definition_json, row.enabled, row.position, workerId);
+      for (const row of db.prepare("SELECT path, description, enabled, position FROM trusted_projects WHERE role_id = ? ORDER BY position").all(managerId) as Array<{
+        path: string; description: string; enabled: number; position: number;
+      }>) db.prepare("INSERT INTO trusted_projects VALUES (?, ?, ?, ?, ?, ?)").run(randomUUID(), row.path, row.description, row.enabled, row.position, workerId);
+      db.prepare("INSERT INTO disabled_internal_mcp SELECT ?, name FROM disabled_internal_mcp WHERE role_id = ?").run(workerId, managerId);
+      db.prepare("UPDATE role_catalog SET default_role_id = ?, worker_default_role_id = ?, revision = revision + 1 WHERE singleton = 1").run(managerId, workerId);
+    }
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
 }

@@ -4,6 +4,7 @@ Status: accepted, 2026-09-28. Supersedes the singleton decision in
 [ADR 0030](0030-single-role-package.md) and the global-revision assumption in
 [ADR 0082](0082-roles-space-for-instruction-fragments.md). Retains private launch
 snapshots, resource ordering, rendering, and credential-safe reads.
+The single shared launch-default and empty-store decisions below were revised by [ADR 0124](0124-manager-and-worker-launch-defaults.md).
 
 ## Decision
 

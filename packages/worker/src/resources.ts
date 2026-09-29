@@ -17,7 +17,7 @@ async function executable(command: string, cwd: string, env: NodeJS.ProcessEnv):
 }
 
 export async function roleSnapshot(env: NodeJS.ProcessEnv, roleId?: string): Promise<RoleSnapshot> {
-  return socketCall(socketPath("roles", env), "tools/call", { name: "role_launch_snapshot", arguments: roleId ? { roleId } : {} }, { timeoutMs: 5_000 }) as Promise<RoleSnapshot>;
+  return socketCall(socketPath("roles", env), "tools/call", { name: "role_launch_snapshot", arguments: roleId ? { roleId } : { audience: "worker" } }, { timeoutMs: 5_000 }) as Promise<RoleSnapshot>;
 }
 
 export async function sessionMcpServers(snapshot: RoleSnapshot, env: NodeJS.ProcessEnv, supportsHttp: boolean, cwd: string,
