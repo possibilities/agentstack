@@ -32,6 +32,7 @@ import { RoleEditorWindow } from "./role-editor";
 import { RoleInstructionsWindow } from "./role-instructions";
 import { RolePreviewWindow } from "./role-preview";
 import { RoleMcpServersWindow, RoleProjectsWindow, RoleSkillsWindow } from "./role-resources";
+import { RoleShimsWindow } from "./role-shims";
 import { AccessWindow } from "./access-window";
 import { InboxWindow, NotificationWindow } from "./notify-windows";
 import { AttentionChangesWindow, AttentionMessagesWindow, AttentionRunsWindow, AttentionWindow, SignalWindow } from "./signal-windows";
@@ -120,6 +121,7 @@ export const spaceViews: Record<SpaceId, {
       { id: "role-skills", title: "Skills", icon: BlocksIcon, accent: "roles", width: 400, height: 300, column: 4, element: <RoleSkillsWindow /> },
       { id: "role-mcp-servers", title: "MCP servers", icon: PlugIcon, accent: "roles", width: 400, height: 440, column: 4, element: <RoleMcpServersWindow /> },
       { id: "role-projects", title: "Trusted projects", icon: FolderLockIcon, accent: "roles", width: 400, height: 240, column: 4, element: <RoleProjectsWindow /> },
+      { id: "role-shims", title: "Shims", icon: SquareTerminalIcon, accent: "roles", width: 480, height: 560, column: 5, element: <RoleShimsWindow /> },
     ],
   },
   inbox: {

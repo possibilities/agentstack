@@ -813,6 +813,8 @@ export type NodeRef =
   | { kind: "skill"; id: string }
   | { kind: "mcp-server"; id: string }
   | { kind: "trusted-project"; id: string }
+  /** An installed Role shim, by command name. It belongs to no Role. */
+  | { kind: "role-shim"; id: string }
   | { kind: "signal" }
   | { kind: "attention-item" | "attention-message" | "attention-run"; id: string }
   /** A Scrape extraction preset by name, and a scrape-to-file job by its `scrape_queue_list` ID. */

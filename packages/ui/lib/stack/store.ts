@@ -158,6 +158,8 @@ const contentKeys: ContentKey[] = ["contentDocuments", "contentTags", "contentLi
 /** Successful content writes change what the lists show; blob stages do not. */
 const contentWrites = new Set(["collection_create", "collection_update", "collection_delete", "item_put", "item_move", "item_delete",
   "document_update", "new", "add", "rm", "restore", "artifacts_rm", "artifacts_restore", "artifact_publish", "gc"]);
+/** Every Role shim write, settled either way, rereads the listing: it is the only record of what is installed. */
+const shimWrites = new Set(["role_shim_create", "role_shim_update", "role_shim_delete"]);
 const itemPage = 100;
 export const contentDocumentLimit = 200;
 
@@ -431,7 +433,9 @@ export class StackStore {
       if (pkg === "bots" && name === "bot_defaults_set") this.refresh("botDefaults");
     }) : pkg === "access" && name !== "access_snapshot" ? request.finally(() => this.refresh("access"))
       // A lost acknowledgement may still have written; re-read either way, never replay.
-      : pkg === "content" && contentWrites.has(name) ? request.finally(() => this.invalidateContent()) : request);
+      : pkg === "content" && contentWrites.has(name) ? request.finally(() => this.invalidateContent())
+      // A refused shim write (stale, foreign or colliding) changed nothing, but the listing it was built from is out of date.
+      : pkg === "roles" && shimWrites.has(name) ? request.finally(() => this.refresh("roleShims")) : request);
     if (pkg === "auth") {
       if (isWorkerLoginState(result)) this.set({ workerAttempts: { ...this.state.workerAttempts, [result.account]: result } });
       else if (isLoginState(result)) this.set({ attempt: result });
@@ -454,7 +458,6 @@ export class StackStore {
    */
   private applyRoleReply(name: string, result: unknown): void {
     const now = Date.now();
-    if (name === "role_shim_create" || name === "role_shim_update" || name === "role_shim_delete") this.refresh("roleShims");
     if (name === "role_editor_snapshot" && isRoleSnapshot(result)) {
       if (!acceptRoleRead(this.state.roleId, this.state.role.data && roleReadOf(this.state.role.data), roleReadOf(result))) return;
       this.set({ role: { data: result, error: null, at: now } });

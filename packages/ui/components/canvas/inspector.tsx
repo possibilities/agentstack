@@ -24,6 +24,7 @@ import { ObservationStatus } from "./usage-window";
 import { useNotifyActions } from "./notify-actions";
 import { useOperation, useStack, useStore, useWorkbench } from "./provider";
 import { useRoleActions } from "./role-actions";
+import { ShimRecordControls } from "./role-shims";
 import { useContentActions } from "./content-actions";
 import { useVoice } from "./voice";
 import { accentBg, accentText, type Accent } from "./window";
@@ -321,6 +322,18 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         related: inside.map((bot) => ({ ref: { kind: "bot", id: bot.id } as NodeRef, label: `${bot.id} · runs inside` })),
         operations: { pkg: "roles", list: recordOperations(catalog, "roles").filter((operation) => operation.name.startsWith("project_")) },
         controls: <RoleRecordControls target={{ kind: "trusted-project", id: project.id }} />,
+        events: state.events.filter((event) => event.pkg === "roles"),
+      };
+    }
+    case "role-shim": {
+      // Local only: a remote session never reads the listing, so there is nothing to inspect.
+      const shim = state.remote ? null : state.roleShims.data?.shims.find((item) => item.name === ref.id);
+      if (!shim) return null;
+      return {
+        eyebrow: "Role shim", accent: "roles", title: shim.name, record: shim,
+        fields: new Map(fieldsOf(findOperation(catalog, "roles", "role_shim_list")?.outputSchema).find((field) => field.name === "shims")?.children.map((field) => [field.name, field]) ?? []),
+        operations: { pkg: "roles", list: recordOperations(catalog, "roles").filter((operation) => operation.name.startsWith("role_shim_")) },
+        controls: <ShimRecordControls name={shim.name} />,
         events: state.events.filter((event) => event.pkg === "roles"),
       };
     }
@@ -746,7 +759,7 @@ function NotificationRecordControls({ id }: { id: string }) {
 function referencePackage(ref: NodeRef): string {
   if (ref.kind === "bot") return "bots";
   if (ref.kind === "server" || ref.kind === "child" || ref.kind === "resource" || ref.kind === "process") return "server";
-  if (ref.kind === "role" || ref.kind === "category" || ref.kind === "fragment" || ref.kind === "skill" || ref.kind === "mcp-server" || ref.kind === "trusted-project") return "roles";
+  if (ref.kind === "role" || ref.kind === "category" || ref.kind === "fragment" || ref.kind === "skill" || ref.kind === "mcp-server" || ref.kind === "trusted-project" || ref.kind === "role-shim") return "roles";
   if (ref.kind === "notification") return "notify";
   if (ref.kind === "document" || ref.kind === "collection" || ref.kind === "item" || ref.kind === "artifact") return "content";
   if (ref.kind === "worker-catalog" || ref.kind === "worker" || ref.kind === "worker-runtime" || ref.kind === "worker-window") return "worker";

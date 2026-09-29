@@ -37,6 +37,7 @@ test("homeOf distinguishes spatial records from reference destinations", () => {
   assert.deepEqual(homeOf({ kind: "skill", id: "s1" }), { kind: "space", space: "roles", window: "role-skills" });
   assert.deepEqual(homeOf({ kind: "mcp-server", id: "m1" }), { kind: "space", space: "roles", window: "role-mcp-servers" });
   assert.deepEqual(homeOf({ kind: "trusted-project", id: "p1" }), { kind: "space", space: "roles", window: "role-projects" });
+  assert.deepEqual(homeOf({ kind: "role-shim", id: "opencode-astra" }), { kind: "space", space: "roles", window: "role-shims" });
   assert.deepEqual(homeOf({ kind: "document", id: "first-note" }), { kind: "space", space: "content", window: "content-documents" });
   assert.deepEqual(homeOf({ kind: "collection", id: "notes" }), { kind: "space", space: "content", window: "content-library" });
   assert.deepEqual(homeOf({ kind: "item", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" }), { kind: "space", space: "content", window: "content-library" });
@@ -115,6 +116,7 @@ test("parseNodeKey inverts nodeKey for every kind and rejects malformed keys", (
     { kind: "skill", id: "00000000-0000-4000-8000-000000000006" },
     { kind: "mcp-server", id: "00000000-0000-4000-8000-000000000007" },
     { kind: "trusted-project", id: "00000000-0000-4000-8000-000000000008" },
+    { kind: "role-shim", id: "opencode-astra.v2_x" },
     { kind: "usage" },
     { kind: "usage-account", id: "worker:account-with-colons:ok" },
     { kind: "grok-bot-usage" },
