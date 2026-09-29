@@ -3,6 +3,7 @@ import { chmodSync, closeSync, constants, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { WorkerHistory, type ObservedSettings } from "./history.js";
+import { SettingsStore } from "@stack/settings";
 
 export type WorkerPhase = "preparing" | "idle" | "running" | "awaiting_input" | "cancelling" | "closed" | "failed" | "needs_recovery";
 export type TurnPhase = "queued" | "running" | "awaiting_input" | "cancelling" | "completed" | "cancelled" | "failed" | "unknown";
@@ -31,6 +32,7 @@ const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(va
 export class WorkerLedger {
   private readonly db: DatabaseSync;
   readonly history: WorkerHistory;
+  readonly settings: SettingsStore;
 
   constructor(private readonly stateDir: string) {
     mkdirSync(stateDir, { recursive: true, mode: 0o700 });
@@ -78,6 +80,8 @@ export class WorkerLedger {
         this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
     }
     this.history = new WorkerHistory(this.db);
+    this.settings = new SettingsStore(this.db);
+    for (const provider of ["codex", "grok", "devin", "claude"]) this.settings.seed(`worker-defaults:${provider}`, {}, "Native Worker selection");
     this.db.prepare("UPDATE workers SET phase = 'needs_recovery', issue = 'Owner restarted during a worker operation; inspect before resuming', updated_at = ? WHERE phase IN ('preparing','running','awaiting_input','cancelling')").run(Date.now());
     this.db.prepare("UPDATE turns SET phase = 'unknown', issue = 'Turn outcome is unknown after owner restart', updated_at = ? WHERE phase IN ('queued','running','awaiting_input','cancelling')").run(Date.now());
     this.db.prepare("UPDATE pending_requests SET state = 'unknown' WHERE state = 'pending'").run();
@@ -120,6 +124,11 @@ export class WorkerLedger {
   startByRequestId(requestId: string): WorkerRecord | null {
     const row = this.db.prepare("SELECT id FROM workers WHERE request_id = ?").get(requestId) as { id: string } | undefined;
     return row ? this.worker(row.id) : null;
+  }
+
+  turnByRequestId(requestId: string): TurnRecord | null {
+    const row = this.db.prepare("SELECT id FROM turns WHERE request_id=?").get(requestId) as { id: string } | undefined;
+    return row ? this.turn(row.id) : null;
   }
 
   reserve(input: { requestId: string; botId: string; threadId: string; accountId: string; provider: WorkerRecord["provider"];
@@ -339,6 +348,7 @@ export class WorkerLedger {
       this.db.prepare("DELETE FROM transcript WHERE worker_id = ?").run(id);
       this.db.prepare("DELETE FROM turns WHERE worker_id = ?").run(id);
       this.db.prepare("DELETE FROM workers WHERE id = ?").run(id);
+      this.settings.remove(`worker:${id}`);
       this.db.exec("COMMIT");
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }

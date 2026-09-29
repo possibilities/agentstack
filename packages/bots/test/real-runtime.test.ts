@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import test from "node:test";
 import { codexRuntimePath } from "../src/paths.js";
 import { appServerArgs, waitForReady } from "../src/supervisor.js";
 import { appServerSocket } from "../src/threads.js";
 
 test("installed codexnk retains its private runtime and honors Bot launch defaults", { skip: !process.env.STACK_TEST_REAL_CODEX }, async () => {
-  const root = await mkdtemp("/tmp/as-full-");
+  const root = await mkdtemp(join(tmpdir(), "stack-settings-native-"));
   const identity = join(root, "identity");
   const capabilities = join(root, "capabilities");
   const history = join(root, "history");
@@ -17,8 +18,12 @@ test("installed codexnk retains its private runtime and honors Bot launch defaul
   const fakeAuth = JSON.stringify({ tokens: { refresh_token: "fixture-only" } });
   await writeFile(join(identity, "auth.json"), fakeAuth, { mode: 0o600 });
   const url = `unix://${join(root, "app.sock")}`;
-  const child = spawn(codexRuntimePath(), [...appServerArgs([], url), "--identity", identity, "--capabilities", capabilities, "--history-dir", history], {
-    env: { ...process.env, TMPDIR: runtime }, stdio: "ignore",
+  const env = { ...process.env, TMPDIR: runtime, STACK_STATE_DIR: root };
+  for (const key of ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_BASE_URL", "CODEX_HOME"]) delete (env as NodeJS.ProcessEnv)[key];
+  const child = spawn(codexRuntimePath(), [...appServerArgs([], url, undefined, { model: "gpt-6-sol", model_reasoning_effort: "medium", sandbox_mode: "danger-full-access", approval_policy: "never",
+    model_context_window: 120_000, model_auto_compact_token_limit_scope: "body_after_prefix", "agents.default_subagent_reasoning_effort": "high",
+    "features.hooks": false, "features.multi_agent_v2.enabled": true, "features.multi_agent_v2.max_concurrent_threads_per_session": 3 }), "--identity", identity, "--capabilities", capabilities, "--history-dir", history], {
+    env, cwd: root, stdio: "ignore",
   });
   let ws: ReturnType<typeof appServerSocket> | undefined;
   try {
@@ -56,6 +61,13 @@ test("installed codexnk retains its private runtime and honors Bot launch defaul
     assert.equal(config.model_reasoning_effort, "medium");
     assert.equal(config.approval_policy, "never");
     assert.equal(config.sandbox_mode, "danger-full-access");
+    const resolved = result.config as Record<string, unknown>;
+    assert.equal(resolved.model_context_window, 120_000);
+    assert.equal(resolved.model_auto_compact_token_limit_scope, "body_after_prefix");
+    assert.equal((resolved.agents as Record<string, unknown>).default_subagent_reasoning_effort, "high");
+    const features = resolved.features as Record<string, unknown>;
+    assert.equal(features.hooks, false);
+    assert.equal((features.multi_agent_v2 as Record<string, unknown>).max_concurrent_threads_per_session, 3);
   } finally {
     ws?.close();
     child.kill("SIGTERM");

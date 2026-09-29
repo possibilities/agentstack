@@ -9,6 +9,7 @@ import { VoiceCalls } from "../src/voice.js";
 import type { ServerView } from "../src/supervisor.js";
 import { DEFAULT_BOT_SETTINGS } from "../src/store.js";
 import { voiceSpeak } from "../api.js";
+import type { SettingsSnapshot } from "@stack/settings";
 
 const server = (url: string, threadId: string | null = "main"): ServerView => ({
   id: "bot-1", pid: 123, cwd: "/tmp/bot-1", url, state: "running", account: "account",
@@ -23,6 +24,8 @@ test("voice dials only an adopted main thread, relays SDP, and stops without tou
   const wss = new WebSocketServer({ server: http });
   const methods: string[] = [];
   const spoken: string[] = [];
+  let settings: SettingsSnapshot = { revision: 0, values: {}, source: "Fixture", sourceRevision: null, updatedAt: 1 };
+  let expectedVoice: Record<string, unknown> = {};
   let emitAnswer = () => {};
   let holdStopAck = false;
   let ackStop = () => {};
@@ -44,6 +47,7 @@ test("voice dials only an adopted main thread, relays SDP, and stops without tou
         assert.deepEqual(frame.params, {
           threadId: "main", realtimeSessionId: frame.params?.realtimeSessionId,
           version: "v3", outputModality: "audio", transport: { type: "webrtc", sdp: "offer" },
+          ...expectedVoice,
         });
         peer.send(JSON.stringify({ id: frame.id, result: {} }));
         emitAnswer = () => {
@@ -66,7 +70,7 @@ test("voice dials only an adopted main thread, relays SDP, and stops without tou
   });
   await new Promise<void>((resolve) => http.listen(path, resolve));
   try {
-    const voice = new VoiceCalls(() => [server(`unix://${path}`)]);
+    const voice = new VoiceCalls(() => [server(`unix://${path}`)], undefined, () => settings);
     let changes = 0;
     voice.onChange = () => { changes++; };
     const id = "11111111-1111-4111-8111-111111111111";
@@ -81,6 +85,8 @@ test("voice dials only an adopted main thread, relays SDP, and stops without tou
     assert.deepEqual(await dialing, { sessionId: id, answer: "answer" });
     assert.deepEqual(voice.status(), { sessionId: id, botId: "bot-1", threadId: "main", phase: "connected" });
     assert.equal(changes, 2);
+    settings = { ...settings, revision: 1, values: { model: "not-a-realtime-model", "voice.includeStartupContext": false, "voice.prompt": null, "voice.realtimeEndInstructions": "" } };
+    assert.deepEqual(voice.settings("bot-1")?.values, {}, "edits do not rewrite an active call snapshot");
     await assert.rejects(voice.speak(crypto.randomUUID(), "Stale announcement"), /active call/);
     await assert.rejects(voice.speak(id, "Wrong bot", "bot-2"), /another Bot/);
     assert.deepEqual(await voice.speak(id, "A short announcement", "bot-1"), { sessionId: id, status: "submitted" });
@@ -100,6 +106,7 @@ test("voice dials only an adopted main thread, relays SDP, and stops without tou
     assert.deepEqual(methods, ["initialize", "thread/realtime/start", "thread/realtime/appendSpeech", "thread/realtime/appendSpeech", "thread/realtime/stop"]);
 
     const nextId = crypto.randomUUID();
+    expectedVoice = { includeStartupContext: false, prompt: null, realtimeEndInstructions: "" };
     const pending = voice.dial("bot-1", nextId, "offer");
     await until(() => methods.filter((method) => method === "thread/realtime/start").length === 2);
     assert.equal(voice.status()?.phase, "dialing");

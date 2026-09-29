@@ -58,11 +58,38 @@ export type PackageDoc = {
 };
 
 export type BotSettings = {
-  model: string;
-  reasoningEffort: "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
-  sandboxMode: "read-only" | "workspace-write" | "danger-full-access";
-  approvalPolicy: "untrusted" | "on-failure" | "on-request" | "never";
+  model?: string;
+  reasoningEffort?: string;
+  sandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
+  approvalPolicy?: "untrusted" | "on-failure" | "on-request" | "never";
 };
+
+/** Managed settings are API records; legacy Bot controls edit only the four-field projection above. */
+export type SettingValue = string | number | boolean | string[] | null;
+export type SettingsBackend = "codex-app-server" | "opencode-codex" | "opencode-grok" | "devin-acp" | "claude-sdk";
+export type SettingsSnapshot = { revision: number; values: Record<string, SettingValue>; source: string; sourceRevision: number | null; updatedAt: number };
+export type SettingEvidence = { state: "known" | "native" | "unknown"; value: SettingValue; source: string; observedAt: number | null };
+export type SettingsBoundary = "bot-start" | "voice-call" | "worker-turn";
+export type SettingsView = { backend: SettingsBackend; saved: SettingsSnapshot; defaults: SettingsSnapshot | null;
+  loaded: (SettingsSnapshot & { loadedAt: number }) | null; instance: string | null; issues: string[];
+  fields: Array<{ key: string; saved: SettingEvidence; loaded: SettingEvidence; resolved: SettingEvidence; effective: SettingEvidence;
+    pending: boolean; apply: SettingsBoundary; maskedBy: string[] }> };
+export type SettingsCatalog = { version: 1; backend: SettingsBackend; runtime: string | null; sourceRevision: string;
+  settings: Array<{ key: string; title: string; description: string; group: string; schema: JsonSchema; nativeDefault: SettingEvidence;
+    applicationDefault: SettingEvidence; apply: SettingsBoundary; stability: "native" | "experimental";
+    choices: "static" | "models" | "efforts" | "service-tiers" | "voices" | "native"; dependencies: string[] }>;
+  resources: Array<{ name: string; package: string; operation: string }>; limitations: string[] };
+export type SettingsPatch = { expectedRevision: number; requestId: string; set?: Record<string, SettingValue>; reset?: string[] };
+export type SettingsPlan = { revision: number; values: Record<string, SettingValue>;
+  changes: Array<{ key: string; beforeSet: boolean; afterSet: boolean; before: SettingValue; after: SettingValue; apply: string }>; issues: string[] };
+export type SettingsReceipt = { requestId: string; revision: number; duplicate: boolean; applied: false };
+export type SettingsDiscovery<T> = { available: boolean; data: T | null; issue: string | null };
+export type BotSettingsOptions = { instance: string; observedAt: number;
+  models: SettingsDiscovery<Array<{ id: string; model: string; displayName: string; supportedReasoningEfforts: Array<{ reasoningEffort: string; description: string }>;
+    defaultReasoningEffort: string; serviceTiers?: Array<{ id: string; name: string; description: string }>; isDefault: boolean; [key: string]: unknown }>>;
+  voices: SettingsDiscovery<{ voices: { v1: string[]; v2: string[]; defaultV1: string; defaultV2: string; [key: string]: unknown } }>;
+  features: SettingsDiscovery<Array<{ name: string; enabled: boolean; defaultEnabled: boolean; stage: string; [key: string]: unknown }>>;
+  requirements: SettingsDiscovery<Record<string, unknown>> };
 
 export type Bot = {
   id: string;

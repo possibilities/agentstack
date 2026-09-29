@@ -1,10 +1,12 @@
 import { AuthStore } from "@stack/auth";
+import { randomUUID } from "node:crypto";
+import { SettingsStore, type SettingValues } from "@stack/settings";
 
 export type BotSettings = {
-  model: string;
-  reasoningEffort: "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
-  sandboxMode: "read-only" | "workspace-write" | "danger-full-access";
-  approvalPolicy: "untrusted" | "on-failure" | "on-request" | "never";
+  model?: string;
+  reasoningEffort?: string;
+  sandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
+  approvalPolicy?: "untrusted" | "on-failure" | "on-request" | "never";
 };
 
 export const DEFAULT_BOT_SETTINGS: BotSettings = {
@@ -18,9 +20,10 @@ function parseSettings(raw: string): BotSettings {
   const value: unknown = JSON.parse(raw);
   if (!value || typeof value !== "object") throw new Error("invalid stored Bot settings");
   const settings = value as Record<string, unknown>;
-  if (typeof settings.model !== "string" || !settings.model.trim() || !["low", "medium", "high", "xhigh", "max", "ultra"].includes(String(settings.reasoningEffort))
-    || !["read-only", "workspace-write", "danger-full-access"].includes(String(settings.sandboxMode))
-    || !["untrusted", "on-failure", "on-request", "never"].includes(String(settings.approvalPolicy))) throw new Error("invalid stored Bot settings");
+  if (settings.model !== undefined && (typeof settings.model !== "string" || !settings.model.trim())
+    || settings.reasoningEffort !== undefined && (typeof settings.reasoningEffort !== "string" || !settings.reasoningEffort)
+    || settings.sandboxMode !== undefined && !["read-only", "workspace-write", "danger-full-access"].includes(String(settings.sandboxMode))
+    || settings.approvalPolicy !== undefined && !["untrusted", "on-failure", "on-request", "never"].includes(String(settings.approvalPolicy))) throw new Error("invalid stored Bot settings");
   return settings as BotSettings;
 }
 
@@ -45,6 +48,7 @@ export type StoredServer = {
 };
 
 export class StateStore extends AuthStore {
+  readonly managed: SettingsStore;
   onDefaultsChange?: () => void;
   constructor(stateDir: string) {
     super(stateDir);
@@ -69,6 +73,9 @@ export class StateStore extends AuthStore {
       BEGIN SELECT RAISE(ABORT, 'Codex account is unavailable'); END;
     `);
     this.db.prepare("INSERT OR IGNORE INTO bot_defaults (id, settings_json) VALUES (1, ?)").run(JSON.stringify(DEFAULT_BOT_SETTINGS));
+    this.managed = new SettingsStore(this.db);
+    const legacyDefaults = this.db.prepare("SELECT settings_json FROM bot_defaults WHERE id=1").get() as { settings_json: string };
+    this.managed.seed("bot-defaults", nativeSettings(parseSettings(legacyDefaults.settings_json)), "Stack Bot defaults");
     // Existing installations of the first SQLite-backed release have neither column.
     const serverColumns = this.db.prepare("PRAGMA table_info(servers)").all() as Array<{ name: string }>;
     if (!serverColumns.some(({ name }) => name === "role_id")) this.db.exec("ALTER TABLE servers ADD COLUMN role_id TEXT");
@@ -106,20 +113,20 @@ export class StateStore extends AuthStore {
     }>).map(({ codex_bin, launched_account, auth_version, runtime_root, main_thread_id, thread_starting, role_root, role_revision, role_id, args_json, settings_json, ...row }) => ({
       ...row, codexBin: codex_bin, launchedAccount: launched_account, authVersion: auth_version, runtimeRoot: runtime_root,
       mainThreadId: main_thread_id, threadStarting: Boolean(thread_starting), roleRoot: role_root,
-      roleRevision: role_revision, roleId: role_id, args: parseArgs(args_json), settings: settings_json === null ? null : parseSettings(settings_json),
+      roleRevision: role_revision, roleId: role_id, args: parseArgs(args_json), settings: this.managed.get(`bot:${row.id}`)
+        ? legacySettings(this.managed.get(`bot:${row.id}`)!.values) : settings_json === null ? null : parseSettings(settings_json),
     }));
   }
 
   botDefaults(): BotSettings {
-    const row = this.db.prepare("SELECT settings_json FROM bot_defaults WHERE id = 1").get() as { settings_json: string };
-    return parseSettings(row.settings_json);
+    return legacySettings(this.managed.get("bot-defaults")!.values);
   }
 
   setBotDefaults(update: Partial<BotSettings>): BotSettings {
-    const next = parseSettings(JSON.stringify({ ...this.botDefaults(), ...update }));
-    this.db.prepare("UPDATE bot_defaults SET settings_json = ? WHERE id = 1").run(JSON.stringify(next));
+    parseSettings(JSON.stringify(update));
+    this.managed.patch("bot-defaults", "codex-app-server", { expectedRevision: this.managed.get("bot-defaults")!.revision, requestId: randomUUID(), set: nativeSettings(update) });
     this.onDefaultsChange?.();
-    return next;
+    return this.botDefaults();
   }
 
   saveServer(server: StoredServer): void {
@@ -156,6 +163,7 @@ export class StateStore extends AuthStore {
       this.db.prepare("DELETE FROM servers WHERE id = ?").run(id);
       this.db.prepare("DELETE FROM secrets.server_args WHERE id = ?").run(id);
       this.db.prepare("DELETE FROM bot_settings WHERE id = ?").run(id);
+      this.managed.remove(`bot:${id}`);
       this.db.exec("DELETE FROM account_aliases WHERE id NOT IN (SELECT name FROM accounts) AND id NOT IN (SELECT account FROM servers WHERE account IS NOT NULL)");
       this.db.exec("COMMIT");
     } catch (error) {
@@ -163,6 +171,14 @@ export class StateStore extends AuthStore {
       throw error;
     }
   }
+}
+
+const legacyKeys = { model: "model", reasoningEffort: "model_reasoning_effort", sandboxMode: "sandbox_mode", approvalPolicy: "approval_policy" } as const;
+export function nativeSettings(settings: BotSettings): SettingValues {
+  return Object.fromEntries(Object.entries(legacyKeys).flatMap(([key, native]) => settings[key as keyof BotSettings] === undefined ? [] : [[native, settings[key as keyof BotSettings]!]]));
+}
+export function legacySettings(values: SettingValues): BotSettings {
+  return Object.fromEntries(Object.entries(legacyKeys).flatMap(([key, native]) => Object.hasOwn(values, native) ? [[key, values[native]]] : [])) as BotSettings;
 }
 
 function parseArgs(raw: string | null): string[] {

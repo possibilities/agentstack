@@ -64,7 +64,7 @@ export function threadTree(threads: ActiveThread[]): ActiveThread[] {
 }
 
 /** Rejoin the Server's already adopted main thread; never allocate one. */
-export async function bindMainThread(url: string, cwd: string, threadId: string): Promise<string> {
+export async function bindMainThread(url: string, cwd: string, threadId: string, onSettings?: (value: Record<string, unknown>) => void): Promise<string> {
   return withAppServer(url, async (call) => {
     const method = "thread/resume";
     const response = await call(method, { threadId, cwd }) as { thread?: { id?: unknown } };
@@ -72,6 +72,7 @@ export async function bindMainThread(url: string, cwd: string, threadId: string)
     if (typeof id !== "string" || id !== threadId) {
       throw new Error(`${method} returned an unexpected thread id`);
     }
+    onSettings?.(response as Record<string, unknown>);
     return id;
   });
 }
@@ -225,7 +226,7 @@ const threadChangeMethods = new Set([
   "item/started",
 ]);
 
-export function watchThreadEvents(url: string, onChange: () => void, onNotification?: (method: string, params: unknown) => void, onConnect?: () => void): () => void {
+export function watchThreadEvents(url: string, onChange: () => void, onNotification?: (method: string, params: unknown) => void, onConnect?: () => void, onDisconnect?: () => void): () => void {
   let stopped = false;
   let ws: WebSocket | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
@@ -259,6 +260,7 @@ export function watchThreadEvents(url: string, onChange: () => void, onNotificat
     current.on("error", () => current.terminate());
     current.on("close", () => {
       if (stopped || ws !== current) return;
+      onDisconnect?.();
       invalidate();
       retry = setTimeout(open, 1_000);
       retry.unref();

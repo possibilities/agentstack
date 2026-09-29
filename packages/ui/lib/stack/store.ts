@@ -429,8 +429,8 @@ export class StackStore {
     const result = await (pkg === "bots" ? request.finally(() => {
       // A lost mutation acknowledgement may still have changed the Bot. Re-read,
       // never replay the operation automatically.
-      if (pkg === "bots" && ["bot_start", "bot_stop", "bot_assign", "bot_remove", "chat_open"].includes(name)) this.refresh("bots");
-      if (pkg === "bots" && name === "bot_defaults_set") this.refresh("botDefaults");
+      if (pkg === "bots" && ["bot_start", "bot_stop", "bot_assign", "bot_remove", "bot_settings_patch", "bot_settings_apply", "chat_open"].includes(name)) this.refresh("bots");
+      if (pkg === "bots" && (name === "bot_defaults_set" || name === "bot_settings_patch" && !args.id)) this.refresh("botDefaults");
     }) : pkg === "access" && name !== "access_snapshot" ? request.finally(() => this.refresh("access"))
       // A lost acknowledgement may still have written; re-read either way, never replay.
       : pkg === "content" && contentWrites.has(name) ? request.finally(() => this.invalidateContent())

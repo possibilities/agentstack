@@ -1,6 +1,7 @@
 import WebSocket, { type RawData } from "ws";
 import { appServerSocket } from "./threads.js";
 import type { ServerView } from "./supervisor.js";
+import { voiceParams, type SettingsSnapshot, type SettingsLoaded } from "@stack/settings";
 
 const START_TIMEOUT_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -14,6 +15,7 @@ export type VoiceCall = {
 
 type Pending = { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> };
 type ActiveCall = VoiceCall & {
+  settings: SettingsLoaded | null;
   connection: WebSocket | null;
   startSent: boolean;
   ending: boolean;
@@ -27,7 +29,12 @@ export class VoiceCalls {
   private current: ActiveCall | null = null;
   onChange?: () => void;
 
-  constructor(private readonly bots: () => ServerView[], private readonly connect = appServerSocket) {}
+  constructor(private readonly bots: () => ServerView[], private readonly connect = appServerSocket,
+    private readonly readSettings?: (id: string) => SettingsSnapshot) {}
+
+  settings(id: string): SettingsLoaded | null {
+    return this.current?.botId === id && this.current.phase === "connected" ? this.current.settings : null;
+  }
 
   status(): VoiceCall | null {
     const call = this.current;
@@ -57,6 +64,7 @@ export class VoiceCalls {
     // Reserve synchronously, before any socket or native request can race a second dial.
     const call: ActiveCall = {
       sessionId, botId, threadId: bot.mainThreadId, phase: "dialing",
+      settings: this.readSettings ? { ...this.readSettings(botId), loadedAt: Date.now() } : null,
       connection: null, startSent: false, ending: false, stop: null, speak: null,
       finish: (error: Error, value?: string) => value === undefined ? rejectAnswer(error) : resolveAnswer(value),
     };
@@ -140,14 +148,14 @@ export class VoiceCalls {
       });
       if (this.current !== call) return;
       ws.send(JSON.stringify({ method: "initialized" }));
-      // WebRTC v3 is the compatible native audio path; leave Codex's prompt,
-      // model, voice, handoff policy and thread settings to their own defaults.
+      // Only explicit native overrides accompany the existing v3 audio transport.
       call.stop = () => request("thread/realtime/stop", { threadId: call.threadId }, 5_000);
       call.speak = (text) => request("thread/realtime/appendSpeech", { threadId: call.threadId, text });
       call.startSent = true;
       await request("thread/realtime/start", {
         threadId: call.threadId, realtimeSessionId: sessionId,
         version: "v3", outputModality: "audio", transport: { type: "webrtc", sdp },
+        ...voiceParams(call.settings?.values ?? {}),
       }, START_TIMEOUT_MS);
     })();
     void setup.catch((error) => void fail(error instanceof Error ? error : new Error(String(error))));

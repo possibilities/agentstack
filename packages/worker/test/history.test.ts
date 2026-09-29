@@ -316,6 +316,13 @@ test("session metadata outside turns, runtime fencing, permission ownership and 
       notify({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "stale process" } });
       assert.equal(reopened.ledger.history.capture(worker.id).records, before);
       reopened.ledger.setRuntimeInstance(worker.id, runtime.instance);
+      reopened.ledger.history.append(worker.id, null, "config_option_update", "response", config("old-runtime-model"));
+      reopened.ledger.history.append(worker.id, null, "runtime", "response", { instance: runtime.instance });
+      notify({ sessionUpdate: "current_mode_update", currentModeId: "build" });
+      assert.equal((await reopened.readSettings(worker.id)).fields.find((field) => field.key === "model")?.effective.state, "unknown",
+        "new mode metadata cannot make the previous runtime's model observation current");
+      notify({ sessionUpdate: "config_option_update", ...config("current-runtime-model") });
+      assert.equal((await reopened.readSettings(worker.id)).fields.find((field) => field.key === "model")?.effective.value, "current-runtime-model");
       reopened.ledger.setTurnPhase(turn.id, "running"); reopened.ledger.setWorkerPhase(worker.id, "running");
       assert.equal(process.onRequest!({ id: 27, method: "session/request_permission", params: { sessionId: "fixture-session",
         toolCall: { toolCallId: "call-permission", title: "Write", rawInput: { filePath: "/fixture" } },

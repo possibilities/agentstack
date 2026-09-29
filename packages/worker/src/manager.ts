@@ -9,11 +9,13 @@ import { WorkerSupervisor, type Runtime } from "./supervisor.js";
 import { claimWorktree, claudeRole, loadWorkerRole, removeWorkerRole, removeWorktree, saveWorkerRole } from "./worktree.js";
 import { safeValue } from "./history.js";
 import { readWorktreeDiff, type DiffOptions } from "./diff.js";
+import { evidence, settingsState, type SettingsPatch, type SettingsBackend, type SettingsSnapshot } from "@stack/settings";
+import { randomUUID } from "node:crypto";
 
 /** worker_list's compact most recent turn; worker_status and worker_turn_list carry the rest. */
 export type ListedTurn = Pick<TurnSummary, "id" | "phase" | "stopReason" | "issue" | "dispatchedAt" | "createdAt" | "updatedAt">;
 
-export type StartInput = { accountId: string; model: string; effort?: string; repo: string; baseRef?: string; roleId?: string; task: string; requestId: string };
+export type StartInput = { accountId: string; model?: string; effort?: string; repo: string; baseRef?: string; roleId?: string; task: string; requestId: string };
 export type SendInput = { id: string; message: string; requestId: string; model?: string; effort?: string };
 
 export class WorkerManager {
@@ -155,6 +157,78 @@ export class WorkerManager {
       throw new Error("Worker read requires its exact live runtime");
     return worker;
   }
+
+  settingsSnapshot(worker: WorkerRecord): SettingsSnapshot {
+    return this.ledger.settings.seed(`worker:${worker.id}`, { model: worker.model, ...(worker.effort ? { effort: worker.effort } : {}) }, "Saved Worker selection");
+  }
+
+  async readSettings(id: string, invocation?: InvocationContext) {
+    const worker = await this.readable(id, invocation);
+    const runtime = this.supervisor.runtime(worker.accountId);
+    const connected = runtime?.instance === worker.runtimeInstance && ["idle", "running", "awaiting_input", "cancelling"].includes(worker.phase);
+    const saved = this.settingsSnapshot(worker);
+    const view = settingsState(workerSettingsBackend(worker.provider), saved, this.ledger.settings.get(`worker-defaults:${worker.provider}`),
+      connected ? this.ledger.settings.loaded(`worker:${id}`, worker.runtimeInstance!) : null, connected ? worker.runtimeInstance : null);
+    const runtimeRecord = this.ledger.history.metadata(id).find((item) => item.kind === "runtime");
+    const observed = runtimeRecord ? this.ledger.history.settings(id, runtimeRecord.seq) : null;
+    for (const field of view.fields) {
+      const value = field.key === "model" ? observed?.model : observed?.effort;
+      if (connected && value && observed)
+        field.effective = evidence({ [field.key]: value }, field.key, "Native Worker observation", observed.at);
+    }
+    view.issues.push("Reset removes a saved selection. Existing sessions retain their native selection until explicitly changed; it does not recreate the session.");
+    return view;
+  }
+
+  async patchSettings(id: string, input: SettingsPatch, invocation?: InvocationContext, preview = false) {
+    const worker = await this.owned(id, invocation);
+    this.settingsSnapshot(worker);
+    if (preview) return this.ledger.settings.preview(`worker:${id}`, workerSettingsBackend(worker.provider), input);
+    const receipt = this.ledger.settings.patch(`worker:${id}`, workerSettingsBackend(worker.provider), input);
+    this.changed(false, id);
+    return receipt;
+  }
+
+  async applySettings(id: string, expectedRevision: number, expectedInstance: string, invocation?: InvocationContext) {
+    await this.owned(id, invocation);
+    const worker = this.ledger.worker(id)!;
+    const snapshot = this.settingsSnapshot(worker);
+    if (snapshot.revision !== expectedRevision) throw new Error("Settings revision conflict; reread before applying");
+    const runtime = this.supervisor.runtime(worker.accountId);
+    if (!runtime || runtime.instance !== expectedInstance || worker.runtimeInstance !== expectedInstance || !worker.sessionId || worker.phase !== "idle")
+      throw new Error("Settings application requires the exact idle native Worker session");
+    // Preparing is the existing durable admission fence, checked by send/close/recovery.
+    this.ledger.setWorkerPhase(id, "preparing");
+    let nativeAttempted = false;
+    try {
+      const model = typeof snapshot.values.model === "string" ? snapshot.values.model : null;
+      const effort = typeof snapshot.values.effort === "string" ? snapshot.values.effort : null;
+      if (model || effort) {
+        await this.checkChoice(worker.accountId, model ?? worker.model, effort ?? worker.effort);
+        const catalog = await this.supervisor.catalog(worker.accountId, false);
+        if (!catalog.modelConfigId) throw new Error("Native model selector is unavailable");
+        nativeAttempted = true;
+        await this.selectValues(id, null, runtime, worker.sessionId, catalog.modelConfigId, model, effort,
+          catalog.models.find((entry) => entry.id === (model ?? worker.model))?.effortConfigId ?? null);
+      }
+      if (this.supervisor.runtime(worker.accountId) !== runtime) throw new Error("Native runtime changed");
+      const observed = this.ledger.history.settings(id);
+      this.ledger.setSelection(id, model ?? observed?.model ?? worker.model, effort ?? observed?.effort ?? worker.effort);
+      this.ledger.settings.markLoaded(`worker:${id}`, runtime.instance, snapshot);
+      this.ledger.setWorkerPhase(id, "idle");
+      this.changed(false, id);
+      return { id, revision: snapshot.revision, status: "loaded" as const };
+    } catch (error) {
+      if (!nativeAttempted && this.supervisor.runtime(worker.accountId) === runtime) {
+        this.ledger.setWorkerPhase(id, "idle");
+        this.changed(false, id);
+        throw error;
+      }
+      this.ledger.setWorkerPhase(id, "needs_recovery", "Settings application outcome is unknown; inspect native observations before recovery");
+      this.changed(false, id);
+      throw new Error("Settings application failed or is unknown; saved settings retained, no automatic retry");
+    }
+  }
   async list(invocation?: InvocationContext): Promise<Array<WorkerRecord & { turn: ListedTurn | null; pendingPermissions: number }>> {
     const owner = invocation?.workerId ? null : await this.owner(invocation);
     const workers = invocation?.workerId ? [await this.readable(invocation.workerId, invocation)]
@@ -247,16 +321,25 @@ export class WorkerManager {
   private async select(id: string, turnId: string | null, runtime: Runtime, sessionId: string, initial: unknown, model: string, effort: string | null): Promise<void> {
     const option = modelOption(optionsOf(initial));
     if (!option || !option.values.some((value) => value.value === model)) throw new Error("ACP session did not offer the selected model");
-    const selected = await runtime.process.request("session/set_config_option", { sessionId, configId: option.id, value: model });
-    this.response(id, turnId, "config_option_update", selected);
-    const current = currentOption(selected, option.id);
-    if (current && current !== model) throw new Error("ACP selected a different model");
-    const effortOptionForModel = effortOption(optionsOf(selected));
+    await this.selectValues(id, turnId, runtime, sessionId, option.id, model, effort, null);
+  }
+
+  private async selectValues(id: string, turnId: string | null, runtime: Runtime, sessionId: string, configId: string,
+    model: string | null, effort: string | null, effortId: string | null): Promise<void> {
+    if (model) {
+      const selected = await runtime.process.request("session/set_config_option", { sessionId, configId, value: model });
+      this.response(id, turnId, "config_option_update", selected);
+      const current = currentOption(selected, configId);
+      if (current && current !== model) throw new Error("Native runtime selected a different model");
+      const option = effortOption(optionsOf(selected));
+      if (effort && !option?.values.some((value) => value.value === effort)) throw new Error("Native session did not offer the selected effort");
+      effortId = option?.id ?? null;
+    }
     if (effort) {
-      if (!effortOptionForModel?.values.some((value) => value.value === effort)) throw new Error("ACP session did not offer the selected effort");
-      const response = await runtime.process.request("session/set_config_option", { sessionId, configId: effortOptionForModel.id, value: effort });
+      if (!effortId) throw new Error("Native effort selector unavailable");
+      const response = await runtime.process.request("session/set_config_option", { sessionId, configId: effortId, value: effort });
       this.response(id, turnId, "config_option_update", response);
-      const actual = currentOption(response, effortOptionForModel.id);
+      const actual = currentOption(response, effortId);
       if (actual && actual !== effort) throw new Error("ACP selected a different effort");
     }
   }
@@ -269,15 +352,24 @@ export class WorkerManager {
     const existing = this.ledger.startByRequestId(input.requestId);
     if (existing) {
       ownsWorker(owner, existing);
-      const prior = this.ledger.findStart(input.requestId, { ...intent, provider: existing.provider })!;
+      const initial = this.ledger.turnByRequestId(input.requestId)!;
+      intent.model ??= initial.requestedModel ?? existing.model;
+      if (input.effort === undefined) intent.effort = initial.requestedEffort;
+      const prior = this.ledger.findStart(input.requestId, { ...intent, model: intent.model!, provider: existing.provider })!;
       return { worker: prior.worker, turn: summarizeTurn(prior.turn), duplicate: true };
     }
     const account = await this.account(input.accountId);
     intent.provider = account.provider;
-    await this.checkChoice(input.accountId, input.model, input.effort ?? null);
-    const reserved = this.ledger.reserve(intent);
+    const defaults = this.ledger.settings.get(`worker-defaults:${account.provider}`)!;
+    const model = input.model ?? (typeof defaults.values.model === "string" ? defaults.values.model : undefined);
+    const effort = input.effort ?? (typeof defaults.values.effort === "string" ? defaults.values.effort : null);
+    if (!model) throw new Error("Select a model from worker_catalog or save a provider Worker default");
+    intent.model = model; intent.effort = effort;
+    await this.checkChoice(input.accountId, model, effort);
+    const reserved = this.ledger.reserve({ ...intent, model });
     if (reserved.duplicate) return { ...reserved, turn: summarizeTurn(reserved.turn) };
     const id = reserved.worker.id;
+    const selection = this.ledger.settings.seed(`worker:${id}`, { model, ...(effort ? { effort } : {}) }, "Worker admission selection", defaults.revision);
     let stage = "Role snapshot";
     try {
       const snapshot = await roleSnapshot(this.env, input.roleId);
@@ -307,7 +399,8 @@ export class WorkerManager {
         if (creating.dropped) this.ledger.history.drop(id, creating.dropped);
         this.response(id, reserved.turn.id, "session/new", value);
       } finally { if (--creating.count === 0) this.creating.delete(runtime.instance); }
-      await this.select(id, reserved.turn.id, runtime, result.sessionId as string, result, input.model, input.effort ?? null);
+      await this.select(id, reserved.turn.id, runtime, result.sessionId as string, result, model, effort);
+      this.ledger.settings.markLoaded(`worker:${id}`, runtime.instance, selection);
       const instructions = renderInstructions(snapshot);
       this.prompt(id, reserved.turn.id, account.provider !== "claude" && instructions ? `${instructions}\n\n${input.task}` : input.task);
     } catch {
@@ -363,8 +456,10 @@ export class WorkerManager {
 
   async send(input: SendInput, invocation?: InvocationContext): Promise<{ worker: WorkerRecord; turn: TurnSummary; duplicate: boolean }> {
     const worker = await this.owned(input.id, invocation);
-    const selected = input.model ?? worker.model;
-    const effort = input.model && input.model !== worker.model ? input.effort ?? null : input.effort ?? worker.effort;
+    const snapshot = this.settingsSnapshot(worker);
+    const previous = this.ledger.turnByRequestId(input.requestId);
+    const selected = input.model ?? (previous?.workerId === worker.id ? previous.requestedModel ?? worker.model : String(snapshot.values.model ?? worker.model));
+    const effort = input.effort ?? (previous?.workerId === worker.id ? previous.requestedEffort : input.model && input.model !== worker.model ? null : typeof snapshot.values.effort === "string" ? snapshot.values.effort : worker.effort);
     // Check an existing request before requiring a currently fresh catalog or an idle worker.
     const prior = this.ledger.findTurnRequest(worker.id, input.requestId, input.message, selected, effort);
     if (prior) return { worker: this.ledger.worker(worker.id)!, turn: summarizeTurn(prior), duplicate: true };
@@ -373,24 +468,22 @@ export class WorkerManager {
     if (!runtime || runtime.instance !== worker.runtimeInstance || !worker.sessionId) throw new Error("worker session is not loaded; use worker_resume");
     const reserved = this.ledger.reserveTurn(worker.id, input.requestId, input.message, selected, effort);
     if (reserved.duplicate) return { worker, turn: summarizeTurn(reserved.turn), duplicate: true };
+    let applied = snapshot;
     try {
       if (input.model || input.effort) {
+        this.ledger.settings.patch(`worker:${worker.id}`, workerSettingsBackend(worker.provider), { expectedRevision: snapshot.revision, requestId: randomUUID(),
+          set: { model: selected, ...(effort ? { effort } : {}) }, ...(effort ? {} : { reset: ["effort"] }) });
+        applied = this.ledger.settings.get(`worker:${worker.id}`)!;
+      }
+      const loaded = this.ledger.settings.loaded(`worker:${worker.id}`, runtime.instance);
+      if (!loaded || loaded.revision !== applied.revision || input.model || input.effort) {
         const catalog = await this.supervisor.catalog(worker.accountId, false);
         if (!catalog.modelConfigId || catalog.stale) throw new Error("account model configuration is unavailable");
-        const current = await runtime.process.request("session/set_config_option", { sessionId: worker.sessionId,
-          configId: catalog.modelConfigId, value: selected });
-        this.response(worker.id, reserved.turn.id, "config_option_update", current);
-        const actualModel = currentOption(current, catalog.modelConfigId);
-        if (actualModel && actualModel !== selected) throw new Error("ACP selected a different model");
-        const option = effortOption(optionsOf(current));
-        if (effort) {
-          if (!option?.values.some((value) => value.value === effort)) throw new Error("ACP did not offer requested effort");
-          const confirmed = await runtime.process.request("session/set_config_option", { sessionId: worker.sessionId, configId: option.id, value: effort });
-          this.response(worker.id, reserved.turn.id, "config_option_update", confirmed);
-          const actualEffort = currentOption(confirmed, option.id);
-          if (actualEffort && actualEffort !== effort) throw new Error("ACP selected a different effort");
-        }
+        await this.selectValues(worker.id, reserved.turn.id, runtime, worker.sessionId, catalog.modelConfigId,
+          typeof applied.values.model === "string" ? applied.values.model : null, typeof applied.values.effort === "string" ? applied.values.effort : null,
+          catalog.models.find((entry) => entry.id === selected)?.effortConfigId ?? null);
         this.ledger.setSelection(worker.id, selected, effort);
+        this.ledger.settings.markLoaded(`worker:${worker.id}`, runtime.instance, applied);
       }
       this.prompt(worker.id, reserved.turn.id, input.message);
     } catch {
@@ -440,6 +533,7 @@ export class WorkerManager {
     if (!runtime?.canLoad) throw new Error("account runtime cannot load saved sessions");
     this.bindRuntime(id, runtime);
     this.ledger.setWorkerPhase(id, "preparing");
+    this.ledger.settings.clearLoaded(`worker:${id}`);
     this.loading.add(id);
     try {
       const snapshot = await loadWorkerRole(this.stateDir, id);
@@ -482,4 +576,8 @@ export class WorkerManager {
     this.changed(false, id);
     return { id, retainedBranch: worker.branch };
   }
+}
+
+export function workerSettingsBackend(provider: WorkerRecord["provider"]): SettingsBackend {
+  return provider === "claude" ? "claude-sdk" : provider === "devin" ? "devin-acp" : provider === "codex" ? "opencode-codex" : "opencode-grok";
 }

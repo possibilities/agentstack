@@ -138,6 +138,10 @@ A Codex child thread whose parent chain reaches a Bot's sanctioned main thread. 
 
 A Codex app-server process with, after its first turn, a durable main thread. By default it is numbered `bot-N` with a private workspace and copies the current Bot defaults: Sol at medium reasoning effort, unrestricted sandbox, and no approval prompts. The Bots Package API can change defaults for future Bots; `bot_start` requires an explicit enabled Codex account and can override a Bot's ID, working directory, saved settings, and launch arguments. Legacy unbound Bots require assignment before a turn. Bots restart on Stack startup with their saved account and settings and resume their main thread when one exists.
 
+## Managed runtime settings
+
+Versioned explicit preferences owned by Bots or Workers, with backend-specific catalogs and separate saved, loaded, resolved-configuration and observed-effective evidence. Creation defaults are copied into new instances; reset removes an override and restores native resolution. Saving does not apply: Bot process changes load at start, voice changes on the next call, and Worker selections on the next follow-up or explicit idle application. Roles own instructions and resources. _Avoid_: effective values inferred from saved configuration, native subagent defaults as Worker controls
+
 ## Role
 
 A named Stack-owned configuration with a stable ID and independent revision: ordered developer-instruction fragments, enabled skills, per-Role internal MCP enablement, additional MCP servers and trusted projects. The first created Role is default; any existing Role can be marked default. Every new Bot launch captures the default; a new Worker captures the default unless `worker_start` selects another Role. Bot launches receive a private snapshot through codexnk's required `--capabilities` directory; Workers receive skills and MCP connections but not instruction fragments. Worker recovery retains its saved snapshot. Edits and default changes affect later launches, not a running process. _Avoid_: singleton Role, capability profile, system-prompt flag, live prompt file

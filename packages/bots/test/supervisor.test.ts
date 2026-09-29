@@ -433,7 +433,7 @@ test("a stopped Server resumes after re-sign-in while preserving its old runtime
     const resumed = await supervisor.start({ cwd, id: "bound" });
     assert.equal(resumed.mainThreadId, "thread-bound");
     assert.equal(launchedWith, auth("new"));
-    assert.equal(resumed.settings, null);
+    assert.deepEqual(resumed.settings, { sandboxMode: "danger-full-access", approvalPolicy: "never" });
     assert.equal(launchedArgs.some((arg) => arg.startsWith("model=") || arg.startsWith("model_reasoning_effort=")), false);
     assert.equal(supervisor.store.servers()[0]?.authVersion, 2);
     const archived = await readdir(join(stateDir, "runtime-recovery", "bound"));

@@ -14,15 +14,16 @@ import { watchThreadEvents } from "./src/threads.js";
 import { VoiceCalls } from "./src/voice.js";
 import { ChatIndex, ChatQueue, ChatUploads, chatRpc, live, observeThreadState } from "./src/chats.js";
 import { LiveChats, boundedMainItems } from "./src/chat-live.js";
+import { botSettingsOperations } from "./src/settings.js";
 import { chatTreePage, readChatTree, pageChatTree, chatTreeDetail as treeDetail, detailChunk } from "./src/chat-tree.js";
 
 const botId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/).describe("Bot id. Omit for the next bot-N; supply a name to override it.");
 const botSettings = z.strictObject({
   model: z.string().min(1).describe("Codex model identifier. Default: gpt-6-sol."),
-  reasoningEffort: z.enum(["low", "medium", "high", "xhigh", "max", "ultra"]).describe("Codex model reasoning effort. Default: medium; the selected model must support it."),
+  reasoningEffort: z.string().min(1).max(64).describe("Codex reasoning effort. The selected model must support it."),
   sandboxMode: z.enum(["read-only", "workspace-write", "danger-full-access"]).describe("Codex sandbox mode. Default: danger-full-access."),
   approvalPolicy: z.enum(["untrusted", "on-failure", "on-request", "never"]).describe("Codex approval policy. Default: never."),
-});
+}).partial();
 const botView = z.object({
   id: botId,
   pid: z.number().int().nullable().describe("Process id while running, otherwise null."),
@@ -35,15 +36,15 @@ const botView = z.object({
   recoveryIssue: z.string().nullable().describe("Process-ownership issue requiring inspection; a running state is unverified while this is set."),
   roleId: z.uuid().nullable().describe("Role ID used for the last launch, not a per-Bot assignment. Null before launch or for legacy launches. Later launches resolve the current default."),
   roleRevision: z.number().int().nonnegative().nullable().describe("Last launched Role revision, or null before launch. Compare both roleId and revision; restart to apply a new default or edits."),
-  settings: botSettings.nullable().describe("Saved launch settings for this Bot, or null for a pre-existing Bot that retains Codex's implicit model and effort. Caller args can override settings at launch."),
+  settings: botSettings.nullable().describe("Legacy four-field projection of saved settings. Omitted fields use native resolution; inspect bot_settings_read for complete saved, loaded and resolved state. Caller args may override values."),
 });
 
 export type BotsContext = { root: string; ledger: BotLedger; store: StateStore; supervisor: Supervisor; voice: VoiceCalls; chats: ChatIndex; liveChats: LiveChats; queue: ChatQueue; uploads: ChatUploads };
 export const topics = {
-  bots_changed: "Published when a bot starts, stops, exits, changes assignment, or is fenced for recovery. Refresh bot_list.",
+  bots_changed: "Published when a bot starts, stops, exits, changes assignment or saved settings, or is fenced for recovery. Refresh bot_list and bot_settings_read.",
   threads_changed: "Published when thread lifecycle, configuration, metadata or status for this Bot may have changed, or its Codex connection resumes. Refresh chat_tree. An invalidation is not proof that a sanctioned thread changed.",
-  voice_changed: "Published when the single voice call starts, connects, or ends. Refresh voice_status; the notice carries no SDP or audio.",
-  defaults_changed: "Published when the defaults for newly created Bots change. Refresh bot_defaults_get.",
+  voice_changed: "Published when the single voice call starts, connects, or ends. Refresh voice_status and bot_settings_read for call-loaded settings; the notice carries no SDP or audio.",
+  defaults_changed: "Published when the defaults for newly created Bots change. Refresh bot_defaults_get, bot_settings_read without id, and bot_settings_catalog.",
   chats_changed: "A Bot's Codex thread state changed or its chat history may have grown. Re-read chat_tree, chat_list, chat_thread_read or chat_turns. Notices carry no transcript content.",
   chat_live_changed: "The Bot's in-progress main-thread projection changed: streamed text, reasoning, item or turn state, or a reset after reconnection. Coalesced to at most one notice per 32 ms. Read chat_main_live with the previous instance and revision as after to receive only changed items.",
   chat_queue_changed: "A queued message changed admission or dispatch state. Refresh chat_queue_list for the Bot; notices carry no message content.",
@@ -506,7 +507,7 @@ export const chatMessageChanges = operation({
   },
 });
 export const api: PackageApi<BotsContext, BotsTopic> = {
-  operations: [botStart, botStop, botAssign, botRemove, botList, botDefaultsGet, botDefaultsSet, voiceStatus, voiceDial, voiceSpeak, voiceHangup, chatList, chatTree, chatTreeDetail, chatSearch, chatRecords, chatRecordChunk, chatMessageChanges, chatThreadRead, chatTurns, chatItems, chatMainLive, chatMainItems, chatOccurrences, chatOpen, chatSend, chatSteer, chatInterrupt, chatEnqueue, chatQueueList, chatQueueResolve, chatCodexQueueAdd, chatCodexQueueList, chatCodexQueueUpdate, chatCodexQueueDelete, chatCodexQueueReorder, chatCodexQueueStart, chatUploadStart, chatUploadStatus, chatUploadChunk, chatUploadFinish, chatAttachmentAdd, chatAttachmentList, chatAttachmentRemove],
+  operations: [...botSettingsOperations, botStart, botStop, botAssign, botRemove, botList, botDefaultsGet, botDefaultsSet, voiceStatus, voiceDial, voiceSpeak, voiceHangup, chatList, chatTree, chatTreeDetail, chatSearch, chatRecords, chatRecordChunk, chatMessageChanges, chatThreadRead, chatTurns, chatItems, chatMainLive, chatMainItems, chatOccurrences, chatOpen, chatSend, chatSteer, chatInterrupt, chatEnqueue, chatQueueList, chatQueueResolve, chatCodexQueueAdd, chatCodexQueueList, chatCodexQueueUpdate, chatCodexQueueDelete, chatCodexQueueReorder, chatCodexQueueStart, chatUploadStart, chatUploadStatus, chatUploadChunk, chatUploadFinish, chatAttachmentAdd, chatAttachmentList, chatAttachmentRemove],
   events: {
     topics,
     scope: {
@@ -535,10 +536,15 @@ export const api: PackageApi<BotsContext, BotsTopic> = {
         }, (method, params) => {
           const bot = ctx.supervisor.list().find((item) => item.id === id && item.url === url);
           if (!bot) return;
+          if (method === "thread/settings/updated" && params && typeof params === "object") {
+            const frame = params as { threadId?: unknown; threadSettings?: unknown };
+            if (typeof frame.threadId === "string" && frame.threadSettings && typeof frame.threadSettings === "object")
+              ctx.supervisor.observeSettings(id, url, frame.threadId, frame.threadSettings as Record<string, unknown>);
+          }
           const before = ctx.liveChats.revision(id);
           ctx.liveChats.observe(id, url, bot.mainThreadId, method, params);
           if (ctx.liveChats.revision(id) !== before) liveChanged(id);
-        }, () => { ctx.liveChats.connected(id, url); liveChanged(id); }) });
+        }, () => { ctx.liveChats.connected(id, url); liveChanged(id); }, () => { ctx.supervisor.forgetObservedSettings(id); publish("threads_changed", id); }) });
       };
       ctx.supervisor.onChange = (id) => { sync(); publish("bots_changed", id); publish("threads_changed", id); publish("chats_changed", id); };
       ctx.store.onDefaultsChange = () => publish("defaults_changed");
@@ -568,7 +574,7 @@ export const api: PackageApi<BotsContext, BotsTopic> = {
     await supervisor.reap();
     await supervisor.resumeAll();
     const chats = new ChatIndex(dir);
-    return { root, ledger, store, supervisor, voice: new VoiceCalls(() => supervisor.list()), chats, liveChats: new LiveChats(), queue: new ChatQueue(chats, (id) => supervisor.list().find((bot) => bot.id === id)), uploads: new ChatUploads(dir) };
+    return { root, ledger, store, supervisor, voice: new VoiceCalls(() => supervisor.list(), undefined, (id) => supervisor.settingsSnapshot(id)), chats, liveChats: new LiveChats(), queue: new ChatQueue(chats, (id) => supervisor.list().find((bot) => bot.id === id)), uploads: new ChatUploads(dir) };
   },
   async closeContext(ctx) {
     try { await ctx.voice.close(); }

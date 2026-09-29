@@ -179,10 +179,11 @@ export class WorkerHistory {
     return (this.db.prepare("SELECT seq FROM worker_metadata WHERE worker_id = ? ORDER BY seq").all(workerId) as Array<{ seq: number }>)
       .map(({ seq }) => this.get(workerId, seq));
   }
-  settings(workerId: string): ObservedSettings | null {
+  settings(workerId: string, afterSeq = 0): ObservedSettings | null {
     const observed: ObservedSettings = { model: null, effort: null, mode: null, at: 0, recordSeq: 0 };
     let found = false;
     for (const reference of this.metadata(workerId)) {
+      if (reference.seq <= afterSeq) continue;
       if (!["session/new", "session/load", "config_option_update", "current_mode_update"].includes(reference.kind)) continue;
       const value = this.data(workerId, reference.seq);
       const data = record(value.update) ? value.update : value;

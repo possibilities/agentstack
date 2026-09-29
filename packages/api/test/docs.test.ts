@@ -89,9 +89,9 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok(Object.hasOwn(xcom.operations.find(op => op.name === "xcom_search")?.inputSchema.properties ?? {}, "scope"));
     assert.ok(Object.hasOwn(xcom.operations.find(op => op.name === "xcom_users")?.outputSchema.properties ?? {}, "results"));
     assert.ok(xcom.transports.find(t => t.type === "mcp")!.operations.includes("xcom_articles_pending"));
-    const responseLength = JSON.stringify({ id: 1, result: snapshot }).length + 1;
-    // Proc and authenticated UI add schemas; retain a large margin below the four-million-byte frame limit.
-    assert.ok(responseLength < 900_000, `discovery snapshot exceeds the socket response budget: ${responseLength} characters`);
+    const responseLength = Buffer.byteLength(JSON.stringify({ id: 1, result: snapshot })) + 1;
+    // Include managed settings discovery while keeping at least 75% of the four-MB frame limit free.
+    assert.ok(responseLength < 1_000_000, `discovery snapshot exceeds the socket response budget: ${responseLength} bytes`);
 
     const brainHttp = found.get("brain")!.transports.find((transport) => transport.type === "http")!;
     const proc = found.get("proc")!;
@@ -191,6 +191,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.deepEqual(
       bots.operations.map((operation) => operation.name).sort(),
       ["bot_assign", "bot_defaults_get", "bot_defaults_set", "bot_list", "bot_remove", "bot_start", "bot_stop", "voice_dial", "voice_hangup", "voice_speak", "voice_status",
+        "bot_settings_catalog", "bot_settings_read", "bot_settings_preview", "bot_settings_patch", "bot_settings_apply", "bot_settings_options", "bot_settings_native_schema",
         "chat_list", "chat_tree", "chat_tree_detail", "chat_search", "chat_records", "chat_record_chunk", "chat_message_changes", "chat_thread_read", "chat_turns", "chat_items", "chat_main_live", "chat_main_items", "chat_occurrences", "chat_open", "chat_send", "chat_steer", "chat_interrupt", "chat_enqueue", "chat_queue_list", "chat_queue_resolve",
         "chat_codex_queue_add", "chat_codex_queue_list", "chat_codex_queue_update", "chat_codex_queue_delete", "chat_codex_queue_reorder", "chat_codex_queue_start", "chat_upload_start", "chat_upload_status", "chat_upload_chunk", "chat_upload_finish", "chat_attachment_add", "chat_attachment_list", "chat_attachment_remove"].sort(),
     );
@@ -274,6 +275,18 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok(JSON.stringify(workerAccount.outputSchema).includes('"claude"'));
     const workers = found.get("worker") as PackageDoc;
     const workerStart = workers.operations.find((operation) => operation.name === "worker_start")!;
+    assert.equal((workerStart.inputSchema.required as string[]).includes("model"), false);
+    for (const pkg of [bots, workers]) {
+      const prefix = pkg.name === "bots" ? "bot" : "worker";
+      for (const suffix of ["catalog", "read", "preview", "patch", "apply"]) {
+        const name = `${prefix}_settings_${suffix}`;
+        assert.ok(pkg.operations.some((operation) => operation.name === name));
+        assert.ok(pkg.transports.find((transport) => transport.type === "websocket")!.operations.includes(name));
+      }
+      const patch = pkg.operations.find((operation) => operation.name === `${prefix}_settings_patch`)!;
+      assert.match(JSON.stringify(patch.inputSchema), /expectedRevision/);
+      assert.equal(patch.annotations.idempotentHint, true);
+    }
     assert.ok(Object.hasOwn(workerStart.inputSchema.properties ?? {}, "roleId"));
     assert.equal((workerStart.inputSchema.required as string[]).includes("roleId"), false);
     const launchRole = roles.operations.find((operation) => operation.name === "role_launch_snapshot")!;
@@ -302,7 +315,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(existsSync(join(stateDir, "brain")), false, "read-only discovery must not initialize Brain storage");
     assert.deepEqual(Object.keys(workers.events).sort(), ["worker_changed", "worker_progress", "workers_changed"]);
     assert.equal(workers.eventScope?.required, false);
-    assert.deepEqual(workers.operations.map((operation) => operation.name), ["worker_catalog", "worker_runtime_list", "worker_account_drain",
+    assert.deepEqual(workers.operations.map((operation) => operation.name), ["worker_settings_catalog", "worker_settings_read", "worker_settings_preview", "worker_settings_patch", "worker_settings_apply", "worker_catalog", "worker_runtime_list", "worker_account_drain",
       "worker_start", "worker_list", "worker_status", "worker_read", "worker_detail", "worker_turn_list", "worker_record_list", "worker_record_read", "worker_tool_list",
       "worker_diff", "worker_send", "worker_respond", "worker_cancel", "worker_resume", "worker_close", "worker_remove"]);
     for (const name of ["worker_list", "worker_detail", "worker_turn_list", "worker_record_list", "worker_record_read", "worker_tool_list", "worker_diff"]) {

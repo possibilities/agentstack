@@ -261,6 +261,9 @@ importers:
       '@stack/roles':
         specifier: workspace:*
         version: link:../roles
+      '@stack/settings':
+        specifier: workspace:*
+        version: link:../settings
       ws:
         specifier: ^8.21.3
         version: 8.21.3
@@ -575,6 +578,19 @@ importers:
         specifier: ^8.21.3
         version: 8.21.3
 
+  packages/settings:
+    dependencies:
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.2
+        version: 26.6.2
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   packages/signal:
     dependencies:
       '@stack/api':
@@ -691,6 +707,9 @@ importers:
       '@stack/roles':
         specifier: workspace:*
         version: link:../roles
+      '@stack/settings':
+        specifier: workspace:*
+        version: link:../settings
       zod:
         specifier: ^4.6.5
         version: 4.6.5

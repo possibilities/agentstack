@@ -247,7 +247,7 @@ test("legacy JSON Server records follow the migrated immutable account ID", asyn
     assert.equal(supervisor.store.servers().find((server) => server.id === "old")?.account, id);
     assert.equal(supervisor.store.servers().find((server) => server.id === "old")?.launchedAccount, id);
     assert.deepEqual(supervisor.store.servers().find((server) => server.id === "old")?.args, []);
-    assert.equal(supervisor.store.servers().find((server) => server.id === "old")?.settings, null);
+    assert.deepEqual(supervisor.store.servers().find((server) => server.id === "old")?.settings, { sandboxMode: "danger-full-access", approvalPolicy: "never" });
     const orphan = supervisor.list().find((server) => server.id === "orphan")?.account;
     assert.match(orphan ?? "", /^[0-9a-f-]{36}$/);
     assert.notEqual(orphan, id);

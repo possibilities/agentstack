@@ -36,6 +36,19 @@ if (process.argv.includes("--device-auth")) {
   wss.on("connection", (peer) => peer.on("message", (raw) => {
     const frame = JSON.parse(String(raw));
     if (frame.method === "initialize") peer.send(JSON.stringify({ id: frame.id, result: {} }));
+    if (frame.method === "config/read") {
+      const config = {};
+      for (let i = 0; i < process.argv.length; i++) if (process.argv[i] === "-c") {
+        const [key, ...parts] = process.argv[++i].split("=");
+        config[key] = JSON.parse(parts.join("="));
+      }
+      peer.send(JSON.stringify({ id: frame.id, result: { config, origins: {} } }));
+    }
+    if (frame.method === "model/list") peer.send(JSON.stringify({ id: frame.id, result: { data: [{ id: "fixture", model: "fixture", displayName: "Fixture",
+      supportedReasoningEfforts: [{ reasoningEffort: "low", description: "Low" }], defaultReasoningEffort: "low", isDefault: true }], nextCursor: null } }));
+    if (frame.method === "thread/realtime/listVoices") peer.send(JSON.stringify({ id: frame.id, result: { voices: { v1: ["sol"], v2: ["alloy"], defaultV1: "sol", defaultV2: "alloy" } } }));
+    if (frame.method === "experimentalFeature/list") peer.send(JSON.stringify({ id: frame.id, error: { message: "Fixture feature discovery unavailable" } }));
+    if (frame.method === "configRequirements/read") peer.send(JSON.stringify({ id: frame.id, result: { requirements: null } }));
     if (frame.method === "test/notify") {
       for (const client of wss.clients) client.send(JSON.stringify({ method: frame.params.method, params: frame.params.params }));
       peer.send(JSON.stringify({ id: frame.id, result: {} }));

@@ -1,11 +1,12 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { accessSync, constants, createWriteStream, existsSync } from "node:fs";
 import { connect } from "node:net";
 import { codexRuntimePath } from "./paths.js";
-import { DEFAULT_BOT_SETTINGS, StateStore, type BotSettings, type StoredServer } from "./store.js";
+import { DEFAULT_BOT_SETTINGS, StateStore, nativeSettings, legacySettings, type BotSettings, type StoredServer } from "./store.js";
+import { nativeArgs, settingValue, type SettingValues, type SettingsPatch, type SettingsSnapshot } from "@stack/settings";
 import { RuntimeAuth, type SyncStatus } from "./runtime-auth.js";
 import { bindMainThread, findEligibleMainThread } from "./threads.js";
 import { chatRpc, observeThreadState, type ThreadStateObservation } from "./chats.js";
@@ -82,6 +83,7 @@ export class Supervisor {
   private readonly queues = new Map<string, Promise<void>>();
   private readonly children = new Map<string, RunningChild>();
   private readonly recoveryIssues = new Map<string, string>();
+  private readonly settingsObservations = new Map<string, { url: string; threadId: string; values: SettingValues; observedAt: number }>();
   private readonly launch: (spec: LaunchSpec) => RunningChild;
   private readonly waitReady: (url: string, exited: Promise<number | null>, timeoutMs: number) => Promise<void>;
   private readonly endpoint: (id: string) => Promise<string>;
@@ -139,6 +141,8 @@ export class Supervisor {
         continue;
       }
     }
+    for (const record of this.records.values()) this.store.managed.seed(`bot:${record.id}`,
+      nativeSettings(record.settings ?? { sandboxMode: "danger-full-access", approvalPolicy: "never" }), "Preserved Bot settings");
   }
 
   async reap(): Promise<void> {
@@ -182,6 +186,55 @@ export class Supervisor {
     return this.enqueue(id, () => this.startQueued(id, input));
   }
 
+  settingsSnapshot(id: string): SettingsSnapshot {
+    if (!this.records.has(id)) throw new Error(`unknown bot: ${id}`);
+    return this.store.managed.get(`bot:${id}`)!;
+  }
+
+  patchSettings(id: string, input: SettingsPatch) {
+    return this.enqueue(id, async () => {
+      this.settingsSnapshot(id);
+      const receipt = this.store.managed.patch(`bot:${id}`, "codex-app-server", input);
+      this.records.get(id)!.settings = legacySettings(this.settingsSnapshot(id).values);
+      this.notify(id);
+      return receipt;
+    });
+  }
+
+  applySettings(id: string, expectedRevision: number): Promise<ServerView> {
+    return this.enqueue(id, async () => {
+      if (this.settingsSnapshot(id).revision !== expectedRevision) throw new Error("Settings revision conflict; reread before applying");
+      const record = this.records.get(id)!;
+      if (record.state !== "stopped") throw new Error("Stop the Bot before applying process settings; this operation never interrupts work or a voice call");
+      if (!record.account) throw new Error("Assign a Codex account before applying Bot settings");
+      return this.startQueued(id, { id, cwd: record.cwd });
+    });
+  }
+
+  settingsArgs(id: string): readonly string[] {
+    this.settingsSnapshot(id);
+    return this.records.get(id)!.args;
+  }
+
+  observeSettings(id: string, url: string, threadId: string, input: Record<string, unknown>): void {
+    const record = this.records.get(id);
+    if (record?.url !== url || record.mainThreadId !== threadId) return;
+    const values: SettingValues = {};
+    for (const [native, key] of Object.entries({ model: "model", effort: "model_reasoning_effort", reasoningEffort: "model_reasoning_effort",
+      serviceTier: "service_tier", approvalPolicy: "approval_policy", approvalsReviewer: "approvals_reviewer", summary: "model_reasoning_summary" })) {
+      const value = settingValue.safeParse(input[native]);
+      if (value.success) values[key] = value.data;
+    }
+    this.settingsObservations.set(id, { url, threadId, values, observedAt: Date.now() });
+  }
+
+  observedSettings(id: string) {
+    const record = this.records.get(id), observed = this.settingsObservations.get(id);
+    return record?.state === "running" && observed?.url === record.url && observed.threadId === record.mainThreadId ? observed : null;
+  }
+
+  forgetObservedSettings(id: string): void { this.settingsObservations.delete(id); }
+
   /** Claim the first materialized root thread created through this Server's Codex socket. */
   adoptMainThread(id: string, url: string): Promise<ServerView | null> {
     return this.enqueue(id, async () => {
@@ -224,6 +277,7 @@ export class Supervisor {
       record.mainThreadId = threadId;
       try { await this.persist(record); }
       catch (error) { record.mainThreadId = null; throw error; }
+      this.observeSettings(id, record.url, threadId, started);
       this.notify(id);
       return { threadId, turn: turn as Record<string, unknown>, threadState };
     });
@@ -287,7 +341,7 @@ export class Supervisor {
     if (!current) await this.options.browserReleased?.(id);
     const userArgs = input.args ?? current?.args ?? [];
     validateAppServerArgs(userArgs);
-    const settings = input.settings === undefined
+    let settings = input.settings === undefined
       ? current ? current.settings ?? null : this.store.botDefaults()
       : { ...(current?.settings ?? this.store.botDefaults()), ...input.settings };
     if (current && current.cwd !== cwd) throw new Error(`server ${id} is bound to ${current.cwd}, not ${cwd}`);
@@ -311,6 +365,15 @@ export class Supervisor {
       }
       return this.view(current);
     }
+    const defaults = this.store.managed.get("bot-defaults")!;
+    let managed = this.store.managed.seed(`bot:${id}`, current
+      ? nativeSettings(current.settings ?? { sandboxMode: "danger-full-access", approvalPolicy: "never" }) : defaults.values,
+    current ? "Preserved Bot settings" : "Copied Bot defaults", current ? null : defaults.revision);
+    if (input.settings !== undefined) {
+      this.store.managed.patch(`bot:${id}`, "codex-app-server", { expectedRevision: managed.revision, requestId: randomUUID(), set: nativeSettings(input.settings) });
+      managed = this.store.managed.get(`bot:${id}`)!;
+    }
+    settings = legacySettings(managed.values);
     if (current?.threadStarting && !current.mainThreadId) {
       throw new Error(`server ${id} has an unconfirmed thread/start; inspect its Codex history before retrying to avoid a second main thread`);
     }
@@ -361,7 +424,7 @@ export class Supervisor {
         env.TMPDIR = runtimeRoot;
         child = this.launch({
           bin: codexBin,
-          args: [...appServerArgs(userArgs, url, settings), "--enable", "realtime_conversation", "--identity", identity, "--capabilities", rolePath, "--history-dir", history],
+          args: [...appServerArgs(userArgs, url, settings, managed.values), "--enable", "realtime_conversation", "--identity", identity, "--capabilities", rolePath, "--history-dir", history],
           cwd,
           logPath,
           env,
@@ -387,9 +450,11 @@ export class Supervisor {
         persisted = true;
         await this.waitReady(url, child.exited, this.readyTimeoutMs);
         ready = true;
+        this.store.managed.markLoaded(`bot:${id}`, url, { ...managed,
+          values: Object.fromEntries(Object.entries(managed.values).filter(([key]) => !key.startsWith("voice."))) });
         // A fresh Server owns the socket, but the first UI owns thread/start.
         // Only a previously adopted main thread needs to be resumed here.
-        if (record.mainThreadId) await this.bindThread(url, cwd, record.mainThreadId);
+        if (record.mainThreadId) await this.bindThread(url, cwd, record.mainThreadId, (settings) => this.observeSettings(id, url, record.mainThreadId!, settings));
         await rm(identity, { recursive: true, force: true });
         await this.runtime.watch(record);
         this.recoveryIssues.delete(id);
@@ -519,7 +584,8 @@ export class Supervisor {
   }
 
   private view(record: RecordFile): ServerView {
-    return viewOf(record, this.recoveryIssues.get(record.id) ?? null);
+    const saved = this.store.managed.get(`bot:${record.id}`);
+    return viewOf(saved ? { ...record, settings: legacySettings(saved.values) } : record, this.recoveryIssues.get(record.id) ?? null);
   }
 
   private noteRecoveryIssue(id: string, error: unknown): void {
@@ -591,16 +657,14 @@ export class Supervisor {
   }
 }
 
-export function appServerArgs(userArgs: readonly string[], url: string, settings: BotSettings | null = DEFAULT_BOT_SETTINGS): string[] {
+export function appServerArgs(userArgs: readonly string[], url: string, settings: BotSettings | null = DEFAULT_BOT_SETTINGS, values = nativeSettings(settings ?? { sandboxMode: "danger-full-access", approvalPolicy: "never" })): string[] {
   validateAppServerArgs(userArgs);
   const args = [...userArgs];
   const appServerAt = args.indexOf("app-server");
   if (appServerAt !== -1) args.splice(appServerAt, 1);
   // Codex applies later arguments last; saved caller args can override these settings.
   return ["app-server", "--listen", url,
-    ...(settings ? ["-c", `model=${JSON.stringify(settings.model)}`, "-c", `model_reasoning_effort="${settings.reasoningEffort}"`] : []),
-    "-c", `sandbox_mode="${settings?.sandboxMode ?? DEFAULT_BOT_SETTINGS.sandboxMode}"`,
-    "-c", `approval_policy="${settings?.approvalPolicy ?? DEFAULT_BOT_SETTINGS.approvalPolicy}"`,
+    ...nativeArgs(values),
     ...args];
 }
 

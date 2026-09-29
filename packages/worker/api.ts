@@ -3,6 +3,7 @@ import { z } from "zod";
 import { operation, stateDir, type PackageApi } from "@stack/api";
 import { WorkerSupervisor } from "./src/supervisor.js";
 import { WorkerManager } from "./src/manager.js";
+import { workerSettingsOperations } from "./src/settings.js";
 
 const id = z.uuid();
 const model = z.strictObject({ id: z.string(), name: z.string(), efforts: z.array(z.string()), effortConfigId: z.string().nullable() });
@@ -74,7 +75,7 @@ export const workerAccountDrain = operation({
 
 export const workerStart = operation({
   name: "worker_start", description: "Start a Worker in an owned Git worktree and dispatch its first turn through ACP or Claude SDK. Choose an account, model and effort from worker_catalog. Optional roleId selects a Role; omission uses the Worker default. Workers capture its enabled instructions, skills and MCP servers. Recovery retains the snapshot. Admission returns promptly; read worker_status for completion.",
-  input: z.strictObject({ accountId: id, model: z.string().min(1).max(200), effort: z.string().min(1).max(64).optional(),
+  input: z.strictObject({ accountId: id, model: z.string().min(1).max(200).optional().describe("Native model choice; omit to use the saved provider default. If neither exists, admission fails."), effort: z.string().min(1).max(64).optional(),
     repo: z.string().min(1).max(4_096), baseRef: z.string().min(1).max(256).optional(), roleId: id.optional().describe("Role to capture at creation; omit for the current Worker default. Cannot change on an existing Worker."), task: z.string().min(1).max(65_536), requestId }),
   output: resultSchema, annotations: { title: "Start Worker" },
   async call(ctx: WorkersContext, input, invocation) { return ctx.manager.start(input, invocation); },
@@ -188,12 +189,12 @@ export const workerRemove = operation({
 });
 
 export const topics = {
-  workers_changed: "Worker account, runtime, catalog or session state changed. Refresh the relevant read operation.",
-  worker_changed: "One Worker's turn, permission or recovery state changed. Subscribe with its Worker ID and re-read worker_status for the latest value.",
+  workers_changed: "Worker account, runtime, catalog, settings defaults or session state changed. Refresh the relevant read operation, including worker_settings_catalog/read for defaults.",
+  worker_changed: "One Worker's turn, permission, settings or recovery state changed. Subscribe with its Worker ID and re-read worker_status and worker_settings_read for the latest values.",
   worker_progress: "Scoped UI invalidation for structured transcript, tool and session metadata progress. Subscribe with a Worker ID and refresh Worker detail/history reads. This is separate from Bot wakeups on worker_changed.",
 } as const;
 export const api: PackageApi<WorkersContext, keyof typeof topics> = {
-  operations: [workerCatalog, workerRuntimeList, workerAccountDrain, workerStart, workerList, workerStatus, workerRead,
+  operations: [...workerSettingsOperations, workerCatalog, workerRuntimeList, workerAccountDrain, workerStart, workerList, workerStatus, workerRead,
     workerDetail, workerTurnList, workerRecordList, workerRecordRead, workerToolList, workerDiff,
     workerSend, workerRespond, workerCancel, workerResume, workerClose, workerRemove],
   events: {

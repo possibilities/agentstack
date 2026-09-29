@@ -13,6 +13,7 @@ import { WorkerManager } from "../src/manager.js";
 import { claimWorktree, loadWorkerRole, removeWorktree } from "../src/worktree.js";
 import { api as workersApi } from "../api.js";
 import { writeV2Credential } from "./v2-credential-fixture.js";
+import type { SettingsView } from "@stack/settings";
 
 const role: RoleSnapshot = { id: randomUUID(), name: "Fixture", description: "", createdAt: null, updatedAt: null, disabledInternalMcpServers: [], revision: 7, categories: [{ id: randomUUID(), title: "Guidance", description: "", enabled: true, createdAt: null, updatedAt: null,
   fragments: [{ id: randomUUID(), categoryId: randomUUID(), title: "Brief", description: "", body: "Check your work.", enabled: true, createdAt: null, updatedAt: null }] }],
@@ -228,6 +229,27 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     const detail = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_detail", arguments: { id } }) as Awaited<ReturnType<WorkerManager["detail"]>>;
     assert.equal(detail.observedSettings?.model, "xai/grok-build");
     assert.equal(detail.observedSettings?.effort, "low");
+    const settingsCall = <T>(name: string, args: Record<string, unknown>) => socketCall(socketPath("worker", env), "tools/call", { name, arguments: args }) as Promise<T>;
+    const settingsBefore = await settingsCall<SettingsView>("worker_settings_read", { id });
+    const settingsPatch = { target: { id }, patch: { expectedRevision: settingsBefore.saved.revision, requestId: randomUUID(), set: { effort: "high" } } };
+    await settingsCall("worker_settings_preview", settingsPatch);
+    assert.equal((await settingsCall<SettingsView>("worker_settings_read", { id })).saved.revision, settingsBefore.saved.revision);
+    const savedSettings = await settingsCall<{ revision: number }>("worker_settings_patch", settingsPatch);
+    assert.equal((await manager.detail(id)).observedSettings?.effort, "low", "saving does not select a native option");
+    await assert.rejects(settingsCall("worker_settings_apply", { id, expectedRevision: savedSettings.revision, expectedInstance: randomUUID() }), /exact idle/);
+    const turnCount = manager.ledger.turns(id).length;
+    const applying = settingsCall("worker_settings_apply", { id, expectedRevision: savedSettings.revision, expectedInstance: started.worker.runtimeInstance });
+    for (let i = 0; i < 100 && (await manager.status(id)).worker.phase !== "preparing"; i++) await new Promise((resolve) => setTimeout(resolve, 2));
+    assert.equal((await manager.status(id)).worker.phase, "preparing");
+    await assert.rejects(manager.send({ id, message: "must not race selection", requestId: randomUUID() }), /not idle/);
+    await settingsCall("worker_settings_patch", { target: { id }, patch: { expectedRevision: savedSettings.revision, requestId: randomUUID(), set: { effort: "low" } } });
+    await applying;
+    const settingsAfter = await settingsCall<SettingsView>("worker_settings_read", { id });
+    assert.equal(settingsAfter.saved.values.effort, "low");
+    assert.equal(settingsAfter.loaded?.values.effort, "high");
+    assert.equal(settingsAfter.fields.find((field) => field.key === "effort")?.effective.value, "high");
+    assert.equal(settingsAfter.fields.find((field) => field.key === "effort")?.pending, true);
+    assert.equal(manager.ledger.turns(id).length, turnCount, "application sends no prompt");
     assert.ok(detail.metadata.some((entry) => entry.kind === "available_commands_update"));
     assert.ok(detail.metadata.some((entry) => entry.kind === "runtime"));
     assert.equal(detail.subagents.hierarchyAvailable, false);
@@ -316,7 +338,12 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     const removed = await manager.remove(id, true);
     assert.equal(removed.retainedBranch, started.worker.branch);
     await assert.rejects(stat(started.worker.cwd!), /ENOENT/);
-    const next = await manager.start({ ...start, requestId: randomUUID() });
+    manager.ledger.settings.patch("worker-defaults:grok", "opencode-grok", { expectedRevision: 0, requestId: randomUUID(), set: { model: start.model, effort: "high" } });
+    const withDefaults = { ...start, model: undefined, effort: undefined, requestId: randomUUID() };
+    const next = await manager.start(withDefaults);
+    assert.equal(next.worker.effort, "high");
+    manager.ledger.settings.patch("worker-defaults:grok", "opencode-grok", { expectedRevision: 1, requestId: randomUUID(), set: { effort: "low" } });
+    assert.equal((await manager.start(withDefaults)).worker.id, next.worker.id, "retry uses the original admitted defaults");
     for (let i = 0; i < 100 && (await manager.status(next.worker.id)).worker.phase !== "idle"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(next.worker.roleId, nextRoleId);
     assert.equal(next.worker.roleRevision, 0);

@@ -127,7 +127,7 @@ const settingOptions = {
   sandboxMode: ["read-only", "workspace-write", "danger-full-access"],
   approvalPolicy: ["untrusted", "on-failure", "on-request", "never"],
 } as const;
-const sandboxTitles: Record<BotSettings["sandboxMode"], string> = { "read-only": "Read only", "workspace-write": "Workspace", "danger-full-access": "Full access" };
+const sandboxTitles: Record<NonNullable<BotSettings["sandboxMode"]>, string> = { "read-only": "Read only", "workspace-write": "Workspace", "danger-full-access": "Full access" };
 
 /** Native radios styled as one segmented control; the empty value means "inherit". */
 function Segmented({ legend, name, options, value, inherit, onChange, titles }: {
@@ -158,7 +158,7 @@ function Segmented({ legend, name, options, value, inherit, onChange, titles }: 
 /** Each "inherit" choice names what it inherits: `Default · medium` for a new Bot, `Current · medium` for a saved one. */
 function SettingsFields({ value, onChange, defaults, inheritLabel }: { value: Partial<BotSettings>; onChange(value: Partial<BotSettings>): void; defaults: BotSettings | null; inheritLabel: "Default" | "Current" }) {
   const id = useId();
-  const inherit = (key: keyof BotSettings) => defaults ? `${inheritLabel} · ${key === "sandboxMode" ? sandboxTitles[defaults.sandboxMode] ?? defaults.sandboxMode : defaults[key]}` : "Keep";
+  const inherit = (key: keyof BotSettings) => defaults ? `${inheritLabel} · ${key === "sandboxMode" && defaults.sandboxMode ? sandboxTitles[defaults.sandboxMode] : defaults[key] ?? "Native"}` : "Keep";
   return <FieldGroup className="gap-4">
     <Field>
       <FieldLabel htmlFor={`${id}-model`}>Model</FieldLabel>
@@ -171,7 +171,7 @@ function SettingsFields({ value, onChange, defaults, inheritLabel }: { value: Pa
         <FieldLabel htmlFor={`${id}-${key}`}>{key === "sandboxMode" ? "Sandbox" : "Approvals"}</FieldLabel>
         <NativeSelect id={`${id}-${key}`} className="w-full" value={value[key] ?? ""} onChange={(event) => onChange({ ...value, [key]: event.target.value })}>
           <NativeSelectOption value="">{inherit(key)}</NativeSelectOption>
-          {settingOptions[key].map((option) => <NativeSelectOption key={option} value={option}>{key === "sandboxMode" ? sandboxTitles[option as BotSettings["sandboxMode"]] : option}</NativeSelectOption>)}
+          {settingOptions[key].map((option) => <NativeSelectOption key={option} value={option}>{key === "sandboxMode" ? sandboxTitles[option as NonNullable<BotSettings["sandboxMode"]>] : option}</NativeSelectOption>)}
         </NativeSelect>
       </Field>)}
     </div>

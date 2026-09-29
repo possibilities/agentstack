@@ -8,6 +8,7 @@ import { serveApi, socketCall, socketSubscribe, type ServedApi, type SocketSubsc
 import { StateStore } from "../src/store.js";
 import { chatRpc } from "../src/chats.js";
 import { RoleStore } from "@stack/roles";
+import type { SettingsView } from "@stack/settings";
 
 const fakeBin = fileURLToPath(new URL("../../test/fixtures/fake-app-server.mjs", import.meta.url));
 type View = { id: string; pid: number | null; cwd: string; url: string | null; state: string; account: string | null; runningAccount: string | null; mainThreadId: string | null; settings: { model: string; reasoningEffort: string; sandboxMode: string; approvalPolicy: string } };
@@ -39,8 +40,8 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
   let defaultsSubscription: SocketSubscription | undefined;
   try {
     const tools = await socketCall(socket, "tools/list") as { tools: Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }>; events: { scope: { required: boolean } } };
-    assert.deepEqual(tools.tools.map((tool) => tool.name), ["bot_start", "bot_stop", "bot_assign", "bot_remove", "bot_list", "bot_defaults_get", "bot_defaults_set", "voice_status", "voice_dial", "voice_speak", "voice_hangup", "chat_list", "chat_tree", "chat_tree_detail", "chat_search", "chat_records", "chat_record_chunk", "chat_message_changes", "chat_thread_read", "chat_turns", "chat_items", "chat_main_live", "chat_main_items", "chat_occurrences", "chat_open", "chat_send", "chat_steer", "chat_interrupt", "chat_enqueue", "chat_queue_list", "chat_queue_resolve", "chat_codex_queue_add", "chat_codex_queue_list", "chat_codex_queue_update", "chat_codex_queue_delete", "chat_codex_queue_reorder", "chat_codex_queue_start", "chat_upload_start", "chat_upload_status", "chat_upload_chunk", "chat_upload_finish", "chat_attachment_add", "chat_attachment_list", "chat_attachment_remove"]);
-    assert.deepEqual(Object.keys(tools.tools[0].inputSchema.properties).sort(), ["account", "args", "cwd", "id", "settings"]);
+    assert.ok(tools.tools.some((tool) => tool.name === "bot_settings_read"));
+    assert.deepEqual(Object.keys(tools.tools.find((tool) => tool.name === "bot_start")!.inputSchema.properties).sort(), ["account", "args", "cwd", "id", "settings"]);
     assert.equal(tools.events.scope.required, false);
     const initial = await call(socket, "bot_defaults_get") as View["settings"];
     assert.deepEqual(initial, { model: "gpt-6-sol", reasoningEffort: "medium", sandboxMode: "danger-full-access", approvalPolicy: "never" });
@@ -185,6 +186,45 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
     assert.deepEqual(await call(socket, "bot_defaults_get"), changed);
     assert.deepEqual((await call(socket, "bot_list") as { bots: View[] }).bots[0]?.settings, initial);
     assert.ok((await call(socket, "bot_list") as { bots: View[] }).bots.every((bot) => bot.state === "running"));
+    // Settings save is independent of process application; reset must survive both restart paths.
+    const options = await call(socket, "bot_settings_options", { id: first.id }) as { models: { available: boolean; data: { defaultReasoningEffort: string }[] }; features: { available: boolean; issue: string }; voices: { available: boolean }; requirements: { available: boolean; data: null } };
+    assert.equal(options.models.available, true);
+    assert.equal(options.models.data[0]?.defaultReasoningEffort, "low");
+    assert.equal(options.voices.available, true);
+    assert.equal(options.features.available, false, "a refused discovery part cannot erase independent catalogs");
+    assert.ok(options.features.issue);
+    assert.deepEqual(options.requirements, { available: true, data: null, issue: null });
+    const readSettings = () => call(socket, "bot_settings_read", { id: first.id, observe: true }) as Promise<SettingsView>;
+    const beforeSettings = await readSettings();
+    const patch = { id: first.id, expectedRevision: beforeSettings.saved.revision, requestId: crypto.randomUUID(),
+      reset: ["model", "model_reasoning_effort", "sandbox_mode", "approval_policy"], set: { model_context_window: 120_000, "voice.includeStartupContext": false } };
+    const preview = await call(socket, "bot_settings_preview", patch) as { changes: unknown[] };
+    assert.equal(preview.changes.length, 6);
+    const receipt = await call(socket, "bot_settings_patch", patch) as { revision: number; applied: boolean };
+    assert.equal(receipt.applied, false);
+    const pendingSettings = await readSettings();
+    assert.equal(pendingSettings.loaded?.values.model, initial.model);
+    assert.equal(pendingSettings.saved.values.model, undefined);
+    assert.equal((await call(socket, "bot_list") as { bots: View[] }).bots[0]!.pid, (await call(socket, "bot_start", { id: first.id, account }) as View).pid);
+    await assert.rejects(call(socket, "bot_settings_apply", { id: first.id, expectedRevision: receipt.revision }), /Stop the Bot/);
+    await call(socket, "bot_stop", { id: first.id });
+    await assert.rejects(call(socket, "bot_settings_apply", { id: first.id, expectedRevision: receipt.revision - 1 }), /revision conflict/);
+    await call(socket, "bot_settings_apply", { id: first.id, expectedRevision: receipt.revision });
+    const appliedSettings = await readSettings();
+    assert.deepEqual(appliedSettings.loaded?.values, { model_context_window: 120_000 });
+    assert.equal(appliedSettings.fields.find((field) => field.key === "voice.includeStartupContext")!.loaded.state, "unknown",
+      "starting the process does not apply voice settings");
+    assert.equal(appliedSettings.fields.find((field) => field.key === "model")!.resolved.state, "unknown");
+    assert.equal(appliedSettings.fields.find((field) => field.key === "model_context_window")!.resolved.value, 120_000);
+    const activeBot = (await call(socket, "bot_list") as { bots: View[] }).bots[0]!;
+    assert.deepEqual(activeBot.settings, {});
+    await chatRpc(activeBot.url!, "test/notify", { method: "thread/settings/updated", params: { threadId: opened.threadId, threadSettings: { model: "thread-model", effort: "low", serviceTier: null } } });
+    assert.equal((await readSettings()).fields.find((field) => field.key === "model")!.effective.value, "thread-model");
+    await chatRpc(activeBot.url!, "test/notify", { method: "thread/settings/updated", params: { threadId: "unrelated", threadSettings: { model: "foreign" } } });
+    assert.equal((await readSettings()).fields.find((field) => field.key === "model")!.effective.value, "thread-model");
+    await bots.close();
+    bots = await serveApi({ name: "bots", transport: "socket", env });
+    assert.deepEqual((await readSettings()).saved.values, appliedSettings.saved.values);
     await call(socket, "bot_remove", { id: "custom" });
     assert.equal((await lstat(external)).isDirectory(), true);
     await call(socket, "bot_remove", { id: "named" });

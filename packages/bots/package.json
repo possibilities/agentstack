@@ -22,6 +22,7 @@
     "@stack/auth": "workspace:*",
     "@stack/browse": "workspace:*",
     "@stack/roles": "workspace:*",
+    "@stack/settings": "workspace:*",
     "ws": "^8.21.3",
     "zod": "^4.6.5"
   },

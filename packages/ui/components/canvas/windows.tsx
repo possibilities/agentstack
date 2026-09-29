@@ -612,7 +612,7 @@ export function BotsWindow() {
             const threads = events.filter((event) => event.topic === "threads_changed").length;
             const lifecycle = events.length - threads;
             const onCall = voice.botId === bot.id;
-            const model = bot.settings ? [bot.settings.model, bot.settings.reasoningEffort].filter(Boolean).join(" · ") : null;
+            const model = bot.settings ? [bot.settings.model, bot.settings.reasoningEffort].filter(Boolean).join(" · ") || null : null;
             const mismatch = bot.state === "running" && !bot.recoveryIssue && bot.account !== bot.runningAccount;
             return (
               <NodeCard key={bot.id} node={{ kind: "bot", id: bot.id }} label={`bot ${bot.id}`} lastEvent={events[0]} accent="var(--pkg-bots)"
