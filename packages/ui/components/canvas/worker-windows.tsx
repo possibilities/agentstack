@@ -219,7 +219,7 @@ export function WorkersLink({ filter, className }: { filter: WorkerFilter; class
   if (!matching.length) return null;
   const open = matching.filter((worker) => worker.phase !== "closed").length;
   return (
-    <a href="/x/workers" title="Show these Workers in the Workers space"
+    <a href="/workers" title="Show these Workers in the Workers space"
       onClick={(event) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         event.preventDefault();

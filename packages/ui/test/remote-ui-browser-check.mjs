@@ -73,7 +73,7 @@ try {
   assert.equal(pendingPairing.state, "pending");
   store.approve(persisted.id, pendingPairing.code, true, ["ui:view"]);
   await pairingPage.getByRole("button", { name: "Approved? Connect" }).click();
-  await pairingPage.waitForURL(`${origin}/x`);
+  await pairingPage.waitForURL(`${origin}/`);
   assert.equal(await pairingPage.evaluate(() => localStorage.getItem("agentstack-pairing")), null, "redemption secret cleared after admission");
   await pairingContext.close();
   const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1800, height: 1050 } });
@@ -81,7 +81,7 @@ try {
     { name: "__Host-agentstack_ui_refresh", value: session.refreshToken, url: origin, secure: true, httpOnly: true, sameSite: "Strict" }]);
   page = await context.newPage(); page.setDefaultTimeout(20_000);
   const errors = []; page.on("pageerror", error => errors.push(error.message));
-  const response = await page.goto(`${origin}/x/content`);
+  const response = await page.goto(`${origin}/content`);
   assert.equal(response.status(), 200);
   await page.locator('[data-remote-scope="view"]').waitFor();
   const preview = page.locator('[data-window="content-preview"]');
@@ -134,7 +134,7 @@ try {
   await page.locator('[data-remote-scope="view"]').waitFor();
   assert.equal(await documents.getByRole("button", { name: "New document" }).isDisabled(), true);
   store.revoke("credential", credential.credentialId);
-  const afterRevoke = await context.request.get(`${origin}/x/content`);
+  const afterRevoke = await context.request.get(`${origin}/content`);
   assert.equal(afterRevoke.status(), 401, "revoked browser cookie cannot load a new UI page");
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ ok: true, assertions: "plain-browser persisted-secret pairing and local approval, remote TLS session, UI hydration, read-only/control UI transitions, refused WebSocket mutation, revocation, document/item/immutable artifact one-use handoffs, opaque artifact origin", state: dir }));

@@ -131,15 +131,15 @@ export function homeOf(ref: NodeRef): NodeHome {
 }
 
 export function spaceHref(space: SpaceId, focus?: NodeRef | null): string {
-  const base = `/x/${space}`;
+  const base = space === defaultSpace ? "/" : `/${space}`;
   return focus ? `${base}?focus=${encodeURIComponent(nodeKey(focus))}` : base;
 }
 
-/** "/x" and "/x/" resolve to the default space; unknown or deeper paths do not resolve. */
+/** The root is Fleet; only single, known space segments resolve. */
 export function parseSpacePath(pathname: string): SpaceId | null {
   const segments = pathname.split("/").filter(Boolean);
-  if (segments.length === 1 && segments[0] === "x") return defaultSpace;
-  if (segments.length === 2 && segments[0] === "x" && isSpaceId(segments[1])) return segments[1];
+  if (segments.length === 0) return defaultSpace;
+  if (segments.length === 1 && isSpaceId(segments[0]) && segments[0] !== defaultSpace) return segments[0];
   return null;
 }
 

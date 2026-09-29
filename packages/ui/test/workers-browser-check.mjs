@@ -164,7 +164,7 @@ try {
   await authorizeBrowser(page, origin, env);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(`${origin}/x/workers`);
+  await page.goto(`${origin}/workers`);
   const list = page.locator('[data-window="workers"]');
   const worker = page.locator('[data-window="worker"]');
   const runtimes = page.locator('[data-window="worker-runtimes"]');
@@ -275,7 +275,7 @@ try {
   await page.keyboard.press("Escape");
 
   // Fleet's Bot card links to its Workers, filtered to that Bot.
-  await page.goto(`${origin}/x/fleet`);
+  await page.goto(`${origin}/`);
   await page.locator('[data-window="bots"]').getByRole("link", { name: /3 Workers/ }).click();
   await page.getByRole("button", { name: "Spaces · Workers" }).waitFor();
   await list.locator("[data-worker]").first().waitFor();

@@ -73,7 +73,7 @@ try {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("dialog", (dialog) => { errors.push(`dialog: ${dialog.message()}`); void dialog.dismiss(); });
-  await page.goto(`${origin}/x/scrape`);
+  await page.goto(`${origin}/scrape`);
   const extract = page.locator('[data-window="scrape-extract"]');
   const presets = page.locator('[data-window="scrape-presets"]');
   const status = page.locator('[data-window="scrape-status"]');

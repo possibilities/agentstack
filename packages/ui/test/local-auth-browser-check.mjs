@@ -28,14 +28,14 @@ try {
     if (next.exitCode !== null) throw new Error(output);
     await new Promise(resolve => setTimeout(resolve, 50));
   }
-  assert.equal((await fetch(`${origin}/x`)).status, 401);
+  assert.equal((await fetch(`${origin}/`)).status, 401);
   browser = await chromium.launch({ headless: true, channel: "chrome" });
   const page = await browser.newPage();
-  await page.goto(`${origin}/x`);
+  await page.goto(`${origin}/`);
   await page.waitForURL(`${origin}/connect/local`);
   const token = auth.bootstrap(origin, "ui");
   await page.goto(`${origin}/connect/local#${token}`);
-  await page.waitForURL(`${origin}/x`);
+  await page.waitForURL(`${origin}/`);
   assert.equal(new URL(page.url()).hash, "");
   const cookie = (await page.context().cookies()).find(cookie => cookie.name === "agentstack_local_ui");
   assert.ok(cookie?.httpOnly); assert.equal(cookie.sameSite, "Strict");
@@ -60,10 +60,10 @@ try {
   const second = await connect(); assert.notEqual(first.ticket, second.ticket);
   auth.rotate();
   await page.waitForFunction(() => window.fixtureSocket.readyState === WebSocket.CLOSED);
-  assert.equal((await page.request.get(`${origin}/x`)).status(), 401);
+  assert.equal((await page.request.get(`${origin}/`)).status(), 401);
   assert.equal((await page.request.post(`${origin}/connect/local/ticket`, { headers: { origin }, data: {} })).status(), 401);
   await page.goto(`${origin}/connect/local#${auth.bootstrap(origin, "ui")}`);
-  await page.waitForURL(`${origin}/x`);
+  await page.waitForURL(`${origin}/`);
   assert.equal((await connect()).frame.result.secret, "fixture-only-private-value");
   console.log(JSON.stringify({ ok: true, assertions: "anonymous SSR rejection, real fragment bootstrap/CSP, HttpOnly cookie, replay rejection, fresh tickets, active revocation and reconnect" }));
 } finally {

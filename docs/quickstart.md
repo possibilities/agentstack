@@ -34,13 +34,13 @@ The browsable Package API reference is built into UI. Open **API reference**
 from anywhere on the bench, or follow a contextual operation link. Its searchable
 reader uses `docs_snapshot` and exposes descriptions, full input/output schemas,
 transports and scoped event subscriptions. The direct entry is
-`http://127.0.0.1:8745/x/fleet?reference=overview` with the default UI port.
+`http://127.0.0.1:8745/?reference=overview` with the default UI port.
 There is no separate docs listener, `agentstack docs` command or Markdown twin.
 
 The server also starts the standalone UI app at `http://127.0.0.1:8745/` and
-prints this UI entry URL. The root redirects to the live open bench at `/x`
-(also `/x/fleet`); there is no separate index page. System holds current local
-links, full Package API MCP URLs, server processes, and host/resource sampling.
+prints this UI entry URL. The root serves the live Fleet open bench; there is no
+separate index page. System holds current local links, full Package API MCP URLs,
+server processes, and host/resource sampling.
 Fleet holds Bot accounts,
 Worker accounts, Bots, Usage and Model catalogs, with explicit Bot lifecycle
 controls and a discovery-driven Bot tools dialog. Spaces are

@@ -139,7 +139,7 @@ function ScheduleSummary({ schedule }: { schedule: ProcSchedule }) {
       {schedule.id === "00000000-0000-4000-8000-000000000001" ? (
         <p className="text-[0.72rem] text-pretty text-muted-foreground">
           The wake-up for Brain's due Sources. It admits nothing unless Sources are enabled.{" "}
-          <a href="/x/brain" className="underline decoration-muted-foreground/50 underline-offset-4 hover:text-foreground">Open Brain</a>
+          <a href="/brain" className="underline decoration-muted-foreground/50 underline-offset-4 hover:text-foreground">Open Brain</a>
         </p>
       ) : null}
     </div>

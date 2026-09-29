@@ -80,7 +80,7 @@ try {
   const page = await context.newPage();
   await authorizeBrowser(page, origin, env);
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(`${origin}/x/system?focus=access-pairing:request`);
+  await page.goto(`${origin}/system?focus=access-pairing:request`);
   await page.addStyleTag({ content: "nextjs-portal { display: none; }" });
   const pairing = page.locator('[data-node="access-pairing:request"]');
   const grant = page.locator('[data-node="access-grant:grant"]');

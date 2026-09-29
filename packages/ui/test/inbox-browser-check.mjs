@@ -51,7 +51,7 @@ try {
   const nextPort = await port();
   env.AGENTSTACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${nextPort}`;
   const origin = `http://127.0.0.1:${nextPort}`;
-  const plain = await call("notification_send", { title: "Brain ingestion stranded", message: "2 submitted links **never** became searchable.", source: "agentstack.brain.doctor", open: `${origin}/x/lab` });
+  const plain = await call("notification_send", { title: "Brain ingestion stranded", message: "2 submitted links **never** became searchable.", source: "agentstack.brain.doctor", open: `${origin}/lab` });
   const question = await call("notification_send", { title: "Merge the release branch?", subtitle: "All checks passed", message: "The branch is ready. Choose one.", source: "ci", actions: ["Ship", "Hold"] });
   const prompt = await call("notification_send", { title: "Name the new Bot", message: "It needs a short name.", source: "ci", reply: "A short name" });
   const progress = await call("notification_send", { title: "Deploy", message: "25%", source: "ci", group: "deploy:web" });
@@ -70,7 +70,7 @@ try {
   await authorizeBrowser(page, origin, env);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(`${origin}/x/inbox`);
+  await page.goto(`${origin}/inbox`);
   const inbox = page.locator('[data-window="notify-inbox"]');
   const detail = page.locator('[data-window="notify-detail"]');
   const row = (title) => inbox.locator("[data-notification]").filter({ hasText: title });
@@ -107,7 +107,7 @@ try {
   await detail.locator("strong", { hasText: "never" }).waitFor();
   const [popup] = await Promise.all([context.waitForEvent("page"), detail.getByRole("link", { name: "Open link" }).click()]);
   await popup.waitForLoadState();
-  assert.equal(new URL(popup.url()).pathname, "/x/lab");
+  assert.equal(new URL(popup.url()).pathname, "/lab");
   await popup.close();
   await settle(plain.id, (record) => record.outcome === "opened");
 

@@ -194,7 +194,7 @@ A named, optional group of Content items. Items exist independently of collectio
 
 ## Canvas space
 
-A named collection of related windows on its own UI open bench, addressed as `/x/<space>`. Fleet (Bots) is the default space, Accounts holds accounts, usage limits and model catalogs, Lab holds experimental windows, and System holds the server, its processes, package channels, host resources and sampling; a relationship between cards in different spaces is a link, not a wire. Spaces retain independent window arrangements and cameras. Navigating switches the visible bench; panning and zooming cannot reveal another space. API reference is a global dock rather than a space.
+A named collection of related windows on its own UI open bench, addressed as `/<space>` (Fleet lives at `/`). Fleet (Bots) is the default space, Accounts holds accounts, usage limits and model catalogs, Lab holds experimental windows, and System holds the server, its processes, package channels, host resources and sampling; a relationship between cards in different spaces is a link, not a wire. Spaces retain independent window arrangements and cameras. Navigating switches the visible bench; panning and zooming cannot reveal another space. API reference is a global dock rather than a space.
 
 _Avoid_: page, tab, workspace (a Bot's working directory)
 

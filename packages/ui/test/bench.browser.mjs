@@ -86,14 +86,14 @@ try {
   }
   assert.ok(ready, output);
   const rebound = await new Promise((resolve, reject) => {
-    get(`${origin}/x`, { headers: { host: "rebind.example.invalid" } }, (response) => { response.resume(); resolve(response.statusCode); }).on("error", reject);
+    get(`${origin}/`, { headers: { host: "rebind.example.invalid" } }, (response) => { response.resume(); resolve(response.statusCode); }).on("error", reject);
   });
   assert.equal(rebound, 403, "UI must reject rebound Hosts before rendering the operator snapshot");
   browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_EXECUTABLE ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, reducedMotion: "reduce" });
   await authorizeBrowser(page, origin, env);
   page.on("pageerror", (error) => issues.push(error.message));
-  await page.goto(`${origin}/x`);
+  await page.goto(`${origin}/`);
   await page.getByRole("main", { name: "Open bench" }).waitFor();
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
   assert.deepEqual(await page.locator("[data-window]:visible").evaluateAll((nodes) => nodes.map((node) => node.dataset.window).sort()), ["bots", "chat"]);
@@ -133,7 +133,7 @@ try {
   await page.getByRole("button", { name: /^Spaces/ }).click();
   await page.getByRole("menuitem", { name: /^System/ }).click();
   await page.locator('[data-window="server"]').waitFor({ state: "visible" });
-  assert.ok(new URL(page.url()).pathname.endsWith("/x/system"));
+  assert.ok(new URL(page.url()).pathname.endsWith("/system"));
   assert.ok(await page.locator('[data-window="sampling"]').isVisible());
   assert.equal(await page.locator('[data-window="bots"]').isVisible(), false);
   const systemPoint = await page.locator('[data-window="server"]').boundingBox();
@@ -142,7 +142,7 @@ try {
   const systemPanned = await page.locator('[data-window="server"]').boundingBox();
   assert.equal(Math.round(systemPanned.x - systemPoint.x), -64);
   await page.goBack();
-  assert.ok(new URL(page.url()).pathname.endsWith("/x/fleet"));
+  assert.ok(new URL(page.url()).pathname.endsWith("/"));
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
   samePoint(initial, await point());
   await page.goForward();
@@ -226,10 +226,10 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.locator('[data-dock="right"]').evaluate((el) => Math.round(el.getBoundingClientRect().width)), 390);
   await page.getByRole("button", { name: "Close API reference", exact: true }).click();
-  await page.goto(`${origin}/x/system`);
+  await page.goto(`${origin}/system`);
   await page.locator('[data-window="server"]').waitFor({ state: "visible" });
   await page.screenshot({ path: join(evidence, "system-mobile.png") });
-  await page.goto(`${origin}/x/system?focus=child%3Afixture-stopped&reference=operation%3Abots.bot_status&inspect=bot%3Abot-1`);
+  await page.goto(`${origin}/system?focus=child%3Afixture-stopped&reference=operation%3Abots.bot_status&inspect=bot%3Abot-1`);
   await page.getByRole("heading", { name: "Request templates" }).waitFor();
   await page.getByRole("button", { name: "Inspector", exact: true }).click();
   await page.getByRole("heading", { name: "bot-1", exact: true }).waitFor();
@@ -271,7 +271,7 @@ try {
 
   // Spatial navigation on mobile hides overlays, not retained inspection or reference state.
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(`${origin}/x/fleet?inspect=bot%3Abot-1&focus=bot%3Abot-1`);
+  await page.goto(`${origin}/?inspect=bot%3Abot-1&focus=bot%3Abot-1`);
   await page.getByRole("heading", { name: "bot-1", exact: true }).waitFor();
   await page.getByRole("button", { name: "Show on bench", exact: true }).click();
   await page.locator('[data-dock="right"]').waitFor({ state: "hidden" });
@@ -321,7 +321,7 @@ try {
     saved.layout.order = ["chat", "bots"];
     localStorage.setItem("agentstack.uix.bench.v2.fleet", JSON.stringify(saved));
   });
-  await page.goto(`${origin}/x/fleet`);
+  await page.goto(`${origin}/`);
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
   const expectFront = async (id) => page.waitForFunction((target) => {
     const windows = [...document.querySelectorAll('[data-space="fleet"] [data-window]')];
@@ -380,7 +380,7 @@ try {
     for (const key of ["2", "3", "4", "5"]) el.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
   });
   await page.locator('[data-space="roles"]').waitFor({ state: "visible" });
-  assert.equal(new URL(page.url()).pathname, "/x/roles");
+  assert.equal(new URL(page.url()).pathname, "/roles");
   assert.equal(await page.locator('.bench-enter').evaluate((el) => getComputedStyle(el).animationDuration), "0.15s");
   await page.waitForTimeout(200);
   assert.deepEqual(await page.locator("[data-window]:visible").evaluateAll((nodes) => nodes.map((n) => n.dataset.window).sort()), expectedWindows.Roles);
@@ -394,7 +394,7 @@ try {
         collapsed: { accounts: true }, sizes: { bots: { width: 500 } }, order: ["bots", "accounts"] },
     }));
   });
-  await page.goto(`${origin}/x/fleet`);
+  await page.goto(`${origin}/`);
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
   samePoint({ x: 900, y: 1000 }, await point());
   await switchSpace("Accounts");

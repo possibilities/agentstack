@@ -139,7 +139,7 @@ On the separate UI origin `/connect/pair` and `/connect/redeem` use the same
 locally approved browser pairing, `/connect/session` and `/connect/refresh`
 rotate credentials into cookies, `/connect/me` reads live scopes, and
 `POST /v1/content/handoff` uses the viewer's cookie rather than a Content
-audience bearer. `/x/*`, `/_next/*` and `/websocket` require a live UI session;
+audience bearer. `/`, `/<space>`, `/_next/*` and `/websocket` require a live UI session;
 all unsafe HTTP requests and WebSocket upgrades require the exact UI Origin.
 No UI route forwards the internal MCP listener. See [ADR 0101](adr/0101-remote-uix-through-access.md).
 

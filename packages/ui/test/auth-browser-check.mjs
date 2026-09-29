@@ -127,7 +127,7 @@ try {
     window.open = (...args) => { window.authFixture.opens.push(args); return null; };
   });
   // Worker accounts live on the Accounts bench; hidden benches lay out at zero size.
-  await page.goto(`${origin}/x/accounts`);
+  await page.goto(`${origin}/accounts`);
   // Keep Next's development badge out of evidence; production has no such overlay.
   if (mode === "dev") await page.addStyleTag({ content: "nextjs-portal { display: none; }" });
   page.on("request", (request) => { if (request.isNavigationRequest() && request.frame() === page.mainFrame()) navigations.push(request.url()); });

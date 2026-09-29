@@ -20,14 +20,14 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
 export default async function Page({ params, searchParams }: { params: Promise<Params>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { space } = await params;
   const segment = space?.[0];
-  if (segment !== undefined && !isSpaceId(segment)) notFound();
+  if (segment !== undefined && (!isSpaceId(segment) || segment === defaultSpace)) notFound();
   if (space && space.length > 1) notFound();
   const query = await searchParams;
   const { focus: focusParam } = query;
   const raw = Array.isArray(focusParam) ? focusParam[0] : focusParam;
   const initialFocus = raw ? parseNodeKey(raw) : null;
   const paramsQuery = new URLSearchParams(Object.entries(query).flatMap(([key, value]) => value === undefined ? [] : [[key, Array.isArray(value) ? value[0] : value]]));
-  const initialLocation = parseLocation(`/x/${segment ?? defaultSpace}`, paramsQuery)!;
+  const initialLocation = parseLocation(segment ? `/${segment}` : "/", paramsQuery)!;
   const incoming = await headers();
   const remote = incoming.get("x-agentstack-remote-ui") === "1" ? incoming.get("x-agentstack-ui-origin") : null;
   const scope = incoming.get("x-agentstack-ui-scope");

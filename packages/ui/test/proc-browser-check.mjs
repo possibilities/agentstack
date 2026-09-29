@@ -132,7 +132,7 @@ try {
   page.on("dialog", (dialog) => { errors.push(`dialog: ${dialog.message()}`); void dialog.dismiss(); });
   const consoleErrors = [];
   page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
-  await page.goto(`${origin}/x/proc`);
+  await page.goto(`${origin}/proc`);
   const schedules = page.locator('[data-window="proc-schedules"]');
   const schedule = page.locator('[data-window="proc-schedule"]');
   const runs = page.locator('[data-window="proc-runs"]');
@@ -247,7 +247,7 @@ try {
   await page.keyboard.press("Escape");
 
   // The Fleet Bot card links its schedule count into a filtered Schedules list.
-  await page.goto(`${origin}/x/fleet`);
+  await page.goto(`${origin}/`);
   await page.getByRole("link", { name: /schedule/ }).first().waitFor();
   await page.getByRole("link", { name: /1 schedule/ }).first().click();
   await schedules.getByText("Bot nightly sync").waitFor();

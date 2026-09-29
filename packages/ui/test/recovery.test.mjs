@@ -35,7 +35,7 @@ async function availablePort() {
   return port;
 }
 
-test("the UI entry redirects to the canvas without losing local links, processes, or Bot recovery details", { timeout: 30_000 }, async () => {
+test("the root UI renders the canvas without losing local links, processes, or Bot recovery details", { timeout: 30_000 }, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "agentstack-ui-recovery-"));
   const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_WEBSOCKET_PORT: "0", NEXT_TELEMETRY_DISABLED: "1" };
   const served = [];
@@ -44,7 +44,7 @@ test("the UI entry redirects to the canvas without losing local links, processes
   try {
     const server = {
       pid: process.pid, startedAt: new Date(Date.now() - 60_000).toISOString(), nodeVersion: process.version,
-      indexUrl: "http://127.0.0.1:43102/", uiUrl: "http://127.0.0.1:43102/x",
+      indexUrl: "http://127.0.0.1:43102/", uiUrl: "http://127.0.0.1:43102/",
       inspectorUrl: "http://127.0.0.1:43103/", mcpUrls: { serve: "http://127.0.0.1:43104/mcp/serve" },
       children: [
         { name: "inspector", pid: 9876, running: true, exitCode: null, signal: null, error: null, startedAt: new Date(Date.now() - 50_000).toISOString(), exitedAt: null },
@@ -109,12 +109,12 @@ test("the UI entry redirects to the canvas without losing local links, processes
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     assert.ok(ready, `Next did not become ready: ${output}`);
-    const refused = await globalThis.fetch(`${origin}/x`);
+    const refused = await globalThis.fetch(`${origin}/`);
     assert.equal(refused.status, 401);
     assert.ok(!(await refused.text()).includes(bot.cwd));
     const entry = await fetch(`${origin}/`, { redirect: "manual" });
-    assert.equal(entry.status, 308);
-    assert.equal(new URL(entry.headers.get("location"), origin).href, `${origin}/x`);
+    assert.equal(entry.status, 200);
+    assert.equal(entry.headers.get("location"), null);
     // Inspect rendered content, not the serialized snapshot embedded by Next.
     const readCanvas = async (path) => {
       const response = await fetch(`${origin}${path}`);
@@ -143,9 +143,9 @@ test("the UI entry redirects to the canvas without losing local links, processes
     assert.doesNotMatch(canvas, /Local links and bot processes/);
 
     const [system, api, brainReference] = await Promise.all([
-      readCanvas("/x/system"),
-      readDock("/x/fleet?reference=package%3Abots", "right"),
-      readDock("/x/fleet?reference=package%3Abrain", "right"),
+      readCanvas("/system"),
+      readDock("/?reference=package%3Abots", "right"),
+      readDock("/?reference=package%3Abrain", "right"),
     ]);
     assert.match(system, /Filter activity/);
     for (const value of ["MCP Inspector", "Packages", "inspector", "9876", "worker", "Fixture spawn failure", server.inspectorUrl, server.mcpUrls.serve,
@@ -160,23 +160,26 @@ test("the UI entry redirects to the canvas without losing local links, processes
 
     server.children[0].running = false;
     server.children[0].pid = null;
-    const stopped = await readCanvas("/x/system");
+    const stopped = await readCanvas("/system");
     assert.doesNotMatch(stopped, /MCP Inspector/);
     assert.match(stopped, /inspector/);
 
     await served.shift().close();
-    const unavailable = await readCanvas("/x/system");
+    const unavailable = await readCanvas("/system");
     assert.match(unavailable, /Server status unavailable/);
     assert.match(unavailable, /No resource data/);
     assert.doesNotMatch(unavailable, /MCP Inspector/);
-    assert.match(await readCanvas("/x"), /bot-1/);
-    assert.equal((await fetch(`${origin}/x/nope`)).status, 404);
-    assert.equal((await fetch(`${origin}/x/system`)).status, 200);
-    assert.equal((await fetch(`${origin}/x/api`)).status, 404);
+    assert.match(await readCanvas("/"), /bot-1/);
+    assert.equal((await fetch(`${origin}/nope`)).status, 404);
+    assert.equal((await fetch(`${origin}/x`)).status, 404);
+    assert.equal((await fetch(`${origin}/x/system`)).status, 404);
+    assert.equal((await fetch(`${origin}/fleet`)).status, 404);
+    assert.equal((await fetch(`${origin}/system`)).status, 200);
+    assert.equal((await fetch(`${origin}/api`)).status, 404);
     assert.equal((await fetch(`${origin}/x.md`)).status, 404);
     assert.equal((await fetch(`${origin}/index.md`)).status, 404);
     withLocalAuth(env, auth => auth.rotate());
-    assert.equal((await fetch(`${origin}/x`)).status, 401);
+    assert.equal((await fetch(`${origin}/`)).status, 401);
   } finally {
     if (next?.pid) {
       try { process.kill(process.platform === "win32" ? next.pid : -next.pid, "SIGTERM"); } catch (error) { if (error.code !== "ESRCH") throw error; }

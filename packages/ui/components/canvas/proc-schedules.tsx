@@ -136,7 +136,7 @@ export function ProcSchedulesLink({ botId, className }: { botId: string; classNa
     !schedule.removedAt && schedule.authority?.kind === "bot" && schedule.authority.botId === botId).length;
   if (!count) return null;
   return (
-    <a href="/x/proc" title={`Show ${botId}'s schedules in the Proc space`}
+    <a href="/proc" title={`Show ${botId}'s schedules in the Proc space`}
       onClick={(event) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         event.preventDefault();

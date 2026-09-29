@@ -26,7 +26,7 @@ function fixture() {
 test("browser pairing is locally approved, session cookies are scoped, and HTTP is origin/provenance-fenced", async () => {
   const f = fixture();
   try {
-    assert.equal((await f.send("/x")).status, 401);
+    assert.equal((await f.send("/")).status, 401);
     assert.equal((await f.send("/connect")).status, 200);
     assert.equal((await f.send("/connect/pair", "POST", {}, { origin: "https://evil.example" })).status, 403);
     const redemptionSecret = secret();
@@ -42,14 +42,18 @@ test("browser pairing is locally approved, session cookies are scoped, and HTTP 
     assert.equal(cookies.length, 2);
     assert.ok(cookies.every(value => /Path=\/; Secure; HttpOnly; SameSite=Strict/.test(value)));
     const auth = cookies[0]!.split(";")[0]!;
-    const page = await f.send("/x/content", "GET", undefined, { cookie: auth });
+    const page = await f.send("/content", "GET", undefined, { cookie: auth });
     assert.equal(page.status, 200);
+    assert.equal((await f.send("/", "GET", undefined, { cookie: auth })).status, 200);
+    assert.equal((await f.send("/x", "GET", undefined, { cookie: auth })).status, 404);
+    assert.equal((await f.send("/x/content", "GET", undefined, { cookie: auth })).status, 404);
+    assert.equal((await f.send("/fleet", "GET", undefined, { cookie: auth })).status, 404);
     assert.equal(page.headers.get("set-cookie"), null);
     assert.match(page.headers.get("content-security-policy")!, /script-src 'nonce-/);
     assert.equal(page.headers.get("cache-control"), "no-store");
-    assert.equal((await f.send("/x", "GET", undefined, { cookie: auth, origin: "https://evil.example" })).status, 403);
-    assert.equal((await f.send("/x", "GET", undefined, { cookie: auth, "x-forwarded-for": peer.remoteAddress })).status, 403);
-    assert.equal((await f.send("/x", "POST", {}, { cookie: auth })).status, 404);
+    assert.equal((await f.send("/", "GET", undefined, { cookie: auth, origin: "https://evil.example" })).status, 403);
+    assert.equal((await f.send("/", "GET", undefined, { cookie: auth, "x-forwarded-for": peer.remoteAddress })).status, 403);
+    assert.equal((await f.send("/", "POST", {}, { cookie: auth })).status, 404);
     assert.equal((await f.send("/v1/content/handoff", "POST", { path: "/d/doc", origin: "documents" }, { cookie: auth, origin: "https://evil.example" })).status, 403);
     const handoff = (await (await f.send("/v1/content/handoff", "POST", { path: "/d/doc", origin: "documents" }, { cookie: auth })).json()).data;
     assert.ok(handoff.handoff);
@@ -62,9 +66,9 @@ test("browser pairing is locally approved, session cookies are scoped, and HTTP 
     assert.equal((await f.send("/v1/content/handoff", "POST", { path: "/d/other%2Fdoc", origin: "documents" }, { cookie: auth })).status, 400);
     f.store.updateGrant(f.store.inventory().grants[0]!.id, 1, ["ui:view"], []);
     assert.equal((await f.send("/v1/content/handoff", "POST", { path: "/d/doc", origin: "documents" }, { cookie: auth })).status, 403);
-    assert.equal((await f.send("/x", "GET", undefined, { cookie: auth })).status, 200);
+    assert.equal((await f.send("/", "GET", undefined, { cookie: auth })).status, 200);
     f.store.revoke("credential", credential.credentialId);
-    assert.equal((await f.send("/x", "GET", undefined, { cookie: auth })).status, 401);
+    assert.equal((await f.send("/", "GET", undefined, { cookie: auth })).status, 401);
     f.online = false;
     assert.equal((await f.send("/connect")).status, 503);
     assert.ok(f.checks >= 14);
@@ -106,10 +110,10 @@ test("each client, grant and credential revocation independently fences a live U
       const credential = f.store.redeem(pairing.id, redemptionSecret);
       const issued = f.store.startUi(credential.refreshToken, randomUUID());
       const cookie = `__Host-agentstack_ui=${issued.accessToken}`;
-      assert.equal((await f.send("/x", "GET", undefined, { cookie })).status, 200);
+      assert.equal((await f.send("/", "GET", undefined, { cookie })).status, 200);
       const grant = f.store.inventory().grants.find(row => row.client_id === credential.clientId)!;
       f.store.revoke(kind, kind === "client" ? credential.clientId : kind === "grant" ? grant.id : credential.credentialId);
-      assert.equal((await f.send("/x", "GET", undefined, { cookie })).status, 401);
+      assert.equal((await f.send("/", "GET", undefined, { cookie })).status, 401);
       assert.equal((await f.send("/connect/refresh", "POST", {}, { cookie: `__Host-agentstack_ui_refresh=${issued.refreshToken}` })).status, 401);
     }
   } finally { f.close(); }

@@ -62,7 +62,7 @@ try {
   await authorizeBrowser(page, origin, env);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(`${origin}/x/roles`);
+  await page.goto(`${origin}/roles`);
   const instructions = page.locator('[data-window="role-instructions"]');
   const editor = page.locator('[data-window="role-editor"]');
   const preview = page.locator('[data-window="role-preview"]');
@@ -260,7 +260,7 @@ try {
   snapshot = await rolesCall("role_snapshot");
   assert.equal(snapshot.mcpServers[0].definition, undefined, "ordinary reads remain credential-safe after an editor write");
   assert.deepEqual((await rolesCall("role_editor_snapshot")).mcpServers[0].definition, { type: "stdio", command: "node", args: ["docs server.js", "--port", "7"] });
-  assert.equal((await (await fetch(`${origin}/x/roles`)).text()).includes("docs server.js"), false, "connection definitions are absent from server-rendered HTML");
+  assert.equal((await (await fetch(`${origin}/roles`)).text()).includes("docs server.js"), false, "connection definitions are absent from server-rendered HTML");
   await preview.getByText('command = "node"', { exact: false }).waitFor();
   const launch = await rolesCall("role_launch_preview", { cwds: [join(project, "src")] });
   assert.equal(launch.config, '[mcp_servers.docs]\ncommand = "node"\nargs = ["docs server.js", "--port", "7"]\nenabled = true\n');

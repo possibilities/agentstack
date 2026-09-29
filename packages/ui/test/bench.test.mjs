@@ -222,9 +222,9 @@ test("dock and card destinations retain inspection; complete URLs restore the do
   const url = new URL(locationHref(reference), "http://localhost");
   assert.deepEqual(parseLocation(url.pathname, url.searchParams), reference);
   // The retired `system` dock parameter is ignored; only real destinations resolve.
-  assert.deepEqual(parseLocation("/x/fleet", new URLSearchParams("reference=overview&system=open")), { ...emptyLocation(), reference: "overview" });
-  assert.deepEqual(parseLocation("/x/system", new URLSearchParams()), { ...emptyLocation("system") });
-  assert.deepEqual(parseLocation("/x", new URLSearchParams("reference=bot:bad&inspect=package:bots&system=account:bad")), emptyLocation());
+  assert.deepEqual(parseLocation("/", new URLSearchParams("reference=overview&system=open")), { ...emptyLocation(), reference: "overview" });
+  assert.deepEqual(parseLocation("/system", new URLSearchParams()), { ...emptyLocation("system") });
+  assert.deepEqual(parseLocation("/", new URLSearchParams("reference=bot:bad&inspect=package:bots&system=account:bad")), emptyLocation());
 });
 
 test("a card link crosses spaces: Bot to account lands in Accounts and back, keeping inspection", () => {
@@ -233,10 +233,10 @@ test("a card link crosses spaces: Bot to account lands in Accounts and back, kee
   assert.equal(onAccount.space, "accounts");
   assert.deepEqual(onAccount.focus, { kind: "account", id: "a1" });
   assert.deepEqual(onAccount.inspect, inspect);
-  assert.equal(locationHref(onAccount), "/x/accounts?focus=account%3Aa1&inspect=bot%3Abot-1");
+  assert.equal(locationHref(onAccount), "/accounts?focus=account%3Aa1&inspect=bot%3Abot-1");
   const back = navigateTo(onAccount, inspect);
   assert.equal(back.space, "fleet");
-  assert.deepEqual(parseLocation("/x/fleet", new URLSearchParams("focus=usage-account%3Abot%3Aa1")).space, "accounts");
+  assert.deepEqual(parseLocation("/", new URLSearchParams("focus=usage-account%3Abot%3Aa1")).space, "accounts");
 });
 
 test("transport templates never invent input values or unsupported call/subscription transports", () => {

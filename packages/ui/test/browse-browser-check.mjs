@@ -142,11 +142,11 @@ try {
   page.on("dialog", (dialog) => { errors.push(`dialog: ${dialog.message()}`); void dialog.dismiss(); });
 
   // Fleet links a Bot waiting on a person to its handoff, in Browse.
-  await page.goto(`${origin}/x/fleet`);
+  await page.goto(`${origin}/`);
   const help = page.locator('[data-window="bots"]').getByRole("link", { name: /Waiting on you in the browser/ });
   await help.waitFor();
   await help.click();
-  await page.waitForURL(/\/x\/browse/);
+  await page.waitForURL(/\/browse/);
   const handoffs = page.locator('[data-window="browse-handoffs"]');
   const viewer = page.locator('[data-window="browse-viewer"]');
   const profiles = page.locator('[data-window="browse-profiles"]');
@@ -185,7 +185,7 @@ try {
   const guest = page.frameLocator('[data-window="browse-viewer"] iframe').getByLabel("guest input");
   await guest.click();
   await page.keyboard.type("1b0");
-  assert.match(page.url(), /\/x\/browse/);
+  assert.match(page.url(), /\/browse/);
   assert.equal(await guest.inputValue(), "1b0");
   await page.screenshot({ path: join(evidence, "browse-control.png"), animations: "disabled" });
 
@@ -246,10 +246,10 @@ try {
   await page.getByText(/Browser handoff · Completed · reported/).waitFor();
 
   // The b key reaches Browse from another space.
-  await page.goto(`${origin}/x/fleet`);
+  await page.goto(`${origin}/`);
   await page.locator('[data-window="bots"]').waitFor();
   await page.keyboard.press("b");
-  await page.waitForURL(/\/x\/browse/);
+  await page.waitForURL(/\/browse/);
 
   assert.deepEqual(errors, []);
   console.log(`browse rendered check passed; evidence in ${evidence}`);

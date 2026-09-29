@@ -147,7 +147,7 @@ try {
   await authorizeBrowser(page, origin, env);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(`${origin}/x/fleet`);
+  await page.goto(`${origin}/`);
   const jump = async (query, name) => {
     await page.keyboard.press("Meta+k");
     await page.getByRole("combobox").fill(query);
@@ -159,10 +159,10 @@ try {
   await page.screenshot({ path: join(evidence, "fleet-light.png"), fullPage: true, animations: "disabled" });
   // Bot and account cards link across the Fleet and Accounts spaces; the Spaces menu follows.
   await page.locator('[data-node="bot:bot-1"]').getByRole("link", { name: /codex-bot-account-1/ }).click();
-  await page.waitForURL((url) => url.pathname === "/x/accounts" && url.searchParams.get("focus") === `account:${id(1)}`);
+  await page.waitForURL((url) => url.pathname === "/accounts" && url.searchParams.get("focus") === `account:${id(1)}`);
   await page.getByRole("button", { name: "Spaces · Accounts" }).waitFor();
   await page.locator(`[data-node="account:${id(1)}"]`).getByRole("link", { name: /bot-1$/ }).click();
-  await page.waitForURL((url) => url.pathname === "/x/fleet" && url.searchParams.get("focus") === "bot:bot-1");
+  await page.waitForURL((url) => url.pathname === "/" && url.searchParams.get("focus") === "bot:bot-1");
   await page.getByRole("button", { name: "Spaces · Fleet" }).waitFor();
   await jump("bot bot-1", /bot-1/);
   await page.getByRole("button", { name: "Create Bot", exact: true }).click();
@@ -292,7 +292,7 @@ try {
   await dialog.getByRole("button", { name: "Close", exact: true }).click();
   // The Lab's Call speech window shows the open call and speaks into it; Enter sends the trimmed text once.
   await jump("space lab", /Lab/);
-  await page.waitForURL((url) => url.pathname === "/x/lab");
+  await page.waitForURL((url) => url.pathname === "/lab");
   const speech = page.locator('[data-window="call-speech"]');
   await speech.getByText(`call ${id(31).slice(0, 8)}`, { exact: false }).waitFor();
   const say = speech.getByRole("button", { name: "Say", exact: true });

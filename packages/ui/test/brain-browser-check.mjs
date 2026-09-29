@@ -58,7 +58,7 @@ try {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("dialog", (dialog) => { errors.push(`dialog: ${dialog.message()}`); void dialog.dismiss(); });
-  await page.goto(`${origin}/x/brain`);
+  await page.goto(`${origin}/brain`);
   const search = page.locator('[data-window="brain-search"]');
   const reader = page.locator('[data-window="brain-reader"]');
   const ingest = page.locator('[data-window="brain-ingest"]');

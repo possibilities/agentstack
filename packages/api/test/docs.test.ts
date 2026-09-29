@@ -113,6 +113,9 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok(accessHttp.routes.some(r => r.path === "/v1/access/pair" && r.inputSchema));
     assert.ok(accessHttp.routes.some(r => r.path === "/v1/content/handoff" && r.authentication === "bearer"));
     assert.ok(accessHttp.routes.some(r => r.surface === "ui" && r.path === "/connect/session" && r.inputSchema));
+    assert.ok(accessHttp.routes.some(r => r.surface === "ui" && r.path === "/" && r.authentication === "bearer"));
+    assert.ok(accessHttp.routes.some(r => r.surface === "ui" && r.path === "/{space}" && r.authentication === "bearer"));
+    assert.ok(!accessHttp.routes.some(r => r.surface === "ui" && r.path.startsWith("/x")));
     assert.ok(accessHttp.routes.some(r => r.surface === "ui" && r.path === "/websocket"));
     assert.deepEqual(brainHttp.operations, []);
     assert.deepEqual(brainHttp.routes.map(({ surface, kind, method, path, operation }) => [surface, kind, method, path, operation]), [

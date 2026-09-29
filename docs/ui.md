@@ -1,7 +1,7 @@
 # UI open bench
 
 The server still serves Next only on loopback. An explicitly configured Access
-TLS tailnet listener can present `/x/...` to a paired browser on a distinct
+TLS tailnet listener can present `/` and the other `/<space>` routes to a paired browser on a distinct
 origin ([ADR 0101](adr/0101-remote-uix-through-access.md)). `ui:view` is
 read-only; `ui:control` enables UI mutations. Sign-in, voice, Access approvals
 and headful browser handoff stay local. Remote Content Preview opens a one-use
@@ -10,7 +10,7 @@ also has `content:read`; local Content links are unchanged. Use the remote
 browser check against disposable state after building in an isolated checkout:
 `PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs node packages/ui/test/remote-ui-browser-check.mjs`.
 
-The UI entry `/` redirects to `/x`, one continuous bench. Fleet is its initial Canvas space. API
+The UI entry `/` serves Fleet, the initial space of one continuous bench. API
 reference is a global tool attached to the viewport, so opening it does not
 navigate away from the current composition. System is a fourth space; see
 [ADR 0058](adr/0058-open-bench-and-global-tools.md) and
@@ -25,7 +25,7 @@ store, auth and voice providers. The former index's process and local URL detail
 live in the System space; MCP Inspector is linked only while its child is running
 ([ADR 0057](adr/0057-canvas-as-ui-home.md)).
 
-Roles (`/x/roles`, shortcut 5) is the fifth space and manages the Role's instruction Categories and Fragments
+Roles (`/roles`, shortcut 5) is the fifth space and manages the Role's instruction Categories and Fragments
 ([ADR 0082](adr/0082-roles-space-for-instruction-fragments.md)). One mounted Role
 actions provider owns the editor's target, page-local text drafts and
 revision-checked writes, so the Instructions, Editor and Preview windows, the
@@ -74,7 +74,7 @@ only to its logical space; an explicit link to another space fits that region.
 
 ## Reference destinations
 
-`/x/fleet?reference=overview` opens the integrated reference. Package and
+`/?reference=overview` opens the integrated reference. Package and
 operation targets use encoded node keys in `reference`; a server, child,
 resource or process node key in `focus` reveals its System space window. `focus`
 reveals a canvas card; `inspect` selects a record. The navigation helpers own

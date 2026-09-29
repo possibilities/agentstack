@@ -9,6 +9,7 @@ import { localApi, verifier, type Peer } from "./network.js";
 const cookieName = "__Host-agentstack_ui";
 const refreshName = "__Host-agentstack_ui_refresh";
 const token = /^[A-Za-z0-9_-]{43}$/;
+const uiPagePath = /^\/(?:$|(?:accounts|lab|system|roles|inbox|signal|content|workers|scrape|browse|brain|proc)\/?$)/;
 const json = (data: unknown, status = 200) => new Response(JSON.stringify({ schema_version: 1, ok: true, data }),
   { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
 const cookie = (header: string | null | undefined, name: string) =>
@@ -30,8 +31,8 @@ if(saved())show(saved());
 async function post(path,data,serverId){const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json',...(serverId?{'x-agentstack-server-id':serverId}:{})},body:JSON.stringify(data),cache:'no-store'});const body=await r.json();if(!r.ok)throw Error(body.error?.message||'Request refused');return body.data}
 async function identity(){const r=await fetch('/connect/identity',{cache:'no-store'});if(!r.ok)throw Error('Server identity unavailable');return (await r.json()).data.serverId}
 document.getElementById('pair').onclick=async()=>{error.textContent='';try{let s=saved();if(!s){const bytes=crypto.getRandomValues(new Uint8Array(32));s={requestId:crypto.randomUUID(),redemptionSecret:btoa(String.fromCharCode(...bytes)).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,''),label:document.getElementById('label').value.trim(),kind:'browser',scopes:['ui:view','ui:control','content:read']};if(!s.label)throw Error('Enter a label');localStorage.setItem(key,JSON.stringify(s))}const serverId=await identity();if(s.serverId&&s.serverId!==serverId)throw Error('AgentStack server changed; do not send this secret');s.serverId=serverId;localStorage.setItem(key,JSON.stringify(s));const receipt=await post('/connect/pair',{requestId:s.requestId,label:s.label,kind:s.kind,scopes:s.scopes,redemptionSecret:s.redemptionSecret},serverId);if(receipt.serverId!==serverId)throw Error('AgentStack server changed');s={...s,...receipt};localStorage.setItem(key,JSON.stringify(s));show(s)}catch(e){error.textContent=e.message}};
-redeem.onclick=async()=>{error.textContent='';try{let s=saved();if(!s.serverId||s.serverId!==await identity())throw Error('AgentStack server changed; pairing refused');if(!s.refreshToken){const receipt=await post('/connect/redeem',{id:s.id,redemptionSecret:s.redemptionSecret},s.serverId);if(receipt.serverId!==s.serverId)throw Error('AgentStack server changed');s={...s,refreshToken:receipt.refreshToken,sessionRequestId:crypto.randomUUID()};localStorage.setItem(key,JSON.stringify(s))}await post('/connect/session',{refreshToken:s.refreshToken,requestId:s.sessionRequestId},s.serverId);localStorage.removeItem(key);location.replace('/x')}catch(e){error.textContent=e.message}};
-if(!saved())post('/connect/refresh',{}).then(()=>location.replace('/x')).catch(()=>{});
+redeem.onclick=async()=>{error.textContent='';try{let s=saved();if(!s.serverId||s.serverId!==await identity())throw Error('AgentStack server changed; pairing refused');if(!s.refreshToken){const receipt=await post('/connect/redeem',{id:s.id,redemptionSecret:s.redemptionSecret},s.serverId);if(receipt.serverId!==s.serverId)throw Error('AgentStack server changed');s={...s,refreshToken:receipt.refreshToken,sessionRequestId:crypto.randomUUID()};localStorage.setItem(key,JSON.stringify(s))}await post('/connect/session',{refreshToken:s.refreshToken,requestId:s.sessionRequestId},s.serverId);localStorage.removeItem(key);location.replace('/')}catch(e){error.textContent=e.message}};
+if(!saved())post('/connect/refresh',{}).then(()=>location.replace('/')).catch(()=>{});
 </script></html>`;
 const inline = (tag: "script" | "style") => new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(connectPage)?.[1] ?? "";
 const digest = (value: string) => createHash("sha256").update(value).digest("base64");
@@ -101,7 +102,7 @@ export function remoteUiHandler({ store, env, host, port, verify, fetchBackend }
         return json({ scopes: principal.scopes, documentOrigin: `https://${name}:${env.AGENTSTACK_ACCESS_PORT ?? 8943}`,
           artifactOrigin: `https://${name}:${env.AGENTSTACK_ACCESS_ARTIFACT_PORT ?? 8944}` });
       }
-      if (!["GET", "HEAD"].includes(request.method) || !(/^(\/x(?:\/|$)|\/_next\/|\/favicon\.ico$|\/$)/.test(path))) throw new AccessError("not_found", 404);
+      if (!["GET", "HEAD"].includes(request.method) || !(uiPagePath.test(path) || path.startsWith("/_next/") || path === "/favicon.ico")) throw new AccessError("not_found", 404);
       const principal = store.ui(cookie(request.headers.get("cookie"), cookieName));
       const upstreamPort = Number(env.AGENTSTACK_UI_PORT ?? 8745);
       const headers = new Headers();
@@ -122,7 +123,7 @@ export function remoteUiHandler({ store, env, host, port, verify, fetchBackend }
       for (const name of ["set-cookie", "access-control-allow-origin", "x-powered-by", "content-encoding", "content-length"]) responseHeaders.delete(name);
       if (responseHeaders.has("location")) {
         const target = new URL(responseHeaders.get("location")!, `http://127.0.0.1:${upstreamPort}`);
-        if (target.origin !== `http://127.0.0.1:${upstreamPort}` || !/^\/(?:x(?:\/|$)|$)/.test(target.pathname)) throw new AccessError("redirect_refused", 403);
+        if (target.origin !== `http://127.0.0.1:${upstreamPort}` || !uiPagePath.test(target.pathname)) throw new AccessError("redirect_refused", 403);
         responseHeaders.set("location", `${target.pathname}${target.search}`);
       }
       responseHeaders.set("cache-control", "no-store"); responseHeaders.set("content-security-policy", csp);

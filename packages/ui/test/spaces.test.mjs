@@ -66,34 +66,35 @@ test("homeOf distinguishes spatial records from reference destinations", () => {
 });
 
 test("spaceHref builds space links with an optional encoded focus", () => {
-  assert.equal(spaceHref("fleet"), "/x/fleet");
-  assert.equal(spaceHref("fleet", { kind: "bot", id: "bot-1" }), "/x/fleet?focus=bot%3Abot-1");
-  assert.equal(spaceHref("accounts", { kind: "account", id: "a1" }), "/x/accounts?focus=account%3Aa1");
+  assert.equal(spaceHref("fleet"), "/");
+  assert.equal(spaceHref("fleet", { kind: "bot", id: "bot-1" }), "/?focus=bot%3Abot-1");
+  assert.equal(spaceHref("accounts", { kind: "account", id: "a1" }), "/accounts?focus=account%3Aa1");
 });
 
-test("parseSpacePath resolves /x and single space segments only", () => {
-  assert.equal(parseSpacePath("/x"), "fleet");
-  assert.equal(parseSpacePath("/x/"), "fleet");
-  assert.equal(parseSpacePath("/x/api"), null);
-  assert.equal(parseSpacePath("/x/api/"), null);
-  assert.equal(parseSpacePath("/x/system"), "system");
-  assert.equal(parseSpacePath("/x/system/"), "system");
-  assert.equal(parseSpacePath("/x/fleet"), "fleet");
-  assert.equal(parseSpacePath("/x/accounts"), "accounts");
-  assert.equal(parseSpacePath("/x/lab"), "lab");
-  assert.equal(parseSpacePath("/x/roles"), "roles");
-  assert.equal(parseSpacePath("/x/inbox"), "inbox");
-  assert.equal(parseSpacePath("/x/signal"), "signal");
-  assert.equal(parseSpacePath("/x/content"), "content");
-  assert.equal(parseSpacePath("/x/workers"), "workers");
-  assert.equal(parseSpacePath("/x/scrape"), "scrape");
-  assert.equal(parseSpacePath("/x/browse"), "browse");
-  assert.equal(parseSpacePath("/x/brain"), "brain");
-  assert.equal(parseSpacePath("/x/proc"), "proc");
-  assert.equal(parseSpacePath("/x/nope"), null);
-  assert.equal(parseSpacePath("/x/api/extra"), null);
+test("parseSpacePath resolves the root and single space segments only", () => {
+  assert.equal(parseSpacePath("/"), "fleet");
+  assert.equal(parseSpacePath("/fleet"), null);
+  assert.equal(parseSpacePath("/x"), null);
+  assert.equal(parseSpacePath("/api"), null);
+  assert.equal(parseSpacePath("/api/"), null);
+  assert.equal(parseSpacePath("/system"), "system");
+  assert.equal(parseSpacePath("/system/"), "system");
+  assert.equal(parseSpacePath("/fleet/"), null);
+  assert.equal(parseSpacePath("/accounts"), "accounts");
+  assert.equal(parseSpacePath("/lab"), "lab");
+  assert.equal(parseSpacePath("/roles"), "roles");
+  assert.equal(parseSpacePath("/inbox"), "inbox");
+  assert.equal(parseSpacePath("/signal"), "signal");
+  assert.equal(parseSpacePath("/content"), "content");
+  assert.equal(parseSpacePath("/workers"), "workers");
+  assert.equal(parseSpacePath("/scrape"), "scrape");
+  assert.equal(parseSpacePath("/browse"), "browse");
+  assert.equal(parseSpacePath("/brain"), "brain");
+  assert.equal(parseSpacePath("/proc"), "proc");
+  assert.equal(parseSpacePath("/nope"), null);
+  assert.equal(parseSpacePath("/api/extra"), null);
   assert.equal(parseSpacePath("/y"), null);
-  assert.equal(parseSpacePath("/"), null);
+  assert.equal(parseSpacePath("/system/extra"), null);
 });
 
 test("parseNodeKey inverts nodeKey for every kind and rejects malformed keys", () => {

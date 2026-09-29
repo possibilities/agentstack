@@ -204,7 +204,7 @@ server = startServer([apiChild(), accessChild(), authChild(), rolesChild(), brow
 statusSource.attach(server);
 subscriptions.resume();
 const indexUrl = `http://127.0.0.1:${uiListenPort}/`;
-const uiUrl = `http://127.0.0.1:${uiListenPort}/x`;
+const uiUrl = `http://127.0.0.1:${uiListenPort}/`;
 statusSource.setIndexUrl(indexUrl);
 statusSource.setUiUrl(uiUrl);
 statusSource.setInspectorUrl(`http://127.0.0.1:${inspectorListenPort}/`);

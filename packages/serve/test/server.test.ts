@@ -150,7 +150,7 @@ test("the server starts the required socket children", () => {
   assert.equal(ui.args[1], process.execPath);
   assert.equal(existsSync(ui.args[2] ?? ""), true);
   assert.deepEqual(ui.args.slice(3), ["start", "--hostname", "127.0.0.1", "--port", "8745"]);
-  assert.equal(existsSync(join(ui.cwd ?? "", "app", "x", "[[...space]]", "page.tsx")), true);
+  assert.equal(existsSync(join(ui.cwd ?? "", "app", "[[...space]]", "page.tsx")), true);
   assert.equal(uiPort({}), 8745);
   assert.equal(uiPort({ AGENTSTACK_UI_PORT: "8123" }), 8123);
   assert.throws(() => uiPort({ AGENTSTACK_UI_PORT: "0" }), /AGENTSTACK_UI_PORT/);

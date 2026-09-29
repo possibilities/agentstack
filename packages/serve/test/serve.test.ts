@@ -188,8 +188,8 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     assert.doesNotMatch(stderr, /AgentStack reference:/);
     await assert.rejects(fetch(`http://127.0.0.1:${retiredDocsPort}/docs`));
     const indexUrl = `http://127.0.0.1:${uiPort}/`;
-    const uiUrl = `http://127.0.0.1:${uiPort}/x`;
-    const referenceUrl = `http://127.0.0.1:${uiPort}/x/fleet?reference=overview`;
+    const uiUrl = `http://127.0.0.1:${uiPort}/`;
+    const referenceUrl = `http://127.0.0.1:${uiPort}/?reference=overview`;
     const uiCookie = await authenticate("ui");
     const uiFetch = (url: string | URL, init: RequestInit = {}) => fetch(url, { ...init, headers: { cookie: uiCookie } });
     assert.equal((await fetch(uiUrl)).status, 401);
@@ -221,15 +221,15 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     for (let i = 0; i < 200; i += 1) {
       try {
         entry = await uiFetch(indexUrl, { redirect: "manual" });
-        if (entry.status === 308) break;
+        if (entry.status === 200) break;
       } catch {
         // Next.js may still be starting.
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    assert.equal(entry?.status, 308, stderr);
-    assert.equal(new URL(entry.headers.get("location")!, indexUrl).href, uiUrl);
-    const system = await uiFetch(new URL("/x/system", uiUrl));
+    assert.equal(entry?.status, 200, stderr);
+    assert.equal(entry.headers.get("location"), null);
+    const system = await uiFetch(new URL("/system", uiUrl));
     assert.equal(system.status, 200);
     const systemHtml = await system.text();
     assert.match(systemHtml, /MCP Inspector/);
@@ -243,7 +243,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     assert.match(canvasHtml, /<main[^>]*data-canvas="workbench"/);
     assert.match(canvasHtml, /<h1[^>]*>AgentStack open bench<\/h1>/);
     assert.match(canvasHtml, /No bots</);
-    const accounts = await uiFetch(new URL("/x/accounts", uiUrl));
+    const accounts = await uiFetch(new URL("/accounts", uiUrl));
     assert.equal(accounts.status, 200);
     assert.match(await accounts.text(), /No accounts</);
     // The integrated discovery reader retains the retired reference's coverage of concurrent APIs.
@@ -254,7 +254,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       ["xcom", ["@agentstack/xcom", "xcom_status", "xcom_search", "xcom_users"]],
       ["worker", ["worker_record_list", "worker_tool_list", "worker_progress"]],
     ] as const) {
-      const response = await uiFetch(new URL(`/x/fleet?reference=package%3A${pkg}`, uiUrl));
+      const response = await uiFetch(new URL(`/?reference=package%3A${pkg}`, uiUrl));
       assert.equal(response.status, 200);
       const html = await response.text();
       const reference = html.match(/<aside\b[^>]*data-dock="right"[^>]*>[\s\S]*?<\/aside>/)?.[0];

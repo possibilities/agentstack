@@ -16,7 +16,7 @@ export function locationHref(location: BenchLocation): string {
   if (location.focus) query.set("focus", nodeKey(location.focus));
   if (location.inspect) query.set("inspect", nodeKey(location.inspect));
   if (location.reference) query.set("reference", typeof location.reference === "string" ? location.reference : nodeKey(location.reference));
-  return `/x/${location.space}${query.size ? `?${query}` : ""}`;
+  return `${location.space === defaultSpace ? "/" : `/${location.space}`}${query.size ? `?${query}` : ""}`;
 }
 
 export function parseLocation(pathname: string, query: URLSearchParams): BenchLocation | null {

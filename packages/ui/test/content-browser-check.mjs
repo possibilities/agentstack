@@ -54,7 +54,7 @@ try {
   page.setDefaultTimeout(30_000);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(`${origin}/x/content`);
+  await page.goto(`${origin}/content`);
   const documents = page.locator('[data-window="content-documents"]');
   const library = page.locator('[data-window="content-library"]');
   const editor = page.locator('[data-window="content-editor"]');

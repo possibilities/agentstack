@@ -68,10 +68,10 @@ test("public browser bootstrap never issues authority without the private capabi
 
 test("Access backend assertions bind method, route and all remote authorization headers", t => {
   const { auth } = fixture(t);
-  const args = ["GET", "/x/roles?focus=one", "https://tailnet.example:8945", "view", "ui:view"] as const;
+  const args = ["GET", "/roles?focus=one", "https://tailnet.example:8945", "view", "ui:view"] as const;
   const proof = auth.signRemote(...args);
   auth.verifyRemote(proof, ...args);
-  assert.throws(() => auth.verifyRemote(proof, "GET", "/x/roles?focus=two", args[2], args[3], args[4]));
+  assert.throws(() => auth.verifyRemote(proof, "GET", "/roles?focus=two", args[2], args[3], args[4]));
   assert.throws(() => auth.verifyRemote(proof, args[0], args[1], args[2], "control", args[4]));
   auth.rotate();
   assert.throws(() => auth.verifyRemote(proof, ...args));
@@ -91,10 +91,10 @@ test("expired bootstrap, tickets, sessions and internal assertions fail closed",
   const bootstrap = auth.bootstrap(origin, "ui");
   const session = auth.redeem(auth.bootstrap(origin, "ui"), origin, "ui");
   const ticket = auth.ticket(session.token, origin);
-  const proof = auth.signRemote("GET", "/x", "https://remote.example", "view", "ui:view");
+  const proof = auth.signRemote("GET", "/", "https://remote.example", "view", "ui:view");
   t.mock.timers.tick(30_001);
   assert.throws(() => auth.consumeTicket(ticket, origin));
-  assert.throws(() => auth.verifyRemote(proof, "GET", "/x", "https://remote.example", "view", "ui:view"));
+  assert.throws(() => auth.verifyRemote(proof, "GET", "/", "https://remote.example", "view", "ui:view"));
   t.mock.timers.tick(30_000);
   assert.throws(() => auth.redeem(bootstrap, origin, "ui"));
   auth.session(session.token, origin, "ui");

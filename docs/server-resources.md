@@ -1,6 +1,6 @@
 # Server resource observations
 
-`serve_resources` and `serve_resource_history` are read-only operations on the existing server socket, MCP and WebSocket Transports. Subscribe to the payload-free `resources_changed` Event, then re-read after subscription and every invalidation. UI presents all of it in the System space (`/x/system`): an Server window (status, runtime vitals, children), Resources and Host windows (totals, per-scope history charts, machine identity), a Processes tree, and a Sampling window (attempts, coverage, retention, capabilities). Watched scopes fetch history incrementally with `since`, merging retained attempts by `attemptId`.
+`serve_resources` and `serve_resource_history` are read-only operations on the existing server socket, MCP and WebSocket Transports. Subscribe to the payload-free `resources_changed` Event, then re-read after subscription and every invalidation. UI presents all of it in the System space (`/system`): a Server window (status, runtime vitals, children), Resources and Host windows (totals, per-scope history charts, machine identity), a Processes tree, and a Sampling window (attempts, coverage, retention, capabilities). Watched scopes fetch history incrementally with `since`, merging retained attempts by `attemptId`.
 
 ## Read and drill down
 
