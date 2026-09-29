@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 const directory = process.cwd();
 const manifest = JSON.parse(await readFile(join(directory, "package.json"), "utf8"));
-if (!["@stack/access", "@stack/api", "@stack/signal", "@stack/auth", "@stack/bots", "@stack/browse", "@stack/roles", "@stack/serve", "@stack/worker", "@stack/usage", "@stack/infer", "@stack/content", "@stack/brain", "@stack/xcom", "@stack/notify", "@stack/scrape", "@stack/proc"].includes(manifest.name)) {
+if (!["@stack/access", "@stack/api", "@stack/cli", "@stack/signal", "@stack/auth", "@stack/bots", "@stack/browse", "@stack/roles", "@stack/serve", "@stack/worker", "@stack/usage", "@stack/infer", "@stack/content", "@stack/brain", "@stack/xcom", "@stack/notify", "@stack/scrape", "@stack/proc"].includes(manifest.name)) {
   throw new Error(`refusing to clean dist outside an Stack package: ${directory}`);
 }
 await rm(join(directory, "dist"), { recursive: true, force: true });

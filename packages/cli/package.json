@@ -1,8 +1,9 @@
 {
-  "name": "@stack/roles",
+  "name": "@stack/cli",
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": { "stack": "./dist/src/main.js" },
   "exports": {
     ".": { "types": "./dist/src/index.d.ts", "default": "./dist/src/index.js" },
     "./package.json": "./package.json"
@@ -12,13 +13,6 @@
     "test": "node --test dist/test/*.test.js"
   },
   "engines": { "node": ">=24" },
-  "dependencies": {
-    "@stack/api": "workspace:*",
-    "@stack/cli": "workspace:*",
-    "zod": "^4.6.5"
-  },
-  "devDependencies": {
-    "@types/node": "^26.6.2",
-    "typescript": "^7.0.2"
-  }
+  "dependencies": { "yaml": "^2.8.1", "zod": "^4.6.5" },
+  "devDependencies": { "@types/node": "^26.6.2", "typescript": "^7.0.2" }
 }

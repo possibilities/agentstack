@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { contentNetworkConfig } from "@stack/content";
 import { lookup } from "node:dns/promises";
 import { connect } from "node:net";
+import { fileURLToPath } from "node:url";
 import { accessChild, apiChild, signalChild, authChild, brainChild, xcomChild, browseChild, contentChild, inferChild, notifyChild, procChild, rolesChild, scrapeChild, usageChild, workerChild, websocketChild } from "./children.js";
 import { botsChild } from "./bots.js";
 import { createMcpEventSubscriptions } from "./mcp-delivery.js";
@@ -14,30 +15,30 @@ import { startWithServerSocketRecovery } from "./server-socket.js";
 import { statusSource } from "./status.js";
 import { uiChild, uiPort } from "./ui.js";
 
-const command = process.argv[2];
+export async function runServeCommand(command: string, args: string[]): Promise<void> {
 
 if (command === "open") {
-  const target = process.argv[3] ?? "ui";
-  if (!["ui", "inspector"].includes(target) || process.argv.length > 5) throw new Error("usage: stack open [ui|inspector] [configured-development-origin]");
-  const result = await socketCall(socketPath("serve"), "tools/call", { name: "serve_local_connect", arguments: { target, ...(process.argv[4] ? { origin: process.argv[4] } : {}) } }) as { url: string };
+  const target = args[0] ?? "ui";
+  if (!["ui", "inspector"].includes(target) || args.length > 2) throw new Error("usage: stack serve open [ui|inspector] [configured-development-origin]");
+  const result = await socketCall(socketPath("serve"), "tools/call", { name: "serve_local_connect", arguments: { target, ...(args[1] ? { origin: args[1] } : {}) } }) as { url: string };
   const child = spawn(process.platform === "darwin" ? "open" : "xdg-open", [result.url], { stdio: "ignore" });
   await new Promise<void>((resolve, reject) => { child.once("error", reject); child.once("exit", code => code === 0 ? resolve() : reject(new Error("browser opener failed"))); });
   process.exit(0);
 }
 if (command === "revoke-local") {
   await socketCall(socketPath("serve"), "tools/call", { name: "serve_local_revoke", arguments: {} });
-  console.error("Local sessions and operator credentials revoked. Run stack open to reconnect.");
+  console.error("Local sessions and operator credentials revoked. Run stack serve open to reconnect.");
   process.exit(0);
 }
 
 if (command === "api") {
-  await runApi(process.argv.slice(3));
+  await runApi(args);
 } else if (command === "mcp") {
   await runMcp();
 } else if (command === "websocket") {
   await runWebSocket();
 } else if (command !== "serve") {
-  console.error("usage: stack serve\nusage: stack open [ui|inspector] [configured-development-origin]\nusage: stack revoke-local\nusage: stack api <package> <transport>\nusage: stack mcp\nusage: stack websocket");
+  console.error("usage: stack serve\nusage: stack serve open [ui|inspector] [configured-development-origin]\nusage: stack serve revoke-local\nusage: stack serve api <package> <transport>\nusage: stack serve mcp\nusage: stack serve websocket");
   process.exit(1);
 }
 
@@ -217,3 +218,8 @@ console.error(`Stack Inspector: http://127.0.0.1:${inspectorListenPort}/`);
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  await runServeCommand(process.argv[2] ?? "", process.argv.slice(3));
+}

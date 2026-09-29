@@ -9,7 +9,7 @@ export function botsChild(serverMcpPort?: number): OwnedChild {
   return {
     name: "bots",
     command: process.execPath,
-    args: [join(dirname(apiPackage), "dist", "src", "cli.js"), "bots", "socket"],
+    args: [join(dirname(apiPackage), "dist", "src", "transport-main.js"), "bots", "socket"],
     ...(serverMcpPort === undefined ? {} : { env: { STACK_SERVER_MCP_PORT: String(serverMcpPort) } }),
   };
 }

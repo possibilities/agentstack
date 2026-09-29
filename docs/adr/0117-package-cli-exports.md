@@ -1,0 +1,7 @@
+# 117. Package-owned CLI commands
+
+Status: accepted, 2026-09-28. Separates the transport-serving launcher in [ADR 0001](0001-package-apis.md) from human-facing package commands.
+
+`@stack/cli` is the only public `stack` command owner. A package opts into `stack <directory-name>` with `packages/<name>/cli.ts` and/or `cli.yaml`, independent of `api.ts` and `api.yaml`. A TypeScript default export implements `PackageCli` with `run(args)` and, if there is no YAML, a description. A YAML manifest declares a description and can stand alone with an `exec` argv array; no shell parses it. With both files, YAML describes the command and TypeScript handles it. The dispatcher loads only the selected package's implementation; help reads descriptions without creating Package API contexts. A missing build or conflicting implementations fail explicitly.
+
+Serve exports its own namespace: `stack serve` runs the owner; `stack serve open`, `revoke-local`, `api`, `mcp`, and `websocket` are its operational subcommands. `stack roles snapshot` is the first independent package command. Old top-level spellings have no aliases. The `packages/api` process entrypoint is renamed `transport-main` to emphasize that it starts socket children, not package CLI exports. The installed wrapper runs the built dispatcher without implicitly rebuilding the UI beside a running server. No Package API transport, operation, or discovery contract changes.

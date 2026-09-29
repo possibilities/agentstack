@@ -79,7 +79,7 @@ Retention is at most 120 attempts (about ten minutes at default cadence) and 50,
 
 ## Attribution and sampling limits
 
-An attached server admits its own process and all observed descendants. Required children receive component names only after their current OS parent is the server. Standalone `stack api serve socket` reports `self_only`, not unrelated process descendants or another running stack. Bot and ACP labels are accepted only for an already owned process under the corresponding named component. A record with an unverified Bot `recoveryIssue` cannot label a process. Inventories never add foreign PIDs. Unmatched running/fenced records increment the relevant domain's coverage count.
+An attached server admits its own process and all observed descendants. Required children receive component names only after their current OS parent is the server. Standalone `stack serve api serve socket` reports `self_only`, not unrelated process descendants or another running stack. Bot and ACP labels are accepted only for an already owned process under the corresponding named component. A record with an unverified Bot `recoveryIssue` cannot label a process. Inventories never add foreign PIDs. Unmatched running/fenced records increment the relevant domain's coverage count.
 
 Claude SDK availability is an account-backend observation, not one shared account process. The domain reader labels the reported `pids` as roots of the same account/runtime scope, subject to the same observed-ancestry check. An available backend with no process roots counts as unmatched domain attribution. Unlabelled observed descendants still contribute to the `workers` component; no per-session cost allocation is inferred.
 

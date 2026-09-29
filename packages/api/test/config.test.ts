@@ -62,7 +62,7 @@ test("individual WebSocket launch is refused in favor of the shared listener", a
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n  operations: all\n  events: all\n");
   try {
-    await assert.rejects(serveApi({ name: "demo", transport: "websocket", root }), /stack websocket/);
+    await assert.rejects(serveApi({ name: "demo", transport: "websocket", root }), /stack serve websocket/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -75,7 +75,7 @@ test("individual mcp launch is refused in favor of the shared HTTP process", asy
     "name: demo\ndescription: Demo operations.\nmcp:\n  description: MCP transport for demo operations.\n  operations: all\n  events: all\n",
   );
   try {
-    await assert.rejects(serveApi({ name: "demo", transport: "mcp", root }), /stack mcp/);
+    await assert.rejects(serveApi({ name: "demo", transport: "mcp", root }), /stack serve mcp/);
     await assert.rejects(serveApi({ name: "demo", transport: "socket", root }), /does not configure socket/);
     await assert.rejects(serveApi({ name: "demo", transport: "websocket", root }), /does not configure websocket/);
     await assert.rejects(serveApi({ name: "missing", transport: "socket", root }), /no package API named missing/);

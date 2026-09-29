@@ -24,7 +24,7 @@ A five-minute Access session for one locally approved browser-kind client on the
 
 ## Local operator session
 
-An eight-hour local UI or Inspector browser session established by a one-use capability minted through the private server socket and opened by `stack open`. It is bound to one exact origin and audience. UI server renders require it; each local WebSocket reconnect exchanges it for a one-use 30-second ticket. Server restart or explicit local revocation invalidates sessions and the native operator bearer credential. Bot/Worker identities and remote Access sessions remain independent. _Avoid_: anonymous loopback authority, OS sandbox, Access grant
+An eight-hour local UI or Inspector browser session established by a one-use capability minted through the private server socket and opened by `stack serve open`. It is bound to one exact origin and audience. UI server renders require it; each local WebSocket reconnect exchanges it for a one-use 30-second ticket. Server restart or explicit local revocation invalidates sessions and the native operator bearer credential. Bot/Worker identities and remote Access sessions remain independent. _Avoid_: anonymous loopback authority, OS sandbox, Access grant
 
 ## Content handoff
 

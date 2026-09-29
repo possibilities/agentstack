@@ -7,12 +7,14 @@ From the repository root:
 ```sh
 scripts/install.sh --install
 pnpm test
-node packages/serve/dist/src/cli.js serve
+node packages/cli/dist/src/main.js serve
 ```
 
 `stack serve` starts the configured Package API socket children, including `signal`, `browse`, and `worker`, plus the shared WebSocket, Inspector, and UI canvas children. It serves `serve` status on its own socket and hosts the configured MCP Package APIs in the server process. Each Package API is a line-delimited JSON socket under `<state>/sockets/<name>.sock`. Discover the MCP URLs with `serve_status` (loopback port 8743 by default); `signal` has no MCP transport. Set `STACK_MCP_PORT` before starting to change the port (or use `0` to allocate one and read the printed URLs). MCP exposes operations and server-managed event subscription tools; socket and WebSocket event subscriptions remain separate.
 
-In another terminal, run `stack open` for UI or `stack open inspector` for Inspector. The command opens a private, one-use bootstrap link without printing the secret. Sessions last eight hours and end on server restart or `stack revoke-local`. Bare UI URLs show connection instructions until authenticated. Anonymous MCP and WebSocket clients are refused. Native operator clients use `operatorHeaders(env)` from `@stack/api` as their HTTP/WebSocket headers; reload these after restart or revocation. Never copy credentials into URLs, logs or discovery. Bot/Worker launch URLs already carry signed identity.
+`stack --help` discovers package CLI exports independently of Package APIs. A package can export `cli.ts` (a typed `PackageCli` default export with `run(args)` and a description), `cli.yaml` (description plus an `exec` argv array), or both (YAML description and TypeScript handler). For example, `stack roles snapshot` reads the public Role summary from its local socket; it needs the server running. The Serve namespace owns its operational subcommands, not the API transport layer.
+
+In another terminal, run `stack serve open` for UI or `stack serve open inspector` for Inspector. The command opens a private, one-use bootstrap link without printing the secret. Sessions last eight hours and end on server restart or `stack serve revoke-local`. Bare UI URLs show connection instructions until authenticated. Anonymous MCP and WebSocket clients are refused. Native operator clients use `operatorHeaders(env)` from `@stack/api` as their HTTP/WebSocket headers; reload these after restart or revocation. Never copy credentials into URLs, logs or discovery. Bot/Worker launch URLs already carry signed identity.
 
 Brain starts with an empty research index under `<state>/brain`. The Stack Chrome and Android clients pair through Access's authenticated tailnet ingress to share links and text. Brain's listener on loopback port `8877` is an internal backend. See [Brain and device sharing](brain.md) for storage, ingestion behavior and client configuration.
 
@@ -24,7 +26,7 @@ To create an account, call `account_login_start` with `{}` on the auth Package A
 
 For Workers, prefer `worker_account_login_start` for Grok, Devin or Claude and follow its native sign-in state. Creating a Codex Bot account also creates its paired Codex Worker; pass that Worker's ID to sign it in separately with the same ChatGPT login. `worker_account_prepare` and `worker_account_confirm` provide a terminal fallback. `worker_catalog({accountId})` lists account-bound model/effort choices. A Bot can call `worker_start` with that exact selection, an absolute Git repository root, a task, and a fresh `requestId`; the returned Worker retains its own Git worktree and native session. Read status and transcript while it works, then send a follow-up turn in the same session. See [operations](operations.md) for recovery and cleanup.
 
-Browser control defaults to the exact UI origins `http://127.0.0.1:<STACK_UI_PORT>` and `http://localhost:<STACK_UI_PORT>` (port 8745 by default). For `next dev`, configure `STACK_WEBSOCKET_ORIGIN=http://localhost:3000` on the server before an authorized restart, use the same state directory for Next, then run `stack open ui http://localhost:3000`. This replaces the default browser-origin allowance. UI obtains a fresh single-use ticket for every WebSocket connection; Origin-less native clients instead supply their operator bearer header.
+Browser control defaults to the exact UI origins `http://127.0.0.1:<STACK_UI_PORT>` and `http://localhost:<STACK_UI_PORT>` (port 8745 by default). For `next dev`, configure `STACK_WEBSOCKET_ORIGIN=http://localhost:3000` on the server before an authorized restart, use the same state directory for Next, then run `stack serve open ui http://localhost:3000`. This replaces the default browser-origin allowance. UI obtains a fresh single-use ticket for every WebSocket connection; Origin-less native clients instead supply their operator bearer header.
 
 Structured documents for every package API — operations with their JSON Schemas, event topics, and configured transports — come from the `api` socket: `docs_list` names the packages, `docs_get` returns one package's document, and `docs_snapshot` returns one consistent catalog for a full reference. MCP and WebSocket URLs are included when their ports are fixed.
 
@@ -54,7 +56,7 @@ The UI follows the system light/dark preference. The server stops the app
 on shutdown.
 
 The server starts the official MCP Inspector as a headless child and prints
-`Stack Inspector: http://127.0.0.1:6274/`. Run `stack open inspector` to see every
+`Stack Inspector: http://127.0.0.1:6274/`. Run `stack serve open inspector` to see every
 Package API that configures MCP, select one, and connect in the Inspector. Set
 `STACK_INSPECTOR_PORT` to choose another fixed port. Stack derives the
 Inspector's read-only server list from `packages/*/api.yaml` and updates it when
@@ -66,7 +68,7 @@ browser tab, and the server stops it on shutdown.
 To serve only the Bots Package API, without the process server:
 
 ```sh
-node packages/api/dist/src/cli.js bots socket
+node packages/api/dist/src/transport-main.js bots socket
 ```
 
 The command prints its Unix socket path. The two commands use the same state directory and cannot own the bots socket at the same time. Stop either command with Ctrl-C and wait for it to exit before starting another instance.

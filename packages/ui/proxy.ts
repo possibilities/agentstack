@@ -27,6 +27,6 @@ export function proxy(request: NextRequest) {
     return response;
   } catch {
     if (request.method === "GET" && request.headers.get("sec-fetch-mode") === "navigate") return NextResponse.redirect(new URL("/connect/local", origin), 303);
-    return new NextResponse("Local authentication required. Run stack open.", { status: 401, headers: { "cache-control": "no-store" } });
+    return new NextResponse("Local authentication required. Run stack serve open.", { status: 401, headers: { "cache-control": "no-store" } });
   }
 }

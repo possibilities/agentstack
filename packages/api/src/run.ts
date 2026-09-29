@@ -3,7 +3,7 @@ import { serveApi } from "./serve.js";
 export async function runApi(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<void> {
   const [name, transport] = args;
   if (args.length !== 2 || !name || !transport) {
-    console.error("usage: stack api <package> <transport>");
+    console.error("usage: stack serve api <package> <transport>");
     process.exit(1);
   }
   let orphaned = false;

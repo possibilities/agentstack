@@ -77,8 +77,8 @@ export async function listPackages(root: string): Promise<PackageLocation[]> {
 export function assertTransport(name: string, config: PackageConfig, transport: string): "socket" {
   if (!isTransportType(transport)) throw new Error(`unknown transport: ${transport}`);
   if (!config[transport]) throw new Error(`${name} does not configure ${transport}`);
-  if (transport === "mcp") throw new Error("mcp is served together for all configured Package APIs; run stack mcp");
-  if (transport === "websocket") throw new Error("websocket is served together for all configured Package APIs; run stack websocket");
-  if (transport === "http") throw new Error("http is served by the owning Package API's declared listeners; run stack api <package> socket");
+  if (transport === "mcp") throw new Error("mcp is served together for all configured Package APIs; run stack serve mcp");
+  if (transport === "websocket") throw new Error("websocket is served together for all configured Package APIs; run stack serve websocket");
+  if (transport === "http") throw new Error("http is served by the owning Package API's declared listeners; run stack serve api <package> socket");
   return transport;
 }

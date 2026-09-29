@@ -1,0 +1,8 @@
+description: Run the Stack server and local operational commands.
+usage: |
+  usage: stack serve
+         stack serve open [ui|inspector] [configured-development-origin]
+         stack serve revoke-local
+         stack serve api <package> <transport>
+         stack serve mcp
+         stack serve websocket

@@ -10,9 +10,6 @@
     },
     "./package.json": "./package.json"
   },
-  "bin": {
-    "stack": "./dist/src/cli.js"
-  },
   "scripts": {
     "build": "node ../../scripts/clean-dist.mjs && tsc",
     "test": "node --test dist/test/*.test.js"
@@ -23,6 +20,7 @@
   "dependencies": {
     "@stack/access": "workspace:*",
     "@stack/api": "workspace:*",
+    "@stack/cli": "workspace:*",
     "@stack/signal": "workspace:*",
     "@stack/bots": "workspace:*",
     "@stack/browse": "workspace:*",

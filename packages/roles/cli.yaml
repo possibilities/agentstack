@@ -1,0 +1,2 @@
+description: Inspect the current Role through its local Package API.
+usage: 'usage: stack roles snapshot'
