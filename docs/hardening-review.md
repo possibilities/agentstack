@@ -2,7 +2,7 @@
 
 ## Scope and assessment
 
-Follow-up UI work is consolidated in [Review UI handoff](review-ui-handoff.md), written after all four approved proposals landed. It covers missing controls, required API support, existing behavior to preserve, and unresolved review/design candidates.
+Follow-up UI work is consolidated in the local handoff at `~/scratch/review-ui-handoff.md`, written after all four approved proposals landed. It covers missing controls, required API support, existing behavior to preserve, and unresolved review/design candidates.
 
 Reviewed the nine API/general/UI reviews supplied under `~/scratch`, then checked the relevant current source, transport contracts, launch consumers and test fixtures. The starting tree was `2735b8d` plus existing uncommitted Proc/owner work. Verification uses an isolated checkout containing that working tree, disposable state and fixture-only browser checks.
 
