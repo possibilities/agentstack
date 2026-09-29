@@ -206,6 +206,9 @@ test("default selection is catalog-marked; empty Roles still isolate; invalid na
     const created = await f.call("role_create", { expectedRevision: catalog.revision, name: "Empty" });
     const emptyId = created.roles.find((role: { name: string }) => role.name === "Empty").id;
     await f.call("role_set_default", { expectedRevision: created.revision, roleId: emptyId });
+    const named = await f.run(["inject", "Research É", "--", "claude"]);
+    assert.equal(named.code, 0, named.stderr);
+    assert.equal(JSON.parse(named.stdout).instructions, instructions, "an explicit name selects the non-default Role");
     for (const [selector, harness] of [[[], "claude"], [["default"], "codex"], [["Empty"], "opencode"]] as const) {
       const result = await f.run(["inject", ...selector, "--", harness]);
       assert.equal(result.code, 0, result.stderr);

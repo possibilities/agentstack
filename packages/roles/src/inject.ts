@@ -33,7 +33,9 @@ async function snapshotFor(name: string): Promise<RoleSnapshot> {
   const catalog = await call("roles", "roles_snapshot") as RoleCatalog;
   const role = catalog.roles.find((role) => asciiFold(role.name) === asciiFold(name));
   if (!role) throw new Error(`unknown Role name: ${name}`);
-  return await call("roles", "role_launch_snapshot", { roleId: role.id }) as RoleSnapshot;
+  // The operator-only complete read supports named Roles even on a running
+  // server whose launch-snapshot operation still accepts only the default.
+  return await call("roles", "role_editor_snapshot", { roleId: role.id }) as RoleSnapshot;
 }
 
 async function connections(snapshot: RoleSnapshot): Promise<Record<string, Mcp>> {
