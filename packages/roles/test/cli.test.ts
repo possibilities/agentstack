@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { serveApi } from "@stack/api";
+import { serveApi, socketCall } from "@stack/api";
 
 test("stack roles snapshot reads the Role from its package socket", async () => {
   const state = await mkdtemp(join(tmpdir(), "stack-roles-cli-"));
@@ -13,6 +13,7 @@ test("stack roles snapshot reads the Role from its package socket", async () => 
   let server: Awaited<ReturnType<typeof serveApi>> | undefined;
   try {
     server = await serveApi({ name: "roles", transport: "socket", env });
+    await socketCall(server.socketPath!, "tools/call", { name: "role_create", arguments: { expectedRevision: 0, name: "Default" } });
     const cli = fileURLToPath(new URL("../../../cli/dist/src/main.js", import.meta.url));
     const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
       const child = spawn(process.execPath, [cli, "roles", "snapshot"], { env });

@@ -41,6 +41,7 @@ export type StoredServer = {
   settings?: BotSettings | null;
   roleRoot?: string | null;
   roleRevision?: number | null;
+  roleId?: string | null;
 };
 
 export class StateStore extends AuthStore {
@@ -70,6 +71,7 @@ export class StateStore extends AuthStore {
     this.db.prepare("INSERT OR IGNORE INTO bot_defaults (id, settings_json) VALUES (1, ?)").run(JSON.stringify(DEFAULT_BOT_SETTINGS));
     // Existing installations of the first SQLite-backed release have neither column.
     const serverColumns = this.db.prepare("PRAGMA table_info(servers)").all() as Array<{ name: string }>;
+    if (!serverColumns.some(({ name }) => name === "role_id")) this.db.exec("ALTER TABLE servers ADD COLUMN role_id TEXT");
     if (!serverColumns.some(({ name }) => name === "auth_version")) this.db.exec("ALTER TABLE servers ADD COLUMN auth_version INTEGER");
     if (!serverColumns.some(({ name }) => name === "runtime_root")) this.db.exec("ALTER TABLE servers ADD COLUMN runtime_root TEXT");
     if (!serverColumns.some(({ name }) => name === "main_thread_id")) this.db.exec("ALTER TABLE servers ADD COLUMN main_thread_id TEXT");
@@ -99,12 +101,12 @@ export class StateStore extends AuthStore {
   }
 
   servers(): StoredServer[] {
-    return (this.db.prepare("SELECT servers.id, pid, cwd, url, state, codex_bin, account, launched_account, auth_version, runtime_root, main_thread_id, thread_starting, role_root, role_revision, args_json, bot_settings.settings_json FROM servers LEFT JOIN secrets.server_args AS launch_args ON launch_args.id = servers.id LEFT JOIN bot_settings ON bot_settings.id = servers.id").all() as Array<{
-      id: string; pid: number | null; cwd: string; url: string | null; state: StoredServer["state"]; codex_bin: string; account: string | null; launched_account: string | null; auth_version: number | null; runtime_root: string | null; main_thread_id: string | null; thread_starting: number; role_root: string | null; role_revision: number | null; args_json: string | null; settings_json: string | null;
-    }>).map(({ codex_bin, launched_account, auth_version, runtime_root, main_thread_id, thread_starting, role_root, role_revision, args_json, settings_json, ...row }) => ({
+    return (this.db.prepare("SELECT servers.id, pid, cwd, url, state, codex_bin, account, launched_account, auth_version, runtime_root, main_thread_id, thread_starting, role_root, role_revision, role_id, args_json, bot_settings.settings_json FROM servers LEFT JOIN secrets.server_args AS launch_args ON launch_args.id = servers.id LEFT JOIN bot_settings ON bot_settings.id = servers.id").all() as Array<{
+      id: string; pid: number | null; cwd: string; url: string | null; state: StoredServer["state"]; codex_bin: string; account: string | null; launched_account: string | null; auth_version: number | null; runtime_root: string | null; main_thread_id: string | null; thread_starting: number; role_root: string | null; role_revision: number | null; role_id: string | null; args_json: string | null; settings_json: string | null;
+    }>).map(({ codex_bin, launched_account, auth_version, runtime_root, main_thread_id, thread_starting, role_root, role_revision, role_id, args_json, settings_json, ...row }) => ({
       ...row, codexBin: codex_bin, launchedAccount: launched_account, authVersion: auth_version, runtimeRoot: runtime_root,
       mainThreadId: main_thread_id, threadStarting: Boolean(thread_starting), roleRoot: role_root,
-      roleRevision: role_revision, args: parseArgs(args_json), settings: settings_json === null ? null : parseSettings(settings_json),
+      roleRevision: role_revision, roleId: role_id, args: parseArgs(args_json), settings: settings_json === null ? null : parseSettings(settings_json),
     }));
   }
 
@@ -125,14 +127,14 @@ export class StateStore extends AuthStore {
     const settings = server.settings == null ? null : parseSettings(JSON.stringify(server.settings));
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      this.db.prepare(`INSERT INTO servers (id, pid, cwd, url, state, codex_bin, account, launched_account, auth_version, runtime_root, main_thread_id, thread_starting, role_root, role_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      this.db.prepare(`INSERT INTO servers (id, pid, cwd, url, state, codex_bin, account, launched_account, auth_version, runtime_root, main_thread_id, thread_starting, role_root, role_revision, role_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET pid=excluded.pid, cwd=excluded.cwd, url=excluded.url,
         state=excluded.state, codex_bin=excluded.codex_bin, account=excluded.account, launched_account=excluded.launched_account,
         auth_version=excluded.auth_version, runtime_root=excluded.runtime_root,
         main_thread_id=excluded.main_thread_id, thread_starting=excluded.thread_starting,
-        role_root=excluded.role_root, role_revision=excluded.role_revision`).run(
+        role_root=excluded.role_root, role_revision=excluded.role_revision, role_id=excluded.role_id`).run(
         server.id, server.pid, server.cwd, server.url, server.state, server.codexBin, server.account, server.launchedAccount ?? null, server.authVersion ?? null, server.runtimeRoot ?? null,
-        server.mainThreadId ?? null, server.threadStarting ? 1 : 0, server.roleRoot ?? null, server.roleRevision ?? null,
+        server.mainThreadId ?? null, server.threadStarting ? 1 : 0, server.roleRoot ?? null, server.roleRevision ?? null, server.roleId ?? null,
       );
       this.db.prepare("INSERT INTO secrets.server_args (id, args_json) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET args_json = excluded.args_json")
         .run(server.id, JSON.stringify(server.args));

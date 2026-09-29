@@ -9,7 +9,7 @@ export type TurnPhase = "queued" | "running" | "awaiting_input" | "cancelling" |
 export type WorkerRecord = {
   id: string; botId: string; threadId: string; accountId: string; provider: "codex" | "grok" | "devin" | "claude";
   model: string; effort: string | null; repo: string; cwd: string | null; branch: string | null; baseCommit: string | null;
-  sourceDirty: boolean; roleRevision: number | null; sessionId: string | null; phase: WorkerPhase;
+  sourceDirty: boolean; roleId: string | null; roleRevision: number | null; sessionId: string | null; phase: WorkerPhase;
   runtimeInstance: string | null;
   currentTurnId: string | null; issue: string | null; createdAt: number; updatedAt: number;
 };
@@ -68,6 +68,7 @@ export class WorkerLedger {
       );
     `);
     const columns = this.db.prepare("PRAGMA table_info(workers)").all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === "role_id")) this.db.exec("ALTER TABLE workers ADD COLUMN role_id TEXT");
     if (!columns.some((column) => column.name === "runtime_instance")) this.db.exec("ALTER TABLE workers ADD COLUMN runtime_instance TEXT");
     for (const [table, additions] of Object.entries({ turns: { prompt: "TEXT", requested_model: "TEXT", requested_effort: "TEXT",
       observed_settings_json: "TEXT", dispatched_at: "INTEGER", dispatched_prompt_seq: "INTEGER" },
@@ -91,7 +92,7 @@ export class WorkerLedger {
       accountId: row.account_id as string, provider: row.provider as WorkerRecord["provider"],
       model: row.model as string, effort: row.effort as string | null, repo: row.repo as string,
       cwd: row.cwd as string | null, branch: row.branch as string | null, baseCommit: row.base_commit as string | null,
-      sourceDirty: Boolean(row.source_dirty), roleRevision: row.role_revision as number | null,
+      sourceDirty: Boolean(row.source_dirty), roleId: row.role_id as string | null, roleRevision: row.role_revision as number | null,
       sessionId: row.acp_session_id as string | null, phase: row.phase as WorkerPhase,
       runtimeInstance: row.runtime_instance as string | null,
       currentTurnId: row.current_turn_id as string | null, issue: row.issue as string | null,
@@ -149,9 +150,9 @@ export class WorkerLedger {
     return { worker: this.worker(id)!, turn: this.turn(turnId)!, duplicate: false };
   }
 
-  setWorktree(id: string, claim: { repo: string; cwd: string; branch: string; baseCommit: string; sourceDirty: boolean; roleRevision: number }): WorkerRecord {
-    this.db.prepare("UPDATE workers SET repo = ?, cwd = ?, branch = ?, base_commit = ?, source_dirty = ?, role_revision = ?, updated_at = ? WHERE id = ?")
-      .run(claim.repo, claim.cwd, claim.branch, claim.baseCommit, Number(claim.sourceDirty), claim.roleRevision, Date.now(), id);
+  setWorktree(id: string, claim: { repo: string; cwd: string; branch: string; baseCommit: string; sourceDirty: boolean; roleId: string; roleRevision: number }): WorkerRecord {
+    this.db.prepare("UPDATE workers SET repo = ?, cwd = ?, branch = ?, base_commit = ?, source_dirty = ?, role_id = ?, role_revision = ?, updated_at = ? WHERE id = ?")
+      .run(claim.repo, claim.cwd, claim.branch, claim.baseCommit, Number(claim.sourceDirty), claim.roleId, claim.roleRevision, Date.now(), id);
     return this.worker(id)!;
   }
   setSession(id: string, sessionId: string): WorkerRecord {

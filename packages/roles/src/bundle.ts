@@ -65,6 +65,7 @@ export async function materializeRole(stateDir: string, botId: string, snapshot:
     const lines: string[] = [];
     if (cwd) for (const project of matchingProjects(snapshot, await realpath(cwd))) lines.push(`[projects.${toml(project.path)}]`, 'trust_level = "trusted"', "");
     for (const [name, url] of Object.entries(mcpServers).sort(([a], [b]) => a.localeCompare(b))) {
+      if (snapshot.disabledInternalMcpServers.includes(name)) continue;
       let parsed: URL;
       try { parsed = new URL(url); }
       catch { throw new Error(`invalid owner MCP entry: ${name}`); }

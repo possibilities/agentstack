@@ -4,25 +4,43 @@ import { join } from "node:path";
 import test from "node:test";
 import { serveApi, socketCall, socketSubscribe } from "@stack/api";
 
+async function createRole(socket: string): Promise<string> {
+  const result = await socketCall(socket, "tools/call", { name: "role_create", arguments: { expectedRevision: 0, name: "Default" } }) as { defaultRoleId: string };
+  return result.defaultRoleId;
+}
+
+/** Resource writes acknowledge a revision; content assertions read the committed state separately. */
+async function roleCall(socket: string, name: string, args: Record<string, unknown>) {
+  const result = await socketCall(socket, "tools/call", { name, arguments: args });
+  if (/^(category|fragment|skill|mcp_server|project)_/.test(name)) {
+    assert.deepEqual(result, { roleId: args.roleId, revision: Number(args.expectedRevision) + 1 });
+    return socketCall(socket, "tools/call", { name: "role_snapshot", arguments: { roleId: args.roleId } });
+  }
+  return result;
+}
+
 test("the roles Package API serves fragment CRUD and invalidates subscribers", async () => {
   const root = await mkdtemp("/tmp/as-role-");
   const served = await serveApi({ name: "roles", transport: "socket", env: { ...process.env, STACK_STATE_DIR: root } });
   const path = served.socketPath!;
+  const roleId = await createRole(path);
   const notices: string[] = [];
   const subscription = await socketSubscribe(path, ["role_changed"], (topic) => notices.push(topic));
   try {
-    const empty = await socketCall(path, "tools/call", { name: "role_snapshot", arguments: {} }) as { revision: number; categories: unknown[]; skills: unknown[]; mcpServers: unknown[]; trustedProjects: unknown[] };
-    assert.deepEqual(empty, { revision: 0, categories: [], skills: [], mcpServers: [], trustedProjects: [] });
-    const created = await socketCall(path, "tools/call", { name: "category_create", arguments: { expectedRevision: 0, title: "General" } }) as {
+    const empty = await socketCall(path, "tools/call", { name: "role_snapshot", arguments: { roleId } }) as { id: string; revision: number; categories: unknown[] };
+    assert.equal(empty.id, roleId);
+    assert.equal(empty.revision, 0);
+    assert.deepEqual(empty.categories, []);
+    const created = await roleCall(path, "category_create", { roleId, expectedRevision: 0, title: "General" }) as {
       revision: number; categories: Array<{ id: string }>;
     };
     assert.equal(created.revision, 1);
-    await assert.rejects(socketCall(path, "tools/call", { name: "category_create", arguments: { expectedRevision: 0, title: "Lost update" } }), /stale role revision/);
-    const added = await socketCall(path, "tools/call", { name: "fragment_create", arguments: {
-      expectedRevision: 1, categoryId: created.categories[0]!.id, title: "Rule", description: "Human-only", body: "Follow this rule.",
-    } }) as { revision: number };
+    await assert.rejects(socketCall(path, "tools/call", { name: "category_create", arguments: { roleId, expectedRevision: 0, title: "Lost update" } }), /stale role revision/);
+    const added = await roleCall(path, "fragment_create", {
+      roleId, expectedRevision: 1, categoryId: created.categories[0]!.id, title: "Rule", description: "Human-only", body: "Follow this rule.",
+    }) as { revision: number };
     assert.equal(added.revision, 2);
-    const preview = await socketCall(path, "tools/call", { name: "role_preview", arguments: {} }) as {
+    const preview = await socketCall(path, "tools/call", { name: "role_preview", arguments: { roleId } }) as {
       revision: number; rendered: string; bytes: number; limitBytes: number; segments: Array<{ fragmentId: string; start: number; end: number }>;
     };
     assert.equal(preview.rendered, "Follow this rule.");
@@ -30,11 +48,11 @@ test("the roles Package API serves fragment CRUD and invalidates subscribers", a
     assert.equal(preview.bytes, 17);
     assert.equal(preview.limitBytes, 262_144);
     assert.deepEqual(preview.segments.map(({ start, end }) => [start, end]), [[0, 17]]);
-    const second = await socketCall(path, "tools/call", { name: "category_create", arguments: { expectedRevision: 2, title: "Second" } }) as {
+    const second = await roleCall(path, "category_create", { roleId, expectedRevision: 2, title: "Second" }) as {
       revision: number; categories: Array<{ id: string; fragments: Array<{ id: string }> }>;
     };
     const fragmentId = second.categories[0]!.fragments[0]!.id;
-    const moved = await socketCall(path, "tools/call", { name: "fragment_move", arguments: { expectedRevision: 3, id: fragmentId, categoryId: second.categories[1]!.id, index: 0 } }) as {
+    const moved = await roleCall(path, "fragment_move", { roleId, expectedRevision: 3, id: fragmentId, categoryId: second.categories[1]!.id, index: 0 }) as {
       revision: number; categories: Array<{ fragments: Array<{ id: string; categoryId: string; updatedAt: number | null }> }>;
     };
     assert.equal(moved.revision, 4);
@@ -54,7 +72,8 @@ test("trusted project operations expose explicit CRUD and enablement with role r
   await mkdir(project);
   const served = await serveApi({ name: "roles", transport: "socket", env: { ...process.env, STACK_STATE_DIR: root } });
   const socket = served.socketPath!;
-  const call = (name: string, args: Record<string, unknown>) => socketCall(socket, "tools/call", { name, arguments: args }) as Promise<{
+  const roleId = await createRole(socket);
+  const call = (name: string, args: Record<string, unknown>) => roleCall(socket, name, { roleId, ...args }) as Promise<{
     revision: number; trustedProjects: Array<{ id: string; path: string; enabled: boolean }>;
   }>;
   try {
@@ -74,7 +93,8 @@ test("role skill and MCP operations support complete create, update, disable, re
   const root = await mkdtemp("/tmp/as-role-resources-");
   const served = await serveApi({ name: "roles", transport: "socket", env: { ...process.env, STACK_STATE_DIR: root } });
   const path = served.socketPath!;
-  const call = (name: string, args: Record<string, unknown>) => socketCall(path, "tools/call", { name, arguments: args }) as Promise<{
+  const roleId = await createRole(path);
+  const call = (name: string, args: Record<string, unknown>) => roleCall(path, name, { roleId, ...args }) as Promise<{
     revision: number; skills: Array<{ id: string; enabled: boolean; files: unknown[] }>; mcpServers: Array<{ id: string; enabled: boolean }>;
   }>;
   try {
@@ -92,7 +112,7 @@ test("role skill and MCP operations support complete create, update, disable, re
     assert.deepEqual(summary.mcpServers, [{ id: http.mcpServers[0]!.id, name: "remote", description: "Remote tools", enabled: true, transport: "http" }]);
     const launch = await socketCall(path, "tools/call", { name: "role_launch_snapshot", arguments: {} }) as { mcpServers: Array<{ definition: unknown }> };
     assert.deepEqual(launch.mcpServers[0]?.definition, definition, "launch state retains the real connection definition");
-    const editor = await socketCall(path, "tools/call", { name: "role_editor_snapshot", arguments: {} });
+    const editor = await socketCall(path, "tools/call", { name: "role_editor_snapshot", arguments: { roleId } });
     assert.deepEqual(editor, launch, "the operator editor retains complete definitions independently of safe summaries");
     await assert.rejects(call("mcp_server_create", { expectedRevision: http.revision, name: "bots", description: "Collision", definition: { type: "http", url: "https://mcp.example.test/tools" } }), /collides with an internal Package API/);
     const mcpId = http.mcpServers[0]!.id;
@@ -114,7 +134,8 @@ test("role_launch_preview reports enabled resources, trust per working directory
   await mkdir(nested, { recursive: true });
   const served = await serveApi({ name: "roles", transport: "socket", env: { ...process.env, STACK_STATE_DIR: root, STACK_MCP_PORT: "48743" } });
   const socket = served.socketPath!;
-  const call = (name: string, args: Record<string, unknown> = {}) => socketCall(socket, "tools/call", { name, arguments: args }) as Promise<any>;
+  const roleId = await createRole(socket);
+  const call = (name: string, args: Record<string, unknown> = {}) => roleCall(socket, name, { roleId, ...args }) as Promise<any>;
   try {
     let state = await call("skill_create", { expectedRevision: 0, name: "review", description: "Review work", body: "# Review",
       files: [{ path: "check.sh", contentBase64: Buffer.from("true\n").toString("base64") }] });
@@ -128,7 +149,7 @@ test("role_launch_preview reports enabled resources, trust per working directory
     assert.equal(preview.revision, state.revision);
     assert.deepEqual(preview.skills.map(({ name, files, bytes }: any) => [name, files, bytes]), [["review", 1, 13]]);
     assert.deepEqual(preview.mcpServers.map(({ name, type }: any) => [name, type]), [["remote", "http"]]);
-    assert.ok(preview.internalMcpServers.includes("roles"));
+    assert.ok(preview.internalMcpServers.some((server: { name: string; enabled: boolean }) => server.name === "roles" && server.enabled));
     assert.equal(preview.config, '[mcp_servers.remote]\nurl = "https://mcp.example.test/tools"\nbearer_token_env_var = "ROLE_TOKEN"\nenabled = true\n');
     const canonical = await realpath(project);
     assert.deepEqual(preview.trustedProjects.map(({ path }: any) => path), [canonical]);

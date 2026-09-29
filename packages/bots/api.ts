@@ -33,7 +33,8 @@ const botView = z.object({
   runningAccount: z.uuid().nullable().describe("Account used by the running process, or null when stopped or launched unbound. Stop/start to apply a changed assignment."),
   mainThreadId: z.string().nullable().describe("First durable root thread, or null until a UI sends its first turn."),
   recoveryIssue: z.string().nullable().describe("Process-ownership issue requiring inspection; a running state is unverified while this is set."),
-  roleRevision: z.number().int().nonnegative().nullable().describe("Last launched role revision, or null before launch. Compare with role_snapshot; restart to apply edits."),
+  roleId: z.uuid().nullable().describe("Role ID used for the last launch, not a per-Bot assignment. Null before launch or for legacy launches. Later launches resolve the current default."),
+  roleRevision: z.number().int().nonnegative().nullable().describe("Last launched Role revision, or null before launch. Compare both roleId and revision; restart to apply a new default or edits."),
   settings: botSettings.nullable().describe("Saved launch settings for this Bot, or null for a pre-existing Bot that retains Codex's implicit model and effort. Caller args can override settings at launch."),
 });
 
@@ -120,7 +121,7 @@ export const botStop = operation({
   async call(ctx: BotsContext, { id }) {
     if (ctx.supervisor.list().some((bot) => bot.id === id)) return ctx.supervisor.stop(id);
     if (!ctx.ledger.has(id) && !ctx.ledger.ownsWorkspace(id)) throw new Error(`unknown bot: ${id}`);
-    return { id, pid: null, cwd: workspacePath(ctx.root, id), url: null, state: "stopped" as const, account: null, runningAccount: null, mainThreadId: null, recoveryIssue: null, roleRevision: null, settings: ctx.store.botDefaults() };
+    return { id, pid: null, cwd: workspacePath(ctx.root, id), url: null, state: "stopped" as const, account: null, runningAccount: null, mainThreadId: null, recoveryIssue: null, roleId: null, roleRevision: null, settings: ctx.store.botDefaults() };
   },
 });
 export const botRemove = operation({

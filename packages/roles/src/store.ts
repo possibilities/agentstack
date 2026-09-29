@@ -2,13 +2,19 @@ import { chmodSync, closeSync, constants, existsSync, mkdirSync, openSync, realp
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { z } from "zod";
+import { initializeRoles } from "./schema.js";
 import { mcpRecord, skillRecord, trustedProjectRecord, type RoleMcpServer, type Skill, type TrustedProject } from "./resources.js";
 
 /** Unix milliseconds; null on records written before the store kept timestamps. */
 type Stamps = { createdAt: number | null; updatedAt: number | null };
 export type Fragment = { id: string; categoryId: string; title: string; description: string; body: string; enabled: boolean } & Stamps;
 export type Category = { id: string; title: string; description: string; enabled: boolean; fragments: Fragment[] } & Stamps;
-export type RoleSnapshot = { revision: number; categories: Category[]; skills: Skill[]; mcpServers: RoleMcpServer[]; trustedProjects: TrustedProject[] };
+export const roleName = z.string().trim().min(1).max(200).describe("Human-readable role name; unique case-insensitively.");
+export const roleDescription = z.string().max(4_000);
+export type Role = { id: string; name: string; description: string; revision: number } & Stamps;
+export type RoleCatalog = { revision: number; defaultRoleId: string | null; roles: Role[] };
+export type RoleSnapshot = Role & { categories: Category[]; skills: Skill[]; mcpServers: RoleMcpServer[]; trustedProjects: TrustedProject[]; disabledInternalMcpServers: string[] };
 
 function canonicalProjectRoot(path: string): string {
   if (!statSync(path).isDirectory()) throw new Error(`project root is not a directory: ${path}`);
@@ -61,42 +67,108 @@ export class RoleStore {
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
     chmodSync(path, 0o600);
     this.db = new DatabaseSync(path);
-    this.db.exec(`
-      PRAGMA busy_timeout = 5000;
-      PRAGMA journal_mode = DELETE;
-      PRAGMA foreign_keys = ON;
-      CREATE TABLE IF NOT EXISTS revision (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), value INTEGER NOT NULL);
-      INSERT OR IGNORE INTO revision VALUES (1, 0);
-      CREATE TABLE IF NOT EXISTS categories (
-        id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL, enabled INTEGER NOT NULL,
-        position INTEGER NOT NULL, created_at INTEGER, updated_at INTEGER
-      );
-      CREATE TABLE IF NOT EXISTS fragments (
-        id TEXT PRIMARY KEY, category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
-        title TEXT NOT NULL, description TEXT NOT NULL, body TEXT NOT NULL, enabled INTEGER NOT NULL,
-        position INTEGER NOT NULL, created_at INTEGER, updated_at INTEGER
-      );
-      CREATE TABLE IF NOT EXISTS skills (
-        id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, description TEXT NOT NULL,
-        body TEXT NOT NULL, files_json TEXT NOT NULL, enabled INTEGER NOT NULL, position INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS role_mcp_servers (
-        id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, description TEXT NOT NULL,
-        definition_json TEXT NOT NULL, enabled INTEGER NOT NULL, position INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS trusted_projects (
-        id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, description TEXT NOT NULL,
-        enabled INTEGER NOT NULL, position INTEGER NOT NULL
-      );
-    `);
-    // Databases from before timestamps gain nullable columns; their existing rows stay unknown.
-    for (const table of ["categories", "fragments"]) {
-      const columns = new Set((this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((column) => column.name));
-      for (const column of ["created_at", "updated_at"]) if (!columns.has(column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} INTEGER`);
-    }
+    try { initializeRoles(this.db); }
+    catch (error) { this.db.close(); throw error; }
   }
 
   close(): void { this.db.close(); }
+
+  role(roleId: string): RoleContents { return new RoleContents(this.db, roleId); }
+
+  catalog(): RoleCatalog { return transaction(this.db, false, () => this.readCatalog()); }
+
+  private readCatalog(): RoleCatalog {
+    return readCatalog(this.db);
+  }
+
+  /** Resolve the default and read its content in the same SQLite snapshot. */
+  defaultSnapshot(): RoleSnapshot {
+    return transaction(this.db, false, () => {
+      const { default_role_id } = this.db.prepare("SELECT default_role_id FROM role_catalog WHERE singleton = 1").get() as { default_role_id: string | null };
+      if (!default_role_id) throw new Error("no default role; create the first role before launching");
+      return this.role(default_role_id).readSnapshot();
+    });
+  }
+
+  createRole(expectedRevision: number, name: string, description = ""): RoleCatalog {
+    return this.changeCatalog(expectedRevision, () => {
+      const id = randomUUID();
+      const now = Date.now();
+      this.db.prepare("INSERT INTO roles VALUES (?, ?, ?, 0, ?, ?)").run(id, roleName.parse(name), roleDescription.parse(description), now, now);
+      this.db.prepare("UPDATE role_catalog SET default_role_id = ? WHERE default_role_id IS NULL").run(id);
+    });
+  }
+
+  setDefault(expectedRevision: number, roleId: string): RoleCatalog {
+    return this.changeCatalog(expectedRevision, () => {
+      this.role(roleId).metadata();
+      this.db.prepare("UPDATE role_catalog SET default_role_id = ? WHERE singleton = 1").run(roleId);
+    });
+  }
+
+  deleteRole(expectedRevision: number, roleId: string): RoleCatalog {
+    return this.changeCatalog(expectedRevision, () => {
+      this.role(roleId).metadata();
+      if (this.readCatalog().defaultRoleId === roleId) throw new Error("cannot delete the default role; mark another role as default first");
+      for (const table of ["fragments", "categories", "skills", "role_mcp_servers", "trusted_projects", "disabled_internal_mcp"]) {
+        this.db.prepare(`DELETE FROM ${table} WHERE role_id = ?`).run(roleId);
+      }
+      this.db.prepare("DELETE FROM roles WHERE id = ?").run(roleId);
+    });
+  }
+
+  private changeCatalog(expectedRevision: number, mutate: () => void): RoleCatalog {
+    return transaction(this.db, true, () => {
+      const revision = this.readCatalog().revision;
+      if (revision !== expectedRevision) throw new Error(`stale role catalog revision: expected ${expectedRevision}, current ${revision}`);
+      mutate();
+      this.db.exec("UPDATE role_catalog SET revision = revision + 1 WHERE singleton = 1");
+      const result = this.readCatalog();
+      if (JSON.stringify(result).length > snapshotLimitChars) throw new Error("role catalog exceeds the socket response budget");
+      return result;
+    });
+  }
+}
+
+function readCatalog(db: DatabaseSync): RoleCatalog {
+  const row = db.prepare("SELECT revision, default_role_id FROM role_catalog WHERE singleton = 1").get() as { revision: number; default_role_id: string | null };
+  const roles = db.prepare("SELECT id, name, description, revision, created_at AS createdAt, updated_at AS updatedAt FROM roles ORDER BY rowid").all() as Role[];
+  return { revision: row.revision, defaultRoleId: row.default_role_id, roles };
+}
+
+function transaction<T>(db: DatabaseSync, write: boolean, action: () => T): T {
+  db.exec(write ? "BEGIN IMMEDIATE" : "BEGIN");
+  try {
+    const value = action();
+    db.exec("COMMIT");
+    return value;
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
+}
+
+/** A scoped view, sharing its owner's connection. Resource IDs never select another Role. */
+export class RoleContents {
+  constructor(private readonly db: DatabaseSync, readonly roleId: string) {}
+
+  metadata(): Role {
+    const role = this.db.prepare("SELECT id, name, description, revision, created_at AS createdAt, updated_at AS updatedAt FROM roles WHERE id = ?").get(this.roleId) as Role | undefined;
+    if (!role) throw new Error(`unknown role: ${this.roleId}`);
+    return role;
+  }
+
+  update(expectedRevision: number, fields: { name?: string; description?: string }): RoleSnapshot {
+    return this.change(expectedRevision, () => {
+      const current = this.metadata();
+      this.db.prepare("UPDATE roles SET name = ?, description = ? WHERE id = ?")
+        .run(roleName.parse(fields.name ?? current.name), roleDescription.parse(fields.description ?? current.description), this.roleId);
+    });
+  }
+
+  setInternalMcp(expectedRevision: number, name: string, enabled: boolean): RoleSnapshot {
+    return this.change(expectedRevision, () => {
+      if (enabled) this.db.prepare("DELETE FROM disabled_internal_mcp WHERE role_id = ? AND name = ?").run(this.roleId, name);
+      else this.db.prepare("INSERT OR IGNORE INTO disabled_internal_mcp VALUES (?, ?)").run(this.roleId, name);
+    });
+  }
 
   snapshot(): RoleSnapshot {
     this.db.exec("BEGIN");
@@ -107,12 +179,12 @@ export class RoleStore {
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
 
-  private readSnapshot(): RoleSnapshot {
-    const revision = this.revision();
-    const rows = this.db.prepare("SELECT id, title, description, enabled, created_at, updated_at FROM categories ORDER BY position, id").all() as Array<{
+  readSnapshot(): RoleSnapshot {
+    const role = this.metadata();
+    const rows = this.db.prepare("SELECT id, title, description, enabled, created_at, updated_at FROM categories WHERE role_id = ? ORDER BY position, id").all(this.roleId) as Array<{
       id: string; title: string; description: string; enabled: number; created_at: number | null; updated_at: number | null;
     }>;
-    const fragments = this.db.prepare("SELECT id, category_id, title, description, body, enabled, created_at, updated_at FROM fragments ORDER BY category_id, position, id").all() as Array<{
+    const fragments = this.db.prepare("SELECT id, category_id, title, description, body, enabled, created_at, updated_at FROM fragments WHERE role_id = ? ORDER BY category_id, position, id").all(this.roleId) as Array<{
       id: string; category_id: string; title: string; description: string; body: string; enabled: number; created_at: number | null; updated_at: number | null;
     }>;
     const categories = rows.map(({ enabled, created_at, updated_at, ...row }): Category => ({
@@ -122,24 +194,25 @@ export class RoleStore {
     for (const { category_id, enabled, created_at, updated_at, ...fragment } of fragments) {
       byId.get(category_id)?.fragments.push({ ...fragment, categoryId: category_id, enabled: Boolean(enabled), createdAt: created_at, updatedAt: updated_at });
     }
-    const skills = (this.db.prepare("SELECT id, name, description, body, files_json, enabled FROM skills ORDER BY position, id").all() as Array<{
+    const skills = (this.db.prepare("SELECT id, name, description, body, files_json, enabled FROM skills WHERE role_id = ? ORDER BY position, id").all(this.roleId) as Array<{
       id: string; name: string; description: string; body: string; files_json: string; enabled: number;
     }>).map(({ files_json, enabled, ...row }) => skillRecord.parse({ ...row, files: JSON.parse(files_json), enabled: Boolean(enabled) }));
-    const mcpServers = (this.db.prepare("SELECT id, name, description, definition_json, enabled FROM role_mcp_servers ORDER BY position, id").all() as Array<{
+    const mcpServers = (this.db.prepare("SELECT id, name, description, definition_json, enabled FROM role_mcp_servers WHERE role_id = ? ORDER BY position, id").all(this.roleId) as Array<{
       id: string; name: string; description: string; definition_json: string; enabled: number;
     }>).map(({ definition_json, enabled, ...row }) => mcpRecord.parse({ ...row, definition: JSON.parse(definition_json), enabled: Boolean(enabled) }));
-    const trustedProjects = (this.db.prepare("SELECT id, path, description, enabled FROM trusted_projects ORDER BY position, id").all() as Array<{
+    const trustedProjects = (this.db.prepare("SELECT id, path, description, enabled FROM trusted_projects WHERE role_id = ? ORDER BY position, id").all(this.roleId) as Array<{
       id: string; path: string; description: string; enabled: number;
     }>).map(({ enabled, ...row }) => trustedProjectRecord.parse({ ...row, enabled: Boolean(enabled) }));
-    return { revision, categories, skills, mcpServers, trustedProjects };
+    const disabledInternalMcpServers = (this.db.prepare("SELECT name FROM disabled_internal_mcp WHERE role_id = ? ORDER BY name").all(this.roleId) as Array<{ name: string }>).map(({ name }) => name);
+    return { ...role, categories, skills, mcpServers, trustedProjects, disabledInternalMcpServers };
   }
 
   createCategory(expectedRevision: number, title: string, description = "", enabled = true): RoleSnapshot {
     return this.change(expectedRevision, () => {
       const position = this.count("categories");
       const now = Date.now();
-      this.db.prepare("INSERT INTO categories (id, title, description, enabled, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(randomUUID(), title, description, Number(enabled), position, now, now);
+      this.db.prepare("INSERT INTO categories (id, title, description, enabled, position, created_at, updated_at, role_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(randomUUID(), title, description, Number(enabled), position, now, now, this.roleId);
     });
   }
 
@@ -173,8 +246,8 @@ export class RoleStore {
       if (index !== undefined) this.insertionIndex(index, siblings.length);
       const id = randomUUID();
       const now = Date.now();
-      this.db.prepare("INSERT INTO fragments (id, category_id, title, description, body, enabled, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(id, categoryId, title, description, body, Number(enabled), siblings.length, now, now);
+      this.db.prepare("INSERT INTO fragments (id, category_id, title, description, body, enabled, position, created_at, updated_at, role_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(id, categoryId, title, description, body, Number(enabled), siblings.length, now, now, this.roleId);
       if (index !== undefined) this.place("fragments", [...siblings.slice(0, index), id, ...siblings.slice(index)]);
     });
   }
@@ -222,8 +295,8 @@ export class RoleStore {
   createSkill(expectedRevision: number, name: string, description: string, body: string, files: Skill["files"] = [], enabled = true): RoleSnapshot {
     return this.change(expectedRevision, () => {
       const skill = skillRecord.parse({ id: randomUUID(), name, description, body, files, enabled });
-      this.db.prepare("INSERT INTO skills VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(skill.id, skill.name, skill.description, skill.body, JSON.stringify(skill.files), Number(skill.enabled), this.count("skills"));
+      this.db.prepare("INSERT INTO skills VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(skill.id, skill.name, skill.description, skill.body, JSON.stringify(skill.files), Number(skill.enabled), this.count("skills"), this.roleId);
     });
   }
 
@@ -247,8 +320,8 @@ export class RoleStore {
   createMcpServer(expectedRevision: number, name: string, description: string, definition: RoleMcpServer["definition"], enabled = true): RoleSnapshot {
     return this.change(expectedRevision, () => {
       const server = mcpRecord.parse({ id: randomUUID(), name, description, definition, enabled });
-      this.db.prepare("INSERT INTO role_mcp_servers VALUES (?, ?, ?, ?, ?, ?)")
-        .run(server.id, server.name, server.description, JSON.stringify(server.definition), Number(server.enabled), this.count("role_mcp_servers"));
+      this.db.prepare("INSERT INTO role_mcp_servers VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(server.id, server.name, server.description, JSON.stringify(server.definition), Number(server.enabled), this.count("role_mcp_servers"), this.roleId);
     });
   }
 
@@ -272,8 +345,8 @@ export class RoleStore {
   createTrustedProject(expectedRevision: number, path: string, description = "", enabled = true): RoleSnapshot {
     return this.change(expectedRevision, () => {
       const project = trustedProjectRecord.parse({ id: randomUUID(), path: canonicalProjectRoot(path), description, enabled });
-      this.db.prepare("INSERT INTO trusted_projects VALUES (?, ?, ?, ?, ?)")
-        .run(project.id, project.path, project.description, Number(project.enabled), this.count("trusted_projects"));
+      this.db.prepare("INSERT INTO trusted_projects VALUES (?, ?, ?, ?, ?, ?)")
+        .run(project.id, project.path, project.description, Number(project.enabled), this.count("trusted_projects"), this.roleId);
     });
   }
 
@@ -295,38 +368,37 @@ export class RoleStore {
   }
 
   private change(expectedRevision: number, mutate: () => void): RoleSnapshot {
-    this.db.exec("BEGIN IMMEDIATE");
-    try {
-      const revision = this.revision();
+    return transaction(this.db, true, () => {
+      const revision = this.metadata().revision;
       if (revision !== expectedRevision) throw new Error(`stale role revision: expected ${expectedRevision}, current ${revision}`);
       mutate();
+      this.db.prepare("UPDATE roles SET revision = revision + 1, updated_at = ? WHERE id = ?").run(Date.now(), this.roleId);
+      this.db.exec("UPDATE role_catalog SET revision = revision + 1 WHERE singleton = 1");
       const snapshot = this.readSnapshot();
       renderInstructions(snapshot);
       if (JSON.stringify(snapshot).length > snapshotLimitChars) throw new Error("role snapshot exceeds the socket response budget");
-      this.db.prepare("UPDATE revision SET value = value + 1 WHERE singleton = 1").run();
-      this.db.exec("COMMIT");
-    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
-    return this.snapshot();
+      if (JSON.stringify(readCatalog(this.db)).length > snapshotLimitChars) throw new Error("role catalog exceeds the socket response budget");
+      return snapshot;
+    });
   }
 
-  private revision(): number { return (this.db.prepare("SELECT value FROM revision WHERE singleton = 1").get() as { value: number }).value; }
   private count(table: "categories" | "fragments" | "skills" | "role_mcp_servers" | "trusted_projects", categoryId?: string): number {
-    return (this.db.prepare(`SELECT COUNT(*) AS n FROM ${table}${categoryId ? " WHERE category_id = ?" : ""}`).get(...(categoryId ? [categoryId] : [])) as { n: number }).n;
+    return (this.db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE role_id = ?${categoryId ? " AND category_id = ?" : ""}`).get(this.roleId, ...(categoryId ? [categoryId] : [])) as { n: number }).n;
   }
   private category(id: string): { title: string; description: string; enabled: boolean } {
-    const row = this.db.prepare("SELECT title, description, enabled FROM categories WHERE id = ?").get(id) as { title: string; description: string; enabled: number } | undefined;
+    const row = this.db.prepare("SELECT title, description, enabled FROM categories WHERE id = ? AND role_id = ?").get(id, this.roleId) as { title: string; description: string; enabled: number } | undefined;
     if (!row) throw new Error(`unknown category: ${id}`);
     return { ...row, enabled: Boolean(row.enabled) };
   }
   private fragment(id: string): Omit<Fragment, "createdAt" | "updatedAt"> & { position: number } {
-    const row = this.db.prepare("SELECT category_id, title, description, body, enabled, position FROM fragments WHERE id = ?").get(id) as {
+    const row = this.db.prepare("SELECT category_id, title, description, body, enabled, position FROM fragments WHERE id = ? AND role_id = ?").get(id, this.roleId) as {
       category_id: string; title: string; description: string; body: string; enabled: number; position: number;
     } | undefined;
     if (!row) throw new Error(`unknown fragment: ${id}`);
     return { id, categoryId: row.category_id, title: row.title, description: row.description, body: row.body, enabled: Boolean(row.enabled), position: row.position };
   }
   private skill(id: string): Skill {
-    const row = this.db.prepare("SELECT id, name, description, body, files_json, enabled FROM skills WHERE id = ?").get(id) as {
+    const row = this.db.prepare("SELECT id, name, description, body, files_json, enabled FROM skills WHERE id = ? AND role_id = ?").get(id, this.roleId) as {
       id: string; name: string; description: string; body: string; files_json: string; enabled: number;
     } | undefined;
     if (!row) throw new Error(`unknown skill: ${id}`);
@@ -334,7 +406,7 @@ export class RoleStore {
     return skillRecord.parse({ ...fields, files: JSON.parse(files_json), enabled: Boolean(enabled) });
   }
   private mcpServer(id: string): RoleMcpServer {
-    const row = this.db.prepare("SELECT id, name, description, definition_json, enabled FROM role_mcp_servers WHERE id = ?").get(id) as {
+    const row = this.db.prepare("SELECT id, name, description, definition_json, enabled FROM role_mcp_servers WHERE id = ? AND role_id = ?").get(id, this.roleId) as {
       id: string; name: string; description: string; definition_json: string; enabled: number;
     } | undefined;
     if (!row) throw new Error(`unknown MCP server: ${id}`);
@@ -342,15 +414,15 @@ export class RoleStore {
     return mcpRecord.parse({ ...fields, definition: JSON.parse(definition_json), enabled: Boolean(enabled) });
   }
   private trustedProject(id: string): TrustedProject {
-    const row = this.db.prepare("SELECT id, path, description, enabled FROM trusted_projects WHERE id = ?").get(id) as {
+    const row = this.db.prepare("SELECT id, path, description, enabled FROM trusted_projects WHERE id = ? AND role_id = ?").get(id, this.roleId) as {
       id: string; path: string; description: string; enabled: number;
     } | undefined;
     if (!row) throw new Error(`unknown trusted project: ${id}`);
     return trustedProjectRecord.parse({ ...row, enabled: Boolean(row.enabled) });
   }
   private ids(table: "categories" | "fragments" | "skills" | "role_mcp_servers" | "trusted_projects", categoryId?: string): string[] {
-    return (this.db.prepare(`SELECT id FROM ${table}${categoryId ? " WHERE category_id = ?" : ""} ORDER BY position, id`)
-      .all(...(categoryId ? [categoryId] : [])) as Array<{ id: string }>).map((row) => row.id);
+    return (this.db.prepare(`SELECT id FROM ${table} WHERE role_id = ?${categoryId ? " AND category_id = ?" : ""} ORDER BY position, id`)
+      .all(this.roleId, ...(categoryId ? [categoryId] : [])) as Array<{ id: string }>).map((row) => row.id);
   }
   private reindex(table: "categories" | "fragments" | "skills" | "role_mcp_servers" | "trusted_projects", categoryId?: string): void {
     this.place(table, this.ids(table, categoryId));

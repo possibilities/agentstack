@@ -6,7 +6,8 @@ import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { StateStore, type StoredServer } from "../src/store.js";
-import { Supervisor, type LaunchSpec } from "../src/supervisor.js";
+import { type LaunchSpec } from "../src/supervisor.js";
+import { ConfiguredSupervisor as Supervisor } from "./supervisor-fixture.js";
 import { runningTree } from "../src/tree.js";
 
 const credential = (token: string) => JSON.stringify({ tokens: { refresh_token: token, access_token: "access", id_token: "fixture.jwt.signature" } });

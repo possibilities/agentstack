@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { serveApi, socketCall, socketSubscribe, type ServedApi, type SocketSubscription } from "@stack/api";
 import { StateStore } from "../src/store.js";
 import { chatRpc } from "../src/chats.js";
+import { RoleStore } from "@stack/roles";
 
 const fakeBin = fileURLToPath(new URL("../../test/fixtures/fake-app-server.mjs", import.meta.url));
 type View = { id: string; pid: number | null; cwd: string; url: string | null; state: string; account: string | null; runningAccount: string | null; mainThreadId: string | null; settings: { model: string; reasoningEffort: string; sandboxMode: string; approvalPolicy: string } };
@@ -27,6 +28,9 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
   const account = store.addAccount(JSON.stringify({ tokens: { refresh_token: "test", access_token: "access", id_token: "fixture.jwt.signature" } })).id;
   const otherAccount = store.addAccount(JSON.stringify({ tokens: { refresh_token: "other", access_token: "access", id_token: "fixture.jwt.signature" } })).id;
   store.close();
+  const roles = new RoleStore(stateDir);
+  roles.createRole(0, "Fixture");
+  roles.close();
   const env = { ...process.env, STACK_STATE_DIR: stateDir };
   const auth = await serveApi({ name: "auth", transport: "socket", env });
   let bots: ServedApi | undefined = await serveApi({ name: "bots", transport: "socket", env });

@@ -26,11 +26,12 @@ export async function sessionMcpServers(snapshot: RoleSnapshot, env: NodeJS.Proc
   const names = new Set<string>();
   const output: AcpMcp[] = [];
   for (const [name, url] of Object.entries(server.mcpUrls)) {
+    names.add(name.toLowerCase());
+    if (snapshot.disabledInternalMcpServers.includes(name)) continue;
     if (!supportsHttp) throw new Error("ACP agent cannot connect to the server's HTTP Package APIs");
     const parsed = new URL(url);
     if (parsed.protocol !== "http:" || parsed.hostname !== "127.0.0.1" || parsed.pathname !== `/mcp/${name}` || parsed.search)
       throw new Error("server reported an invalid internal MCP URL");
-    names.add(name.toLowerCase());
     output.push({ type: "http", name, url: workerMcpUrl(url, worker.id, worker.instance, env), headers: [] });
   }
   for (const value of snapshot.mcpServers) {

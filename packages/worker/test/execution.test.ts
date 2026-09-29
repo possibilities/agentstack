@@ -7,14 +7,14 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { operation, parseWorkerMcpIdentity, serveApi, serveSocket, socketCall, socketPath } from "@stack/api";
-import { type RoleSnapshot } from "@stack/roles";
+import { RoleStore, type RoleSnapshot } from "@stack/roles";
 import { WorkerSupervisor } from "../src/supervisor.js";
 import { WorkerManager } from "../src/manager.js";
-import { claimWorktree, removeWorktree } from "../src/worktree.js";
+import { claimWorktree, loadWorkerRole, removeWorktree } from "../src/worktree.js";
 import { api as workersApi } from "../api.js";
 import { writeV2Credential } from "./v2-credential-fixture.js";
 
-const role: RoleSnapshot = { revision: 7, categories: [{ id: randomUUID(), title: "Guidance", description: "", enabled: true, createdAt: null, updatedAt: null,
+const role: RoleSnapshot = { id: randomUUID(), name: "Fixture", description: "", createdAt: null, updatedAt: null, disabledInternalMcpServers: [], revision: 7, categories: [{ id: randomUUID(), title: "Guidance", description: "", enabled: true, createdAt: null, updatedAt: null,
   fragments: [{ id: randomUUID(), categoryId: randomUUID(), title: "Brief", description: "", body: "Check your work.", enabled: true, createdAt: null, updatedAt: null }] }],
   skills: [{ id: randomUUID(), name: "review", description: "Review changes", body: "Review the diff.", files: [], enabled: true }],
   mcpServers: [{ id: randomUUID(), name: "fixture-mcp", description: "", enabled: true,
@@ -24,6 +24,21 @@ function run(cwd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => execFile("git", ["-C", cwd, ...args], { timeout: 10_000 }, (error, stdout) =>
     error ? reject(error) : resolve(stdout.trim())));
 }
+
+test("legacy Worker snapshots retain all internal MCP connections on recovery", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stack-worker-legacy-role-"));
+  const directory = join(root, "workers", "roles");
+  try {
+    await mkdir(directory, { recursive: true });
+    const { disabledInternalMcpServers: _disabled, id: _id, name: _name, description: _description, createdAt: _created, updatedAt: _updated, ...legacy } = role;
+    await writeFile(join(directory, "legacy.json"), JSON.stringify(legacy));
+    const loaded = await loadWorkerRole(root, "legacy");
+    assert.deepEqual(loaded.disabledInternalMcpServers, []);
+    assert.equal(loaded.revision, 7);
+    assert.deepEqual(loaded.mcpServers, legacy.mcpServers);
+    assert.equal(await readFile(join(directory, "legacy.json"), "utf8"), JSON.stringify(legacy), "the saved launch remains immutable");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 async function repoFixture(root: string): Promise<string> {
   const repo = join(root, "repo");
@@ -101,7 +116,8 @@ process.stdin.on('data', (chunk) => {
       send({ method: 'session/update', params: { sessionId: frame.params.sessionId, update: { sessionUpdate: 'user_message_chunk', messageId: 'replayed-user', content: { type: 'text', text: 'Old task replay' } } } });
       send({ method: 'session/update', params: { sessionId: frame.params.sessionId, update: { sessionUpdate: 'agent_message_chunk', messageId: 'replayed-agent', content: { type: 'text', text: 'Old answer replay' } } } });
       send({ method: 'session/update', params: { sessionId: frame.params.sessionId, update: { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'PRIVATE REASONING' } } } });
-      send({ id: frame.id, result: { configOptions: options() } }); }
+      void writeFile(join(cwd, 'loaded-mcp-names.json'), JSON.stringify(frame.params.mcpServers.map((entry) => entry.name)))
+        .then(() => send({ id: frame.id, result: { configOptions: options() } })); }
     else if (frame.method === 'session/set_config_option') {
       if (frame.params.configId === 'effort') currentEffort = frame.params.value;
       const reply = () => send({ id: frame.id, result: { configOptions: options() } });
@@ -147,12 +163,18 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
   await chmod(binary, 0o700);
   const env = { ...process.env, STACK_STATE_DIR: root, STACK_OPENCODE_BIN: binary };
   const auth = await serveApi({ name: "auth", transport: "socket", env });
-  const roles = await serveSocket({ info: { name: "roles", description: "Roles", transportDescription: "Socket", path: socketPath("roles", env) },
-    context: {}, operations: [operation({ name: "role_launch_snapshot", description: "Role", input: z.object({}), output: z.any(),
-      async call() { return role; } })] });
+  const roleStore = new RoleStore(root);
+  const roleId = roleStore.createRole(0, "Worker fixture").defaultRoleId!;
+  const contents = roleStore.role(roleId);
+  let applied = contents.createCategory(0, "Guidance");
+  applied = contents.createFragment(applied.revision, applied.categories[0]!.id, "Brief", "Check your work.");
+  applied = contents.createSkill(applied.revision, "review", "Review changes", "Review the diff.");
+  applied = contents.createMcpServer(applied.revision, "fixture-mcp", "", role.mcpServers[0]!.definition);
+  applied = contents.setInternalMcp(applied.revision, "notify", false);
+  const roles = await serveApi({ name: "roles", transport: "socket", env });
   const server = await serveSocket({ info: { name: "serve", description: "Server", transportDescription: "Socket", path: socketPath("serve", env) },
     context: {}, operations: [operation({ name: "serve_status", description: "Status", input: z.object({}), output: z.any(),
-      async call() { return { mcpUrls: { roles: "http://127.0.0.1:8743/mcp/roles" } }; } })] });
+      async call() { return { mcpUrls: { roles: "http://127.0.0.1:8743/mcp/roles", notify: "http://127.0.0.1:8743/mcp/notify" } }; } })] });
   const bots = await serveSocket({ info: { name: "bots", description: "Bots", transportDescription: "Socket", path: socketPath("bots", env) },
     context: {}, operations: [operation({ name: "bot_list", description: "List", input: z.object({}), output: z.any(),
       async call() { return { bots: [] }; } })] });
@@ -186,6 +208,8 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     assert.equal(failed.turn.dispatchedAt, null); assert.equal(failed.turn.requestedModel, start.model);
     const started = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_start", arguments: start }) as Awaited<ReturnType<WorkerManager["start"]>>;
     assert.equal(started.duplicate, false);
+    assert.equal(started.worker.roleId, roleId);
+    assert.equal(started.worker.roleRevision, applied.revision);
     await assert.rejects(manager.start({ ...start, task: "Different task" }), /requestId was reused/);
     const fromApi = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_status", arguments: { id: started.worker.id } }) as { worker: { id: string } };
     assert.equal(fromApi.worker.id, started.worker.id);
@@ -276,19 +300,35 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     await workerSocket.close(); workerSocket = undefined;
     await manager.close(); manager = undefined;
 
+    // Recovery must retain the captured Role and its MCP selection, even after default/content edits.
+    contents.setInternalMcp(applied.revision, "roles", false);
+    const roleCatalog = roleStore.createRole(roleStore.catalog().revision, "Next worker");
+    const nextRoleId = roleCatalog.roles[1]!.id;
+    roleStore.setDefault(roleCatalog.revision, nextRoleId);
+
     const reopenedSupervisor = new WorkerSupervisor(root, env);
     manager = new WorkerManager(root, reopenedSupervisor, env);
     assert.equal((await manager.status(id)).worker.phase, "needs_recovery");
     await reopenedSupervisor.reconcile();
     assert.equal((await manager.resume(id, false)).phase, "idle");
+    assert.equal((await manager.status(id)).worker.roleId, roleId);
+    assert.deepEqual(JSON.parse(await readFile(join(started.worker.cwd!, "loaded-mcp-names.json"), "utf8")), ["roles", "fixture-mcp"]);
     assert.equal((await manager.closeWorker(id)).phase, "closed");
     const removed = await manager.remove(id, true);
     assert.equal(removed.retainedBranch, started.worker.branch);
     await assert.rejects(stat(started.worker.cwd!), /ENOENT/);
+    const next = await manager.start({ ...start, requestId: randomUUID() });
+    for (let i = 0; i < 100 && (await manager.status(next.worker.id)).worker.phase !== "idle"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(next.worker.roleId, nextRoleId);
+    assert.equal(next.worker.roleRevision, 0);
+    assert.deepEqual(JSON.parse(await readFile(join(next.worker.cwd!, "mcp-names.json"), "utf8")), ["roles", "notify"]);
+    await manager.closeWorker(next.worker.id);
+    await manager.remove(next.worker.id, true);
   } finally {
     await workerSocket?.close();
     await manager?.close();
     await bots.close(); await server.close(); await roles.close(); await auth.close();
+    roleStore.close();
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -1,2 +1,2 @@
-description: Inspect the current Role through its local Package API.
-usage: 'usage: stack roles snapshot'
+description: List Roles or inspect a selected Role (the default if omitted) through its local Package API.
+usage: 'usage: stack roles list | snapshot [role-id]'

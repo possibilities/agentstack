@@ -1,10 +1,17 @@
 name: roles
-description: Manage the single role's instruction fragments, skills, additional MCP servers, and explicit trusted projects for new bot launches.
+description: Manage named Roles and their instructions, skills, MCP servers and trusted projects. The default Role supplies every new Bot and Worker launch.
 socket:
   description: Unix socket for role operations and change events.
 mcp:
-  workerOperations: [role_snapshot, role_preview]
+  workerOperations: [roles_snapshot, role_snapshot, role_preview, role_internal_mcp_list]
   operations:
+    - roles_snapshot
+    - role_create
+    - role_update
+    - role_set_default
+    - role_delete
+    - role_internal_mcp_list
+    - role_internal_mcp_update
     - role_snapshot
     - role_preview
     - category_create
@@ -32,6 +39,13 @@ mcp:
   description: HTTP MCP operations for role editing, forwarded to the roles socket.
 websocket:
   operations:
+    - roles_snapshot
+    - role_create
+    - role_update
+    - role_set_default
+    - role_delete
+    - role_internal_mcp_list
+    - role_internal_mcp_update
     - role_snapshot
     - role_editor_snapshot
     - role_preview

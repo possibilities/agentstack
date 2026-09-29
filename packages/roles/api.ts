@@ -4,11 +4,14 @@ import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { configuredMcpPackages, mcpPort, operation, workspaceRoot, type PackageApi } from "@stack/api";
 import { matchingProjects, serverMcpOrigins, roleMcpConfig, roleMcpConflict } from "./src/bundle.js";
-import { RoleStore, instructionLimitBytes, renderSegments, snapshotLimitChars } from "./src/store.js";
+import { RoleStore, instructionLimitBytes, renderSegments, snapshotLimitChars, roleName, roleDescription } from "./src/store.js";
 import { mcpDefinition, mcpRecord, projectPath, resourceName, resourceDescription, skillBody, skillFiles, skillRecord, trustedProjectRecord } from "./src/resources.js";
 
 const id = z.uuid().describe("Stable Role record ID.");
 const revision = z.number().int().nonnegative().describe("Expected role revision; stale writes fail.");
+const roleId = z.uuid().describe("Explicit Role ID. Editing never follows a change of default.");
+const selection = z.strictObject({ roleId });
+const catalogRevision = z.number().int().nonnegative().describe("Expected revision from roles_snapshot. Any role or default change advances it.");
 const title = z.string().trim().min(1).max(200);
 const description = z.string().max(4_000);
 const body = z.string().max(262_144).describe("Verbatim developer instruction body; metadata never renders.");
@@ -17,20 +20,24 @@ const stamps = { createdAt: stamp, updatedAt: stamp.describe("Unix milliseconds 
 const fragment = z.strictObject({ id, categoryId: id, title, description, body, enabled: z.boolean(), ...stamps });
 const category = z.strictObject({ id, title, description, enabled: z.boolean(), fragments: z.array(fragment), ...stamps });
 const index = z.number().int().nonnegative().describe("Zero-based position within the category.");
-const launchSnapshot = z.strictObject({ revision, categories: z.array(category), skills: z.array(skillRecord), mcpServers: z.array(mcpRecord), trustedProjects: z.array(trustedProjectRecord) });
+const role = z.strictObject({ id: roleId, name: roleName, description: roleDescription, revision, ...stamps });
+const catalog = z.strictObject({ revision: catalogRevision, defaultRoleId: roleId.nullable(), roles: z.array(role) });
+const launchSnapshot = role.extend({ categories: z.array(category), skills: z.array(skillRecord), mcpServers: z.array(mcpRecord), trustedProjects: z.array(trustedProjectRecord),
+  disabledInternalMcpServers: z.array(z.string()).describe("Internal Package API names disabled for this Role. Other configured internal MCP servers are enabled, including newly added ones.") });
 const snapshot = launchSnapshot.extend({ mcpServers: z.array(mcpRecord.omit({ definition: true }).extend({ transport: z.enum(["http", "stdio"]) })) });
+const receipt = z.strictObject({ roleId, revision }).describe("Applied Role revision. Reread the selected Role to refresh content.");
 const segment = z.strictObject({ categoryId: id, fragmentId: id,
   start: z.number().int().nonnegative(), end: z.number().int().nonnegative() }).describe("One rendered fragment body as [start, end) string offsets; separators belong to no segment.");
-const preview = z.strictObject({ revision, rendered: z.string(), segments: z.array(segment),
+const preview = z.strictObject({ roleId, revision, rendered: z.string(), segments: z.array(segment),
   bytes: z.number().int().nonnegative().describe("UTF-8 size of rendered."), limitBytes: z.number().int().positive().describe("Largest rendered size an edit may produce.") });
-const write = z.strictObject({ expectedRevision: revision });
+const write = selection.extend({ expectedRevision: revision });
 const count = z.number().int().nonnegative();
 const launchPreview = z.strictObject({
-  revision,
+  roleId, revision,
   instructions: z.strictObject({ bytes: count.describe("UTF-8 size of SYSTEM_APPEND.md."), limitBytes: count, fragments: count.describe("Fragments that render.") }),
   skills: z.array(z.strictObject({ id, name: resourceName, description: resourceDescription, files: count.describe("Supporting files beside SKILL.md."),
     bytes: count.describe("Decoded size of the body and supporting files.") })).describe("Enabled role skills in order; each becomes skills/<name>/SKILL.md."),
-  internalMcpServers: z.array(z.string()).describe("Server-provided Package API MCP servers every Bot receives; each launch binds their URLs to that Bot."),
+  internalMcpServers: z.array(z.strictObject({ name: z.string(), enabled: z.boolean() })).describe("Configured internal Package API MCP servers and their enablement for this Role. Only enabled ones enter new Bot and Worker launches."),
   mcpServers: z.array(z.strictObject({ id, name: resourceName, type: z.enum(["http", "stdio"]) })).describe("Enabled role MCP servers in order."),
   config: z.string().describe("The config.toml tables the Role contributes for its enabled MCP servers, exactly as launches write them."),
   trustedProjects: z.array(z.strictObject({ id, path: projectPath })).describe("Enabled trusted project roots in order."),
@@ -39,7 +46,7 @@ const launchPreview = z.strictObject({
     path: z.string().nullable().describe("Its canonical path, or null when it does not exist."),
     trustedProjectIds: z.array(id).describe("Enabled trusted projects whose root contains it; a launch there trusts each."),
   })).describe("Each requested working directory, matched against trusted project roots."),
-  issues: z.array(z.strictObject({ id, name: resourceName, message: z.string() })).describe("Enabled role MCP servers that would stop every Bot launch until changed or disabled."),
+  issues: z.array(z.strictObject({ id, name: resourceName, message: z.string() })).describe("Enabled role MCP servers that would stop a launch using this Role until changed or disabled."),
   snapshotChars: count.describe("JSON size of the complete Role, including MCP connection definitions."),
   snapshotLimitChars: count.describe("Largest complete Role JSON size a write may leave behind."),
 });
@@ -48,7 +55,7 @@ export type RolesContext = { store: RoleStore; changed?: () => void; mcpOrigins?
 function summarize(result: z.infer<typeof launchSnapshot>): z.infer<typeof snapshot> {
   return { ...result, mcpServers: result.mcpServers.map(({ definition, ...record }) => ({ ...record, transport: definition.type })) };
 }
-function changed(ctx: RolesContext, result: z.infer<typeof launchSnapshot>) { ctx.changed?.(); return summarize(result); }
+function changed(ctx: RolesContext, result: z.infer<typeof launchSnapshot>) { ctx.changed?.(); return { roleId: result.id, revision: result.revision }; }
 const internalMcpNames = async () => (await configuredMcpPackages(workspaceRoot(import.meta.dirname))).map((pkg) => pkg.name);
 /** Refuse a role MCP server a launch would refuse, whether or not it is enabled now. */
 async function ensureRoleMcp(ctx: RolesContext, name?: string, definition?: z.infer<typeof mcpDefinition>): Promise<void> {
@@ -57,37 +64,83 @@ async function ensureRoleMcp(ctx: RolesContext, name?: string, definition?: z.in
   if (definition?.type === "http" && origins.has(new URL(definition.url).origin)) throw new Error("role MCP server URL cannot alias the internal MCP listener");
 }
 
+export const rolesSnapshot = operation({
+  name: "roles_snapshot", description: "List Role metadata, per-role revisions, the default Role ID, and the catalog revision. An empty catalog has no default. Every successful write advances the catalog revision.",
+  input: z.strictObject({}), output: catalog, annotations: { title: "List roles", readOnlyHint: true },
+  async call(ctx: RolesContext) { return ctx.store.catalog(); },
+});
+export const roleCreate = operation({
+  name: "role_create", description: "Create an empty named Role. The first created Role becomes default automatically; later Roles do not change the default. Pass the catalog revision from roles_snapshot. Names are unique case-insensitively.",
+  input: z.strictObject({ expectedRevision: catalogRevision, name: roleName, description: roleDescription.optional() }), output: catalog,
+  annotations: { title: "Create role" },
+  async call(ctx: RolesContext, { expectedRevision, name, description }) { const result = ctx.store.createRole(expectedRevision, name, description); ctx.changed?.(); return result; },
+});
+export const roleUpdate = operation({
+  name: "role_update", description: "Rename a Role or edit its human-only description. Pass that Role's revision. The default is selected by ID, so renaming does not change it.",
+  input: write.extend({ name: roleName.optional(), description: roleDescription.optional() }), output: receipt,
+  annotations: { title: "Update role" },
+  async call(ctx: RolesContext, { roleId, expectedRevision, ...fields }) { return changed(ctx, ctx.store.role(roleId).update(expectedRevision, fields)); },
+});
+export const roleSetDefault = operation({
+  name: "role_set_default", description: "Atomically mark an existing Role as default for every later Bot and Worker launch. Running sessions keep their launch snapshots. Pass the catalog revision from roles_snapshot. Role content revisions do not change.",
+  input: selection.extend({ expectedRevision: catalogRevision }), output: catalog, annotations: { title: "Set default role" },
+  async call(ctx: RolesContext, { roleId, expectedRevision }) { const result = ctx.store.setDefault(expectedRevision, roleId); ctx.changed?.(); return result; },
+});
+export const roleDelete = operation({
+  name: "role_delete", description: "Delete a non-default Role and all its instructions, skills, MCP definitions and trusted projects. Mark another Role as default before deleting the default. Pass the catalog revision from roles_snapshot. Private snapshots of existing sessions are retained.",
+  input: selection.extend({ expectedRevision: catalogRevision }), output: catalog, annotations: { title: "Delete role", destructiveHint: true },
+  async call(ctx: RolesContext, { roleId, expectedRevision }) { const result = ctx.store.deleteRole(expectedRevision, roleId); ctx.changed?.(); return result; },
+});
+export const roleInternalMcpList = operation({
+  name: "role_internal_mcp_list", description: "List the currently configured Stack Package API MCP servers and whether each is enabled in this Role. All are on unless explicitly disabled; newly configured internal servers are on by default. These switches control launch connections, not Package API exposure or running sessions.",
+  input: selection, output: z.strictObject({ roleId, revision, servers: z.array(z.strictObject({ name: z.string(), enabled: z.boolean() })) }),
+  annotations: { title: "List internal role MCP servers", readOnlyHint: true },
+  async call(ctx: RolesContext, { roleId }) {
+    const names = await internalMcpNames();
+    const value = ctx.store.role(roleId).snapshot();
+    return { roleId, revision: value.revision, servers: names.map((name) => ({ name, enabled: !value.disabledInternalMcpServers.includes(name) })) };
+  },
+});
+export const roleInternalMcpUpdate = operation({
+  name: "role_internal_mcp_update", description: "Enable or disable one configured internal Stack MCP server for this Role's later Bot and Worker launches. Pass this Role's revision. Does not stop the package or change its transport operations. Any internal server, including roles, can be disabled; the operator can still edit through the socket or UI.",
+  input: write.extend({ name: z.string().min(1), enabled: z.boolean() }), output: receipt,
+  annotations: { title: "Set internal role MCP enablement" },
+  async call(ctx: RolesContext, { roleId, expectedRevision, name, enabled }) {
+    if (!(await internalMcpNames()).includes(name)) throw new Error(`unknown internal MCP server: ${name}`);
+    return changed(ctx, ctx.store.role(roleId).setInternalMcp(expectedRevision, name, enabled));
+  },
+});
 export const roleSnapshot = operation({
   name: "role_snapshot", description: "Read the role's instructions, skills, trusted projects, MCP server summaries, and revision. MCP connection definitions are omitted because URLs, arguments, headers and environment values can contain credentials.",
-  input: z.strictObject({}), output: snapshot, annotations: { title: "Read role", readOnlyHint: true },
-  async call(ctx: RolesContext) { return summarize(ctx.store.snapshot()); },
+  input: selection, output: snapshot, annotations: { title: "Read role", readOnlyHint: true },
+  async call(ctx: RolesContext, { roleId }) { return summarize(ctx.store.role(roleId).snapshot()); },
 });
 export const roleLaunchSnapshot = operation({
-  name: "role_launch_snapshot", description: "Read the complete Role for native runtime launch, including credential-bearing MCP connection definitions. Keep the result in private launch state and out of model transcripts.",
+  name: "role_launch_snapshot", description: "Atomically resolve the default Role and read its complete snapshot for native runtime launch, including credential-bearing MCP definitions. Fails if no Role exists. Keep the result in private launch state and out of model transcripts.",
   input: z.strictObject({}), output: launchSnapshot, annotations: { title: "Read launch role", readOnlyHint: true },
-  async call(ctx: RolesContext) { return ctx.store.snapshot(); },
+  async call(ctx: RolesContext) { return ctx.store.defaultSnapshot(); },
 });
 export const roleEditorSnapshot = operation({
   name: "role_editor_snapshot", description: "Read the complete Role for the operator's resource editor, including credential-bearing MCP connection definitions. Keep this result out of model transcripts.",
-  input: z.strictObject({}), output: launchSnapshot, annotations: { title: "Read role editor", readOnlyHint: true },
-  async call(ctx: RolesContext) { return ctx.store.snapshot(); },
+  input: selection, output: launchSnapshot, annotations: { title: "Read role editor", readOnlyHint: true },
+  async call(ctx: RolesContext, { roleId }) { return ctx.store.role(roleId).snapshot(); },
 });
 export const rolePreview = operation({
-  name: "role_preview", description: "Preview the exact developer instruction text from the role for the next bot launch; descriptions and titles are excluded.",
-  input: z.strictObject({}), output: preview, annotations: { title: "Preview role", readOnlyHint: true },
-  async call(ctx: RolesContext) {
-    const value = ctx.store.snapshot();
+  name: "role_preview", description: "Preview the selected Role's exact developer instructions; descriptions and titles are excluded. Only the default Role is used for new launches.",
+  input: selection, output: preview, annotations: { title: "Preview role", readOnlyHint: true },
+  async call(ctx: RolesContext, { roleId }) {
+    const value = ctx.store.role(roleId).snapshot();
     const { rendered, segments } = renderSegments(value);
-    return { revision: value.revision, rendered, segments, bytes: Buffer.byteLength(rendered), limitBytes: instructionLimitBytes };
+    return { roleId, revision: value.revision, rendered, segments, bytes: Buffer.byteLength(rendered), limitBytes: instructionLimitBytes };
   },
 });
 export const roleLaunchPreview = operation({
-  name: "role_launch_preview", description: "Preview what the next Bot launch receives from the role besides its instructions: enabled skills, MCP servers and their config.toml, trusted project roots matched against given working directories, and anything that would stop a launch.",
-  input: z.strictObject({ cwds: z.array(z.string().max(4_096).refine(isAbsolute, "working directory must be an absolute path")).max(64).optional()
+  name: "role_launch_preview", description: "Preview the selected Role's enabled skills, MCP servers and config.toml, trusted project roots, and launch issues. Only the default Role is used for new launches.",
+  input: selection.extend({ cwds: z.array(z.string().max(4_096).refine(isAbsolute, "working directory must be an absolute path")).max(64).optional()
     .describe("Working directories to match against trusted project roots, such as each Bot's cwd.") }),
   output: launchPreview, annotations: { title: "Preview role launch", readOnlyHint: true },
-  async call(ctx: RolesContext, { cwds = [] }) {
-    const value = ctx.store.snapshot();
+  async call(ctx: RolesContext, { roleId, cwds = [] }) {
+    const value = ctx.store.role(roleId).snapshot();
     const { rendered, segments } = renderSegments(value);
     const internal = await internalMcpNames();
     const serverNames = new Set(internal.map((name) => name.toLowerCase()));
@@ -98,11 +151,12 @@ export const roleLaunchPreview = operation({
     });
     const enabledProjects = value.trustedProjects.filter((project) => project.enabled);
     return {
+      roleId,
       revision: value.revision,
       instructions: { bytes: Buffer.byteLength(rendered), limitBytes: instructionLimitBytes, fragments: segments.length },
       skills: value.skills.filter((skill) => skill.enabled).map((skill) => ({ id: skill.id, name: skill.name, description: skill.description, files: skill.files.length,
         bytes: Buffer.byteLength(skill.body) + skill.files.reduce((sum, file) => sum + Buffer.from(file.contentBase64, "base64").length, 0) })),
-      internalMcpServers: internal,
+      internalMcpServers: internal.map((name) => ({ name, enabled: !value.disabledInternalMcpServers.includes(name) })),
       mcpServers: value.mcpServers.filter((server) => server.enabled).map((server) => ({ id: server.id, name: server.name, type: server.definition.type })),
       config: roleMcpConfig(value),
       trustedProjects: enabledProjects.map((project) => ({ id: project.id, path: project.path })),
@@ -118,134 +172,134 @@ export const roleLaunchPreview = operation({
 });
 export const categoryCreate = operation({
   name: "category_create", description: "Create an ordered category at the end of the role. Pass the current revision.",
-  input: write.extend({ title, description: description.optional(), enabled: z.boolean().optional() }), output: snapshot,
+  input: write.extend({ title, description: description.optional(), enabled: z.boolean().optional() }), output: receipt,
   annotations: { title: "Create category" },
-  async call(ctx: RolesContext, input) { return changed(ctx, ctx.store.createCategory(input.expectedRevision, input.title, input.description, input.enabled)); },
+  async call(ctx: RolesContext, input) { return changed(ctx, ctx.store.role(input.roleId).createCategory(input.expectedRevision, input.title, input.description, input.enabled)); },
 });
 export const categoryUpdate = operation({
   name: "category_update", description: "Update a category's title, human-only description, or enabled state. A disabled category contributes no fragments.",
-  input: write.extend({ id, title: title.optional(), description: description.optional(), enabled: z.boolean().optional() }), output: snapshot,
+  input: write.extend({ id, title: title.optional(), description: description.optional(), enabled: z.boolean().optional() }), output: receipt,
   annotations: { title: "Update category" },
-  async call(ctx: RolesContext, { id, expectedRevision, ...fields }) { return changed(ctx, ctx.store.updateCategory(expectedRevision, id, fields)); },
+  async call(ctx: RolesContext, { roleId, id, expectedRevision, ...fields }) { return changed(ctx, ctx.store.role(roleId).updateCategory(expectedRevision, id, fields)); },
 });
 export const categoryDelete = operation({
   name: "category_delete", description: "Delete an empty category. Move or delete its fragments first; no implicit content deletion.",
-  input: write.extend({ id }), output: snapshot, annotations: { title: "Delete category", destructiveHint: true },
-  async call(ctx: RolesContext, { id, expectedRevision }) { return changed(ctx, ctx.store.deleteCategory(expectedRevision, id)); },
+  input: write.extend({ id }), output: receipt, annotations: { title: "Delete category", destructiveHint: true },
+  async call(ctx: RolesContext, { roleId, id, expectedRevision }) { return changed(ctx, ctx.store.role(roleId).deleteCategory(expectedRevision, id)); },
 });
 export const categoryReorder = operation({
   name: "category_reorder", description: "Atomically replace category order with an exact permutation of all category IDs.",
-  input: write.extend({ ids: z.array(id) }), output: snapshot, annotations: { title: "Reorder categories" },
-  async call(ctx: RolesContext, { ids, expectedRevision }) { return changed(ctx, ctx.store.reorderCategories(expectedRevision, ids)); },
+  input: write.extend({ ids: z.array(id) }), output: receipt, annotations: { title: "Reorder categories" },
+  async call(ctx: RolesContext, { roleId, ids, expectedRevision }) { return changed(ctx, ctx.store.role(roleId).reorderCategories(expectedRevision, ids)); },
 });
 export const fragmentCreate = operation({
   name: "fragment_create", description: "Create a fragment at the end of a category, or at index. Only enabled bodies in enabled categories render.",
-  input: write.extend({ categoryId: id, title, body, description: description.optional(), enabled: z.boolean().optional(), index: index.optional() }), output: snapshot,
+  input: write.extend({ categoryId: id, title, body, description: description.optional(), enabled: z.boolean().optional(), index: index.optional() }), output: receipt,
   annotations: { title: "Create instruction fragment" },
-  async call(ctx: RolesContext, input) { return changed(ctx, ctx.store.createFragment(input.expectedRevision, input.categoryId, input.title, input.body, input.description, input.enabled, input.index)); },
+  async call(ctx: RolesContext, input) { return changed(ctx, ctx.store.role(input.roleId).createFragment(input.expectedRevision, input.categoryId, input.title, input.body, input.description, input.enabled, input.index)); },
 });
 export const fragmentUpdate = operation({
   name: "fragment_update", description: "Update content or metadata, enable/disable, or move to another category (appended there). Reorder separately if needed.",
-  input: write.extend({ id, categoryId: id.optional(), title: title.optional(), body: body.optional(), description: description.optional(), enabled: z.boolean().optional() }), output: snapshot,
+  input: write.extend({ id, categoryId: id.optional(), title: title.optional(), body: body.optional(), description: description.optional(), enabled: z.boolean().optional() }), output: receipt,
   annotations: { title: "Update instruction fragment" },
-  async call(ctx: RolesContext, { id, expectedRevision, ...fields }) { return changed(ctx, ctx.store.updateFragment(expectedRevision, id, fields)); },
+  async call(ctx: RolesContext, { roleId, id, expectedRevision, ...fields }) { return changed(ctx, ctx.store.role(roleId).updateFragment(expectedRevision, id, fields)); },
 });
 export const fragmentDelete = operation({
   name: "fragment_delete", description: "Delete a fragment from its category and the role.",
-  input: write.extend({ id }), output: snapshot, annotations: { title: "Delete instruction fragment", destructiveHint: true },
-  async call(ctx: RolesContext, { id, expectedRevision }) { return changed(ctx, ctx.store.deleteFragment(expectedRevision, id)); },
+  input: write.extend({ id }), output: receipt, annotations: { title: "Delete instruction fragment", destructiveHint: true },
+  async call(ctx: RolesContext, { roleId, id, expectedRevision }) { return changed(ctx, ctx.store.role(roleId).deleteFragment(expectedRevision, id)); },
 });
 export const fragmentReorder = operation({
   name: "fragment_reorder", description: "Atomically replace one category's fragment order with an exact permutation of its fragment IDs.",
-  input: write.extend({ categoryId: id, ids: z.array(id) }), output: snapshot, annotations: { title: "Reorder instruction fragments" },
-  async call(ctx: RolesContext, { categoryId, ids, expectedRevision }) { return changed(ctx, ctx.store.reorderFragments(expectedRevision, categoryId, ids)); },
+  input: write.extend({ categoryId: id, ids: z.array(id) }), output: receipt, annotations: { title: "Reorder instruction fragments" },
+  async call(ctx: RolesContext, { roleId, categoryId, ids, expectedRevision }) { return changed(ctx, ctx.store.role(roleId).reorderFragments(expectedRevision, categoryId, ids)); },
 });
 
 export const fragmentMove = operation({
   name: "fragment_move", description: "Atomically place a fragment at a zero-based index of a category, its own or another. Index counts the destination's other fragments.",
-  input: write.extend({ id, categoryId: id, index }), output: snapshot, annotations: { title: "Move instruction fragment" },
-  async call(ctx: RolesContext, { id, categoryId, index, expectedRevision }) { return changed(ctx, ctx.store.moveFragment(expectedRevision, id, categoryId, index)); },
+  input: write.extend({ id, categoryId: id, index }), output: receipt, annotations: { title: "Move instruction fragment" },
+  async call(ctx: RolesContext, { roleId, id, categoryId, index, expectedRevision }) { return changed(ctx, ctx.store.role(roleId).moveFragment(expectedRevision, id, categoryId, index)); },
 });
 
 export const skillCreate = operation({
   name: "skill_create", description: "Add a role-owned skill. Stack generates SKILL.md frontmatter from the name and description; supporting files are private base64-encoded bytes. Only enabled skills enter later bot launches.",
   input: write.extend({ name: resourceName, description: resourceDescription.min(1), body: skillBody, files: skillFiles.optional(), enabled: z.boolean().optional() }),
-  output: snapshot, annotations: { title: "Create role skill" },
-  async call(ctx: RolesContext, input) { return changed(ctx, ctx.store.createSkill(input.expectedRevision, input.name, input.description, input.body, input.files, input.enabled)); },
+  output: receipt, annotations: { title: "Create role skill" },
+  async call(ctx: RolesContext, input) { return changed(ctx, ctx.store.role(input.roleId).createSkill(input.expectedRevision, input.name, input.description, input.body, input.files, input.enabled)); },
 });
 export const skillUpdate = operation({
   name: "skill_update", description: "Edit skill name, description, Markdown body, supporting files, or enabled state. Supplying files replaces the complete supporting-file set.",
   input: write.extend({ id, name: resourceName.optional(), description: resourceDescription.min(1).optional(), body: skillBody.optional(), files: skillFiles.optional(), enabled: z.boolean().optional() }),
-  output: snapshot, annotations: { title: "Update role skill" },
-  async call(ctx: RolesContext, { id, expectedRevision, ...fields }) { return changed(ctx, ctx.store.updateSkill(expectedRevision, id, fields)); },
+  output: receipt, annotations: { title: "Update role skill" },
+  async call(ctx: RolesContext, { roleId, id, expectedRevision, ...fields }) { return changed(ctx, ctx.store.role(roleId).updateSkill(expectedRevision, id, fields)); },
 });
 export const skillDelete = operation({
   name: "skill_delete", description: "Delete a role-owned skill and all its supporting files from future launches.",
-  input: write.extend({ id }), output: snapshot, annotations: { title: "Delete role skill", destructiveHint: true },
-  async call(ctx: RolesContext, { id, expectedRevision }) { return changed(ctx, ctx.store.deleteSkill(expectedRevision, id)); },
+  input: write.extend({ id }), output: receipt, annotations: { title: "Delete role skill", destructiveHint: true },
+  async call(ctx: RolesContext, { roleId, id, expectedRevision }) { return changed(ctx, ctx.store.role(roleId).deleteSkill(expectedRevision, id)); },
 });
 export const skillReorder = operation({
   name: "skill_reorder", description: "Atomically replace skill order with an exact permutation of all skill IDs.",
-  input: write.extend({ ids: z.array(id) }), output: snapshot, annotations: { title: "Reorder role skills" },
-  async call(ctx: RolesContext, { ids, expectedRevision }) { return changed(ctx, ctx.store.reorderSkills(expectedRevision, ids)); },
+  input: write.extend({ ids: z.array(id) }), output: receipt, annotations: { title: "Reorder role skills" },
+  async call(ctx: RolesContext, { roleId, ids, expectedRevision }) { return changed(ctx, ctx.store.role(roleId).reorderSkills(expectedRevision, ids)); },
 });
 
 export const mcpServerCreate = operation({
   name: "mcp_server_create", description: "Add an HTTP or stdio MCP server to the role. It joins the server-provided internal MCP servers only on later bot launches.",
   input: write.extend({ name: resourceName, description: resourceDescription, definition: mcpDefinition, enabled: z.boolean().optional() }),
-  output: snapshot, annotations: { title: "Create role MCP server" },
+  output: receipt, annotations: { title: "Create role MCP server" },
   async call(ctx: RolesContext, input) {
     await ensureRoleMcp(ctx, input.name, input.definition);
-    return changed(ctx, ctx.store.createMcpServer(input.expectedRevision, input.name, input.description, input.definition, input.enabled));
+    return changed(ctx, ctx.store.role(input.roleId).createMcpServer(input.expectedRevision, input.name, input.description, input.definition, input.enabled));
   },
 });
 export const mcpServerUpdate = operation({
   name: "mcp_server_update", description: "Edit a role MCP server's name, description, full transport definition, or enabled state. Existing bot connections are unchanged until restart.",
   input: write.extend({ id, name: resourceName.optional(), description: resourceDescription.optional(), definition: mcpDefinition.optional(), enabled: z.boolean().optional() }),
-  output: snapshot, annotations: { title: "Update role MCP server" },
-  async call(ctx: RolesContext, { id, expectedRevision, ...fields }) {
+  output: receipt, annotations: { title: "Update role MCP server" },
+  async call(ctx: RolesContext, { roleId, id, expectedRevision, ...fields }) {
     await ensureRoleMcp(ctx, fields.name, fields.definition);
-    return changed(ctx, ctx.store.updateMcpServer(expectedRevision, id, fields));
+    return changed(ctx, ctx.store.role(roleId).updateMcpServer(expectedRevision, id, fields));
   },
 });
 export const mcpServerDelete = operation({
   name: "mcp_server_delete", description: "Delete an additional role MCP server from later launches; internal server MCP connections are unaffected.",
-  input: write.extend({ id }), output: snapshot, annotations: { title: "Delete role MCP server", destructiveHint: true },
-  async call(ctx: RolesContext, { id, expectedRevision }) { return changed(ctx, ctx.store.deleteMcpServer(expectedRevision, id)); },
+  input: write.extend({ id }), output: receipt, annotations: { title: "Delete role MCP server", destructiveHint: true },
+  async call(ctx: RolesContext, { roleId, id, expectedRevision }) { return changed(ctx, ctx.store.role(roleId).deleteMcpServer(expectedRevision, id)); },
 });
 export const mcpServerReorder = operation({
   name: "mcp_server_reorder", description: "Atomically replace additional MCP server order with an exact permutation of their IDs.",
-  input: write.extend({ ids: z.array(id) }), output: snapshot, annotations: { title: "Reorder role MCP servers" },
-  async call(ctx: RolesContext, { ids, expectedRevision }) { return changed(ctx, ctx.store.reorderMcpServers(expectedRevision, ids)); },
+  input: write.extend({ ids: z.array(id) }), output: receipt, annotations: { title: "Reorder role MCP servers" },
+  async call(ctx: RolesContext, { roleId, ids, expectedRevision }) { return changed(ctx, ctx.store.role(roleId).reorderMcpServers(expectedRevision, ids)); },
 });
 
 export const projectCreate = operation({
   name: "project_create", description: "Allow bots launched inside this project root to load trusted project .codex configuration, including its MCP servers. Only later launches change.",
   input: write.extend({ path: projectPath, description: resourceDescription.optional(), enabled: z.boolean().optional() }),
-  output: snapshot, annotations: { title: "Trust project for bots" },
-  async call(ctx: RolesContext, input) { return changed(ctx, ctx.store.createTrustedProject(input.expectedRevision, input.path, input.description, input.enabled)); },
+  output: receipt, annotations: { title: "Trust project for bots" },
+  async call(ctx: RolesContext, input) { return changed(ctx, ctx.store.role(input.roleId).createTrustedProject(input.expectedRevision, input.path, input.description, input.enabled)); },
 });
 export const projectUpdate = operation({
   name: "project_update", description: "Edit a trusted project root, description, or enabled state. Disabling stops project config from entering later matching Bot launches.",
   input: write.extend({ id, path: projectPath.optional(), description: resourceDescription.optional(), enabled: z.boolean().optional() }),
-  output: snapshot, annotations: { title: "Update trusted project" },
-  async call(ctx: RolesContext, { id, expectedRevision, ...fields }) { return changed(ctx, ctx.store.updateTrustedProject(expectedRevision, id, fields)); },
+  output: receipt, annotations: { title: "Update trusted project" },
+  async call(ctx: RolesContext, { roleId, id, expectedRevision, ...fields }) { return changed(ctx, ctx.store.role(roleId).updateTrustedProject(expectedRevision, id, fields)); },
 });
 export const projectDelete = operation({
   name: "project_delete", description: "Remove a trusted project root from later Bot launches; running Bots keep their launch configuration.",
-  input: write.extend({ id }), output: snapshot, annotations: { title: "Remove trusted project", destructiveHint: true },
-  async call(ctx: RolesContext, { id, expectedRevision }) { return changed(ctx, ctx.store.deleteTrustedProject(expectedRevision, id)); },
+  input: write.extend({ id }), output: receipt, annotations: { title: "Remove trusted project", destructiveHint: true },
+  async call(ctx: RolesContext, { roleId, id, expectedRevision }) { return changed(ctx, ctx.store.role(roleId).deleteTrustedProject(expectedRevision, id)); },
 });
 export const projectReorder = operation({
   name: "project_reorder", description: "Atomically replace trusted project order with an exact permutation of all project IDs.",
-  input: write.extend({ ids: z.array(id) }), output: snapshot, annotations: { title: "Reorder trusted projects" },
-  async call(ctx: RolesContext, { ids, expectedRevision }) { return changed(ctx, ctx.store.reorderTrustedProjects(expectedRevision, ids)); },
+  input: write.extend({ ids: z.array(id) }), output: receipt, annotations: { title: "Reorder trusted projects" },
+  async call(ctx: RolesContext, { roleId, ids, expectedRevision }) { return changed(ctx, ctx.store.role(roleId).reorderTrustedProjects(expectedRevision, ids)); },
 });
 
-export const topics = { role_changed: "The role was edited. Read role_snapshot after (re)subscribing." } as const;
+export const topics = { role_changed: "The role catalog, default, or any Role changed. Read roles_snapshot and refresh the selected Role after (re)subscribing." } as const;
 
 export const api: PackageApi<RolesContext, keyof typeof topics> = {
-  operations: [roleSnapshot, roleLaunchSnapshot, roleEditorSnapshot, rolePreview, roleLaunchPreview, categoryCreate, categoryUpdate, categoryDelete, categoryReorder,
+  operations: [rolesSnapshot, roleCreate, roleUpdate, roleSetDefault, roleDelete, roleInternalMcpList, roleInternalMcpUpdate, roleSnapshot, roleLaunchSnapshot, roleEditorSnapshot, rolePreview, roleLaunchPreview, categoryCreate, categoryUpdate, categoryDelete, categoryReorder,
     fragmentCreate, fragmentUpdate, fragmentDelete, fragmentReorder, fragmentMove, skillCreate, skillUpdate, skillDelete, skillReorder,
     mcpServerCreate, mcpServerUpdate, mcpServerDelete, mcpServerReorder,
     projectCreate, projectUpdate, projectDelete, projectReorder],

@@ -136,7 +136,15 @@ A Codex app-server process with, after its first turn, a durable main thread. By
 
 ## Role
 
-The single Stack-owned configuration shared by every new Bot launch: ordered developer-instruction fragments, enabled skills, internal server MCP connections, and additional enabled MCP servers. Each Bot receives a private launch snapshot through codexnk's required `--capabilities` directory. Edits affect later launches, not a running process. _Avoid_: capability profile, system-prompt flag, live prompt file
+A named Stack-owned configuration with a stable ID and independent revision: ordered developer-instruction fragments, enabled skills, per-Role internal MCP enablement, additional MCP servers and trusted projects. The first created Role is default; any existing Role can be marked default. Every new Bot launch and new Worker captures the current default. Bot launches receive a private snapshot through codexnk's required `--capabilities` directory; Worker recovery retains its saved snapshot. Edits and default changes affect later launches, not a running process. _Avoid_: singleton Role, capability profile, system-prompt flag, live prompt file
+
+## Default Role
+
+The Role selected in the Role catalog for every later Bot launch and new Worker. Selecting a Role for editing does not make it default. A fresh catalog has no Role until its first creation; afterward exactly one is default. The default cannot be deleted until another Role is selected. A session's `roleId` and `roleRevision` record what it received, not a per-session assignment.
+
+## Internal Role MCP enablement
+
+Per-Role selection of Stack's configured Package API MCP connections. All are on by default, including newly configured internal servers. `disabledInternalMcpServers` stores explicit exclusions. These settings affect launch connections, not the package's availability, operation exposure or authorization. Additional Role MCP servers remain separately managed.
 
 ## Trusted project
 

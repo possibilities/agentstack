@@ -33,7 +33,7 @@ test("isolated native Grok and Devin accounts finish Worker turns in owned workt
   await git(repo, ["add", "README.md"]);
   await git(repo, ["commit", "-m", "initial"]);
   const env = { ...process.env, STACK_STATE_DIR: root };
-  const role: RoleSnapshot = { revision: 1, categories: [{ id: randomUUID(), title: "Test", description: "", enabled: true, createdAt: null, updatedAt: null,
+  const role: RoleSnapshot = { id: randomUUID(), name: "Fixture", description: "", createdAt: null, updatedAt: null, disabledInternalMcpServers: [], revision: 1, categories: [{ id: randomUUID(), title: "Test", description: "", enabled: true, createdAt: null, updatedAt: null,
     fragments: [{ id: randomUUID(), categoryId: randomUUID(), title: "Prime", description: "", enabled: true, body: "Follow the disposable test task.", createdAt: null, updatedAt: null }] }],
     skills: [{ id: randomUUID(), name: "stack-smoke", description: "Describe test verification", body: "Describe the test result.", files: [], enabled: true }],
     mcpServers: [], trustedProjects: [] };

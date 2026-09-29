@@ -4,7 +4,7 @@ import { isAbsolute, join } from "node:path";
 import { renderInstructions, skillRecord, type RoleSnapshot } from "@stack/roles";
 
 export type ClaimedWorktree = { repo: string; cwd: string; branch: string; baseCommit: string; sourceDirty: boolean;
-  roleRevision: number; instructions: string };
+  roleId: string; roleRevision: number; instructions: string };
 
 function git(cwd: string, args: string[]): Promise<string> {
   return new Promise((resolveResult, reject) => {
@@ -79,7 +79,7 @@ export async function claimWorktree(stateDir: string, id: string, source: string
       await writeFile(join(prime, "SKILL.md"), `---\nname: prime\ndescription: Load this worker's Stack Role instructions when explicitly requested\ntriggers: [user]\n---\n\n${instructions}\n`, { mode: 0o600 });
     }
     if (await git(cwd, ["status", "--porcelain=v1", "--untracked-files=all"])) throw new Error("managed worker files are visible to Git; refusing to start");
-    return { repo, cwd, branch, baseCommit, sourceDirty, roleRevision: snapshot.revision, instructions };
+    return { repo, cwd, branch, baseCommit, sourceDirty, roleId: snapshot.id, roleRevision: snapshot.revision, instructions };
   } catch (error) {
     // Preserve the claimed worktree for inspection; a failed role materialization must not erase unknown files.
     throw error;
@@ -133,6 +133,10 @@ export async function loadWorkerRole(stateDir: string, id: string): Promise<Role
   const snapshot = JSON.parse(await readFile(rolePath(stateDir, id), "utf8")) as RoleSnapshot;
   if (!Number.isInteger(snapshot.revision) || !Array.isArray(snapshot.skills) || !Array.isArray(snapshot.mcpServers))
     throw new Error("worker role snapshot is invalid");
+  // Legacy immutable snapshots predate internal MCP selection and enabled every internal server.
+  if (snapshot.disabledInternalMcpServers === undefined) snapshot.disabledInternalMcpServers = [];
+  if (!Array.isArray(snapshot.disabledInternalMcpServers) || !snapshot.disabledInternalMcpServers.every((name) => typeof name === "string"))
+    throw new Error("worker role snapshot has invalid internal MCP selection");
   return snapshot;
 }
 export async function removeWorkerRole(stateDir: string, id: string): Promise<void> {

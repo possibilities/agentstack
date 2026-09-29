@@ -29,6 +29,7 @@ export type ServerView = {
   mainThreadId: string | null;
   recoveryIssue: string | null;
   roleRevision: number | null;
+  roleId: string | null;
   settings: BotSettings | null;
 };
 
@@ -333,7 +334,7 @@ export class Supervisor {
     }
     // Reconciliation above may advance the saved credential generation.
     const account = selected ? this.store.accountCredentials(selected) : null;
-    const snapshot = this.role.snapshot();
+    const snapshot = this.role.defaultSnapshot();
     const privateHistory = join(this.options.stateDir, "history", id);
     const history = current?.mainThreadId && !existsSync(privateHistory) ? join(this.options.stateDir, "history") : privateHistory;
     await mkdir(history, { recursive: true, mode: 0o700 });
@@ -374,7 +375,7 @@ export class Supervisor {
       const record: RecordFile = {
         id, pid: child.pid, cwd, url, state: "running", codexBin, account: account?.id ?? null, launchedAccount: account?.id ?? null, authVersion: account?.version ?? null, runtimeRoot,
         mainThreadId: current?.mainThreadId ?? null, threadStarting: current?.threadStarting ?? false, args: [...userArgs], settings,
-        roleRoot: rolePath, roleRevision: snapshot.revision,
+        roleRoot: rolePath, roleRevision: snapshot.revision, roleId: snapshot.id,
       };
       this.records.set(id, record);
       this.watchExit(id, child, record);
@@ -678,6 +679,7 @@ function viewOf(record: RecordFile, recoveryIssue: string | null): ServerView {
     mainThreadId: record.mainThreadId ?? null,
     recoveryIssue,
     roleRevision: record.roleRevision ?? null,
+    roleId: record.roleId ?? null,
     settings: record.settings ?? null,
   };
 }

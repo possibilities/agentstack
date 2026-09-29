@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { connect, createServer as createNetServer } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { appServerArgs, launchChild, processOwnsEndpoint, Supervisor, waitForReady, type LaunchSpec, type RunningChild, type SupervisorOptions } from "../src/supervisor.js";
+import { appServerArgs, launchChild, processOwnsEndpoint, waitForReady, type LaunchSpec, type RunningChild, type SupervisorOptions } from "../src/supervisor.js";
+import { ConfiguredSupervisor as Supervisor } from "./supervisor-fixture.js";
 import { codexRuntimePath } from "../src/paths.js";
 import { DEFAULT_BOT_SETTINGS } from "../src/store.js";
 import type { StoredServer } from "../src/store.js";
@@ -346,13 +347,14 @@ test("Bot launch passes only matching Role project trust to the private codexnk 
   });
   try {
     await supervisor.load();
-    const role = supervisor.role.createTrustedProject(0, project, "Explicit project MCP");
+    const contents = supervisor.role.role(supervisor.role.catalog().defaultRoleId!);
+    const role = contents.createTrustedProject(0, project, "Explicit project MCP");
     await supervisor.start({ id: "project-bot", cwd });
     const firstRoot = launches[0]?.[launches[0].indexOf("--capabilities") + 1];
     assert.ok(firstRoot);
     assert.match(await readFile(join(firstRoot, "config.toml"), "utf8"), /\[projects\..*\]\ntrust_level = "trusted"/);
     await supervisor.stop("project-bot");
-    supervisor.role.updateTrustedProject(role.revision, role.trustedProjects[0]!.id, { enabled: false });
+    contents.updateTrustedProject(role.revision, role.trustedProjects[0]!.id, { enabled: false });
     await supervisor.start({ id: "project-bot", cwd });
     const secondRoot = launches[1]?.[launches[1].indexOf("--capabilities") + 1];
     assert.ok(secondRoot);

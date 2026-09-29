@@ -74,7 +74,7 @@ test("the api package serves structured documents for every workspace package", 
     for (const pkg of ["auth", "bots", "browse", "notify", "serve", "proc", "scrape", "usage", "xcom"])
       assert.deepEqual(found.get(pkg)!.transports.find(t => t.type === "mcp")!.workerOperations, []);
     assert.deepEqual(found.get("api")!.transports.find(t => t.type === "mcp")!.workerOperations, ["docs_list", "docs_get", "docs_snapshot"]);
-    assert.deepEqual(found.get("roles")!.transports.find(t => t.type === "mcp")!.workerOperations, ["role_snapshot", "role_preview"]);
+    assert.deepEqual(found.get("roles")!.transports.find(t => t.type === "mcp")!.workerOperations, ["roles_snapshot", "role_internal_mcp_list", "role_snapshot", "role_preview"]);
     assert.deepEqual(found.get("brain")!.transports.find(t => t.type === "mcp")!.workerOperations.sort(), ["context", "get", "search", "stats", "tags"]);
     assert.ok(!found.get("content")!.transports.find(t => t.type === "mcp")!.workerOperations.includes("blob_stage_status"));
     assert.ok(!found.get("worker")!.transports.find(t => t.type === "mcp")!.workerOperations.includes("worker_runtime_list"));
@@ -225,6 +225,7 @@ test("the api package serves structured documents for every workspace package", 
     const roles = found.get("roles") as PackageDoc;
     assert.deepEqual(Object.keys(roles.events), ["role_changed"]);
     assert.deepEqual(roles.operations.map((operation) => operation.name).sort(), [
+      "roles_snapshot", "role_create", "role_update", "role_set_default", "role_delete", "role_internal_mcp_list", "role_internal_mcp_update",
       "role_preview", "role_launch_preview", "role_snapshot", "role_editor_snapshot", "role_launch_snapshot", "category_create", "category_delete", "category_reorder", "category_update",
       "fragment_create", "fragment_delete", "fragment_move", "fragment_reorder", "fragment_update",
       "skill_create", "skill_delete", "skill_reorder", "skill_update",
@@ -232,7 +233,7 @@ test("the api package serves structured documents for every workspace package", 
       "project_create", "project_delete", "project_reorder", "project_update",
     ].sort());
     const roleView = roles.operations.find((operation) => operation.name === "role_snapshot") as OperationDoc;
-    assert.deepEqual(Object.keys(roleView.outputSchema.properties as object).sort(), ["categories", "mcpServers", "revision", "skills", "trustedProjects"]);
+    assert.deepEqual(Object.keys(roleView.outputSchema.properties as object).sort(), ["id", "name", "description", "createdAt", "updatedAt", "categories", "mcpServers", "revision", "skills", "trustedProjects", "disabledInternalMcpServers"].sort());
     assert.equal(roles.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
     assert.deepEqual(Object.keys(auth.events).sort(), ["accounts_changed", "login_changed", "worker_accounts_changed", "worker_login_changed"]);
     assert.deepEqual(

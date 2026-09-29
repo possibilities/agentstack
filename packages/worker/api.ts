@@ -14,7 +14,7 @@ const observedSettingsSchema = z.strictObject({ model: z.string().nullable(), ef
   at: z.number().int(), recordSeq: z.number().int() });
 const workerSchema = z.strictObject({ id, botId: z.string(), threadId: z.string(), accountId: id, provider: z.enum(["codex", "grok", "devin", "claude"]),
   model: z.string(), effort: z.string().nullable(), repo: z.string(), cwd: z.string().nullable(), branch: z.string().nullable(),
-  baseCommit: z.string().nullable(), sourceDirty: z.boolean(), roleRevision: z.number().int().nullable(), sessionId: z.string().nullable(),
+  baseCommit: z.string().nullable(), sourceDirty: z.boolean(), roleId: z.uuid().nullable().describe("Role ID captured at creation; null for legacy or not-yet-prepared Workers. Recovery retains the saved snapshot."), roleRevision: z.number().int().nullable(), sessionId: z.string().nullable(),
   runtimeInstance: id.nullable(),
   phase, currentTurnId: id.nullable(), issue: z.string().nullable(), createdAt: z.number().int(), updatedAt: z.number().int() });
 const turnSchema = z.strictObject({ id, workerId: id, phase: turnPhase, stopReason: z.string().nullable(), issue: z.string().nullable(),
