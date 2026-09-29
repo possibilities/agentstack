@@ -2,3 +2,6 @@ packages:
   - packages/*
 allowBuilds:
   '@modelcontextprotocol/inspector': false
+overrides:
+  # Effect prereleases are not runtime-compatible across the native host pin.
+  '@effect/platform-node@4.0.0-rc.112>@effect/platform-node-shared': 4.0.0-rc.112

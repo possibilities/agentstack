@@ -1,2 +1,5 @@
-description: List Roles or inspect a selected Role (the default if omitted) through its local Package API.
-usage: 'usage: stack roles list | snapshot [role-id]'
+description: List, inspect or inject a Role into an isolated Claude, Codex or OpenCode invocation.
+usage: |-
+  usage: stack roles list | snapshot [role-id]
+         stack roles inject [default|existing-role-name] -- <claude|codex|opencode> [native args...]
+  Run stack roles inject --help for isolation, authentication and history limits.
