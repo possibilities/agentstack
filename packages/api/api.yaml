@@ -2,6 +2,11 @@ name: api
 description: Structured package API discovery documents for every AgentStack package.
 socket:
   description: Unix socket for package API discovery, namespaced as api.
+mcp:
+  operations: [docs_list, docs_get, docs_snapshot]
+  workerOperations: [docs_list, docs_get, docs_snapshot]
+  events: []
+  description: Credential-free Package API schemas and effective transport and Worker selections, forwarded to the discovery socket.
 websocket:
   operations: all
   events: all

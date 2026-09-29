@@ -11,8 +11,9 @@ import { WorkerSupervisor, type Runtime } from "../src/supervisor.js";
 import type { AcpProcess } from "../src/acp.js";
 import { LOCAL_OPERATOR_ID, ownsWorker } from "../src/owner.js";
 import { api, workerCancel, workerRead, workerSend, workerStart, workerStatus, workerTurnList } from "../api.js";
+import type { InvocationContext } from "@agentstack/api";
 
-const intent = (accountId = randomUUID()) => ({ requestId: randomUUID(), botId: "fixture-bot", threadId: "root",
+const intent = (accountId: string = randomUUID()) => ({ requestId: randomUUID(), botId: "fixture-bot", threadId: "root",
   accountId, provider: "grok" as const, model: "xai/grok-build", effort: "high", repo: "/fixture/repo", baseRef: "main", task: "Review the actual task" });
 const config = (model = "xai/grok-observed", effort = "low") => ({ configOptions: [
   { id: "model", name: "Model", type: "select", category: "model", currentValue: model, options: [{ value: model, name: model }] },
@@ -34,6 +35,43 @@ function managerFixture(root: string, request = intent()) {
   return { manager, supervisor, worker, turn, notify: (update: Record<string, unknown>) =>
     runtime.process.onNotification!("session/update", { sessionId: "fixture-session", update }) };
 }
+
+test("Worker callers read only their own records and never gain lifecycle authority", async () => {
+  const root = await mkdtemp(join(tmpdir(), "as-worker-self-read-"));
+  const ctx = managerFixture(root);
+  const { manager, worker, turn, supervisor } = ctx;
+  manager.ledger.setWorkerPhase(worker.id, "running");
+  const runtime = supervisor.runtime(worker.accountId)!;
+  const invocation: InvocationContext = { transport: "mcp", botId: null, instance: null, threadId: null, sessionId: null,
+    workerId: worker.id, workerInstance: runtime.instance };
+  const sibling = manager.ledger.reserve({ ...intent(worker.accountId), botId: worker.botId }).worker;
+  const otherBot = manager.ledger.reserve({ ...intent(), botId: "other-bot" }).worker;
+  const seq = manager.ledger.history.append(worker.id, turn.id, "fixture", "live", { body: "self data" })!;
+  const reads = (id: string, caller = invocation) => [
+    () => manager.status(id, caller), () => manager.read(id, 0, 10, caller), () => manager.detail(id, caller),
+    () => manager.turns(id, undefined, 10, caller), () => manager.records(id, 0, 10, undefined, caller),
+    () => manager.recordChunk(id, seq, 0, 100, caller), () => manager.tools(id, 0, 10, caller),
+  ];
+  try {
+    assert.deepEqual((await manager.list(invocation)).map(entry => entry.id), [worker.id]);
+    for (const read of reads(worker.id)) await read();
+    for (const target of [sibling.id, otherBot.id, randomUUID()]) {
+      for (const read of reads(target)) await assert.rejects(read, /limited to the calling Worker/);
+      await assert.rejects(manager.diff(target, {}, invocation), /limited to the calling Worker/);
+    }
+    await assert.rejects(manager.records(worker.id, 0, 10, sibling.currentTurnId!, invocation), /turn does not belong/);
+    const siblingSeq = manager.ledger.history.append(sibling.id, sibling.currentTurnId, "fixture", "live", { body: "sibling data" })!;
+    await assert.rejects(manager.recordChunk(worker.id, siblingSeq, 0, 100, invocation), /unknown worker record/);
+    for (const read of reads(worker.id, { ...invocation, workerInstance: randomUUID() })) await assert.rejects(read, /exact live runtime/);
+    await assert.rejects(manager.cancel(worker.id, invocation), /Bot-bound MCP/);
+    await assert.rejects(manager.closeWorker(worker.id, invocation), /Bot-bound MCP/);
+    assert.equal((await manager.list()).length, 3, "operator inventory is unchanged");
+    manager.ledger.setWorkerPhase(worker.id, "closed");
+    for (const read of reads(worker.id)) await assert.rejects(read, /exact live runtime/);
+    await assert.rejects(manager.list(invocation), /exact live runtime/);
+    assert.equal((await manager.status(worker.id)).worker.id, worker.id, "operator can inspect historical records");
+  } finally { await manager.close(); await rm(root, { recursive: true, force: true }); }
+});
 
 test("exhausted structured retention still captures a new turn's text and attributes known late tools", async () => {
   const root = await mkdtemp(join(tmpdir(), "as-worker-retention-regression-"));
@@ -271,7 +309,7 @@ test("session metadata outside turns, runtime fencing, permission ownership and 
       const foreign = reopened.ledger.reserve(intent()).worker;
       await assert.rejects(reopened.recordChunk(foreign.id, records.entries.at(-1)!.seq, 0, 20), /unknown worker record/);
       await assert.rejects(reopened.detail(worker.id, { transport: "mcp", botId: null, workerId: worker.id,
-        instance: runtime.instance, threadId: null, sessionId: null }), /Bot-bound/);
+        instance: runtime.instance, threadId: null, sessionId: null }), /limited to the calling Worker/);
       assert.throws(() => ownsWorker({ botId: "other-bot", threadId: "root" }, worker), /another Bot/);
       const before = reopened.ledger.history.capture(worker.id).records;
       reopened.ledger.setRuntimeInstance(worker.id, randomUUID());

@@ -17,6 +17,7 @@ const transportDocSchema = z.object({
   subscriptions: z.boolean().describe("Selected event topics support subscriptions; MCP requires the owner's Bot subscription service."),
   endpoint: z.string().nullable().describe("Socket path or HTTP URL when the transport has a fixed address."),
   operations: z.array(z.string()).describe("Operations available through this transport; HTTP uses explicit routes instead."),
+  workerOperations: z.array(z.string()).describe("Explicit Worker-visible operations intersected with MCP exposure; empty for other transports. Record ownership still applies. Read-only hints alone grant no disclosure authority."),
   events: z.array(z.string()).describe("Event topics available through this transport; independent of its operation selection."),
   routes: z.array(z.object({ surface: z.string(), surfaceDescription: z.string(), kind: z.enum(["json", "static"]), authentication: z.enum(["bearer", "none"]),
     method: z.string(), path: z.string(), description: z.string(), format: z.string(), operation: z.string().nullable(),

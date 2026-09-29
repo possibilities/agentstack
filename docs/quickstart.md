@@ -28,6 +28,8 @@ Browser control defaults to the exact UI origins `http://127.0.0.1:<AGENTSTACK_U
 
 Structured documents for every package API — operations with their JSON Schemas, event topics, and configured transports — come from the `api` socket: `docs_list` names the packages, `docs_get` returns one package's document, and `docs_snapshot` returns one consistent catalog for a full reference. MCP and WebSocket URLs are included when their ports are fixed.
 
+Discovery is also available over authenticated MCP. Worker-visible reads must be named in `mcp.workerOperations`; omission denies all, and the effective list is intersected with ordinary MCP exposure. Read-only annotations alone grant no access. The API reference displays this effective selection. Workers can read their own records and selected shared Role/Brain/Content data; sign-in state, Bot conversations, notifications and Proc output are excluded. Changing a selection applies to subsequent calls in existing native sessions. See [ADR 0114](adr/0114-explicit-worker-disclosure.md).
+
 The browsable Package API reference is built into UIX. Open **API reference**
 from anywhere on the bench, or follow a contextual operation link. Its searchable
 reader uses `docs_snapshot` and exposes descriptions, full input/output schemas,

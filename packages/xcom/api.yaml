@@ -3,6 +3,7 @@ description: Keep a private, best-effort archive of the X following feed and ful
 socket:
   description: Local archive control, retrieval, sync and index repair.
 mcp:
+  workerOperations: []
   operations: [xcom_status, xcom_sync, xcom_articles_sync, xcom_search, xcom_context, xcom_list, xcom_articles_pending, xcom_get, xcom_users, xcom_user_get]
   events: []
   description: Agent research retrieval and asynchronous archive maintenance. Index repair is local socket-only.

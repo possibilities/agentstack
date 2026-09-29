@@ -22,6 +22,11 @@ const transportSchema = z
   })
   .strict();
 
+// Worker disclosure is opt-in, independent of mutation hints and event exposure.
+const mcpSchema = transportSchema.extend({
+  workerOperations: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)).default([]),
+});
+
 const httpSchema = z.object({
   description: blurb,
 }).strict();
@@ -31,7 +36,7 @@ const configSchema = z
     name: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/),
     description: blurb,
     socket: httpSchema.optional(),
-    mcp: transportSchema.optional(),
+    mcp: mcpSchema.optional(),
     websocket: transportSchema.optional(),
     http: httpSchema.optional(),
   })
@@ -44,6 +49,7 @@ const configSchema = z
   });
 
 export type TransportConfig = z.infer<typeof transportSchema>;
+export type McpConfig = z.infer<typeof mcpSchema>;
 export type WebsocketConfig = TransportConfig;
 export type PackageConfig = z.infer<typeof configSchema>;
 

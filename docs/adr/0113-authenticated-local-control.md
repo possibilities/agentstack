@@ -2,6 +2,8 @@
 
 Status: accepted, 2026-09-28. Implements hardening proposal 3. Extends the shared MCP/WebSocket gateways and owner-managed UI/Inspector; preserves ADR 0101's independent remote Access policy.
 
+The subsequent [ADR 0114](0114-explicit-worker-disclosure.md) replaces the Worker read-only-hint selection described below with explicit positive disclosure selections.
+
 ## Decision
 
 TCP reachability is not operator authority. MCP requires either the private operator bearer credential or a signed Bot/Worker launch identity whose instance is still live. Authentication precedes socket metadata reads and is rechecked before calls and returning operation results. Bot thread and downstream ownership checks remain independent. Worker selection still uses `readOnlyHint`, pending the separate audience-policy decision. Private Unix sockets retain their same-user authority.

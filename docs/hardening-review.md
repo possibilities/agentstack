@@ -51,9 +51,9 @@ The owner → package socket → transport gateway architecture is worth keeping
 
 **UI follow-up:** local session revocation is available through `agentstack revoke-local`; no dedicated session control was added. Brain grant/revocation and Proc schedules/runs/reauthorization UI also remain separate decisions.
 
-### 4. Explicit Worker-visible read policy
+### 4. Explicit Worker-visible read policy — approved and implemented
 
-`readOnlyHint` still determines the Worker tool set. It means no requested mutation, not “safe to place in another provider's context.” Role connection definitions are now excluded, but sign-in URLs/codes, Proc specifications/output and cross-Bot transcripts warrant an explicit audience decision. Prefer a positive Worker operation selection resolved beside MCP exposure, plus package-level data ownership checks. Avoid abusing read-only annotations to hide genuinely read-only operations.
+Positive `mcp.workerOperations` selections now default to deny and intersect current MCP exposure through the shared resolver. Read-only hints validate consistency but grant no disclosure authority. Initial selections cover API metadata, safe Role summaries, selected shared Brain/Content retrieval and self-only Worker records; sign-in state, Bot transcripts, notifications and Proc output remain excluded. Worker handlers independently fence sibling/cross-Bot IDs and stale runtimes. Current policy is rechecked before returning results, including on existing sessions. The existing UIX API reference shows effective Worker selections. See [ADR 0114](adr/0114-explicit-worker-disclosure.md).
 
 ### 5. Errors, cancellation and declared latency
 
@@ -132,6 +132,12 @@ Proposal 3 replaces anonymous local TCP authority with authenticated admission a
 - The owner lifecycle test passed again after adding persisted-authority startup rotation checks. The real remote UIX browser check passed, covering TLS pairing, rendering, scope changes, reconnect, revocation and resource-scoped Content handoffs.
 - The real local UIX browser check passed: anonymous SSR refusal, fragment bootstrap and CSP, HttpOnly session, consumed-link/ticket replay rejection, fresh connection tickets, active revocation and reauthentication. It caught and now covers receiving a bootstrap fragment while the connection-instructions page is already open.
 
+## Worker disclosure verification — 2026-09-28
+
+- Full `pnpm test`: **40/40 Turbo tasks successful; 960 tests passed, 7 skipped, zero failures or cancellations**. Skips remain six credential/runtime-gated tests and the Linux-only netfilter test.
+- UIX typecheck passed. Tests cover default-deny policy, invalid/wildcard/duplicate selections, MCP intersection, read-only secret exclusion, live narrowing, in-flight result withholding, stale Worker identities, self-only inventories and records, sibling/cross-Bot IDs, foreign turn/record IDs, mutation refusal and operator historical inspection.
+- Real owner/Next/Inspector lifecycle tests verify discovery's new MCP endpoint and rendered Worker selection text in the existing API reference. An outdated Inspector package-list fixture was migrated. Builds and lifecycle checks used an isolated checkout and disposable state.
+
 ## Deployment
 
 Source changes are not deployment. The running owner has not been restarted and its checkout's `dist`/`.next` have not been rebuilt by this review. Apply a coordinated rebuild and authorized owner restart to use the matching Role/Worker contracts and browser policies. Development browser clients on another port must configure `AGENTSTACK_WEBSOCKET_ORIGIN` explicitly.
@@ -141,3 +147,5 @@ Proc authority also requires a coordinated owner rebuild/restart because its sch
 Research egress requires the matching Brain/Scrape/Browse packages. Its additive schema-v13 migration creates no grants. Existing private sources need explicit operator grants, and browser-only/authenticated sources need a capable isolated provider; existing signed-in profiles are not reused. A provider lacking working guest IPv4/IPv6 netfilter fails closed. Live Hypeman enforcement has not been exercised by the macOS verification environment.
 
 Local authentication requires matching API/owner/Access/UIX packages and the owner-scoped Inspector preloader. After deployment, use `agentstack open` or `agentstack open inspector`; native operator clients must supply `operatorHeaders(env)`. Existing anonymous clients will be refused. Local sessions and operator credentials rotate on owner start; remote Access sessions and signed Bot/Worker launch identities remain independently authorized.
+
+Worker disclosure requires matching shared API, Worker and UIX code with the new manifests. Custom MCP manifests without `workerOperations` disclose nothing to Workers. Refresh native tool listings after policy edits; enforcement is live even when a client retains an older tool menu. A Role MCP server named `api` must be renamed before launch because discovery now uses that internal MCP name.

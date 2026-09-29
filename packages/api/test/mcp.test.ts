@@ -384,12 +384,14 @@ test("a bot-bound MCP URL forwards verified bot and Codex thread context without
   }
 });
 
-test("a Worker-bound MCP URL exposes only read operations and fences a replaced native runtime", { timeout: 30_000 }, async () => {
+test("Worker MCP disclosure is explicit, live, fail-closed and runtime-bound", { timeout: 30_000 }, async () => {
   const root = await mkdtemp("/tmp/as-mcp-w-");
   const env = { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_MCP_PORT: "0" };
   const packageDir = join(root, "packages", "sample");
   await mkdir(packageDir, { recursive: true });
-  await writeFile(join(packageDir, "api.yaml"), "name: sample\ndescription: Sample.\nmcp:\n  description: Sample MCP.\n  operations: all\n  events: all\n");
+  const configure = (worker = "", operations = "all") => writeFile(join(packageDir, "api.yaml"), `name: sample\ndescription: Sample.\nmcp:\n  description: Sample MCP.\n  operations: ${operations}\n  events: all\n${worker ? `  workerOperations: ${worker}\n` : ""}`);
+  await configure();
+  let withdrawOnRead = false;
   const workerId = "11111111-1111-4111-8111-111111111111";
   const accountId = "22222222-2222-4222-8222-222222222222";
   let instance = "33333333-3333-4333-8333-333333333333";
@@ -404,7 +406,9 @@ test("a Worker-bound MCP URL exposes only read operations and fences a replaced 
   const sample = await serveSocket({ info: { name: "sample", description: "Sample", transportDescription: "Socket", path: socketPath("sample", env) },
     context: {}, operations: [
       operation({ name: "read", description: "Read", input: z.strictObject({}), output: z.object({ ok: z.boolean() }), annotations: { readOnlyHint: true },
-        async call(_ctx, _input, invocation) { seen.push(invocation); return { ok: true }; } }),
+        async call(_ctx, _input, invocation) { seen.push(invocation); if (withdrawOnRead) await configure("[]"); return { ok: true }; } }),
+      operation({ name: "login_secret", description: "A read is not automatically safe for Workers", input: z.strictObject({}), output: z.object({ code: z.string() }), annotations: { readOnlyHint: true },
+        async call() { throw new Error("secret must never reach the Worker"); } }),
       operation({ name: "change", description: "Change", input: z.strictObject({}), output: z.object({ ok: z.boolean() }),
         async call() { throw new Error("must never reach the package"); } }),
     ], events: { topics: { changed: "Refresh." } } });
@@ -414,18 +418,32 @@ test("a Worker-bound MCP URL exposes only read operations and fences a replaced 
   try {
     assert.deepEqual(parseWorkerMcpIdentity(new URL(url), env), { workerId, instance });
     await client.connect(new StreamableHTTPClientTransport(new URL(url)));
+    assert.deepEqual((await client.listTools()).tools, []);
+    assert.equal((await client.callTool({ name: "read", arguments: {} })).isError, true);
+    await configure("[read]");
     assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), ["read"]);
     assert.deepEqual((await client.callTool({ name: "read", arguments: {} })).structuredContent, { ok: true });
     assert.equal(seen[0]?.workerId, workerId);
     assert.equal(seen[0]?.workerInstance, instance);
     assert.equal(seen[0]?.botId, null);
     assert.equal((await client.callTool({ name: "change", arguments: {} })).isError, true);
+    assert.equal((await client.callTool({ name: "login_secret", arguments: {} })).isError, true);
     assert.equal((await client.callTool({ name: "events_subscribe", arguments: {} })).isError, true);
+    await configure("[read]", "[login_secret]");
+    assert.deepEqual((await client.listTools()).tools, []);
+    assert.equal((await client.callTool({ name: "read", arguments: {} })).isError, true);
+    await configure("[read]");
+    withdrawOnRead = true;
+    const withheld = await client.callTool({ name: "read", arguments: {} });
+    assert.equal(withheld.isError, true); assert.equal(withheld.structuredContent, undefined);
+    assert.match(JSON.stringify(withheld), /policy changed/);
+    assert.deepEqual((await client.listTools()).tools, []);
+    await configure("[read]");
     const tampered = new URL(url); tampered.searchParams.set("proof", "0".repeat(64));
     assert.equal((await fetch(tampered, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" }, body: "{}" })).status, 403);
     instance = "44444444-4444-4444-8444-444444444444";
     await assert.rejects(client.callTool({ name: "read", arguments: {} }), /401|Unauthorized/);
-    assert.equal(seen.length, 1);
+    assert.equal(seen.length, 2);
   } finally {
     await client.close(); await served.close(); await sample.close(); await workers.close();
     await rm(root, { recursive: true, force: true });

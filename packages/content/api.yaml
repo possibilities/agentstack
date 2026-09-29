@@ -3,6 +3,7 @@ description: Store and share documents, files and images in collections, search 
 socket:
   description: Unix socket for document and artifact operations.
 mcp:
+  workerOperations: [get, list, search, tags, resolve, links, backlinks, graph, artifacts_list, artifacts_versions, artifacts_show, collection_list, collection_get, item_list, item_get, item_read]
   operations: all
   events: all
   description: HTTP MCP operations forwarded to the content socket.

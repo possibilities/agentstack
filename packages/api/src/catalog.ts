@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import { packageEventTopics, type PackageApi } from "./operation.js";
 import { publishedJsonSchema } from "./schema.js";
 import { configuredTransports } from "./config.js";
-import { resolveExposure } from "./exposure.js";
+import { resolveExposure, resolveWorkerExposure } from "./exposure.js";
 import { listPackages, mcpPort, socketPath, websocketPort, workspaceRoot } from "./workspace.js";
 
 export type CatalogTransport = {
@@ -14,6 +14,7 @@ export type CatalogTransport = {
   subscriptions: boolean;
   endpoint: string | null;
   operations: string[];
+  workerOperations: string[];
   events: string[];
   routes: Array<{
     surface: string; surfaceDescription: string; kind: "json" | "static"; authentication: "bearer" | "none";
@@ -81,7 +82,7 @@ export async function loadCatalog(env: NodeJS.ProcessEnv = process.env, from = i
           if (!api.http?.length) throw new Error(`${item.config.name} configures http without declared HTTP surfaces`);
           return {
             type: "http", description: transport.description, supported: true, subscriptions: false, endpoint: null,
-            operations: [], events: [], routes: api.http.flatMap((surface) => surface.routes.map((route) => ({
+            operations: [], workerOperations: [], events: [], routes: api.http.flatMap((surface) => surface.routes.map((route) => ({
               surface: surface.name, surfaceDescription: surface.description, kind: surface.kind, authentication: surface.authentication,
               method: route.method, path: route.path, description: route.description, format: route.format,
               operation: route.operation?.name ?? null,
@@ -93,7 +94,8 @@ export async function loadCatalog(env: NodeJS.ProcessEnv = process.env, from = i
           };
         }
         const exposure = resolveExposure(item.config, transport.type, api.operations.map((op) => op.name), Object.keys(events));
-        const base = { type: transport.type, description: transport.description, supported: true, ...exposure, routes: [] };
+        const workerOperations = transport.type === "mcp" ? resolveWorkerExposure(item.config, api.operations, Object.keys(events)).operations : [];
+        const base = { type: transport.type, description: transport.description, supported: true, ...exposure, workerOperations, routes: [] };
         const subscriptions = exposure.events.length > 0;
         if (transport.type === "socket") return { ...base, subscriptions, endpoint: socketPath(item.config.name, env) };
         if (transport.type === "websocket") return { ...base, subscriptions,

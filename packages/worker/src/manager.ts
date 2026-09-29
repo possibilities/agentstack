@@ -142,30 +142,44 @@ export class WorkerManager {
     ownsWorker(owner, worker);
     return worker;
   }
+  /** Worker self-reads do not grant Bot/operator ownership or mutation rights. */
+  private async readable(id: string, invocation?: InvocationContext): Promise<WorkerRecord> {
+    if (!invocation?.workerId) return this.owned(id, invocation);
+    if (invocation.transport !== "mcp" || invocation.botId || invocation.instance || invocation.workerId !== id)
+      throw new Error("Worker reads are limited to the calling Worker");
+    const worker = this.ledger.worker(id);
+    const runtime = worker && this.supervisor.runtime(worker.accountId);
+    if (!worker || !runtime || !invocation.workerInstance || worker.runtimeInstance !== invocation.workerInstance
+      || runtime.instance !== invocation.workerInstance || !["preparing", "idle", "running", "awaiting_input", "cancelling"].includes(worker.phase))
+      throw new Error("Worker read requires its exact live runtime");
+    return worker;
+  }
   async list(invocation?: InvocationContext): Promise<Array<WorkerRecord & { turn: ListedTurn | null; pendingPermissions: number }>> {
-    const owner = await this.owner(invocation);
-    return this.ledger.workers(owner.botId === LOCAL_OPERATOR_ID ? undefined : owner.botId).map((worker) => {
+    const owner = invocation?.workerId ? null : await this.owner(invocation);
+    const workers = invocation?.workerId ? [await this.readable(invocation.workerId, invocation)]
+      : this.ledger.workers(owner!.botId === LOCAL_OPERATOR_ID ? undefined : owner!.botId);
+    return workers.map((worker) => {
       const turn = worker.currentTurnId ? this.ledger.turn(worker.currentTurnId) : null;
       return { ...worker, turn: turn && { id: turn.id, phase: turn.phase, stopReason: turn.stopReason, issue: turn.issue,
         dispatchedAt: turn.dispatchedAt, createdAt: turn.createdAt, updatedAt: turn.updatedAt }, pendingPermissions: this.ledger.pending(worker.id).length };
     });
   }
   async diff(id: string, options: DiffOptions, invocation?: InvocationContext) {
-    const worker = await this.owned(id, invocation);
+    const worker = await this.readable(id, invocation);
     if (!worker.cwd || !worker.baseCommit) throw new Error("this Worker has no prepared worktree");
     return { workerId: worker.id, branch: worker.branch, ...await readWorktreeDiff(worker.cwd, worker.baseCommit, options) };
   }
   async status(id: string, invocation?: InvocationContext): Promise<{ worker: WorkerRecord; turn: TurnSummary | null; pending: PendingRequest[] }> {
-    const worker = await this.owned(id, invocation);
+    const worker = await this.readable(id, invocation);
     const turn = worker.currentTurnId ? this.ledger.turn(worker.currentTurnId) : null;
     return { worker, turn: turn ? summarizeTurn(turn) : null, pending: this.ledger.pending(id) };
   }
   async read(id: string, afterSeq: number, limit: number, invocation?: InvocationContext) {
-    await this.owned(id, invocation);
+    await this.readable(id, invocation);
     return this.ledger.read(id, afterSeq, limit);
   }
   async detail(id: string, invocation?: InvocationContext) {
-    const worker = await this.owned(id, invocation);
+    const worker = await this.readable(id, invocation);
     const runtime = this.supervisor.runtime(worker.accountId);
     const connected = Boolean(worker.sessionId && runtime && runtime.instance === worker.runtimeInstance
       && ["idle", "running", "awaiting_input", "cancelling"].includes(worker.phase));
@@ -179,20 +193,20 @@ export class WorkerManager {
           : "ACP supplies no portable parent/child enumeration. OpenCode task rawOutput.metadata can reference a called session; tool completion is not a live child status. Vendor _meta is evidence only; absence does not prove no children." } };
   }
   async turns(id: string, afterId: string | undefined, limit: number, invocation?: InvocationContext) {
-    await this.owned(id, invocation);
+    await this.readable(id, invocation);
     return this.ledger.turnPage(id, afterId, limit);
   }
   async records(id: string, afterSeq: number, limit: number, turnId: string | undefined, invocation?: InvocationContext) {
-    await this.owned(id, invocation);
+    await this.readable(id, invocation);
     if (turnId && this.ledger.turn(turnId)?.workerId !== id) throw new Error("turn does not belong to this worker");
     return this.ledger.history.read(id, afterSeq, limit, turnId);
   }
   async recordChunk(id: string, seq: number, offset: number, limit: number, invocation?: InvocationContext) {
-    await this.owned(id, invocation);
+    await this.readable(id, invocation);
     return this.ledger.history.chunk(id, seq, offset, limit);
   }
   async tools(id: string, afterSeq: number, limit: number, invocation?: InvocationContext) {
-    await this.owned(id, invocation);
+    await this.readable(id, invocation);
     return this.ledger.history.tools(id, afterSeq, limit);
   }
 

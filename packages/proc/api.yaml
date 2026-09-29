@@ -3,6 +3,7 @@ description: Durable scheduling of Package API operations and supervised process
 socket:
   description: Full local control for process execution, scheduled calls, run history, line cursors and change notices.
 mcp:
+  workerOperations: []
   operations: all
   events: all
   description: Agent tools for schedules, process runs, output observation and change subscriptions, forwarded to the Proc socket.

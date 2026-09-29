@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { parseConfig } from "../src/config.js";
-import { resolveExposure } from "../src/exposure.js";
+import { resolveExposure, resolveWorkerExposure } from "../src/exposure.js";
 import { serveApi } from "../src/serve.js";
 import { loadCatalog } from "../src/catalog.js";
 
@@ -34,10 +34,20 @@ test("semantic selection errors fail discovery and startup before creating a con
   await writeFile(join(dir, "dist", "api.js"), `export const api = { operations: [],
     createContext() { throw new Error("context must not be created"); }, closeContext() {} };`);
   try {
-    for (const selection of ["operations: [missing]\n  events: all", "operations: all\n  events: [missing]"]) {
+    for (const selection of ["operations: [missing]\n  events: all", "operations: all\n  events: [missing]", "operations: all\n  events: []\n  workerOperations: [missing]"]) {
       await writeFile(join(dir, "api.yaml"), `${header}mcp:\n  description: Selected.\n  ${selection}\n`);
       await assert.rejects(loadCatalog({}, root), /selects unknown name/);
       await assert.rejects(serveApi({ root, name: "demo", transport: "socket", env: { AGENTSTACK_STATE_DIR: root } }), /selects unknown name/);
     }
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("Worker selections default to deny, intersect MCP and reject wildcards, unknowns, duplicates and mutations", () => {
+  const tools = [{ name: "safe", annotations: { readOnlyHint: true } }, { name: "secret", annotations: { readOnlyHint: true } }, { name: "write" }];
+  const config = (selection = "", operations = "all") => parseConfig(`${header}mcp:\n  description: MCP.\n  operations: ${operations}\n  events: all\n${selection}`);
+  assert.deepEqual(resolveWorkerExposure(config(), tools), { operations: [], events: [] });
+  assert.deepEqual(resolveWorkerExposure(config("  workerOperations: [safe]\n"), tools), { operations: ["safe"], events: [] });
+  assert.deepEqual(resolveWorkerExposure(config("  workerOperations: [safe]\n", "[secret]"), tools), { operations: [], events: [] });
+  for (const selection of ["all", "'*'", "{exclude: [secret]}"]) assert.throws(() => config(`  workerOperations: ${selection}\n`));
+  for (const selection of ["[missing]", "[safe, safe]", "[write]"]) assert.throws(() => resolveWorkerExposure(config(`  workerOperations: ${selection}\n`), tools), /unknown|duplicate|non-read-only/);
 });

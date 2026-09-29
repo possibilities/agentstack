@@ -40,11 +40,23 @@ export function exposeCatalog(catalog: SocketCatalog, exposure: Exposure): Socke
     } : null };
 }
 
+/** A positive disclosure selection, intersected with MCP availability. Read-only
+ * annotations validate intent; they never add operations to this selection. */
+export function resolveWorkerExposure(config: PackageConfig,
+  tools: ReadonlyArray<{ name: string; annotations?: { readOnlyHint?: boolean } }>, events: readonly string[] = []): Exposure {
+  const mcp = resolveExposure(config, "mcp", tools.map(tool => tool.name), events);
+  const selected = select(config.mcp!.workerOperations, tools.map(tool => tool.name), `${config.name} mcp workerOperations`);
+  for (const name of selected) if (tools.find(tool => tool.name === name)?.annotations?.readOnlyHint !== true)
+    throw new Error(`${config.name} mcp workerOperations selects non-read-only operation: ${name}`);
+  return { operations: selected.filter(name => mcp.operations.includes(name)), events: [] };
+}
+
 /** The live socket is authoritative; gateways never import or instantiate a Package API. */
 export async function socketExposure(config: PackageConfig, transport: "mcp" | "websocket", env: NodeJS.ProcessEnv) {
   const catalog = await readSocketCatalog(config.name, env);
   const exposure = resolveExposure(config, transport, catalog.tools.map((tool) => tool.name), Object.keys(catalog.events?.topics ?? {}));
-  return { exposure, catalog: exposeCatalog(catalog, exposure) };
+  const workerExposure = transport === "mcp" ? resolveWorkerExposure(config, catalog.tools, Object.keys(catalog.events?.topics ?? {})) : undefined;
+  return { exposure, workerExposure, catalog: exposeCatalog(catalog, exposure) };
 }
 
 export async function currentMcpCatalog(root: string, pkg: string, env: NodeJS.ProcessEnv): Promise<SocketCatalog> {
@@ -52,7 +64,14 @@ export async function currentMcpCatalog(root: string, pkg: string, env: NodeJS.P
   // after the metadata read: a slow upstream must not retain an old selection.
   const catalog = await readSocketCatalog(pkg, env);
   const { config } = await findPackage(root, pkg);
+  resolveWorkerExposure(config, catalog.tools, Object.keys(catalog.events?.topics ?? {}));
   return exposeCatalog(catalog, resolveExposure(config, "mcp", catalog.tools.map((tool) => tool.name), Object.keys(catalog.events?.topics ?? {})));
+}
+
+export async function currentWorkerCatalog(root: string, pkg: string, env: NodeJS.ProcessEnv): Promise<SocketCatalog> {
+  const catalog = await readSocketCatalog(pkg, env);
+  const { config } = await findPackage(root, pkg);
+  return exposeCatalog(catalog, resolveWorkerExposure(config, catalog.tools, Object.keys(catalog.events?.topics ?? {})));
 }
 
 function readSocketCatalog(pkg: string, env: NodeJS.ProcessEnv): Promise<SocketCatalog> {

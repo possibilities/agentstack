@@ -3,6 +3,7 @@ description: Durable Bot browser profiles, supervised Kernel runtimes, controlle
 socket:
   description: Owner-local provider lifecycle, constrained disposable research browsers and system management; not an agent-facing browser transport.
 mcp:
+  workerOperations: []
   events: []
   description: Verified live Bots manage only their own profiles and current-launch controllers. Page actions remain in agent-browser.
   operations:

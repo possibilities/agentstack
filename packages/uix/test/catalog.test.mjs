@@ -47,3 +47,13 @@ test("incompatible transport metadata becomes a read error rather than a render 
   await assert.rejects(loadCatalog(async (name) => name === "docs_snapshot" ? { packages: [old] }
     : name === "docs_list" ? { packages: [{ name: "brain" }] } : old), /Incompatible API catalog/);
 });
+
+test("MCP discovery requires an explicit effective Worker selection and preserves it", async () => {
+  const doc = { ...brain, transports: [{ ...brain.transports[0], type: "mcp", workerOperations: ["search"] }] };
+  assert.deepEqual(await loadCatalog(async () => ({ packages: [doc] })), [doc]);
+  for (const value of [undefined, "all", ["unknown"]]) {
+    const invalid = { ...doc, transports: [{ ...doc.transports[0], workerOperations: value }] };
+    await assert.rejects(loadCatalog(async name => name === "docs_snapshot" ? { packages: [invalid] }
+      : name === "docs_list" ? { packages: [{ name: "brain" }] } : invalid), /Incompatible API catalog/);
+  }
+});

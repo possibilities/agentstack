@@ -80,12 +80,12 @@ export const workerStart = operation({
   async call(ctx: WorkersContext, input, invocation) { return ctx.manager.start(input, invocation); },
 });
 export const workerList = operation({
-  name: "worker_list", description: "List durable workers owned by this Bot, each with its most recent turn summary and pending permission count; a local operator sees all. A turn outcome can be unknown after interruption.",
+  name: "worker_list", description: "List durable workers owned by this Bot; a Worker caller sees only itself and a local operator sees all. Includes the most recent turn summary and pending permission count. Outcomes can be unknown after interruption.",
   input: z.strictObject({}), output: z.strictObject({ workers: z.array(listedWorkerSchema) }), annotations: { title: "List workers", readOnlyHint: true },
   async call(ctx: WorkersContext, _input, invocation) { return { workers: await ctx.manager.list(invocation) }; },
 });
 export const workerStatus = operation({
-  name: "worker_status", description: "Read one worker, its compact most recent turn summary and exact pending permissions. Full prompts are in worker_turn_list, so long prompts do not obscure lifecycle outcomes in Bot wakeups. No turn is started by this read.",
+  name: "worker_status", description: "Read one worker, its compact most recent turn summary and exact pending permissions. Worker callers may read only themselves through their exact live runtime; Bot callers see their own Workers and operators see all. Full prompts are in worker_turn_list. No turn starts.",
   input: z.strictObject({ id }), output: z.strictObject({ worker: workerSchema, turn: turnSummarySchema.nullable(), pending: z.array(permissionSchema) }),
   annotations: { title: "Read worker status", readOnlyHint: true },
   async call(ctx: WorkersContext, { id }, invocation) { return ctx.manager.status(id, invocation); },

@@ -3,6 +3,7 @@ description: Manage independent Codex Bot sign-ins and Codex, Grok, Devin and Cl
 socket:
   description: Unix socket for account and sign-in operations, namespaced as auth.
 mcp:
+  workerOperations: []
   operations: all
   events: all
   description: HTTP MCP tools for account and sign-in operations, forwarded to the auth socket.

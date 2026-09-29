@@ -34,7 +34,7 @@ export async function fixtureWorkspace(directory, names) {
 }
 
 export function transport(endpoint, operations = [], events = [], type = "websocket") {
-  return { type, endpoint, description: "Isolated fixture", supported: true, subscriptions: events.length > 0, operations, events, routes: [] };
+  return { type, endpoint, description: "Isolated fixture", supported: true, subscriptions: events.length > 0, operations, workerOperations: [], events, routes: [] };
 }
 
 /**

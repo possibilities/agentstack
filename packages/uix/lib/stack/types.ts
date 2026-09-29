@@ -37,6 +37,7 @@ export type TransportDoc = {
   subscriptions: boolean;
   endpoint: string | null;
   operations: string[];
+  workerOperations: string[];
   events: string[];
   routes: { surface: string; surfaceDescription: string; kind: "json" | "static"; authentication: "bearer" | "none";
     method: string; path: string; description: string; format: string; operation: string | null;

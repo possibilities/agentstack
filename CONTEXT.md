@@ -102,7 +102,7 @@ One admitted prompt on an existing Worker, dispatched through its native backend
 
 ## Worker MCP invocation context
 
-Transport-supplied Worker ID and exact native runtime instance from a private signed MCP URL. The owner checks both against the durable Worker and live account backend before admitting tools; the URL exposes read-only Package API operations and cannot subscribe a Bot thread. It is a same-user correlation and stale-runtime fence, not an OS sandbox. _Avoid_: Bot identity, operator authority
+Transport-supplied Worker ID and exact native runtime instance from a private signed MCP URL. The owner checks both against the durable Worker and live account backend. A manifest's positive `mcp.workerOperations` list, intersected with MCP exposure, selects disclosed reads; omission denies all. Read-only hints alone grant no access. Worker record reads are self-only, and Worker calls cannot subscribe Bot threads. It is not an OS sandbox. _Avoid_: Bot identity, operator authority
 
 ## Inference request
 

@@ -16,8 +16,10 @@ export async function loadCatalog(read: Read): Promise<PackageDoc[]> {
 function validateCatalog(packages: PackageDoc[]): PackageDoc[] {
   if (!Array.isArray(packages) || packages.some((doc) => !doc || !Array.isArray(doc.operations) || !Array.isArray(doc.transports)
     || doc.transports.some((transport) => !transport || !Array.isArray(transport.operations)
-      || !Array.isArray(transport.events) || !Array.isArray(transport.routes)))) {
-    throw new Error("Incompatible API catalog: transport operation, event and route selections are required. Restart matching package and UI versions.");
+      || !Array.isArray(transport.events) || !Array.isArray(transport.routes)
+      || transport.type === "mcp" && (!Array.isArray(transport.workerOperations)
+        || transport.workerOperations.some(name => typeof name !== "string" || !transport.operations.includes(name)))))) {
+    throw new Error("Incompatible API catalog: transport operation, Worker, event and route selections are required. Restart matching package and UI versions.");
   }
   return packages;
 }

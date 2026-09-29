@@ -1,7 +1,7 @@
 import type { PackageApi } from "./operation.js";
 import { packageEventTopics } from "./operation.js";
 import { loadPackageApi } from "./catalog.js";
-import { resolveExposure } from "./exposure.js";
+import { resolveExposure, resolveWorkerExposure } from "./exposure.js";
 import { serveSocket, type ServedSocket, type SocketServerInfo } from "./socket.js";
 import { assertTransport, findPackage, socketPath, workspaceRoot } from "./workspace.js";
 
@@ -30,6 +30,7 @@ export async function serveApi(options: {
   const eventTopics = api.events ? packageEventTopics(options.name, api.events) : undefined;
   for (const type of ["mcp", "websocket"] as const) if (located.config[type])
     resolveExposure(located.config, type, api.operations.map((op) => op.name), Object.keys(eventTopics ?? {}));
+  if (located.config.mcp) resolveWorkerExposure(located.config, api.operations, Object.keys(eventTopics ?? {}));
   let socket: ServedSocket | undefined;
   let stopEvents: (() => void) | void = undefined;
   let context: unknown;

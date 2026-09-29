@@ -3,6 +3,7 @@ description: Observe scoped Codex Bot and Codex, Grok, Devin and Claude Worker a
 socket:
   description: Private read-only usage snapshots maintained by the owner-owned observer.
 mcp:
+  workerOperations: []
   operations: all
   events: all
   description: Agent-facing read-only usage snapshots forwarded to the usage socket.

@@ -8,7 +8,7 @@ import { docsSnapshot, serveApi, socketCall } from "../src/index.js";
 import { forwardTimeouts } from "../src/forward-timeout.js";
 
 type TransportDoc = { type: string; description: string; supported: boolean; subscriptions: boolean; endpoint: string | null;
-  operations: string[]; events: string[]; routes: Array<{ surface: string; surfaceDescription: string; kind: "json" | "static"; authentication: "bearer" | "none";
+  operations: string[]; workerOperations: string[]; events: string[]; routes: Array<{ surface: string; surfaceDescription: string; kind: "json" | "static"; authentication: "bearer" | "none";
     method: string; path: string; description: string; format: string; operation: string | null;
     inputSchema: Record<string, unknown> | null; querySchema: Record<string, unknown> | null;
     outputSchema: Record<string, unknown> | null; errorSchema: Record<string, unknown> | null }> };
@@ -63,6 +63,21 @@ test("the api package serves structured documents for every workspace package", 
       }
     }
     assert.deepEqual(snapshot.packages, [...found.values()]);
+    for (const doc of found.values()) for (const transport of doc.transports) {
+      assert.ok(Array.isArray(transport.workerOperations));
+      if (transport.type !== "mcp") assert.deepEqual(transport.workerOperations, []);
+      for (const name of transport.workerOperations) {
+        assert.ok(transport.operations.includes(name));
+        assert.equal(doc.operations.find(op => op.name === name)?.annotations.readOnlyHint, true);
+      }
+    }
+    for (const pkg of ["auth", "bots", "browse", "notify", "owner", "proc", "scrape", "usage", "xcom"])
+      assert.deepEqual(found.get(pkg)!.transports.find(t => t.type === "mcp")!.workerOperations, []);
+    assert.deepEqual(found.get("api")!.transports.find(t => t.type === "mcp")!.workerOperations, ["docs_list", "docs_get", "docs_snapshot"]);
+    assert.deepEqual(found.get("roles")!.transports.find(t => t.type === "mcp")!.workerOperations, ["role_snapshot", "role_preview"]);
+    assert.deepEqual(found.get("brain")!.transports.find(t => t.type === "mcp")!.workerOperations.sort(), ["context", "get", "search", "stats", "tags"]);
+    assert.ok(!found.get("content")!.transports.find(t => t.type === "mcp")!.workerOperations.includes("blob_stage_status"));
+    assert.ok(!found.get("worker")!.transports.find(t => t.type === "mcp")!.workerOperations.includes("worker_runtime_list"));
     const xcom = found.get("xcom")!;
     assert.deepEqual(xcom.transports.map(t => t.type), ["socket", "mcp"]);
     assert.deepEqual(xcom.transports.find(t => t.type === "mcp")!.operations,

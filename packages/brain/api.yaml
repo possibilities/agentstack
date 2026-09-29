@@ -3,6 +3,7 @@ description: Search local research and admit durable ingestion into an isolated 
 socket:
   description: Unix socket for research, ingestion ledger, recurring sources, recovery and operator-only private-destination grants. Grant management is socket-only.
 mcp:
+  workerOperations: [stats, search, context, get, tags]
   operations: &public_operations
     - brain_status
     - jobs_reveal

@@ -162,7 +162,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     assert.equal(servers?.status, 200, stderr);
-    assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["auth", "bots", "brain", "browse", "content", "notify", "owner", "proc", "roles", "scrape", "usage", "worker", "xcom"]);
+    assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["api", "auth", "bots", "brain", "browse", "content", "notify", "owner", "proc", "roles", "scrape", "usage", "worker", "xcom"]);
     const inspectorUrl = `http://127.0.0.1:${inspectorPort}/`;
     assert.equal((await fetch(inspectorUrl, { redirect: "manual" })).status, 303);
     assert.equal((await fetch(`${inspectorUrl}api/servers`, { headers: { "x-mcp-remote-auth": "Bearer test-token" } })).status, 401);
@@ -260,6 +260,10 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       const reference = html.match(/<aside\b[^>]*data-dock="right"[^>]*>[\s\S]*?<\/aside>/)?.[0];
       assert.ok(reference, `Missing integrated ${pkg} reference`);
       assert.match(reference, /data-reference/);
+      const rendered = reference.replace(/<!--.*?-->/g, "");
+      assert.match(rendered, /Worker disclosure \(catalog snapshot\):/);
+      if (["owner", "bots", "xcom"].includes(pkg)) assert.match(rendered, /Worker disclosure \(catalog snapshot\): none/);
+      if (pkg === "worker") assert.match(rendered, /Worker disclosure \(catalog snapshot\): worker_list, worker_status, worker_read/);
       for (const name of names) assert.ok(reference.includes(name), `Reference is missing ${name}`);
     }
     assert.doesNotMatch(canvasHtml, /Local links and Server processes/);

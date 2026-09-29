@@ -9,7 +9,7 @@ import type { InvocationContext } from "./operation.js";
 import { McpEventSubscriptions } from "./mcp-subscriptions.js";
 import { z } from "zod";
 import type { PackageConfig } from "./config.js";
-import { socketExposure } from "./exposure.js";
+import { socketExposure, currentWorkerCatalog } from "./exposure.js";
 import { forwardTimeout } from "./forward-timeout.js";
 import { LocalAuth } from "./local-auth.js";
 
@@ -131,10 +131,15 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
     const eventTools = (topics: string[]) => !workerIdentity && options.subscriptions && topics.length > 0 ? subscriptionTools : [];
     mcp.setRequestHandler(ListToolsRequestSchema, async () => {
       await checkAuthority();
+      if (workerIdentity) {
+        const current = await currentWorkerCatalog(root, name, env);
+        await checkAuthority();
+        return { tools: current.tools.map(tool => ({ ...tool, title: tool.annotations?.title })) };
+      }
       const { catalog: listed, exposure } = selection;
       const extra = eventTools(exposure.events);
       if (extra.some((tool) => listed.tools.some((item) => item.name === tool.name))) throw new Error(`${name} has an operation reserved for MCP event subscriptions`);
-      return { tools: [...listed.tools.filter((tool) => !workerIdentity || tool.annotations?.readOnlyHint).map((tool) => ({ ...tool, title: tool.annotations?.title })), ...extra] };
+      return { tools: [...listed.tools.map((tool) => ({ ...tool, title: tool.annotations?.title })), ...extra] };
     });
     mcp.setRequestHandler(CallToolRequestSchema, async ({ params }, extra) => {
       try {
@@ -142,8 +147,8 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
         const { catalog: listed, exposure } = selection;
         if (workerIdentity) {
           if (params.name.startsWith("events_")) throw new Error("worker MCP connections cannot subscribe Bot threads");
-          if (!listed.tools.some((tool) => tool.name === params.name && tool.annotations?.readOnlyHint))
-            throw new Error("worker MCP connections may call only read-only Package API operations");
+          if (!(await currentWorkerCatalog(root, name, env)).tools.some(tool => tool.name === params.name))
+            throw new Error("operation is not selected for Worker disclosure");
         }
         const meta = (params as { _meta?: unknown })._meta;
         const ids = meta && typeof meta === "object" && !Array.isArray(meta) ? meta as Record<string, unknown> : {};
@@ -173,12 +178,15 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
           return resultOf(result);
         }
         if (!exposure.operations.includes(params.name)) throw new Error(`operation ${params.name} is not available over mcp`);
+        if (workerIdentity) await checkAuthority();
         const result = await socketCall(socketPath(name, env), "tools/call", {
           name: params.name,
           arguments: params.arguments ?? {},
           invocation,
           resultFormat: "mcp",
         }, { signal: extra.signal, timeoutMs: forwardTimeout(name, params.name) });
+        if (workerIdentity && !(await currentWorkerCatalog(root, name, env)).tools.some(tool => tool.name === params.name))
+          throw new Error("Worker disclosure policy changed during the operation; result withheld");
         await checkAuthority();
         if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("operation returned a non-object result");
         return result as CallToolResult;
