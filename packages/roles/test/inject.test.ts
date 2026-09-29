@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
@@ -8,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { z } from "zod";
-import { operation, operatorHeaders, serveApi, serveSocket, socketCall, socketPath } from "@stack/api";
+import { operation, operatorHeaders, serveApi, serveSocket, socketCall, socketPath, socketSubscribe } from "@stack/api";
 import { startOpenCodeHost } from "../src/inject-opencode.js";
 
 const cli = fileURLToPath(new URL("../../../cli/dist/src/main.js", import.meta.url));
@@ -87,7 +87,7 @@ async function setup() {
   await mkdir(home); await mkdir(bin);
   await writeFile(join(home, "ambient"), "ordinary home untouched");
   for (const harness of ["claude", "codex", "opencode"]) { await writeFile(join(bin, harness), fixture); await chmod(join(bin, harness), 0o700); }
-  const env = { ...process.env, HOME: home, STACK_STATE_DIR: state, PATH: `${bin}:${process.env.PATH}`, CODEX_HOME: join(home, ".codex"),
+  const env = { ...process.env, HOME: home, STACK_STATE_DIR: state, STACK_INSTALL_BIN_DIR: bin, PATH: `${bin}:${process.env.PATH}`, CODEX_HOME: join(home, ".codex"),
     CLAUDE_CONFIG_DIR: join(home, ".claude"), XDG_DATA_HOME: join(home, "data"), XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state"), XDG_CACHE_HOME: join(home, "cache"),
     OPENCODE_TEST_HOME: home, OPENCODE_DB: join(home, "ordinary.db"), OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
     OPENCODE_CONFIG: join(home, "ambient.json"), OPENCODE_CONFIG_CONTENT: '{"plugins":["ambient"]}', OPENCODE_CLI_CONFIG_CONTENT: '{"plugins":["ambient"]}',
@@ -201,6 +201,44 @@ test("inject launches each native boundary with the selected bytes, private cred
       assert.equal(await readFile(join(f.env.CODEX_HOME, "auth.json"), "utf8"), '{"fixture":"never-real-auth"}');
     }
   } finally { await f.close(); }
+});
+
+test("Role shim API installs a real PATH command, preserves both argument regions, and refuses foreign or stale files", async () => {
+  const f = await setup();
+  const notices: string[] = [];
+  const subscription = await socketSubscribe(socketPath("roles", f.env), ["role_shims_changed"], (topic) => notices.push(topic));
+  try {
+    await populate(f);
+    const proposed = ["default", "--with-harness", "opencode", "--with-model=astra", "--", "opencode", "--model", "openai/gpt-6-astra#medium", "--yolo"];
+    const created = await f.call("role_shim_create", { name: "opencode-astra", args: proposed });
+    assert.equal(created.path, join(f.bin, "opencode-astra"));
+    assert.equal((await stat(created.path)).mode & 0o777, 0o700);
+    assert.deepEqual((await f.call("role_shim_list")).shims, [created]);
+    assert.deepEqual(created.args, proposed, "future native options are stored, not filtered by today's inject allowlist");
+    await assert.rejects(f.call("role_shim_create", { name: "opencode-astra", args: proposed }), /refusing to replace/);
+    await assert.rejects(f.call("role_shim_create", { name: "opencode", args: proposed }), /cannot replace/);
+    await assert.rejects(f.call("role_shim_create", { name: "escape", args: ["--", "bash"] }), /claude, codex or opencode/);
+    const args = ["Research É", "--with-harness=claude", "--", "claude", "--model", "test/model", "--output-format=json"];
+    const updated = await f.call("role_shim_update", { name: created.name, expectedRevision: created.revision, args });
+    await assert.rejects(f.call("role_shim_update", { name: created.name, expectedRevision: created.revision, args: proposed }), /stale/);
+    const result = await f.run(["--max-turns", "3", "--", "an argument with ' quotes"], {}, "opencode-astra");
+    assert.equal(result.code, 0, result.stderr);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.harness, "claude");
+    assert.deepEqual(report.argv.slice(-7), ["--model", "test/model", "--output-format=json", "--max-turns", "3", "--", "an argument with ' quotes"]);
+    assert.equal(report.instructions, instructions);
+    await symlink(join(f.bin, "claude"), join(f.bin, "foreign-shim"));
+    await assert.rejects(f.call("role_shim_create", { name: "foreign-shim", args }), /refusing to replace/);
+    await assert.rejects(f.call("role_shim_delete", { name: "foreign-shim", expectedRevision: updated.revision }), /not a Stack-owned/);
+    const disposable = await f.call("role_shim_create", { name: "claude-test", args });
+    await f.call("role_shim_delete", { name: disposable.name, expectedRevision: disposable.revision });
+    await assert.rejects(stat(disposable.path), { code: "ENOENT" });
+    await writeFile(updated.path, "#!/bin/sh\nexit 0\n");
+    assert.deepEqual((await f.call("role_shim_list")).shims, []);
+    await assert.rejects(f.call("role_shim_delete", { name: updated.name, expectedRevision: updated.revision }), /not a Stack-owned/);
+    assert.equal(await readFile(updated.path, "utf8"), "#!/bin/sh\nexit 0\n");
+    assert.deepEqual(notices, Array(4).fill("role_shims_changed"));
+  } finally { await subscription.close(); await f.close(); }
 });
 
 test("default selection is catalog-marked; empty Roles still isolate; invalid names and bypass modes fail before launch", async () => {

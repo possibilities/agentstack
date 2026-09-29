@@ -7,6 +7,7 @@ import { configuredMcpPackages, mcpPort, operation, workspaceRoot, type PackageA
 import { matchingProjects, serverMcpOrigins, roleMcpConfig, roleMcpConflict } from "./src/bundle.js";
 import { RoleStore, instructionLimitBytes, renderSegments, snapshotLimitChars, roleName, roleDescription } from "./src/store.js";
 import { mcpDefinition, mcpRecord, projectPath, resourceName, resourceDescription, skillBody, skillFiles, skillRecord, trustedProjectRecord } from "./src/resources.js";
+import { RoleShims, shimArgs, shimName } from "./src/shims.js";
 
 const id = z.uuid().describe("Stable Role record ID.");
 const revision = z.number().int().nonnegative().describe("Expected role revision; stale writes fail.");
@@ -52,7 +53,7 @@ const launchPreview = z.strictObject({
   snapshotLimitChars: count.describe("Largest complete Role JSON size a write may leave behind."),
 });
 
-export type RolesContext = { store: RoleStore; changed?: () => void; mcpOrigins?: readonly string[] };
+export type RolesContext = { store: RoleStore; shims: RoleShims; changed?: () => void; shimsChanged?: () => void; mcpOrigins?: readonly string[] };
 function summarize(result: z.infer<typeof launchSnapshot>): z.infer<typeof snapshot> {
   return { ...result, mcpServers: result.mcpServers.map(({ definition, ...record }) => ({ ...record, transport: definition.type })) };
 }
@@ -176,6 +177,32 @@ export const roleLaunchPreview = operation({
       snapshotLimitChars,
     };
   },
+});
+const shim = z.strictObject({ name: shimName, args: shimArgs, path: z.string(), revision: z.string().regex(/^[a-f0-9]{64}$/) });
+const shimRevision = shim.shape.revision.describe("SHA-256 of the installed script from role_shim_list; stale writes fail.");
+export const roleShimList = operation({
+  name: "role_shim_list", description: "List Stack-owned Role injection commands installed in Stack's command directory. Scripts are durable definitions; unrelated or edited files are not adopted. The directory defaults to ~/.local/bin, as in scripts/install.sh; STACK_INSTALL_BIN_DIR selects another directory for this server.",
+  input: z.strictObject({}), output: z.strictObject({ binDir: z.string(), shims: z.array(shim) }),
+  annotations: { title: "List Role shims", readOnlyHint: true },
+  async call(ctx: RolesContext) { return ctx.shims.list(); },
+});
+export const roleShimCreate = operation({
+  name: "role_shim_create", description: "Install an executable Role injection shim in Stack's command directory; never replace a file or symlink. Supply ordered arguments after 'stack roles inject', including -- and a supported harness. Invocation arguments append unchanged. Native options are checked at launch, not configuration. Roles resolve at launch. Requires an installed Stack checkout and command directory.",
+  input: z.strictObject({ name: shimName, args: shimArgs }), output: shim,
+  annotations: { title: "Install Role shim" },
+  async call(ctx: RolesContext, { name, args }) { const result = ctx.shims.create(name, args); ctx.shimsChanged?.(); return result; },
+});
+export const roleShimUpdate = operation({
+  name: "role_shim_update", description: "Replace exactly one Stack-owned shim if its installed script still matches the listed revision. Never adopts unrelated or edited commands. Existing processes keep their launch snapshot.",
+  input: z.strictObject({ name: shimName, expectedRevision: shimRevision, args: shimArgs }), output: shim,
+  annotations: { title: "Update Role shim" },
+  async call(ctx: RolesContext, { name, expectedRevision, args }) { const result = ctx.shims.update(name, expectedRevision, args); ctx.shimsChanged?.(); return result; },
+});
+export const roleShimDelete = operation({
+  name: "role_shim_delete", description: "Remove only a Stack-owned Role shim at the listed revision. Does not delete a Role, an unrelated command, or a running session.",
+  input: z.strictObject({ name: shimName, expectedRevision: shimRevision }), output: z.strictObject({ name: shimName }),
+  annotations: { title: "Remove Role shim", destructiveHint: true },
+  async call(ctx: RolesContext, { name, expectedRevision }) { ctx.shims.delete(name, expectedRevision); ctx.shimsChanged?.(); return { name }; },
 });
 export const categoryCreate = operation({
   name: "category_create", description: "Create an ordered category at the end of the role. Pass the current revision.",
@@ -303,21 +330,23 @@ export const projectReorder = operation({
   async call(ctx: RolesContext, { roleId, ids, expectedRevision }) { return changed(ctx, ctx.store.role(roleId).reorderTrustedProjects(expectedRevision, ids)); },
 });
 
-export const topics = { role_changed: "The role catalog, default, or any Role changed. Read roles_snapshot and refresh the selected Role after (re)subscribing." } as const;
+export const topics = { role_changed: "The role catalog, default, or any Role changed. Read roles_snapshot and refresh the selected Role after (re)subscribing.",
+  role_shims_changed: "A Stack-owned Role shim was installed, updated or removed. Read role_shim_list after (re)subscribing; manual PATH edits do not publish notices." } as const;
 
 export const api: PackageApi<RolesContext, keyof typeof topics> = {
-  operations: [rolesSnapshot, roleCreate, roleUpdate, roleSetDefault, roleSetWorkerDefault, roleDelete, roleInternalMcpList, roleInternalMcpUpdate, roleSnapshot, roleLaunchSnapshot, roleEditorSnapshot, rolePreview, roleLaunchPreview, categoryCreate, categoryUpdate, categoryDelete, categoryReorder,
+  operations: [rolesSnapshot, roleCreate, roleUpdate, roleSetDefault, roleSetWorkerDefault, roleDelete, roleInternalMcpList, roleInternalMcpUpdate, roleSnapshot, roleLaunchSnapshot, roleEditorSnapshot, rolePreview, roleLaunchPreview,
+    roleShimList, roleShimCreate, roleShimUpdate, roleShimDelete, categoryCreate, categoryUpdate, categoryDelete, categoryReorder,
     fragmentCreate, fragmentUpdate, fragmentDelete, fragmentReorder, fragmentMove, skillCreate, skillUpdate, skillDelete, skillReorder,
     mcpServerCreate, mcpServerUpdate, mcpServerDelete, mcpServerReorder,
     projectCreate, projectUpdate, projectDelete, projectReorder],
   events: {
     topics,
-    start(ctx, publish) { ctx.changed = () => publish("role_changed"); return () => { ctx.changed = undefined; }; },
+    start(ctx, publish) { ctx.changed = () => publish("role_changed"); ctx.shimsChanged = () => publish("role_shims_changed"); return () => { ctx.changed = undefined; ctx.shimsChanged = undefined; }; },
   },
   async createContext(env) {
     // The server serves MCP on its configured port; Bots also report the bound one.
     const ports = [mcpPort(env), Number(env.STACK_SERVER_MCP_PORT)].filter((port) => Number.isInteger(port) && port > 0);
-    return { store: new RoleStore(env.STACK_STATE_DIR ?? join(homedir(), ".local", "state", "stack")), mcpOrigins: ports.flatMap(serverMcpOrigins) };
+    return { store: new RoleStore(env.STACK_STATE_DIR ?? join(homedir(), ".local", "state", "stack")), shims: new RoleShims(env), mcpOrigins: ports.flatMap(serverMcpOrigins) };
   },
   async closeContext(ctx) { ctx.store.close(); },
 };

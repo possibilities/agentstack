@@ -140,7 +140,7 @@ test("remote control sessions receive only Scrape's read-only operations; fetchi
   }
 });
 
-test("remote UI cannot read arbitrary Brain share job IDs even with control scope", async () => {
+test("remote UI cannot read Brain share jobs or manage local Role shims even with control scope", async () => {
   const root = mkdtempSync(join(tmpdir(), "stack-remote-brain-"));
   const store = new AccessStore(root);
   const env = { STACK_STATE_DIR: root };
@@ -153,6 +153,15 @@ test("remote UI cannot read arbitrary Brain share job IDs even with control scop
       operation({ name: "jobs_show", description: "Read.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { return { ok: true }; } }),
       operation({ name: "share_read_states", description: "Trusted local read.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { shareReads++; return { ok: true }; } }),
     ], events: { topics: {} } });
+  const rolesDirectory = join(root, "packages", "roles"); mkdirSync(rolesDirectory, { recursive: true });
+  writeFileSync(join(rolesDirectory, "api.yaml"), "name: roles\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: [roles_snapshot, role_shim_list, role_shim_create]\n  events: [role_shims_changed]\n  description: WebSocket.\n");
+  let shimCalls = 0;
+  const roles = await serveSocket({ info: { name: "roles", description: "Demo.", transportDescription: "Socket.", path: socketPath("roles", env) }, context: {},
+    operations: [
+      operation({ name: "roles_snapshot", description: "Catalog.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { return { ok: true }; } }),
+      operation({ name: "role_shim_list", description: "Local PATH inventory.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { shimCalls++; return { ok: true }; } }),
+      operation({ name: "role_shim_create", description: "Local PATH write.", input: z.strictObject({}), output: ok, async call() { shimCalls++; return { ok: true }; } }),
+    ], events: { topics: { role_shims_changed: "Changed." } } });
   const key = join(root, "key.pem"), cert = join(root, "cert.pem");
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "1", "-subj", "/CN=localhost"], { stdio: "ignore" });
   const port = await freePort();
@@ -173,8 +182,18 @@ test("remote UI cannot read arbitrary Brain share job IDs even with control scop
     assert.equal((await send("tools/call", { name: "jobs_show", arguments: {} })).result.ok, true);
     assert.match((await send("tools/call", { name: "share_read_states", arguments: {} })).error.message, /not available/);
     assert.equal(shareReads, 0);
+    const rolesCall = async (method: string, params: Record<string, unknown>) => {
+      const response = frame(ws!);
+      ws!.send(JSON.stringify({ id: 2, method, params: { package: "roles", ...params } }));
+      return response;
+    };
+    assert.deepEqual((await rolesCall("tools/list", {})).result.tools.map((tool: { name: string }) => tool.name), ["roles_snapshot"]);
+    for (const name of ["role_shim_list", "role_shim_create"])
+      assert.match((await rolesCall("tools/call", { name, arguments: {} })).error.message, /not available/);
+    assert.match((await rolesCall("events/subscribe", { subscription: "s", topics: ["role_shims_changed"] })).error.message, /not available|selected|topic/i);
+    assert.equal(shimCalls, 0);
   } finally {
-    ws?.terminate(); await remote.close(); await backend.close(); store.close(); rmSync(root, { recursive: true, force: true });
+    ws?.terminate(); await remote.close(); await roles.close(); await backend.close(); store.close(); rmSync(root, { recursive: true, force: true });
   }
 });
 

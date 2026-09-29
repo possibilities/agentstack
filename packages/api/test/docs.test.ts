@@ -58,7 +58,7 @@ test("the api package serves structured documents for every workspace package", 
       const doc = found.get(pkg)!;
       for (const transport of doc.transports.filter((entry) => entry.type === "mcp" || entry.type === "websocket")) {
         const omitted = [...internal.filter((name) => !(pkg === "brain" && transport.type === "websocket" && name === "share_read_states")),
-          ...(pkg === "roles" && transport.type === "mcp" ? ["role_editor_snapshot", "role_launch_preview"] : [])];
+          ...(pkg === "roles" && transport.type === "mcp" ? ["role_editor_snapshot", "role_launch_preview", "role_shim_list", "role_shim_create", "role_shim_update", "role_shim_delete"] : [])];
         assert.deepEqual([...transport.operations].sort(), doc.operations.map((op) => op.name).filter((name) => !omitted.includes(name)).sort());
       }
     }
@@ -232,10 +232,10 @@ test("the api package serves structured documents for every workspace package", 
 
     const auth = found.get("auth") as PackageDoc;
     const roles = found.get("roles") as PackageDoc;
-    assert.deepEqual(Object.keys(roles.events), ["role_changed"]);
+    assert.deepEqual(Object.keys(roles.events).sort(), ["role_changed", "role_shims_changed"]);
     assert.deepEqual(roles.operations.map((operation) => operation.name).sort(), [
       "roles_snapshot", "role_create", "role_update", "role_set_default", "role_set_worker_default", "role_delete", "role_internal_mcp_list", "role_internal_mcp_update",
-      "role_preview", "role_launch_preview", "role_snapshot", "role_editor_snapshot", "role_launch_snapshot", "category_create", "category_delete", "category_reorder", "category_update",
+      "role_preview", "role_launch_preview", "role_snapshot", "role_editor_snapshot", "role_launch_snapshot", "role_shim_list", "role_shim_create", "role_shim_update", "role_shim_delete", "category_create", "category_delete", "category_reorder", "category_update",
       "fragment_create", "fragment_delete", "fragment_move", "fragment_reorder", "fragment_update",
       "skill_create", "skill_delete", "skill_reorder", "skill_update",
       "mcp_server_create", "mcp_server_delete", "mcp_server_reorder", "mcp_server_update",

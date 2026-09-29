@@ -8,7 +8,7 @@ import type { ContentArtifact, ContentCollection, ContentDocument, ContentItem, 
 import { scrapeCallError } from "./scrape";
 import type { ScrapeCanaryRun, ScrapePreset, ScrapeQueue, ScrapeReplay, ScrapeStatus } from "./types";
 import type { AgentBrowserInstallation, AgentBrowserStatus, BrowserController, BrowserHandoff, BrowserProfile, BrowserStatus, BrowserToolchain, HypemanInstallation } from "./types";
-import type { Account, AttentionItem, AttentionMessage, AttentionPage, AttentionRun, AttentionStatus, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, ServerResources, ServerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RoleCatalog, RoleInternalMcp, RoleLaunchPreview, RolePreview, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerListItem, WorkerLogin, WorkerRuntime, WorkerStatus } from "./types";
+import type { Account, AttentionItem, AttentionMessage, AttentionPage, AttentionRun, AttentionStatus, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, ServerResources, ServerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RoleCatalog, RoleInternalMcp, RoleLaunchPreview, RolePreview, RoleShims, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerListItem, WorkerLogin, WorkerRuntime, WorkerStatus } from "./types";
 import { acceptCatalog, acceptRoleRead, roleReadOf } from "./roles";
 import { brainCallError, jobViews, mergeJobs, submissionLabel, terminalStates, type BrainJobView, type CallError } from "./brain";
 import type { BrainAdmission, BrainJob, BrainJobRecord, BrainJobStats, BrainShareState, BrainSource, BrainStats, BrainStatus, BrainTag } from "./types";
@@ -53,6 +53,8 @@ export type StackState = Snapshot & {
   roleLaunch: Resource<RoleLaunchPreview>;
   /** The internal Stack MCP servers configured now, each with the selected Role's switch. */
   roleInternal: Resource<RoleInternalMcp>;
+  /** Local-only PATH inventory; no Roles window consumes it until the shim UI is requested. */
+  roleShims: Resource<RoleShims>;
   signalStatus: Resource<AttentionStatus>;
   /** Bumped when attention records may have changed (a new `changeSeq` or a reconnect); Signal views re-read on it. */
   signalGeneration: number;
@@ -151,7 +153,7 @@ const contentWrites = new Set(["collection_create", "collection_update", "collec
 const itemPage = 100;
 export const contentDocumentLimit = 200;
 
-type ResourceKey = ContentKey | "access" | "server" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "roleCatalog" | "role" | "rolePreview" | "roleLaunch" | "roleInternal" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts" | "signalStatus" | "scrapeStatus" | "scrapePresets" | "scrapeCanaries" | "scrapeQueue"
+type ResourceKey = ContentKey | "access" | "server" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "roleCatalog" | "role" | "rolePreview" | "roleLaunch" | "roleInternal" | "roleShims" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts" | "signalStatus" | "scrapeStatus" | "scrapePresets" | "scrapeCanaries" | "scrapeQueue"
   | "browserProfiles" | "browserControllers" | "browserHandoffs" | "browserToolchain"
   | "brainStatus" | "brainStats" | "brainTags" | "brainJobStats" | "brainJobs" | "brainSources"
   | "procSchedules" | "procRuns" | "procStatus";
@@ -246,7 +248,7 @@ export class StackStore {
       notificationFilter: { dismissed: false }, notifications: { data: null, error: null, at: null },
       notifyCounts: { data: null, error: null, at: null }, notificationRecords: {},
       roleId: null, role: { data: null, error: null, at: null }, rolePreview: { data: null, error: null, at: null },
-      roleLaunch: { data: null, error: null, at: null }, roleInternal: { data: null, error: null, at: null },
+      roleLaunch: { data: null, error: null, at: null }, roleInternal: { data: null, error: null, at: null }, roleShims: { data: null, error: null, at: null },
       signalStatus: { data: null, error: null, at: null }, signalGeneration: 0, signalRecords: { items: {}, messages: {}, runs: {} },
       contentDocuments: { data: null, error: null, at: null }, contentTags: { data: null, error: null, at: null },
       contentLibrary: { data: null, error: null, at: null }, contentItems: { data: null, error: null, at: null },
@@ -330,7 +332,10 @@ export class StackStore {
     open("signal", () => this.refresh("signalStatus"), () => this.refresh("signalStatus"), ["signal_changed"], { silent: ["signal_changed"] });
     // role_changed is an invalidation notice: the catalog changed, and so may the selected Role.
     const roleReads = () => { this.refresh("roleCatalog"); this.refreshRole(); };
-    open("roles", roleReads, roleReads, ["role_changed"]);
+    open("roles", () => { roleReads(); if (!this.state.remote) this.refresh("roleShims"); }, (topic) => {
+      if (topic === "role_shims_changed") this.refresh("roleShims");
+      else roleReads();
+    }, this.state.remote ? ["role_changed"] : ["role_changed", "role_shims_changed"]);
     const notify = () => { this.refresh("notifications"); this.refresh("notifyCounts"); this.refreshWatchedNotifications(); };
     open("notify", notify, notify, ["notify_changed"]);
     open("api", () => this.refresh("catalog"));
@@ -403,6 +408,7 @@ export class StackStore {
     }
     if (this.state.remote && ["access", "auth", "browse", "proc"].includes(pkg)) throw new Error(`${pkg} controls are available only on the local UI`);
     if (this.state.remote && pkg === "bots" && name.startsWith("voice_")) throw new Error("Voice calls are available only on the local UI");
+    if (this.state.remote && pkg === "roles" && name.startsWith("role_shim_")) throw new Error("Role shims are available only on the local UI");
     const channel = this.main.get(pkg);
     if (!channel || channel.status !== "open") throw new Error(`${pkg} WebSocket is not connected`);
     const request = channel.call<T>(name, args);
@@ -436,6 +442,7 @@ export class StackStore {
    */
   private applyRoleReply(name: string, result: unknown): void {
     const now = Date.now();
+    if (name === "role_shim_create" || name === "role_shim_update" || name === "role_shim_delete") this.refresh("roleShims");
     if (name === "role_editor_snapshot" && isRoleSnapshot(result)) {
       if (!acceptRoleRead(this.state.roleId, this.state.role.data && roleReadOf(this.state.role.data), roleReadOf(result))) return;
       this.set({ role: { data: result, error: null, at: now } });
@@ -1144,6 +1151,7 @@ export class StackStore {
       case "botDefaults": return call<BotSettings>("bots", "bot_defaults_get");
       case "voice": return call<{ call: VoiceCall | null }>("bots", "voice_status").then((result) => result.call);
       case "roleCatalog": return call<RoleCatalog>("roles", "roles_snapshot");
+      case "roleShims": return call<RoleShims>("roles", "role_shim_list");
       case "role": return call<RoleSnapshot>("roles", "role_editor_snapshot", { roleId: this.state.roleId });
       case "rolePreview": return call<RolePreview>("roles", "role_preview", { roleId: this.state.roleId });
       case "roleLaunch": return call<RoleLaunchPreview>("roles", "role_launch_preview", { roleId: this.state.roleId, cwds: botCwds(this.state.bots.data).split("\n").filter(Boolean) });

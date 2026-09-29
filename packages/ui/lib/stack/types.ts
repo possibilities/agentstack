@@ -499,6 +499,9 @@ export type RoleTrustedProject = { id: string; path: string; description: string
 export type Role = { id: string; name: string; description: string; revision: number; createdAt: number | null; updatedAt: number | null };
 /** `roles_snapshot`: Roles in creation order. `revision` is the catalog-wide edit fence, not any Role's. */
 export type RoleCatalog = { revision: number; defaultRoleId: string | null; workerDefaultRoleId: string | null; roles: Role[] };
+/** Local-only `role_shim_list`: installed executable wrappers, not Role records. */
+export type RoleShim = { name: string; args: string[]; path: string; revision: string };
+export type RoleShims = { binDir: string; shims: RoleShim[] };
 /** `role_editor_snapshot`: operator-only definitions; ordinary snapshots and write replies use MCP summaries. */
 export type RoleSnapshot = Role & { categories: RoleCategory[]; skills: RoleSkill[]; mcpServers: RoleMcpServer[]; trustedProjects: RoleTrustedProject[];
   /** Internal Package API names switched off for this Role. Not an inventory: an empty list means every configured server is on. */

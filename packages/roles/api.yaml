@@ -41,6 +41,10 @@ mcp:
 websocket:
   operations:
     - roles_snapshot
+    - role_shim_list
+    - role_shim_create
+    - role_shim_update
+    - role_shim_delete
     - role_create
     - role_update
     - role_set_default

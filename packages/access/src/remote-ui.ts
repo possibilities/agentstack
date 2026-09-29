@@ -176,13 +176,13 @@ export async function startRemoteUi(options: RemoteUiOptions, tls: { key: Buffer
           for (const name of safe) readOnly.add(`${pkg}/${name}`);
           // share_read_states accepts arbitrary job IDs; only Access's device route
           // filters those IDs through client-bound admission receipts.
-          const denied = (name: string) => pkg === "bots" && name.startsWith("voice_") || pkg === "brain" && name === "share_read_states";
+          const denied = (name: string) => pkg === "bots" && name.startsWith("voice_") || pkg === "brain" && name === "share_read_states" || pkg === "roles" && name.startsWith("role_shim_");
           return { operations: exposure.operations.filter(name => !denied(name) && (safe.has(name) || principal.scopes.includes("ui:control") && controls[pkg]?.(name))),
-            events: exposure.events.filter(name => !(pkg === "bots" && name === "voice_changed")) };
+            events: exposure.events.filter(name => !(pkg === "bots" && name === "voice_changed") && !(pkg === "roles" && name === "role_shims_changed")) };
         },
         mutation(pkg, operation) {
           this.check();
-          if (pkg === "access" || pkg === "auth" || pkg === "browse" || pkg === "proc" || pkg === "bots" && operation.startsWith("voice_") || pkg === "brain" && operation === "share_read_states") throw new AccessError("operation_refused", 403);
+          if (pkg === "access" || pkg === "auth" || pkg === "browse" || pkg === "proc" || pkg === "bots" && operation.startsWith("voice_") || pkg === "brain" && operation === "share_read_states" || pkg === "roles" && operation.startsWith("role_shim_")) throw new AccessError("operation_refused", 403);
           if (readOnly.has(`${pkg}/${operation}`)) return;
           // The gateway already selected the live operation, but a narrowed
           // grant must be re-evaluated before each mutating invocation.

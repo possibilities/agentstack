@@ -142,6 +142,10 @@ A named Stack-owned configuration with a stable ID and independent revision: ord
 
 A local operator invocation of `stack roles inject [default|role-name] -- <claude|codex|opencode> ...` that captures one Role's enabled skills, MCP connections and rendered instruction fragments for a native CLI. Omission or literal `default` selects the catalog default. Private capability delivery excludes ambient personal configuration while authentication remains native and independent of the Role. This invocation is neither a Bot nor a Worker; internal MCP connections use operator authority. _Avoid_: account selection, global Role installation, Worker launch, OS sandbox
 
+## Role shim
+
+An explicitly installed, Stack-owned executable in Stack's command directory (by default `~/.local/bin`) that runs `stack roles inject` with an exact configured argument vector and appends invocation arguments unchanged. The installed script is the durable definition; its content hash fences edits and removal. It resolves Role names and defaults when invoked, not when installed. Unrelated or manually edited commands are never adopted or replaced. Shim management is local operator control, not a remote UI or Worker capability. _Avoid_: ambient role overlay, Bot launch, implicit install
+
 ## Default Role
 
 The Role selected in the Role catalog for every later Bot launch and for new Workers that omit `roleId`. Selecting a Role for editing does not make it default. A fresh catalog has no Role until its first creation; afterward exactly one is default. The default cannot be deleted until another Role is selected. A session's `roleId` and `roleRevision` record the applied snapshot, not a mutable assignment.
