@@ -1,4 +1,4 @@
-/** Wire names checked against codexnk-v0.1.4 (f2905ff0), protocol.rs and v2/Thread.ts. */
+/** Wire names checked against codexnk-v0.1.7 (3aae20d1), protocol.rs and v2/Thread.ts. */
 export type RecordValue = Record<string, unknown>;
 export const object = (value: unknown): RecordValue => value && typeof value === "object" && !Array.isArray(value) ? value as RecordValue : {};
 export const string = (value: unknown): string | null => typeof value === "string" ? value : null;
