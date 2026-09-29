@@ -72,7 +72,9 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         record: { ...record }, fields: new Map(fields?.children.map((field) => [field.name, field])),
         related: [{ ref: { kind: "package", id: "access" }, label: "Access Package API" },
           ...("client_id" in record ? [{ ref: { kind: "access-client", id: record.client_id } as NodeRef, label: "Client" }] : []),
-          ...("grant_id" in record ? [{ ref: { kind: "access-grant", id: record.grant_id } as NodeRef, label: "Grant" }] : [])],
+          ...("grant_id" in record ? [{ ref: { kind: "access-grant", id: record.grant_id } as NodeRef, label: "Grant" }] : []),
+          ...("sponsor_credential_id" in record && record.sponsor_credential_id && state.access.data?.credentials.some((item) => item.id === record.sponsor_credential_id)
+            ? [{ ref: { kind: "access-credential", id: record.sponsor_credential_id } as NodeRef, label: "Sponsor credential" }] : [])],
         events: state.events.filter((event) => event.pkg === "access"),
       };
     }

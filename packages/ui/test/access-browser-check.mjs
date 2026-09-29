@@ -21,13 +21,25 @@ const env = { ...process.env, STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1"
 const now = Date.now();
 const data = {
   serverId: "00000000-0000-4000-8000-000000000001",
-  clients: [{ id: "device", label: "My phone", kind: "android", created: now, revoked: null }],
+  clients: [{ id: "device", label: "My phone", kind: "android", created: now, revoked: null },
+    { id: "extension", label: "Work Chrome", kind: "chrome", created: now, revoked: null },
+    { id: "remote", label: "Remote browser", kind: "browser", created: now, revoked: null },
+    { id: "mystery", label: "Mystery client", kind: "tablet", created: now, revoked: null },
+    { id: "laptop", label: "Laptop", kind: "desktop", created: now, revoked: null }],
   pairings: [{ id: "request", code: "ORCHID-GLASS-673428", label: "New phone", kind: "android", scopes: ["brain:share", "brain:status", "content:read"], created: now, expires: now + 600000, state: "pending" },
+    { id: "browser-request", code: "AMBER-RIVER-118204", label: "Browser request", kind: "browser", scopes: ["ui:view", "access:enroll"], created: now, expires: now + 600000, state: "pending" },
     { id: "expired", code: "EXPIRED-CODE", label: "Old request", kind: "chrome", scopes: ["brain:share"], created: now - 10000, expires: now - 1, state: "pending" }],
-  grants: [{ id: "grant", client_id: "device", network: "tailnet", scopes: ["brain:share", "brain:status"], operations: [], created: now, revoked: null, revision: 1 },
-    { id: "cloud", client_id: "device", network: "public-cloud", scopes: [], operations: ["content.document_get"], created: now, revoked: null, revision: 1 }],
+  grants: [{ id: "grant", client_id: "device", network: "tailnet", scopes: ["brain:share", "brain:status"], operations: [], created: now, revoked: null, revision: 1, enrollment_id: null, sponsor_credential_id: null },
+    { id: "cloud", client_id: "device", network: "public-cloud", scopes: [], operations: ["content.document_get"], created: now, revoked: null, revision: 1, enrollment_id: null, sponsor_credential_id: null },
+    { id: "sponsor-grant", client_id: "extension", network: "tailnet", scopes: ["access:enroll", "brain:share"], operations: [], created: now, revoked: null, revision: 3, enrollment_id: null, sponsor_credential_id: null },
+    { id: "browser-grant", client_id: "remote", network: "tailnet", scopes: ["access:enroll", "ui:view"], operations: [], created: now, revoked: null, revision: 1, enrollment_id: null, sponsor_credential_id: null },
+    { id: "mystery-grant", client_id: "mystery", network: "tailnet", scopes: ["brain:share"], operations: [], created: now, revoked: null, revision: 1, enrollment_id: null, sponsor_credential_id: null },
+    { id: "enrolled-grant", client_id: "laptop", network: "tailnet", scopes: ["brain:share"], operations: [], created: now, revoked: null, revision: 1, enrollment_id: "enrollment", sponsor_credential_id: "sponsor-credential" },
+    { id: "local-enrolled-grant", client_id: "laptop", network: "tailnet", scopes: ["content:read"], operations: [], created: now, revoked: null, revision: 1, enrollment_id: "local-enrollment", sponsor_credential_id: null }],
+  invitations: [], enrollments: [],
   credentials: [{ id: "credential", client_id: "device", grant_id: "grant", generation: 2, created: now, expires: now + 600000, revoked: null },
-    { id: "old-credential", client_id: "device", grant_id: "grant", generation: 1, created: now - 20000, expires: now - 1, revoked: null }],
+    { id: "old-credential", client_id: "device", grant_id: "grant", generation: 1, created: now - 20000, expires: now - 1, revoked: null },
+    { id: "sponsor-credential", client_id: "extension", grant_id: "sponsor-grant", generation: 1, created: now, expires: now + 600000, revoked: null }],
   audit: [], uiSessions: [], ingress: { host: "100.64.0.1", port: 8787, artifactPort: 8788, uiPort: 8789 },
 };
 const served = new Map(), calls = [], errors = [], external = [];
@@ -96,6 +108,7 @@ try {
     await panel.locator(":scope > .animate-ui-flash").waitFor({ state: "detached" });
   };
   await pairing.getByText("ORCHID-GLASS-673428").waitFor();
+  await page.getByText("Manual pairing approvals", { exact: true }).waitFor();
   assert.equal(await page.getByText("EXPIRED-CODE").count(), 0);
   for (const theme of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme: theme });
@@ -112,8 +125,17 @@ try {
   await pairing.getByRole("button", { name: "Approve matching code", exact: true }).click();
   await pairing.waitFor({ state: "hidden" });
   assert.deepEqual(calls.find((call) => call.name === "pairing_decide").input, { id: "request", code: "ORCHID-GLASS-673428", approve: true, scopes: ["brain:share", "brain:status"] });
+  // A browser pairing's requested enrollment scope is shown but cannot be approved.
+  const browserPairing = page.locator('[data-node="access-pairing:browser-request"]');
+  await reveal(browserPairing);
+  const pairingEnroll = browserPairing.getByRole("switch", { name: /^Enroll other devices/ });
+  assert.equal(await pairingEnroll.isChecked(), false); assert.equal(await pairingEnroll.isDisabled(), true);
+  await browserPairing.getByRole("button", { name: "Approve matching code", exact: true }).click();
+  await browserPairing.waitFor({ state: "hidden" });
+  assert.deepEqual(calls.filter((call) => call.name === "pairing_decide").at(-1).input, { id: "browser-request", code: "AMBER-RIVER-118204", approve: true, scopes: ["ui:view"] });
   await reveal(grant);
   await grant.getByRole("button", { name: "Edit permissions", exact: true }).click();
+  assert.equal(await grant.getByRole("switch", { name: /^Enroll other devices/ }).isDisabled(), false, "android may sponsor");
   await grant.getByRole("switch", { name: "Read Content" }).click();
   await grant.getByRole("button", { name: "Save permissions", exact: true }).click();
   await grant.getByRole("alert").getByText("Fixture permission update failed", { exact: true }).waitFor();
@@ -123,6 +145,57 @@ try {
   await grant.getByRole("button", { name: "Edit permissions", exact: true }).waitFor();
   assert.deepEqual(calls.filter((call) => call.name === "grant_update").at(-1).input, { id: "grant", expectedRevision: 1, scopes: ["brain:share", "brain:status", "content:read"], operations: [] });
   await grant.screenshot({ path: join(evidence, "grant-updated.png"), animations: "disabled" });
+  // Unknown kinds are never offered enrollment.
+  const mystery = page.locator('[data-node="access-grant:mystery-grant"]');
+  await reveal(mystery);
+  await mystery.getByRole("button", { name: "Edit permissions", exact: true }).click();
+  await mystery.getByRole("switch", { name: "Read Content", exact: true }).waitFor();
+  assert.equal(await mystery.getByRole("switch", { name: /^Enroll other devices/ }).count(), 0);
+  await mystery.getByRole("button", { name: "Cancel", exact: true }).click();
+  // A stored browser enrollment scope stays visible as ineffective, survives other edits, and can be removed but not restored.
+  const browserGrant = page.locator('[data-node="access-grant:browser-grant"]');
+  await reveal(browserGrant);
+  await browserGrant.getByText(/no effect for browser clients/).waitFor();
+  await browserGrant.getByRole("button", { name: "Edit permissions", exact: true }).click();
+  const browserEnroll = browserGrant.getByRole("switch", { name: /^Enroll other devices.*no effect for browser clients/ });
+  assert.equal(await browserEnroll.isChecked(), true); assert.equal(await browserEnroll.isDisabled(), false);
+  await browserGrant.getByRole("switch", { name: "Control remote UI", exact: true }).click();
+  await browserGrant.getByRole("button", { name: "Save permissions", exact: true }).click();
+  await browserGrant.getByRole("button", { name: "Edit permissions", exact: true }).waitFor();
+  assert.deepEqual(calls.filter((call) => call.name === "grant_update").at(-1).input.scopes, ["access:enroll", "ui:view", "ui:control"]);
+  await browserGrant.getByRole("button", { name: "Edit permissions", exact: true }).click();
+  await browserEnroll.click();
+  assert.equal(await browserGrant.getByRole("switch", { name: /^Enroll other devices/ }).isDisabled(), true);
+  await browserGrant.getByRole("button", { name: "Save permissions", exact: true }).click();
+  await browserGrant.getByRole("button", { name: "Edit permissions", exact: true }).waitFor();
+  assert.deepEqual(calls.filter((call) => call.name === "grant_update").at(-1).input.scopes, ["ui:view", "ui:control"]);
+  assert.equal(await browserGrant.getByText(/Enroll other devices/).count(), 0);
+  // Sponsor grants explain revision fencing and revocation reach.
+  const sponsorGrant = page.locator('[data-node="access-grant:sponsor-grant"]');
+  await reveal(sponsorGrant);
+  await sponsorGrant.getByRole("button", { name: "Edit permissions", exact: true }).click();
+  await sponsorGrant.getByText(/invalidates outstanding enrollment approvals/).waitFor();
+  await sponsorGrant.screenshot({ path: join(evidence, "sponsor-grant-edit.png"), animations: "disabled" });
+  await sponsorGrant.getByRole("button", { name: "Cancel", exact: true }).click();
+  await sponsorGrant.getByRole("button", { name: /^Revoke grant/ }).click();
+  await page.getByRole("alertdialog").getByText(/must be revoked separately/).waitFor();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Cancel", exact: true }).click();
+  await grant.getByRole("button", { name: /^Revoke grant/ }).click();
+  assert.equal(await page.getByRole("alertdialog").getByText(/must be revoked separately/).count(), 0, "non-sponsor grant omits enrollment note");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Cancel", exact: true }).click();
+  // Sponsor provenance links to the sponsoring credential; missing provenance adds no link.
+  const enrolled = page.locator('[data-node="access-grant:enrolled-grant"]');
+  await enrolled.getByRole("button", { name: /^Inspect / }).click();
+  const inspector = page.locator('[data-dock="right"]');
+  await inspector.getByText("sponsor-credential").first().waitFor();
+  await inspector.screenshot({ path: join(evidence, "sponsor-provenance.png"), animations: "disabled" });
+  await inspector.getByRole("button", { name: "Sponsor credential", exact: true }).click();
+  await page.locator('[data-node="access-credential:sponsor-credential"] > .animate-ui-flash').waitFor({ state: "attached" });
+  await page.locator('[data-node="access-grant:local-enrolled-grant"]').getByRole("button", { name: /^Inspect / }).click();
+  await inspector.getByText("local-enrollment").first().waitFor();
+  assert.equal(await inspector.getByRole("button", { name: "Sponsor credential", exact: true }).count(), 0);
+  assert.equal(await page.getByText(/manually paired/i).count(), 0);
+  await page.getByRole("button", { name: "Close inspector", exact: true }).click();
   assert.match(await page.locator('[data-node="access-credential:old-credential"]').innerText(), /Expired/);
   assert.match(await page.locator('[data-node="access-grant:cloud"]').innerText(), /Foundation only/);
   await reveal(client);
@@ -147,9 +220,9 @@ try {
   data.clients = []; data.grants = []; data.credentials = []; data.pairings = [];
   publish();
   await page.getByText("No paired clients", { exact: true }).waitFor();
-  for (const title of ["No pending approvals", "No grants", "No credentials", "No access activity"]) assert.equal(await page.getByText(title, { exact: true }).count(), 1);
+  for (const title of ["No pending manual pairings", "No grants", "No credentials", "No access activity"]) assert.equal(await page.getByText(title, { exact: true }).count(), 1);
   assert.deepEqual(errors, []); assert.deepEqual(external, []);
-  console.log(JSON.stringify({ ok: true, evidence, assertions: "expiry; scoped approval; grant revision/update/error/retry; client revoke confirm/cancel; dependent credential status; snapshot error/stale/empty; inspector routing; light/dark/narrow; no external requests or hydration errors" }, null, 2));
+  console.log(JSON.stringify({ ok: true, evidence, assertions: "expiry; scoped approval; kind-aware enrollment scope (browser pairing, unknown, stored browser scope kept/removed); sponsor revision and revocation notes; sponsor provenance link; grant revision/update/error/retry; client revoke confirm/cancel; dependent credential status; snapshot error/stale/empty; inspector routing; light/dark/narrow; no external requests or hydration errors" }, null, 2));
 } catch (error) {
   await browser?.contexts()[0]?.pages()[0]?.screenshot({ path: join(evidence, "failure.png"), fullPage: true }).catch(() => {});
   console.error(log, { errors, external }); throw error;
