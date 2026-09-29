@@ -283,9 +283,9 @@ test("a mixed round preserves accepted, rejected, and held outcomes", async () =
 
 test("legacy and replaced identities remain held beyond expiry without sending", async () => {
   await enqueue({ text: "Legacy" }, NOW, "https://same.example");
-  await enqueue({ text: "Original" }, NOW, "https://same.example#agentstack=original");
+  await enqueue({ text: "Original" }, NOW, "https://same.example#stack=original");
   const summary = await flushOutbox(() => { throw new Error("must not send"); }, {
-    now: NOW + OUTBOX_MAX_AGE_MS + 1, force: true, destination: "https://same.example#agentstack=replacement",
+    now: NOW + OUTBOX_MAX_AGE_MS + 1, force: true, destination: "https://same.example#stack=replacement",
   });
   assert.equal(summary.otherDestination, 2);
   assert.equal(summary.attempted, 0);

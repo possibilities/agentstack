@@ -3,8 +3,8 @@ import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { serveApi, socketCall, socketPath } from "@agentstack/api";
-import { AuthStore } from "@agentstack/auth";
+import { serveApi, socketCall, socketPath } from "@stack/api";
+import { AuthStore } from "@stack/auth";
 import { WorkerSupervisor } from "../src/supervisor.js";
 import { catalogModels, nativeDevinModels, optionsOf } from "../src/catalog.js";
 import { writeV2Credential } from "./v2-credential-fixture.js";
@@ -49,11 +49,11 @@ function codexBotAccount(dir: string): { bot: string; worker: string } {
 }
 
 test("ACP catalog reflects the exact account process and dependent effort choices without turns", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-worker-catalog-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-worker-catalog-"));
   const binary = join(dir, "fake-acp");
   await writeFile(binary, fake);
   await chmod(binary, 0o700);
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, AGENTSTACK_OPENCODE_BIN: binary, AGENTSTACK_DEVIN_BIN: binary };
+  const env = { ...process.env, STACK_STATE_DIR: dir, STACK_OPENCODE_BIN: binary, STACK_DEVIN_BIN: binary };
   const auth = await serveApi({ name: "auth", transport: "socket", env });
   const supervisor = new WorkerSupervisor(dir, env);
   try {
@@ -109,13 +109,13 @@ test("ACP catalog reflects the exact account process and dependent effort choice
 });
 
 test("catalog failure reports the discovery error for an account that cannot launch", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-worker-catalog-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-worker-catalog-"));
   const binary = join(dir, "dead-acp");
   await writeFile(binary, `#!/usr/bin/env node
 if (process.argv[2] === '--version') { console.log('fake-acp 2.0'); process.exit(0); }
 process.exit(1);`);
   await chmod(binary, 0o700);
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, AGENTSTACK_OPENCODE_BIN: binary };
+  const env = { ...process.env, STACK_STATE_DIR: dir, STACK_OPENCODE_BIN: binary };
   const auth = await serveApi({ name: "auth", transport: "socket", env });
   const supervisor = new WorkerSupervisor(dir, env);
   try {
@@ -157,11 +157,11 @@ test("catalog parsing preserves native IDs and grouped ACP options", () => {
 });
 
 test("operator disable and removal drain the exact account process before deleting credentials", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-worker-lifecycle-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-worker-lifecycle-"));
   const binary = join(dir, "fake-acp");
   await writeFile(binary, fake);
   await chmod(binary, 0o700);
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, AGENTSTACK_OPENCODE_BIN: binary };
+  const env = { ...process.env, STACK_STATE_DIR: dir, STACK_OPENCODE_BIN: binary };
   const auth = await serveApi({ name: "auth", transport: "socket", env });
   const workers = await serveApi({ name: "worker", transport: "socket", env });
   const call = (name: string, args: object) => socketCall(socketPath("auth", env), "tools/call", { name, arguments: args });

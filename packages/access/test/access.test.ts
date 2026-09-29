@@ -10,7 +10,7 @@ import { verifier } from "../src/network.js";
 
 const key = () => randomBytes(32).toString("base64url");
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-access-")); let now = Date.now();
+  const root = mkdtempSync(join(tmpdir(), "stack-access-")); let now = Date.now();
   let store = new AccessStore(root, () => now);
   return { get store() { return store; }, root, advance(ms: number) { now += ms; },
     reopen() { store.close(); store = new AccessStore(root, () => now); }, close() { store.close(); rmSync(root, { recursive: true, force: true }); } };
@@ -161,7 +161,7 @@ test("server identity fences admission and credential exchange before any side e
     const client = pair(f.store);
     const token = f.store.refresh(client.receipt.refreshToken, randomUUID(), "brain");
     const send = (path: string, serverId: string, payload: unknown) => serve(new Request(`https://test${path}`, {
-      method: "POST", headers: { authorization: `Bearer ${token.accessToken}`, "content-type": "application/json", "x-agentstack-server-id": serverId },
+      method: "POST", headers: { authorization: `Bearer ${token.accessToken}`, "content-type": "application/json", "x-stack-server-id": serverId },
       body: JSON.stringify(payload),
     }), peer);
     assert.equal((await send("/v1/share", randomUUID(), {})).status, 409);
@@ -181,7 +181,7 @@ test("ingress checks network on every route; duplicate admissions confer indepen
     const one = pair(f.store), two = pair(f.store), outsider = pair(f.store);
     const tokens = [one, two, outsider].map(p => f.store.refresh(p.receipt.refreshToken, randomUUID(), "brain").accessToken);
     const peer = { remoteAddress: "100.80.0.2", localAddress: "100.80.0.1", remotePort: 1 };
-    const req = (path: string, token: string, post = false) => new Request(`https://test${path}`, { method: post ? "POST" : "GET", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-agentstack-server-id": f.store.serverId }, ...(post ? { body: "{}" } : {}) });
+    const req = (path: string, token: string, post = false) => new Request(`https://test${path}`, { method: post ? "POST" : "GET", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-stack-server-id": f.store.serverId }, ...(post ? { body: "{}" } : {}) });
     for (const token of tokens.slice(0, 2)) assert.equal((await serve(req("/v1/share", token!, true), peer)).status, 200);
     for (const token of tokens.slice(0, 2)) assert.deepEqual((await (await serve(req("/v1/shares?job_ids=7,8", token!), peer)).json()).data.shares, [7]);
     assert.deepEqual((await (await serve(req("/v1/shares?job_ids=7", tokens[2]!), peer)).json()).data.shares, []);

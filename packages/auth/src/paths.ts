@@ -8,5 +8,5 @@ export function codexRuntimePath(): string {
 }
 
 export function stateDir(env: NodeJS.ProcessEnv = process.env): string {
-  return env.AGENTSTACK_STATE_DIR ?? join(homedir(), ".local", "state", "agentstack");
+  return env.STACK_STATE_DIR ?? join(homedir(), ".local", "state", "stack");
 }

@@ -1,5 +1,5 @@
 {
-  "name": "@agentstack/scrape",
+  "name": "@stack/scrape",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -17,7 +17,7 @@
   },
   "engines": { "node": ">=24" },
   "dependencies": {
-    "@agentstack/api": "workspace:*",
+    "@stack/api": "workspace:*",
     "cheerio": "1.2.0",
     "fast-xml-parser": "5.10.1",
     "markdown-it": "14.2.0",

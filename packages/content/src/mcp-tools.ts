@@ -13,7 +13,7 @@
  * state, and they are marked where they appear.
  *
  * Nothing in here imports the MCP SDK: `api.ts` hands these descriptions to
- * AgentStack's shared transports.
+ * Stack's shared transports.
  */
 
 import * as z from "zod/v4";

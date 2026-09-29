@@ -23,7 +23,7 @@ const fixture = async (state: string, id: string, parent: string | null, body: s
 };
 
 test("owned chat index scopes history, searches tool content, and pages raw records while stopped", async () => {
-  const state = await mkdtemp(join(tmpdir(), "agentstack-chats-"));
+  const state = await mkdtemp(join(tmpdir(), "stack-chats-"));
   let index: ChatIndex | undefined;
   try {
     const root = await fixture(state, rootId, null, "needle root chat");
@@ -62,7 +62,7 @@ test("owned chat index scopes history, searches tool content, and pages raw reco
 });
 
 test("legacy shared history admits only the adopted root and its private descendants", async () => {
-  const state = await mkdtemp(join(tmpdir(), "agentstack-legacy-chats-"));
+  const state = await mkdtemp(join(tmpdir(), "stack-legacy-chats-"));
   let index: ChatIndex | undefined;
   try {
     const shared = join(state, "history", "2025", "09", "25");
@@ -79,8 +79,8 @@ test("legacy shared history admits only the adopted root and its private descend
 });
 
 test("a symlinked history root cannot redirect indexing outside the Bot's state", async () => {
-  const state = await mkdtemp(join(tmpdir(), "agentstack-chats-root-"));
-  const external = await mkdtemp(join(tmpdir(), "agentstack-chats-outside-"));
+  const state = await mkdtemp(join(tmpdir(), "stack-chats-root-"));
+  const external = await mkdtemp(join(tmpdir(), "stack-chats-outside-"));
   let index: ChatIndex | undefined;
   try {
     await mkdir(join(state, "history"));
@@ -95,7 +95,7 @@ test("a symlinked history root cannot redirect indexing outside the Bot's state"
 });
 
 test("queue admits once, sends only while idle, and preserves an unknown dispatch fence across restart", async () => {
-  const state = await mkdtemp(join(tmpdir(), "agentstack-queue-"));
+  const state = await mkdtemp(join(tmpdir(), "stack-queue-"));
   const server = createServer();
   const wss = new WebSocketServer({ server });
   let status = "active";
@@ -149,7 +149,7 @@ test("queue admits once, sends only while idle, and preserves an unknown dispatc
 });
 
 test("chunked uploads resume by actual offset, validate bytes, and stay Bot-scoped", async () => {
-  const state = await mkdtemp(join(tmpdir(), "agentstack-chat-upload-"));
+  const state = await mkdtemp(join(tmpdir(), "stack-chat-upload-"));
   const uploads = new ChatUploads(state);
   const id = randomUUID();
   const bytes = Buffer.from([0, 1, 255, 128, 65, 0]);

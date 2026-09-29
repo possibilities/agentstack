@@ -6,16 +6,16 @@ import type { OwnedChild } from "./server.js";
 const require = createRequire(import.meta.url);
 
 export function uiPort(env: NodeJS.ProcessEnv = process.env): number {
-  const value = env.AGENTSTACK_UI_PORT;
+  const value = env.STACK_UI_PORT;
   const port = value === undefined ? 8745 : Number(value);
   if (value === "" || !Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error("AGENTSTACK_UI_PORT must be an integer from 1 to 65535");
+    throw new Error("STACK_UI_PORT must be an integer from 1 to 65535");
   }
   return port;
 }
 
 export function uiChild(port: number): OwnedChild {
-  const cwd = dirname(require.resolve("@agentstack/ui/package.json"));
+  const cwd = dirname(require.resolve("@stack/ui/package.json"));
   return {
     name: "ui",
     command: process.execPath,

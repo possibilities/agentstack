@@ -5,14 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { serveInspectorCatalog } from "../src/inspector-catalog.js";
-import { withLocalAuth, operatorHeaders } from "@agentstack/api";
+import { withLocalAuth, operatorHeaders } from "@stack/api";
 
 test("Inspector's read-only server file follows Package API configuration", { timeout: 15_000 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-inspector-catalog-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-inspector-catalog-"));
   const alpha = join(root, "packages", "alpha");
   await mkdir(alpha, { recursive: true });
   await writeFile(join(alpha, "api.yaml"), "name: alpha\ndescription: Alpha.\nmcp:\n  description: Alpha HTTP.\n  operations: all\n  events: all\n");
-  const catalog = await serveInspectorCatalog({ root, env: { AGENTSTACK_STATE_DIR: join(root, "state") }, mcpPort: 7823 });
+  const catalog = await serveInspectorCatalog({ root, env: { STACK_STATE_DIR: join(root, "state") }, mcpPort: 7823 });
   const names = async () => Object.keys((JSON.parse(await readFile(catalog.path, "utf8")) as { mcpServers: Record<string, unknown> }).mcpServers);
   try {
     assert.deepEqual(await names(), ["alpha"]);
@@ -23,7 +23,7 @@ test("Inspector's read-only server file follows Package API configuration", { ti
     const config = JSON.parse(await readFile(catalog.path, "utf8")) as { mcpServers: Record<string, { url: string; suppressNotificationStream: boolean; headers: Record<string, string> }> };
     assert.equal(config.mcpServers.beta?.url, "http://127.0.0.1:7823/mcp/beta");
     assert.equal(config.mcpServers.beta?.suppressNotificationStream, true);
-    const env = { AGENTSTACK_STATE_DIR: join(root, "state") };
+    const env = { STACK_STATE_DIR: join(root, "state") };
     assert.deepEqual(config.mcpServers.beta?.headers, operatorHeaders(env));
     withLocalAuth(env, auth => auth.rotate());
     await waitFor(async () => JSON.parse(await readFile(catalog.path, "utf8")).mcpServers.beta.headers.authorization === operatorHeaders(env).authorization);

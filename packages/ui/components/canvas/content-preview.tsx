@@ -57,7 +57,7 @@ function OpenLocally() {
   return (
     <p className="flex items-start gap-1.5 rounded-lg border border-dashed px-2.5 py-2 text-[0.7rem] text-pretty text-muted-foreground">
       <MonitorIcon className="mt-px size-3.5 shrink-0" />
-      {contentOrigins ? "Open this on the AgentStack machine to view it in a browser tab. Remote viewing needs an Access Content handoff, which this page can’t request."
+      {contentOrigins ? "Open this on the Stack machine to view it in a browser tab. Remote viewing needs an Access Content handoff, which this page can’t request."
         : "This server doesn’t know Content’s HTTP address, so there is no browser link. Its text and metadata still show here."}
     </p>
   );

@@ -5,7 +5,7 @@ The `bots` and `worker` Package APIs provide the read models for a UI of delegat
 ## Identity and ownership
 
 - A Bot owns exactly its `mainThreadId` and threads with a proven parent chain to that root. Use `(botId, threadId)` as a Chat key. Other top-level Codex threads on the same app-server are outside the Bot's tree.
-- A Worker is a separate ACP or Claude SDK conversation keyed by its durable Worker `id`. Its `botId` and originating `threadId` place it under the Chat that dispatched it. A local-operator Worker has no Bot-tree parent. Keep `sessionId` as native provider correlation, not as an AgentStack Worker ID. This field replaces the earlier ACP-only `acpSessionId`; existing saved ACP sessions retain their identity.
+- A Worker is a separate ACP or Claude SDK conversation keyed by its durable Worker `id`. Its `botId` and originating `threadId` place it under the Chat that dispatched it. A local-operator Worker has no Bot-tree parent. Keep `sessionId` as native provider correlation, not as an Stack Worker ID. This field replaces the earlier ACP-only `acpSessionId`; existing saved ACP sessions retain their identity.
 - A provider's task tool or child-session reference is evidence within a Worker conversation. It is not another managed Worker and does not imply that the backend exposes the child's full conversation or nested descendants.
 
 ## Bot subagent reads

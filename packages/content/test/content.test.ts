@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { serveApi, socketCall, socketPath } from "@agentstack/api";
+import { serveApi, socketCall, socketPath } from "@stack/api";
 import { api, contentNetworkConfig } from "../api.js";
 import { resolveObjectPath } from "../src/serve.js";
 import { listingPage } from "../src/render.js";
@@ -19,8 +19,8 @@ test("artifact listing links retain a scoped view prefix and encode entry names"
 });
 
 test("isolated vault supports documents, graph, tombstones and static artifacts", { timeout: 30_000 }, async () => {
-  const state = await mkdtemp(join(tmpdir(), "agentstack-wiki-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: state, AGENTSTACK_WIKI_PORT: "0", AGENTSTACK_WIKI_ARTIFACT_PORT: "0" };
+  const state = await mkdtemp(join(tmpdir(), "stack-wiki-"));
+  const env = { ...process.env, STACK_STATE_DIR: state, STACK_WIKI_PORT: "0", STACK_WIKI_ARTIFACT_PORT: "0" };
   const ctx = await api.createContext(env);
   const call = async (name: string, input: Record<string, unknown>) => {
     const op = api.operations.find((item) => item.name === name);
@@ -90,7 +90,7 @@ test("isolated vault supports documents, graph, tombstones and static artifacts"
 });
 
 test("artifact paths reject traversal and symlinks outside the content object", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-wiki-path-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-wiki-path-"));
   const object = join(root, "object");
   try {
     await mkdir(join(object, "sub"), { recursive: true });
@@ -108,8 +108,8 @@ test("artifact paths reject traversal and symlinks outside the content object", 
 });
 
 test("content operations are served over the Package API socket", { timeout: 30_000 }, async () => {
-  const state = await mkdtemp(join(tmpdir(), "agentstack-wiki-socket-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: state, AGENTSTACK_WIKI_PORT: "0", AGENTSTACK_WIKI_ARTIFACT_PORT: "0" };
+  const state = await mkdtemp(join(tmpdir(), "stack-wiki-socket-"));
+  const env = { ...process.env, STACK_STATE_DIR: state, STACK_WIKI_PORT: "0", STACK_WIKI_ARTIFACT_PORT: "0" };
   const served = await serveApi({ name: "content", transport: "socket", env });
   try {
     const socket = socketPath("content", env);
@@ -132,8 +132,8 @@ test("content operations are served over the Package API socket", { timeout: 30_
 });
 
 test("content mutations publish content_changed; reads announce only direct vault edits they notice", { timeout: 30_000 }, async () => {
-  const state = await mkdtemp(join(tmpdir(), "agentstack-content-events-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: state, AGENTSTACK_WIKI_PORT: "0", AGENTSTACK_WIKI_ARTIFACT_PORT: "0" };
+  const state = await mkdtemp(join(tmpdir(), "stack-content-events-"));
+  const env = { ...process.env, STACK_STATE_DIR: state, STACK_WIKI_PORT: "0", STACK_WIKI_ARTIFACT_PORT: "0" };
   const ctx = await api.createContext(env);
   const notices: string[] = [];
   const stop = await api.events!.start(ctx, (topic) => { notices.push(topic); });
@@ -180,8 +180,8 @@ test("content mutations publish content_changed; reads announce only direct vaul
 });
 
 test("collections store documents and binary media with fenced edits and shareable URLs", { timeout: 30_000 }, async () => {
-  const state = await mkdtemp(join(tmpdir(), "agentstack-content-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: state, AGENTSTACK_CONTENT_PORT: "0", AGENTSTACK_CONTENT_ARTIFACT_PORT: "0" };
+  const state = await mkdtemp(join(tmpdir(), "stack-content-"));
+  const env = { ...process.env, STACK_STATE_DIR: state, STACK_CONTENT_PORT: "0", STACK_CONTENT_ARTIFACT_PORT: "0" };
   const ctx = await api.createContext(env);
   const call = async (name: string, input: Record<string, unknown>) => {
     const op = api.operations.find((item) => item.name === name);
@@ -235,8 +235,8 @@ test("collections store documents and binary media with fenced edits and shareab
 });
 
 test("ungrouped items retain their IDs and links through moves and collection deletion", { timeout: 30_000 }, async () => {
-  const state = await mkdtemp(join(tmpdir(), "agentstack-ungrouped-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: state, AGENTSTACK_CONTENT_PORT: "0", AGENTSTACK_CONTENT_ARTIFACT_PORT: "0" };
+  const state = await mkdtemp(join(tmpdir(), "stack-ungrouped-"));
+  const env = { ...process.env, STACK_STATE_DIR: state, STACK_CONTENT_PORT: "0", STACK_CONTENT_ARTIFACT_PORT: "0" };
   const ctx = await api.createContext(env);
   const call = async (name: string, input: Record<string, unknown>) => {
     const op = api.operations.find((entry) => entry.name === name)!;
@@ -263,8 +263,8 @@ test("ungrouped items retain their IDs and links through moves and collection de
 });
 
 test("resumable staged bytes survive a context restart and support large items by digest", { timeout: 30_000 }, async () => {
-  const state = await mkdtemp(join(tmpdir(), "agentstack-stage-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: state, AGENTSTACK_CONTENT_PORT: "0", AGENTSTACK_CONTENT_ARTIFACT_PORT: "0" };
+  const state = await mkdtemp(join(tmpdir(), "stack-stage-"));
+  const env = { ...process.env, STACK_STATE_DIR: state, STACK_CONTENT_PORT: "0", STACK_CONTENT_ARTIFACT_PORT: "0" };
   const bytes = Buffer.alloc(300_000, 65);
   const digest = createHash("sha256").update(bytes).digest("hex");
   const call = async (ctx: Awaited<ReturnType<typeof api.createContext>>, name: string, input: Record<string, unknown>) => {
@@ -298,7 +298,7 @@ test("resumable staged bytes survive a context restart and support large items b
 });
 
 test("the original collection schema migrates IDs and byte references without requiring a collection later", { timeout: 30_000 }, async () => {
-  const state = await mkdtemp(join(tmpdir(), "agentstack-collection-migration-"));
+  const state = await mkdtemp(join(tmpdir(), "stack-collection-migration-"));
   const root = join(state, "wiki", "collections");
   await mkdir(join(root, "objects", "ba"), { recursive: true });
   const bytes = Buffer.from("legacy");
@@ -312,7 +312,7 @@ test("the original collection schema migrates IDs and byte references without re
   db.exec("INSERT INTO collections VALUES ('old', 'Old', '', 'now', 'now')");
   db.prepare("INSERT INTO items VALUES (?, 'old', 'legacy.txt', 'document', 'text/plain', 6, ?, 1, 'now', 'now')").run(id, digest);
   db.close();
-  const ctx = await api.createContext({ ...process.env, AGENTSTACK_STATE_DIR: state, AGENTSTACK_CONTENT_PORT: "0", AGENTSTACK_CONTENT_ARTIFACT_PORT: "0" });
+  const ctx = await api.createContext({ ...process.env, STACK_STATE_DIR: state, STACK_CONTENT_PORT: "0", STACK_CONTENT_ARTIFACT_PORT: "0" });
   try {
     assert.equal(ctx.collections.item(id).url, `/c/${id}`);
     ctx.collections.remove("old");
@@ -322,16 +322,16 @@ test("the original collection schema migrates IDs and byte references without re
 });
 
 test("Content backends cannot bind remotely; Access owns authenticated remote ingress", () => {
-  assert.throws(() => contentNetworkConfig({ AGENTSTACK_CONTENT_HOST: "0.0.0.0" }), /must bind 127/);
-  assert.throws(() => contentNetworkConfig({ AGENTSTACK_CONTENT_DOCUMENT_ORIGIN: "https://same.example", AGENTSTACK_CONTENT_ARTIFACT_ORIGIN: "https://same.example" }), /must differ/);
-  assert.throws(() => contentNetworkConfig({ AGENTSTACK_CONTENT_HOST: "0.0.0.0", AGENTSTACK_CONTENT_DOCUMENT_ORIGIN: "https://docs.example", AGENTSTACK_CONTENT_ARTIFACT_ORIGIN: "https://assets.example" }), /must bind 127/);
+  assert.throws(() => contentNetworkConfig({ STACK_CONTENT_HOST: "0.0.0.0" }), /must bind 127/);
+  assert.throws(() => contentNetworkConfig({ STACK_CONTENT_DOCUMENT_ORIGIN: "https://same.example", STACK_CONTENT_ARTIFACT_ORIGIN: "https://same.example" }), /must differ/);
+  assert.throws(() => contentNetworkConfig({ STACK_CONTENT_HOST: "0.0.0.0", STACK_CONTENT_DOCUMENT_ORIGIN: "https://docs.example", STACK_CONTENT_ARTIFACT_ORIGIN: "https://assets.example" }), /must bind 127/);
 });
 
 test("configured public origins drive static redirects without appearing in stored item identities", { timeout: 30_000 }, async () => {
-  const state = await mkdtemp(join(tmpdir(), "agentstack-public-origin-"));
-  const ctx = await api.createContext({ ...process.env, AGENTSTACK_STATE_DIR: state,
-    AGENTSTACK_CONTENT_PORT: "0", AGENTSTACK_CONTENT_ARTIFACT_PORT: "0",
-    AGENTSTACK_CONTENT_DOCUMENT_ORIGIN: "https://docs.example", AGENTSTACK_CONTENT_ARTIFACT_ORIGIN: "https://assets.example" });
+  const state = await mkdtemp(join(tmpdir(), "stack-public-origin-"));
+  const ctx = await api.createContext({ ...process.env, STACK_STATE_DIR: state,
+    STACK_CONTENT_PORT: "0", STACK_CONTENT_ARTIFACT_PORT: "0",
+    STACK_CONTENT_DOCUMENT_ORIGIN: "https://docs.example", STACK_CONTENT_ARTIFACT_ORIGIN: "https://assets.example" });
   try {
     const item = ctx.collections.put({ name: "picture.png", kind: "image", mediaType: "image/png", bytes: Buffer.from("image") });
     assert.equal(item.url, `/c/${item.id}`);
@@ -342,8 +342,8 @@ test("configured public origins drive static redirects without appearing in stor
 });
 
 test("collections survive a context restart without moving the legacy vault", { timeout: 30_000 }, async () => {
-  const state = await mkdtemp(join(tmpdir(), "agentstack-content-persist-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: state, AGENTSTACK_WIKI_PORT: "0", AGENTSTACK_WIKI_ARTIFACT_PORT: "0" };
+  const state = await mkdtemp(join(tmpdir(), "stack-content-persist-"));
+  const env = { ...process.env, STACK_STATE_DIR: state, STACK_WIKI_PORT: "0", STACK_WIKI_ARTIFACT_PORT: "0" };
   try {
     const first = await api.createContext(env);
     let id: string;

@@ -1,4 +1,4 @@
-package dev.agentstack.app.share
+package dev.stack.app.share
 
 import kotlin.test.assertEquals
 import kotlin.test.assertNull

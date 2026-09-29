@@ -20,12 +20,12 @@ async function fixture(root: string, id: string, identity: string, access: strin
 }
 
 test("Claude profiles isolate two native sign-ins, scrub ambient auth and bind reauthentication to identity", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-claude-accounts-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-claude-accounts-"));
   const store = new AuthStore(root);
   try {
     const a = store.prepareWorker("claude"), b = store.prepareWorker("claude");
     for (const account of [a, b]) await prepareAccountProfile(root, account, fileOnly);
-    const source = { HOME: "/original/home", AGENTSTACK_CLAUDE_BIN: ".local/bin/custom-claude", ANTHROPIC_API_KEY: "ambient",
+    const source = { HOME: "/original/home", STACK_CLAUDE_BIN: ".local/bin/custom-claude", ANTHROPIC_API_KEY: "ambient",
       ANTHROPIC_CUSTOM_HEADERS: "ambient", ANTHROPIC_PROFILE: "ambient", CLAUDE_CONFIG_DIR: "/shared",
       CLAUDE_SECURESTORAGE_CONFIG_DIR: "", CLAUDE_CODE_OAUTH_TOKEN: "ambient", CLAUDE_CODE_USE_BEDROCK: "1",
       CLAUDE_CODE_HOST_CREDS_FILE: "/shared", CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR: "3", CLAUDE_LOCAL_OAUTH_API_BASE: "https://bad.invalid",
@@ -33,8 +33,8 @@ test("Claude profiles isolate two native sign-ins, scrub ambient auth and bind r
     const envA = accountEnvironment(root, a, source), envB = accountEnvironment(root, b, source);
     assert.notEqual(envA.CLAUDE_CONFIG_DIR, envB.CLAUDE_CONFIG_DIR);
     assert.notEqual(envA.HOME, envB.HOME);
-    assert.equal(envA.AGENTSTACK_CLAUDE_BIN, "/original/home/.local/bin/custom-claude");
-    assert.equal(claudeRuntimePath({ HOME: "/original/home", AGENTSTACK_CLAUDE_BIN: "~/tools/claude" }), "/original/home/tools/claude");
+    assert.equal(envA.STACK_CLAUDE_BIN, "/original/home/.local/bin/custom-claude");
+    assert.equal(claudeRuntimePath({ HOME: "/original/home", STACK_CLAUDE_BIN: "~/tools/claude" }), "/original/home/tools/claude");
     assert.equal(envA.AGENTSTART_SHIM_BYPASS, "1");
     for (const key of Object.keys(source).filter((key) => /^(ANTHROPIC_|CLAUDE_|AWS_|GOOGLE_|AZURE_)/.test(key) && key !== "CLAUDE_CONFIG_DIR")) assert.equal(envA[key], undefined, key);
     assert.equal(envA.USER, claudeKeychainAccount());
@@ -63,7 +63,7 @@ test("Claude profiles isolate two native sign-ins, scrub ambient auth and bind r
 });
 
 test("Claude reads and deletes only its reserved keychain service and treats keychain errors as failures", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-claude-keychain-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-claude-keychain-"));
   const store = new AuthStore(root);
   try {
     const account = store.prepareWorker("claude");
@@ -99,7 +99,7 @@ test("Claude reads and deletes only its reserved keychain service and treats key
 });
 
 test("Claude rejects unsafe native evidence without exposing the bytes or following links", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-claude-private-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-claude-private-"));
   const store = new AuthStore(root);
   try {
     const account = store.prepareWorker("claude");
@@ -121,7 +121,7 @@ test("Claude rejects unsafe native evidence without exposing the bytes or follow
 });
 
 test("auth migrates the prior Worker provider constraint without losing account state or ordering", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-claude-migrate-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-claude-migrate-"));
   const db = new DatabaseSync(join(root, "configuration.sqlite"));
   db.exec("CREATE TABLE worker_accounts (id TEXT PRIMARY KEY, provider TEXT NOT NULL CHECK(provider IN ('codex','grok','devin')), enabled INTEGER NOT NULL DEFAULT 1, ready INTEGER NOT NULL DEFAULT 0, removing INTEGER NOT NULL DEFAULT 0, credential_digest TEXT)");
   db.prepare("INSERT INTO worker_accounts VALUES (?, 'grok', 0, 1, 1, 'prior-digest')").run(identityA);

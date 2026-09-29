@@ -1,5 +1,5 @@
 /**
- * Share history for the AgentStack Chrome client.
+ * Share history for the Stack Chrome client.
  *
  * The Share outbox holds only what has *not* been delivered: the moment the
  * ingress admits a share its entry is gone, so nothing in this extension could
@@ -8,7 +8,7 @@
  * `chrome.storage.local` so it survives the MV3 service worker.
  *
  * It is client state, like the outbox, and equally not the ledger. `held` here
- * is never *saved*: nothing exists in AgentStack until Admission answers, and
+ * is never *saved*: nothing exists in Stack until Admission answers, and
  * everything past that point is echoed from the ingress rather than decided
  * here. An entry's `job` is the identity Admission returned; `ledger` is
  * whatever the ingress last said became of that job.
@@ -16,8 +16,8 @@
 
 import { updateStorage } from "./storage.js";
 
-export const HISTORY_KEY = "agentstack.chrome.share.history.v1";
-const REMOVED_HISTORY_KEY = "agentstack.chrome.share.history-removed.v1";
+export const HISTORY_KEY = "stack.chrome.share.history.v1";
+const REMOVED_HISTORY_KEY = "stack.chrome.share.history-removed.v1";
 
 /** The popover shows a reading run, not an archive. */
 export const HISTORY_MAX_ENTRIES = 20;

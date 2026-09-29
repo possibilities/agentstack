@@ -7,9 +7,9 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { z } from "zod";
-import { operation, serveApi, serveMcp, serveSocket, socketCall, socketPath } from "@agentstack/api";
-import { accountEnvironment, type WorkerAccount } from "@agentstack/auth";
-import type { RoleSnapshot } from "@agentstack/roles";
+import { operation, serveApi, serveMcp, serveSocket, socketCall, socketPath } from "@stack/api";
+import { accountEnvironment, type WorkerAccount } from "@stack/auth";
+import type { RoleSnapshot } from "@stack/roles";
 import { WorkerManager } from "../src/manager.js";
 import { WorkerSupervisor } from "../src/supervisor.js";
 import { record } from "../src/acp.js";
@@ -21,7 +21,7 @@ const skillList = (command: string, args: string[], cwd: string, env: NodeJS.Pro
   execFile(command, args, { cwd, env, timeout: 15_000, maxBuffer: 200_000 }, (error, stdout) => error ? reject(error) : resolve(stdout)));
 
 test("isolated native Grok and Devin accounts finish Worker turns in owned worktrees", {
-  skip: process.env.AGENTSTACK_NATIVE_ACCOUNT_TURN !== "1", timeout: 240_000,
+  skip: process.env.STACK_NATIVE_ACCOUNT_TURN !== "1", timeout: 240_000,
 }, async (t) => {
   const root = await mkdtemp("/tmp/aswa-");
   const repo = join(root, "repo");
@@ -32,10 +32,10 @@ test("isolated native Grok and Devin accounts finish Worker turns in owned workt
   await writeFile(join(repo, "README.md"), "A disposable worker test repository.\n");
   await git(repo, ["add", "README.md"]);
   await git(repo, ["commit", "-m", "initial"]);
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: root };
+  const env = { ...process.env, STACK_STATE_DIR: root };
   const role: RoleSnapshot = { revision: 1, categories: [{ id: randomUUID(), title: "Test", description: "", enabled: true, createdAt: null, updatedAt: null,
     fragments: [{ id: randomUUID(), categoryId: randomUUID(), title: "Prime", description: "", enabled: true, body: "Follow the disposable test task.", createdAt: null, updatedAt: null }] }],
-    skills: [{ id: randomUUID(), name: "agentstack-smoke", description: "Describe test verification", body: "Describe the test result.", files: [], enabled: true }],
+    skills: [{ id: randomUUID(), name: "stack-smoke", description: "Describe test verification", body: "Describe the test result.", files: [], enabled: true }],
     mcpServers: [], trustedProjects: [] };
   const auth = await serveApi({ name: "auth", transport: "socket", env });
   const roles = await serveSocket({ info: { name: "roles", description: "Roles", transportDescription: "Socket", path: socketPath("roles", env) },
@@ -109,8 +109,8 @@ test("isolated native Grok and Devin accounts finish Worker turns in owned workt
       const catalog = await supervisor.catalog(accountId, true);
       assert.equal(catalog.stale, false);
       assert.ok(catalog.models.some((item) => item.id === model));
-      const marker = `AGENTSTACK_${provider.toUpperCase()}_WORKER_READY`;
-      const task = provider === "grok" ? `Load the agentstack-smoke skill, then reply exactly ${marker}. Do not change files.`
+      const marker = `STACK_${provider.toUpperCase()}_WORKER_READY`;
+      const task = provider === "grok" ? `Load the stack-smoke skill, then reply exactly ${marker}. Do not change files.`
         : `Reply exactly ${marker}. Do not call tools or change files.`;
       const started = await manager.start({ accountId, model, repo, task, requestId: randomUUID() });
       assert.notEqual(started.worker.phase, "failed");
@@ -126,12 +126,12 @@ test("isolated native Grok and Devin accounts finish Worker turns in owned workt
       assert.ok(status.worker.cwd?.includes(`/workers/worktrees/${started.worker.id}`));
       const account: WorkerAccount = { id: accountId, provider, enabled: true, ready: true, removing: false };
       if (provider === "grok") {
-        assert.ok(toolEvidence.some((item) => item.title === "skill" && item.skillId === "agentstack-smoke"));
+        assert.ok(toolEvidence.some((item) => item.title === "skill" && item.skillId === "stack-smoke"));
         assert.ok(toolEvidence.some((item) => item.status === "completed"));
       }
       else {
         const discovered = await skillList("devin", ["skills", "list"], status.worker.cwd!, accountEnvironment(root, account, env));
-        assert.match(discovered, /agentstack-smoke/);
+        assert.match(discovered, /stack-smoke/);
         assert.match(discovered, /prime/);
       }
       console.log(JSON.stringify({ provider, model, worktree: true, stopReason: status.turn.stopReason, reply: true, skillsVisible: true }));

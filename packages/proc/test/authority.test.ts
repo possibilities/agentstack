@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { botInstance, operation, serveSocket, socketCall, socketPath, type InvocationContext } from "@agentstack/api";
+import { botInstance, operation, serveSocket, socketCall, socketPath, type InvocationContext } from "@stack/api";
 import { z } from "zod";
 import { api } from "../api.js";
 import { ProcService } from "../src/service.js";
@@ -31,7 +31,7 @@ async function settled(service: ProcService, id: string) {
 
 async function fixture(t: import("node:test").TestContext) {
   const root = await mkdtemp(join(tmpdir(), "as-proc-auth-"));
-  const env = { AGENTSTACK_STATE_DIR: root };
+  const env = { STACK_STATE_DIR: root };
   const workspace = join(root, "workspace");
   await mkdir(join(workspace, "packages", "fixture"), { recursive: true });
   const expose = (names: string[]) => writeFile(join(workspace, "packages", "fixture", "api.yaml"),

@@ -10,20 +10,20 @@ import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { serveSocket, socketPath } from "@agentstack/api";
+import { serveSocket, socketPath } from "@stack/api";
 import { passthrough as pass, transport, authorizeBrowser } from "./browser-fixture.mjs";
 
 const require = createRequire(import.meta.url);
 const uiDir = dirname(dirname(fileURLToPath(import.meta.url)));
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed playwright module.");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
-const stateDir = await mkdtemp(join(tmpdir(), "opencode/agentstack-bench-"));
-const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_WEBSOCKET_PORT: "0", NEXT_TELEMETRY_DISABLED: "1" };
+const stateDir = await mkdtemp(join(tmpdir(), "opencode/stack-bench-"));
+const env = { ...process.env, STACK_STATE_DIR: stateDir, STACK_WEBSOCKET_PORT: "0", NEXT_TELEMETRY_DISABLED: "1" };
 // Fixed far-past timestamps keep SSR and hydration rendering the same coarse relative text.
 const fixtureAt = "2020-06-01T12:00:00.000Z";
 const op = (name, result) => ({ name, description: name, input: pass, output: pass, async call() { return result; } });
 const bots = Array.from({ length: 8 }, (_, i) => ({ id: `bot-${i + 1}`, pid: 100 + i, cwd: "/fixture/project", state: "running", account: "account-1", runningAccount: "account-1", mainThreadId: `thread-${i}`, url: null, recoveryIssue: null, roleRevision: 1, settings: { model: "fixture", reasoningEffort: "medium", sandboxMode: "read-only", approvalPolicy: "never" } }));
-const doc = (name, operation) => ({ name, packageName: `@agentstack/${name}`, description: `${name} fixture description`, events: { changed: "Fixture changed" }, eventScope: { required: true, description: "A current Bot ID", example: "bot-1" }, transports: [transport(socketPath(name, env), [operation], ["changed"], "socket")], operations: [{ name: operation, title: "Read fixture", description: "Read current fixture state", annotations: { readOnlyHint: true, destructiveHint: false }, inputSchema: { type: "object", properties: { id: { type: "string", description: "Current ID", minLength: 1 } }, required: ["id"], additionalProperties: false }, outputSchema: { oneOf: [{ type: "object", properties: { value: { type: "string" } } }, { type: "null" }], $defs: { complete: { type: "number" } } } }] });
+const doc = (name, operation) => ({ name, packageName: `@stack/${name}`, description: `${name} fixture description`, events: { changed: "Fixture changed" }, eventScope: { required: true, description: "A current Bot ID", example: "bot-1" }, transports: [transport(socketPath(name, env), [operation], ["changed"], "socket")], operations: [{ name: operation, title: "Read fixture", description: "Read current fixture state", annotations: { readOnlyHint: true, destructiveHint: false }, inputSchema: { type: "object", properties: { id: { type: "string", description: "Current ID", minLength: 1 } }, required: ["id"], additionalProperties: false }, outputSchema: { oneOf: [{ type: "object", properties: { value: { type: "string" } } }, { type: "null" }], $defs: { complete: { type: "number" } } } }] });
 const catalog = [doc("serve", "serve_status"), doc("bots", "bot_status"), doc("auth", "account_list")];
 const resourcesFixture = {
   observation: { snapshotId: "snap-1", capturedAt: fixtureAt, ageMs: 400, freshness: "fresh", lastAttemptAt: fixtureAt, error: null,
@@ -36,9 +36,9 @@ const resourcesFixture = {
   retention: { maxSamples: 120, maxProcessRecords: 50_000, retainedSamples: 1, oldestAttemptAt: fixtureAt, newestAttemptAt: fixtureAt, droppedSamples: 0 },
   runtime: { pid: 123, nodeVersion: process.version, uptimeSeconds: 60, heapUsedBytes: 24_000_000, heapTotalBytes: 40_000_000, externalBytes: 2_000_000, arrayBuffersBytes: 100_000, eventLoopUtilization: null },
   scope: null,
-  scopes: [{ id: "total", kind: "total", name: "AgentStack", component: null, botId: null, accountId: null, runtimeInstance: null, provider: null, shared: true,
+  scopes: [{ id: "total", kind: "total", name: "Stack", component: null, botId: null, accountId: null, runtimeInstance: null, provider: null, shared: true,
     metrics: { processCount: 3, rssBytes: 120_000_000, virtualBytes: 360_000_000, cpuTimeMs: 2_400, cpuPercent: 4.2, cpuMeasuredProcessCount: 3, threads: null } }],
-  processes: [{ id: "process:1:root", subtreeId: "subtree:1:root", pid: 123, ppid: 1, birth: "b1", name: "agentstack", parentId: null, ancestryParentId: null,
+  processes: [{ id: "process:1:root", subtreeId: "subtree:1:root", pid: 123, ppid: 1, birth: "b1", name: "stack", parentId: null, ancestryParentId: null,
     ownership: "root", component: "server", botId: null, accountId: null, runtimeInstance: null, provider: null, attribution: "component", attributedAt: null,
     cpuIntervalMs: 5_000, cpuStatus: "measured",
     self: { processCount: 1, rssBytes: 40_000_000, virtualBytes: 120_000_000, cpuTimeMs: 800, cpuPercent: 1.4, cpuMeasuredProcessCount: 1, threads: null },
@@ -245,7 +245,7 @@ try {
   await page.keyboard.up("Alt");
   const afterDrag = await point();
   assert.ok(Math.abs(afterDrag.x - beforeDrag.x - 50) < 1 && Math.abs(afterDrag.y - beforeDrag.y - 40) < 1, `drag ${JSON.stringify(beforeDrag)} -> ${JSON.stringify(afterDrag)}`);
-  await page.waitForFunction(() => JSON.parse(localStorage.getItem("agentstack.uix.bench.v2.fleet") ?? "{}").layout?.manual?.bots === true);
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("stack.uix.bench.v2.fleet") ?? "{}").layout?.manual?.bots === true);
   await page.reload();
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
   samePoint(afterDrag, await point());
@@ -312,14 +312,14 @@ try {
   // Reproduce physically overlapping windows without adding temporary production spaces.
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.evaluate(() => {
-    const saved = JSON.parse(localStorage.getItem("agentstack.uix.bench.v2.fleet"));
+    const saved = JSON.parse(localStorage.getItem("stack.uix.bench.v2.fleet"));
     saved.space = "another-logical-space"; // forces Fleet's direct URL to fit, rather than reuse this camera
     saved.layout.positions.chat = { x: 0, y: 0 };
     saved.layout.positions.bots = { x: 0, y: 0 };
     saved.layout.manual.chat = true;
     saved.layout.manual.bots = true;
     saved.layout.order = ["chat", "bots"];
-    localStorage.setItem("agentstack.uix.bench.v2.fleet", JSON.stringify(saved));
+    localStorage.setItem("stack.uix.bench.v2.fleet", JSON.stringify(saved));
   });
   await page.goto(`${origin}/`);
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
@@ -387,8 +387,8 @@ try {
   await page.screenshot({ path: join(evidence, "isolated-roles-bench.png") });
   // Upgrade a shared-world save without discarding manual layout or its viewed anchor.
   await page.evaluate(() => {
-    for (const key of Object.keys(localStorage)) if (key.startsWith("agentstack.uix.bench.v2.")) localStorage.removeItem(key);
-    localStorage.setItem("agentstack.uix.bench.v1", JSON.stringify({
+    for (const key of Object.keys(localStorage)) if (key.startsWith("stack.uix.bench.v2.")) localStorage.removeItem(key);
+    localStorage.setItem("stack.uix.bench.v1", JSON.stringify({
       space: "fleet", camera: { x: 100, y: 200, k: 0.8 }, anchor: { id: "bots", point: { x: 1000, y: 1000 } },
       layout: { positions: { bots: { x: 123, y: 234 }, accounts: { x: 66, y: 88 } }, manual: { bots: true, accounts: true },
         collapsed: { accounts: true }, sizes: { bots: { width: 500 } }, order: ["bots", "accounts"] },
@@ -399,8 +399,8 @@ try {
   samePoint({ x: 900, y: 1000 }, await point());
   await switchSpace("Accounts");
   assert.equal(await page.getByRole("button", { name: "Expand Accounts", exact: true }).count(), 1);
-  await page.waitForFunction(() => JSON.parse(localStorage.getItem("agentstack.uix.bench.v2.accounts") ?? "{}").layout?.manual?.accounts === true);
-  assert.deepEqual(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("agentstack.uix.bench.v2.accounts")).layout.positions).sort()), expectedWindows.Accounts);
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("stack.uix.bench.v2.accounts") ?? "{}").layout?.manual?.accounts === true);
+  assert.deepEqual(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("stack.uix.bench.v2.accounts")).layout.positions).sort()), expectedWindows.Accounts);
   assert.deepEqual(issues, []);
   console.log("PASS: isolated spaces at minimum zoom/pan, independent cameras/history, hidden focus exclusion, retained draft/collapse state, reduced motion and rapid navigation, legacy layout migration; desktop/mobile navigation, joint dock sizing/expanded reading, keyboard resize/Escape/focus return, retained inspection/reference, stacking, inspector scroll, pin persistence, schemas, search, deep links and manual placement reload; no page errors.");
   console.log(`Screenshots: ${evidence}`);

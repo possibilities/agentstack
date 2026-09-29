@@ -90,7 +90,7 @@ reference does not imply it has a dedicated Fleet control.
 
 ## Verification and delivery
 
-Run `pnpm --filter @agentstack/ui typecheck` and the focused UI tests for an
+Run `pnpm --filter @stack/ui typecheck` and the focused UI tests for an
 affected contract. `pnpm test` includes a production build and lifecycle tests.
 Build only in an isolated checkout while the main checkout serves a live server.
 Use disposable state for lifecycle or rendered checks.

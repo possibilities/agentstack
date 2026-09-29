@@ -1,4 +1,4 @@
-import { socketCall, socketPath, type InvocationContext } from "@agentstack/api";
+import { socketCall, socketPath, type InvocationContext } from "@stack/api";
 import { record, type AcpRequest } from "./acp.js";
 import { currentOption, effortOption, modelOption, optionsOf } from "./catalog.js";
 import { WorkerLedger, summarizeTurn, type WorkerRecord, type TurnSummary, type PendingRequest } from "./ledger.js";
@@ -308,7 +308,7 @@ export class WorkerManager {
       } finally { if (--creating.count === 0) this.creating.delete(runtime.instance); }
       await this.select(id, reserved.turn.id, runtime, result.sessionId as string, result, input.model, input.effort ?? null);
       this.prompt(id, reserved.turn.id, claim.instructions && account.provider !== "devin" && account.provider !== "claude"
-        ? `AgentStack Role instructions for this worker:\n${claim.instructions}\n\nTask:\n${input.task}` : input.task);
+        ? `Stack Role instructions for this worker:\n${claim.instructions}\n\nTask:\n${input.task}` : input.task);
     } catch {
       const issue = `${stage} preparation failed; inspect the owned worktree and account runtime`;
       this.ledger.setTurnPhase(reserved.turn.id, "failed", null, issue);

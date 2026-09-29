@@ -1,7 +1,7 @@
-package dev.agentstack.app.share
+package dev.stack.app.share
 
-import dev.agentstack.app.Settings
-import dev.agentstack.app.R
+import dev.stack.app.Settings
+import dev.stack.app.R
 
 import android.content.Context
 import androidx.work.Worker
@@ -34,8 +34,8 @@ class ShareUploadWorker(
             ShareScheduler.scheduleNext(applicationContext, outbox)
         } catch (error: OutboxReadException) {
             return Result.failure(workDataOf(
-                "agentstack.app.share.error" to "outbox_unreadable",
-                "agentstack.app.share.recovery" to applicationContext.getString(R.string.outbox_unreadable, error.fileName),
+                "stack.app.share.error" to "outbox_unreadable",
+                "stack.app.share.recovery" to applicationContext.getString(R.string.outbox_unreadable, error.fileName),
             ))
         }
         return Result.success()

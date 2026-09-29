@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { scheduledAuthority } from "@agentstack/api";
+import { scheduledAuthority } from "@stack/api";
 
 export const authority = scheduledAuthority;
 export type Authority = z.infer<typeof authority>;

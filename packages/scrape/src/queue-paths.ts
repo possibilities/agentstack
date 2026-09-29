@@ -20,9 +20,9 @@ export function resolveQueuePaths(
   env: NodeJS.ProcessEnv = process.env,
   home: string = homedir(),
 ): QueuePaths {
-  const stateRoot = env.AGENTSTACK_STATE_DIR !== undefined
-    ? validatedDataRoot("AGENTSTACK_STATE_DIR", env.AGENTSTACK_STATE_DIR)
-    : join(home, ".local", "state", "agentstack");
+  const stateRoot = env.STACK_STATE_DIR !== undefined
+    ? validatedDataRoot("STACK_STATE_DIR", env.STACK_STATE_DIR)
+    : join(home, ".local", "state", "stack");
   const dataHome = join(stateRoot, "scrape");
   return {
     dataHome,

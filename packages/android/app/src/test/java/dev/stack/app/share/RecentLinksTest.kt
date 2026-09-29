@@ -1,4 +1,4 @@
-package dev.agentstack.app.share
+package dev.stack.app.share
 
 import java.nio.file.Files
 import kotlin.test.assertEquals

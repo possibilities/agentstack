@@ -166,7 +166,7 @@ test("tags are normalized and blank collections dropped", () => {
 });
 
 test("token files are written with owner-only permissions", () => {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-share-token-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-share-token-"));
   try {
     const path = join(root, "nested", "share-token");
     const token = generateShareToken();
@@ -179,7 +179,7 @@ test("token files are written with owner-only permissions", () => {
 });
 
 test("a missing token file reports how to create one", () => {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-share-token-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-share-token-"));
   try {
     expect(() => readShareToken(join(root, "absent"))).toThrow(
       /share token not found/,

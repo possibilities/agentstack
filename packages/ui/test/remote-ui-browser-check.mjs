@@ -7,7 +7,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { serveApi, serveHttp, socketCall, socketPath } from "@agentstack/api";
+import { serveApi, serveHttp, socketCall, socketPath } from "@stack/api";
 import { AccessStore } from "../../access/dist/src/store.js";
 import { handler } from "../../access/dist/src/ingress.js";
 import { startRemoteUi } from "../../access/dist/src/remote-ui.js";
@@ -16,14 +16,14 @@ import { freePort, gatewayRoot, root, ui } from "./browser-fixture.mjs";
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const require = createRequire(import.meta.url);
-const dir = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agentstack-remote-ui-"));
+const dir = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "stack-remote-ui-"));
 const ports = await Promise.all(Array.from({ length: 6 }, () => freePort()));
 const [documentBackend, artifactBackend, documentPort, artifactPort, remotePort, nextPort] = ports;
 const origin = `https://127.0.0.1:${remotePort}`;
-const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1",
-  AGENTSTACK_CONTENT_PORT: String(documentBackend), AGENTSTACK_CONTENT_ARTIFACT_PORT: String(artifactBackend),
-  AGENTSTACK_ACCESS_PORT: String(documentPort), AGENTSTACK_ACCESS_ARTIFACT_PORT: String(artifactPort),
-  AGENTSTACK_ACCESS_UI_PORT: String(remotePort), AGENTSTACK_ACCESS_UI_ORIGIN: origin, AGENTSTACK_UI_PORT: String(nextPort) };
+const env = { ...process.env, STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1",
+  STACK_CONTENT_PORT: String(documentBackend), STACK_CONTENT_ARTIFACT_PORT: String(artifactBackend),
+  STACK_ACCESS_PORT: String(documentPort), STACK_ACCESS_ARTIFACT_PORT: String(artifactPort),
+  STACK_ACCESS_UI_PORT: String(remotePort), STACK_ACCESS_UI_ORIGIN: origin, STACK_UI_PORT: String(nextPort) };
 const contentCall = (name, args = {}) => socketCall(socketPath("content", env), "tools/call", { name, arguments: args });
 const cert = join(dir, "cert.pem"), key = join(dir, "key.pem");
 execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "1", "-subj", "/CN=localhost"], { stdio: "ignore" });
@@ -67,18 +67,18 @@ try {
   await pairingPage.getByLabel("Browser label").fill("Plain browser check");
   await pairingPage.getByRole("button", { name: "Request approval" }).click();
   await pairingPage.getByText(/Compare approval code:/).waitFor();
-  const persisted = await pairingPage.evaluate(() => JSON.parse(localStorage.getItem("agentstack-pairing")));
+  const persisted = await pairingPage.evaluate(() => JSON.parse(localStorage.getItem("stack-pairing")));
   assert.match(persisted.redemptionSecret, /^[A-Za-z0-9_-]{43}$/);
   const pendingPairing = store.inventory().pairings.find(entry => entry.id === persisted.id);
   assert.equal(pendingPairing.state, "pending");
   store.approve(persisted.id, pendingPairing.code, true, ["ui:view"]);
   await pairingPage.getByRole("button", { name: "Approved? Connect" }).click();
   await pairingPage.waitForURL(`${origin}/`);
-  assert.equal(await pairingPage.evaluate(() => localStorage.getItem("agentstack-pairing")), null, "redemption secret cleared after admission");
+  assert.equal(await pairingPage.evaluate(() => localStorage.getItem("stack-pairing")), null, "redemption secret cleared after admission");
   await pairingContext.close();
   const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1800, height: 1050 } });
-  await context.addCookies([{ name: "__Host-agentstack_ui", value: session.accessToken, url: origin, secure: true, httpOnly: true, sameSite: "Strict" },
-    { name: "__Host-agentstack_ui_refresh", value: session.refreshToken, url: origin, secure: true, httpOnly: true, sameSite: "Strict" }]);
+  await context.addCookies([{ name: "__Host-stack_ui", value: session.accessToken, url: origin, secure: true, httpOnly: true, sameSite: "Strict" },
+    { name: "__Host-stack_ui_refresh", value: session.refreshToken, url: origin, secure: true, httpOnly: true, sameSite: "Strict" }]);
   page = await context.newPage(); page.setDefaultTimeout(20_000);
   const errors = []; page.on("pageerror", error => errors.push(error.message));
   const response = await page.goto(`${origin}/content`);

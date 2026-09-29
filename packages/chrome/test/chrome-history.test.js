@@ -197,11 +197,11 @@ test("a held share never reads as saved", async () => {
     text: null,
     outcome: OUTCOME.HELD,
     job: null,
-    message: "Cannot reach AgentStack.",
+    message: "Cannot reach Stack.",
     ledger: null,
   });
   assert.equal(status.label, "Held");
-  assert.equal(status.detail, "Cannot reach AgentStack.");
+  assert.equal(status.detail, "Cannot reach Stack.");
   for (const word of ["saved", "queued", "accepted", "indexed"]) {
     assert.equal((`${status.label} ${status.detail}`.toLowerCase()).includes(word), false);
   }

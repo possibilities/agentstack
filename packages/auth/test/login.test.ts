@@ -29,7 +29,7 @@ async function prompted(login: LoginManager, id: string) {
 }
 
 test("device login imports only finished credentials into the secrets database", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-login-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-login-"));
   const store = new AuthStore(root);
   const login = new LoginManager(store, { bin: process.execPath, args: [fixture] });
   try {
@@ -60,7 +60,7 @@ test("device login imports only finished credentials into the secrets database",
 });
 
 test("a new sign-in supersedes a pending attempt and never imports cancelled credentials", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-login-restart-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-login-restart-"));
   const store = new AuthStore(root);
   const login = new LoginManager(store, { bin: process.execPath, args: [fixture] });
   const savedHang = process.env.FAKE_LOGIN_HANG;
@@ -92,7 +92,7 @@ test("a new sign-in supersedes a pending attempt and never imports cancelled cre
 });
 
 test("a cancelled sign-in ignores delayed prompt output and never imports", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-login-delayed-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-login-delayed-"));
   const store = new AuthStore(root);
   const login = new LoginManager(store, { bin: process.execPath, args: [fixture] });
   const savedDelayed = process.env.FAKE_LOGIN_DELAYED;
@@ -129,7 +129,7 @@ test("a cancelled sign-in ignores delayed prompt output and never imports", asyn
 });
 
 test("closing during an unfinished sign-in marks it failed and never imports", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-login-close-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-login-close-"));
   const store = new AuthStore(root);
   const login = new LoginManager(store, { bin: process.execPath, args: [fixture] });
   const savedHang = process.env.FAKE_LOGIN_HANG;
@@ -153,7 +153,7 @@ test("closing during an unfinished sign-in marks it failed and never imports", a
 });
 
 test("a sign-in that ignores SIGTERM is force-killed within the bounded fallback", { timeout: 20_000 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-login-stubborn-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-login-stubborn-"));
   const store = new AuthStore(root);
   const login = new LoginManager(store, { bin: process.execPath, args: [fixture] });
   const savedStubborn = process.env.FAKE_LOGIN_STUBBORN;
@@ -177,7 +177,7 @@ test("a sign-in that ignores SIGTERM is force-killed within the bounded fallback
 });
 
 test("parallel sign-in starts are linearized so only one attempt stays pending", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-login-parallel-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-login-parallel-"));
   const store = new AuthStore(root);
   const login = new LoginManager(store, { bin: process.execPath, args: [fixture] });
   const savedHang = process.env.FAKE_LOGIN_HANG;

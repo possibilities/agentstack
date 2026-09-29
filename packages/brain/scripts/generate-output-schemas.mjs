@@ -62,5 +62,5 @@ for (const [module, names] of Object.entries(roots)) {
 const path = resolve(root, "src/output-schemas.ts");
 const generated = `// Generated from domain types by scripts/generate-output-schemas.mjs.\nimport { z } from "zod";\n\n${declarations.join("\n\n")}\n`;
 if (process.argv.includes("--check")) {
-  if (readFileSync(path, "utf8") !== generated) throw new Error("Brain output schemas drifted; run pnpm --filter @agentstack/brain generate:schemas");
+  if (readFileSync(path, "utf8") !== generated) throw new Error("Brain output schemas drifted; run pnpm --filter @stack/brain generate:schemas");
 } else writeFileSync(path, generated);

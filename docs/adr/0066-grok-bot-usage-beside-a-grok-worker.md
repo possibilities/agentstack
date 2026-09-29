@@ -22,5 +22,5 @@ counts toward the window's total, on a machine with no signed-in Grok Worker.
 ## Consequences
 
 The Grok Bot login is still not identified with any Worker account; the
-Grok Worker is only the reason to observe it. Clearing AgentStack's accounts
-now clears Grok Bot from AgentStack's view without signing the CLI out.
+Grok Worker is only the reason to observe it. Clearing Stack's accounts
+now clears Grok Bot from Stack's view without signing the CLI out.

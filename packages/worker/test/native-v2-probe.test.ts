@@ -6,7 +6,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { accountEnvironment, accountRoot, prepareAccountProfile, type WorkerAccount } from "@agentstack/auth";
+import { accountEnvironment, accountRoot, prepareAccountProfile, type WorkerAccount } from "@stack/auth";
 import { AcpProcess, record } from "../src/acp.js";
 import { effortOption, modelOption, optionsOf } from "../src/catalog.js";
 
@@ -15,7 +15,7 @@ const list = (binary: string, cwd: string, env: NodeJS.ProcessEnv) => new Promis
     (error, stdout) => { if (error) reject(new Error("OpenCode V2 auth list failed")); else try { resolve(JSON.parse(stdout)); } catch { reject(new Error("OpenCode V2 auth list was not JSON")); } }));
 
 test("OpenCode V2 advertises account-specific ACP options for isolated native credentials", {
-  skip: process.env.AGENTSTACK_NATIVE_V2_PROBE !== "1", timeout: 90_000,
+  skip: process.env.STACK_NATIVE_V2_PROBE !== "1", timeout: 90_000,
 }, async () => {
   const binary = join(homedir(), ".local", "bin", "opencode");
   for (const [workerProvider, nativeProvider] of [["grok", "xai"], ["codex", "openai"]] as const) {

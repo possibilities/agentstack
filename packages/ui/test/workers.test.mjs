@@ -16,12 +16,12 @@ const { appendBySeq, conversation, filterWorkers, groupWorkers, parsePlan, parse
 const { WorkerWindowStore, primaryWorker } = await import("../lib/stack/worker-windows.ts");
 
 const session = (id, phase, extra = {}) => ({ id, botId: "bot-1", threadId: "t", accountId: "w1", provider: "claude", model: "opus", effort: "high",
-  repo: "/src/agentstack/", cwd: null, branch: null, baseCommit: null, sourceDirty: false, roleRevision: 1, sessionId: null, runtimeInstance: null,
+  repo: "/src/stack/", cwd: null, branch: null, baseCommit: null, sourceDirty: false, roleRevision: 1, sessionId: null, runtimeInstance: null,
   phase, currentTurnId: null, issue: null, createdAt: 1, updatedAt: 1, ...extra });
 const entry = (seq, turnId, kind, text) => ({ seq, workerId: "w", turnId, kind, text, at: seq });
 
 test("Workers are named by repository and short ID, and the local operator by role", () => {
-  assert.equal(workerLabel(session("0fd9d71a-8b46", "idle")), "agentstack · 0fd9d7");
+  assert.equal(workerLabel(session("0fd9d71a-8b46", "idle")), "stack · 0fd9d7");
   assert.equal(workerOrigin("_local_operator"), "Operator");
   assert.equal(workerOrigin("bot-3"), "bot-3");
 });
@@ -117,7 +117,7 @@ test("WorkerWindowStore follows Workers like chat windows and restores a valid a
   windows.setFilter({ botId: "bot-1" });
   assert.deepEqual(windows.getFilter(), { botId: "bot-1" });
 
-  saved.set("agentstack.uix.workers.v1", JSON.stringify([{ id: "worker-3", workerId: "x" }, { id: "bogus", workerId: "y" }, { id: "worker-3", workerId: "dup" }]));
+  saved.set("stack.uix.workers.v1", JSON.stringify([{ id: "worker-3", workerId: "x" }, { id: "bogus", workerId: "y" }, { id: "worker-3", workerId: "dup" }]));
   const restored = new WorkerWindowStore();
   restored.attach(storage);
   assert.deepEqual(restored.getWindows(), [{ id: "worker", workerId: null }, { id: "worker-3", workerId: "x" }]);

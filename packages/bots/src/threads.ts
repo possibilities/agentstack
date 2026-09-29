@@ -132,7 +132,7 @@ export async function withAppServer<T>(url: string, run: (call: (method: string,
   });
   try {
     await once(ws, "open", 5_000);
-    await call("initialize", { clientInfo: { name: "agentstack", version: "0.0.0" }, capabilities: { experimentalApi: true } });
+    await call("initialize", { clientInfo: { name: "stack", version: "0.0.0" }, capabilities: { experimentalApi: true } });
     ws.send(JSON.stringify({ method: "initialized" }));
     return await run(call);
   } finally {
@@ -182,7 +182,7 @@ export async function listActiveThreads(url: string, mainThreadId: string | null
     });
   try {
     await once(ws, "open", 1_000);
-    await call("initialize", { clientInfo: { name: "agentstack", version: "0.0.0" } });
+    await call("initialize", { clientInfo: { name: "stack", version: "0.0.0" } });
     ws.send(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }));
     const loaded = (await call("thread/loaded/list", {})) as { data?: unknown };
     const ids = Array.isArray(loaded.data) ? loaded.data.filter((id): id is string => typeof id === "string") : [];
@@ -239,7 +239,7 @@ export function watchThreadEvents(url: string, onChange: () => void, onNotificat
     if (stopped) return;
     const current = appServerSocket(url);
     ws = current;
-    current.on("open", () => current.send(JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "agentstack", version: "0.0.0" }, capabilities: { experimentalApi: true } } })));
+    current.on("open", () => current.send(JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "stack", version: "0.0.0" }, capabilities: { experimentalApi: true } } })));
     current.on("message", (raw) => {
       let message: { id?: unknown; result?: unknown; method?: unknown; params?: unknown };
       try {

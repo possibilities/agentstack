@@ -619,8 +619,8 @@ export type AgentBrowserStatus = {
   installed: boolean; version: string | null; location: string | null; latest: string | null; pending: string | null;
   checkedAt: string | null; checkError: string | null; policy: "manual" | "automatic";
 };
-export type AgentBrowserInstallation = { location: string; version: string | null; source: "agentstack" | "agentstart" };
-export type HypemanInstallation = { root: string; installed: boolean; selected: boolean; source: "agentstack" | "legacy" | "custom"; running: boolean; issue: string | null };
+export type AgentBrowserInstallation = { location: string; version: string | null; source: "stack" | "agentstart" };
+export type HypemanInstallation = { root: string; installed: boolean; selected: boolean; source: "stack" | "legacy" | "custom"; running: boolean; issue: string | null };
 export type BrowserToolchain = { status: BrowserStatus; agentBrowser: AgentBrowserStatus; detected: AgentBrowserInstallation[]; hypeman: HypemanInstallation[] };
 export type BrainJobState = "queued" | "running" | "retry_wait" | "blocked" | "failed" | "completed" | "excluded" | "cancelled";
 export type BrainSensitivity = "public" | "normal" | "sensitive" | "private";

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { AccountScope, Provider, Measurement, Subscription } from "./schema.js";
 import { codexUsage, grokUsage, devinUsage, claudeUsage, grokBotUsage } from "./schema.js";
-import { ClaudeCredentialError, readClaudeCredentials, type ClaudeCredentialOptions } from "@agentstack/auth";
+import { ClaudeCredentialError, readClaudeCredentials, type ClaudeCredentialOptions } from "@stack/auth";
 import type { z } from "zod";
 
 type RecordValue = Record<string, unknown>;

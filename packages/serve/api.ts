@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { operation, withLocalAuth, localOrigin, type PackageApi } from "@agentstack/api";
+import { operation, withLocalAuth, localOrigin, type PackageApi } from "@stack/api";
 import { statusSource, type StatusSource } from "./src/status.js";
 import { ResourceMonitor } from "./src/resources/monitor.js";
 import { serverResourcesInput, serverResourcesOutput, serverResourceHistoryInput, serverResourceHistoryOutput } from "./src/resources/schema.js";
@@ -28,9 +28,9 @@ export const serverLocalConnect = operation({
   async call(ctx: ServerContext, input, invocation) {
     if (invocation) throw new Error("local bootstrap requires private socket authority");
     const env = ctx.env ?? process.env;
-    const origin = input.origin ?? `http://127.0.0.1:${input.target === "ui" ? env.AGENTSTACK_UI_PORT ?? 8745 : env.AGENTSTACK_INSPECTOR_PORT ?? 6274}`;
+    const origin = input.origin ?? `http://127.0.0.1:${input.target === "ui" ? env.STACK_UI_PORT ?? 8745 : env.STACK_INSPECTOR_PORT ?? 6274}`;
     localOrigin(origin);
-    if (input.origin && !(input.target === "ui" && input.origin === env.AGENTSTACK_WEBSOCKET_ORIGIN)) throw new Error("development origin is not configured");
+    if (input.origin && !(input.target === "ui" && input.origin === env.STACK_WEBSOCKET_ORIGIN)) throw new Error("development origin is not configured");
     const token = withLocalAuth(env, auth => auth.bootstrap(origin, input.target));
     return { url: `${origin}/connect/local#${token}`, expiresInSeconds: 60 as const };
   },
@@ -67,7 +67,7 @@ export const serverStatus = operation({
 
 export const serverResources = operation({
   name: "serve_resources",
-  description: "Read cached CPU, memory and process-tree observations for AgentStack, components, Bots, accounts, observed Worker runtimes or individual processes/subtrees. Pin snapshotId when paging. Costs overlap across scope kinds; RSS is not unique RAM. Unknown/expired IDs are errors. No collection is triggered by a read.",
+  description: "Read cached CPU, memory and process-tree observations for Stack, components, Bots, accounts, observed Worker runtimes or individual processes/subtrees. Pin snapshotId when paging. Costs overlap across scope kinds; RSS is not unique RAM. Unknown/expired IDs are errors. No collection is triggered by a read.",
   input: serverResourcesInput, output: serverResourcesOutput,
   annotations: { title: "Server resource snapshot", readOnlyHint: true },
   async call(ctx: ServerContext, input) { return ctx.resources.resources(input); },

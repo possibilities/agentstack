@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { serveApi, socketCall, socketSubscribe } from "@agentstack/api";
+import { serveApi, socketCall, socketSubscribe } from "@stack/api";
 import { AuthStore } from "../src/store.js";
 import { accountRoot, prepareAccountProfile } from "../src/worker-accounts.js";
 
@@ -14,7 +14,7 @@ const fakeLogin = fileURLToPath(new URL("../../test/fixtures/fake-login.mjs", im
 
 test("a scheduled Bot cannot acquire operator-only account authority", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "as-auth-scheduled-"));
-  const served = await serveApi({ name: "auth", transport: "socket", env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir } });
+  const served = await serveApi({ name: "auth", transport: "socket", env: { ...process.env, STACK_STATE_DIR: stateDir } });
   try {
     await assert.rejects(socketCall(served.socketPath!, "tools/call", { name: "account_set_enabled", arguments: {
       id: "00000000-0000-4000-8000-000000000001", enabled: false,
@@ -31,8 +31,8 @@ function call(socket: string, name: string, args: Record<string, unknown> = {}):
 }
 
 test("auth serves accounts and device sign-in on its namespaced socket", { timeout: 60_000 }, async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-auth-api-"));
-  const home = await mkdtemp(join(tmpdir(), "agentstack-auth-home-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-auth-api-"));
+  const home = await mkdtemp(join(tmpdir(), "stack-auth-home-"));
   const savedHome = process.env.HOME;
   process.env.HOME = home;
   await mkdir(join(home, ".local", "libexec", "codexnk"), { recursive: true });
@@ -41,7 +41,7 @@ test("auth serves accounts and device sign-in on its namespaced socket", { timeo
   const served = await serveApi({
     name: "auth",
     transport: "socket",
-    env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir },
+    env: { ...process.env, STACK_STATE_DIR: stateDir },
   });
   try {
     assert.equal(served.socketPath, join(stateDir, "sockets", "auth.sock"));
@@ -177,7 +177,7 @@ async function nativeCodexLogin(stateDir: string, id: string, identity: string):
 }
 
 test("each Codex Bot account has one paired Codex Worker, created and removed with it", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-auth-paired-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-auth-paired-"));
   const store = new AuthStore(stateDir);
   const matching = store.addAccount(botLogin("native-a"));
   const unmatched = store.addAccount(botLogin("native-b"));
@@ -201,7 +201,7 @@ test("each Codex Bot account has one paired Codex Worker, created and removed wi
     socket.end(`${JSON.stringify({ id, result: { structuredContent: {} } })}\n`);
   }));
   await new Promise<void>((resolve) => workersApi.listen(join(stateDir, "sockets", "worker.sock"), resolve));
-  const served = await serveApi({ name: "auth", transport: "socket", env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir } });
+  const served = await serveApi({ name: "auth", transport: "socket", env: { ...process.env, STACK_STATE_DIR: stateDir } });
   const request = (name: string, args: Record<string, unknown> = {}) => call(served.socketPath ?? "", name, args);
   type Listed = { accounts: Array<{ id: string; ready?: boolean; linkedAccounts: Array<{ scope: string; id: string }> }> };
   const workers = async () => (await request("worker_account_list") as Listed).accounts;
@@ -236,11 +236,11 @@ test("each Codex Bot account has one paired Codex Worker, created and removed wi
 });
 
 test("auth subscription ends when the connection drops and shutdown does not hang", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-auth-sub-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-auth-sub-"));
   const served = await serveApi({
     name: "auth",
     transport: "socket",
-    env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir },
+    env: { ...process.env, STACK_STATE_DIR: stateDir },
   });
   try {
     const received: string[] = [];

@@ -46,7 +46,7 @@ export const resourceHostSchema = z.object({
   uptimeSeconds: value.describe("Host uptime at capture time."),
   totalMemoryBytes: value, freeMemoryBytes: value,
   loadAverage: z.array(z.number().nonnegative()).length(3).nullable(),
-}).describe("Host-wide OS context, not AgentStack consumption or cgroup capacity. Free memory is not available/reclaimable memory.");
+}).describe("Host-wide OS context, not Stack consumption or cgroup capacity. Free memory is not available/reclaimable memory.");
 export const domainStatusSchema = z.object({
   source: z.enum(["bots", "worker"]), capturedAt: z.string().nullable(),
   error: z.enum(["source_unavailable", "invalid_source"]).nullable(),

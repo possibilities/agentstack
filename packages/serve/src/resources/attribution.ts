@@ -159,7 +159,7 @@ export function attribute(collection: Collection, roots: ResourceRoots, domains:
     }
   }
 
-  const scopes = new Map<string, ResourceScope>([["total", scope("total", "total", "AgentStack")]]);
+  const scopes = new Map<string, ResourceScope>([["total", scope("total", "total", "Stack")]]);
   const members = new Map<string, Set<string>>([["total", new Set(processes.keys())]]);
   const include = (group: ResourceScope, process: ResourceProcess) => {
     if (!scopes.has(group.id)) scopes.set(group.id, group);

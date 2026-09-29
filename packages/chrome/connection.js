@@ -1,6 +1,6 @@
-/** AgentStack-wide connection. All refreshes run in the service worker so an
+/** Stack-wide connection. All refreshes run in the service worker so an
  * options page and an outbox flush cannot race rotating credentials. */
-export const CONNECTION_KEY = "agentstack.connection.v1";
+export const CONNECTION_KEY = "stack.connection.v1";
 let queue = Promise.resolve();
 const serial = run => { const next = queue.then(run, run); queue = next.catch(() => {}); return next; };
 const read = async () => {
@@ -20,7 +20,7 @@ export async function verifyIdentity(server, serverId) {
 async function request(server, path, data, token, serverId) {
   if (serverId) await verifyIdentity(server, serverId);
   const response = await fetch(`${server}${path}`, { method: "POST", redirect: "error", signal: AbortSignal.timeout(15_000),
-    headers: { "content-type": "application/json", ...(serverId ? { "X-AgentStack-Server-ID": serverId } : {}), ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(data) });
+    headers: { "content-type": "application/json", ...(serverId ? { "X-Stack-Server-ID": serverId } : {}), ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(data) });
   const body = await response.json();
   if (!response.ok || !body.ok) throw new Error(body.error?.code ?? `HTTP ${response.status}`);
   if (serverId && body.data.serverId && body.data.serverId !== serverId) throw new Error("server_identity_changed");
@@ -28,7 +28,7 @@ async function request(server, path, data, token, serverId) {
 }
 async function access(audience = "brain") {
   const state = await read();
-  if (!state.refreshToken) throw new Error("Pair this client in AgentStack System → Access.");
+  if (!state.refreshToken) throw new Error("Pair this client in Stack System → Access.");
   if (!state.serverId) throw new Error("Pair again to pin the server identity");
   await verifyIdentity(state.serverUrl, state.serverId);
   if (!state.pendingRefresh && state.tokens?.[audience]?.expiresAt > Date.now() + 30_000) return { serverUrl: state.serverUrl, serverId: state.serverId, token: state.tokens[audience].accessToken };
@@ -52,7 +52,7 @@ export function connectionMessage(message) {
     if (message.action === "pair") {
       const url = new URL(message.serverUrl);
       const serverUrl = url.origin;
-      if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/") throw new Error("Use an HTTPS AgentStack origin.");
+      if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/") throw new Error("Use an HTTPS Stack origin.");
       const old = await read();
       if (old.refreshToken) throw new Error("Disconnect first. If revocation cannot be confirmed, explicitly Forget locally and revoke the old credential in System → Access.");
       // An explicit Pair while connected starts a new request. A pending Pair
@@ -84,7 +84,7 @@ export function connectionMessage(message) {
     if (message.action === "check") {
       const config = await access();
       const current = await read();
-      const response = await fetch(`${config.serverUrl}/v1/access/me`, { redirect: "error", signal: AbortSignal.timeout(15_000), headers: { authorization: `Bearer ${config.token}`, "X-AgentStack-Server-ID": current.serverId } });
+      const response = await fetch(`${config.serverUrl}/v1/access/me`, { redirect: "error", signal: AbortSignal.timeout(15_000), headers: { authorization: `Bearer ${config.token}`, "X-Stack-Server-ID": current.serverId } });
       const body = await response.json();
       if (!response.ok || !body.ok) throw new Error(body.error?.code ?? "server_unavailable");
       if (body.data.serverId !== current.serverId) throw new Error("server_identity_changed");

@@ -31,7 +31,7 @@ export function accountEnvironment(stateDir: string, account: WorkerAccount, sou
     env.HOME = root;
     if (account.provider === "claude") {
       env.CLAUDE_CONFIG_DIR = claudeConfigRoot(stateDir, account.id);
-      env.AGENTSTACK_CLAUDE_BIN = claudeRuntimePath(source);
+      env.STACK_CLAUDE_BIN = claudeRuntimePath(source);
       env.AGENTSTART_SHIM_BYPASS = "1";
       env.USER = env.LOGNAME = claudeKeychainAccount();
     } else {

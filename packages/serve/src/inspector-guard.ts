@@ -1,5 +1,5 @@
 import { Server, type IncomingMessage, type ServerResponse } from "node:http";
-import { localBrowserResponse, localCookie, localOrigin, withLocalAuth } from "@agentstack/api";
+import { localBrowserResponse, localCookie, localOrigin, withLocalAuth } from "@stack/api";
 
 // Pinned Inspector 2.7 injects its API credential in index.html. Guard every
 // request BEFORE the dependency's router (including static/bootstrap responses).

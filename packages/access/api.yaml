@@ -1,5 +1,5 @@
 name: access
-description: Shared AgentStack client pairing, grants, revocable credentials and audit. Device ingress requires verified direct tailnet traffic on every request.
+description: Shared Stack client pairing, grants, revocable credentials and audit. Device ingress requires verified direct tailnet traffic on every request.
 socket:
   description: Same-user trusted approval, inventory and revocation authority.
 websocket:

@@ -3,13 +3,13 @@ import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, rename, symlink
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { botMcpUrl } from "@agentstack/api";
+import { botMcpUrl } from "@stack/api";
 import { DatabaseSync } from "node:sqlite";
 import { RoleStore, renderInstructions, renderSegments } from "../src/store.js";
 import { materializeRole, removeRole } from "../src/bundle.js";
 
 test("categories and fragments are durable, ordered, and rendered without human metadata", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-roles-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-roles-"));
   let store = new RoleStore(root);
   try {
     let state = store.createCategory(0, "Planning", "human-only category");
@@ -46,7 +46,7 @@ test("categories and fragments are durable, ordered, and rendered without human 
 });
 
 test("fragments move atomically, insert at an index, and keep human timestamps", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-role-move-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-role-move-"));
   const store = new RoleStore(root);
   try {
     const before = Date.now();
@@ -94,7 +94,7 @@ test("rendered segments locate each contributing body and skip disabled or blank
 });
 
 test("a database from before timestamps keeps its records with unknown times", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-role-stamps-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-role-stamps-"));
   try {
     const db = new DatabaseSync(join(root, "roles.sqlite"));
     db.exec(`
@@ -122,7 +122,7 @@ test("a database from before timestamps keeps its records with unknown times", a
 });
 
 test("a role snapshots instructions and MCP configuration without argv content", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-role-snapshot-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-role-snapshot-"));
   const store = new RoleStore(root);
   try {
     let state = store.createCategory(0, "Default");
@@ -141,7 +141,7 @@ test("a role snapshots instructions and MCP configuration without argv content",
 });
 
 test("an oversized assembled prompt is rejected before committing an edit", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-role-limit-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-role-limit-"));
   const store = new RoleStore(root);
   try {
     let state = store.createCategory(0, "Large");
@@ -153,7 +153,7 @@ test("an oversized assembled prompt is rejected before committing an edit", asyn
 });
 
 test("a legacy capabilities database keeps its fragments, revision, and launch cleanup", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-role-migration-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-role-migration-"));
   const old = new RoleStore(root);
   try {
     let state = old.createCategory(0, "Existing");
@@ -171,7 +171,7 @@ test("a legacy capabilities database keeps its fragments, revision, and launch c
 });
 
 test("enabled role resources materialize privately and disabled items stay out of bot launches", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-role-resources-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-role-resources-"));
   let store = new RoleStore(root);
   try {
     let state = store.createSkill(0, "review", "Review changes", "# Review", [{ path: "scripts/check.sh", contentBase64: Buffer.from("exit 0\n").toString("base64") }]);
@@ -220,11 +220,11 @@ test("enabled role resources materialize privately and disabled items stay out o
 });
 
 test("role launch keeps bot-bound internal URLs and rejects an unbound internal alias", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-role-bot-mcp-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-role-bot-mcp-"));
   const store = new RoleStore(root);
   try {
     const base = "http://127.0.0.1:8743/mcp/auth";
-    const bound = botMcpUrl(base, "bot-1", "unix:///tmp/bot-one.sock", { AGENTSTACK_STATE_DIR: root });
+    const bound = botMcpUrl(base, "bot-1", "unix:///tmp/bot-one.sock", { STACK_STATE_DIR: root });
     const path = await materializeRole(root, "bot-1", store.snapshot(), { auth: bound });
     assert.match(await readFile(join(path, "config.toml"), "utf8"), /\?bot=bot-1&instance=/);
     await removeRole(root, "bot-1", path);
@@ -235,7 +235,7 @@ test("role launch keeps bot-bound internal URLs and rejects an unbound internal 
 });
 
 test("only enabled, explicitly trusted project roots matching a Bot cwd enter its private launch config", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-role-project-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-role-project-"));
   const project = join(root, "repo with spaces");
   const nested = join(project, "src");
   const unrelated = join(root, "other");

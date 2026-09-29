@@ -1,5 +1,5 @@
 {
-  "name": "@agentstack/browse",
+  "name": "@stack/browse",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -12,6 +12,6 @@
     "test": "node --test dist/test/*.test.js"
   },
   "engines": { "node": ">=24" },
-  "dependencies": { "@agentstack/api": "workspace:*", "@agentstack/scrape": "workspace:*", "ws": "^8.18.3", "zod": "^4.6.5" },
+  "dependencies": { "@stack/api": "workspace:*", "@stack/scrape": "workspace:*", "ws": "^8.18.3", "zod": "^4.6.5" },
   "devDependencies": { "@types/node": "^26.6.2", "@types/ws": "^8.18.1", "typescript": "^7.0.2" }
 }

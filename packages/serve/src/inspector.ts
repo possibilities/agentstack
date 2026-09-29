@@ -2,10 +2,10 @@ import { fileURLToPath } from "node:url";
 import type { OwnedChild } from "./server.js";
 
 export function inspectorPort(env: NodeJS.ProcessEnv = process.env): number {
-  const value = env.AGENTSTACK_INSPECTOR_PORT;
+  const value = env.STACK_INSPECTOR_PORT;
   const port = value === undefined ? 6274 : Number(value);
   if (value === "" || !Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error("AGENTSTACK_INSPECTOR_PORT must be an integer from 1 to 65535");
+    throw new Error("STACK_INSPECTOR_PORT must be an integer from 1 to 65535");
   }
   return port;
 }

@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { serveSocket, socketPath, withLocalAuth, localCookieName } from "@agentstack/api";
+import { serveSocket, socketPath, withLocalAuth, localCookieName } from "@stack/api";
 
 const require = createRequire(import.meta.url);
 const uiDir = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -20,7 +20,7 @@ const record = (id) => ({ id, pid: 4321, cwd: "/tmp/fixture-workspace", url: "un
 const bot = record("bot-1");
 const operation = (name, value) => ({ name, description: `${name} fixture`, input: passthrough, output: passthrough, async call() { return value; } });
 const packageDoc = (name, operationName, collection) => ({
-  name, description: `${name} fixture`, packageName: `@agentstack/${name}`, events: {}, eventScope: null, transports: [],
+  name, description: `${name} fixture`, packageName: `@stack/${name}`, events: {}, eventScope: null, transports: [],
   operations: [{ name: operationName, title: operationName, description: "Fixture list", annotations: {}, inputSchema: { type: "object" },
     outputSchema: { type: "object", properties: { [collection]: { type: "array", items: { type: "object", properties: {
       recoveryIssue: { type: ["string", "null"], description: "Why recovery needs inspection." },
@@ -36,8 +36,8 @@ async function availablePort() {
 }
 
 test("the root UI renders the canvas without losing local links, processes, or Bot recovery details", { timeout: 30_000 }, async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-ui-recovery-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_WEBSOCKET_PORT: "0", NEXT_TELEMETRY_DISABLED: "1" };
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-ui-recovery-"));
+  const env = { ...process.env, STACK_STATE_DIR: stateDir, STACK_WEBSOCKET_PORT: "0", NEXT_TELEMETRY_DISABLED: "1" };
   const served = [];
   let next;
   let output = "";
@@ -65,12 +65,12 @@ test("the root UI renders the canvas without losing local links, processes, or B
       runtime: { pid: process.pid, nodeVersion: process.version, uptimeSeconds: 60, heapUsedBytes: 24_000_000, heapTotalBytes: 40_000_000, externalBytes: 2_000_000, arrayBuffersBytes: 100_000, eventLoopUtilization: null },
       scope: null,
       scopes: [
-        { id: "total", kind: "total", name: "AgentStack", component: null, botId: null, accountId: null, runtimeInstance: null, provider: null, shared: true, metrics: metric(4, 120_000_000) },
+        { id: "total", kind: "total", name: "Stack", component: null, botId: null, accountId: null, runtimeInstance: null, provider: null, shared: true, metrics: metric(4, 120_000_000) },
         { id: "component:serverr", kind: "component", name: "serve", component: "server", botId: null, accountId: null, runtimeInstance: null, provider: null, shared: true, metrics: metric(1, 40_000_000) },
         { id: "component:inspector", kind: "component", name: "inspector", component: "inspector", botId: null, accountId: null, runtimeInstance: null, provider: null, shared: true, metrics: metric(1, 30_000_000) },
       ],
       processes: [
-        { id: "process:1:root", subtreeId: "subtree:1:root", pid: process.pid, ppid: 1, birth: "b1", name: "agentstack", parentId: null, ancestryParentId: null, ownership: "root", component: "server",
+        { id: "process:1:root", subtreeId: "subtree:1:root", pid: process.pid, ppid: 1, birth: "b1", name: "stack", parentId: null, ancestryParentId: null, ownership: "root", component: "server",
           botId: null, accountId: null, runtimeInstance: null, provider: null, attribution: "component", attributedAt: null, cpuIntervalMs: 5_000, cpuStatus: "measured", self: metric(1, 40_000_000), subtree: metric(4, 120_000_000) },
         { id: "process:2:child", subtreeId: "subtree:2:child", pid: 9876, ppid: process.pid, birth: "b2", name: "inspector", parentId: "process:1:root", ancestryParentId: "process:1:root", ownership: "descendant", component: "inspector",
           botId: null, accountId: null, runtimeInstance: null, provider: null, attribution: "component", attributedAt: null, cpuIntervalMs: 5_000, cpuStatus: "measured", self: metric(1, 30_000_000), subtree: metric(1, 30_000_000) },
@@ -133,7 +133,7 @@ test("the root UI renders the canvas without losing local links, processes, or B
       return dock;
     };
     const canvas = await readCanvas("/");
-    assert.match(canvas, /AgentStack open bench/);
+    assert.match(canvas, /Stack open bench/);
     assert.match(canvas, /Needs inspection|needs inspection/);
     assert.match(canvas, /Recorded process ownership could not be verified/);
     assert.match(canvas, /bot-1/);
@@ -149,14 +149,14 @@ test("the root UI renders the canvas without losing local links, processes, or B
     ]);
     assert.match(system, /Filter activity/);
     for (const value of ["MCP Inspector", "Packages", "inspector", "9876", "worker", "Fixture spawn failure", server.inspectorUrl, server.mcpUrls.serve,
-      "fixture-host", "Apple M4", "Fresh", "server_tree", "AgentStack", "darwin_ps"]) {
+      "fixture-host", "Apple M4", "Fresh", "server_tree", "Stack", "darwin_ps"]) {
       assert.ok(system.includes(value), `System is missing ${value}`);
     }
     assert.doesNotMatch(system, /Runtime index/);
     assert.doesNotMatch(system, /data-dock="left"/);
     assert.match(api, /bot_list/);
     assert.match(brainReference, /brain_catalog_probe/);
-    assert.match(brainReference, /@agentstack\/brain/);
+    assert.match(brainReference, /@stack\/brain/);
 
     server.children[0].running = false;
     server.children[0].pid = null;

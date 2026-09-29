@@ -3,7 +3,7 @@
 The browse Package API owns durable profiles and local Hypeman/Kernel runtimes.
 Use agent-browser CLI/MCP for page and tab operations. Each Bot receives an
 exclusive default profile automatically; additional profiles start empty.
-Profiles stay running while AgentStack runs, including those retained unassigned
+Profiles stay running while Stack runs, including those retained unassigned
 after Bot deletion. Controller close only disconnects.
 
 ## Installation and launch scope
@@ -16,7 +16,7 @@ updates default to manual acceptance. The validated switching protocol is 0.38.1
 
 Each Bot launch receives `AGENT_BROWSER_CONFIG`, `AGENT_BROWSER_NAMESPACE` and
 an idle timeout of zero. Its private config lives in
-`<AGENTSTACK_STATE_DIR>/browser/controllers/` and carries a signed, live-launch
+`<STACK_STATE_DIR>/browser/controllers/` and carries a signed, live-launch
 proof. It is not a human/global provider setting. Use the Bot's inherited config
 and namespace; choose `--session NAME` for independent controllers. Overriding
 the managed namespace/config or attaching a separate CDP client is outside the
@@ -86,7 +86,7 @@ Supported automatic recovery is limited to an exact owned Stopped VM, a changed
 guest IP/relay, and transient CDP loss that Kernel's in-guest Chrome supervisor
 can repair. Each CDP readiness attempt is bounded to 35 seconds, followed by a
 later supervision cycle. A persistently unresponsive Chrome in a Running VM
-stays failed; AgentStack does not force-stop that VM and risk unflushed data.
+stays failed; Stack does not force-stop that VM and risk unflushed data.
 A missing recorded VM also stays failed with a specific retained-volume error.
 Exact-volume VM reconstruction and guest process remediation need an intentional
 operator recovery workflow; they are not implemented automatic recovery paths.

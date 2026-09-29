@@ -61,7 +61,7 @@ export function ProcRunWindow({ id }: { id: string }) {
     <Window id={id} title={run ? runTitle(run) : "Run"} subtitle={run ? `${run.id.slice(0, 8)} · ${runView(run).word}` : "proc"} icon={SquareTerminalIcon} accent="proc"
       node={run ? { kind: "proc-run", id: run.id } : undefined} reveal={{ kind: "proc-run-window", id }} bleed actions={actions}
       footer={run && isActiveRun(run) && !remote ? <StopControl run={run} /> : undefined}>
-      {remote ? <ProcPlaceholder title="Available only on the local UI" hint="Process output and schedule definitions stay on the AgentStack machine." />
+      {remote ? <ProcPlaceholder title="Available only on the local UI" hint="Process output and schedule definitions stay on the Stack machine." />
         : !endpoints.proc ? <ProcPlaceholder title="Proc isn't served by this server" />
         : !runId ? <ProcPlaceholder title="Choose a run" hint="Pick one in the Runs list." />
         : detail.error && !run ? <ProcPlaceholder title="Run unavailable" hint={detail.error} />

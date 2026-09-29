@@ -85,7 +85,7 @@ function dispositionFor(index: number): string {
 // 1,088-row contract, on disk, exactly as the real generation is shaped, so the
 // installed CLI verifies and admits it without any special-casing.
 function makeFixture(options: FixtureOptions & { onlineBaseUrl?: string } = {}): Fixture {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-recovery-int-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-recovery-int-"));
   roots.push(root);
   const artifactRoot = join(root, "legacy-artifacts");
   const manifestsRoot = join(root, "manifests");
@@ -389,7 +389,7 @@ function prepareOfflineRunForOnlineGate(): PreparedOnlineGateFixture {
   const dataHome = join(fixture.root, "data");
   const dbPath = join(fixture.root, "online-gate.db");
   const env = {
-    AGENTSTACK_STATE_DIR: dataHome,
+    STACK_STATE_DIR: dataHome,
     PATH: `${binDir}:${originalPath}`,
   };
   const importArgs = [
@@ -542,7 +542,7 @@ afterAll(() => {
 });
 
 test("disposable rehearsal drives the frozen generation through the internal Node dispatcher", async (t) => {
-  const onlineLog = join(mkdtempSync(join(tmpdir(), "agentstack-recovery-http-")), "requests");
+  const onlineLog = join(mkdtempSync(join(tmpdir(), "stack-recovery-http-")), "requests");
   t.after(() => rmSync(join(onlineLog, ".."), { recursive: true, force: true }));
   const server = new Worker(`
     const { parentPort, workerData } = require("node:worker_threads");
@@ -565,7 +565,7 @@ test("disposable rehearsal drives the frozen generation through the internal Nod
   const dataHome = join(fixture.root, "data");
   const dbPath = join(fixture.root, "rehearsal.db");
   const env = {
-    AGENTSTACK_STATE_DIR: dataHome,
+    STACK_STATE_DIR: dataHome,
     PATH: `${binDir}:${originalPath}`,
   };
   const importArgs = [
@@ -1059,7 +1059,7 @@ test("a tampered generation file fails closed without writing state or leaking l
   const dataHome = join(fixture.root, "data");
   const dbPath = join(fixture.root, "rehearsal.db");
   const env = {
-    AGENTSTACK_STATE_DIR: dataHome,
+    STACK_STATE_DIR: dataHome,
     PATH: `${binDir}:${originalPath}`,
   };
 
@@ -1099,7 +1099,7 @@ test("a malformed legacy artifact fails closed before any admission", () => {
   const dataHome = join(fixture.root, "data");
   const dbPath = join(fixture.root, "rehearsal.db");
   const env = {
-    AGENTSTACK_STATE_DIR: dataHome,
+    STACK_STATE_DIR: dataHome,
     PATH: `${binDir}:${originalPath}`,
   };
 

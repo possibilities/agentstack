@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 function tempDb(): string {
-  const dir = mkdtempSync(join(tmpdir(), "agentstack-brain-store-"));
+  const dir = mkdtempSync(join(tmpdir(), "stack-brain-store-"));
   dirs.push(dir);
   return join(dir, "research.db");
 }
@@ -391,7 +391,7 @@ test("immediate write transactions serialize concurrent equivalent admissions", 
         path,
       ],
       cwd: repo,
-      env: { ...process.env, AGENTSTACK_STATE_DIR: join(dirname(path), "data") },
+      env: { ...process.env, STACK_STATE_DIR: join(dirname(path), "data") },
       stdout: "pipe",
       stderr: "pipe",
     }),

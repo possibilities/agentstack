@@ -1,5 +1,5 @@
 {
-  "name": "@agentstack/auth",
+  "name": "@stack/auth",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -18,7 +18,7 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@agentstack/api": "workspace:*",
+    "@stack/api": "workspace:*",
     "zod": "^4.6.5"
   },
   "devDependencies": {

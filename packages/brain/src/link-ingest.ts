@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { currentEgress } from "@agentstack/scrape/network";
+import { currentEgress } from "@stack/scrape/network";
 import { DEFAULT_MAX_BYTES } from "./extract.js";
 import type {
   ExtractionFanoutPlan,

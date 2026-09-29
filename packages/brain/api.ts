@@ -1,8 +1,8 @@
 import { chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { operation, operatorInvocation, type PackageApi } from "@agentstack/api";
-import { egressPolicy } from "@agentstack/scrape/network";
+import { operation, operatorInvocation, type PackageApi } from "@stack/api";
+import { egressPolicy } from "@stack/scrape/network";
 import { ResearchEgress, grantScope, grantRecord, jobNetworkPolicy } from "./src/egress.js";
 import { ArtifactStore } from "./src/artifacts.js";
 import { brainTopics, watchBrainChanges, type BrainChanges, type BrainTopic } from "./src/changes.js";
@@ -77,7 +77,7 @@ const outputs: Record<string, z.ZodType> = {
 };
 
 async function invoke(ctx: BrainContext, command: string, commandArgv: string[]): Promise<unknown> {
-  if (ctx.controller.signal.aborted) throw new Error("brain_stopping\nAgentStack Brain is stopping");
+  if (ctx.controller.signal.aborted) throw new Error("brain_stopping\nStack Brain is stopping");
   const call = withBrainEnvironment(ctx.env, async () => {
     try {
       const text = await withShareIngressToken(ctx.shareToken, () => captureOutput(() => runParsed({
@@ -129,9 +129,9 @@ const commandOperations = agentTools(undefined, true).filter((tool) => !internal
 });
 
 function sharePort(env: NodeJS.ProcessEnv): number {
-  const value = env.AGENTSTACK_BRAIN_SHARE_PORT === undefined ? SHARE_DEFAULT_PORT : Number(env.AGENTSTACK_BRAIN_SHARE_PORT);
-  if (env.AGENTSTACK_BRAIN_SHARE_PORT === "" || !Number.isInteger(value) || value < 0 || value > 65535) {
-    throw new Error("AGENTSTACK_BRAIN_SHARE_PORT must be an integer from 0 to 65535");
+  const value = env.STACK_BRAIN_SHARE_PORT === undefined ? SHARE_DEFAULT_PORT : Number(env.STACK_BRAIN_SHARE_PORT);
+  if (env.STACK_BRAIN_SHARE_PORT === "" || !Number.isInteger(value) || value < 0 || value > 65535) {
+    throw new Error("STACK_BRAIN_SHARE_PORT must be an integer from 0 to 65535");
   }
   return value;
 }
@@ -144,7 +144,7 @@ export async function createBrainContext(env: NodeJS.ProcessEnv, workerOptions: 
     const tokenPath = join(stateRoot, "share-token");
     const registrationPath = join(stateRoot, "share-ingress.json");
     const port = sharePort(env);
-    const host = env.AGENTSTACK_BRAIN_SHARE_HOST ?? SHARE_DEFAULT_HOST;
+    const host = env.STACK_BRAIN_SHARE_HOST ?? SHARE_DEFAULT_HOST;
     if (host !== "127.0.0.1") throw new Error("Brain backend must bind 127.0.0.1; configure remote clients through Access");
     assertDefaultDatabaseTargetSafe(dbPath);
     mkdirSync(stateRoot, { recursive: true, mode: 0o700 });

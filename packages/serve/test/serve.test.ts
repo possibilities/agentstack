@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { socketCall, socketSubscribe, operatorHeaders, withLocalAuth, type SocketSubscription } from "@agentstack/api";
+import { socketCall, socketSubscribe, operatorHeaders, withLocalAuth, type SocketSubscription } from "@stack/api";
 import WebSocket from "ws";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -15,19 +15,19 @@ import { serverResourcesOutput, serverResourceHistoryOutput } from "../src/resou
 
 const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
 const socketNames = ["access", "api", "signal", "auth", "roles", "bots", "brain", "xcom", "proc", "browse", "scrape", "content", "worker", "usage", "infer", "notify", "serve"];
-const brainEnv = { AGENTSTACK_BRAIN_SHARE_HOST: "127.0.0.1", AGENTSTACK_BRAIN_SHARE_PORT: "0" };
+const brainEnv = { STACK_BRAIN_SHARE_HOST: "127.0.0.1", STACK_BRAIN_SHARE_PORT: "0" };
 
 test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a standalone reference listener, then shuts them down", { timeout: 120_000 }, async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-serve-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-serve-"));
   const inspectorPort = await availablePort();
   const uiPort = await availablePort();
   const retiredDocsPort = await availablePort();
-  const previousHeaders = operatorHeaders({ AGENTSTACK_STATE_DIR: stateDir });
-  const previousSession = withLocalAuth({ AGENTSTACK_STATE_DIR: stateDir }, auth => auth.redeem(auth.bootstrap(`http://127.0.0.1:${uiPort}`, "ui"), `http://127.0.0.1:${uiPort}`, "ui"));
+  const previousHeaders = operatorHeaders({ STACK_STATE_DIR: stateDir });
+  const previousSession = withLocalAuth({ STACK_STATE_DIR: stateDir }, auth => auth.redeem(auth.bootstrap(`http://127.0.0.1:${uiPort}`, "ui"), `http://127.0.0.1:${uiPort}`, "ui"));
   const child = spawn(process.execPath, [cli, "serve"], {
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, ...brainEnv, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_AGENTGROK_BIN: join(stateDir, "missing-agentgrok"),
-      AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UI_PORT: String(uiPort), AGENTSTACK_DOCS_PORT: String(retiredDocsPort), AGENTSTACK_WIKI_PORT: "0", AGENTSTACK_WIKI_ARTIFACT_PORT: "0", MCP_INSPECTOR_API_TOKEN: "test-token" },
+    env: { ...process.env, ...brainEnv, STACK_STATE_DIR: stateDir, STACK_AGENTGROK_BIN: join(stateDir, "missing-agentgrok"),
+      STACK_MCP_PORT: "0", STACK_WEBSOCKET_PORT: "0", STACK_INSPECTOR_PORT: String(inspectorPort), STACK_UI_PORT: String(uiPort), STACK_DOCS_PORT: String(retiredDocsPort), STACK_WIKI_PORT: "0", STACK_WIKI_ARTIFACT_PORT: "0", MCP_INSPECTOR_API_TOKEN: "test-token" },
   });
   let stderr = "";
   child.stderr?.setEncoding("utf8");
@@ -35,7 +35,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     stderr += chunk;
   });
   const serverSock = join(stateDir, "sockets", "serve.sock");
-  const env = { AGENTSTACK_STATE_DIR: stateDir };
+  const env = { STACK_STATE_DIR: stateDir };
   const authenticate = async (target: "ui" | "inspector") => {
     const bootstrap = await socketCall(serverSock, "tools/call", { name: "serve_local_connect", arguments: { target } }) as { url: string };
     const url = new URL(bootstrap.url);
@@ -185,7 +185,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
 
     subscription = await socketSubscribe(serverSock, ["pids_changed"], () => undefined);
 
-    assert.doesNotMatch(stderr, /AgentStack reference:/);
+    assert.doesNotMatch(stderr, /Stack reference:/);
     await assert.rejects(fetch(`http://127.0.0.1:${retiredDocsPort}/docs`));
     const indexUrl = `http://127.0.0.1:${uiPort}/`;
     const uiUrl = `http://127.0.0.1:${uiPort}/`;
@@ -193,9 +193,9 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     const uiCookie = await authenticate("ui");
     const uiFetch = (url: string | URL, init: RequestInit = {}) => fetch(url, { ...init, headers: { cookie: uiCookie } });
     assert.equal((await fetch(uiUrl)).status, 401);
-    assert.equal((await fetch(uiUrl, { headers: { "x-agentstack-remote-ui": "1", "x-agentstack-ui-origin": "https://evil.example", "x-agentstack-ui-scope": "control" } })).status, 401);
-    assert.ok(stderr.includes(`AgentStack UI entry: ${indexUrl}`), stderr);
-    assert.ok(stderr.includes(`AgentStack UI canvas: ${uiUrl}`), stderr);
+    assert.equal((await fetch(uiUrl, { headers: { "x-stack-remote-ui": "1", "x-stack-ui-origin": "https://evil.example", "x-stack-ui-scope": "control" } })).status, 401);
+    assert.ok(stderr.includes(`Stack UI entry: ${indexUrl}`), stderr);
+    assert.ok(stderr.includes(`Stack UI canvas: ${uiUrl}`), stderr);
     const serverStatus = await socketCall(serverSock, "tools/call", { name: "serve_status", arguments: {} }) as {
       indexUrl: string; uiUrl: string; inspectorUrl: string; mcpUrls: Record<string, string>;
     };
@@ -206,12 +206,12 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     assert.equal(Object.hasOwn(serverStatus, "docsUrl"), false);
     const duplicate = spawn(process.execPath, [cli, "serve"], {
       stdio: ["ignore", "ignore", "pipe"],
-      env: { ...process.env, ...brainEnv, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0" },
+      env: { ...process.env, ...brainEnv, STACK_STATE_DIR: stateDir, STACK_MCP_PORT: "0", STACK_WEBSOCKET_PORT: "0" },
     });
     let duplicateError = "";
     duplicate.stderr?.on("data", (chunk: Buffer) => { duplicateError += chunk.toString(); });
     assert.equal(await new Promise<number | null>((resolve) => duplicate.once("exit", resolve)), 0);
-    assert.match(duplicateError, /AgentStack is already running/);
+    assert.match(duplicateError, /Stack is already running/);
     assert.doesNotMatch(duplicateError, /Reference:/);
     assert.ok(duplicateError.includes(indexUrl), duplicateError);
     assert.ok(duplicateError.includes(uiUrl), duplicateError);
@@ -241,7 +241,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     assert.equal(canvas.status, 200);
     const canvasHtml = await canvas.text();
     assert.match(canvasHtml, /<main[^>]*data-canvas="workbench"/);
-    assert.match(canvasHtml, /<h1[^>]*>AgentStack open bench<\/h1>/);
+    assert.match(canvasHtml, /<h1[^>]*>Stack open bench<\/h1>/);
     assert.match(canvasHtml, /No bots</);
     const accounts = await uiFetch(new URL("/accounts", uiUrl));
     assert.equal(accounts.status, 200);
@@ -250,8 +250,8 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     for (const [pkg, names] of [
       ["serve", ["serve_resources", "serve_resource_history", "resources_changed"]],
       ["bots", ["chat_tree", "chat_tree_detail"]],
-      ["brain", ["@agentstack/brain", "brain_status", "search", "submit"]],
-      ["xcom", ["@agentstack/xcom", "xcom_status", "xcom_search", "xcom_users"]],
+      ["brain", ["@stack/brain", "brain_status", "search", "submit"]],
+      ["xcom", ["@stack/xcom", "xcom_status", "xcom_search", "xcom_users"]],
       ["worker", ["worker_record_list", "worker_tool_list", "worker_progress"]],
     ] as const) {
       const response = await uiFetch(new URL(`/?reference=package%3A${pkg}`, uiUrl));
@@ -325,18 +325,18 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
 });
 
 test("the retired docs command is rejected before startup", { timeout: 30_000 }, async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-retired-docs-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-retired-docs-"));
   try {
     const child = spawn(process.execPath, [cli, "docs"], {
       stdio: ["ignore", "ignore", "pipe"],
-      env: { ...process.env, AGENTSTACK_STATE_DIR: stateDir },
+      env: { ...process.env, STACK_STATE_DIR: stateDir },
       timeout: 5_000,
     });
     let stderr = "";
     child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
     assert.equal(await new Promise<number | null>((resolve) => child.once("exit", resolve)), 1);
-    assert.match(stderr, /usage: agentstack serve/);
-    assert.doesNotMatch(stderr, /usage: agentstack docs|AgentStack reference:/);
+    assert.match(stderr, /usage: stack serve/);
+    assert.doesNotMatch(stderr, /usage: stack docs|Stack reference:/);
     assert.equal(existsSync(join(stateDir, "sockets", "serve.sock")), false);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
@@ -344,7 +344,7 @@ test("the retired docs command is rejected before startup", { timeout: 30_000 },
 });
 
 test("a claimed MCP port refuses startup before the server creates a socket", { timeout: 30_000 }, async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-occupied-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-occupied-"));
   const listener = createServer();
   await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
   const address = listener.address();
@@ -352,7 +352,7 @@ test("a claimed MCP port refuses startup before the server creates a socket", { 
   try {
     const child = spawn(process.execPath, [cli, "serve"], {
       stdio: ["ignore", "ignore", "pipe"],
-      env: { ...process.env, ...brainEnv, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: String(address.port) },
+      env: { ...process.env, ...brainEnv, STACK_STATE_DIR: stateDir, STACK_MCP_PORT: String(address.port) },
     });
     let stderr = "";
     child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
@@ -366,7 +366,7 @@ test("a claimed MCP port refuses startup before the server creates a socket", { 
 });
 
 test("a claimed WebSocket port refuses startup before the server creates a socket", { timeout: 30_000 }, async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-ws-occupied-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-ws-occupied-"));
   const listener = createServer();
   await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
   const address = listener.address();
@@ -374,7 +374,7 @@ test("a claimed WebSocket port refuses startup before the server creates a socke
   try {
     const child = spawn(process.execPath, [cli, "serve"], {
       stdio: ["ignore", "ignore", "pipe"],
-      env: { ...process.env, ...brainEnv, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: String(address.port) },
+      env: { ...process.env, ...brainEnv, STACK_STATE_DIR: stateDir, STACK_MCP_PORT: "0", STACK_WEBSOCKET_PORT: String(address.port) },
     });
     let stderr = "";
     child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
@@ -388,7 +388,7 @@ test("a claimed WebSocket port refuses startup before the server creates a socke
 });
 
 test("a claimed Inspector port refuses startup before the server creates a socket", { timeout: 30_000 }, async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-inspector-occupied-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-inspector-occupied-"));
   const listener = createServer();
   await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
   const address = listener.address();
@@ -396,7 +396,7 @@ test("a claimed Inspector port refuses startup before the server creates a socke
   try {
     const child = spawn(process.execPath, [cli, "serve"], {
       stdio: ["ignore", "ignore", "pipe"],
-      env: { ...process.env, ...brainEnv, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_INSPECTOR_PORT: String(address.port) },
+      env: { ...process.env, ...brainEnv, STACK_STATE_DIR: stateDir, STACK_MCP_PORT: "0", STACK_WEBSOCKET_PORT: "0", STACK_INSPECTOR_PORT: String(address.port) },
     });
     let stderr = "";
     child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
@@ -410,7 +410,7 @@ test("a claimed Inspector port refuses startup before the server creates a socke
 });
 
 test("a claimed UI canvas port refuses startup before the server creates a socket", { timeout: 30_000 }, async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-ui-occupied-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-ui-occupied-"));
   const inspectorPort = await availablePort();
   const listener = createServer();
   await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
@@ -419,7 +419,7 @@ test("a claimed UI canvas port refuses startup before the server creates a socke
   try {
     const child = spawn(process.execPath, [cli, "serve"], {
       stdio: ["ignore", "ignore", "pipe"],
-      env: { ...process.env, ...brainEnv, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UI_PORT: String(address.port) },
+      env: { ...process.env, ...brainEnv, STACK_STATE_DIR: stateDir, STACK_MCP_PORT: "0", STACK_WEBSOCKET_PORT: "0", STACK_INSPECTOR_PORT: String(inspectorPort), STACK_UI_PORT: String(address.port) },
     });
     let stderr = "";
     child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
@@ -433,7 +433,7 @@ test("a claimed UI canvas port refuses startup before the server creates a socke
 });
 
 test("a claimed content document port refuses startup before the server creates a socket", { timeout: 30_000 }, async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-wiki-occupied-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-wiki-occupied-"));
   const inspectorPort = await availablePort();
   const uiPort = await availablePort();
   const listener = createServer();
@@ -443,7 +443,7 @@ test("a claimed content document port refuses startup before the server creates 
   try {
     const child = spawn(process.execPath, [cli, "serve"], {
       stdio: ["ignore", "ignore", "pipe"],
-      env: { ...process.env, ...brainEnv, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UI_PORT: String(uiPort), AGENTSTACK_CONTENT_PORT: String(address.port), AGENTSTACK_CONTENT_ARTIFACT_PORT: "0" },
+      env: { ...process.env, ...brainEnv, STACK_STATE_DIR: stateDir, STACK_MCP_PORT: "0", STACK_WEBSOCKET_PORT: "0", STACK_INSPECTOR_PORT: String(inspectorPort), STACK_UI_PORT: String(uiPort), STACK_CONTENT_PORT: String(address.port), STACK_CONTENT_ARTIFACT_PORT: "0" },
     });
     let stderr = "";
     child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
@@ -462,7 +462,7 @@ test("a claimed Brain share port on its configured host refuses startup before c
   const address = listener.address();
   assert.ok(address && typeof address !== "string");
   try {
-    const stderr = await refusedStartup({ AGENTSTACK_BRAIN_SHARE_HOST: "::1", AGENTSTACK_BRAIN_SHARE_PORT: String(address.port) });
+    const stderr = await refusedStartup({ STACK_BRAIN_SHARE_HOST: "::1", STACK_BRAIN_SHARE_PORT: String(address.port) });
     assert.match(stderr, /Brain backend must bind 127/);
   } finally {
     await new Promise<void>((resolve) => listener.close(() => resolve()));
@@ -471,40 +471,40 @@ test("a claimed Brain share port on its configured host refuses startup before c
 
 test("Brain share rejects invalid ports before creating sockets", { timeout: 30_000 }, async () => {
   for (const value of ["", "not-a-port", "-1", "65536", "1.5"]) {
-    assert.match(await refusedStartup({ AGENTSTACK_BRAIN_SHARE_PORT: value }), /AGENTSTACK_BRAIN_SHARE_PORT must be a port from 0 to 65535/);
+    assert.match(await refusedStartup({ STACK_BRAIN_SHARE_PORT: value }), /STACK_BRAIN_SHARE_PORT must be a port from 0 to 65535/);
   }
-  assert.match(await refusedStartup({ AGENTSTACK_BRAIN_SHARE_HOST: "" }), /Brain backend must bind 127/);
+  assert.match(await refusedStartup({ STACK_BRAIN_SHARE_HOST: "" }), /Brain backend must bind 127/);
 });
 
 test("remote content listeners require two distinct public origins before creating sockets", { timeout: 30_000 }, async () => {
-  assert.match(await refusedStartup({ AGENTSTACK_CONTENT_HOST: "0.0.0.0" }), /Content backend must bind 127/);
-  assert.match(await refusedStartup({ AGENTSTACK_CONTENT_DOCUMENT_ORIGIN: "https:\/\/same.example", AGENTSTACK_CONTENT_ARTIFACT_ORIGIN: "https:\/\/same.example" }), /origins must differ/);
+  assert.match(await refusedStartup({ STACK_CONTENT_HOST: "0.0.0.0" }), /Content backend must bind 127/);
+  assert.match(await refusedStartup({ STACK_CONTENT_DOCUMENT_ORIGIN: "https:\/\/same.example", STACK_CONTENT_ARTIFACT_ORIGIN: "https:\/\/same.example" }), /origins must differ/);
 });
 
 test("remote UI requires an exact HTTPS certificate origin and three distinct Access ports before creating sockets", { timeout: 30_000 }, async () => {
-  const base = { AGENTSTACK_ACCESS_HOST: "100.80.0.1", AGENTSTACK_ACCESS_TLS_KEY: "/operator/key", AGENTSTACK_ACCESS_TLS_CERT: "/operator/cert" };
-  assert.match(await refusedStartup({ ...base, AGENTSTACK_ACCESS_UI_PORT: "8945" }), /AGENTSTACK_ACCESS_UI_ORIGIN/);
-  assert.match(await refusedStartup({ ...base, AGENTSTACK_ACCESS_UI_ORIGIN: "http://machine.ts.net:8945" }), /AGENTSTACK_ACCESS_UI_ORIGIN/);
-  assert.match(await refusedStartup({ ...base, AGENTSTACK_ACCESS_UI_ORIGIN: "https://machine.ts.net:8945/path" }), /AGENTSTACK_ACCESS_UI_ORIGIN/);
-  assert.match(await refusedStartup({ ...base, AGENTSTACK_ACCESS_UI_ORIGIN: "https://machine.ts.net:8945", AGENTSTACK_ACCESS_UI_PORT: "8943" }), /distinct valid ports/);
+  const base = { STACK_ACCESS_HOST: "100.80.0.1", STACK_ACCESS_TLS_KEY: "/operator/key", STACK_ACCESS_TLS_CERT: "/operator/cert" };
+  assert.match(await refusedStartup({ ...base, STACK_ACCESS_UI_PORT: "8945" }), /STACK_ACCESS_UI_ORIGIN/);
+  assert.match(await refusedStartup({ ...base, STACK_ACCESS_UI_ORIGIN: "http://machine.ts.net:8945" }), /STACK_ACCESS_UI_ORIGIN/);
+  assert.match(await refusedStartup({ ...base, STACK_ACCESS_UI_ORIGIN: "https://machine.ts.net:8945/path" }), /STACK_ACCESS_UI_ORIGIN/);
+  assert.match(await refusedStartup({ ...base, STACK_ACCESS_UI_ORIGIN: "https://machine.ts.net:8945", STACK_ACCESS_UI_PORT: "8943" }), /distinct valid ports/);
 });
 
 test("Brain share rejects collisions with server listeners before creating sockets", { timeout: 30_000 }, async () => {
-  for (const setting of ["AGENTSTACK_MCP_PORT", "AGENTSTACK_WEBSOCKET_PORT", "AGENTSTACK_INSPECTOR_PORT", "AGENTSTACK_UI_PORT", "AGENTSTACK_CONTENT_PORT", "AGENTSTACK_CONTENT_ARTIFACT_PORT"]) {
+  for (const setting of ["STACK_MCP_PORT", "STACK_WEBSOCKET_PORT", "STACK_INSPECTOR_PORT", "STACK_UI_PORT", "STACK_CONTENT_PORT", "STACK_CONTENT_ARTIFACT_PORT"]) {
     const port = String(await availablePort());
-    const stderr = await refusedStartup({ [setting]: port, AGENTSTACK_BRAIN_SHARE_PORT: port });
-    assert.match(stderr, new RegExp(`AGENTSTACK_BRAIN_SHARE_PORT and ${setting} must use different ports`));
+    const stderr = await refusedStartup({ [setting]: port, STACK_BRAIN_SHARE_PORT: port });
+    assert.match(stderr, new RegExp(`STACK_BRAIN_SHARE_PORT and ${setting} must use different ports`));
   }
 });
 
 async function refusedStartup(settings: NodeJS.ProcessEnv): Promise<string> {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-brain-preflight-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-brain-preflight-"));
   const inspectorPort = await availablePort();
   const uiPort = await availablePort();
   const child = spawn(process.execPath, [cli, "serve"], {
     stdio: ["ignore", "ignore", "pipe"],
-    env: { ...process.env, ...brainEnv, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0", AGENTSTACK_WEBSOCKET_PORT: "0",
-      AGENTSTACK_INSPECTOR_PORT: String(inspectorPort), AGENTSTACK_UI_PORT: String(uiPort), AGENTSTACK_CONTENT_PORT: "0", AGENTSTACK_CONTENT_ARTIFACT_PORT: "0", ...settings },
+    env: { ...process.env, ...brainEnv, STACK_STATE_DIR: stateDir, STACK_MCP_PORT: "0", STACK_WEBSOCKET_PORT: "0",
+      STACK_INSPECTOR_PORT: String(inspectorPort), STACK_UI_PORT: String(uiPort), STACK_CONTENT_PORT: "0", STACK_CONTENT_ARTIFACT_PORT: "0", ...settings },
   });
   let stderr = "";
   child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });

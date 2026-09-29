@@ -77,7 +77,7 @@ export function ResourcesWindow() {
     if ((scope.kind === "account" && scope.id.startsWith("account:worker:")) || scope.kind === "runtime") return scope.accountId ? workerLabels.get(scope.accountId) ?? scope.name : scope.name;
     return scope.name;
   };
-  const activeName = active === "total" ? "AgentStack" : scopeName(data?.scopes.find((scope) => scope.id === active) ?? ({ name: active } as ResourceScope));
+  const activeName = active === "total" ? "Stack" : scopeName(data?.scopes.find((scope) => scope.id === active) ?? ({ name: active } as ResourceScope));
   return (
     <Window id="resources" title="Resources" subtitle="server sampler" icon={ChartLineIcon} accent="server" node={{ kind: "resource", id: "total" }}
       count={data?.scopes.length ?? null} updatedAt={resources.at} error={resources.error} empty={!data && !resources.error}>
@@ -169,7 +169,7 @@ export function HostWindow() {
             </Row>
             <Row label="Load 1/5/15"><span className="tabular-nums">{host.loadAverage ? host.loadAverage.map((load) => load.toFixed(2)).join(" · ") : "—"}</span></Row>
             <Row label="Load per core"><span className="tabular-nums">{host.loadAverage ? (host.loadAverage[0] / host.logicalCpuCount).toFixed(2) : "—"}</span></Row>
-            <Row label="AgentStack RSS" hint="The total scope's resident set as a share of host memory.">
+            <Row label="Stack RSS" hint="The total scope's resident set as a share of host memory.">
               {agentShare === null ? "—" : <span className="tabular-nums">{formatBytes(totalRss)} · {formatPercent(agentShare * 100)} of host</span>}
             </Row>
           </dl>

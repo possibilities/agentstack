@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { withLocalAuth, localCookieName } from "@agentstack/api";
+import { withLocalAuth, localCookieName } from "@stack/api";
 
 /** Authenticate a disposable rendered fixture; production bootstrap is tested separately. */
 export async function authorizeBrowser(page, origin, env) {
@@ -59,7 +59,7 @@ export function fixtureOperations(names, handlers) {
 export function fixtureDoc(name, api, endpoint, publishedJsonSchema) {
   const operations = api?.operations ?? [];
   const topics = api?.events?.topics ?? {};
-  return { name, packageName: `@agentstack/${name}`, description: `${name} fixture`, events: topics, eventScope: null,
+  return { name, packageName: `@stack/${name}`, description: `${name} fixture`, events: topics, eventScope: null,
     transports: [{ type: "websocket", description: "Isolated fixture", supported: true, subscriptions: true, endpoint,
       operations: operations.map((operation) => operation.name), workerOperations: [], events: Object.keys(topics), routes: [] }],
     operations: operations.map((operation) => ({ name: operation.name, title: operation.annotations?.title ?? null, description: operation.description,

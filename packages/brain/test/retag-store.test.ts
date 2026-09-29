@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 function tempDb(): string {
-  const dir = mkdtempSync(join(tmpdir(), "agentstack-brain-retag-"));
+  const dir = mkdtempSync(join(tmpdir(), "stack-brain-retag-"));
   dirs.push(dir);
   return join(dir, "research.db");
 }

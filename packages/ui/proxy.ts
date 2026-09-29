@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { localCookie, withLocalAuth } from "@agentstack/api";
+import { localCookie, withLocalAuth } from "@stack/api";
 
 /** The operator snapshot is private even before the WebSocket connects. */
 export function proxy(request: NextRequest) {
@@ -10,11 +10,11 @@ export function proxy(request: NextRequest) {
   const origin = `http://${host}`;
   try {
     const incoming = request.headers;
-    if ([...incoming.keys()].some(name => name.startsWith("x-agentstack-"))) {
-      if (incoming.get("x-agentstack-remote-ui") !== "1") throw new Error("untrusted internal headers");
-      withLocalAuth(process.env, auth => auth.verifyRemote(incoming.get("x-agentstack-ui-proof") ?? "", request.method,
-        request.nextUrl.pathname + request.nextUrl.search, incoming.get("x-agentstack-ui-origin") ?? "",
-        incoming.get("x-agentstack-ui-scope") ?? "", incoming.get("x-agentstack-ui-scopes") ?? ""));
+    if ([...incoming.keys()].some(name => name.startsWith("x-stack-"))) {
+      if (incoming.get("x-stack-remote-ui") !== "1") throw new Error("untrusted internal headers");
+      withLocalAuth(process.env, auth => auth.verifyRemote(incoming.get("x-stack-ui-proof") ?? "", request.method,
+        request.nextUrl.pathname + request.nextUrl.search, incoming.get("x-stack-ui-origin") ?? "",
+        incoming.get("x-stack-ui-scope") ?? "", incoming.get("x-stack-ui-scopes") ?? ""));
     } else if (/^\/connect\/local(?:\/(?:session|ticket|logout))?$/.test(request.nextUrl.pathname)) {
       return NextResponse.next();
     } else {
@@ -27,6 +27,6 @@ export function proxy(request: NextRequest) {
     return response;
   } catch {
     if (request.method === "GET" && request.headers.get("sec-fetch-mode") === "navigate") return NextResponse.redirect(new URL("/connect/local", origin), 303);
-    return new NextResponse("Local authentication required. Run agentstack open.", { status: 401, headers: { "cache-control": "no-store" } });
+    return new NextResponse("Local authentication required. Run stack open.", { status: 401, headers: { "cache-control": "no-store" } });
   }
 }

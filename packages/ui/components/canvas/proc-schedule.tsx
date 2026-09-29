@@ -66,7 +66,7 @@ export function ProcScheduleWindow() {
       status={status.proc} endpoint={endpoints.proc} updatedAt={detail.at} error={detail.error}
       empty={!schedule}
       footer={schedule && !remote ? <ScheduleControls schedule={schedule} onChanged={() => setEpoch((value) => value + 1)} /> : undefined}>
-      {unavailable ? <ProcPlaceholder title={unavailable} hint="Process output and schedule definitions stay on the AgentStack machine." />
+      {unavailable ? <ProcPlaceholder title={unavailable} hint="Process output and schedule definitions stay on the Stack machine." />
         : !selectedScheduleId ? <ProcPlaceholder title="Choose a schedule" hint="Pick one in the Schedules list." />
         : detail.error && !schedule ? <ProcPlaceholder title="Schedule unavailable" hint={detail.error} />
         : !schedule ? <ProcPlaceholder title={procSchedules.data && !listed && !detail.data ? "Reading schedule…" : "Reading schedule…"} />

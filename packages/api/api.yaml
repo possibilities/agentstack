@@ -1,5 +1,5 @@
 name: api
-description: Structured package API discovery documents for every AgentStack package.
+description: Structured package API discovery documents for every Stack package.
 socket:
   description: Unix socket for package API discovery, namespaced as api.
 mcp:

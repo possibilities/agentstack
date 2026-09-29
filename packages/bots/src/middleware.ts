@@ -109,7 +109,7 @@ export async function attachInputMiddleware(
       ws.once("open", () => { clearTimeout(timer); resolve(); });
       ws.once("error", (error) => { clearTimeout(timer); reject(error); });
     });
-    await call("initialize", { clientInfo: { name: "agentstack-codex-middleware", version: "0.0.0" }, capabilities: { experimentalApi: true } });
+    await call("initialize", { clientInfo: { name: "stack-codex-middleware", version: "0.0.0" }, capabilities: { experimentalApi: true } });
     send({ method: "initialized" });
     const attached = await call("thread/input/middleware/attach", {
       threadId,

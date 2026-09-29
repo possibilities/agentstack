@@ -8,7 +8,7 @@ import { WebSocketServer } from "ws";
 import { attachInputMiddleware, type InputResolution } from "../src/middleware.js";
 
 test("host-side middleware uses the app-server Unix WebSocket and acts only after resolution", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-middleware-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-middleware-"));
   const path = join(dir, "codex.sock");
   const http = createServer();
   const server = new WebSocketServer({ server: http });

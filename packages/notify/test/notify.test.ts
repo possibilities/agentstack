@@ -5,14 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { serveApi, socketCall, socketSubscribe } from "@agentstack/api";
+import { serveApi, socketCall, socketSubscribe } from "@stack/api";
 import type { Notification } from "../src/schema.js";
 
 type Page = { entries: Notification[]; nextCursor: number | null };
 
 test("notifications persist, page, replace by group, and dismiss once with an outcome", async () => {
   const root = await mkdtemp(join(tmpdir(), "n-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: root };
+  const env = { ...process.env, STACK_STATE_DIR: root };
   let served = await serveApi({ name: "notify", transport: "socket", env });
   const call = <T>(name: string, args: Record<string, unknown> = {}) => socketCall(served.socketPath!, "tools/call", { name, arguments: args }) as Promise<T>;
   let notices = 0;
@@ -88,7 +88,7 @@ test("notifications persist, page, replace by group, and dismiss once with an ou
 
 test("notify folds version 1 acknowledgment into dismissal and keeps retries idempotent", async () => {
   const root = await mkdtemp(join(tmpdir(), "n-v1-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: root };
+  const env = { ...process.env, STACK_STATE_DIR: root };
   await mkdir(join(root, "notify"));
   const legacy = new DatabaseSync(join(root, "notify", "notifications.sqlite"));
   legacy.exec(`CREATE TABLE notifications (
@@ -125,7 +125,7 @@ test("notify folds version 1 acknowledgment into dismissal and keeps retries ide
 
 test("notify adopts the prior notification store without losing history", async () => {
   const root = await mkdtemp(join(tmpdir(), "n-migrate-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: root };
+  const env = { ...process.env, STACK_STATE_DIR: root };
   let served = await serveApi({ name: "notify", transport: "socket", env });
   try {
     const id = "718f6656-b34c-400e-b996-093070880711";

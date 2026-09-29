@@ -3,8 +3,8 @@ import { chmod, lstat, mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod";
 import { chatMessagePage, messageCursor } from "./src/chat-messages.js";
-import { operation, workspaceRoot, botInstance, socketCall, socketPath, type PackageApi } from "@agentstack/api";
-import { prepareBotBrowserConfig, browserNamespace } from "@agentstack/browse";
+import { operation, workspaceRoot, botInstance, socketCall, socketPath, type PackageApi } from "@stack/api";
+import { prepareBotBrowserConfig, browserNamespace } from "@stack/browse";
 import { BotLedger } from "./src/ledger.js";
 import { serverMcpUrls } from "./src/server-mcp.js";
 import { stateDir } from "./src/paths.js";
@@ -85,7 +85,7 @@ export const botStart = operation({
     id: botId.optional().describe("Existing or custom bot id. Omit to allocate the next bot-N."),
     account: z.uuid().describe("Required enabled Codex account ID from account_list. For an existing bot, must equal its assignment."),
     cwd: z.string().optional().describe("Existing working directory override. Omit for a new private workspace or to reuse an existing bot's workspace. A supplied directory is never deleted by bot_remove."),
-    args: z.array(z.string()).optional().describe("Extra Codex arguments retained for future launches. Omit to reuse saved args; [] clears them while stopped. AgentStack owns --listen, --identity, --capabilities, and --history-dir."),
+    args: z.array(z.string()).optional().describe("Extra Codex arguments retained for future launches. Omit to reuse saved args; [] clears them while stopped. Stack owns --listen, --identity, --capabilities, and --history-dir."),
     settings: botSettings.partial().optional().describe("Override defaults for a new Bot, or update saved settings of a stopped Bot. Omit to reuse its saved settings."),
   }),
   output: botView, annotations: { title: "Start bot" },
@@ -273,7 +273,7 @@ export const chatTreeDetail = operation({
   },
 });
 export const chatSearch = operation({
-  name: "chat_search", description: "Full-text search over agentstack-owned Bot rollouts: user and assistant text, tool calls and outputs, and available reasoning summaries. Results rank chats by matching message, with a citeable rollout line and snippet. Only the sanctioned root and descendants are returned; scores are comparable only within one query.",
+  name: "chat_search", description: "Full-text search over stack-owned Bot rollouts: user and assistant text, tool calls and outputs, and available reasoning summaries. Results rank chats by matching message, with a citeable rollout line and snippet. Only the sanctioned root and descendants are returned; scores are comparable only within one query.",
   input: z.strictObject({ botId, query: z.string().min(1).max(512), ...page }), output: z.strictObject({ hits: z.array(chatRow.extend({ line: z.number().int(), role: z.string(), snippet: z.string(), score: z.number() })) }), annotations: { title: "Search chats", readOnlyHint: true },
   async call(ctx: BotsContext, { botId: id, query, limit, offset }) { const bot = botFor(ctx, id); await ctx.chats.refresh(id, bot.mainThreadId); return { hits: ctx.chats.search(id, bot.mainThreadId, query, limit, offset) }; },
 });
@@ -529,15 +529,15 @@ export const api: PackageApi<BotsContext, BotsTopic> = {
   },
   async createContext(env) {
     const dir = stateDir(env);
-    const serverMcpPort = env.AGENTSTACK_SERVER_MCP_PORT;
-    if (serverMcpPort !== undefined && (!/^[1-9][0-9]*$/.test(serverMcpPort) || Number(serverMcpPort) > 65535)) throw new Error("AGENTSTACK_SERVER_MCP_PORT must be a bound TCP port");
+    const serverMcpPort = env.STACK_SERVER_MCP_PORT;
+    if (serverMcpPort !== undefined && (!/^[1-9][0-9]*$/.test(serverMcpPort) || Number(serverMcpPort) > 65535)) throw new Error("STACK_SERVER_MCP_PORT must be a bound TCP port");
     await mkdir(dir, { recursive: true, mode: 0o700 });
     await chmod(dir, 0o700);
     const store = new StateStore(dir);
     const root = resolve(join(dir, "bots"));
     const ledger = new BotLedger(root);
     const supervisor = new Supervisor({ stateDir: dir, store,
-      browserEnv: (id, endpoint) => ({ AGENTSTACK_STATE_DIR: dir, AGENT_BROWSER_CONFIG: prepareBotBrowserConfig(env, id, endpoint), AGENT_BROWSER_NAMESPACE: browserNamespace(env, id, botInstance(endpoint)), AGENT_BROWSER_IDLE_TIMEOUT_MS: "0" }),
+      browserEnv: (id, endpoint) => ({ STACK_STATE_DIR: dir, AGENT_BROWSER_CONFIG: prepareBotBrowserConfig(env, id, endpoint), AGENT_BROWSER_NAMESPACE: browserNamespace(env, id, botInstance(endpoint)), AGENT_BROWSER_IDLE_TIMEOUT_MS: "0" }),
       browserReleased: serverMcpPort === undefined ? undefined : async (botId) => {
         await socketCall(socketPath("browse", env), "tools/call", { name: "browser_bot_release", arguments: { botId } }, { timeoutMs: 65_000 });
       },

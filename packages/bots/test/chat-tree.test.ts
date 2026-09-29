@@ -26,7 +26,7 @@ async function rollout(state: string, threadId: string, parent: unknown, extra: 
   await writeFile(join(dir, `rollout-test-${threadId}.jsonl`), [record("session_meta", { id: threadId, session_id: root, parent_thread_id: parent, cwd: "/work", timestamp: "2026-09-25T00:00:00.000Z", ...extra }), ...records].map((value) => JSON.stringify(value)).join("\n") + "\n");
 }
 async function fixture(run: (state: string, index: ChatIndex) => Promise<void>) {
-  const state = await mkdtemp(join(tmpdir(), "agentstack-chat-tree-"));
+  const state = await mkdtemp(join(tmpdir(), "stack-chat-tree-"));
   const index = new ChatIndex(state);
   try { await run(state, index); } finally { index.close(); await rm(state, { recursive: true, force: true }); }
 }

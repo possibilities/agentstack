@@ -214,7 +214,7 @@ export async function runParsed(
   const command = parsed.command;
 
   if (parsed.showVersion) {
-    writeOut(`AgentStack Brain ${VERSION}\n`);
+    writeOut(`Stack Brain ${VERSION}\n`);
     return;
   }
 
@@ -348,7 +348,7 @@ export async function runParsed(
         throw new CliError(
           "db_not_found",
           `research cache DB not found: ${parsed.globals.dbPath}`,
-          { recovery: "Use the Brain Package API; internal operators may pass --db PATH or set AGENTSTACK_STATE_DIR." },
+          { recovery: "Use the Brain Package API; internal operators may pass --db PATH or set STACK_STATE_DIR." },
         );
       }
       const store = new ResearchStore(parsed.globals.dbPath);
@@ -366,7 +366,7 @@ export async function runParsed(
         throw new CliError(
           "db_not_found",
           `research cache DB not found: ${parsed.globals.dbPath}`,
-          { recovery: "Use the Brain Package API; internal operators may pass --db PATH or set AGENTSTACK_STATE_DIR." },
+          { recovery: "Use the Brain Package API; internal operators may pass --db PATH or set STACK_STATE_DIR." },
         );
       }
       const store = new ResearchStore(parsed.globals.dbPath);
@@ -840,7 +840,7 @@ function runBackup(
         "db_not_found",
         `research cache DB not found: ${dbPath}`,
         {
-          recovery: "Use the Brain Package API; internal operators may pass --db PATH or set AGENTSTACK_STATE_DIR.",
+          recovery: "Use the Brain Package API; internal operators may pass --db PATH or set STACK_STATE_DIR.",
         },
       );
     }
@@ -1111,7 +1111,7 @@ function runDoctor(argv: string[], globals: GlobalOptions): ReadCommand {
   const notify = opts.notify === true;
   return async (cache) => {
     // The ingress check is a request to this machine's own registered share
-    // address and nowhere else; AgentStack Brain still opens no socket to the web.
+    // address and nowhere else; Stack Brain still opens no socket to the web.
     const data = doctor(cache, new Date(), [await shareIngressCheck()]);
     const report = notify ? await withStrandedNotice(cache, data) : data;
     writeByFormat(
@@ -1598,7 +1598,7 @@ export async function main(argv: string[]): Promise<void> {
       if (json) {
         writeJson(errorEnvelope(command, err.code, err.message, err.recovery));
       } else {
-        process.stderr.write(`AgentStack Brain: ${err.message}\n`);
+        process.stderr.write(`Stack Brain: ${err.message}\n`);
         if (err.recovery !== undefined)
           process.stderr.write(`recovery: ${err.recovery}\n`);
       }
@@ -1608,7 +1608,7 @@ export async function main(argv: string[]): Promise<void> {
     if (json) {
       writeJson(errorEnvelope(command, "unexpected_error", message));
     } else {
-      process.stderr.write(`AgentStack Brain: unexpected error: ${message}\n`);
+      process.stderr.write(`Stack Brain: unexpected error: ${message}\n`);
     }
     process.exit(1);
   }

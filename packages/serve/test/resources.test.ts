@@ -5,7 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { operation, serveSocket, socketCall, socketSubscribe } from "@agentstack/api";
+import { operation, serveSocket, socketCall, socketSubscribe } from "@stack/api";
 import { z } from "zod";
 import { api, serverResources, serverResourceHistory, type ServerContext } from "../api.js";
 import { StatusSource } from "../src/status.js";
@@ -295,7 +295,7 @@ test("automatic sampling recovers from failure and halts after process-capacity 
 
 test("bounded domain failures are labelled; standalone mode never connects", async () => {
   const state = await mkdtemp(join(tmpdir(), "resource-domains-"));
-  const read = createDomainReader({ AGENTSTACK_STATE_DIR: state });
+  const read = createDomainReader({ STACK_STATE_DIR: state });
   try {
     const absent = await read(true, new AbortController().signal);
     assert.ok(absent.statuses.every((status) => status.error === "source_unavailable"));
@@ -312,7 +312,7 @@ test("domain readers validate inventories, flag unverified Bots, retain last-goo
   ] };
   const server = await serveSocket({ info: { path: join(state, "sockets", "bots.sock"), name: "bots", description: "test", transportDescription: "test" },
     context: {}, operations: [operation({ name: "bot_list", description: "Test inventory", input: z.object({}), output: z.unknown(), async call() { return bots; } })] });
-  const read = createDomainReader({ AGENTSTACK_STATE_DIR: state });
+  const read = createDomainReader({ STACK_STATE_DIR: state });
   try {
     const first = await read(true, new AbortController().signal);
     assert.equal(first.labels.length, 1); assert.equal(first.labels[0].botId, "healthy");
@@ -338,7 +338,7 @@ test("Claude session process roots share account attribution without fabricating
       ] };
     } })] });
   try {
-    const result = await createDomainReader({ AGENTSTACK_STATE_DIR: state })(true, new AbortController().signal);
+    const result = await createDomainReader({ STACK_STATE_DIR: state })(true, new AbortController().signal);
     assert.equal(result.statuses[1].state, "current");
     assert.equal(result.statuses[1].error, null);
     assert.equal(result.statuses[1].unmatched, 1);

@@ -1,6 +1,6 @@
-package dev.agentstack.app.share
+package dev.stack.app.share
 
-import dev.agentstack.app.R
+import dev.stack.app.R
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -19,10 +19,10 @@ import androidx.core.content.ContextCompat
 
 /** Owns the ongoing notification corresponding to each retained recent link. */
 object RecentLinkNotifications {
-    private const val CHANNEL_ID = "agentstack.app.share.recent-links.v1"
-    private const val GROUP_KEY = "agentstack.app.share.recent-links"
-    private const val ACTION_REMOVE = "dev.agentstack.app.share.REMOVE_RECENT_LINK"
-    private const val EXTRA_ID = "dev.agentstack.app.share.RECENT_LINK_ID"
+    private const val CHANNEL_ID = "stack.app.share.recent-links.v1"
+    private const val GROUP_KEY = "stack.app.share.recent-links"
+    private const val ACTION_REMOVE = "dev.stack.app.share.REMOVE_RECENT_LINK"
+    private const val EXTRA_ID = "dev.stack.app.share.RECENT_LINK_ID"
 
     fun remember(context: Context, payload: SharePayload): RecentLink? {
         val url = payload.url ?: return null
@@ -84,7 +84,7 @@ object RecentLinkNotifications {
 
         val remove = Intent(context, RecentLinkActionReceiver::class.java)
             .setAction(ACTION_REMOVE)
-            .setData(Uri.parse("agentstack-share://recent/${entry.id}"))
+            .setData(Uri.parse("stack-share://recent/${entry.id}"))
             .putExtra(EXTRA_ID, entry.id)
         val removeIntent = PendingIntent.getBroadcast(
             context,
@@ -137,7 +137,7 @@ object RecentLinkNotifications {
         intent.takeIf { it.action == ACTION_REMOVE }?.getStringExtra(EXTRA_ID)
 }
 
-/** Explicit notification action; removing a reminder never mutates AgentStack. */
+/** Explicit notification action; removing a reminder never mutates Stack. */
 class RecentLinkActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         RecentLinkNotifications.removeId(intent)?.let { id ->

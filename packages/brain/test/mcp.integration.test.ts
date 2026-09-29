@@ -3,12 +3,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { serveMcp, serveSocket, socketPath, operatorHeaders } from "@agentstack/api";
+import { serveMcp, serveSocket, socketPath, operatorHeaders } from "@stack/api";
 import { api, createBrainContext, closeBrainContext } from "../api.js";
 
 test("real MCP handshake, discovery and calls preserve Brain object outputs over its socket", { timeout: 15_000 }, async () => {
   const root = mkdtempSync(join(tmpdir(), "brain-mcp-"));
-  const env = { HOME: root, AGENTSTACK_STATE_DIR: root, AGENTSTACK_BRAIN_SHARE_PORT: "0", AGENTSTACK_MCP_PORT: "0" };
+  const env = { HOME: root, STACK_STATE_DIR: root, STACK_BRAIN_SHARE_PORT: "0", STACK_MCP_PORT: "0" };
   const ctx = await createBrainContext(env, { pollMs: 60_000, extract: async () => { throw new Error("unexpected network extraction"); } });
   let socket: Awaited<ReturnType<typeof serveSocket>> | undefined;
   let mcp: Awaited<ReturnType<typeof serveMcp>> | undefined;

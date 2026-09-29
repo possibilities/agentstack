@@ -128,7 +128,7 @@ function ProfileRow({ profile, controllers }: { profile: BrowserProfile; control
 
 /**
  * Durable Browser profiles by owning Bot, then unassigned. Each has one supervised browser while
- * AgentStack runs; a new profile starts empty and never imports sign-ins.
+ * Stack runs; a new profile starts empty and never imports sign-ins.
  */
 export function ProfilesWindow() {
   const { status, endpoints, browserProfiles, browserControllers, bots, remote } = useStack();
@@ -277,15 +277,15 @@ function HypemanRow({ item, locked, blocked }: { item: HypemanInstallation; lock
           <Button type="button" size="xs" variant="outline" disabled={Boolean(blocked ?? change) || enable.pending} title={blocked ?? change ?? "Use this Hypeman for browser profiles"}
             onClick={() => void enable.run({ root: item.root })}><PendingLabel since={enable.since}>Select</PendingLabel></Button>
         ) : null}
-        {item.source === "agentstack" && item.installed ? (
+        {item.source === "stack" && item.installed ? (
           <Button type="button" size="xs" variant="ghost" className="ml-auto text-muted-foreground" disabled={Boolean(blocked) || item.selected || uninstall.pending}
-            title={item.selected ? "Deselect it first" : blocked ?? "Uninstall AgentStack's Hypeman"} onClick={() => setConfirming(true)}>Uninstall…</Button>
+            title={item.selected ? "Deselect it first" : blocked ?? "Uninstall Stack's Hypeman"} onClick={() => setConfirming(true)}>Uninstall…</Button>
         ) : null}
       </div>
       <AlertDialog open={confirming} onOpenChange={(next) => { if (!uninstall.pending) { setConfirming(next); setDiscard(false); } }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Uninstall AgentStack&apos;s Hypeman?</AlertDialogTitle>
+            <AlertDialogTitle>Uninstall Stack&apos;s Hypeman?</AlertDialogTitle>
             <AlertDialogDescription>Only a stopped, deselected installation with no browser reservations is removed. Other Hypeman installations are never touched.</AlertDialogDescription>
           </AlertDialogHeader>
           <label className="flex items-start gap-2 text-sm">
@@ -394,8 +394,8 @@ export function ToolchainWindow() {
               : <p className="text-[0.7rem] text-muted-foreground">No local Hypeman found.</p>}
             <WriteError error={hypemanInstall.error ?? locate.error} />
             <div className="flex flex-wrap items-center gap-1">
-              {data.hypeman.some((item) => item.source === "agentstack" && item.installed) ? null : (
-                <Button type="button" size="xs" variant="outline" disabled={Boolean(blocked) || hypemanInstall.pending} title="Install the checksum-verified release in AgentStack state; it is not selected"
+              {data.hypeman.some((item) => item.source === "stack" && item.installed) ? null : (
+                <Button type="button" size="xs" variant="outline" disabled={Boolean(blocked) || hypemanInstall.pending} title="Install the checksum-verified release in Stack state; it is not selected"
                   onClick={() => void hypemanInstall.run()}><PendingLabel since={hypemanInstall.since}>Install Hypeman</PendingLabel></Button>
               )}
               <form className="flex min-w-0 flex-1 items-center gap-1" onSubmit={(event) => { event.preventDefault(); if (root.trim()) void locate.run({ root: root.trim() }).then((result) => { if (result) setRoot(""); }); }}>

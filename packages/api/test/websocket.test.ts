@@ -19,7 +19,7 @@ function connect(url: string, origin?: string, headers?: Record<string, string>)
     const env = credentials.get(url);
     let protocols: string[] = [];
     if (env && origin && /^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin)) {
-      protocols = [withLocalAuth(env, auth => `agentstack-local.${auth.ticket(auth.redeem(auth.bootstrap(origin, "ui"), origin, "ui").token, origin)}`)];
+      protocols = [withLocalAuth(env, auth => `stack-local.${auth.ticket(auth.redeem(auth.bootstrap(origin, "ui"), origin, "ui").token, origin)}`)];
     }
     const ws = new WebSocket(url, protocols, { ...(origin ? { origin } : {}), headers: { ...(!origin && env ? operatorHeaders(env) : {}), ...headers } });
     ws.once("open", () => resolve(ws));
@@ -39,11 +39,11 @@ function nextMessage(ws: WebSocket, timeoutMs = 2_000): Promise<Frame> {
 }
 
 async function fixture(overrides: NodeJS.ProcessEnv = {}) {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-ws-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-ws-"));
   const dir = join(root, "packages", "demo");
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n  operations: all\n  events: all\n");
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_WEBSOCKET_PORT: "0", AGENTSTACK_UI_PORT: "8745", AGENTSTACK_WEBSOCKET_ORIGIN: undefined, ...overrides };
+  const env = { ...process.env, STACK_STATE_DIR: root, STACK_WEBSOCKET_PORT: "0", STACK_UI_PORT: "8745", STACK_WEBSOCKET_ORIGIN: undefined, ...overrides };
   const socket = await serveSocket<{ allowed: string }>({
     info: { name: "demo", description: "Demo.", transportDescription: "Socket.", path: socketPath("demo", env) },
     context: { allowed: "bot-1" },
@@ -297,9 +297,9 @@ test("WebSocket admits current configuration while existing connections keep wor
 
 test("WebSocket port configuration rejects invalid values", () => {
   assert.equal(websocketPort({}), 8744);
-  assert.equal(websocketPort({ AGENTSTACK_WEBSOCKET_PORT: "0" }), 0);
+  assert.equal(websocketPort({ STACK_WEBSOCKET_PORT: "0" }), 0);
   for (const value of ["", "-1", "65536", "123.5", "abc"]) {
-    assert.throws(() => websocketPort({ AGENTSTACK_WEBSOCKET_PORT: value }), /AGENTSTACK_WEBSOCKET_PORT/);
+    assert.throws(() => websocketPort({ STACK_WEBSOCKET_PORT: value }), /STACK_WEBSOCKET_PORT/);
   }
 });
 
@@ -316,9 +316,9 @@ test("anonymous sockets, replayed tickets and revoked operator/browser connectio
     await assert.rejects(raw([], { origin }), /403/);
     const token = withLocalAuth(setup.env, auth => auth.redeem(auth.bootstrap(origin, "ui"), origin, "ui").token);
     const ticket = withLocalAuth(setup.env, auth => auth.ticket(token, origin));
-    await assert.rejects(raw([`agentstack-local.${ticket}`], { origin: "http://localhost:8745" }), /403/);
-    browser = await raw([`agentstack-local.${ticket}`], { origin });
-    await assert.rejects(raw([`agentstack-local.${ticket}`], { origin }), /403/);
+    await assert.rejects(raw([`stack-local.${ticket}`], { origin: "http://localhost:8745" }), /403/);
+    browser = await raw([`stack-local.${ticket}`], { origin });
+    await assert.rejects(raw([`stack-local.${ticket}`], { origin }), /403/);
     const headers = operatorHeaders(setup.env);
     native = await raw([], headers);
     const closed = [native, browser].map(ws => new Promise<void>(resolve => ws.once("close", () => resolve())));
@@ -330,7 +330,7 @@ test("anonymous sockets, replayed tickets and revoked operator/browser connectio
 });
 
 test("WebSocket explicit development origin replaces the default UI origins", async () => {
-  const setup = await fixture({ AGENTSTACK_WEBSOCKET_ORIGIN: "http://localhost:3000" });
+  const setup = await fixture({ STACK_WEBSOCKET_ORIGIN: "http://localhost:3000" });
   try {
     await assert.rejects(connect(setup.url, "http://localhost:8745"), /403/);
     const browser = await connect(setup.url, "http://localhost:3000");

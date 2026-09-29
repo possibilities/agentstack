@@ -4,7 +4,7 @@ import { registerHooks, createRequire } from "node:module";
 import { dirname, extname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { serveApi, serveWebSocket, socketCall, socketPath, withLocalAuth } from "@agentstack/api";
+import { serveApi, serveWebSocket, socketCall, socketPath, withLocalAuth } from "@stack/api";
 import { gatewayRoot } from "./browser-fixture.mjs";
 
 // Load the browser store directly without a Next build. Its bundler-style
@@ -38,7 +38,7 @@ async function until(store, condition) {
 test("the Inbox store pages, filters, follows notify_changed and applies dismissals from the real notify API", async () => {
   // Unix socket paths are short; keep the state directory near the root of the temporary tree.
   const dir = await mkdtemp(join("/tmp", "as-notify-store-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: dir };
+  const env = { ...process.env, STACK_STATE_DIR: dir };
   const notify = await serveApi({ name: "notify", transport: "socket", env, root });
   const websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["notify"]), port: 0 });
   const originalFetch = globalThis.fetch, originalWebSocket = globalThis.WebSocket;

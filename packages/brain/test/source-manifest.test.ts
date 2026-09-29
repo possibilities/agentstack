@@ -242,7 +242,7 @@ test("string fields are trimmed into the stored definition", () => {
         display_name: "  Blog One  ",
         sensitivity: " public ",
         collections: [" blogs "],
-        credential_refs: [" keychain:agentstack-brain/blog-one "],
+        credential_refs: [" keychain:stack-brain/blog-one "],
       }),
     ),
   );
@@ -252,7 +252,7 @@ test("string fields are trimmed into the stored definition", () => {
     display_name: "Blog One",
     sensitivity: "public",
     collections: ["blogs"],
-    credential_refs: ["keychain:agentstack-brain/blog-one"],
+    credential_refs: ["keychain:stack-brain/blog-one"],
   });
 });
 
@@ -817,7 +817,7 @@ test("a definition larger than 128KiB is refused", () => {
 });
 
 test("unreadable or non-JSON manifest files fail as bad_source_manifest", () => {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-manifest-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-manifest-"));
   try {
     const missing = cliError(() =>
       readSourceManifest(join(root, "absent.json")),
@@ -846,7 +846,7 @@ function decode(value: Uint8Array | string): string {
 
 function runApply(manifestPath: string, extra: string[] = []) {
   const repo = join(import.meta.dirname, "..");
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-manifest-cli-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-manifest-cli-"));
   const result = spawnSync({
     cmd: [
       process.execPath,
@@ -873,13 +873,13 @@ function runApply(manifestPath: string, extra: string[] = []) {
 }
 
 test("sources apply exits 2 for manifest faults and 1 for payload URL faults", () => {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-manifest-files-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-manifest-files-"));
   try {
     const structural = join(root, "structural.json");
     writeFileSync(structural, JSON.stringify(manifest(blog({ version: "x" }))));
     const rejected = runApply(structural);
     expect(rejected.exitCode).toBe(2);
-    expect(rejected.stderr.startsWith("AgentStack Brain: ")).toBe(true);
+    expect(rejected.stderr.startsWith("Stack Brain: ")).toBe(true);
     expect(rejected.stderr).toContain("version");
 
     const envelope = runApply(structural, ["--json"]);

@@ -10,7 +10,7 @@ import { AuthStore } from "../src/store.js";
 const fakeLogin = fileURLToPath(new URL("../../test/fixtures/fake-login.mjs", import.meta.url));
 
 test("a duplicate completed device sign-in reports a safe failure without changing inventory", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-duplicate-login-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-duplicate-login-"));
   const previousIdentity = process.env.FAKE_LOGIN_NATIVE_ID;
   process.env.FAKE_LOGIN_NATIVE_ID = "already-registered";
   const store = new AuthStore(root);

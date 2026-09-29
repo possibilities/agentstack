@@ -1,4 +1,4 @@
-package dev.agentstack.app.share
+package dev.stack.app.share
 
 import android.content.Context
 import java.io.File
@@ -113,6 +113,6 @@ class RecentLinks(private val file: File) {
                 url.startsWith("http://", ignoreCase = true)
 
         fun at(context: Context): RecentLinks =
-            RecentLinks(File(context.filesDir, "agentstack.app.share.recent-links.v1.json"))
+            RecentLinks(File(context.filesDir, "stack.app.share.recent-links.v1.json"))
     }
 }

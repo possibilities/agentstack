@@ -79,7 +79,7 @@ export async function discoverModels(stateDir: string, auth: string,
           newline = buffer.indexOf("\n");
         }
       });
-      send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { clientInfo: { name: "agentstack-infer", version: "0.0.0" }, capabilities: {} } });
+      send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { clientInfo: { name: "stack-infer", version: "0.0.0" }, capabilities: {} } });
     });
   } finally {
     if (child) {

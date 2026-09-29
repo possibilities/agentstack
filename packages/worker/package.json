@@ -1,5 +1,5 @@
 {
-  "name": "@agentstack/worker",
+  "name": "@stack/worker",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -13,10 +13,10 @@
   },
   "engines": { "node": ">=24" },
   "dependencies": {
-    "@agentstack/api": "workspace:*",
-    "@agentstack/auth": "workspace:*",
-    "@agentstack/bots": "workspace:*",
-    "@agentstack/roles": "workspace:*",
+    "@stack/api": "workspace:*",
+    "@stack/auth": "workspace:*",
+    "@stack/bots": "workspace:*",
+    "@stack/roles": "workspace:*",
     "@anthropic-ai/claude-agent-sdk": "0.3.283",
     "zod": "^4.6.5"
   },

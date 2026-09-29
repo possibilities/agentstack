@@ -51,7 +51,7 @@ function env(overrides: Record<string, string>): NodeJS.ProcessEnv {
 }
 
 async function harness(provider: Provider, overrides: Record<string, string> = {}) {
-  const root = await mkdtemp(join(tmpdir(), `agentstack-worker-login-${provider}-`));
+  const root = await mkdtemp(join(tmpdir(), `stack-worker-login-${provider}-`));
   const store = new AuthStore(root);
   const login = new WorkerLoginManager(store, { env: env(overrides), command: commandFor(provider) });
   const seen: string[] = [];
@@ -141,13 +141,13 @@ test("devin still accepts its original app.devin.ai sign-in URL", async () => {
 
 for (const outcome of ["submit", "cancel", "failure"] as const) {
   test(`macOS default devin launcher blocks open and preserves ${outcome}`, { skip: platform() !== "darwin", timeout: 15_000 }, async () => {
-    const root = await mkdtemp(join(tmpdir(), "agentstack-devin native-"));
+    const root = await mkdtemp(join(tmpdir(), "stack-devin native-"));
     const store = new AuthStore(root);
     const bin = join(root, "fake devin's cli");
     const fixture = fileURLToPath(new URL("../../test/fixtures/fake-worker-login-devin-native.mjs", import.meta.url));
     const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
     const login = new WorkerLoginManager(store, { env: env({
-      AGENTSTACK_DEVIN_BIN: bin,
+      STACK_DEVIN_BIN: bin,
       FAKE_WORKER_LOGIN_ACCEPT_FIRST: "1",
       FAKE_WORKER_LOGIN_NATIVE_FAIL: outcome === "failure" ? "1" : "",
     }) });

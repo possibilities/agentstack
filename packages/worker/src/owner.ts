@@ -1,5 +1,5 @@
-import { botInstance, operatorInvocation, socketCall, socketPath, type InvocationContext } from "@agentstack/api";
-import { listActiveThreads, type ActiveThread } from "@agentstack/bots";
+import { botInstance, operatorInvocation, socketCall, socketPath, type InvocationContext } from "@stack/api";
+import { listActiveThreads, type ActiveThread } from "@stack/bots";
 import type { WorkerRecord } from "./ledger.js";
 
 export type WorkerOwner = { botId: string; threadId: string };

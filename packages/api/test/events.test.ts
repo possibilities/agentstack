@@ -35,7 +35,7 @@ async function serveEventsSocket(dir: string, extras: { operations?: boolean } =
 }
 
 test("socket events deliver change notices to subscribed connections only", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-events-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-events-"));
   const { served, path } = await serveEventsSocket(dir);
   const received: string[] = [];
   const other: string[] = [];
@@ -64,7 +64,7 @@ test("socket events deliver change notices to subscribed connections only", asyn
 });
 
 test("scoped socket subscriptions receive only their own changes and validate the scope", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-events-scope-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-events-scope-"));
   const path = join(dir, "scoped.sock");
   const served = await serveSocket({
     info: { name: "demo", description: "Demo.", transportDescription: "Socket.", path },
@@ -103,7 +103,7 @@ test("scoped socket subscriptions receive only their own changes and validate th
 });
 
 test("events/subscribe rejects unknown, duplicate, and empty topic sets atomically", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-events-reject-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-events-reject-"));
   const { served, path } = await serveEventsSocket(dir);
   try {
     await assert.rejects(socketCall(path, "events/subscribe", { topics: [] }), /non-empty/);
@@ -135,7 +135,7 @@ test("events/subscribe rejects unknown, duplicate, and empty topic sets atomical
 });
 
 test("a subscribed connection that stops reading is destroyed at the output bound", { timeout: 30_000 }, async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-events-slow-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-events-slow-"));
   const { served, path } = await serveEventsSocket(dir);
   try {
     const connection = connect(path);
@@ -159,7 +159,7 @@ test("a subscribed connection that stops reading is destroyed at the output boun
 });
 
 test("events/subscribe on an event-free socket fails and closing the connection unsubscribes", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-events-none-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-events-none-"));
   const path = join(dir, "plain.sock");
   const served = await serveSocket({
     info: { name: "demo", description: "Demo.", transportDescription: "Socket.", path },
@@ -204,7 +204,7 @@ test("events/subscribe on an event-free socket fails and closing the connection 
 });
 
 test("socketSubscribe rejects bad topic sets and reports a server failure", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-events-client-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-events-client-"));
   const { served, path } = await serveEventsSocket(dir);
   try {
     await assert.rejects(socketSubscribe(path, [], () => undefined), /at least one topic/);
@@ -218,7 +218,7 @@ test("socketSubscribe rejects bad topic sets and reports a server failure", asyn
 });
 
 test("a subscription connection does not stall socket shutdown", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-events-close-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-events-close-"));
   const { served, path } = await serveEventsSocket(dir);
   const subscription = await socketSubscribe(path, ["ping_changed"], () => undefined);
   await Promise.race([
@@ -229,7 +229,7 @@ test("a subscription connection does not stall socket shutdown", async () => {
 });
 
 test("an event-bearing package fails closed before its context is created on an incapable transport", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-events-gate-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-events-gate-"));
   const dir = join(root, "packages", "demo");
   await mkdir(join(dir, "dist", "src"), { recursive: true });
   await writeFile(
@@ -246,7 +246,7 @@ test("an event-bearing package fails closed before its context is created on an 
     };\n`,
   );
   try {
-    await assert.rejects(serveApi({ name: "demo", transport: "mcp", root }), /agentstack mcp/);
+    await assert.rejects(serveApi({ name: "demo", transport: "mcp", root }), /stack mcp/);
     await assert.rejects(serveApi({ name: "demo", transport: "socket", root }), /does not configure socket/);
     await assert.rejects(serveApi({ name: "demo", transport: "websocket", root }), /does not configure websocket/);
   } finally {
@@ -255,7 +255,7 @@ test("an event-bearing package fails closed before its context is created on an 
 });
 
 test("scoped events stay on the socket owner for WebSocket forwarding", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-scoped-websocket-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-scoped-websocket-"));
   const dir = join(root, "packages", "demo");
   await mkdir(join(dir, "dist"), { recursive: true });
   await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo operations.\nsocket:\n  description: Local socket.\nwebsocket:\n  description: Browser notices.\n  operations: all\n  events: all\n");
@@ -270,7 +270,7 @@ test("scoped events stay on the socket owner for WebSocket forwarding", async ()
     async closeContext() {},
   };\n`);
   try {
-    const served = await serveApi({ name: "demo", transport: "socket", root, env: { ...process.env, AGENTSTACK_STATE_DIR: root } });
+    const served = await serveApi({ name: "demo", transport: "socket", root, env: { ...process.env, STACK_STATE_DIR: root } });
     await served.close();
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -278,7 +278,7 @@ test("scoped events stay on the socket owner for WebSocket forwarding", async ()
 });
 
 test("socketSubscribe closes on post-ack malformed frames, odd notifications, and abort", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-events-stream-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-events-stream-"));
   const servers: Array<{ close(): Promise<void> }> = [];
   const fake = async (act: (socket: Socket, request: unknown) => void) => {
     const path = join(dir, `fake-${servers.length}.sock`);
@@ -337,7 +337,7 @@ test("socketSubscribe closes on post-ack malformed frames, odd notifications, an
 });
 
 test("socketSubscribe rejects acknowledgements that do not match the requested topics", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-events-ack-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-events-ack-"));
   const servers: Array<{ close(): Promise<void> }> = [];
   const fake = async (response: unknown) => {
     const path = join(dir, `fake-${servers.length}.sock`);

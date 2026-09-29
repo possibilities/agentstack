@@ -1,4 +1,4 @@
-package dev.agentstack.app.share
+package dev.stack.app.share
 
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -48,7 +48,7 @@ class ShareClient(
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 setRequestProperty("Authorization", "Bearer ${tokenProvider?.invoke() ?: token}")
-                serverId?.let { setRequestProperty("X-AgentStack-Server-ID", it) }
+                serverId?.let { setRequestProperty("X-Stack-Server-ID", it) }
             }
             connection.outputStream.use { it.write(body) }
 
@@ -61,7 +61,7 @@ class ShareClient(
             interpret(status, raw)
         } catch (error: IOException) {
             ShareResult.Unreachable(
-                error.message ?: "Could not reach AgentStack at $serverUrl",
+                error.message ?: "Could not reach Stack at $serverUrl",
             )
         } finally {
             connection?.disconnect()
@@ -78,7 +78,7 @@ class ShareClient(
                 connectTimeout = timeoutMs
                 readTimeout = timeoutMs
                 setRequestProperty("Authorization", "Bearer ${tokenProvider?.invoke() ?: token}")
-                serverId?.let { setRequestProperty("X-AgentStack-Server-ID", it) }
+                serverId?.let { setRequestProperty("X-Stack-Server-ID", it) }
             }
             when (val status = connection.responseCode) {
                 in 200..299 -> ShareResult.Queued(0)
@@ -121,7 +121,7 @@ class ShareClient(
         return ShareResult.Rejected(
             status,
             error?.optString("code") ?: "http_$status",
-            error?.optString("message") ?: "AgentStack rejected the share (HTTP $status).",
+            error?.optString("message") ?: "Stack rejected the share (HTTP $status).",
         )
     }
 

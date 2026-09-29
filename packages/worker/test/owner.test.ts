@@ -3,13 +3,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { botInstance, operation, serveSocket, socketPath, type InvocationContext } from "@agentstack/api";
+import { botInstance, operation, serveSocket, socketPath, type InvocationContext } from "@stack/api";
 import { z } from "zod";
 import { LOCAL_OPERATOR_ID, workerOwner } from "../src/owner.js";
 
 test("Worker targets recognize operator schedules and fence scheduled Bot roots and instances", async () => {
   const root = await mkdtemp(join(tmpdir(), "as-worker-owner-"));
-  const env = { AGENTSTACK_STATE_DIR: root };
+  const env = { STACK_STATE_DIR: root };
   const bot = { id: "a", state: "running", url: "unix:///fixture-launch", mainThreadId: "new-root", recoveryIssue: null };
   const served = await serveSocket({ info: { name: "bots", description: "Bots", transportDescription: "Socket", path: socketPath("bots", env) }, context: {},
     operations: [operation({ name: "bot_list", description: "List", input: z.object({}), output: z.any(), async call() { return { bots: [bot] }; } })] });

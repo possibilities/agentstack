@@ -12,7 +12,7 @@ showing it, or else switches the primary window to it; a ⌘-, Ctrl- or
 Shift-click opens another chat window in the next column. Every chat window
 has a Bot switcher and a "new chat window" control; additional windows close,
 while closing the primary only empties it. Which Bot each window shows is
-browser-local (`agentstack.uix.chats.v1`), restored after hydration, and a
+browser-local (`stack.uix.chats.v1`), restored after hydration, and a
 removed Bot's windows are pruned. A chat window is a `chat:<window>` node for
 navigation (`homeOf` → its own Fleet window) but has no inspectable record.
 Chat windows keep a fixed footprint height (a `WindowDef.fixed` window) and

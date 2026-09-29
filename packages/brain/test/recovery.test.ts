@@ -91,7 +91,7 @@ function dispositionFor(index: number): string {
 }
 
 function makeFixture(options: FixtureOptions = {}): Fixture {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-recovery-test-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-recovery-test-"));
   roots.push(root);
   const artifactRoot = join(root, "legacy-artifacts");
   const manifestsRoot = join(root, "manifests");
@@ -343,7 +343,7 @@ function directAdmissionFixture(): {
   store: ResearchStore;
   artifacts: ArtifactStore;
 } {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-recovery-admission-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-recovery-admission-"));
   roots.push(root);
   return {
     store: new ResearchStore(join(root, "research.db")),

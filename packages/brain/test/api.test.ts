@@ -18,10 +18,10 @@ async function call(ctx: BrainContext, name: string, input: Record<string, unkno
 }
 
 test("Package API initializes isolated state and owns share-to-index processing and shutdown", async () => {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-api-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-api-"));
   const state = join(root, "state");
   const forbidden = join(root, "ignored");
-  const ctx = await createBrainContext({ HOME: root, AGENTSTACK_STATE_DIR: state, AGENTSTACK_BRAIN_SHARE_PORT: "0", AGENTSTACK_BRAIN_DB: forbidden, XDG_DATA_HOME: forbidden }, {
+  const ctx = await createBrainContext({ HOME: root, STACK_STATE_DIR: state, STACK_BRAIN_SHARE_PORT: "0", STACK_BRAIN_DB: forbidden, XDG_DATA_HOME: forbidden }, {
     pollMs: 5, extract: async () => { throw new Error("this test may not perform network reads"); },
   });
   let url = "";
@@ -91,8 +91,8 @@ test("Package API initializes isolated state and owns share-to-index processing 
 });
 
 test("API admission and source/operator dispositions use typed outputs", async () => {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-operations-"));
-  const ctx = await createBrainContext({ HOME: root, AGENTSTACK_STATE_DIR: root, AGENTSTACK_BRAIN_SHARE_PORT: "0" }, { pollMs: 60_000 });
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-operations-"));
+  const ctx = await createBrainContext({ HOME: root, STACK_STATE_DIR: root, STACK_BRAIN_SHARE_PORT: "0" }, { pollMs: 60_000 });
   try {
     const admitted = await call(ctx, "submit", { source: "-offline operator text", kind: "text", "idempotency-key": "operator" });
     assert.equal(admitted.status, "queued");
@@ -117,7 +117,7 @@ test("API admission and source/operator dispositions use typed outputs", async (
 });
 
 test("retrieval is structurally read-only, refuses absent DB and preserves indexed bytes", () => {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-readonly-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-readonly-"));
   try {
     const absent = join(root, "absent.db");
     assert.throws(() => new ResearchCache(absent), /not found/);
@@ -151,7 +151,7 @@ test("due Sources require explicit admission at startup and during maintenance",
   } finally { store.close(); }
   let discoveries = 0;
   t.mock.timers.enable({ apis: ["setInterval"] });
-  const ctx = await createBrainContext({ HOME: root, AGENTSTACK_STATE_DIR: root, AGENTSTACK_BRAIN_SHARE_PORT: "0" }, {
+  const ctx = await createBrainContext({ HOME: root, STACK_STATE_DIR: root, STACK_BRAIN_SHARE_PORT: "0" }, {
     pollMs: 5,
     extract: async () => { throw new Error("unexpected URL extraction"); },
     sourceDiscovery: {
@@ -204,11 +204,11 @@ test("due Sources require explicit admission at startup and during maintenance",
 });
 
 test("closing Brain cancels active extraction and waiting admission without losing the durable job", async () => {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-cancel-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-cancel-"));
   let markStarted: () => void = () => {};
   const started = new Promise<void>((resolve) => { markStarted = resolve; });
   let aborted = false;
-  const ctx = await createBrainContext({ HOME: root, AGENTSTACK_STATE_DIR: root, AGENTSTACK_BRAIN_SHARE_PORT: "0" }, {
+  const ctx = await createBrainContext({ HOME: root, STACK_STATE_DIR: root, STACK_BRAIN_SHARE_PORT: "0" }, {
     pollMs: 5,
     extract: async (_url, options) => {
       markStarted();
@@ -237,8 +237,8 @@ test("closing Brain cancels active extraction and waiting admission without losi
 });
 
 test("change notices follow ledger, source and index commits without carrying values", async () => {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-events-"));
-  const ctx = await createBrainContext({ HOME: root, AGENTSTACK_STATE_DIR: root, AGENTSTACK_BRAIN_SHARE_PORT: "0" }, { pollMs: 5 });
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-events-"));
+  const ctx = await createBrainContext({ HOME: root, STACK_STATE_DIR: root, STACK_BRAIN_SHARE_PORT: "0" }, { pollMs: 5 });
   const seen: string[] = [];
   const stop = await api.events!.start(ctx, (topic, scope) => { assert.equal(scope, undefined); seen.push(topic); });
   const waitFor = async (topic: string) => {

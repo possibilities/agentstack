@@ -1,8 +1,8 @@
-package dev.agentstack.app.share
+package dev.stack.app.share
 
-import dev.agentstack.app.R
-import dev.agentstack.app.Settings
-import dev.agentstack.app.SettingsActivity
+import dev.stack.app.R
+import dev.stack.app.Settings
+import dev.stack.app.SettingsActivity
 
 import android.content.Context
 import android.content.Intent
@@ -118,7 +118,7 @@ class ShareActivity : Activity() {
 
     /**
      * A held share is reported as held, never as saved: nothing exists in
-     * AgentStack until the ingress admits it.
+     * Stack until the ingress admits it.
      */
     private fun describe(result: ShareResult, outbox: ShareOutbox): String = when (result) {
         is ShareResult.Queued -> getString(R.string.queued, result.jobId)

@@ -172,7 +172,7 @@ importers:
 
   packages/access:
     dependencies:
-      '@agentstack/api':
+      '@stack/api':
         specifier: workspace:*
         version: link:../api
       zod:
@@ -221,7 +221,7 @@ importers:
 
   packages/auth:
     dependencies:
-      '@agentstack/api':
+      '@stack/api':
         specifier: workspace:*
         version: link:../api
       zod:
@@ -237,16 +237,16 @@ importers:
 
   packages/bots:
     dependencies:
-      '@agentstack/api':
+      '@stack/api':
         specifier: workspace:*
         version: link:../api
-      '@agentstack/auth':
+      '@stack/auth':
         specifier: workspace:*
         version: link:../auth
-      '@agentstack/browse':
+      '@stack/browse':
         specifier: workspace:*
         version: link:../browse
-      '@agentstack/roles':
+      '@stack/roles':
         specifier: workspace:*
         version: link:../roles
       ws:
@@ -268,10 +268,10 @@ importers:
 
   packages/brain:
     dependencies:
-      '@agentstack/api':
+      '@stack/api':
         specifier: workspace:*
         version: link:../api
-      '@agentstack/scrape':
+      '@stack/scrape':
         specifier: workspace:*
         version: link:../scrape
       fflate:
@@ -305,10 +305,10 @@ importers:
 
   packages/browse:
     dependencies:
-      '@agentstack/api':
+      '@stack/api':
         specifier: workspace:*
         version: link:../api
-      '@agentstack/scrape':
+      '@stack/scrape':
         specifier: workspace:*
         version: link:../scrape
       ws:
@@ -332,7 +332,7 @@ importers:
 
   packages/content:
     dependencies:
-      '@agentstack/api':
+      '@stack/api':
         specifier: workspace:*
         version: link:../api
       markdown-it:
@@ -357,7 +357,7 @@ importers:
 
   packages/infer:
     dependencies:
-      '@agentstack/api':
+      '@stack/api':
         specifier: workspace:*
         version: link:../api
       zod:
@@ -373,7 +373,7 @@ importers:
 
   packages/notify:
     dependencies:
-      '@agentstack/api':
+      '@stack/api':
         specifier: workspace:*
         version: link:../api
       zod:
@@ -389,7 +389,7 @@ importers:
 
   packages/proc:
     dependencies:
-      '@agentstack/api':
+      '@stack/api':
         specifier: workspace:*
         version: link:../api
       zod:
@@ -405,7 +405,7 @@ importers:
 
   packages/roles:
     dependencies:
-      '@agentstack/api':
+      '@stack/api':
         specifier: workspace:*
         version: link:../api
       zod:
@@ -421,7 +421,7 @@ importers:
 
   packages/scrape:
     dependencies:
-      '@agentstack/api':
+      '@stack/api':
         specifier: workspace:*
         version: link:../api
       cheerio:
@@ -461,49 +461,49 @@ importers:
 
   packages/serve:
     dependencies:
-      '@agentstack/access':
+      '@stack/access':
         specifier: workspace:*
         version: link:../access
-      '@agentstack/api':
+      '@stack/api':
         specifier: workspace:*
         version: link:../api
-      '@agentstack/bots':
+      '@stack/bots':
         specifier: workspace:*
         version: link:../bots
-      '@agentstack/brain':
+      '@stack/brain':
         specifier: workspace:*
         version: link:../brain
-      '@agentstack/browse':
+      '@stack/browse':
         specifier: workspace:*
         version: link:../browse
-      '@agentstack/content':
+      '@stack/content':
         specifier: workspace:*
         version: link:../content
-      '@agentstack/infer':
+      '@stack/infer':
         specifier: workspace:*
         version: link:../infer
-      '@agentstack/notify':
+      '@stack/notify':
         specifier: workspace:*
         version: link:../notify
-      '@agentstack/proc':
+      '@stack/proc':
         specifier: workspace:*
         version: link:../proc
-      '@agentstack/scrape':
+      '@stack/scrape':
         specifier: workspace:*
         version: link:../scrape
-      '@agentstack/signal':
+      '@stack/signal':
         specifier: workspace:*
         version: link:../signal
-      '@agentstack/ui':
+      '@stack/ui':
         specifier: workspace:*
         version: link:../ui
-      '@agentstack/usage':
+      '@stack/usage':
         specifier: workspace:*
         version: link:../usage
-      '@agentstack/worker':
+      '@stack/worker':
         specifier: workspace:*
         version: link:../worker
-      '@agentstack/xcom':
+      '@stack/xcom':
         specifier: workspace:*
         version: link:../xcom
       '@modelcontextprotocol/inspector':
@@ -531,7 +531,7 @@ importers:
 
   packages/signal:
     dependencies:
-      '@agentstack/api':
+      '@stack/api':
         specifier: workspace:*
         version: link:../api
       zod:
@@ -547,7 +547,7 @@ importers:
 
   packages/ui:
     dependencies:
-      '@agentstack/api':
+      '@stack/api':
         specifier: workspace:*
         version: link:../api
       '@base-ui/react':
@@ -611,10 +611,10 @@ importers:
 
   packages/usage:
     dependencies:
-      '@agentstack/api':
+      '@stack/api':
         specifier: workspace:*
         version: link:../api
-      '@agentstack/auth':
+      '@stack/auth':
         specifier: workspace:*
         version: link:../auth
       zod:
@@ -630,16 +630,16 @@ importers:
 
   packages/worker:
     dependencies:
-      '@agentstack/api':
+      '@stack/api':
         specifier: workspace:*
         version: link:../api
-      '@agentstack/auth':
+      '@stack/auth':
         specifier: workspace:*
         version: link:../auth
-      '@agentstack/bots':
+      '@stack/bots':
         specifier: workspace:*
         version: link:../bots
-      '@agentstack/roles':
+      '@stack/roles':
         specifier: workspace:*
         version: link:../roles
       '@anthropic-ai/claude-agent-sdk':
@@ -658,7 +658,7 @@ importers:
 
   packages/xcom:
     dependencies:
-      '@agentstack/api':
+      '@stack/api':
         specifier: workspace:*
         version: link:../api
       zod:

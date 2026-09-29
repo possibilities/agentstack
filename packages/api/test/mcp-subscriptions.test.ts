@@ -26,7 +26,7 @@ async function until(check: () => boolean, timeoutMs = 3_000): Promise<void> {
 test("MCP subscriptions return an initial value, coalesce notices, reconnect with a snapshot, and fence ownership", { timeout: 15_000 }, async () => {
   const root = await mkdtemp("/tmp/as-events-");
   await manifest(root, "bots");
-  const env = { AGENTSTACK_STATE_DIR: root };
+  const env = { STACK_STATE_DIR: root };
   let value = 0;
   const snapshot = operation({ name: "bot_list", description: "Read bots.", input: z.strictObject({}), output: z.object({ value: z.number() }),
     annotations: { readOnlyHint: true }, async call(_ctx, _input, invocation) {
@@ -99,7 +99,7 @@ test("MCP subscriptions return an initial value, coalesce notices, reconnect wit
 test("optional Bot scopes cannot bypass chat and thread wakeup feedback fencing", async () => {
   const root = await mkdtemp(join(tmpdir(), "as-tree-events-"));
   await manifest(root, "bots");
-  const env = { AGENTSTACK_STATE_DIR: root };
+  const env = { STACK_STATE_DIR: root };
   const socket = await serveSocket({
     info: { name: "bots", description: "Bots.", transportDescription: "Socket.", path: socketPath("bots", env) },
     context: {}, operations: [operation({ name: "chat_tree", description: "Read tree.", input: z.strictObject({}), output: z.object({ nodes: z.array(z.string()) }),
@@ -143,7 +143,7 @@ test("optional Bot scopes cannot bypass chat and thread wakeup feedback fencing"
 test("subscriptions survive server-process recreation and rebind to the current Bot launch", { timeout: 10_000 }, async () => {
   const root = await mkdtemp("/tmp/as-events-durable-");
   await manifest(root, "sample");
-  const env = { AGENTSTACK_STATE_DIR: root };
+  const env = { STACK_STATE_DIR: root };
   const socket = await serveSocket({
     info: { name: "sample", description: "Sample.", transportDescription: "Socket.", path: socketPath("sample", env) },
     context: {}, operations: [operation({ name: "snapshot", description: "Read value.", input: z.strictObject({}), output: z.object({ value: z.number() }),
@@ -187,7 +187,7 @@ test("subscriptions survive server-process recreation and rebind to the current 
 
 test("saved package selectors migrate without dropping Bot watches or replaying old sockets", { timeout: 10_000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), "as-renamed-events-"));
-  const env = { AGENTSTACK_STATE_DIR: root };
+  const env = { STACK_STATE_DIR: root };
   const names = ["signal", "browse", "worker"] as const;
   await Promise.all(names.map((name) => manifest(root, name)));
   const sockets = await Promise.all(names.map((name) => serveSocket({
@@ -232,7 +232,7 @@ test("saved package selectors migrate without dropping Bot watches or replaying 
 
 test("durable watches reauthorize refresh and discard values read across a policy change", async () => {
   const root = await mkdtemp(join(tmpdir(), "as-policy-events-"));
-  const env = { AGENTSTACK_STATE_DIR: root };
+  const env = { STACK_STATE_DIR: root };
   const file = join(root, "packages", "sample", "api.yaml");
   await manifest(root, "sample", "[snapshot]", "[changed]");
   let reads = 0;
@@ -284,7 +284,7 @@ test("durable watches reauthorize refresh and discard values read across a polic
 
 test("queued deliveries reauthorize after the previous turn and respect unsubscribe", async () => {
   const root = await mkdtemp(join(tmpdir(), "as-queued-events-"));
-  const env = { AGENTSTACK_STATE_DIR: root };
+  const env = { STACK_STATE_DIR: root };
   await manifest(root, "sample");
   let value = 0;
   const socket = await serveSocket({

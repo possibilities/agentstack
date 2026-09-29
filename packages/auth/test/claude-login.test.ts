@@ -25,12 +25,12 @@ async function wait(login: WorkerLoginManager, id: string, accept: (state: Worke
 for (const native of [false, true]) {
   for (const outcome of ["submit", "cancel", "remove", "failure"] as const) {
     test(`Claude ${native ? "default macOS" : "fixture"} login copies its URL and supports ${outcome}`, { skip: native && process.platform !== "darwin", timeout: 15_000 }, async () => {
-      const root = await mkdtemp(join(tmpdir(), "agentstack-claude-login-"));
+      const root = await mkdtemp(join(tmpdir(), "stack-claude-login-"));
       const store = new AuthStore(root);
       const bin = join(root, "fake claude's cli");
       await writeFile(bin, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(fixture)} "$@"\n`, { mode: 0o700 });
       const login = new WorkerLoginManager(store, { claude: fileOnly,
-        env: { ...process.env, AGENTSTACK_CLAUDE_BIN: bin, FAKE_CLAUDE_NATIVE: native ? "1" : "",
+        env: { ...process.env, STACK_CLAUDE_BIN: bin, FAKE_CLAUDE_NATIVE: native ? "1" : "",
           FAKE_CLAUDE_FAIL: outcome === "failure" ? "1" : "", ANTHROPIC_API_KEY: "ambient-secret", CLAUDE_CODE_OAUTH_TOKEN: "ambient-secret",
           CLAUDE_SECURESTORAGE_CONFIG_DIR: "", AWS_ACCESS_KEY_ID: "ambient-secret", GOOGLE_APPLICATION_CREDENTIALS: "/shared" },
         ...(native ? {} : { command: () => ({ bin: process.execPath, args: [fixture] }) }),
@@ -90,7 +90,7 @@ for (const native of [false, true]) {
 }
 
 test("Claude refuses unrelated and credential-bearing URLs and supersedes only its own account", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-claude-url-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-claude-url-"));
   const store = new AuthStore(root);
   const login = new WorkerLoginManager(store, { claude: fileOnly, env: { ...process.env,
     FAKE_CLAUDE_URL: "https://claude.com/cai/oauth/authorize?response_type=code&state=fixture&code_challenge=fixture&access_token=secret" },
@@ -112,7 +112,7 @@ test("Claude refuses unrelated and credential-bearing URLs and supersedes only i
 });
 
 test("parallel Claude starts stay account-bound and cancellation reaps a descendant that outlives its leader", { timeout: 10_000 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-claude-descendant-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-claude-descendant-"));
   const store = new AuthStore(root);
   const login = new WorkerLoginManager(store, { claude: fileOnly,
     env: { ...process.env, FAKE_CLAUDE_STUBBORN_DESCENDANT: "1" }, command: () => ({ bin: process.execPath, args: [fixture] }) });
@@ -137,7 +137,7 @@ test("parallel Claude starts stay account-bound and cancellation reaps a descend
 });
 
 test("cancellation fences delayed Claude credential confirmation after native login exits", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-claude-late-confirm-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-claude-late-confirm-"));
   const store = new AuthStore(root);
   let release: () => void = () => undefined, reading: () => void = () => undefined;
   const gate = new Promise<void>((resolve) => { release = resolve; });

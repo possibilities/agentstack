@@ -17,8 +17,8 @@ type PackageDoc = { name: string; description: string; packageName: string; oper
 
 test("the api package serves structured documents for every workspace package", { timeout: 60_000 }, async () => {
   assert.equal(docsSnapshot.name, "docs_snapshot");
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-docs-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "8743", AGENTSTACK_WEBSOCKET_PORT: "8744" };
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-docs-"));
+  const env = { ...process.env, STACK_STATE_DIR: stateDir, STACK_MCP_PORT: "8743", STACK_WEBSOCKET_PORT: "8744" };
   const served = await serveApi({ name: "api", transport: "socket", env });
   try {
     assert.equal(served.socketPath, join(stateDir, "sockets", "api.sock"));
@@ -38,7 +38,7 @@ test("the api package serves structured documents for every workspace package", 
       docs.packages.map((item) => item.name),
        ["access", "api", "auth", "bots", "brain", "browse", "content", "infer", "notify", "proc", "roles", "scrape", "serve", "signal", "usage", "worker", "xcom"],
     );
-    assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@agentstack/${item.name}`));
+    assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@stack/${item.name}`));
 
     const found = new Map<string, PackageDoc>();
     for (const item of docs.packages) {

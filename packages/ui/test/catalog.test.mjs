@@ -3,7 +3,7 @@ import test from "node:test";
 import { fieldsOf, findOperation, loadCatalog } from "../lib/stack/catalog.ts";
 
 const brain = {
-  name: "brain", description: "Isolated research storage", packageName: "@agentstack/brain",
+  name: "brain", description: "Isolated research storage", packageName: "@stack/brain",
   events: { changed: "Read research state again." }, eventScope: null,
   transports: [{ type: "websocket", description: "Research discovery", supported: true, subscriptions: true, endpoint: "ws://127.0.0.1:8744/websocket", operations: ["search"], events: ["changed"], routes: [] }],
   operations: [{ name: "search", description: "Search research", annotations: { readOnlyHint: true },

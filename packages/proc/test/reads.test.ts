@@ -5,14 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { serveApi, socketCall, socketPath } from "@agentstack/api";
+import { serveApi, socketCall, socketPath } from "@stack/api";
 import { ProcStore } from "../src/store.js";
 import { callCapacity, lineChunkChars, maxOutputBytes, maxOutputLines, retentionDays, runCapacity } from "../src/limits.js";
 import { operator } from "../src/schema.js";
 
 async function fixture(t: import("node:test").TestContext) {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-proc-reads-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: root };
+  const root = await mkdtemp(join(tmpdir(), "stack-proc-reads-"));
+  const env = { ...process.env, STACK_STATE_DIR: root };
   const proc = await serveApi({ name: "proc", transport: "socket", env });
   t.after(async () => { await proc.close(); await rm(root, { recursive: true, force: true }); });
   const call = (name: string, args: object = {}) => socketCall(socketPath("proc", env), "tools/call", { name, arguments: args });
@@ -70,7 +70,7 @@ test("schedule and run labels round-trip, deduplicate canonically and conflict o
 });
 
 test("a repeated request ID must carry the same run label, and env values never reach the runs row", { timeout: 10_000 }, async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-proc-labels-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-proc-labels-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const store = new ProcStore(join(root, "proc"));
   try {
@@ -90,7 +90,7 @@ test("a repeated request ID must carry the same run label, and env values never 
 });
 
 test("v2 migration adds labels, links runs to schedules and stores env-free process summaries", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-proc-v2-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-proc-v2-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const db = new DatabaseSync(join(root, "proc.sqlite"));
   const now = new Date().toISOString();

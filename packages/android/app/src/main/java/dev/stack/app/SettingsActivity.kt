@@ -1,6 +1,6 @@
-package dev.agentstack.app
+package dev.stack.app
 
-import dev.agentstack.app.share.*
+import dev.stack.app.share.*
 
 import android.Manifest
 import android.content.Intent
@@ -91,7 +91,7 @@ class SettingsActivity : AppCompatActivity() {
             connectionTask {
                 try {
                     val code = settings.pair(url)
-                    runOnUiThread { codeField.text = code; status.text = "Approve this matching code in AgentStack System → Access, then check approval." }
+                    runOnUiThread { codeField.text = code; status.text = "Approve this matching code in Stack System → Access, then check approval." }
                 } catch (error: Exception) { runOnUiThread { status.text = error.message } }
             }
         }
@@ -102,7 +102,7 @@ class SettingsActivity : AppCompatActivity() {
                 try {
                     settings.completePairing()
                     ShareScheduler.flushNow(applicationContext)
-                    runOnUiThread { codeField.text = ""; status.text = "Paired with AgentStack."; requestNotificationPermissionIfNeeded() }
+                    runOnUiThread { codeField.text = ""; status.text = "Paired with Stack."; requestNotificationPermissionIfNeeded() }
                 } catch (error: Exception) { runOnUiThread { status.text = error.message } }
             }
         }

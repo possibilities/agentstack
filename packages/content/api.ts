@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
-import { operation, type PackageApi } from "@agentstack/api";
+import { operation, type PackageApi } from "@stack/api";
 import { ARTIFACT_KINDS, ArtifactStore, MAX_ARTIFACT_BYTES } from "./src/artifacts.js";
 import { Collections, MAX_COLLECTION_ITEM_BYTES, MAX_INLINE_BYTES } from "./src/collections.js";
 import type { Context, Handler } from "./src/context.js";
@@ -235,7 +235,7 @@ const outputSchemas: Record<string, z.ZodType> = {
   commit: z.looseObject({ committed: z.boolean(), repo: z.boolean(), clean: z.boolean() }),
 };
 
-const contract = buildContract({ vaultRoot: "<AgentStack state>/wiki/vault", artifactHome: "<AgentStack state>/wiki/artifacts" });
+const contract = buildContract({ vaultRoot: "<Stack state>/wiki/vault", artifactHome: "<Stack state>/wiki/artifacts" });
 const localOnlyCommands = new Set(["path", "publish", "doctor", "reindex", "commit"]);
 function portableData(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(portableData);
@@ -258,7 +258,7 @@ const commandOperations = agentTools(contract)
         try {
           const result = await handlers[invocation.name]!(ctx.command, invocation.flags);
           // As with the original vault, the next API call records edits made directly
-          // to vault files. The fresh AgentStack vault has no remote by default. A read
+          // to vault files. The fresh Stack vault has no remote by default. A read
           // that commits a direct edit announces it; mutations announce themselves.
           if (syncVault(ctx.command.vaultRoot) && !mutating.has(tool.name)) ctx.changed?.();
           const data = portableData(result.data) as Record<string, unknown>;
@@ -283,7 +283,7 @@ function port(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
 }
 
 export function contentNetworkConfig(env: NodeJS.ProcessEnv): { host: string; documentOrigin?: string; artifactOrigin?: string } {
-  const host = env.AGENTSTACK_CONTENT_HOST ?? DEFAULT_HOST;
+  const host = env.STACK_CONTENT_HOST ?? DEFAULT_HOST;
   if (host !== "127.0.0.1") throw new Error("Content backend must bind 127.0.0.1; configure remote clients through Access");
   const parseOrigin = (value: string | undefined, name: string): string | undefined => {
     if (value === undefined) return undefined;
@@ -293,8 +293,8 @@ export function contentNetworkConfig(env: NodeJS.ProcessEnv): { host: string; do
       throw new Error(`${name} must be an HTTP(S) origin with no path, credentials or query`);
     return url.origin;
   };
-  const documentOrigin = parseOrigin(env.AGENTSTACK_CONTENT_DOCUMENT_ORIGIN, "AGENTSTACK_CONTENT_DOCUMENT_ORIGIN");
-  const artifactOrigin = parseOrigin(env.AGENTSTACK_CONTENT_ARTIFACT_ORIGIN, "AGENTSTACK_CONTENT_ARTIFACT_ORIGIN");
+  const documentOrigin = parseOrigin(env.STACK_CONTENT_DOCUMENT_ORIGIN, "STACK_CONTENT_DOCUMENT_ORIGIN");
+  const artifactOrigin = parseOrigin(env.STACK_CONTENT_ARTIFACT_ORIGIN, "STACK_CONTENT_ARTIFACT_ORIGIN");
   if ((documentOrigin === undefined) !== (artifactOrigin === undefined)) throw new Error("content document and artifact origins must be configured together");
   if (documentOrigin && documentOrigin === artifactOrigin) throw new Error("content document and artifact origins must differ");
   if (![DEFAULT_HOST, "localhost"].includes(host) && !documentOrigin)
@@ -356,7 +356,7 @@ export const api: PackageApi<ContentContext, keyof typeof topics> = {
   },
   async createContext(env) {
     const home = homedir();
-    const state = env.AGENTSTACK_STATE_DIR ?? join(home, ".local", "state", "agentstack");
+    const state = env.STACK_STATE_DIR ?? join(home, ".local", "state", "stack");
     const vaultRoot = join(state, "wiki", "vault");
     ensureVault(vaultRoot);
     const command: Context = { env, home, cwd: process.cwd(), vaultRoot, now: nowIso,
@@ -367,8 +367,8 @@ export const api: PackageApi<ContentContext, keyof typeof topics> = {
     try {
       store = ArtifactStore.open(env, home);
       collections = new Collections(join(state, "wiki", "collections"));
-      const documentPort = port(env, env.AGENTSTACK_CONTENT_PORT === undefined ? "AGENTSTACK_WIKI_PORT" : "AGENTSTACK_CONTENT_PORT", DEFAULT_PORT);
-      const artifactPort = port(env, env.AGENTSTACK_CONTENT_ARTIFACT_PORT === undefined ? "AGENTSTACK_WIKI_ARTIFACT_PORT" : "AGENTSTACK_CONTENT_ARTIFACT_PORT", DEFAULT_ARTIFACT_PORT);
+      const documentPort = port(env, env.STACK_CONTENT_PORT === undefined ? "STACK_WIKI_PORT" : "STACK_CONTENT_PORT", DEFAULT_PORT);
+      const artifactPort = port(env, env.STACK_CONTENT_ARTIFACT_PORT === undefined ? "STACK_WIKI_ARTIFACT_PORT" : "STACK_CONTENT_ARTIFACT_PORT", DEFAULT_ARTIFACT_PORT);
       if (documentPort !== 0 && documentPort === artifactPort) throw new Error("content document and artifact ports must differ");
       const server = await startServer({ vaultRoot, casRoot: store.casRoot, index, store, collections,
         port: documentPort, artifactPort, ...contentNetworkConfig(env), routes: {

@@ -253,7 +253,7 @@ export function indexPage(options: {
       .join("\n    ")}
   </ul>`;
   return page(
-    "AgentStack Content",
+    "Stack Content",
     `<main>
    <h1>Content</h1>
   <h2>Documents</h2>

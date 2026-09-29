@@ -12,8 +12,8 @@ import { runningTree } from "../src/tree.js";
 const credential = (token: string) => JSON.stringify({ tokens: { refresh_token: token, access_token: "access", id_token: "fixture.jwt.signature" } });
 
 test("a server snapshots its account at launch and never falls back to ambient Codex auth", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-axes-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-cwd-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-axes-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-cwd-"));
   const store = new StateStore(root);
   const observed: Array<{ spec: LaunchSpec; auth: string }> = [];
   try {
@@ -63,8 +63,8 @@ function requireAuth(identity: string): string {
 }
 
 test("an existing unbound server stays unbound until assign, then the next start uses that account", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-unbound-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-cwd-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-unbound-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-cwd-"));
   const store = new StateStore(root);
   const observed: Array<string | null> = [];
   try {
@@ -135,7 +135,7 @@ test("an existing unbound server stays unbound until assign, then the next start
 });
 
 test("upgrading a stopped Server reconciles its retained runtime against the last launched account", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-stopped-upgrade-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-stopped-upgrade-"));
   const auth = (stamp: string, token: string) => JSON.stringify({
     last_refresh: stamp, tokens: { refresh_token: token, access_token: "access", id_token: "fixture.jwt.signature" },
   });
@@ -167,7 +167,7 @@ test("upgrading a stopped Server reconciles its retained runtime against the las
 });
 
 test("existing SQLite state gains runtime and credential generations without losing accounts", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-schema-upgrade-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-schema-upgrade-"));
   try {
     const first = new StateStore(root);
     const accountId = first.addAccount(credential("before-upgrade")).id;
@@ -192,7 +192,7 @@ test("existing SQLite state gains runtime and credential generations without los
 });
 
 test("legacy launch capabilities migrate once to role fields without resurrecting cleaned roots", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-role-columns-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-role-columns-"));
   try {
     const first = new StateStore(root);
     first.saveServer({ id: "bot-1", pid: null, cwd: root, url: null, state: "stopped", codexBin: "codex", account: null,
@@ -219,7 +219,7 @@ test("legacy launch capabilities migrate once to role fields without resurrectin
 });
 
 test("legacy JSON Server records follow the migrated immutable account ID", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-json-account-upgrade-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-json-account-upgrade-"));
   try {
     const initial = new StateStore(root);
     const before = initial.addAccount(credential("legacy"));
@@ -257,7 +257,7 @@ test("legacy JSON Server records follow the migrated immutable account ID", asyn
 });
 
 test("Server launch arguments persist only in private secrets storage and are removed with the Server", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-private-args-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-private-args-"));
   const store = new StateStore(root);
   const args = ["-c", "provider_token=private-example", "-c", 'model="gpt-5.4"'];
   try {

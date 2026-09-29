@@ -21,8 +21,8 @@ import type { InvocationContext } from "../src/operation.js";
 import { McpEventSubscriptions, type EventValue } from "../src/mcp-subscriptions.js";
 
 test("one HTTP process exposes each configured Package API and forwards operations to socket servers", { timeout: 30_000 }, async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-mcp-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir, AGENTSTACK_MCP_PORT: "0" };
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-mcp-"));
+  const env = { ...process.env, STACK_STATE_DIR: stateDir, STACK_MCP_PORT: "0" };
   const seen: string[] = [];
   for (const name of ["auth", "bots", "brain", "browse", "content", "notify", "roles", "serve", "scrape", "usage", "worker"]) {
     const dir = join(stateDir, "packages", name);
@@ -96,8 +96,8 @@ test("one HTTP process exposes each configured Package API and forwards operatio
 });
 
 test("Proc admits mutating calls over MCP and WebSocket with all event topics selected", { timeout: 30_000 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-proc-transports-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: root };
+  const root = await mkdtemp(join(tmpdir(), "stack-proc-transports-"));
+  const env = { ...process.env, STACK_STATE_DIR: root };
   const dir = join(root, "packages", "proc");
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "api.yaml"), "name: proc\ndescription: Processes and schedules.\nsocket:\n  description: Local.\nmcp:\n  description: Agent tools.\n  operations: all\n  events: all\nwebsocket:\n  description: Loopback tools.\n  operations: all\n  events: all\n");
@@ -148,11 +148,11 @@ test("Proc admits mutating calls over MCP and WebSocket with all event topics se
 });
 
 test("any Package API can present native MCP media without changing its socket or WebSocket JSON", { timeout: 30_000 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-mcp-media-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-mcp-media-"));
   const dir = join(root, "packages", "demo");
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nmcp:\n  description: MCP.\n  operations: all\n  events: all\nwebsocket:\n  description: WebSocket.\n  operations: all\n  events: all\n");
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: root };
+  const env = { ...process.env, STACK_STATE_DIR: root };
   const bytes = Buffer.from("sample audio\0");
   const payload = { mimeType: "audio/wav", base64: bytes.toString("base64") };
   let calls = 0;
@@ -194,8 +194,8 @@ test("any Package API can present native MCP media without changing its socket o
 });
 
 test("content items keep portable JSON on socket and WebSocket and gain native MCP blocks", { timeout: 30_000 }, async () => {
-  const state = await mkdtemp(join(tmpdir(), "agentstack-content-media-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: state, AGENTSTACK_CONTENT_PORT: "0", AGENTSTACK_CONTENT_ARTIFACT_PORT: "0" };
+  const state = await mkdtemp(join(tmpdir(), "stack-content-media-"));
+  const env = { ...process.env, STACK_STATE_DIR: state, STACK_CONTENT_PORT: "0", STACK_CONTENT_ARTIFACT_PORT: "0" };
   const content = await serveApi({ name: "content", transport: "socket", env });
   await mkdir(join(state, "packages", "content"), { recursive: true });
   await writeFile(join(state, "packages", "content", "api.yaml"), "name: content\ndescription: Test.\nmcp:\n  description: Test.\n  operations: all\n  events: all\nwebsocket:\n  description: Test.\n  operations: all\n  events: all\n");
@@ -273,8 +273,8 @@ test("content items keep portable JSON on socket and WebSocket and gain native M
 });
 
 test("MCP allowlists hide and reject direct calls to excluded socket operations", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-mcp-allow-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: root };
+  const root = await mkdtemp(join(tmpdir(), "stack-mcp-allow-"));
+  const env = { ...process.env, STACK_STATE_DIR: root };
   const dir = join(root, "packages", "demo");
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nmcp:\n  description: Selected tools.\n  operations: [read]\n  events: []\n");
@@ -296,7 +296,7 @@ test("MCP allowlists hide and reject direct calls to excluded socket operations"
 
 test("a bot-bound MCP URL forwards verified bot and Codex thread context without changing tool inputs", { timeout: 30_000 }, async () => {
   const root = await mkdtemp("/tmp/as-mcp-b-");
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_MCP_PORT: "0" };
+  const env = { ...process.env, STACK_STATE_DIR: root, STACK_MCP_PORT: "0" };
   const packageDir = join(root, "packages", "sample");
   await mkdir(packageDir, { recursive: true });
   const configure = (operations: string, events: string) => writeFile(join(packageDir, "api.yaml"), `name: sample\ndescription: Sample.\nmcp:\n  description: Sample MCP.\n  operations: ${operations}\n  events: ${events}\n`);
@@ -373,7 +373,7 @@ test("a bot-bound MCP URL forwards verified bot and Codex thread context without
     endpoint = "unix:///tmp/bot-instance-2.sock";
     await assert.rejects(client.callTool({ name: "who", arguments: { value: "stale" }, _meta: { threadId: "thread-1" } }), /401|Unauthorized/);
     assert.equal(seen.length, 1);
-    assert.equal((await lstat(join(env.AGENTSTACK_STATE_DIR, "mcp-bot-identity.key"))).mode & 0o777, 0o600);
+    assert.equal((await lstat(join(env.STACK_STATE_DIR, "mcp-bot-identity.key"))).mode & 0o777, 0o600);
   } finally {
     await client.close();
     await subscriptions.close();
@@ -386,7 +386,7 @@ test("a bot-bound MCP URL forwards verified bot and Codex thread context without
 
 test("Worker MCP disclosure is explicit, live, fail-closed and runtime-bound", { timeout: 30_000 }, async () => {
   const root = await mkdtemp("/tmp/as-mcp-w-");
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_MCP_PORT: "0" };
+  const env = { ...process.env, STACK_STATE_DIR: root, STACK_MCP_PORT: "0" };
   const packageDir = join(root, "packages", "sample");
   await mkdir(packageDir, { recursive: true });
   const configure = (worker = "", operations = "all") => writeFile(join(packageDir, "api.yaml"), `name: sample\ndescription: Sample.\nmcp:\n  description: Sample MCP.\n  operations: ${operations}\n  events: all\n${worker ? `  workerOperations: ${worker}\n` : ""}`);
@@ -451,11 +451,11 @@ test("Worker MCP disclosure is explicit, live, fail-closed and runtime-bound", {
 });
 
 test("MCP paths follow configured packages after startup", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-mcp-config-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-mcp-config-"));
   const dir = join(root, "packages", "alpha");
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "api.yaml"), "name: alpha\ndescription: Alpha.\nmcp:\n  description: Alpha HTTP.\n  operations: all\n  events: all\n");
-  const served = await serveMcp({ root, port: 0, env: { ...process.env, AGENTSTACK_STATE_DIR: root } });
+  const served = await serveMcp({ root, port: 0, env: { ...process.env, STACK_STATE_DIR: root } });
   try {
     const url = `http://127.0.0.1:${served.port}/mcp/beta`;
     assert.equal((await fetch(url, { method: "POST" })).status, 404);
@@ -473,8 +473,8 @@ test("MCP paths follow configured packages after startup", async () => {
 
 test("MCP port configuration rejects invalid values", () => {
   assert.equal(mcpPort({}), 8743);
-  assert.equal(mcpPort({ AGENTSTACK_MCP_PORT: "0" }), 0);
+  assert.equal(mcpPort({ STACK_MCP_PORT: "0" }), 0);
   for (const value of ["", "-1", "65536", "123.5", "abc"]) {
-    assert.throws(() => mcpPort({ AGENTSTACK_MCP_PORT: value }), /AGENTSTACK_MCP_PORT/);
+    assert.throws(() => mcpPort({ STACK_MCP_PORT: value }), /STACK_MCP_PORT/);
   }
 });

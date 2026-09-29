@@ -1,5 +1,5 @@
 /**
- * AgentStack Brain's internal operator contract. The Package API derives its
+ * Stack Brain's internal operator contract. The Package API derives its
  * input schemas from these command arguments; shared transports own serving.
  *
  * This module is the single authorship of what this CLI is and what it
@@ -306,13 +306,13 @@ immediately.`;
 export const AGENT_CONTRACT: AgentContract = {
   contract_version: 1,
   meta: {
-    name: "AgentStack Brain",
+    name: "Stack Brain",
     version: VERSION,
     purpose:
       "Search, retrieve, and durably ingest a local research index: FTS search with citations, bounded context, a durable submission ledger, and recurring sources.",
     audience: "agent",
   },
-  guidance: `AgentStack Brain is the sole durable ingestion authority and the reader/writer for
+  guidance: `Stack Brain is the sole durable ingestion authority and the reader/writer for
 this machine's local research index. Reach for it before any web search or
 paid research call: the answer is often already indexed here.
 
@@ -329,7 +329,7 @@ every text, file, directory, or URL intent, and writes no document directly;
 \`ingest\` is an older spelling of it. Admission is durable and
 offline, so never expect a submitted URL to be searchable immediately —
 \`worker\` leases the job later and delegates all URL extraction and network
-policy to Agentscrape. AgentStack Brain owns durable admission, the ingestion
+policy to Agentscrape. Stack Brain owns durable admission, the ingestion
 ledger, Artifact snapshots, and index writes; Agentscrape owns URL fetching,
 browser and session behavior, and extraction.
 
@@ -343,12 +343,12 @@ audit record — pass it only when the body is genuinely required. Retry,
 cancel, and exclude are explicit operator acts that append transitions and
 preserve every attempt.
 
-The Package API uses <AGENTSTACK_STATE_DIR>/brain/research.db, defaulting to
-~/.local/state/agentstack/brain/research.db. The internal operator dispatcher
+The Package API uses <STACK_STATE_DIR>/brain/research.db, defaulting to
+~/.local/state/stack/brain/research.db. The internal operator dispatcher
 also accepts an explicit --db path. Read commands open SQLite with a
 structurally read-only connection and never initialize or migrate it.
 
-The Package API publishes its operation schemas through AgentStack discovery.
+The Package API publishes its operation schemas through Stack discovery.
 For internal operator command help, run
 \`node packages/brain/dist/src/cli.js help <command>\` from the workspace root.`,
   concepts: {
@@ -365,7 +365,7 @@ For internal operator command help, run
            "docs/adr/0059-isolated-brain-and-platform-clients.md, docs/brain-maintenance.md",
         glossary: "CONTEXT.md",
       },
-      default_db: "~/.local/state/agentstack/brain/research.db",
+      default_db: "~/.local/state/stack/brain/research.db",
       source_types: {
         x: ["tweet", "tweet_article"],
         generic: ["scraped_url", "text", "file", "url", "url_text", "url_pdf"],
@@ -541,7 +541,7 @@ For internal operator command help, run
       {
         code: "db_not_found",
         meaning: "No research database exists at the resolved path.",
-        recovery: "Use the Brain Package API; internal operators may pass --db PATH or set AGENTSTACK_STATE_DIR.",
+        recovery: "Use the Brain Package API; internal operators may pass --db PATH or set STACK_STATE_DIR.",
       },
       {
         code: "db_location_conflict",
@@ -556,7 +556,7 @@ For internal operator command help, run
         code: "unsupported_schema_version",
         meaning:
           "The database schema is newer or older than this binary supports.",
-        recovery: "Upgrade AgentStack, or point --db at a compatible database.",
+        recovery: "Upgrade Stack, or point --db at a compatible database.",
       },
       {
         code: "bad_source",
@@ -931,7 +931,7 @@ For internal operator command help, run
       name: "--db",
       type: "string",
       description:
-        "Internal operator database path. The Package API fixes its database under AGENTSTACK_STATE_DIR/brain and does not accept a per-operation override.",
+        "Internal operator database path. The Package API fixes its database under STACK_STATE_DIR/brain and does not accept a per-operation override.",
       format: "path",
       direction: "in",
       role: "store-selection",
@@ -2203,7 +2203,7 @@ because the durable Run continues independently.`,
       audience: "operator",
       mutates: false,
       guidance:
-        "Authoring scaffolding, not a research verb: it emits a prompt a human feeds to a harness that is writing documentation about this CLI. An agent already working with AgentStack Brain has the contract itself and gains nothing from it mid-task.",
+        "Authoring scaffolding, not a research verb: it emits a prompt a human feeds to a harness that is writing documentation about this CLI. An agent already working with Stack Brain has the contract itself and gains nothing from it mid-task.",
       arguments: [],
     },
     {

@@ -5,19 +5,19 @@ import { dirname, join } from "node:path";
 import { isTransportType, readConfig, type PackageConfig } from "./config.js";
 
 export function mcpPort(env: NodeJS.ProcessEnv = process.env): number {
-  const value = env.AGENTSTACK_MCP_PORT;
+  const value = env.STACK_MCP_PORT;
   const port = value === undefined ? 8743 : Number(value);
   if (!Number.isInteger(port) || port < 0 || port > 65535 || value === "") {
-    throw new Error("AGENTSTACK_MCP_PORT must be an integer from 0 to 65535");
+    throw new Error("STACK_MCP_PORT must be an integer from 0 to 65535");
   }
   return port;
 }
 
 export function websocketPort(env: NodeJS.ProcessEnv = process.env): number {
-  const value = env.AGENTSTACK_WEBSOCKET_PORT;
+  const value = env.STACK_WEBSOCKET_PORT;
   const port = value === undefined ? 8744 : Number(value);
   if (!Number.isInteger(port) || port < 0 || port > 65535 || value === "") {
-    throw new Error("AGENTSTACK_WEBSOCKET_PORT must be an integer from 0 to 65535");
+    throw new Error("STACK_WEBSOCKET_PORT must be an integer from 0 to 65535");
   }
   return port;
 }
@@ -34,7 +34,7 @@ export function workspaceRoot(from: string): string {
 }
 
 export function stateDir(env: NodeJS.ProcessEnv = process.env): string {
-  return env.AGENTSTACK_STATE_DIR ?? join(homedir(), ".local", "state", "agentstack");
+  return env.STACK_STATE_DIR ?? join(homedir(), ".local", "state", "stack");
 }
 
 export function socketPath(name: string, env: NodeJS.ProcessEnv = process.env): string {
@@ -77,8 +77,8 @@ export async function listPackages(root: string): Promise<PackageLocation[]> {
 export function assertTransport(name: string, config: PackageConfig, transport: string): "socket" {
   if (!isTransportType(transport)) throw new Error(`unknown transport: ${transport}`);
   if (!config[transport]) throw new Error(`${name} does not configure ${transport}`);
-  if (transport === "mcp") throw new Error("mcp is served together for all configured Package APIs; run agentstack mcp");
-  if (transport === "websocket") throw new Error("websocket is served together for all configured Package APIs; run agentstack websocket");
-  if (transport === "http") throw new Error("http is served by the owning Package API's declared listeners; run agentstack api <package> socket");
+  if (transport === "mcp") throw new Error("mcp is served together for all configured Package APIs; run stack mcp");
+  if (transport === "websocket") throw new Error("websocket is served together for all configured Package APIs; run stack websocket");
+  if (transport === "http") throw new Error("http is served by the owning Package API's declared listeners; run stack api <package> socket");
   return transport;
 }

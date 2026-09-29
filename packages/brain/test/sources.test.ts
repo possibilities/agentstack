@@ -18,7 +18,7 @@ const roots: string[] = [];
 const T0 = new Date("2026-07-20T00:00:00.000Z");
 
 function tempDb(): string {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-sources-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-sources-"));
   roots.push(root);
   return join(root, "research.db");
 }
@@ -95,7 +95,7 @@ test("source manifests validate versions, stable IDs, payloads, overlays, and cr
         id: "blog-one",
         version: 2,
         sensitivity: "private",
-        credential_refs: ["keychain:agentstack-brain/blog-one"],
+        credential_refs: ["keychain:stack-brain/blog-one"],
         limits: { max_items_per_run: 10 },
       },
     ],
@@ -105,7 +105,7 @@ test("source manifests validate versions, stable IDs, payloads, overlays, and cr
     version: 2,
     kind: "blog_source",
     sensitivity: "private",
-    credential_refs: ["keychain:agentstack-brain/blog-one"],
+    credential_refs: ["keychain:stack-brain/blog-one"],
     limits: { max_items_per_run: 10, max_pages_per_run: 3 },
   });
 

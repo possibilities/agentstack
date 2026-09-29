@@ -7,17 +7,17 @@ import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { serveSocket, serveWebSocket, socketPath } from "@agentstack/api";
+import { serveSocket, serveWebSocket, socketPath } from "@stack/api";
 import { fixtureWorkspace, passthrough, transport, authorizeBrowser } from "./browser-fixture.mjs";
 
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const require = createRequire(import.meta.url);
 const ui = dirname(dirname(fileURLToPath(import.meta.url)));
 const root = dirname(dirname(ui));
-const dir = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agentstack-access-browser-"));
+const dir = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "stack-access-browser-"));
 const evidence = process.env.ACCESS_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
-const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
+const env = { ...process.env, STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
 const now = Date.now();
 const data = {
   serverId: "00000000-0000-4000-8000-000000000001",
@@ -57,14 +57,14 @@ try {
     worker: ["worker_list", "worker_runtime_list"], usage: ["usage_snapshot"], api: ["docs_snapshot"] };
   websocket = await serveWebSocket({ env, root: await fixtureWorkspace(dir, Object.keys(definitions)), port: 0 });
   const topics = { access: { access_changed: "Fixture" } };
-  handlers.docs_snapshot = () => ({ packages: Object.keys(definitions).map((name) => ({ name, packageName: `@agentstack/${name}`, description: "Access fixture", events: topics[name] ?? {}, eventScope: null, operations: [],
+  handlers.docs_snapshot = () => ({ packages: Object.keys(definitions).map((name) => ({ name, packageName: `@stack/${name}`, description: "Access fixture", events: topics[name] ?? {}, eventScope: null, operations: [],
     transports: [transport(websocket.url, definitions[name], Object.keys(topics[name] ?? {}))] })) });
   for (const [name, names] of Object.entries(definitions)) served.set(name, await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {},
     operations: names.map((name) => ({ name, description: name, input: passthrough, output: passthrough, async call(_, input) { calls.push({ name, input }); return handlers[name](input); } })), events: { topics: topics[name] ?? {} } }));
   const server = createServer();
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = server.address().port;
-  env.AGENTSTACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${port}`;
+  env.STACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${port}`;
   await new Promise((resolve) => server.close(resolve));
   next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), process.env.UI_ACCESS_NEXT_MODE === "dev" ? "dev" : "start", "--hostname", "127.0.0.1", "--port", String(port)], { cwd: ui, env, stdio: ["ignore", "pipe", "pipe"] });
   next.stdout.on("data", (chunk) => { log += chunk; }); next.stderr.on("data", (chunk) => { log += chunk; });

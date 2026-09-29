@@ -62,8 +62,8 @@ try {
       runtime: {
         openOptionsPage: async () => {},
         sendMessage: async (message) => {
-          if (message.type === 'agentstack.history-clear') window.fixture = [];
-          if (message.type === 'agentstack.history-remove') window.fixture = fixture.filter(e => e.id !== message.id);
+          if (message.type === 'stack.history-clear') window.fixture = [];
+          if (message.type === 'stack.history-remove') window.fixture = fixture.filter(e => e.id !== message.id);
           return { entries: fixture, pending: fixture.filter(e => e.outcome === 'held').length, reachable: true, discarded: 3 };
         }
       }

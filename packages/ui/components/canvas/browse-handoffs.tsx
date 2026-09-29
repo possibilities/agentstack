@@ -356,7 +356,7 @@ export function ViewerWindow({ id }: { id: string }) {
   return (
     <Window id={id} title={profile ? profileName(profile) : "Viewer"} subtitle={profile ? `${profile.botId ?? "unassigned"} · ${grant ? "you have control" : "observing"}` : "browser"}
       icon={MonitorIcon} accent="browse" node={profile ? { kind: "browser-profile", id: profile.id } : undefined} reveal={{ kind: "browser-viewer", id }} bleed actions={actions}>
-      {remote ? <Placeholder title="Available only on the local UI" hint="Browser handoff stays on the AgentStack machine." />
+      {remote ? <Placeholder title="Available only on the local UI" hint="Browser handoff stays on the Stack machine." />
         : !profileId ? <Placeholder title="No profile selected" hint="Choose one with the switcher, or Watch a handoff." />
         : !profile ? <Placeholder title={browserProfiles.data ? "This profile is gone" : "Reading profiles…"} />
         : (

@@ -70,7 +70,7 @@ async function fixture(options: FixtureOptions = {}) {
     started: Promise<void>;
     release(): void;
   };
-  const env = { AGENTSTACK_STATE_DIR: root };
+  const env = { STACK_STATE_DIR: root };
   const path = socketPath("demo", env);
   let served: ServedApi | undefined;
   return {

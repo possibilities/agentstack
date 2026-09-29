@@ -108,7 +108,7 @@ export class AcpProcess {
   }
 
   async initialize(): Promise<Record<string, unknown>> {
-    const value = await this.request("initialize", { protocolVersion: 1, clientInfo: { name: "agentstack", version: "0.0.0" },
+    const value = await this.request("initialize", { protocolVersion: 1, clientInfo: { name: "stack", version: "0.0.0" },
       clientCapabilities: { session: { configOptions: { boolean: {} } } } });
     if (!record(value) || value.protocolVersion !== 1) throw new Error("ACP v1 is unavailable");
     return value;

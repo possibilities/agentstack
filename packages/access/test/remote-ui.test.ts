@@ -11,13 +11,13 @@ const peer = { remoteAddress: "100.80.0.2", localAddress: "100.80.0.1", remotePo
 const origin = "https://100.80.0.1:8945";
 const secret = () => randomBytes(32).toString("base64url");
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-remote-ui-")); let now = Date.now(), online = true, checks = 0;
+  const root = mkdtempSync(join(tmpdir(), "stack-remote-ui-")); let now = Date.now(), online = true, checks = 0;
   const store = new AccessStore(root, () => now);
   const serve = remoteUiHandler({ store, env: {}, host: "100.80.0.1", port: 8945,
     verify: async () => { checks++; if (!online) throw new Error("not on tailnet"); },
     fetchBackend: async () => new Response("safe page", { headers: { "content-type": "text/html", "set-cookie": "bad=1" } }) });
   const send = (path: string, method = "GET", data?: unknown, headers: Record<string, string> = {}) =>
-    serve(new Request(`${origin}${path}`, { method, headers: { host: "100.80.0.1:8945", ...(method === "POST" ? { origin, "content-type": "application/json", "x-agentstack-server-id": store.serverId } : {}), ...headers },
+    serve(new Request(`${origin}${path}`, { method, headers: { host: "100.80.0.1:8945", ...(method === "POST" ? { origin, "content-type": "application/json", "x-stack-server-id": store.serverId } : {}), ...headers },
       ...(data === undefined ? {} : { body: JSON.stringify(data) }) }), peer);
   return { root, store, send, get checks() { return checks; }, set online(value: boolean) { online = value; },
     advance(ms: number) { now += ms; }, close() { store.close(); rmSync(root, { recursive: true, force: true }); } };
@@ -35,7 +35,7 @@ test("browser pairing is locally approved, session cookies are scoped, and HTTP 
     assert.equal((await f.send("/connect/redeem", "POST", { id: pairing.id, redemptionSecret })).status, 409);
     f.store.approve(pairing.id, pairing.code, true);
     const credential = (await (await f.send("/connect/redeem", "POST", { id: pairing.id, redemptionSecret })).json()).data;
-    assert.equal((await f.send("/connect/session", "POST", { refreshToken: credential.refreshToken, requestId: randomUUID() }, { "x-agentstack-server-id": randomUUID() })).status, 409);
+    assert.equal((await f.send("/connect/session", "POST", { refreshToken: credential.refreshToken, requestId: randomUUID() }, { "x-stack-server-id": randomUUID() })).status, 409);
     const session = await f.send("/connect/session", "POST", { refreshToken: credential.refreshToken, requestId: randomUUID() });
     assert.equal(session.status, 200);
     const cookies = session.headers.getSetCookie();
@@ -91,7 +91,7 @@ test("view grant cannot establish a UI session without browser kind, ui:view, or
 test("the configured certificate hostname is accepted without treating its DNS name as tailnet provenance", async () => {
   const f = fixture();
   try {
-    const serve = remoteUiHandler({ store: f.store, env: { AGENTSTACK_ACCESS_UI_ORIGIN: "https://machine.ts.net:8945" }, host: "100.80.0.1", port: 8945,
+    const serve = remoteUiHandler({ store: f.store, env: { STACK_ACCESS_UI_ORIGIN: "https://machine.ts.net:8945" }, host: "100.80.0.1", port: 8945,
       verify: async actual => { assert.deepEqual(actual, peer); } });
     const good = await serve(new Request("https://100.80.0.1:8945/connect/identity", { headers: { host: "machine.ts.net:8945" } }), peer);
     assert.equal(good.status, 200);
@@ -109,12 +109,12 @@ test("each client, grant and credential revocation independently fences a live U
       f.store.approve(pairing.id, pairing.code, true);
       const credential = f.store.redeem(pairing.id, redemptionSecret);
       const issued = f.store.startUi(credential.refreshToken, randomUUID());
-      const cookie = `__Host-agentstack_ui=${issued.accessToken}`;
+      const cookie = `__Host-stack_ui=${issued.accessToken}`;
       assert.equal((await f.send("/", "GET", undefined, { cookie })).status, 200);
       const grant = f.store.inventory().grants.find(row => row.client_id === credential.clientId)!;
       f.store.revoke(kind, kind === "client" ? credential.clientId : kind === "grant" ? grant.id : credential.credentialId);
       assert.equal((await f.send("/", "GET", undefined, { cookie })).status, 401);
-      assert.equal((await f.send("/connect/refresh", "POST", {}, { cookie: `__Host-agentstack_ui_refresh=${issued.refreshToken}` })).status, 401);
+      assert.equal((await f.send("/connect/refresh", "POST", {}, { cookie: `__Host-stack_ui_refresh=${issued.refreshToken}` })).status, 401);
     }
   } finally { f.close(); }
 });

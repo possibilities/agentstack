@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { withEgressPolicy, EgressRefused } from "@agentstack/scrape/network";
+import { withEgressPolicy, EgressRefused } from "@stack/scrape/network";
 import { ResearchEgress } from "./egress.js";
 import { SourceRegistry } from "./sources.js";
 import { brainSignal, brainEnvironment } from "./paths.js";

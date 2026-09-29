@@ -17,7 +17,7 @@ const server = (url: string, threadId: string | null = "main"): ServerView => ({
 });
 
 test("voice dials only an adopted main thread, relays SDP, and stops without touching turns", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-voice-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-voice-"));
   const path = join(dir, "codex.sock");
   const http = createServer();
   const wss = new WebSocketServer({ server: http });

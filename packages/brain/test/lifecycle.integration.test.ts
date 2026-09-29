@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import { socketCall, socketPath } from "@agentstack/api";
+import { socketCall, socketPath } from "@stack/api";
 import { ResearchStore } from "../src/store.js";
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
@@ -22,8 +22,8 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("missing local port");
-    const env = { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_BRAIN_SHARE_PORT: "0" };
-    const child = spawn(process.execPath, ["--input-type=module", "-e", 'import { runApi } from "@agentstack/api"; await runApi(["brain", "socket"]);'], {
+    const env = { ...process.env, STACK_STATE_DIR: root, STACK_BRAIN_SHARE_PORT: "0" };
+    const child = spawn(process.execPath, ["--input-type=module", "-e", 'import { runApi } from "@stack/api"; await runApi(["brain", "socket"]);'], {
       cwd: join(import.meta.dirname, "../.."), env, stdio: ["ignore", "ignore", "pipe"],
     });
     let stderr = "";

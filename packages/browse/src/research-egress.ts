@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
-import { egressPolicy, type EgressPolicy } from "@agentstack/scrape/network";
+import { egressPolicy, type EgressPolicy } from "@stack/scrape/network";
 
 export const researchPolicyId = (policy: EgressPolicy) => createHash("sha256").update(JSON.stringify(egressPolicy.parse(policy))).digest("hex");
 

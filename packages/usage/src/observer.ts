@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { chmod, mkdir, open, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { socketCall, socketPath, socketSubscribe, type SocketSubscription } from "@agentstack/api";
+import { socketCall, socketPath, socketSubscribe, type SocketSubscription } from "@stack/api";
 import { accountSubscription, collectAccount, collectGrokBot, ObservationFailure } from "./collect.js";
 import { observationError, snapshotSchema, type AccountScope, type Provider, type Snapshot, type StoredMeasurement, type Subscription } from "./schema.js";
 
@@ -51,7 +51,7 @@ export class UsageObserver {
         ...workers.accounts.map((account): Registered => ({ ...account, scope: "worker" }))];
     },
     private readonly fetchAccount: FetchAccount = (id, provider, scope) => collectAccount(stateDir, id, provider, fetch, this.controller.signal, scope),
-    private readonly fetchBot: FetchBot = () => collectGrokBot(env.AGENTSTACK_AGENTGROK_BIN, this.controller.signal),
+    private readonly fetchBot: FetchBot = () => collectGrokBot(env.STACK_AGENTGROK_BIN, this.controller.signal),
     private readonly readSubscription: (id: string, provider: Provider, scope: AccountScope) => Promise<Subscription> =
       (id, provider, scope) => accountSubscription(stateDir, id, provider, scope),
     private readonly watchAccounts: WatchAccounts = (onChange) =>

@@ -1,7 +1,7 @@
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { forwardTimeout, socketCall, socketPath, type InvocationContext } from "@agentstack/api";
+import { forwardTimeout, socketCall, socketPath, type InvocationContext } from "@stack/api";
 import { operator, systemBrainId, type Action, type Authority, type ProcessSpec, type ScheduleSpec } from "./schema.js";
 import { callCapacity, lineChunkChars, maxOutputBytes, maxOutputLines, retentionDays, runCapacity } from "./limits.js";
 import { ProcStore } from "./store.js";

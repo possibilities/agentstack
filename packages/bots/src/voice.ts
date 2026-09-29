@@ -135,7 +135,7 @@ export class VoiceCalls {
       await ready;
       if (this.current !== call) return;
       await request("initialize", {
-        clientInfo: { name: "agentstack-voice", version: "0.0.0" },
+        clientInfo: { name: "stack-voice", version: "0.0.0" },
         capabilities: { experimentalApi: true, requestAttestation: false },
       });
       if (this.current !== call) return;

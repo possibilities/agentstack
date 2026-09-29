@@ -3,12 +3,12 @@
 ## Build and load
 
 ```sh
-pnpm --filter @agentstack/chrome build
-pnpm --filter @agentstack/chrome test
+pnpm --filter @stack/chrome build
+pnpm --filter @stack/chrome test
 ```
 
 No JavaScript dependencies or bundler are needed. The distributable directory is
-`packages/chrome/dist/agentstack-chrome/`. Open `chrome://extensions`, enable
+`packages/chrome/dist/stack-chrome/`. Open `chrome://extensions`, enable
 Developer mode, and **Load unpacked** with that directory. Rebuild and click
 **Reload** after changing the client. Loading/installing is an operator action.
 
@@ -17,7 +17,7 @@ Developer mode, and **Load unpacked** with that directory. Rebuild and click
 1. Configure the shared [Access ingress](../../docs/access.md) on the tailnet.
 2. In **Settings**, enter its HTTPS origin without a path and choose **Pair**.
    Chrome grants host permission for that exact origin.
-3. Approve the matching code in AgentStack **System → Access**, then check
+3. Approve the matching code in Stack **System → Access**, then check
    approval. **Check connection** authenticates against `/v1/access/me`.
    Stored credentials alone do not establish connectivity.
 
@@ -25,7 +25,7 @@ Developer mode, and **Load unpacked** with that directory. Rebuild and click
 **Forget locally** explicitly clears it without claiming revocation; revoke the
 old credential in System → Access separately. Both preserve held shares.
 
-Settings, credentials, history, and the outbox start empty in AgentStack-prefixed
+Settings, credentials, history, and the outbox start empty in Stack-prefixed
 `chrome.storage.local` keys. They are not imported or synced from another app or
 browser. The extension cannot encrypt browser-local credentials independently
 of the browser profile; keep the profile private.
@@ -59,7 +59,7 @@ stops local redelivery; it cannot undo a request whose server receipt was lost.
 
 ## Assets and verification
 
-`pnpm --filter @agentstack/chrome icons` regenerates 16/32/48/128 PNGs using
+`pnpm --filter @stack/chrome icons` regenerates 16/32/48/128 PNGs using
 `rsvg-convert` (librsvg); ordinary builds use checked-in PNGs. The reproducible
 vector source and license are in `assets/`. The Layers geometry matches the
 canvas’s Lucide icon; light/dark neutrals follow `packages/ui/app/globals.css`.

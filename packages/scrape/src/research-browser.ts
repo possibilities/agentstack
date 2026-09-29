@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { socketCall, socketPath } from "@agentstack/api";
+import { socketCall, socketPath } from "@stack/api";
 import { z } from "zod";
 import { currentEgress, EgressRefused } from "./egress.js";
 

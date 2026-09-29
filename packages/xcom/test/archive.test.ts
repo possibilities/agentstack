@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { api } from "../api.js";
-import { serveApi, socketCall } from "@agentstack/api";
+import { serveApi, socketCall } from "@stack/api";
 import { FeedError } from "../src/feed.js";
 import { ArchiveStore, twoMonthsAgo, type Post } from "../src/store.js";
 import { ArchiveSync, type Provider } from "../src/sync.js";
@@ -168,8 +168,8 @@ test("fifty-page batch retains head cursor and explicit backfill can rescan the 
 
 test("shared socket serves typed xcom operations in disposable state without touching a real CLI", async () => {
   const root = await mkdtemp(join(tmpdir(), "xcom-socket-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: root,
-    AGENTSTACK_XCOM_TWITTER: join(root, "does-not-exist-twitter") };
+  const env = { ...process.env, STACK_STATE_DIR: root,
+    STACK_XCOM_TWITTER: join(root, "does-not-exist-twitter") };
   const server = await serveApi({ name: "xcom", transport: "socket", env });
   try {
     const path = join(root, "sockets", "xcom.sock");

@@ -156,7 +156,7 @@ export function ProcTimelineWindow() {
           <NativeSelectOption value="24">24 h</NativeSelectOption>
         </NativeSelect>
       }>
-      {unavailable ? <ProcPlaceholder title={unavailable} hint="Process output and schedule definitions stay on the AgentStack machine." />
+      {unavailable ? <ProcPlaceholder title={unavailable} hint="Process output and schedule definitions stay on the Stack machine." />
         : !lanes.length && !error ? <ProcPlaceholder title={procSchedules.data ? "No executions in range" : "Reading timeline…"} />
         : (
           <div className="flex flex-col gap-1" aria-label="Schedule execution timeline">

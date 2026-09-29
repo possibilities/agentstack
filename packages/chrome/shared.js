@@ -1,6 +1,6 @@
 import { connectionMessage } from "./connection.js";
 /**
- * Shared configuration and transport for the AgentStack share extension.
+ * Shared configuration and transport for the Stack share extension.
  *
  * The extension is deliberately thin: it reports what the browser observed and
  * lets the server resolve the ingestion intent. See docs/brain-share-contract.md.
@@ -8,7 +8,7 @@ import { connectionMessage } from "./connection.js";
 
 export const SHARE_CLIENT = "chrome-extension";
 export const SHARE_VERSION = 1;
-export const CONFIG_KEY = "agentstack.chrome.share.config.v1";
+export const CONFIG_KEY = "stack.chrome.share.config.v1";
 export const DEFAULT_SERVER_URL = "http://127.0.0.1:8877";
 
 export function normalizeServerUrl(value) {
@@ -34,15 +34,15 @@ const SHARE_TIMEOUT_MS = 15_000;
 /** Device-local configuration; credentials are never synced to another browser. */
 export async function loadConfig() {
   try {
-    const message = { type: "agentstack.connection", action: "state" };
+    const message = { type: "stack.connection", action: "state" };
     const result = typeof document === "undefined" ? await connectionMessage(message) : await chrome.runtime.sendMessage(message);
-    return result?.paired && result.serverId ? { serverUrl: result.serverUrl, serverId: result.serverId, destination: `${result.serverUrl}#agentstack=${result.serverId}`, connection: true } : null;
+    return result?.paired && result.serverId ? { serverUrl: result.serverUrl, serverId: result.serverId, destination: `${result.serverUrl}#stack=${result.serverId}`, connection: true } : null;
   } catch { return null; }
 }
 
 async function credential(config) {
   if (!config.connection) return config.token;
-  const message = { type: "agentstack.connection", action: "access", audience: "brain" };
+  const message = { type: "stack.connection", action: "access", audience: "brain" };
   if (typeof document !== "undefined") throw new Error("Credentials remain in the background worker");
   const result = await connectionMessage(message);
   if (result.error || result.serverUrl !== config.serverUrl || result.serverId !== config.serverId) throw new Error("Connection changed or requires pairing");
@@ -93,7 +93,7 @@ export async function postShare(config, payload) {
       headers: {
         "content-type": "application/json",
         authorization: `Bearer ${token}`,
-        ...(config.serverId ? { "X-AgentStack-Server-ID": config.serverId } : {}),
+        ...(config.serverId ? { "X-Stack-Server-ID": config.serverId } : {}),
       },
       body: JSON.stringify({
         version: SHARE_VERSION,
@@ -106,7 +106,7 @@ export async function postShare(config, payload) {
       ok: false,
       status: 0,
       code: "unreachable",
-      message: `Cannot reach ${config.serverUrl}. Check the connection and AgentStack Brain share listener.`,
+      message: `Cannot reach ${config.serverUrl}. Check the connection and Stack Brain share listener.`,
     };
   }
 
@@ -131,7 +131,7 @@ export async function postShare(config, payload) {
     code: body?.error?.code ?? `http_${response.status}`,
     message:
       body?.error?.message ??
-      `AgentStack rejected the share (HTTP ${response.status}).`,
+      `Stack rejected the share (HTTP ${response.status}).`,
     recovery: body?.error?.recovery,
   };
 }
@@ -152,7 +152,7 @@ export async function fetchShareStates(config, jobIds) {
         method: "GET",
         redirect: "error",
         signal: AbortSignal.timeout(SHARE_TIMEOUT_MS),
-        headers: { authorization: `Bearer ${token}`, ...(config.serverId ? { "X-AgentStack-Server-ID": config.serverId } : {}) },
+        headers: { authorization: `Bearer ${token}`, ...(config.serverId ? { "X-Stack-Server-ID": config.serverId } : {}) },
       },
     );
   } catch {

@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "agentstack-android"
+rootProject.name = "stack-android"
 include(":app")

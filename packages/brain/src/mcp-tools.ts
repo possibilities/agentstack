@@ -88,7 +88,7 @@ function propertyName(name: string): string {
 /**
  * The arguments a leaf exposes, after collapsing two spellings of one value.
  *
- * AgentStack Brain's `search` and `context` each declare the query twice — as a
+ * Stack Brain's `search` and `context` each declare the query twice — as a
  * positional and as `--query` — because at a shell a query beginning with a
  * dash cannot be positional. An MCP caller has no shell and no argv, so the
  * distinction is noise that would collide on the property name `query`. The
@@ -128,7 +128,7 @@ function collapseDuplicates(argumentList: ContractArgument[]): {
  * Everything else is suppressed: `--json`, `--jsonl`, `--format` and `--quiet`
  * are output shape the server has already fixed, `--db` is which index is being
  * served rather than a per-call choice, and the four meta flags print help
- * instead of running the command. In AgentStack Brain that suppresses all nine
+ * instead of running the command. In Stack Brain that suppresses all nine
  * globals.
  */
 function callArguments(
@@ -142,7 +142,7 @@ function callArguments(
 }
 
 /** MCP.md: a `ref` stays a string, and the caller is told a label resolves.
- * AgentStack Brain declares no `ref` argument — its selectors are ids and URIs — but
+ * Stack Brain declares no `ref` argument — its selectors are ids and URIs — but
  * the branch stays so a later one is described rather than silently bare. */
 const REF_NOTE =
   "Accepts an id or any unambiguous name; ids are opaque and are not the only way to name a thing.";
@@ -186,7 +186,7 @@ function propertyDescription(
 }
 
 /**
- * The contract's four scalars, verbatim. `choices` becomes an enum — AgentStack Brain
+ * The contract's four scalars, verbatim. `choices` becomes an enum — Stack Brain
  * has no non-string choice list, and a numeric one would need its own branch
  * rather than a coercion that quietly changed the type.
  */
@@ -329,7 +329,7 @@ const REMOVING_VERBS = new Set([
 /**
  * Full paths whose repeat call is NOT a no-op.
  *
- * AgentStack Brain's admission is idempotent by construction: an equivalent intent
+ * Stack Brain's admission is idempotent by construction: an equivalent intent
  * comes back `duplicate` with the same job_id rather than queuing a second one,
  * which is exactly what MCP.md calls idempotent. `jobs show --reveal-content`
  * is the exception — every reveal appends a sensitive-inspection audit record,
@@ -381,7 +381,7 @@ function toolDescription(
 ): string {
   const parts: string[] = [];
   // MCP.md: a blocking command says so in the FIRST sentence, because a host
-  // with a request timeout has no other way to know. Nothing AgentStack Brain serves
+  // with a request timeout has no other way to know. Nothing Stack Brain serves
   // spends money or quota; a sibling whose command bills says so in that leaf's
   // own `guidance`, which lands below.
   if (leaf.blocking === true) {
@@ -585,7 +585,7 @@ ${defaults}
 /**
  * A tool call, as this CLI's own top-level dispatcher takes it.
  *
- * AgentStack Brain's dispatcher is argv-shaped the whole way down: `runParsed` reads
+ * Stack Brain's dispatcher is argv-shaped the whole way down: `runParsed` reads
  * a command name and that command's remaining words, and each command parses
  * its own options. There is no per-command handler taking parsed flags to call
  * instead, so the tokens below are BUILT — as an array, never as a shell string

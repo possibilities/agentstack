@@ -27,7 +27,7 @@ async function ask(message) {
 }
 
 function reportFailure(action, error) {
-  console.error(`AgentStack popover could not ${action}`, error);
+  console.error(`Stack popover could not ${action}`, error);
   statusLine.textContent =
     "Extension error · click Reload at chrome://extensions";
 }
@@ -65,7 +65,7 @@ function render(entries, { pending, reachable }) {
     remove.addEventListener("click", (event) =>
       runAction(
         event.currentTarget,
-        { type: "agentstack.history-remove", id: entry.id },
+        { type: "stack.history-remove", id: entry.id },
         "remove the item",
       ),
     );
@@ -113,7 +113,7 @@ async function refresh() {
   if (refreshing) return;
   refreshing = true;
   try {
-    const result = await ask({ type: "agentstack.history-refresh" });
+    const result = await ask({ type: "stack.history-refresh" });
     render(result.entries, result);
   } catch (error) {
     reportFailure("refresh", error);
@@ -125,7 +125,7 @@ async function refresh() {
 document.getElementById("share").addEventListener("click", async (event) => {
   await runAction(
     event.currentTarget,
-    { type: "agentstack.share-current-page" },
+    { type: "stack.share-current-page" },
     "share this page",
   );
 });
@@ -133,7 +133,7 @@ document.getElementById("share").addEventListener("click", async (event) => {
 document.getElementById("flush").addEventListener("click", async (event) => {
   await runAction(
     event.currentTarget,
-    { type: "agentstack.outbox-flush" },
+    { type: "stack.outbox-flush" },
     "send held shares",
   );
 });
@@ -141,7 +141,7 @@ document.getElementById("flush").addEventListener("click", async (event) => {
 document.getElementById("clear").addEventListener("click", async (event) => {
   await runAction(
     event.currentTarget,
-    { type: "agentstack.history-clear" },
+    { type: "stack.history-clear" },
     "clear the list",
   );
 });

@@ -139,7 +139,7 @@ export class WorkerLedger {
       this.db.prepare(`INSERT INTO workers (id, request_id, input_digest, bot_id, thread_id, account_id, provider, model, effort, repo,
         cwd, branch, phase, current_turn_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'preparing',?,?,?)`)
         .run(id, input.requestId, inputDigest, input.botId, input.threadId, input.accountId, input.provider, input.model, input.effort, input.repo,
-          join(this.stateDir, "workers", "worktrees", id), `agentstack-worker-${id}`, turnId, now, now);
+          join(this.stateDir, "workers", "worktrees", id), `stack-worker-${id}`, turnId, now, now);
       this.db.prepare("INSERT INTO turns (id, worker_id, request_id, input_digest, phase, created_at, updated_at, prompt, requested_model, requested_effort) VALUES (?,?,?,?, 'queued',?,?,?,?,?)")
         .run(turnId, id, input.requestId, inputDigest, now, now, input.task, input.model, input.effort);
       this.append(id, turnId, "user", input.task);

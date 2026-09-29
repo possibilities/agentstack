@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { socketCall, socketPath } from "@agentstack/api";
+import { socketCall, socketPath } from "@stack/api";
 import { brainEnvironment, brainStateRoot } from "./paths.js";
 import { dirname, join } from "node:path";
 
 /**
  * Operator notification.
  *
- * AgentStack Brain acknowledges a submission at Admission, long before extraction and
+ * Stack Brain acknowledges a submission at Admission, long before extraction and
  * indexing decide whether it succeeded. When a job reaches a stranded terminal
  * state there is no request left to fail and no reader watching the ledger, so
  * the ingress that accepted the link records a durable notification.
@@ -25,9 +25,9 @@ interface NotifySignal {
   group: string;
 }
 
-const DOCTOR_SOURCE = "agentstack.brain.doctor";
+const DOCTOR_SOURCE = "stack.brain.doctor";
 // One open stranded notice at a time: a higher count replaces the one the operator has not dismissed.
-const STRANDED_GROUP = "agentstack.brain.stranded";
+const STRANDED_GROUP = "stack.brain.stranded";
 
 export function defaultNotifyStatePath(home?: string): string {
   return join(brainStateRoot(brainEnvironment(), home), "doctor-notify.json");
@@ -112,7 +112,7 @@ export async function notifyStranded(
   try {
     const result = await (options.send ?? sendNotice)({
       id,
-      title: "AgentStack Brain ingestion stranded",
+      title: "Stack Brain ingestion stranded",
       message: stranded === 1 ? "1 submitted link never became searchable." : `${stranded} submitted links never became searchable.`,
       source: DOCTOR_SOURCE,
       group: STRANDED_GROUP,

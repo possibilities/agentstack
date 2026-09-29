@@ -5,7 +5,7 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { stateDir } from "@agentstack/api";
+import { stateDir } from "@stack/api";
 
 const execFile = promisify(execFileCallback);
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
@@ -34,7 +34,7 @@ function safeDirectory(path: string): boolean {
   } catch { return false; }
 }
 
-export type HypemanInstallation = { root: string; installed: boolean; selected: boolean; source: "agentstack" | "legacy" | "custom"; running: boolean; issue: string | null };
+export type HypemanInstallation = { root: string; installed: boolean; selected: boolean; source: "stack" | "legacy" | "custom"; running: boolean; issue: string | null };
 
 export class BrowserSystem {
   readonly root: string;
@@ -133,13 +133,13 @@ export class BrowserSystem {
       checkedAt: this.record.checkedAt, checkError: this.record.checkError, policy: this.record.policy };
   }
 
-  async browserDetect(): Promise<Array<{ location: string; version: string | null; source: "agentstack" | "agentstart" }>> {
+  async browserDetect(): Promise<Array<{ location: string; version: string | null; source: "stack" | "agentstart" }>> {
     const paths = [this.browserPath(), join(this.env.HOME ?? homedir(), ".local", "bin", "agent-browser")];
-    const result: Array<{ location: string; version: string | null; source: "agentstack" | "agentstart" }> = [];
+    const result: Array<{ location: string; version: string | null; source: "stack" | "agentstart" }> = [];
     for (const [index, path] of paths.entries()) {
       try {
         const { stdout } = await execFile(path, ["--version"], { timeout: 5_000, maxBuffer: 1024, env: this.env });
-        result.push({ location: path, version: /^agent-browser (\S+)\s*$/.exec(stdout)?.[1] ?? null, source: index === 0 ? "agentstack" : "agentstart" });
+        result.push({ location: path, version: /^agent-browser (\S+)\s*$/.exec(stdout)?.[1] ?? null, source: index === 0 ? "stack" : "agentstart" });
       } catch { /* Not an installed, executable agent-browser. */ }
     }
     return result;
@@ -243,7 +243,7 @@ export class BrowserSystem {
 
   private candidateRoots(): Array<{ root: string; source: HypemanInstallation["source"] }> {
     const roots = [
-      { root: join(this.root, "hypeman"), source: "agentstack" as const },
+      { root: join(this.root, "hypeman"), source: "stack" as const },
       { root: join(this.env.HOME ?? homedir(), ".local", "share", "ab-hypeman"), source: "legacy" as const },
       ...(this.record.hypemanRoot ? [{ root: this.record.hypemanRoot, source: "custom" as const }] : []),
       ...(this.record.candidateRoot ? [{ root: this.record.candidateRoot, source: "custom" as const }] : []),
@@ -311,12 +311,12 @@ export class BrowserSystem {
       };
       if (await probe()) return;
       if (!this.hostChild) {
-        if (root !== join(this.root, "hypeman")) throw new Error("the selected external Hypeman service is stopped; AgentStack will not start an independent installation");
+        if (root !== join(this.root, "hypeman")) throw new Error("the selected external Hypeman service is stopped; Stack will not start an independent installation");
         const configPath = join(root, "config.yaml");
         if (!safeFile(configPath) || !safeFile(join(root, "bin", "hypeman-api"))) throw new Error("managed Hypeman has unsafe config or executable");
         const config = JSON.parse(await readFile(configPath, "utf8")) as { port?: string };
         if (!config.port || connection.baseUrl !== `http://127.0.0.1:${config.port}`) throw new Error("Hypeman config and connection disagree");
-        const log = openSync(join(root, "agentstack-host.log"), "a", 0o600);
+        const log = openSync(join(root, "stack-host.log"), "a", 0o600);
         try {
           const child = spawn(join(root, "bin", "hypeman-api"), [], {
             cwd: root, env: { ...this.env, CONFIG_PATH: configPath, PATH: `/opt/homebrew/opt/e2fsprogs/sbin:${this.env.PATH ?? "/usr/bin:/bin"}` },
@@ -360,7 +360,7 @@ export class BrowserSystem {
   async installHypeman(): Promise<HypemanInstallation[]> {
     return this.serial(async () => {
       const root = join(this.root, "hypeman");
-      const receiptPath = join(root, "agentstack-install.json");
+      const receiptPath = join(root, "stack-install.json");
       if (existsSync(root) && (!safeDirectory(root) || !safeFile(receiptPath)))
         throw new Error("refusing to replace an independent Hypeman installation");
       const platform = `${process.platform}_${process.arch === "x64" ? "amd64" : process.arch}`;
@@ -410,10 +410,10 @@ export class BrowserSystem {
           logging: { level: "info" }, oversubscription: { disk: 2.0 },
         };
         await writeFile(join(staged, "config.yaml"), `${JSON.stringify(config)}\n`, { mode: 0o600 });
-        const { stdout: token } = await execFile(join(binaries, "hypeman-token"), ["-user-id", "agentstack", "-duration", "8760h"], { env: { ...this.env, JWT_SECRET: jwt }, timeout: 5_000, maxBuffer: 10_000 });
+        const { stdout: token } = await execFile(join(binaries, "hypeman-token"), ["-user-id", "stack", "-duration", "8760h"], { env: { ...this.env, JWT_SECRET: jwt }, timeout: 5_000, maxBuffer: 10_000 });
         await writeFile(join(staged, "token"), `${token.trim()}\n`, { mode: 0o600 });
         await writeFile(join(staged, "connection.json"), `${JSON.stringify({ baseUrl: `http://127.0.0.1:${port}`, tokenFile: join(root, "token") })}\n`, { mode: 0o600 });
-        await writeFile(join(staged, "agentstack-install.json"), `${JSON.stringify({ version: HYPEMAN_VERSION, digest, installedAt: new Date().toISOString() })}\n`, { mode: 0o600 });
+        await writeFile(join(staged, "stack-install.json"), `${JSON.stringify({ version: HYPEMAN_VERSION, digest, installedAt: new Date().toISOString() })}\n`, { mode: 0o600 });
         await rm(archive);
         await mkdir(join(staged, "logs"), { mode: 0o700 });
         await rename(staged, root);
@@ -426,7 +426,7 @@ export class BrowserSystem {
   async uninstallHypeman(discardData: boolean): Promise<HypemanInstallation[]> {
     return this.serial(async () => {
       const root = join(this.root, "hypeman");
-      if (!safeDirectory(root) || !safeFile(join(root, "agentstack-install.json"))) throw new Error("only AgentStack-owned Hypeman can be uninstalled through this operation");
+      if (!safeDirectory(root) || !safeFile(join(root, "stack-install.json"))) throw new Error("only Stack-owned Hypeman can be uninstalled through this operation");
       if (this.record.hypemanRoot === root) throw new Error("disable this Hypeman installation before uninstalling it");
       if (!discardData) throw new Error("managed Hypeman stores its images and state under this root; confirm data disposal to uninstall");
       const sessions = join(this.root, "sessions.json");
@@ -442,7 +442,7 @@ export class BrowserSystem {
         reachable = true;
         if (!i.ok || !v.ok) throw new Error("Hypeman inventory failed");
         instances = await i.json(); volumes = await v.json();
-      } catch { /* Stopped host: explicit disposal and empty AgentStack ledger are required. */ }
+      } catch { /* Stopped host: explicit disposal and empty Stack ledger are required. */ }
       if ((Array.isArray(instances) && instances.length) || (Array.isArray(volumes) && volumes.length))
         throw new Error("Hypeman still contains instances or profile volumes; refusing uninstall");
       if (this.hostChild || reachable) throw new Error("stop managed Hypeman before uninstalling it");

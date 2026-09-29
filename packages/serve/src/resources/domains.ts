@@ -1,4 +1,4 @@
-import { socketCall, socketPath } from "@agentstack/api";
+import { socketCall, socketPath } from "@stack/api";
 import { z } from "zod";
 import type { DomainStatus } from "./schema.js";
 

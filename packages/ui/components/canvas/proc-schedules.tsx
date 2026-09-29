@@ -71,7 +71,7 @@ export function ProcSchedulesWindow() {
   return (
     <Window id="proc-schedules" title="Schedules" subtitle="proc" icon={CalendarClockIcon} accent="proc" count={procSchedules.data ? shown.length : null}
       status={status.proc} endpoint={endpoints.proc} updatedAt={procSchedules.at} error={procSchedules.error} empty={!all.length}>
-      {unavailable ? <ProcPlaceholder title={unavailable} hint="Process output and schedule definitions stay on the AgentStack machine." />
+      {unavailable ? <ProcPlaceholder title={unavailable} hint="Process output and schedule definitions stay on the Stack machine." />
         : !procSchedules.data ? <ProcPlaceholder title={procSchedules.error ? "Schedules unavailable" : "Reading schedules…"} />
         : !all.length ? <ProcPlaceholder title="No schedules yet" hint="Bots create them with proc_schedule_create." />
         : (

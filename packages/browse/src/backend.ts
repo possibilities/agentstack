@@ -6,7 +6,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { BrowserSystem } from "./system.js";
-import { egressPolicy, type EgressPolicy } from "@agentstack/scrape/network";
+import { egressPolicy, type EgressPolicy } from "@stack/scrape/network";
 import { researchFirewall, researchPolicyId } from "./research-egress.js";
 
 const IMAGE = "docker.io/onkernel/chromium-headful@sha256:da9ee68cb9d2de0b3c26885ff3bdcf04c944254a36eb127219028ac017ff56f3";
@@ -39,12 +39,12 @@ function records(value: unknown): Array<Record<string, unknown>> {
 }
 function owned(value: Record<string, unknown>, session: string, lease: string, role: string): boolean {
   const tags = value.tags ? row(value.tags) : {};
-  return tags["dev.agentstack.browser"] === "true" && tags["dev.agentstack.role"] === role &&
-    tags["dev.agentstack.session"] === session && tags["dev.agentstack.lease"] === lease;
+  return tags["dev.stack.browser"] === "true" && tags["dev.stack.role"] === role &&
+    tags["dev.stack.session"] === session && tags["dev.stack.lease"] === lease;
 }
 const tags = (session: string, lease: string, role: string) => ({
-  "dev.agentstack.browser": "true", "dev.agentstack.role": role,
-  "dev.agentstack.session": session, "dev.agentstack.lease": lease,
+  "dev.stack.browser": "true", "dev.stack.role": role,
+  "dev.stack.session": session, "dev.stack.lease": lease,
 });
 
 export class Backend {
@@ -176,14 +176,14 @@ export class Backend {
       } catch { /* Guest starts asynchronously. */ }
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    throw new Error("Kernel Chrome did not expose CDP within 35 seconds; receipt retained. Kernel supervises Chrome; AgentStack does not force-reboot a Running VM with unflushed profile data");
+    throw new Error("Kernel Chrome did not expose CDP within 35 seconds; receipt retained. Kernel supervises Chrome; Stack does not force-reboot a Running VM with unflushed profile data");
   }
 
   private async provision(receipt: NativeRecord): Promise<NativeRecord> {
     const session = receipt.session;
     const lease = receipt.lease;
-    const volumeName = `agentstack-profile-${session}-${lease.slice(0, 8)}`;
-    const instanceName = `agentstack-browser-${session}-${lease.slice(0, 8)}`;
+    const volumeName = `stack-profile-${session}-${lease.slice(0, 8)}`;
+    const instanceName = `stack-browser-${session}-${lease.slice(0, 8)}`;
     const instances = records(await this.request("GET", "/instances"));
     const existing = instances.find((item) => item.name === instanceName);
     if (existing && !owned(existing, session, lease, "browser")) throw new Error("browser instance name is occupied by a foreign target");
@@ -199,7 +199,7 @@ export class Backend {
       volume = records(await this.request("GET", "/volumes")).find((item) => item.name === volumeName);
     }
     if (!volume || typeof volume.id !== "string") throw new Error("Hypeman did not retain the new profile volume");
-    const slotValue = existing ? row(existing.tags)["dev.agentstack.slot"] : undefined;
+    const slotValue = existing ? row(existing.tags)["dev.stack.slot"] : undefined;
     const slot = typeof slotValue === "string" && /^(0|[1-9][0-9]{0,2})$/.test(slotValue) ? Number(slotValue) : receipt.native?.slot ?? this.firstFreeSlot(instances);
     let instance = existing;
     if (!instance) {
@@ -207,8 +207,8 @@ export class Backend {
       if (image.status !== "ready") throw new Error("pinned Kernel image is not installed on local Hypeman");
       await this.request("POST", "/instances", {
         name: instanceName, image: IMAGE, platform: "linux/amd64", size: "3G", vcpus: 2,
-        tags: { ...tags(session, lease, "browser"), "dev.agentstack.slot": String(slot),
-          ...(receipt.egress ? { "dev.agentstack.egress": researchPolicyId(receipt.egress) } : {}) },
+        tags: { ...tags(session, lease, "browser"), "dev.stack.slot": String(slot),
+          ...(receipt.egress ? { "dev.stack.egress": researchPolicyId(receipt.egress) } : {}) },
         env: { DISPLAY_NUM: "1", HEIGHT: "1080", WIDTH: "1920", RUN_AS_ROOT: "false", CHROMIUM_FLAGS: `--start-fullscreen --disable-infobars${receipt.egress ? " --disable-quic --force-webrtc-ip-handling-policy=disable_non_proxied_udp" : ""}`,
           ENABLE_WEBRTC: receipt.egress ? "false" : "true", NEKO_WEBRTC_UDPMUX: String(56000 + slot) },
         volumes: [{ volume_id: volume.id, mount_path: "/home/kernel", readonly: false }],
@@ -232,7 +232,7 @@ export class Backend {
   }
 
   private firstFreeSlot(instances: Array<Record<string, unknown>>): number {
-    const used = new Set(instances.map((item) => Number(item.tags ? row(item.tags)["dev.agentstack.slot"] : NaN)).filter((value) => Number.isInteger(value) && value >= 0));
+    const used = new Set(instances.map((item) => Number(item.tags ? row(item.tags)["dev.stack.slot"] : NaN)).filter((value) => Number.isInteger(value) && value >= 0));
     for (let slot = 0; slot < 1000; slot += 1) if (!used.has(slot)) return slot;
     throw new Error("local Hypeman has no free browser slots");
   }
@@ -264,7 +264,7 @@ export class Backend {
       if (!observed) throw new Error("recorded browser VM is missing; automatic replacement is disabled and the profile volume receipt is retained for operator recovery");
       let instance = row(observed);
       if (instance.id !== native.instanceId || !owned(instance, name, current.lease, "browser")) throw new Error("browser target changed; refusing to attach to another incarnation");
-      if (current.egress && row(instance.tags)["dev.agentstack.egress"] !== researchPolicyId(current.egress)) throw new Error("browser_egress_unverifiable");
+      if (current.egress && row(instance.tags)["dev.stack.egress"] !== researchPolicyId(current.egress)) throw new Error("browser_egress_unverifiable");
       const volume = records(await this.request("GET", "/volumes")).find((item) => item.id === native.volumeId);
       if (!volume || volume.name !== native.volumeName || !owned(volume, name, current.lease, current.persistent ? "durable-profile" : "disposable-profile")) throw new Error("browser profile changed; refusing to attach to another volume");
       if (persistent && instance.state === "Stopped") {
@@ -331,8 +331,8 @@ export class Backend {
       const current = all[index]!;
       if (current.native || current.target) throw new Error("a launched browser requires its exact close receipt");
       const suffix = `${session}-${lease.slice(0, 8)}`;
-      const instanceName = `agentstack-browser-${suffix}`;
-      const volumeName = `agentstack-profile-${suffix}`;
+      const instanceName = `stack-browser-${suffix}`;
+      const volumeName = `stack-profile-${suffix}`;
       const instance = records(await this.request("GET", "/instances")).find((item) => item.name === instanceName);
       if (instance) {
         if (!owned(instance, session, lease, "browser") || typeof instance.id !== "string") throw new Error("refusing to reconcile a foreign browser target");

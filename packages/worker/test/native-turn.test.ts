@@ -7,9 +7,9 @@ import { AcpProcess, record } from "../src/acp.js";
 import { effortOption, modelOption, optionsOf } from "../src/catalog.js";
 
 test("installed Grok/OpenCode V2 and native Devin ACP complete bounded text turns", {
-  skip: process.env.AGENTSTACK_NATIVE_WORKER_TURN !== "1", timeout: 180_000,
+  skip: process.env.STACK_NATIVE_WORKER_TURN !== "1", timeout: 180_000,
 }, async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-native-worker-turn-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-native-worker-turn-"));
   try {
     const opencodeV2 = join(homedir(), ".local", "bin", "opencode");
     const devinNative = join(homedir(), ".local", "share", "devin", "cli", "_versions", "current", "bin", "devin");
@@ -38,7 +38,7 @@ test("installed Grok/OpenCode V2 and native Devin ACP complete bounded text turn
         const effort = effortOption(optionsOf(selected));
         const lowest = effort?.values.find((item) => ["low", "none", "minimal"].includes(item.value));
         if (lowest) await child.request("session/set_config_option", { sessionId: created.sessionId, configId: effort!.id, value: lowest.value });
-        const marker = `AGENTSTACK_${harness.toUpperCase()}_ACP_READY`;
+        const marker = `STACK_${harness.toUpperCase()}_ACP_READY`;
         const result = await child.request("session/prompt", { sessionId: created.sessionId,
           prompt: [{ type: "text", text: `Reply with exactly ${marker}. Do not call tools or change files.` }] }, 90_000);
         assert.equal(record(result) ? result.stopReason : null, "end_turn");

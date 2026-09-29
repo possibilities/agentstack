@@ -1,4 +1,4 @@
-package dev.agentstack.app
+package dev.stack.app
 
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith

@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath } from "@agentstack/api";
+import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath } from "@stack/api";
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as procApi } from "../../proc/dist/api.js";
 import { ProcStore } from "../../proc/dist/src/store.js";
@@ -21,7 +21,7 @@ const require = createRequire(import.meta.url);
 const dir = await mkdtemp(join("/tmp", "as-proc-ui-"));
 const evidence = process.env.PROC_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
-const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
+const env = { ...process.env, STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
 
 const botAuthority = (botId) => ({ kind: "bot", botId, mainThreadId: `main-${botId}`, threadId: `thread-${botId}` });
 const operatorActor = { kind: "operator" };
@@ -88,7 +88,7 @@ try {
       operations: fixtureOperations(names, handlers), events: { topics: topics[name], scope: name === "bots" ? { valid: () => true, description: "Fixture", example: "bot-1" } : undefined } }));
   }
   const nextPort = await port();
-  env.AGENTSTACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${nextPort}`;
+  env.STACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${nextPort}`;
   const mode = process.env.PROC_NEXT === "start" ? "start" : "dev";
   next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), mode, "--hostname", "127.0.0.1", "--port", String(nextPort)], { cwd: ui, env, stdio: ["ignore", "pipe", "pipe"] });
   next.stdout.on("data", (chunk) => { log += chunk; }); next.stderr.on("data", (chunk) => { log += chunk; });

@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { serveApi, socketCall, socketSubscribe } from "@agentstack/api";
+import { serveApi, socketCall, socketSubscribe } from "@stack/api";
 import { apiChild, signalChild, authChild, brainChild, xcomChild, browseChild, contentChild, inferChild, notifyChild, procChild, rolesChild, scrapeChild, workerChild, websocketChild } from "../src/children.js";
 import { inspectorChild, inspectorPort } from "../src/inspector.js";
 import { botsChild } from "../src/bots.js";
@@ -24,7 +24,7 @@ test("the server stops a child it started", async () => {
 });
 
 test("the server signals descendants in its process group", { skip: process.platform === "win32" }, async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-server-tree-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-server-tree-"));
   const ready = join(dir, "ready");
   const stopped = join(dir, "stopped");
   const helper = `process.on("SIGTERM", () => { require("node:fs").writeFileSync(${JSON.stringify(stopped)}, "yes"); process.exit(0); }); require("node:fs").writeFileSync(${JSON.stringify(ready)}, "yes"); setInterval(() => {}, 1000);`;
@@ -41,7 +41,7 @@ test("the server signals descendants in its process group", { skip: process.plat
 });
 
 test("browser lifecycle parent drains before its Hypeman-like descendant is signalled", { skip: process.platform === "win32" }, async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-browser-drain-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-browser-drain-"));
   const ready = join(dir, "ready"), drained = join(dir, "drained"), stopped = join(dir, "stopped");
   const helper = `const fs=require("node:fs"); process.on("SIGTERM",()=>{fs.writeFileSync(${JSON.stringify(stopped)},fs.existsSync(${JSON.stringify(drained)})?"after":"before");process.exit(0)});fs.writeFileSync(${JSON.stringify(ready)},"ready");setInterval(()=>{},1000);`;
   const parent = `const child=require("node:child_process").spawn(process.execPath,["-e",${JSON.stringify(helper)}],{stdio:"ignore"});process.on("SIGTERM",()=>{setTimeout(()=>{require("node:fs").writeFileSync(${JSON.stringify(drained)},"flushed");child.kill("SIGTERM");child.once("exit",()=>process.exit(0));},100)});setInterval(()=>{},1000);`;
@@ -54,7 +54,7 @@ test("browser lifecycle parent drains before its Hypeman-like descendant is sign
 });
 
 test("the UI guardian closes its listener when the server disappears", { skip: process.platform === "win32" }, async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-ui-guardian-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-ui-guardian-"));
   const ready = join(dir, "ready.json");
   const script = `
     const fs = require("node:fs"), net = require("node:net");
@@ -93,7 +93,7 @@ test("the UI guardian closes its listener when the server disappears", { skip: p
 });
 
 test("shutdown drains a dependent child before stopping its dependency", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-server-drain-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-server-drain-"));
   const ingressStopped = join(dir, "ingress-stopped");
   const botStopped = join(dir, "bot-stopped");
   const drained = join(dir, "drained");
@@ -132,7 +132,7 @@ test("the server starts the required socket children", () => {
   }
   assert.deepEqual([apiChild(), signalChild(), authChild(), rolesChild(), botsChild(), workerChild(), inferChild(), notifyChild(), contentChild(), brainChild(), xcomChild(), procChild(), browseChild(), scrapeChild()].map((child) => child.name), ["api", "signal", "auth", "roles", "bots", "worker", "infer", "notify", "content", "brain", "xcom", "proc", "browse", "scrape"]);
   assert.equal(procChild().parentFirst, true);
-  assert.deepEqual(botsChild(43123).env, { AGENTSTACK_SERVER_MCP_PORT: "43123" });
+  assert.deepEqual(botsChild(43123).env, { STACK_SERVER_MCP_PORT: "43123" });
   const websocket = websocketChild();
   assert.equal(websocket.command, process.execPath);
   assert.equal(existsSync(websocket.args[0] ?? ""), true);
@@ -142,7 +142,7 @@ test("the server starts the required socket children", () => {
   assert.equal(existsSync(inspector.args[0] ?? ""), true);
   assert.deepEqual(inspector.args.slice(1), ["/tmp/mcp.json"]);
   assert.equal(inspectorPort({}), 6274);
-  assert.throws(() => inspectorPort({ AGENTSTACK_INSPECTOR_PORT: "0" }), /AGENTSTACK_INSPECTOR_PORT/);
+  assert.throws(() => inspectorPort({ STACK_INSPECTOR_PORT: "0" }), /STACK_INSPECTOR_PORT/);
   const ui = uiChild(8745);
   assert.equal(ui.name, "ui");
   assert.equal(ui.command, process.execPath);
@@ -152,8 +152,8 @@ test("the server starts the required socket children", () => {
   assert.deepEqual(ui.args.slice(3), ["start", "--hostname", "127.0.0.1", "--port", "8745"]);
   assert.equal(existsSync(join(ui.cwd ?? "", "app", "[[...space]]", "page.tsx")), true);
   assert.equal(uiPort({}), 8745);
-  assert.equal(uiPort({ AGENTSTACK_UI_PORT: "8123" }), 8123);
-  assert.throws(() => uiPort({ AGENTSTACK_UI_PORT: "0" }), /AGENTSTACK_UI_PORT/);
+  assert.equal(uiPort({ STACK_UI_PORT: "8123" }), 8123);
+  assert.throws(() => uiPort({ STACK_UI_PORT: "0" }), /STACK_UI_PORT/);
 });
 
 function orphanParent(stateDir: string, keepAlive: boolean) {
@@ -161,7 +161,7 @@ function orphanParent(stateDir: string, keepAlive: boolean) {
     import { startServer } from ${JSON.stringify(fileURLToPath(new URL("../src/server.js", import.meta.url)))};
     import { apiChild, authChild, brainChild, rolesChild } from ${JSON.stringify(fileURLToPath(new URL("../src/children.js", import.meta.url)))};
     import { botsChild } from ${JSON.stringify(fileURLToPath(new URL("../src/bots.js", import.meta.url)))};
-    const server = startServer([apiChild(), authChild(), rolesChild(), botsChild(), brainChild()], { ...process.env, AGENTSTACK_STATE_DIR: ${JSON.stringify(stateDir)}, AGENTSTACK_BRAIN_SHARE_HOST: "127.0.0.1", AGENTSTACK_BRAIN_SHARE_PORT: "0" });
+    const server = startServer([apiChild(), authChild(), rolesChild(), botsChild(), brainChild()], { ...process.env, STACK_STATE_DIR: ${JSON.stringify(stateDir)}, STACK_BRAIN_SHARE_HOST: "127.0.0.1", STACK_BRAIN_SHARE_PORT: "0" });
     for (const child of server.children()) console.log(\`PID \${child.name} \${child.pid}\`);
     ${keepAlive ? "setInterval(() => {}, 1000);" : "process.exit(0);"}
   `;
@@ -218,7 +218,7 @@ async function connectable(path: string, timeoutMs = 10_000): Promise<void> {
 const sockets = (stateDir: string) => ["api", "auth", "roles", "bots", "brain"].map((name) => join(stateDir, "sockets", `${name}.sock`));
 
 test("api children shut down when the server parent dies abruptly", { skip: process.platform === "win32", timeout: 60_000 }, async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-orphan-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-orphan-"));
   const { parent, pids } = orphanParent(stateDir, true);
   const socks = sockets(stateDir);
   try {
@@ -235,7 +235,7 @@ test("api children shut down when the server parent dies abruptly", { skip: proc
 });
 
 test("api children shut down when the server exits before they finish starting", { skip: process.platform === "win32", timeout: 60_000 }, async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-orphan-early-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-orphan-early-"));
   const { parent, pids } = orphanParent(stateDir, false);
   const socks = sockets(stateDir);
   try {
@@ -254,7 +254,7 @@ test("server retains running and failed child statuses", async () => {
   const server = startServer(
     [
       { name: "fixture", command: process.execPath, args: [childBin] },
-      { name: "missing", command: "agentstack-missing-binary", args: [] },
+      { name: "missing", command: "stack-missing-binary", args: [] },
       { name: "exit", command: process.execPath, args: ["-e", "process.exit(0)"] },
     ],
     process.env,
@@ -280,7 +280,7 @@ test("server retains running and failed child statuses", async () => {
 });
 
 test("server close resolves promptly after a failed spawn", async () => {
-  const server = startServer([{ name: "missing", command: "agentstack-missing-binary", args: [] }]);
+  const server = startServer([{ name: "missing", command: "stack-missing-binary", args: [] }]);
   await waitFor(() => server.children().every((child) => !child.running), 5_000);
   await Promise.race([
     server.close(),
@@ -289,8 +289,8 @@ test("server close resolves promptly after a failed spawn", async () => {
 });
 
 test("server api serves status and pids_changed on its socket", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-server-sock-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir };
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-server-sock-"));
+  const env = { ...process.env, STACK_STATE_DIR: stateDir };
   const served = await serveApi({ name: "serve", transport: "socket", env });
   const received: string[] = [];
   try {

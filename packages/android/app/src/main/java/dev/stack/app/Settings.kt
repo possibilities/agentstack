@@ -1,4 +1,4 @@
-package dev.agentstack.app
+package dev.stack.app
 
 import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
@@ -14,24 +14,24 @@ import org.json.JSONObject
 import org.json.JSONArray
 
 data class ShareConfiguration(val serverUrl: String, val serverId: String) {
-    val destination: String get() = "$serverUrl#agentstack=$serverId"
+    val destination: String get() = "$serverUrl#stack=$serverId"
 }
 
 /**
  * Device-local configuration.
  *
  * The share token is a credential, so it is held in EncryptedSharedPreferences
- * rather than plain preferences. This AgentStack namespace starts empty.
+ * rather than plain preferences. This Stack namespace starts empty.
  */
 class Settings(context: Context) {
 
     private val prefs = run {
-        val key = MasterKey.Builder(context, "agentstack.app.share.master.v1")
+        val key = MasterKey.Builder(context, "stack.app.share.master.v1")
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
         EncryptedSharedPreferences.create(
             context,
-            "agentstack.app.connection.v1",
+            "stack.app.connection.v1",
             key,
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
@@ -91,7 +91,7 @@ class Settings(context: Context) {
 
     fun accessToken(destination: String, audience: String = "brain"): String = synchronized(LOCK) {
         if (destination != configuration()?.destination) throw IOException("Held share belongs to another destination")
-        val refresh = prefs.getString("refresh", null) ?: throw IOException("Pair with AgentStack first")
+        val refresh = prefs.getString("refresh", null) ?: throw IOException("Pair with Stack first")
         val pendingAudience = prefs.getString("refresh.audience", null)
         if (pendingAudience == null && prefs.getLong("token.$audience.expires", 0) > System.currentTimeMillis() + 30_000)
             return@synchronized prefs.getString("token.$audience", "").orEmpty()
@@ -128,7 +128,7 @@ class Settings(context: Context) {
                 code.contains("revoked") -> "Credential revoked"
                 code.contains("expired") -> "Credential expired; pair again"
                 code.contains("identity") -> "Server identity changed; held shares stay on the original destination"
-                else -> "Paired but unavailable; check AgentStack and tailnet reachability"
+                else -> "Paired but unavailable; check Stack and tailnet reachability"
             }
             val value = "$state: $code (checked ${java.util.Date()})"
             prefs.edit().putString("observation", value).commit()
@@ -141,7 +141,7 @@ class Settings(context: Context) {
         try {
             connection.instanceFollowRedirects = false; connection.connectTimeout = 15_000; connection.readTimeout = 15_000
             if (token != null) connection.setRequestProperty("Authorization", "Bearer $token")
-            connection.setRequestProperty("X-AgentStack-Server-ID", prefs.getString("server.id", null) ?: throw IOException("Pair first"))
+            connection.setRequestProperty("X-Stack-Server-ID", prefs.getString("server.id", null) ?: throw IOException("Pair first"))
             val ok = connection.responseCode in 200..299
             val body = JSONObject((if (ok) connection.inputStream else connection.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty())
             if (!ok || !body.optBoolean("ok")) throw IOException(body.optJSONObject("error")?.optString("code") ?: "Unavailable")
@@ -157,7 +157,7 @@ class Settings(context: Context) {
         try {
             connection.apply { requestMethod = "POST"; instanceFollowRedirects = false; connectTimeout = 15_000; readTimeout = 15_000; doOutput = true
                 setRequestProperty("Content-Type", "application/json"); if (token != null) setRequestProperty("Authorization", "Bearer $token") }
-            if (path != "/v1/access/pair") connection.setRequestProperty("X-AgentStack-Server-ID", prefs.getString("server.id", null) ?: throw IOException("Pair first"))
+            if (path != "/v1/access/pair") connection.setRequestProperty("X-Stack-Server-ID", prefs.getString("server.id", null) ?: throw IOException("Pair first"))
             connection.outputStream.use { it.write(data.toString().toByteArray(Charsets.UTF_8)) }
             val ok = connection.responseCode in 200..299
             val raw = (if (ok) connection.inputStream else connection.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
@@ -172,7 +172,7 @@ class Settings(context: Context) {
 
     companion object {
         const val DEFAULT_SERVER_URL = ""
-        private const val KEY_SERVER = "agentstack.app.share.server_url"
+        private const val KEY_SERVER = "stack.app.share.server_url"
         private val LOCK = Any()
 
         fun normalizeServerUrl(value: String): String {

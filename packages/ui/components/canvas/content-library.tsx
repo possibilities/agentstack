@@ -44,7 +44,7 @@ import { Empty } from "./primitives";
 import { useStack, useStore, useWorkbench } from "./provider";
 import { footerButton, Window } from "./window";
 
-const itemType = "application/x-agentstack-item";
+const itemType = "application/x-stack-item";
 
 /** Collections and their items: upload by dropping files, regroup by dragging items onto a collection. */
 export function ContentLibraryWindow() {

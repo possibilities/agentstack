@@ -28,8 +28,8 @@ test("readiness times out when an HTTP listener never answers", async () => {
 });
 
 test("a failed database write rolls back the launched child", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-persist-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-cwd-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-persist-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-cwd-"));
   const signals: string[] = [];
   try {
     const supervisor = new Supervisor({
@@ -56,8 +56,8 @@ test("a failed database write rolls back the launched child", async () => {
 });
 
 test("start is idempotent and stop is idempotent", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-cwd-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-cwd-"));
   let pids = 20;
   const launched: LaunchSpec[] = [];
   const killed: string[] = [];
@@ -132,8 +132,8 @@ test("start is idempotent and stop is idempotent", async () => {
 });
 
 test("adoption is fenced to one live Server and rolls back a failed binding write", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-adopt-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-adopt-cwd-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-adopt-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-adopt-cwd-"));
   let resolveExit: (code: number | null) => void = () => undefined;
   let scans = 0;
   const supervisor = new Supervisor({ stateDir, graceMs: 20,
@@ -175,8 +175,8 @@ test("adoption is fenced to one live Server and rolls back a failed binding writ
 });
 
 test("launch arguments survive owner recovery and can change only while stopped", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-persist-args-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-persist-args-cwd-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-persist-args-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-persist-args-cwd-"));
   const launches: string[][] = [];
   const options: SupervisorOptions = {
     stateDir, graceMs: 20,
@@ -204,7 +204,7 @@ test("launch arguments survive owner recovery and can change only while stopped"
     await first.start({ cwd, id: "configured" });
     await first.start({ cwd, id: "configured", args: ["-c", 'model="gpt-5.4"'] });
     await assert.rejects(first.start({ cwd, id: "configured", args: ["-c", 'model="gpt-5.6"'] }), /stop it before changing args/);
-    await assert.rejects(first.start({ cwd, id: "configured", args: ["--listen", "other"] }), /agentstack owns these axes/);
+    await assert.rejects(first.start({ cwd, id: "configured", args: ["--listen", "other"] }), /stack owns these axes/);
     assert.equal(launches.length, 1);
     await first.stop("configured");
 
@@ -233,8 +233,8 @@ test("launch arguments survive owner recovery and can change only while stopped"
 });
 
 test("saved Bot settings survive defaults changes and override only when stopped", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-settings-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-settings-cwd-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-settings-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-settings-cwd-"));
   const launches: string[][] = [];
   const options: SupervisorOptions = {
     stateDir,
@@ -282,8 +282,8 @@ test("saved Bot settings survive defaults changes and override only when stopped
 });
 
 test("owner MCP connections are materialized in each launch bundle without persisting as caller arguments", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-mcp-launch-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-mcp-cwd-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-mcp-launch-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-mcp-cwd-"));
   const launches: string[][] = [];
   let exposed: Record<string, string> = { auth: "http://127.0.0.1:43123/mcp/auth" };
   const supervisor = new Supervisor({
@@ -328,7 +328,7 @@ test("owner MCP connections are materialized in each launch bundle without persi
 });
 
 test("Bot launch passes only matching Role project trust to the private codexnk config", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-project-mcp-launch-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-project-mcp-launch-"));
   const project = join(stateDir, "project");
   const cwd = join(project, "nested");
   await mkdir(cwd, { recursive: true });
@@ -367,8 +367,8 @@ test("Bot launch passes only matching Role project trust to the private codexnk 
 });
 
 test("a new Server launches with credentials reconciled from an older Server", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-fresh-generation-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-fresh-cwd-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-fresh-generation-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-fresh-cwd-"));
   const auth = (stamp: string, token: string) => JSON.stringify({ last_refresh: stamp, tokens: { refresh_token: token, access_token: "access", id_token: "fixture.jwt.signature" } });
   let launchedWith = "";
   const supervisor = new Supervisor({ stateDir,
@@ -402,8 +402,8 @@ test("a new Server launches with credentials reconciled from an older Server", a
 });
 
 test("a stopped Server resumes after re-sign-in while preserving its old runtime", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-replaced-generation-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-replaced-cwd-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-replaced-generation-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-replaced-cwd-"));
   const auth = (token: string) => JSON.stringify({ last_refresh: "2026-09-23T10:00:00Z", tokens: { refresh_token: token, access_token: "access", id_token: "fixture.jwt.signature" } });
   let launchedWith = "";
   let launchedArgs: string[] = [];
@@ -446,8 +446,8 @@ test("a stopped Server resumes after re-sign-in while preserving its old runtime
 });
 
 test("onChange fires only on persisted running/stopped transitions", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-change-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-change-cwd-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-change-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-change-cwd-"));
   const events: string[] = [];
   const children = new Map<number, { resolve: (code: number | null) => void }>();
   let pids = 50;
@@ -536,10 +536,10 @@ test("model, effort, and access defaults precede caller overrides, and owned lau
   assert.deepEqual(appServerArgs([], url, { ...DEFAULT_BOT_SETTINGS, model: "gpt-custom", reasoningEffort: "high" }).slice(3, 7), ["-c", 'model="gpt-custom"', "-c", 'model_reasoning_effort="high"']);
   assert.throws(() => appServerArgs(["--listen", "ws://127.0.0.1:1"], url), /do not pass --listen/);
   assert.throws(() => appServerArgs(["--listen=ws://127.0.0.1:1"], url), /do not pass --listen/);
-  assert.throws(() => appServerArgs(["--identity", "/tmp/other"], url), /agentstack owns these axes/);
+  assert.throws(() => appServerArgs(["--identity", "/tmp/other"], url), /stack owns these axes/);
 
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-args-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-args-cwd-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-args-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-args-cwd-"));
   const launched: LaunchSpec[] = [];
   try {
     const supervisor = new Supervisor({
@@ -569,7 +569,7 @@ test("model, effort, and access defaults precede caller overrides, and owned lau
 });
 
 test("reap kills only a recorded app-server command", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack recovery "));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack recovery "));
   const url = `unix://${join(stateDir, "app", "keep.sock")}`;
   const killed: string[] = [];
   const dead = new Set<number>();
@@ -626,8 +626,8 @@ test("reap kills only a recorded app-server command", async () => {
 });
 
 test("an unverifiable recorded process remains fenced during recovery", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-unknown-owner-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-unknown-cwd-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-unknown-owner-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-unknown-cwd-"));
   const url = `unix://${join(stateDir, "app", "uncertain.sock")}`;
   const signals: string[] = [];
   const changes: string[] = [];
@@ -666,7 +666,7 @@ test("an unverifiable recorded process remains fenced during recovery", async ()
 });
 
 test("recovery retains a Server if its verified process survives SIGKILL", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-stubborn-owner-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-stubborn-owner-"));
   const url = "ws://127.0.0.1:41001";
   const signals: string[] = [];
   const originalKill = process.kill;
@@ -693,8 +693,8 @@ test("recovery retains a Server if its verified process survives SIGKILL", async
 });
 
 test("a pre-existing app socket path is never unlinked during launch", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-stale-path-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-stale-cwd-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-stale-path-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-stale-cwd-"));
   const path = join(stateDir, "app", "stale.sock");
   const supervisor = new Supervisor({ stateDir, endpoint: async () => `unix://${path}`, launch: () => { throw new Error("must not launch"); } });
   try {
@@ -712,7 +712,7 @@ test("a pre-existing app socket path is never unlinked during launch", async () 
 });
 
 test("macOS endpoint inspection distinguishes an exact Unix socket path with spaces", { skip: process.platform !== "darwin" }, async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack socket probe "));
+  const dir = await mkdtemp(join(tmpdir(), "stack socket probe "));
   const path = join(dir, "live.sock");
   const server = createNetServer();
   try {
@@ -740,7 +740,7 @@ test("macOS endpoint inspection verifies an exact legacy loopback TCP listener",
 });
 
 test("recovery reaps a real recorded app-server with a spaced socket path", { skip: process.platform !== "darwin" }, async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack prior "));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack prior "));
   const path = join(stateDir, "app", "prior.sock");
   const url = `unix://${path}`;
   await Promise.all(["app", "logs", "history"].map((name) => mkdir(join(stateDir, name))));
@@ -772,8 +772,8 @@ test("recovery reaps a real recorded app-server with a spaced socket path", { sk
 });
 
 test("a dead in-memory server is stopped and can start again", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-dead-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-dead-cwd-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-dead-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-dead-cwd-"));
   const launched: number[] = [];
   let resolveExit: (code: number | null) => void = () => undefined;
   const exited = new Promise<number | null>((resolve) => {
@@ -817,8 +817,8 @@ test("a dead in-memory server is stopped and can start again", async () => {
 });
 
 test("an exited in-memory server is recorded as stopped", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-exited-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-exited-cwd-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-exited-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-exited-cwd-"));
   let resolveExit: (code: number | null) => void = () => undefined;
   const exited = new Promise<number | null>((resolve) => {
     resolveExit = resolve;
@@ -857,7 +857,7 @@ test("an exited in-memory server is recorded as stopped", async () => {
 });
 
 test("a listen url is not owned when it is only a prefix of another port", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-prefix-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-prefix-"));
   const killed: string[] = [];
   const dead = new Set<number>();
   const supervisor = new Supervisor({
@@ -913,8 +913,8 @@ test("a listen url is not owned when it is only a prefix of another port", async
 });
 
 test("a reused pid is not treated as the recorded server", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-reused-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-reused-cwd-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-reused-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-reused-cwd-"));
   const launched: number[] = [];
   try {
     const supervisor = new Supervisor({
@@ -962,8 +962,8 @@ test("a reused pid is not treated as the recorded server", async () => {
 });
 
 test("a fake app-server becomes ready and can be stopped", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-live-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-live-cwd-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-live-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-live-cwd-"));
   const supervisor = new Supervisor({ stateDir, graceMs: 1_000, launch: (spec) => launchChild({ ...spec, bin: fakeBin }) });
   try {
     await supervisor.load();
@@ -992,8 +992,8 @@ test("a fake app-server becomes ready and can be stopped", async () => {
 });
 
 test("failed resume retains the main thread and never creates a replacement", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-resume-fail-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-resume-cwd-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-resume-fail-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-resume-cwd-"));
   let resolveExit: (code: number | null) => void = () => undefined;
   const calls: Array<string | null> = [];
   const options: SupervisorOptions = { stateDir, graceMs: 20,
@@ -1030,8 +1030,8 @@ test("failed resume retains the main thread and never creates a replacement", as
 });
 
 test("a legacy unconfirmed thread start still blocks automatic recovery", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-uncertain-thread-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-uncertain-cwd-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-uncertain-thread-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-uncertain-cwd-"));
   let resolveExit: (code: number | null) => void = () => undefined;
   const options: SupervisorOptions = { stateDir, graceMs: 20,
     endpoint: async () => "ws://127.0.0.1:43112",
@@ -1063,8 +1063,8 @@ test("a legacy unconfirmed thread start still blocks automatic recovery", async 
 });
 
 test("a persisted live server from another runtime is not returned as codexnk", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-legacy-"));
-  const cwd = await mkdtemp(join(tmpdir(), "agentstack-legacy-cwd-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-legacy-"));
+  const cwd = await mkdtemp(join(tmpdir(), "stack-legacy-cwd-"));
   let launched = false;
   const supervisor = new Supervisor({
     stateDir,

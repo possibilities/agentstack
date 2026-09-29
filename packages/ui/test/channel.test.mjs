@@ -80,12 +80,12 @@ test("local connections fetch fresh tickets on reconnect and dispose during admi
     assert.equal(sockets.length, 0);
     channel = new Channel("ws://127.0.0.1:8746/websocket", "bots").connect();
     resolveTicket(); await new Promise(resolve => setImmediate(resolve));
-    assert.deepEqual(sockets[0].protocols, [`agentstack-local.${"2".repeat(43)}`]);
+    assert.deepEqual(sockets[0].protocols, [`stack-local.${"2".repeat(43)}`]);
     sockets[0].close();
     await new Promise(resolve => setTimeout(resolve, 550));
     assert.equal(requests.length, 3);
     resolveTicket(); await new Promise(resolve => setImmediate(resolve));
-    assert.deepEqual(sockets[1].protocols, [`agentstack-local.${"3".repeat(43)}`]);
+    assert.deepEqual(sockets[1].protocols, [`stack-local.${"3".repeat(43)}`]);
     assert.ok(requests.every(({ url, options }) => url === "/connect/local/ticket" && options.method === "POST" && options.credentials === "same-origin" && options.cache === "no-store"));
   } finally { channel?.dispose(); globalThis.WebSocket = originalSocket; globalThis.fetch = originalFetch; }
 });

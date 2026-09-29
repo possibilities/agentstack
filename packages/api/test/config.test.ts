@@ -21,7 +21,7 @@ test("bots declares socket, MCP, and WebSocket transports", async () => {
 });
 
 test("a package API loads from the built sibling api.ts without an index", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-api-entry-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-api-entry-"));
   try {
     await mkdir(join(dir, "dist"));
     await writeFile(join(dir, "package.json"), '{"type":"module"}');
@@ -57,17 +57,17 @@ test("WebSocket uses Package API events rather than transport-specific pubsub", 
 });
 
 test("individual WebSocket launch is refused in favor of the shared listener", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-ws-config-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-ws-config-"));
   const dir = join(root, "packages", "demo");
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  description: WebSocket.\n  operations: all\n  events: all\n");
   try {
-    await assert.rejects(serveApi({ name: "demo", transport: "websocket", root }), /agentstack websocket/);
+    await assert.rejects(serveApi({ name: "demo", transport: "websocket", root }), /stack websocket/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("individual mcp launch is refused in favor of the shared HTTP process", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-api-config-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-api-config-"));
   const dir = join(root, "packages", "demo");
   await mkdir(dir, { recursive: true });
   await writeFile(
@@ -75,7 +75,7 @@ test("individual mcp launch is refused in favor of the shared HTTP process", asy
     "name: demo\ndescription: Demo operations.\nmcp:\n  description: MCP transport for demo operations.\n  operations: all\n  events: all\n",
   );
   try {
-    await assert.rejects(serveApi({ name: "demo", transport: "mcp", root }), /agentstack mcp/);
+    await assert.rejects(serveApi({ name: "demo", transport: "mcp", root }), /stack mcp/);
     await assert.rejects(serveApi({ name: "demo", transport: "socket", root }), /does not configure socket/);
     await assert.rejects(serveApi({ name: "demo", transport: "websocket", root }), /does not configure websocket/);
     await assert.rejects(serveApi({ name: "missing", transport: "socket", root }), /no package API named missing/);

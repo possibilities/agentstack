@@ -1,4 +1,4 @@
-import { AuthStore } from "@agentstack/auth";
+import { AuthStore } from "@stack/auth";
 
 export type BotSettings = {
   model: string;

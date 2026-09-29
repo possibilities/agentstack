@@ -17,7 +17,7 @@ const fakeGate = (cdp: string, neko: string): ManagedGate => ({
   cdpUrl: cdp, observationUrl: neko, async start() {}, async close() {}, hold() {}, async drain() {}, resume() {}, unknownDrain() {},
   async grantHuman() { return neko + "/human"; }, async revokeHuman() {},
 });
-import { botMcpUrl, botInstance, serveSocket, socketPath, operation, type InvocationContext } from "@agentstack/api";
+import { botMcpUrl, botInstance, serveSocket, socketPath, operation, type InvocationContext } from "@stack/api";
 import { browserProfileList, browserProfileCreate, browserProfileDelete, browserControllerList, browserControllerSelect } from "../api.js";
 
 type Item = Record<string, unknown>;
@@ -48,13 +48,13 @@ test("research runtime binds policy to its receipt and never attaches to an unre
     assert.equal((instance.env as Item).ENABLE_WEBRTC, "false");
     await assert.rejects(backend.launch("research"), /policy mismatch/);
     await assert.rejects(backend.launch("research", false, { privateDestinations: [{ address: "10.0.0.1", port: 80 }] }), /policy mismatch/);
-    delete (instance.tags as Item)["dev.agentstack.egress"];
+    delete (instance.tags as Item)["dev.stack.egress"];
     await assert.rejects(backend.launch("research", false, policy), /egress_unverifiable/);
     await backend.close(acquired.cleanup);
   } finally { await backend.closeContext(); await s.close(); }
 });
 async function fixture(options: { failInstanceCreate?: boolean } = {}) {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-browser-") );
+  const dir = await mkdtemp(join(tmpdir(), "stack-browser-") );
   const root = join(dir, "local-hypeman");
   await mkdir(join(root, "bin"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "bin", "hypeman-api"), "fixture", { mode: 0o700 });
@@ -95,7 +95,7 @@ async function fixture(options: { failInstanceCreate?: boolean } = {}) {
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("fixture did not bind");
   await writeFile(join(root, "connection.json"), JSON.stringify({ baseUrl: `http://127.0.0.1:${address.port}`, tokenFile: join(root, "token") }));
-  const env: NodeJS.ProcessEnv = { ...process.env, AGENTSTACK_STATE_DIR: dir, HOME: dir };
+  const env: NodeJS.ProcessEnv = { ...process.env, STACK_STATE_DIR: dir, HOME: dir };
   const system = new BrowserSystem(env);
   await system.start();
   return { dir, root, env, system, counts: () => ({ instances: instances.length, volumes: volumes.length }),
@@ -476,7 +476,7 @@ test("provider protocol forwards only the exact browser lifecycle calls", async 
       if (input.name === "browser_status") return { provider: "hypeman", mode: "disposable", sessions: 0 };
       if (input.name === "browser_controller_launch") return { cdpUrl: "http://127.0.0.1:9999", cleanup: { controller: "controller", revision: 0 } };
       return { closed: true };
-    }) as typeof import("@agentstack/api").socketCall;
+    }) as typeof import("@stack/api").socketCall;
     const protocol = "agent-browser.plugin.v1";
     const manifest = await handleProvider(JSON.stringify({ protocol, type: "plugin.manifest", capability: "plugin.manifest", request: {} }), s.env, call);
     assert.deepEqual((manifest.manifest as { capabilities: string[] }).capabilities, ["browser.provider"]);
@@ -487,10 +487,10 @@ test("provider protocol forwards only the exact browser lifecycle calls", async 
     assert.equal(closed.success, true);
     assert.deepEqual(calls, ["browser_status", "browser_controller_launch", "browser_controller_close"]);
     assert.equal((await handleProvider(JSON.stringify({ protocol, type: "browser.close", capability: "browser.provider", request: cleanup }), s.env,
-      (async () => { throw new Error("owner socket closed"); }) as typeof import("@agentstack/api").socketCall)).success, true);
+      (async () => { throw new Error("owner socket closed"); }) as typeof import("@stack/api").socketCall)).success, true);
     assert.equal((await handleProvider(JSON.stringify({ protocol, type: "browser.launch", capability: "browser.provider", request: { session: "bot-1" } }), s.env, call)).success, false);
     const refused = await handleProvider(JSON.stringify({ protocol, type: "browser.launch", capability: "browser.provider", request: { session: "task" } }), s.env,
-      (async () => ({ provider: "agentbrowse" })) as typeof import("@agentstack/api").socketCall);
+      (async () => ({ provider: "agentbrowse" })) as typeof import("@stack/api").socketCall);
     assert.equal(refused.success, false);
   } finally { await s.close(); }
 });
@@ -500,14 +500,14 @@ test("owner's private agent-browser config leaves global settings alone", async 
   try {
     const path = prepareBrowserConfig(s.env);
     const config = JSON.parse(await readFile(path, "utf8")) as { provider: string; plugins: Array<{ command: string; args: string[] }> };
-    assert.equal(config.provider, "agentstack");
+    assert.equal(config.provider, "stack");
     assert.equal(config.plugins[0]?.command, process.execPath);
     assert.match(config.plugins[0]?.args[0] ?? "", /packages\/browse\/dist\/src\/provider\.js$/);
   } finally { await s.close(); }
 });
 
 test("manual release observation requires exact acceptance; automatic checks only upgrade", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-browser-updates-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-browser-updates-"));
   const bin = join(dir, "bin");
   await mkdir(bin, { recursive: true });
   const npm = `#!/bin/sh
@@ -525,7 +525,7 @@ printf '{"name":"agent-browser","version":"%s"}\\n' "$version" >"$package/packag
 printf '#!/bin/sh\\nprintf "agent-browser %s\\\\n"\\n' "$version" >"$package/bin/agent-browser-darwin-arm64"
 `;
   await writeFile(join(bin, "npm"), npm, { mode: 0o755 });
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: dir, AGENTSTACK_STATE_DIR: dir, PATH: `${bin}:/usr/bin:/bin`, TEST_LATEST: "0.39.0" };
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: dir, STACK_STATE_DIR: dir, PATH: `${bin}:/usr/bin:/bin`, TEST_LATEST: "0.39.0" };
   const system = new BrowserSystem(env);
   try {
     await system.start();

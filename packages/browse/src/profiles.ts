@@ -3,7 +3,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { botInstance, operatorInvocation, parseBotMcpIdentity, socketCall, socketPath, type InvocationContext } from "@agentstack/api";
+import { botInstance, operatorInvocation, parseBotMcpIdentity, socketCall, socketPath, type InvocationContext } from "@stack/api";
 import { z } from "zod";
 import { Backend, backendSession } from "./backend.js";
 import { BrowserSystem } from "./system.js";
@@ -317,7 +317,7 @@ export class Profiles {
           await managed?.gate.revokeHuman();
           await managed?.gate.close();
           this.gates.delete(id);
-          const gate = this.makeGate(launched.cdpUrl, new URL(observation.url).origin, `agentstack:${id}`);
+          const gate = this.makeGate(launched.cdpUrl, new URL(observation.url).origin, `stack:${id}`);
           try { await gate.start(); } catch (error) { await gate.close(); throw error; }
           managed = { source: launched.cdpUrl, gate }; this.gates.set(id, managed);
           if (this.ledger.handoffs.some((h) => h.profileId === id && h.state !== "resolved" && !h.quiesced)) gate.unknownDrain();

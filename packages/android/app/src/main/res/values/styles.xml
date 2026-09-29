@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Base.Theme.AgentStack" parent="Theme.AppCompat.DayNight">
+    <style name="Base.Theme.Stack" parent="Theme.AppCompat.DayNight">
         <item name="colorPrimary">@color/stack_surface</item>
         <item name="colorPrimaryDark">@color/stack_background</item>
         <item name="colorAccent">@color/stack_primary</item>
@@ -13,6 +13,6 @@
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:fontFamily">sans</item>
     </style>
-    <style name="Theme.AgentStack" parent="Base.Theme.AgentStack" />
+    <style name="Theme.Stack" parent="Base.Theme.Stack" />
     <bool name="stack_light_system_bars">true</bool>
 </resources>

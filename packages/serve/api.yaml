@@ -1,5 +1,5 @@
 name: serve
-description: Owns agentstack child processes and reports status, cached process-tree CPU and memory observations, and bounded resource history.
+description: Owns stack child processes and reports status, cached process-tree CPU and memory observations, and bounded resource history.
 socket:
   description: Unix socket for server status, paged resource snapshots, recent history and payload-free change events, namespaced as serve.
 mcp:

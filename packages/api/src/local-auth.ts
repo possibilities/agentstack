@@ -125,7 +125,7 @@ export function localOrigin(origin: string): URL {
   if (url.origin !== origin || url.protocol !== "http:" || !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || !url.port) throw new LocalAuthError();
   return url;
 }
-export const localCookieName = (audience: LocalAudience) => `agentstack_local_${audience}`;
+export const localCookieName = (audience: LocalAudience) => `stack_local_${audience}`;
 export function localCookie(header: string | null | undefined, audience: LocalAudience): string {
   const values = (header ?? "").split(";").map(part => part.trim()).filter(part => part.startsWith(`${localCookieName(audience)}=`));
   return values.length === 1 ? values[0]!.slice(localCookieName(audience).length + 1) : "";

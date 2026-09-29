@@ -1,6 +1,6 @@
 import { chmod, mkdir } from "node:fs/promises";
 import { z } from "zod";
-import { operation, stateDir, type PackageApi } from "@agentstack/api";
+import { operation, stateDir, type PackageApi } from "@stack/api";
 import { WorkerSupervisor } from "./src/supervisor.js";
 import { WorkerManager } from "./src/manager.js";
 

@@ -35,7 +35,7 @@ function setup(): {
   store: ResearchStore;
   artifacts: ArtifactStore;
 } {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-link-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-link-"));
   roots.push(root);
   return {
     store: new ResearchStore(join(root, "research.db")),

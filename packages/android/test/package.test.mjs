@@ -8,14 +8,14 @@ const read = (file) => readFile(new URL(file, root), "utf8");
 test("the Android application has a fresh root identity and feature-scoped components", async () => {
   const gradle = await read("app/build.gradle.kts");
   const manifest = await read("app/src/main/AndroidManifest.xml");
-  assert.match(gradle, /namespace = "dev\.agentstack\.app"/);
-  assert.match(gradle, /applicationId = "dev\.agentstack\.app"/);
+  assert.match(gradle, /namespace = "dev\.stack\.app"/);
+  assert.match(gradle, /applicationId = "dev\.stack\.app"/);
   assert.match(manifest, /android:allowBackup="false"/);
   for (const name of [".SettingsActivity", ".share.ShareActivity", ".share.RecentLinkActionReceiver", ".share.RecentLinkRestoreReceiver"]) {
     assert.ok(manifest.includes(`android:name="${name}"`));
   }
-  const settings = await read("app/src/main/java/dev/agentstack/app/Settings.kt");
-  assert.match(settings, /agentstack\.app\.connection\.v1/);
+  const settings = await read("app/src/main/java/dev/stack/app/Settings.kt");
+  assert.match(settings, /stack\.app\.connection\.v1/);
   assert.match(settings, /instanceFollowRedirects = false/);
 });
 

@@ -1,6 +1,6 @@
-package dev.agentstack.app.share
+package dev.stack.app.share
 
-import dev.agentstack.app.Settings
+import dev.stack.app.Settings
 
 import android.content.Context
 import androidx.work.Constraints
@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit
  */
 object ShareScheduler {
 
-    private const val WORK_NAME = "agentstack.app.share.outbox.v1"
+    private const val WORK_NAME = "stack.app.share.outbox.v1"
 
     /** Schedules a drain for when the earliest held share is due. */
     fun scheduleNext(context: Context, outbox: ShareOutbox) {

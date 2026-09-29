@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { operation, stateDir, type PackageApi } from "@agentstack/api";
+import { operation, stateDir, type PackageApi } from "@stack/api";
 import { z } from "zod";
 import * as s from "./src/schema.js";
 import { ProcService, newId, scheduleFromInput } from "./src/service.js";

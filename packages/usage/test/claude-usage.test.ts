@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { AuthStore, claudeConfigRoot, claudeKeychainService, credentialEvidence, prepareAccountProfile } from "@agentstack/auth";
+import { AuthStore, claudeConfigRoot, claudeKeychainService, credentialEvidence, prepareAccountProfile } from "@stack/auth";
 import { collectAccount, parseClaudeUsage } from "../src/collect.js";
 import { UsageObserver } from "../src/observer.js";
 import { claudeUsage, snapshotSchema } from "../src/schema.js";
@@ -48,7 +48,7 @@ test("Claude usage projects binding/scoped windows and provider-unit extra usage
 });
 
 test("Claude read-only collection pins account identity, token source, endpoint and OAuth headers", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-claude-usage-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-claude-usage-"));
   const store = new AuthStore(root);
   try {
     const a = await account(store, "10000000-0000-4000-8000-000000000001", "first-secret");
@@ -80,7 +80,7 @@ test("Claude read-only collection pins account identity, token source, endpoint 
 });
 
 test("Claude usage reads only the exact injected keychain service and sanitizes bounded HTTP failures", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-claude-usage-keychain-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-claude-usage-keychain-"));
   const store = new AuthStore(root);
   try {
     const a = await account(store, "10000000-0000-4000-8000-000000000001", "file-secret");
@@ -104,7 +104,7 @@ test("Claude usage reads only the exact injected keychain service and sanitizes 
 });
 
 test("Claude observer keeps account-scoped last-good usage through failures and reload, and prunes removal", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-claude-last-good-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-claude-last-good-"));
   const store = new AuthStore(root);
   try {
     const a = await account(store, "10000000-0000-4000-8000-000000000001", "first-secret");

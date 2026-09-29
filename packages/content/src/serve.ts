@@ -3,7 +3,7 @@
 
 import type { Dirent, Stats } from "node:fs";
 import { createReadStream, lstatSync, readdirSync } from "node:fs";
-import { serveHttp } from "@agentstack/api";
+import { serveHttp } from "@stack/api";
 import { join, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import type { ArtifactRow, ArtifactStore } from "./artifacts.js";

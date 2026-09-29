@@ -1,4 +1,4 @@
-package dev.agentstack.app.share
+package dev.stack.app.share
 
 import java.io.File
 import java.io.FileOutputStream

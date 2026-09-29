@@ -1,13 +1,13 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { IncomingMessage } from "node:http";
-import { serveHttp, serveWebSocket, withLocalAuth, type RemoteWebSocketAdmission } from "@agentstack/api";
+import { serveHttp, serveWebSocket, withLocalAuth, type RemoteWebSocketAdmission } from "@stack/api";
 import { z } from "zod";
 import { AccessError, AccessStore } from "./store.js";
 import { pairInput, redeemInput, resourcePath } from "./ingress.js";
 import { localApi, verifier, type Peer } from "./network.js";
 
-const cookieName = "__Host-agentstack_ui";
-const refreshName = "__Host-agentstack_ui_refresh";
+const cookieName = "__Host-stack_ui";
+const refreshName = "__Host-stack_ui_refresh";
 const token = /^[A-Za-z0-9_-]{43}$/;
 const uiPagePath = /^\/(?:$|(?:accounts|lab|system|roles|inbox|signal|content|workers|scrape|browse|brain|proc)\/?$)/;
 const json = (data: unknown, status = 200) => new Response(JSON.stringify({ schema_version: 1, ok: true, data }),
@@ -20,18 +20,18 @@ const remoteHeaders = (request: Request | IncomingMessage, expected: string, met
   const headers = request.headers;
   const keys = headers instanceof Headers ? [...headers.keys()] : Object.keys(headers);
   if (host !== new URL(expected).host || keys.some(key => key === "forwarded" || key.startsWith("x-forwarded-") || key.startsWith("tailscale-")
-    || key.startsWith("x-agentstack-ui-") || key === "x-agentstack-remote-ui")) throw new AccessError("untrusted_request", 403);
+    || key.startsWith("x-stack-ui-") || key === "x-stack-remote-ui")) throw new AccessError("untrusted_request", 403);
   if (origin && origin !== expected || !["GET", "HEAD"].includes(method) && origin !== expected) throw new AccessError("origin_refused", 403);
 };
 
-const connectPage = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Pair AgentStack browser</title><style>body{font:16px system-ui;max-width:36rem;margin:5vh auto;padding:1rem}input,button{font:inherit;padding:.6rem}input{width:95%}button{margin-top:1rem}code{font-size:1.3rem}#error{color:#a00}</style><h1>Pair this browser</h1><p>Pairing requires approval on the AgentStack machine. Compare the full code there. This browser saves its redemption secret before requesting approval.</p><label>Browser label <input id="label" maxlength="100" autocomplete="off" required></label><br><button id="pair">Request approval</button><p id="code"></p><button id="redeem" hidden>Approved? Connect</button><p id="error" role="alert"></p><script>
-const key='agentstack-pairing';const error=document.getElementById('error');const code=document.getElementById('code');const redeem=document.getElementById('redeem');
+const connectPage = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Pair Stack browser</title><style>body{font:16px system-ui;max-width:36rem;margin:5vh auto;padding:1rem}input,button{font:inherit;padding:.6rem}input{width:95%}button{margin-top:1rem}code{font-size:1.3rem}#error{color:#a00}</style><h1>Pair this browser</h1><p>Pairing requires approval on the Stack machine. Compare the full code there. This browser saves its redemption secret before requesting approval.</p><label>Browser label <input id="label" maxlength="100" autocomplete="off" required></label><br><button id="pair">Request approval</button><p id="code"></p><button id="redeem" hidden>Approved? Connect</button><p id="error" role="alert"></p><script>
+const key='stack-pairing';const error=document.getElementById('error');const code=document.getElementById('code');const redeem=document.getElementById('redeem');
 const saved=()=>JSON.parse(localStorage.getItem(key)||'null');const show=s=>{code.textContent=s.code?'Compare approval code: '+s.code:'Pairing saved. Retry request to recover the code.';redeem.hidden=!s.id};
 if(saved())show(saved());
-async function post(path,data,serverId){const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json',...(serverId?{'x-agentstack-server-id':serverId}:{})},body:JSON.stringify(data),cache:'no-store'});const body=await r.json();if(!r.ok)throw Error(body.error?.message||'Request refused');return body.data}
+async function post(path,data,serverId){const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json',...(serverId?{'x-stack-server-id':serverId}:{})},body:JSON.stringify(data),cache:'no-store'});const body=await r.json();if(!r.ok)throw Error(body.error?.message||'Request refused');return body.data}
 async function identity(){const r=await fetch('/connect/identity',{cache:'no-store'});if(!r.ok)throw Error('Server identity unavailable');return (await r.json()).data.serverId}
-document.getElementById('pair').onclick=async()=>{error.textContent='';try{let s=saved();if(!s){const bytes=crypto.getRandomValues(new Uint8Array(32));s={requestId:crypto.randomUUID(),redemptionSecret:btoa(String.fromCharCode(...bytes)).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,''),label:document.getElementById('label').value.trim(),kind:'browser',scopes:['ui:view','ui:control','content:read']};if(!s.label)throw Error('Enter a label');localStorage.setItem(key,JSON.stringify(s))}const serverId=await identity();if(s.serverId&&s.serverId!==serverId)throw Error('AgentStack server changed; do not send this secret');s.serverId=serverId;localStorage.setItem(key,JSON.stringify(s));const receipt=await post('/connect/pair',{requestId:s.requestId,label:s.label,kind:s.kind,scopes:s.scopes,redemptionSecret:s.redemptionSecret},serverId);if(receipt.serverId!==serverId)throw Error('AgentStack server changed');s={...s,...receipt};localStorage.setItem(key,JSON.stringify(s));show(s)}catch(e){error.textContent=e.message}};
-redeem.onclick=async()=>{error.textContent='';try{let s=saved();if(!s.serverId||s.serverId!==await identity())throw Error('AgentStack server changed; pairing refused');if(!s.refreshToken){const receipt=await post('/connect/redeem',{id:s.id,redemptionSecret:s.redemptionSecret},s.serverId);if(receipt.serverId!==s.serverId)throw Error('AgentStack server changed');s={...s,refreshToken:receipt.refreshToken,sessionRequestId:crypto.randomUUID()};localStorage.setItem(key,JSON.stringify(s))}await post('/connect/session',{refreshToken:s.refreshToken,requestId:s.sessionRequestId},s.serverId);localStorage.removeItem(key);location.replace('/')}catch(e){error.textContent=e.message}};
+document.getElementById('pair').onclick=async()=>{error.textContent='';try{let s=saved();if(!s){const bytes=crypto.getRandomValues(new Uint8Array(32));s={requestId:crypto.randomUUID(),redemptionSecret:btoa(String.fromCharCode(...bytes)).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,''),label:document.getElementById('label').value.trim(),kind:'browser',scopes:['ui:view','ui:control','content:read']};if(!s.label)throw Error('Enter a label');localStorage.setItem(key,JSON.stringify(s))}const serverId=await identity();if(s.serverId&&s.serverId!==serverId)throw Error('Stack server changed; do not send this secret');s.serverId=serverId;localStorage.setItem(key,JSON.stringify(s));const receipt=await post('/connect/pair',{requestId:s.requestId,label:s.label,kind:s.kind,scopes:s.scopes,redemptionSecret:s.redemptionSecret},serverId);if(receipt.serverId!==serverId)throw Error('Stack server changed');s={...s,...receipt};localStorage.setItem(key,JSON.stringify(s));show(s)}catch(e){error.textContent=e.message}};
+redeem.onclick=async()=>{error.textContent='';try{let s=saved();if(!s.serverId||s.serverId!==await identity())throw Error('Stack server changed; pairing refused');if(!s.refreshToken){const receipt=await post('/connect/redeem',{id:s.id,redemptionSecret:s.redemptionSecret},s.serverId);if(receipt.serverId!==s.serverId)throw Error('Stack server changed');s={...s,refreshToken:receipt.refreshToken,sessionRequestId:crypto.randomUUID()};localStorage.setItem(key,JSON.stringify(s))}await post('/connect/session',{refreshToken:s.refreshToken,requestId:s.sessionRequestId},s.serverId);localStorage.removeItem(key);location.replace('/')}catch(e){error.textContent=e.message}};
 if(!saved())post('/connect/refresh',{}).then(()=>location.replace('/')).catch(()=>{});
 </script></html>`;
 const inline = (tag: "script" | "style") => new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(connectPage)?.[1] ?? "";
@@ -51,9 +51,9 @@ export type RemoteUiOptions = { store: AccessStore; env: NodeJS.ProcessEnv; host
   verify?: (peer: Peer) => Promise<void>; fetchBackend?: typeof fetch; root?: string };
 
 export function remoteUiHandler({ store, env, host, port, verify, fetchBackend }: RemoteUiOptions) {
-  const expected = env.AGENTSTACK_ACCESS_UI_ORIGIN ?? `https://${host.includes(":") ? `[${host}]` : host}:${port}`;
-  const check = verify ?? verifier(env.AGENTSTACK_TAILSCALE_BIN,
-    env.AGENTSTACK_TAILSCALE_SOCKET ? localApi(env.AGENTSTACK_TAILSCALE_SOCKET) : undefined);
+  const expected = env.STACK_ACCESS_UI_ORIGIN ?? `https://${host.includes(":") ? `[${host}]` : host}:${port}`;
+  const check = verify ?? verifier(env.STACK_TAILSCALE_BIN,
+    env.STACK_TAILSCALE_SOCKET ? localApi(env.STACK_TAILSCALE_SOCKET) : undefined);
   return async (request: Request, peer: Peer): Promise<Response> => {
     try {
       await check(peer);
@@ -66,11 +66,11 @@ export function remoteUiHandler({ store, env, host, port, verify, fetchBackend }
       if (path === "/connect/identity" && request.method === "GET") return json({ serverId: store.serverId });
       if (path === "/connect/pair" && request.method === "POST") return json(store.pair(pairInput.parse(await payload(request))));
       if (path === "/connect/redeem" && request.method === "POST") {
-        if (request.headers.get("x-agentstack-server-id") !== store.serverId) throw new AccessError("server_identity_mismatch", 409);
+        if (request.headers.get("x-stack-server-id") !== store.serverId) throw new AccessError("server_identity_mismatch", 409);
         const input = redeemInput.parse(await payload(request)); return json(store.redeem(input.id, input.redemptionSecret));
       }
       if (path === "/connect/session" && request.method === "POST") {
-        if (request.headers.get("x-agentstack-server-id") !== store.serverId) throw new AccessError("server_identity_mismatch", 409);
+        if (request.headers.get("x-stack-server-id") !== store.serverId) throw new AccessError("server_identity_mismatch", 409);
         const input = z.strictObject({ refreshToken: z.string().regex(token), requestId: z.uuid() }).parse(await payload(request));
         const issued = store.startUi(input.refreshToken, input.requestId);
         const response = json({ scopes: store.ui(issued.accessToken).scopes, expiresAt: issued.expiresAt });
@@ -99,22 +99,22 @@ export function remoteUiHandler({ store, env, host, port, verify, fetchBackend }
       if (path === "/connect/me" && request.method === "GET") {
         const principal = store.ui(cookie(request.headers.get("cookie"), cookieName));
         const name = new URL(expected).hostname;
-        return json({ scopes: principal.scopes, documentOrigin: `https://${name}:${env.AGENTSTACK_ACCESS_PORT ?? 8943}`,
-          artifactOrigin: `https://${name}:${env.AGENTSTACK_ACCESS_ARTIFACT_PORT ?? 8944}` });
+        return json({ scopes: principal.scopes, documentOrigin: `https://${name}:${env.STACK_ACCESS_PORT ?? 8943}`,
+          artifactOrigin: `https://${name}:${env.STACK_ACCESS_ARTIFACT_PORT ?? 8944}` });
       }
       if (!["GET", "HEAD"].includes(request.method) || !(uiPagePath.test(path) || path.startsWith("/_next/") || path === "/favicon.ico")) throw new AccessError("not_found", 404);
       const principal = store.ui(cookie(request.headers.get("cookie"), cookieName));
-      const upstreamPort = Number(env.AGENTSTACK_UI_PORT ?? 8745);
+      const upstreamPort = Number(env.STACK_UI_PORT ?? 8745);
       const headers = new Headers();
       for (const name of ["accept", "accept-language", "user-agent", "rsc", "next-router-state-tree", "next-router-prefetch", "next-url"]) {
         const value = request.headers.get(name); if (value) headers.set(name, value);
       }
-      headers.set("x-agentstack-remote-ui", "1");
-      headers.set("x-agentstack-ui-origin", expected);
-      headers.set("x-agentstack-ui-scope", principal.scopes.includes("ui:control") ? "control" : "view");
-      headers.set("x-agentstack-ui-scopes", principal.scopes.join(","));
-      headers.set("x-agentstack-ui-proof", withLocalAuth(env, auth => auth.signRemote(request.method, path + url.search, expected,
-        headers.get("x-agentstack-ui-scope")!, headers.get("x-agentstack-ui-scopes")!)));
+      headers.set("x-stack-remote-ui", "1");
+      headers.set("x-stack-ui-origin", expected);
+      headers.set("x-stack-ui-scope", principal.scopes.includes("ui:control") ? "control" : "view");
+      headers.set("x-stack-ui-scopes", principal.scopes.join(","));
+      headers.set("x-stack-ui-proof", withLocalAuth(env, auth => auth.signRemote(request.method, path + url.search, expected,
+        headers.get("x-stack-ui-scope")!, headers.get("x-stack-ui-scopes")!)));
       const nonce = randomBytes(16).toString("base64");
       const csp = `default-src 'none'; script-src 'nonce-${nonce}' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ${expected.replace(/^https:/, "wss:")}; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; object-src 'none'`;
       headers.set("content-security-policy", csp);
@@ -147,9 +147,9 @@ async function payload(request: Request) {
 
 export async function startRemoteUi(options: RemoteUiOptions, tls: { key: Buffer; cert: Buffer }) {
   const { store, env, host, port } = options;
-  const expected = env.AGENTSTACK_ACCESS_UI_ORIGIN ?? `https://${host.includes(":") ? `[${host}]` : host}:${port}`;
-  const verify = options.verify ?? verifier(env.AGENTSTACK_TAILSCALE_BIN,
-    env.AGENTSTACK_TAILSCALE_SOCKET ? localApi(env.AGENTSTACK_TAILSCALE_SOCKET) : undefined);
+  const expected = env.STACK_ACCESS_UI_ORIGIN ?? `https://${host.includes(":") ? `[${host}]` : host}:${port}`;
+  const verify = options.verify ?? verifier(env.STACK_TAILSCALE_BIN,
+    env.STACK_TAILSCALE_SOCKET ? localApi(env.STACK_TAILSCALE_SOCKET) : undefined);
   const http = await serveHttp({ host, port, tls, handle: remoteUiHandler({ ...options, verify }),
     requestTimeout: 30_000, headersTimeout: 10_000, forceCloseConnections: true });
   try {

@@ -26,8 +26,8 @@ The [port decision](adr/0059-isolated-brain-and-platform-clients.md) establishes
 - A Share outbox holds intent that the server has not acknowledged. The UI must say **held**, not saved or queued in Brain. A repeated request after an ambiguous response relies on server idempotency.
 - Preserve destination binding for held payloads and observed job IDs. Updating a credential for the same destination is different from redirecting content to another server.
 - Bounded history is client evidence, not a second ingestion ledger. Completed, blocked and failed states must come from authoritative server observations.
-- Treat `packages/chrome` and `packages/android` as general AgentStack app identities. Add another feature only when requested; preserve the existing sharing feature's semantics during branding and platform work.
+- Treat `packages/chrome` and `packages/android` as general Stack app identities. Add another feature only when requested; preserve the existing sharing feature's semantics during branding and platform work.
 
 ## Verification
 
-Use disposable AgentStack state and stub external extraction. Never point a regression test at a live database, token, source manifest or server socket. Exercise the public Package API and actual share listener as well as domain helpers; a passing TypeScript build does not establish lifecycle or wire compatibility. Platform build and device/runtime verification are separate evidence.
+Use disposable Stack state and stub external extraction. Never point a regression test at a live database, token, source manifest or server socket. Exercise the public Package API and actual share listener as well as domain helpers; a passing TypeScript build does not establish lifecycle or wire compatibility. Platform build and device/runtime verification are separate evidence.

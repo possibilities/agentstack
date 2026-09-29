@@ -1,4 +1,4 @@
-import { socketCall, socketPath } from "@agentstack/api";
+import { socketCall, socketPath } from "@stack/api";
 import { randomUUID } from "node:crypto";
 import { annotation, instructions, PROMPT_VERSION, type Settings } from "./schema.js";
 import { AttentionStore } from "./store.js";

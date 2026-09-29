@@ -35,7 +35,7 @@ afterEach(() => {
 });
 
 function temporaryRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-backup-test-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-backup-test-"));
   roots.push(root);
   return root;
 }
@@ -265,7 +265,7 @@ test("manifest records schema, paths, and Artifact references without content", 
   const manifest = JSON.parse(manifestText) as BackupManifest;
   expect(manifest).toMatchObject({
     manifest_version: 1,
-    kind: "agentstack_brain_backup",
+    kind: "stack_brain_backup",
     created_at: "2026-07-18T12:34:56.000Z",
     schema_version: RESEARCH_SCHEMA_VERSION,
     source_paths: { database: dbPath, artifact_store: artifactRoot },

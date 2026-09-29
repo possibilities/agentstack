@@ -1,4 +1,4 @@
-import { operation, stateDir, type PackageApi } from "@agentstack/api";
+import { operation, stateDir, type PackageApi } from "@stack/api";
 import { InferService } from "./src/service.js";
 import { completeInput, completeOutput, discoverInput, getInput, listInput, listOutput, modelListInput, modelListOutput, modelObservation, modelsInput, modelsOutput, requestRecord, startInput } from "./src/schema.js";
 import { InferTraces } from "./src/traces.js";

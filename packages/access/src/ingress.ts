@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { serveHttp, socketCall, socketPath } from "@agentstack/api";
+import { serveHttp, socketCall, socketPath } from "@stack/api";
 import { z } from "zod";
 import { AccessError, AccessStore, scopes, type Principal } from "./store.js";
 import { tailnetAddress, verifier, localApi, type Peer } from "./network.js";
@@ -29,8 +29,8 @@ export type IngressOptions = { store: AccessStore; env: NodeJS.ProcessEnv; origi
   call?: (packageName: string, name: string, args: unknown) => Promise<any>; fetchBackend?: typeof fetch };
 export function handler(options: IngressOptions) {
   const { store, env, origin } = options;
-  const verify = options.verify ?? verifier(env.AGENTSTACK_TAILSCALE_BIN,
-    env.AGENTSTACK_TAILSCALE_SOCKET ? localApi(env.AGENTSTACK_TAILSCALE_SOCKET) : undefined);
+  const verify = options.verify ?? verifier(env.STACK_TAILSCALE_BIN,
+    env.STACK_TAILSCALE_SOCKET ? localApi(env.STACK_TAILSCALE_SOCKET) : undefined);
   const call = options.call ?? ((pkg, name, args) => socketCall(socketPath(pkg, env), "tools/call", { name, arguments: args }));
   return async (request: Request, peer: Peer): Promise<Response> => {
     let cors: Record<string, string> = {};
@@ -40,7 +40,7 @@ export function handler(options: IngressOptions) {
         throw new AccessError("forwarded_headers_refused", 403);
       }
       const requestOrigin = request.headers.get("origin");
-      if (requestOrigin?.match(/^chrome-extension:\/\/[a-p]{32}$/)) cors = { "access-control-allow-origin": requestOrigin, vary: "origin", "access-control-allow-methods": "GET,POST,OPTIONS", "access-control-allow-headers": "authorization,content-type,x-agentstack-server-id" };
+      if (requestOrigin?.match(/^chrome-extension:\/\/[a-p]{32}$/)) cors = { "access-control-allow-origin": requestOrigin, vary: "origin", "access-control-allow-methods": "GET,POST,OPTIONS", "access-control-allow-headers": "authorization,content-type,x-stack-server-id" };
       if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
        const url = new URL(request.url);
        let path = url.pathname;
@@ -56,7 +56,7 @@ export function handler(options: IngressOptions) {
       // Navigations cannot set custom headers. Resource cookies and one-use
       // handoffs are bound to this store; API clients additionally pin identity.
        const bootstrap = path === "/v1/access/pair" || path === "/v1/access/identity";
-       if ((path.startsWith("/v1/") && !bootstrap || request.headers.has("authorization")) && request.headers.get("x-agentstack-server-id") !== store.serverId) {
+       if ((path.startsWith("/v1/") && !bootstrap || request.headers.has("authorization")) && request.headers.get("x-stack-server-id") !== store.serverId) {
         throw new AccessError("server_identity_mismatch", 409);
       }
       let response: Response;
@@ -80,7 +80,7 @@ export function handler(options: IngressOptions) {
       } else if (path === "/session" && request.method === "GET") {
         // Fragment never reaches a server or Referer. The one-use handoff alone
         // crosses the browser navigation; broad credentials never enter a URL.
-        response = new Response(`<!doctype html><meta name="referrer" content="no-referrer"><title>Open AgentStack content</title><p id="status">Opening content…</p><script>const token=location.hash.slice(1);history.replaceState(null,'','/session');fetch('/session',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({handoff:token})}).then(async r=>{if(!r.ok)throw Error();location.replace((await r.json()).data.path)}).catch(()=>document.getElementById('status').textContent='Link expired or unavailable. Open it again from your paired client.');</script>`, { headers: { "content-type": "text/html", "cache-control": "no-store", "content-security-policy": "default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'", "referrer-policy": "no-referrer" } });
+        response = new Response(`<!doctype html><meta name="referrer" content="no-referrer"><title>Open Stack content</title><p id="status">Opening content…</p><script>const token=location.hash.slice(1);history.replaceState(null,'','/session');fetch('/session',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({handoff:token})}).then(async r=>{if(!r.ok)throw Error();location.replace((await r.json()).data.path)}).catch(()=>document.getElementById('status').textContent='Link expired or unavailable. Open it again from your paired client.');</script>`, { headers: { "content-type": "text/html", "cache-control": "no-store", "content-security-policy": "default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'", "referrer-policy": "no-referrer" } });
       } else if (path === "/session" && request.method === "POST") {
         const input = z.strictObject({ handoff: pairInput.shape.redemptionSecret }).parse(await body(request));
          const value = store.exchange(input.handoff, origin);
@@ -121,7 +121,7 @@ export function handler(options: IngressOptions) {
         }
         // Fixed loopback destinations, no caller-selected upstream, Host or
         // forwarding headers. Never follow backend redirects with credentials.
-        const port = origin === "documents" ? env.AGENTSTACK_CONTENT_PORT ?? env.AGENTSTACK_WIKI_PORT ?? "8777" : env.AGENTSTACK_CONTENT_ARTIFACT_PORT ?? env.AGENTSTACK_WIKI_ARTIFACT_PORT ?? "8778";
+        const port = origin === "documents" ? env.STACK_CONTENT_PORT ?? env.STACK_WIKI_PORT ?? "8777" : env.STACK_CONTENT_ARTIFACT_PORT ?? env.STACK_WIKI_ARTIFACT_PORT ?? "8778";
         const upstream = await (options.fetchBackend ?? fetch)(`http://127.0.0.1:${port}${path}`, { method: request.method, redirect: "manual", signal: AbortSignal.timeout(10_000) });
         const headers = new Headers(upstream.headers); headers.set("cache-control", "no-store"); headers.set("referrer-policy", "no-referrer");
          if (headers.has("location")) { const location = new URL(headers.get("location")!, `http://127.0.0.1:${port}`); if (location.origin !== `http://127.0.0.1:${port}`) throw new AccessError("cross_origin_redirect_refused", 403); headers.set("location", view ? `/view/${view[1]}${location.pathname}` : location.pathname); }
@@ -139,26 +139,26 @@ export function handler(options: IngressOptions) {
   };
 }
 export async function startIngress(store: AccessStore, env: NodeJS.ProcessEnv) {
-  const host = env.AGENTSTACK_ACCESS_HOST;
+  const host = env.STACK_ACCESS_HOST;
   if (!host) return null;
-  if (!tailnetAddress(host)) throw new Error("AGENTSTACK_ACCESS_HOST must be a direct Tailscale IP; proxies and wildcard binds are refused");
-  if (!env.AGENTSTACK_ACCESS_TLS_KEY || !env.AGENTSTACK_ACCESS_TLS_CERT) throw new Error("Access requires operator-provisioned TLS key and certificate paths");
-  const tls = { key: readFileSync(env.AGENTSTACK_ACCESS_TLS_KEY), cert: readFileSync(env.AGENTSTACK_ACCESS_TLS_CERT) };
-  const port = Number(env.AGENTSTACK_ACCESS_PORT ?? 8943), artifactPort = Number(env.AGENTSTACK_ACCESS_ARTIFACT_PORT ?? 8944), uiPort = Number(env.AGENTSTACK_ACCESS_UI_PORT ?? 8945);
+  if (!tailnetAddress(host)) throw new Error("STACK_ACCESS_HOST must be a direct Tailscale IP; proxies and wildcard binds are refused");
+  if (!env.STACK_ACCESS_TLS_KEY || !env.STACK_ACCESS_TLS_CERT) throw new Error("Access requires operator-provisioned TLS key and certificate paths");
+  const tls = { key: readFileSync(env.STACK_ACCESS_TLS_KEY), cert: readFileSync(env.STACK_ACCESS_TLS_CERT) };
+  const port = Number(env.STACK_ACCESS_PORT ?? 8943), artifactPort = Number(env.STACK_ACCESS_ARTIFACT_PORT ?? 8944), uiPort = Number(env.STACK_ACCESS_UI_PORT ?? 8945);
   if (![port, artifactPort].every(p => Number.isInteger(p) && p > 0 && p <= 65535) || port === artifactPort) throw new Error("Access ports must be distinct nonzero TCP ports");
-  if (env.AGENTSTACK_ACCESS_UI_PORT !== undefined && !env.AGENTSTACK_ACCESS_UI_ORIGIN)
-    throw new Error("AGENTSTACK_ACCESS_UI_ORIGIN is required when configuring a remote UI port");
-  if (env.AGENTSTACK_ACCESS_UI_ORIGIN) {
-    const uiOrigin = new URL(env.AGENTSTACK_ACCESS_UI_ORIGIN);
+  if (env.STACK_ACCESS_UI_PORT !== undefined && !env.STACK_ACCESS_UI_ORIGIN)
+    throw new Error("STACK_ACCESS_UI_ORIGIN is required when configuring a remote UI port");
+  if (env.STACK_ACCESS_UI_ORIGIN) {
+    const uiOrigin = new URL(env.STACK_ACCESS_UI_ORIGIN);
     if (!Number.isInteger(uiPort) || uiPort < 1 || uiPort > 65535 || port === uiPort || artifactPort === uiPort
-      || uiOrigin.protocol !== "https:" || uiOrigin.origin !== env.AGENTSTACK_ACCESS_UI_ORIGIN || Number(uiOrigin.port) !== uiPort || !uiOrigin.hostname || uiOrigin.username || uiOrigin.password)
-      throw new Error("AGENTSTACK_ACCESS_UI_ORIGIN must be the exact HTTPS origin on a distinct AGENTSTACK_ACCESS_UI_PORT");
+      || uiOrigin.protocol !== "https:" || uiOrigin.origin !== env.STACK_ACCESS_UI_ORIGIN || Number(uiOrigin.port) !== uiPort || !uiOrigin.hostname || uiOrigin.username || uiOrigin.password)
+      throw new Error("STACK_ACCESS_UI_ORIGIN must be the exact HTTPS origin on a distinct STACK_ACCESS_UI_PORT");
   }
   const documents = await serveHttp({ host, port, tls, handle: handler({ store, env, origin: "documents" }), requestTimeout: 30_000, headersTimeout: 10_000, forceCloseConnections: true });
   try {
     const artifacts = await serveHttp({ host, port: artifactPort, tls, handle: handler({ store, env, origin: "artifacts" }), requestTimeout: 30_000, headersTimeout: 10_000, forceCloseConnections: true });
     try {
-      const ui = env.AGENTSTACK_ACCESS_UI_ORIGIN ? await startRemoteUi({ store, env, host, port: uiPort }, tls) : null;
+      const ui = env.STACK_ACCESS_UI_ORIGIN ? await startRemoteUi({ store, env, host, port: uiPort }, tls) : null;
       return { host, port, artifactPort, uiPort: ui ? uiPort : null,
         close: async () => { await Promise.all([ui?.close(), documents.close(), artifacts.close()]); } };
     } catch (error) { await artifacts.close(); throw error; }

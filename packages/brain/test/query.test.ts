@@ -59,7 +59,7 @@ function retrievalFixture(): {
   firstDocumentId: number;
   secondDocumentId: number;
 } {
-  const dir = mkdtempSync(join(tmpdir(), "agentstack-brain-query-"));
+  const dir = mkdtempSync(join(tmpdir(), "stack-brain-query-"));
   tempDirs.push(dir);
   const path = join(dir, "research.db");
   const store = new ResearchStore(path);
@@ -310,7 +310,7 @@ test("typed retrieval filters, deduplicates resources, and keeps relations separ
 });
 
 test("Markdown retrieval includes heading breadcrumbs without changing text token search", () => {
-  const dir = mkdtempSync(join(tmpdir(), "agentstack-brain-query-markdown-"));
+  const dir = mkdtempSync(join(tmpdir(), "stack-brain-query-markdown-"));
   tempDirs.push(dir);
   const path = join(dir, "research.db");
   const store = new ResearchStore(path);

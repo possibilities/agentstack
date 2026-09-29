@@ -53,9 +53,9 @@ volume ID, lease tags and mount identity are checked before attachment or restar
 Stopped instances restart with `{}` and their new address replaces the old relay.
 The browser process receives planned shutdown before its process group: it drains
 controllers, sends Chrome `Browser.close`, then stops exact owned VMs, retaining
-volumes. The external/shared Hypeman service is not stopped by AgentStack.
+volumes. The external/shared Hypeman service is not stopped by Stack.
 
-Recovery has a deliberate data-preserving limit: AgentStack restarts a verified
+Recovery has a deliberate data-preserving limit: Stack restarts a verified
 Stopped VM and refreshes its relay, while the pinned Kernel runtime supervises
 Chrome inside a Running VM. CDP readiness is bounded to 35 seconds per attempt;
 a persistent Chrome/CDP failure is reported failed and re-probed, never converted

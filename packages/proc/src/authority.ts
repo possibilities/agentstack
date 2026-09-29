@@ -1,4 +1,4 @@
-import { botInstance, currentMcpCatalog, socketCall, socketPath, workspaceRoot, type InvocationContext } from "@agentstack/api";
+import { botInstance, currentMcpCatalog, socketCall, socketPath, workspaceRoot, type InvocationContext } from "@stack/api";
 import { operator, type Actor, type Authority, type Action } from "./schema.js";
 
 type Bot = { id: string; state: string; url: string | null; mainThreadId: string | null; recoveryIssue: string | null };

@@ -24,7 +24,7 @@ function fixture(): {
   store: ResearchStore;
   artifacts: ArtifactStore;
 } {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-admission-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-admission-"));
   roots.push(root);
   return {
     root,

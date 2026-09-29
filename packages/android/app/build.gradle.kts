@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "dev.agentstack.app"
+    namespace = "dev.stack.app"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "dev.agentstack.app"
+        applicationId = "dev.stack.app"
         minSdk = 26
         targetSdk = 34
         versionCode = 1

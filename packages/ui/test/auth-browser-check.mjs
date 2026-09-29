@@ -8,7 +8,7 @@ import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { serveSocket, serveWebSocket, socketPath } from "@agentstack/api";
+import { serveSocket, serveWebSocket, socketPath } from "@stack/api";
 import { fixtureWorkspace, anyObject, transport, z, authorizeBrowser } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
@@ -16,10 +16,10 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const require = createRequire(import.meta.url);
 const ui = dirname(dirname(fileURLToPath(import.meta.url)));
 const root = dirname(dirname(ui));
-const dir = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agentstack-auth-browser-"));
+const dir = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "stack-auth-browser-"));
 const evidence = process.env.AUTH_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
-const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
+const env = { ...process.env, STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
 const providers = ["codex", "grok", "devin", "claude"];
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const accounts = providers.map((provider, index) => ({ id: id(index + 1), provider, enabled: true, ready: false, removing: false, linkedAccounts: [] }));
@@ -89,7 +89,7 @@ try {
     bots: ["bot_list", "bot_defaults_get", "voice_status"], worker: ["worker_list", "worker_runtime_list"], usage: ["usage_snapshot"], api: ["docs_snapshot"] };
   websocket = await serveWebSocket({ env, root: await fixtureWorkspace(dir, Object.keys(definitions)), port: 0 });
   const topics = { auth: Object.fromEntries(["accounts_changed", "worker_accounts_changed", "login_changed", "worker_login_changed"].map((name) => [name, "Fixture"])) };
-  handlers.docs_snapshot = () => ({ packages: Object.keys(definitions).map((name) => ({ name, packageName: `@agentstack/${name}`, description: "Auth fixture", events: topics[name] ?? {}, eventScope: null, operations: [],
+  handlers.docs_snapshot = () => ({ packages: Object.keys(definitions).map((name) => ({ name, packageName: `@stack/${name}`, description: "Auth fixture", events: topics[name] ?? {}, eventScope: null, operations: [],
     transports: [transport(websocket.url, definitions[name], Object.keys(topics[name] ?? {}))] })) });
   for (const [name, names] of Object.entries(definitions)) {
     served.set(name, await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {},
@@ -97,7 +97,7 @@ try {
       events: { topics: topics[name] ?? {} } }));
   }
   const nextPort = await port();
-  env.AGENTSTACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${nextPort}`;
+  env.STACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${nextPort}`;
   const mode = process.env.UI_AUTH_NEXT_MODE === "dev" ? "dev" : "start";
   next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), mode, "--hostname", "127.0.0.1", "--port", String(nextPort)], { cwd: ui, env, stdio: ["ignore", "pipe", "pipe"] });
   next.stdout.on("data", (chunk) => { log += chunk; });

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Android blocks cleartext HTTP by default since API 28. The AgentStack share
+  Android blocks cleartext HTTP by default since API 28. The Stack share
   ingress normally runs as plain HTTP inside a Tailscale tailnet, so cleartext
   is permitted only for tailnet names rather than globally.
 

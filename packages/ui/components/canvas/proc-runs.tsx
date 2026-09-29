@@ -80,7 +80,7 @@ export function ProcRunsWindow() {
     <Window id="proc-runs" title="Runs" subtitle={procStatus.data ? runningCount : "proc"} icon={SquareTerminalIcon} accent="proc"
       count={procRuns.data ? shown.length : null} status={status.proc} endpoint={endpoints.proc}
       updatedAt={procRuns.at} error={procRuns.error} empty={!all.length}>
-      {unavailable ? <ProcPlaceholder title={unavailable} hint="Process output and schedule definitions stay on the AgentStack machine." />
+      {unavailable ? <ProcPlaceholder title={unavailable} hint="Process output and schedule definitions stay on the Stack machine." />
         : !procRuns.data ? <ProcPlaceholder title={procRuns.error ? "Runs unavailable" : "Reading runs…"} />
         : !all.length ? <ProcPlaceholder title="No process runs yet" hint="Runs appear when a Bot or schedule starts a process." />
         : (

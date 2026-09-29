@@ -353,7 +353,7 @@ export const sourceDefinitionValuesSchema = z
   })
   .meta({
     description:
-      "One Source definition: a stable identity plus the policy under which AgentStack Brain is willing to poll it.",
+      "One Source definition: a stable identity plus the policy under which Stack Brain is willing to poll it.",
     allOf: [
       {
         description:

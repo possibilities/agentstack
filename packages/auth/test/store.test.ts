@@ -11,7 +11,7 @@ import { AuthStore } from "../src/store.js";
 const credential = (token: string) => JSON.stringify({ tokens: { refresh_token: token, access_token: "access", id_token: "fixture.jwt.signature" } });
 
 test("accounts have stable IDs, can be disabled, and store credentials separately", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-accounts-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-accounts-"));
   try {
     const store = new AuthStore(root);
     assert.deepEqual(store.listAccounts(), []);
@@ -45,7 +45,7 @@ test("accounts have stable IDs, can be disabled, and store credentials separatel
 });
 
 test("a known ChatGPT login cannot be added twice, even when the existing account is disabled or removing", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-unique-codex-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-unique-codex-"));
   const store = new AuthStore(root);
   const auth = (identity: string, refresh: string, includeStoredId = true) => JSON.stringify({ tokens: {
     refresh_token: refresh,
@@ -72,7 +72,7 @@ test("a known ChatGPT login cannot be added twice, even when the existing accoun
 });
 
 test("legacy ordinal references migrate atomically across credentials and Server bindings", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-account-migration-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-account-migration-"));
   try {
     const store = new AuthStore(root);
     const original = store.addAccount(credential("legacy-secret"));
@@ -112,7 +112,7 @@ test("legacy ordinal references migrate atomically across credentials and Server
 });
 
 test("an account cannot be removed while a Server last launched with it awaits another assignment", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-pending-removal-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-pending-removal-"));
   const store = new AuthStore(root);
   try {
     const launched = store.addAccount(credential("launched"));
@@ -129,7 +129,7 @@ test("an account cannot be removed while a Server last launched with it awaits a
 });
 
 test("refreshed credentials advance only on a strictly newer timestamp and matching launch generation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-credential-order-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-credential-order-"));
   const store = new AuthStore(root);
   const auth = (stamp: string, token: string, accountId = "provider-account") => JSON.stringify({
     last_refresh: stamp, tokens: { refresh_token: token, access_token: "access", id_token: "fixture.jwt.signature", account_id: accountId },
@@ -149,7 +149,7 @@ test("refreshed credentials advance only on a strictly newer timestamp and match
 });
 
 test("a missing timestamp cannot establish that a runtime credential is newer", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-no-timestamp-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-no-timestamp-"));
   const store = new AuthStore(root);
   try {
     const original = credential("original");
@@ -163,7 +163,7 @@ test("a missing timestamp cannot establish that a runtime credential is newer", 
 });
 
 test("a second auth store connection sees committed accounts and fences stale refresh generations", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-auth-shared-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-auth-shared-"));
   const writer = new AuthStore(root);
   const reader = new AuthStore(root);
   const auth = (stamp: string, token: string, accountId: string) => JSON.stringify({
@@ -186,7 +186,7 @@ test("a second auth store connection sees committed accounts and fences stale re
 });
 
 test("concurrent fresh stores in separate processes initialize shared databases without SQLITE_BUSY", { timeout: 60_000 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-auth-race-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-auth-race-"));
   const storePath = fileURLToPath(new URL("../src/store.js", import.meta.url));
   const script = `
     import { AuthStore } from ${JSON.stringify(storePath)};

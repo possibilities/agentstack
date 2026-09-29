@@ -9,7 +9,7 @@ import { DEFAULT_BOT_SETTINGS, StateStore, type BotSettings, type StoredServer }
 import { RuntimeAuth, type SyncStatus } from "./runtime-auth.js";
 import { bindMainThread, findEligibleMainThread } from "./threads.js";
 import { chatRpc } from "./chats.js";
-import { RoleStore, materializeRole, removeRole } from "@agentstack/roles";
+import { RoleStore, materializeRole, removeRole } from "@stack/roles";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const DEFAULT_GRACE_MS = 10_000;
@@ -605,7 +605,7 @@ export function appServerArgs(userArgs: readonly string[], url: string, settings
 function validateAppServerArgs(userArgs: readonly string[]): void {
   for (const [index, arg] of userArgs.entries()) {
     if (["--listen", "--identity", "--capabilities", "--history-dir"].some((flag) => arg === flag || arg.startsWith(`${flag}=`))) {
-      throw new Error("do not pass --listen, --identity, --capabilities, or --history-dir; agentstack owns these axes");
+      throw new Error("do not pass --listen, --identity, --capabilities, or --history-dir; stack owns these axes");
     }
     const override = arg === "-c" || arg === "--config" ? userArgs[index + 1]
       : arg.startsWith("--config=") ? arg.slice("--config=".length)

@@ -1,5 +1,5 @@
 {
-  "name": "@agentstack/content",
+  "name": "@stack/content",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -16,7 +16,7 @@
   },
   "engines": { "node": ">=24" },
   "dependencies": {
-    "@agentstack/api": "workspace:*",
+    "@stack/api": "workspace:*",
     "markdown-it": "^15.0.0",
     "yaml": "^2.9.0",
     "zod": "^4.6.5"

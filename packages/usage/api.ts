@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { operation, stateDir, type PackageApi } from "@agentstack/api";
+import { operation, stateDir, type PackageApi } from "@stack/api";
 import { UsageObserver } from "./src/observer.js";
 import { snapshotSchema } from "./src/schema.js";
 

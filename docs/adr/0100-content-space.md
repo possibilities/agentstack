@@ -60,7 +60,7 @@ also watch it.
 through `artifact_publish`; people cite, tombstone and restore.
 
 **Remote viewing is not solved here.** The UIX server names Content's loopback origins from its
-own environment (`AGENTSTACK_CONTENT_PORT`, `AGENTSTACK_CONTENT_ARTIFACT_PORT` and their older
+own environment (`STACK_CONTENT_PORT`, `STACK_CONTENT_ARTIFACT_PORT` and their older
 wiki names, or the configured origins). A page served from a loopback host gets "Open" links to
 `/d/`, `/c/` and `/a/` in a new tab. Artifacts never render inside the UIX: the Artifact origin
 sends `frame-ancestors 'none'`, and item and Artifact bytes are never interpreted as HTML in the

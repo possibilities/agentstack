@@ -11,7 +11,7 @@ import { WorkerSupervisor, type Runtime } from "../src/supervisor.js";
 import type { AcpProcess } from "../src/acp.js";
 import { LOCAL_OPERATOR_ID, ownsWorker } from "../src/owner.js";
 import { api, workerCancel, workerRead, workerSend, workerStart, workerStatus, workerTurnList } from "../api.js";
-import type { InvocationContext } from "@agentstack/api";
+import type { InvocationContext } from "@stack/api";
 
 const intent = (accountId: string = randomUUID()) => ({ requestId: randomUUID(), botId: "fixture-bot", threadId: "root",
   accountId, provider: "grok" as const, model: "xai/grok-build", effort: "high", repo: "/fixture/repo", baseRef: "main", task: "Review the actual task" });
@@ -28,8 +28,8 @@ function managerFixture(root: string, request = intent()) {
   const seed = new WorkerLedger(root);
   const { worker, turn } = seed.reserve(request);
   seed.setSession(worker.id, "fixture-session"); seed.setRuntimeInstance(worker.id, runtime.instance); seed.close();
-  const supervisor = new WorkerSupervisor(root, { AGENTSTACK_STATE_DIR: root });
-  const manager = new WorkerManager(root, supervisor, { AGENTSTACK_STATE_DIR: root });
+  const supervisor = new WorkerSupervisor(root, { STACK_STATE_DIR: root });
+  const manager = new WorkerManager(root, supervisor, { STACK_STATE_DIR: root });
   supervisor.runtime = () => runtime;
   supervisor.onRuntimeReady!(runtime);
   return { manager, supervisor, worker, turn, notify: (update: Record<string, unknown>) =>
@@ -274,8 +274,8 @@ test("structured pages and immutable chunk recovery stay bounded with explicit d
 
 test("session metadata outside turns, runtime fencing, permission ownership and scoped progress", async () => {
   const root = await mkdtemp(join(tmpdir(), "as-worker-events-"));
-  const supervisor = new WorkerSupervisor(root, { AGENTSTACK_STATE_DIR: root });
-  const manager = new WorkerManager(root, supervisor, { AGENTSTACK_STATE_DIR: root });
+  const supervisor = new WorkerSupervisor(root, { STACK_STATE_DIR: root });
+  const manager = new WorkerManager(root, supervisor, { STACK_STATE_DIR: root });
   const process = {} as AcpProcess;
   const accountId = randomUUID();
   const runtime: Runtime = { account: { id: accountId, provider: "grok", enabled: true, ready: true, removing: false },
@@ -291,7 +291,7 @@ test("session metadata outside turns, runtime fencing, permission ownership and 
     manager.ledger.setSession(worker.id, "fixture-session");
     // The manager learns persisted session IDs when constructed; use a new manager below to exercise that path.
     await stop?.(); await manager.close();
-    const reopened = new WorkerManager(root, supervisor, { AGENTSTACK_STATE_DIR: root });
+    const reopened = new WorkerManager(root, supervisor, { STACK_STATE_DIR: root });
     supervisor.onRuntimeReady!(runtime);
     const end = await api.events!.start!({ manager: reopened, supervisor }, (topic, scope) => notices.push({ topic, scope }));
     try {

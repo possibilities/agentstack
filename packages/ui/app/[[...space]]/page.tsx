@@ -14,7 +14,7 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
   const { space } = await params;
   const segment = space?.[0];
   const title = spaceTitle(segment && isSpaceId(segment) ? segment : defaultSpace);
-  return { title: `AgentStack · ${title}` };
+  return { title: `Stack · ${title}` };
 }
 
 export default async function Page({ params, searchParams }: { params: Promise<Params>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
@@ -29,8 +29,8 @@ export default async function Page({ params, searchParams }: { params: Promise<P
   const paramsQuery = new URLSearchParams(Object.entries(query).flatMap(([key, value]) => value === undefined ? [] : [[key, Array.isArray(value) ? value[0] : value]]));
   const initialLocation = parseLocation(segment ? `/${segment}` : "/", paramsQuery)!;
   const incoming = await headers();
-  const remote = incoming.get("x-agentstack-remote-ui") === "1" ? incoming.get("x-agentstack-ui-origin") : null;
-  const scope = incoming.get("x-agentstack-ui-scope");
+  const remote = incoming.get("x-stack-remote-ui") === "1" ? incoming.get("x-stack-ui-origin") : null;
+  const scope = incoming.get("x-stack-ui-scope");
   return <Workbench snapshot={await loadSnapshot(remote ?? undefined, scope === "view" || scope === "control" ? scope : undefined,
-    incoming.get("x-agentstack-ui-scopes")?.split(",").filter(Boolean) ?? [])} initialSpace={segment ?? defaultSpace} initialFocus={initialFocus} initialLocation={initialLocation} />;
+    incoming.get("x-stack-ui-scopes")?.split(",").filter(Boolean) ?? [])} initialSpace={segment ?? defaultSpace} initialFocus={initialFocus} initialLocation={initialLocation} />;
 }

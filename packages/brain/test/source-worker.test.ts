@@ -20,7 +20,7 @@ const roots: string[] = [];
 const T0 = new Date("2026-07-20T00:00:00.000Z");
 
 function fixture(): { store: ResearchStore; registry: SourceRegistry } {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-source-worker-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-source-worker-"));
   roots.push(root);
   const store = new ResearchStore(join(root, "research.db"));
   return { store, registry: new SourceRegistry(store) };

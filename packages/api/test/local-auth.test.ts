@@ -9,7 +9,7 @@ import { localBrowserResponse } from "../src/local-browser.js";
 const origin = "http://127.0.0.1:8745";
 function fixture(t: import("node:test").TestContext) {
   const root = mkdtempSync(join(tmpdir(), "as-local-auth-"));
-  const env = { AGENTSTACK_STATE_DIR: root };
+  const env = { STACK_STATE_DIR: root };
   const auth = new LocalAuth(env);
   t.after(() => { auth.close(); rmSync(root, { recursive: true, force: true }); });
   return { root, env, auth };

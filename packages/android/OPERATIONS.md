@@ -3,10 +3,10 @@
 ## Build gates
 
 ```sh
-pnpm --filter @agentstack/android build
-pnpm --filter @agentstack/android test
-pnpm --filter @agentstack/android test:android
-pnpm --filter @agentstack/android build:apk
+pnpm --filter @stack/android build
+pnpm --filter @stack/android test
+pnpm --filter @stack/android test:android
+pnpm --filter @stack/android build:apk
 ```
 
 The normal pnpm/Turbo build prepares `dist/build-info.json`; the normal test
@@ -27,12 +27,12 @@ emulator or access a real phone merely to build this package.
 
 ## Configure the app
 
-The launcher is **AgentStack**, application ID and namespace `dev.agentstack.app`.
-Root settings live in `dev.agentstack.app`; the current share feature lives in
-`dev.agentstack.app.share`. This is a fresh app with no migration or copied data.
+The launcher is **Stack**, application ID and namespace `dev.stack.app`.
+Root settings live in `dev.stack.app`; the current share feature lives in
+`dev.stack.app.share`. This is a fresh app with no migration or copied data.
 
 Configure the shared [Access ingress](../../docs/access.md), enter its HTTPS
-origin in Settings, and choose **Pair**. Approve the matching code in AgentStack
+origin in Settings, and choose **Pair**. Approve the matching code in Stack
 **System → Access**, then check approval. Credentials and retry intents remain
 in device-local encrypted preferences. **Check connection** authenticates
 against `/v1/access/me`; a stored credential alone is not a connected status.
@@ -45,7 +45,7 @@ Held shares remain on the device in either case.
 
 ## Sharing and recovery
 
-From another Android app, share `text/plain` to **AgentStack**. A bare URL becomes
+From another Android app, share `text/plain` to **Stack**. A bare URL becomes
 `url`; prose becomes `text`, with URL resolution left to Brain. `EXTRA_SUBJECT`
 becomes the title when distinct. Payload shape and `/v1` routes match the Chrome
 client.
@@ -72,7 +72,7 @@ remain visible in settings.
 
 ### An unreadable outbox
 
-If `agentstack.app.share.outbox.v1.json` is corrupt, truncated, invalid UTF-8, or
+If `stack.app.share.outbox.v1.json` is corrupt, truncated, invalid UTF-8, or
 contains a malformed record, the app preserves its bytes and pauses delivery.
 It does not skip bad rows, overwrite the file with an empty outbox, or let
 **Discard held** erase an unreadable list. Settings displays recovery guidance;
@@ -83,7 +83,7 @@ failure with recovery text, without scheduling repeated retries.
 
 Use developer assistance to copy the app-private file before attempting repair.
 For an explicitly authorized debug-device session, `adb exec-out run-as
-dev.agentstack.app cat files/agentstack.app.share.outbox.v1.json` can export it.
+dev.stack.app cat files/stack.app.share.outbox.v1.json` can export it.
 Keep that original copy and repair/restore verified records with the app stopped;
 do not clear app storage or use uninstall as recovery. Missing intent cannot be
 reconstructed from malformed bytes automatically. After restoring a valid file,
@@ -95,15 +95,15 @@ device**. Only cap-driven eviction is `OVERFLOW` and reads as **Dropped because
 the outbox was full**.
 
 All app-owned preferences, keystore aliases, storage files, WorkManager names,
-notification channels/groups, and intent identifiers have AgentStack identity.
+notification channels/groups, and intent identifiers have Stack identity.
 Backup is disabled. Source settings, tokens, histories, endpoints, and user data
 are never imported.
 
 ## Appearance and assets
 
-System-aware DayNight native controls use AgentStack’s neutral canvas palette.
+System-aware DayNight native controls use Stack’s neutral canvas palette.
 Visible labels, focus, 48dp targets, live status announcements, and wrapping text
-are preserved. `pnpm --filter @agentstack/android icons` regenerates adaptive
+are preserved. `pnpm --filter @stack/android icons` regenerates adaptive
 launcher foreground/monochrome vectors, fallback PNGs, the in-app mark, and the
 notification glyph from `assets/layers.svg`; raster generation uses
 `rsvg-convert`. Normal builds use checked-in outputs. Source/license notices are

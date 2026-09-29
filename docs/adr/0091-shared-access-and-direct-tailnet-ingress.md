@@ -40,7 +40,7 @@ on their next request. An already admitted Brain job is not cancelled.
 
 Each installation has a durable UUID `serverId`. Pairing receipts introduce it;
 redemption, refresh and authenticated API requests must supply the expected
-`X-AgentStack-Server-ID` before any admission. `/v1/access/me` authenticates a
+`X-Stack-Server-ID` before any admission. `/v1/access/me` authenticates a
 Brain-audience token without a data permission and reports current scopes and
 credential identity. Disconnect likewise requires no data scope. Browser
 navigation uses server-bound handoffs and resource cookies instead of a custom
@@ -82,7 +82,7 @@ network provenance before using its decision.
 
 ## Consequences
 
-Chrome and Android use one AgentStack connection for Brain and Content. Existing
+Chrome and Android use one Stack connection for Brain and Content. Existing
 shared-token clients must re-pair. A different ingress URL does not silently
 retarget old outboxes. An operator must drain those entries before migration or
 explicitly reconcile them; the migration never sends held content elsewhere.

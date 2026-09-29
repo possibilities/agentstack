@@ -53,7 +53,7 @@ export class ResearchCache {
         "db_not_found",
         `research cache DB not found: ${dbPath}`,
         {
-          recovery: "Use the Brain Package API; internal operators may pass --db PATH or set AGENTSTACK_STATE_DIR.",
+          recovery: "Use the Brain Package API; internal operators may pass --db PATH or set STACK_STATE_DIR.",
         },
       );
     }

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { watch, type FSWatcher } from "node:fs";
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { configuredMcpPackages, socketPath, workspaceRoot, operatorHeaders } from "@agentstack/api";
+import { configuredMcpPackages, socketPath, workspaceRoot, operatorHeaders } from "@stack/api";
 
 export type InspectorCatalog = { path: string; close(): Promise<void> };
 

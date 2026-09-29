@@ -12,19 +12,19 @@ fail startup instead of exposing unauthenticated data.
 Configure these in the server's environment before a separately authorized restart:
 
 ```sh
-AGENTSTACK_ACCESS_HOST=100.x.y.z
-AGENTSTACK_ACCESS_PORT=8943
-AGENTSTACK_ACCESS_ARTIFACT_PORT=8944
+STACK_ACCESS_HOST=100.x.y.z
+STACK_ACCESS_PORT=8943
+STACK_ACCESS_ARTIFACT_PORT=8944
 # Optional: enable a distinct, authenticated remote UI origin. Existing
 # Access Brain/Content device ingress runs without these two settings.
-AGENTSTACK_ACCESS_UI_PORT=8945
-AGENTSTACK_ACCESS_UI_ORIGIN=https://machine.example-tailnet.ts.net:8945
-AGENTSTACK_ACCESS_TLS_CERT=/operator/provisioned/server.crt
-AGENTSTACK_ACCESS_TLS_KEY=/operator/provisioned/server.key
+STACK_ACCESS_UI_PORT=8945
+STACK_ACCESS_UI_ORIGIN=https://machine.example-tailnet.ts.net:8945
+STACK_ACCESS_TLS_CERT=/operator/provisioned/server.crt
+STACK_ACCESS_TLS_KEY=/operator/provisioned/server.key
 # Optional absolute CLI path, especially for GUI/launch-agent environments:
-AGENTSTACK_TAILSCALE_BIN=/usr/local/bin/tailscale
+STACK_TAILSCALE_BIN=/usr/local/bin/tailscale
 # Prefer direct daemon IPC when this installation exposes a Unix LocalAPI socket:
-# AGENTSTACK_TAILSCALE_SOCKET=/path/to/tailscaled.sock
+# STACK_TAILSCALE_SOCKET=/path/to/tailscaled.sock
 ```
 
 The bind is the machine's actual Tailscale IP, not `0.0.0.0`, loopback, or a
@@ -33,13 +33,13 @@ using the certificate's hostname resolving to that address. The Content origins
 use the same certificate hostname on ports 8943 and 8944. A DNS
 suffix is not an authorization signal. Certificate issuance/renewal remains the
 operator's responsibility; Access reads the files at startup. Omitting
-`AGENTSTACK_ACCESS_HOST` disables remote listeners while local inventory works.
+`STACK_ACCESS_HOST` disables remote listeners while local inventory works.
 
 This implementation uses **direct** ingress. It does not support Serve/Funnel or
 a reverse proxy: their loopback source fails provenance checks, regardless of
 headers. It invokes read-only `tailscale status --json` and `tailscale whois
 --json --proto=tcp <actual-source-ip:port>` on every request, with bounded timeout
-and concurrent verification. With `AGENTSTACK_TAILSCALE_SOCKET`, the same checks
+and concurrent verification. With `STACK_TAILSCALE_SOCKET`, the same checks
 use bounded read-only LocalAPI requests without spawning CLI processes.
 No command changes Tailscale configuration.
 Both peers must have working tailnet connectivity. Invalid or unavailable
@@ -52,7 +52,7 @@ evidence refuses pairing, refresh, preflight, document, UI and asset requests al
    Enter a label and request approval. The page saves its 256-bit redemption
    secret in that origin's local storage **before** sending the request; do not
    clear site data while pairing is pending.
-2. On the AgentStack machine, use the **local** System → Access window to compare
+2. On the Stack machine, use the **local** System → Access window to compare
    the full code and approve a subset of `ui:view`, `ui:control` and
    `content:read`. The remote UI can never approve, update or revoke grants.
 3. On the browser select **Approved? Connect**. The browser receives short-lived
@@ -84,7 +84,7 @@ than opening an unauthenticated local link. Loopback Preview remains unchanged.
 
 1. In Chrome or Android settings enter the HTTPS Access URL and select **Pair**.
    Chrome requests host permission for that exact origin. The connection is
-   AgentStack-wide; current requested scopes are Brain admission, own share
+   Stack-wide; current requested scopes are Brain admission, own share
    status and Content read.
 2. In the server's UI, open **System → Access**. Compare the full displayed code
    with the device, then approve that matching request. Labels are device claims,
@@ -145,7 +145,7 @@ No UI route forwards the internal MCP listener. See [ADR 0101](adr/0101-remote-u
 
 The pairing receipt, redemption and refresh responses include the durable UUID
 `serverId`. Pin it with the connection: all `/v1/` requests except initial pairing,
-identity discovery and CORS preflight require `X-AgentStack-Server-ID` with that value. This includes
+identity discovery and CORS preflight require `X-Stack-Server-ID` with that value. This includes
 redemption, data, refresh, me, disconnect and handoff issuance. Missing or wrong
 identity fails with `server_identity_mismatch` before admission or rotation.
 Bearer-authenticated static Content reads require it too. Extension CORS allows

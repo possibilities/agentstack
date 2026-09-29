@@ -520,7 +520,7 @@ export async function chatRpc(url: string, method: string, params: RecordValue):
       if (ws.readyState === WebSocket.OPEN) ws.close(); else ws.terminate();
       if (error) reject(error); else resolve(result ?? {});
     };
-    ws.on("open", () => ws.send(JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "agentstack-chats", version: "0.0.0" }, capabilities: { experimentalApi: true } } })));
+    ws.on("open", () => ws.send(JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "stack-chats", version: "0.0.0" }, capabilities: { experimentalApi: true } } })));
     ws.on("message", (raw) => {
       let frame: RecordValue;
       try { frame = object(JSON.parse(String(raw))); } catch { return; }

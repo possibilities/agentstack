@@ -13,12 +13,12 @@ import { PresetDriftError } from "../src/errors.js";
 import { loadRegistry, selectPreset } from "../src/presets.js";
 import { resolveDataHome } from "../src/queue-paths.js";
 
-const state = mkdtempSync(join(tmpdir(), "agentstack-scrape-api-"));
-const previous = process.env.AGENTSTACK_STATE_DIR;
-process.env.AGENTSTACK_STATE_DIR = state;
+const state = mkdtempSync(join(tmpdir(), "stack-scrape-api-"));
+const previous = process.env.STACK_STATE_DIR;
+process.env.STACK_STATE_DIR = state;
 test.after(() => {
-  if (previous === undefined) delete process.env.AGENTSTACK_STATE_DIR;
-  else process.env.AGENTSTACK_STATE_DIR = previous;
+  if (previous === undefined) delete process.env.STACK_STATE_DIR;
+  else process.env.STACK_STATE_DIR = previous;
   rmSync(state, { recursive: true, force: true });
 });
 
@@ -46,7 +46,7 @@ test("a changed provider shape is an actionable failure, never a generic success
   assert.throws(() => selectPreset("https://x.com/example/unmatched", loadRegistry()), /preset-owned domain/);
 });
 
-test("scrape exports only Package API operations and defaults to isolated AgentStack state", async () => {
+test("scrape exports only Package API operations and defaults to isolated Stack state", async () => {
   assert.equal(resolveDataHome(), join(state, "scrape"));
   assert.equal(api.operations.some((entry) => entry.name === "scrape_fetch"), true);
   assert.equal(api.operations.some((entry) => entry.name === "scrape_queue_submit"), true);
@@ -58,7 +58,7 @@ test("scrape exports only Package API operations and defaults to isolated AgentS
   } finally { await api.prepareCloseContext?.(ctx); await api.closeContext?.(ctx); }
 });
 
-test("Scrape prefers AgentStack's private browser toolchain without launching it", () => {
+test("Scrape prefers Stack's private browser toolchain without launching it", () => {
   const candidates: string[] = [];
   const selected = findAgentBrowserExecutable(state, undefined, (candidate) => {
     candidates.push(candidate);

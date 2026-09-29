@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { serveHttp } from "@agentstack/api";
+import { serveHttp } from "@stack/api";
 import { AccessStore } from "../dist/src/store.js";
 import { handler } from "../dist/src/ingress.js";
 
@@ -30,7 +30,7 @@ try {
   } });
   servers.push(backend);
   const requests = [];
-  const artifactHandler = handler({ store, env: { AGENTSTACK_CONTENT_ARTIFACT_PORT: String(backend.port) }, origin: "artifacts", verify: async () => {} });
+  const artifactHandler = handler({ store, env: { STACK_CONTENT_ARTIFACT_PORT: String(backend.port) }, origin: "artifacts", verify: async () => {} });
   const ingress = await serveHttp({ host: "127.0.0.1", port: 0, tls, forceCloseConnections: true,
     async handle(request, peer) {
       const response = await artifactHandler(request, peer);

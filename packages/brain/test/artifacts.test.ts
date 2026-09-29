@@ -33,7 +33,7 @@ afterEach(() => {
 });
 
 function temporaryRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-artifact-test-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-artifact-test-"));
   temporaryRoots.push(root);
   return root;
 }

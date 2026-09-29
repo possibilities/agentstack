@@ -1,5 +1,5 @@
 {
-  "name": "@agentstack/serve",
+  "name": "@stack/serve",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "agentstack": "./dist/src/cli.js"
+    "stack": "./dist/src/cli.js"
   },
   "scripts": {
     "build": "node ../../scripts/clean-dist.mjs && tsc",
@@ -21,21 +21,21 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@agentstack/access": "workspace:*",
-    "@agentstack/api": "workspace:*",
-    "@agentstack/signal": "workspace:*",
-    "@agentstack/bots": "workspace:*",
-    "@agentstack/browse": "workspace:*",
-    "@agentstack/brain": "workspace:*",
-    "@agentstack/xcom": "workspace:*",
-    "@agentstack/proc": "workspace:*",
-    "@agentstack/scrape": "workspace:*",
-    "@agentstack/infer": "workspace:*",
-    "@agentstack/notify": "workspace:*",
-    "@agentstack/ui": "workspace:*",
-    "@agentstack/usage": "workspace:*",
-    "@agentstack/worker": "workspace:*",
-    "@agentstack/content": "workspace:*",
+    "@stack/access": "workspace:*",
+    "@stack/api": "workspace:*",
+    "@stack/signal": "workspace:*",
+    "@stack/bots": "workspace:*",
+    "@stack/browse": "workspace:*",
+    "@stack/brain": "workspace:*",
+    "@stack/xcom": "workspace:*",
+    "@stack/proc": "workspace:*",
+    "@stack/scrape": "workspace:*",
+    "@stack/infer": "workspace:*",
+    "@stack/notify": "workspace:*",
+    "@stack/ui": "workspace:*",
+    "@stack/usage": "workspace:*",
+    "@stack/worker": "workspace:*",
+    "@stack/content": "workspace:*",
     "@modelcontextprotocol/inspector": "2.7.0",
     "zod": "^4.6.5"
   },

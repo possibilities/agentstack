@@ -14,7 +14,7 @@ const devinId = "00000000-0000-4000-8000-000000000003";
 const ids: Partial<Record<Provider, string>> = { codex: codexId, grok: grokId, devin: devinId };
 
 test("observes each registered account with its own credentials and projects only usage", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-usage-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-usage-"));
   try {
     const secrets = join(root, "secrets.sqlite");
     const db = new DatabaseSync(secrets);
@@ -85,7 +85,7 @@ test("observes each registered account with its own credentials and projects onl
 });
 
 test("Grok includes a provider-declared monthly dollar allocation without guessing one from percentages", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-usage-credits-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-usage-credits-"));
   try {
     await mkdir(join(root, "worker-accounts", grokId, "data/opencode"), { recursive: true });
     const db = new DatabaseSync(join(root, "worker-accounts", grokId, "data/opencode/opencode.db"));
@@ -108,7 +108,7 @@ test("Grok includes a provider-declared monthly dollar allocation without guessi
 });
 
 test("owner observer keeps last-good records, removes deleted accounts and paces retries", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-usage-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-usage-"));
   try {
     let available = true, successes = true, calls = 0, changes = 0;
     const observer = new UsageObserver(root, {}, async () => available ? [{ id: codexId, scope: "bot", provider: "codex", enabled: true, ready: true, removing: false },
@@ -155,7 +155,7 @@ test("owner observer keeps last-good records, removes deleted accounts and paces
 });
 
 test("usage repeats auth's Bot–Worker pairing, including a Worker awaiting sign-in", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-usage-links-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-usage-links-"));
   const codexWorkerId = "00000000-0000-4000-8000-000000000004";
   let workerReady = true;
   let paired = true;
@@ -191,7 +191,7 @@ test("usage repeats auth's Bot–Worker pairing, including a Worker awaiting sig
 });
 
 test("an auth account change re-reads the inventory without waiting for the next observation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-usage-invalidate-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-usage-invalidate-"));
   let removed = false;
   let notify: () => void = () => undefined;
   let closeWatch: () => void = () => undefined;
@@ -216,7 +216,7 @@ test("an auth account change re-reads the inventory without waiting for the next
 });
 
 test("a legacy shared UUID remains two scoped usage records and two independent links", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-usage-overlap-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-usage-overlap-"));
   const observer = new UsageObserver(root, {}, async () => [
     { id: codexId, scope: "bot", provider: "codex", enabled: true, ready: true, removing: false, linkedAccounts: [{ scope: "worker", id: codexId }] },
     { id: codexId, scope: "worker", provider: "codex", enabled: true, ready: true, removing: false, linkedAccounts: [{ scope: "bot", id: codexId }] },
@@ -240,7 +240,7 @@ test("a legacy shared UUID remains two scoped usage records and two independent 
 });
 
 test("version-one usage rows migrate as Bot Codex and Worker Grok/Devin", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-usage-migrate-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-usage-migrate-"));
   const path = join(root, "usage/observations.json");
   await mkdir(join(root, "usage"));
   const empty = { observedAtMs: null, lastAttemptAtMs: null, error: null, usage: null };
@@ -263,7 +263,7 @@ test("version-one usage rows migrate as Bot Codex and Worker Grok/Devin", async 
 });
 
 test("version-two Grok last-good usage survives the new dollar allocation field", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-usage-migrate-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-usage-migrate-"));
   const path = join(root, "usage/observations.json");
   try {
     await mkdir(join(root, "usage"));
@@ -287,7 +287,7 @@ test("version-two Grok last-good usage survives the new dollar allocation field"
 });
 
 test("Grok Bot CLI output is bounded and its provider identifiers are never published", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-usage-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-usage-"));
   try {
     const binary = join(root, "agentgrok");
     await writeFile(binary, `#!/usr/bin/env node
@@ -301,7 +301,7 @@ console.log(JSON.stringify({schema_version:1,ok:true,data:{usage:{usagePercent:4
 });
 
 test("a Devin plan period end is its subscription end, checked when measured", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-usage-devin-subscription-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-usage-devin-subscription-"));
   const usage = { planLabel: "Pro", billing: "quota", dailyRemainingPercent: 76, weeklyRemainingPercent: 54, dailyResetsAt: null,
     weeklyResetsAt: null, periodStart: "2026-09-23T02:47:53.000Z", periodEnd: "2026-10-23T02:47:53.000Z", promptCreditsMonthly: null,
     promptCreditsAvailable: null, weeklyQuotaHidden: null, displayName: null };
@@ -318,7 +318,7 @@ test("a Devin plan period end is its subscription end, checked when measured", a
 });
 
 test("Grok Bot usage is read and reported only beside a signed-in Grok Worker account", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-usage-grok-bot-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-usage-grok-bot-"));
   let grok: { ready: boolean; removing: boolean } | null = null;
   let reads = 0;
   const bot = { usedPercent: 20, periodStart: "2026-09-20T00:00:00.000Z", resetsAt: "2026-09-27T00:00:00.000Z", hasAvailableUsage: true,

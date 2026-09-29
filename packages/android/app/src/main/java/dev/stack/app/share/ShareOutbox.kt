@@ -1,7 +1,7 @@
-package dev.agentstack.app.share
+package dev.stack.app.share
 
 import android.content.Context
-import dev.agentstack.app.Settings
+import dev.stack.app.Settings
 import java.io.File
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -59,7 +59,7 @@ data class FlushSummary(
  * a reboot, and are redelivered until the ingress admits them or classifies
  * them as unsendable.
  *
- * The outbox holds intent only. It is not a queue in the AgentStack sense: no
+ * The outbox holds intent only. It is not a queue in the Stack sense: no
  * job exists until Admission creates one, so nothing here may be reported to
  * the user as saved. Redelivery needs no client idempotency key because the
  * ingress derives one from the intent, so a share delivered twice comes back as
@@ -390,6 +390,6 @@ class ShareOutbox(private val file: File) {
             payload.url ?: payload.title ?: payload.text?.take(60) ?: "a share"
 
         fun at(context: Context): ShareOutbox =
-            ShareOutbox(File(context.filesDir, "agentstack.app.share.outbox.v1.json"))
+            ShareOutbox(File(context.filesDir, "stack.app.share.outbox.v1.json"))
     }
 }

@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   agentRules: false,
-  serverExternalPackages: ["@agentstack/api"],
+  serverExternalPackages: ["@stack/api"],
 };
 
 export default nextConfig;

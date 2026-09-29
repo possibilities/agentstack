@@ -23,7 +23,7 @@ function checkPath(path: string, directory: boolean): void {
 }
 
 export function archivePath(env: NodeJS.ProcessEnv): string {
-  return join(env.AGENTSTACK_STATE_DIR ?? join(homedir(), ".local", "state", "agentstack"), "xcom", "following.sqlite3");
+  return join(env.STACK_STATE_DIR ?? join(homedir(), ".local", "state", "stack"), "xcom", "following.sqlite3");
 }
 
 export class ArchiveStore {

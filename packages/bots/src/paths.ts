@@ -1,1 +1,1 @@
-export { codexRuntimePath, stateDir } from "@agentstack/auth";
+export { codexRuntimePath, stateDir } from "@stack/auth";

@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { withEgressPolicy } from "@agentstack/scrape/network";
+import { withEgressPolicy } from "@stack/scrape/network";
 import {
   extractWithAgentscrape, scrapeWithAgentscrape, validateExtractionEnvelope,
   discoverFeedWithAgentscrape,
@@ -41,7 +41,7 @@ test("Brain extracts Markdown through the bundled Scrape engine, not a CLI", asy
 });
 
 test("recorded feed parsing runs inside the package without network access", async () => {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-scrape-feed-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-scrape-feed-"));
   try {
     const path = join(root, "feed.xml");
     writeFileSync(path, '<?xml version="1.0"?><rss version="2.0"><channel><title>Feed</title><item><guid>one</guid><link>https://example.com/one</link><title>One</title></item></channel></rss>');

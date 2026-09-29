@@ -5,7 +5,7 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**"]
     },
-    "@agentstack/ui#build": {
+    "@stack/ui#build": {
       "dependsOn": ["^build"],
       "outputs": [".next/**", "!.next/cache/**"]
     },
@@ -13,20 +13,20 @@
       "dependsOn": ["build", "^build"],
       "cache": false
     },
-    "@agentstack/api#test": {
+    "@stack/api#test": {
       "dependsOn": [
         "build",
-        "@agentstack/auth#build",
-        "@agentstack/signal#build",
-        "@agentstack/infer#build",
-        "@agentstack/bots#build",
-        "@agentstack/roles#build",
-        "@agentstack/serve#build",
-        "@agentstack/worker#build",
-        "@agentstack/brain#build",
-        "@agentstack/xcom#build",
-        "@agentstack/browse#build",
-        "@agentstack/content#build"
+        "@stack/auth#build",
+        "@stack/signal#build",
+        "@stack/infer#build",
+        "@stack/bots#build",
+        "@stack/roles#build",
+        "@stack/serve#build",
+        "@stack/worker#build",
+        "@stack/brain#build",
+        "@stack/xcom#build",
+        "@stack/browse#build",
+        "@stack/content#build"
       ],
       "cache": false
     }

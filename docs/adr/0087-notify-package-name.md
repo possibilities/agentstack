@@ -7,7 +7,7 @@ lifecycle decisions were later superseded by
 
 ## Decision
 
-The owner-managed Package API is `notify`, packaged as `@agentstack/notify`.
+The owner-managed Package API is `notify`, packaged as `@stack/notify`.
 Discovery, the owner child, socket, MCP and WebSocket addresses use `notify`.
 Its change Event is `notify_changed`. The operations remain `notification_*`:
 they act on a Notification, the domain term in [CONTEXT.md](../../CONTEXT.md),

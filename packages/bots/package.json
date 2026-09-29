@@ -1,5 +1,5 @@
 {
-  "name": "@agentstack/bots",
+  "name": "@stack/bots",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -18,10 +18,10 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@agentstack/api": "workspace:*",
-    "@agentstack/auth": "workspace:*",
-    "@agentstack/browse": "workspace:*",
-    "@agentstack/roles": "workspace:*",
+    "@stack/api": "workspace:*",
+    "@stack/auth": "workspace:*",
+    "@stack/browse": "workspace:*",
+    "@stack/roles": "workspace:*",
     "ws": "^8.21.3",
     "zod": "^4.6.5"
   },

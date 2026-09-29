@@ -9,7 +9,7 @@ import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { publishedJsonSchema, serveSocket, serveWebSocket, socketPath } from "@agentstack/api";
+import { publishedJsonSchema, serveSocket, serveWebSocket, socketPath } from "@stack/api";
 import { anyObject, fixtureDoc, freePort as port, gatewayRoot, ui, z, authorizeBrowser } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
@@ -18,7 +18,7 @@ const require = createRequire(import.meta.url);
 const dir = await mkdtemp(join("/tmp", "as-browse-ui-"));
 const evidence = process.env.BROWSE_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
-const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
+const env = { ...process.env, STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
 const { api: browseApi } = await import("../../browse/dist/api.js");
 const served = new Map(), calls = [];
 let websocket, next, browser, neko, page, log = "";
@@ -32,7 +32,7 @@ const state = {
   handoffs: [],
   receipts: new Map(),
   tool: { installed: true, version: "0.38.1", location: "/fixture/agent-browser", latest: "0.38.1", pending: null, checkedAt: iso(-60_000), checkError: null, policy: "manual" },
-  hypeman: [{ root: "/fixture/hypeman", installed: true, selected: true, source: "agentstack", running: true, issue: null }],
+  hypeman: [{ root: "/fixture/hypeman", installed: true, selected: true, source: "stack", running: true, issue: null }],
 };
 const publish = (topic) => served.get("browse").publish(topic);
 const handoff = (id) => state.handoffs.find((item) => item.id === id);
@@ -73,7 +73,7 @@ const handlers = {
     state.profiles = state.profiles.filter((item) => item.id !== input.profileId); publish("browser_profiles_changed"); return { deleted: true };
   },
   agent_browser_status: () => state.tool,
-  agent_browser_detect: () => ({ installations: [{ location: "/fixture/agent-browser", version: "0.38.1", source: "agentstack" }] }),
+  agent_browser_detect: () => ({ installations: [{ location: "/fixture/agent-browser", version: "0.38.1", source: "stack" }] }),
   agent_browser_check_updates: () => { Object.assign(state.tool, { latest: "0.39.0", pending: "0.39.0", checkedAt: iso() }); publish("browser_system_changed"); return state.tool; },
   agent_browser_update_accept: (input) => { assert.equal(input.version, "0.39.0"); Object.assign(state.tool, { version: "0.39.0", pending: null }); publish("browser_system_changed"); return state.tool; },
   agent_browser_update_policy_set: (input) => { state.tool.policy = input.policy; publish("browser_system_changed"); return state.tool; },

@@ -68,14 +68,14 @@ export function useDockSizes() {
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem("agentstack.uix.docks.v1") ?? "{}");
+      const saved = JSON.parse(localStorage.getItem("stack.uix.docks.v1") ?? "{}");
       setSizes((current) => Object.fromEntries(Object.entries(current).map(([key, value]) => [key, typeof saved[key] === "number" && Number.isFinite(saved[key]) ? clamp(saved[key], 280, 1200) : value])) as typeof current);
     } catch { /* Unavailable storage never blocks the bench. */ }
     setLoaded(true);
   }, []);
   useEffect(() => {
     if (!loaded) return;
-    const timer = setTimeout(() => { try { localStorage.setItem("agentstack.uix.docks.v1", JSON.stringify(sizes)); } catch { /* optional persistence */ } }, 200);
+    const timer = setTimeout(() => { try { localStorage.setItem("stack.uix.docks.v1", JSON.stringify(sizes)); } catch { /* optional persistence */ } }, 200);
     return () => clearTimeout(timer);
   }, [loaded, sizes]);
   return [sizes, setSizes] as const;
@@ -87,14 +87,14 @@ export function useInspectorPin() {
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem("agentstack.uix.inspector.v1") ?? "{}");
+      const saved = JSON.parse(localStorage.getItem("stack.uix.inspector.v1") ?? "{}");
       if (typeof saved.pinned === "boolean") setPinned(saved.pinned);
     } catch { /* Unavailable storage never blocks the bench. */ }
     setLoaded(true);
   }, []);
   useEffect(() => {
     if (!loaded) return;
-    try { localStorage.setItem("agentstack.uix.inspector.v1", JSON.stringify({ pinned })); } catch { /* optional persistence */ }
+    try { localStorage.setItem("stack.uix.inspector.v1", JSON.stringify({ pinned })); } catch { /* optional persistence */ }
   }, [loaded, pinned]);
   return [pinned, setPinned] as const;
 }

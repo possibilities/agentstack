@@ -10,7 +10,7 @@ import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketPath } from "@agentstack/api";
+import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketPath } from "@stack/api";
 import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
@@ -21,13 +21,13 @@ const evidence = process.env.SCRAPE_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
 // Scrape resolves its queue directories when its module loads, and the socket below runs in this
 // process: point the whole process at the disposable state before importing it, then prove it.
-process.env.AGENTSTACK_STATE_DIR = dir;
+process.env.STACK_STATE_DIR = dir;
 const { api: scrapeApi } = await import("../../scrape/dist/api.js");
 const { resolveDataHome } = await import("../../scrape/dist/src/queue-paths.js");
 const { QUEUE_DIR } = await import("../../scrape/dist/src/queue.js");
 assert.equal(resolveDataHome(), join(dir, "scrape"));
 assert.equal(QUEUE_DIR, join(dir, "scrape", "queue"), "Scrape must never use a live queue");
-const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
+const env = { ...process.env, STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
 const handlers = { serve_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }) };
 const sockets = [];
 let websocket, next, browser, scrape, web, page;
@@ -55,7 +55,7 @@ try {
     sockets.push(await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {}, operations: fixtureOperations(names, handlers), events: { topics } }));
   }
   const nextPort = await port();
-  env.AGENTSTACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${nextPort}`;
+  env.STACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${nextPort}`;
   const mode = process.env.SCRAPE_NEXT === "start" ? "start" : "dev";
   next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), mode, "--hostname", "127.0.0.1", "--port", String(nextPort)], { cwd: ui, env, stdio: ["ignore", "pipe", "pipe"] });
   next.stdout.on("data", (chunk) => { log += chunk; }); next.stderr.on("data", (chunk) => { log += chunk; });
@@ -121,7 +121,7 @@ try {
   await queue.getByRole("button", { name: "Submit job…" }).click();
   await queue.getByLabel("URL", { exact: true }).fill(`${base}/page.md`);
   const destination = join(dir, "queued.md");
-  await queue.getByLabel("Destination file on the AgentStack machine").fill(destination);
+  await queue.getByLabel("Destination file on the Stack machine").fill(destination);
   await queue.getByLabel("Frontmatter (key: value per line)").fill("source: rendered check");
   await queue.getByRole("switch", { name: /Allow browser egress/ }).click();
   await queue.getByRole("button", { name: "Submit", exact: true }).click();
@@ -137,7 +137,7 @@ try {
 
   // A direct Markdown 404 fails permanently; the list shows the failed job, which inspects as a job.
   await queue.getByLabel("URL", { exact: true }).fill(`${base}/missing.md`);
-  await queue.getByLabel("Destination file on the AgentStack machine").fill(join(dir, "missing.md"));
+  await queue.getByLabel("Destination file on the Stack machine").fill(join(dir, "missing.md"));
   await queue.getByRole("switch", { name: /Allow browser egress/ }).click();
   await queue.getByRole("button", { name: "Submit", exact: true }).click();
   await queue.getByText(/^Queued/).waitFor();

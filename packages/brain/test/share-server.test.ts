@@ -21,7 +21,7 @@ afterEach(() => {
 const TOKEN = generateShareToken();
 
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-share-server-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-share-server-"));
   roots.push(root);
   const store = new ResearchStore(join(root, "research.db"));
   stores.push(store);
@@ -309,7 +309,7 @@ test("operational events record routing facts without shared content", async () 
 });
 
 test("the bound server accepts a real share over HTTP", async () => {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-brain-share-live-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-brain-share-live-"));
   roots.push(root);
   const store = new ResearchStore(join(root, "research.db"));
   stores.push(store);

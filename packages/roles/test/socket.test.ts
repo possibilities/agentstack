@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { serveApi, socketCall, socketSubscribe } from "@agentstack/api";
+import { serveApi, socketCall, socketSubscribe } from "@stack/api";
 
 test("the roles Package API serves fragment CRUD and invalidates subscribers", async () => {
   const root = await mkdtemp("/tmp/as-role-");
-  const served = await serveApi({ name: "roles", transport: "socket", env: { ...process.env, AGENTSTACK_STATE_DIR: root } });
+  const served = await serveApi({ name: "roles", transport: "socket", env: { ...process.env, STACK_STATE_DIR: root } });
   const path = served.socketPath!;
   const notices: string[] = [];
   const subscription = await socketSubscribe(path, ["role_changed"], (topic) => notices.push(topic));
@@ -52,7 +52,7 @@ test("trusted project operations expose explicit CRUD and enablement with role r
   const root = await mkdtemp("/tmp/as-role-project-");
   const project = join(root, "project");
   await mkdir(project);
-  const served = await serveApi({ name: "roles", transport: "socket", env: { ...process.env, AGENTSTACK_STATE_DIR: root } });
+  const served = await serveApi({ name: "roles", transport: "socket", env: { ...process.env, STACK_STATE_DIR: root } });
   const socket = served.socketPath!;
   const call = (name: string, args: Record<string, unknown>) => socketCall(socket, "tools/call", { name, arguments: args }) as Promise<{
     revision: number; trustedProjects: Array<{ id: string; path: string; enabled: boolean }>;
@@ -72,7 +72,7 @@ test("trusted project operations expose explicit CRUD and enablement with role r
 
 test("role skill and MCP operations support complete create, update, disable, reorder, and delete", async () => {
   const root = await mkdtemp("/tmp/as-role-resources-");
-  const served = await serveApi({ name: "roles", transport: "socket", env: { ...process.env, AGENTSTACK_STATE_DIR: root } });
+  const served = await serveApi({ name: "roles", transport: "socket", env: { ...process.env, STACK_STATE_DIR: root } });
   const path = served.socketPath!;
   const call = (name: string, args: Record<string, unknown>) => socketCall(path, "tools/call", { name, arguments: args }) as Promise<{
     revision: number; skills: Array<{ id: string; enabled: boolean; files: unknown[] }>; mcpServers: Array<{ id: string; enabled: boolean }>;
@@ -112,7 +112,7 @@ test("role_launch_preview reports enabled resources, trust per working directory
   const project = join(root, "project");
   const nested = join(project, "src");
   await mkdir(nested, { recursive: true });
-  const served = await serveApi({ name: "roles", transport: "socket", env: { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_MCP_PORT: "48743" } });
+  const served = await serveApi({ name: "roles", transport: "socket", env: { ...process.env, STACK_STATE_DIR: root, STACK_MCP_PORT: "48743" } });
   const socket = served.socketPath!;
   const call = (name: string, args: Record<string, unknown> = {}) => socketCall(socket, "tools/call", { name, arguments: args }) as Promise<any>;
   try {

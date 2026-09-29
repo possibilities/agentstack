@@ -45,7 +45,7 @@ export interface BackupArtifactReference {
 
 export interface BackupManifest {
   manifest_version: typeof BACKUP_MANIFEST_VERSION;
-  kind: "agentstack_brain_backup";
+  kind: "stack_brain_backup";
   created_at: string;
   snapshot_started_at: string;
   snapshot_completed_at: string;
@@ -375,7 +375,7 @@ export function createBackup(
     const completedAt = (options.now ?? new Date()).toISOString();
     const manifest: BackupManifest = {
       manifest_version: BACKUP_MANIFEST_VERSION,
-      kind: "agentstack_brain_backup",
+      kind: "stack_brain_backup",
       created_at: completedAt,
       snapshot_started_at: startedAt,
       snapshot_completed_at: completedAt,
@@ -438,7 +438,7 @@ export function readBackupManifest(backupPath: string): BackupManifest {
   if (
     !isObject(raw) ||
     raw.manifest_version !== BACKUP_MANIFEST_VERSION ||
-    raw.kind !== "agentstack_brain_backup" ||
+    raw.kind !== "stack_brain_backup" ||
     typeof raw.created_at !== "string" ||
     !Number.isFinite(Date.parse(raw.created_at)) ||
     typeof raw.snapshot_started_at !== "string" ||
@@ -519,7 +519,7 @@ export function readBackupManifest(backupPath: string): BackupManifest {
   }
   return {
     manifest_version: BACKUP_MANIFEST_VERSION,
-    kind: "agentstack_brain_backup",
+    kind: "stack_brain_backup",
     created_at: raw.created_at,
     snapshot_started_at: raw.snapshot_started_at,
     snapshot_completed_at: raw.snapshot_completed_at,
@@ -660,7 +660,7 @@ export function verifyBackup(
       : "database bytes are missing, changed, or corrupt",
   });
 
-  const temporary = mkdtempSync(join(tmpdir(), "agentstack-brain-backup-verify-"));
+  const temporary = mkdtempSync(join(tmpdir(), "stack-brain-backup-verify-"));
   chmodSync(temporary, PRIVATE_DIRECTORY_MODE);
   const restoredDatabase = join(temporary, BACKUP_DATABASE_FILE);
   try {

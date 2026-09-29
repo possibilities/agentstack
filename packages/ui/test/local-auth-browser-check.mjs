@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { LocalAuth, serveSocket, serveWebSocket, socketPath } from "@agentstack/api";
+import { LocalAuth, serveSocket, serveWebSocket, socketPath } from "@stack/api";
 import { fixtureWorkspace, freePort, ui, z } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
@@ -13,7 +13,7 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const require = createRequire(import.meta.url);
 const dir = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "as-local-browser-"));
 const port = await freePort(), origin = `http://127.0.0.1:${port}`;
-const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, AGENTSTACK_UI_PORT: String(port), AGENTSTACK_WEBSOCKET_PORT: "0", NEXT_TELEMETRY_DISABLED: "1" };
+const env = { ...process.env, STACK_STATE_DIR: dir, STACK_UI_PORT: String(port), STACK_WEBSOCKET_PORT: "0", NEXT_TELEMETRY_DISABLED: "1" };
 const auth = new LocalAuth(env);
 let next, browser, socket, gateway;
 let output = "";
@@ -37,14 +37,14 @@ try {
   await page.goto(`${origin}/connect/local#${token}`);
   await page.waitForURL(`${origin}/`);
   assert.equal(new URL(page.url()).hash, "");
-  const cookie = (await page.context().cookies()).find(cookie => cookie.name === "agentstack_local_ui");
+  const cookie = (await page.context().cookies()).find(cookie => cookie.name === "stack_local_ui");
   assert.ok(cookie?.httpOnly); assert.equal(cookie.sameSite, "Strict");
-  assert.equal(await page.evaluate(() => document.cookie.includes("agentstack_local_ui")), false);
+  assert.equal(await page.evaluate(() => document.cookie.includes("stack_local_ui")), false);
   assert.equal((await page.request.post(`${origin}/connect/local/session`, { headers: { origin }, data: { token } })).status(), 401);
   const connect = async () => page.evaluate(async url => {
     const response = await fetch("/connect/local/ticket", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     const { ticket } = await response.json();
-    const socket = new WebSocket(url, [`agentstack-local.${ticket}`]);
+    const socket = new WebSocket(url, [`stack-local.${ticket}`]);
     window.fixtureSocket = socket;
     await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
     const result = new Promise(resolve => { socket.onmessage = event => resolve(JSON.parse(event.data)); });
@@ -54,7 +54,7 @@ try {
   const first = await connect();
   assert.equal(first.frame.result.secret, "fixture-only-private-value");
   assert.equal(await page.evaluate(({ url, ticket }) => new Promise(resolve => {
-    const ws = new WebSocket(url, [`agentstack-local.${ticket}`]); ws.onopen = () => { ws.close(); resolve(false); }; ws.onerror = () => resolve(true);
+    const ws = new WebSocket(url, [`stack-local.${ticket}`]); ws.onopen = () => { ws.close(); resolve(false); }; ws.onerror = () => resolve(true);
   }), { url: gateway.url, ticket: first.ticket }), true);
   await page.evaluate(() => window.fixtureSocket.close());
   const second = await connect(); assert.notEqual(first.ticket, second.ticket);

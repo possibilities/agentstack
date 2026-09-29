@@ -36,16 +36,16 @@ test("the service worker persists before transport and binds admission/history t
     if (url.endsWith("/v1/access/identity")) return Response.json({ ok: true, data: { serverId: "instance-one" } });
     requests++;
     assert.equal(url, "https://first.example/v1/share");
-    assert.equal(options.headers["X-AgentStack-Server-ID"], "instance-one");
+    assert.equal(options.headers["X-Stack-Server-ID"], "instance-one");
     assert.ok(storage.get(OUTBOX_KEY).length > 0, "the request must already be durable");
     if (reply === null) throw new TypeError("Synthetic offline state");
     return Response.json(reply);
   });
   await import("../background.js");
-  assert.equal(messages[0]({ type: "agentstack.connection", action: "access" }, { id: chrome.runtime.id, url: chrome.runtime.getURL("options.html") }, () => { throw new Error("credential exposed"); }), false);
-  assert.equal(messages[0]({ type: "agentstack.connection", action: "state" }, { id: chrome.runtime.id, url: "https://example.com" }, () => { throw new Error("webpage accepted"); }), false);
+  assert.equal(messages[0]({ type: "stack.connection", action: "access" }, { id: chrome.runtime.id, url: chrome.runtime.getURL("options.html") }, () => { throw new Error("credential exposed"); }), false);
+  assert.equal(messages[0]({ type: "stack.connection", action: "state" }, { id: chrome.runtime.id, url: "https://example.com" }, () => { throw new Error("webpage accepted"); }), false);
   const ask = (type) => new Promise((resolve) => {
-    assert.equal(messages[0]({ type: `agentstack.${type}` }, { id: chrome.runtime.id, url: chrome.runtime.getURL("popup.html") }, resolve), true);
+    assert.equal(messages[0]({ type: `stack.${type}` }, { id: chrome.runtime.id, url: chrome.runtime.getURL("popup.html") }, resolve), true);
   });
 
   await ask("share-current-page");
@@ -60,7 +60,7 @@ test("the service worker persists before transport and binds admission/history t
   assert.equal(admitted.delivered, 1);
   assert.equal(storage.get(OUTBOX_KEY).length, 0);
   assert.equal(storage.get(HISTORY_KEY)[0].job, 7);
-  assert.equal(storage.get(HISTORY_KEY)[0].destination, "https://first.example#agentstack=instance-one");
+  assert.equal(storage.get(HISTORY_KEY)[0].destination, "https://first.example#stack=instance-one");
 
   storage.set(CONFIG_KEY, configured("https://second.example"));
   await ask("history-refresh");

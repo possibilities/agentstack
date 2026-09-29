@@ -10,7 +10,7 @@ export type WorkerWindow = { id: string; workerId: string | null };
 export type WorkerWindows = readonly WorkerWindow[];
 
 export const primaryWorker = "worker";
-const storageKey = "agentstack.uix.workers.v1";
+const storageKey = "stack.uix.workers.v1";
 
 type Listener = () => void;
 

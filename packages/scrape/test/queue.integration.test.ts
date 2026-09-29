@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-test("owned scrape-to-file queue processes direct Markdown only in disposable AgentStack state", () => {
-  const state = mkdtempSync(join(tmpdir(), "agentstack-scrape-queue-"));
+test("owned scrape-to-file queue processes direct Markdown only in disposable Stack state", () => {
+  const state = mkdtempSync(join(tmpdir(), "stack-scrape-queue-"));
   try {
     const destination = join(state, "result.md");
     const apiPath = fileURLToPath(new URL("../api.js", import.meta.url));
@@ -35,7 +35,7 @@ test("owned scrape-to-file queue processes direct Markdown only in disposable Ag
       }
     `;
     const child = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
-      env: { ...process.env, AGENTSTACK_STATE_DIR: state }, encoding: "utf8", timeout: 10_000,
+      env: { ...process.env, STACK_STATE_DIR: state }, encoding: "utf8", timeout: 10_000,
     });
     assert.equal(child.status, 0, child.stderr);
     const result = JSON.parse(child.stdout) as { queued: { path: string }; result: { processed: number; failed: number } };
@@ -46,7 +46,7 @@ test("owned scrape-to-file queue processes direct Markdown only in disposable Ag
 });
 
 test("queue list reports pending, retrying and failed jobs read-only and omits frontmatter values", () => {
-  const state = mkdtempSync(join(tmpdir(), "agentstack-scrape-list-"));
+  const state = mkdtempSync(join(tmpdir(), "stack-scrape-list-"));
   try {
     const apiPath = fileURLToPath(new URL("../api.js", import.meta.url));
     const script = `
@@ -83,7 +83,7 @@ test("queue list reports pending, retrying and failed jobs read-only and omits f
         writeFileSync(join(scrapeRoot, "retry", "unexpected.json"), "{}\\n", { mode: 0o600 });
         const listed = await call("scrape_queue_list", { limit: 200 });
         const limited = await call("scrape_queue_list", { limit: 1 });
-        console.log(JSON.stringify({ empty, created, listed, limited, generationId }));
+         console.log(JSON.stringify({ empty, created, listed, limited, generationId }));
       } finally {
         await api.prepareCloseContext(ctx);
         await api.closeContext(ctx);
@@ -92,7 +92,7 @@ test("queue list reports pending, retrying and failed jobs read-only and omits f
       }
     `;
     const child = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
-      env: { ...process.env, AGENTSTACK_STATE_DIR: state }, encoding: "utf8", timeout: 10_000,
+      env: { ...process.env, STACK_STATE_DIR: state }, encoding: "utf8", timeout: 10_000,
     });
     assert.equal(child.status, 0, child.stderr);
     const out = JSON.parse(child.stdout);
@@ -109,7 +109,7 @@ test("queue list reports pending, retrying and failed jobs read-only and omits f
     assert.deepEqual({ state: gone.state, completed: gone.completed_failures, problem: gone.problem }, { state: "retrying", completed: 1, problem: null });
     const retry = jobs.find((job) => job.id === out.generationId)!;
     assert.deepEqual({ url: retry.url, completed: retry.completed_failures, max: retry.max_attempts, next: retry.next_attempt_at, submitted: retry.submitted_at },
-      { url: "https://example.com/retry", completed: 2, max: 5, next: "2026-01-01T01:00:00.000Z", submitted: "2026-01-01T00:00:00.000Z" });
+       { url: "https://example.com/retry", completed: 2, max: 5, next: "2026-01-01T01:00:00.000Z", submitted: "2026-01-01T00:00:00.000Z" });
     const broken = jobs.find((job) => job.file === "unexpected.json")!;
     assert.equal(broken.state, "retrying");
     assert.ok(broken.problem);

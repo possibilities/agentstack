@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { socketCall, socketPath } from "@agentstack/api";
+import { socketCall, socketPath } from "@stack/api";
 
 const protocol = "agent-browser.plugin.v1";
 type Request = { protocol: string; type: string; capability: string; request: Record<string, unknown> };
@@ -12,7 +12,7 @@ export async function handleProvider(source: string, env: NodeJS.ProcessEnv = pr
     if (!input || input.protocol !== protocol || input.capability !== (input.type === "plugin.manifest" ? "plugin.manifest" : "browser.provider") ||
         !input.request || typeof input.request !== "object" || Array.isArray(input.request)) throw new Error("invalid provider request");
     if (input.type === "plugin.manifest") return { protocol, success: true,
-      manifest: { name: "agentstack", capabilities: ["browser.provider"], description: "AgentStack durable Bot browsers" } };
+      manifest: { name: "stack", capabilities: ["browser.provider"], description: "Stack durable Bot browsers" } };
     const socket = socketPath("browse", env);
     if (input.type === "browser.close") {
       // Disconnect belongs to agent-browser, not to an available owner socket.

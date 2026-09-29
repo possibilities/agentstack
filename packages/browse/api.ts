@@ -1,10 +1,10 @@
 import { z } from "zod";
-import { operation, type PackageApi } from "@agentstack/api";
+import { operation, type PackageApi } from "@stack/api";
 import { Backend, cleanupSchema } from "./src/backend.js";
 import { BrowserSystem } from "./src/system.js";
 import { Profiles, profileSchema, bindingSchema } from "./src/profiles.js";
 import { handoffSchema, handoffRequestSchema, handoffActionSchema, completionInput } from "./src/handoff.js";
-import { egressPolicy } from "@agentstack/scrape/network";
+import { egressPolicy } from "@stack/scrape/network";
 
 export type BrowserContext = { backend: Backend; system: BrowserSystem; profiles: Profiles };
 export const browserResearchAcquire = operation({
@@ -172,7 +172,7 @@ const browserToolOutput = z.strictObject({
 });
 const hypemanInstallation = z.strictObject({
   root: z.string(), installed: z.boolean(), selected: z.boolean(),
-  source: z.enum(["agentstack", "legacy", "custom"]), running: z.boolean(), issue: z.string().nullable(),
+  source: z.enum(["stack", "legacy", "custom"]), running: z.boolean(), issue: z.string().nullable(),
 });
 const hypemanInstallations = z.strictObject({ installations: z.array(hypemanInstallation) });
 export const browserToolStatus = operation({
@@ -182,8 +182,8 @@ export const browserToolStatus = operation({
   async call(ctx: BrowserContext) { return ctx.system.browserStatus(); },
 });
 export const browserToolDetect = operation({
-  name: "agent_browser_detect", description: "Detect AgentStack's private agent-browser installation and the legacy AgentStart command without changing either.",
-  input: z.strictObject({}), output: z.strictObject({ installations: z.array(z.strictObject({ location: z.string(), version: z.string().nullable(), source: z.enum(["agentstack", "agentstart"]) })) }),
+  name: "agent_browser_detect", description: "Detect Stack's private agent-browser installation and the legacy AgentStart command without changing either.",
+  input: z.strictObject({}), output: z.strictObject({ installations: z.array(z.strictObject({ location: z.string(), version: z.string().nullable(), source: z.enum(["stack", "agentstart"]) })) }),
   annotations: { title: "Detect agent-browser", readOnlyHint: true },
   async call(ctx: BrowserContext) { return { installations: await ctx.system.browserDetect() }; },
 });
@@ -200,7 +200,7 @@ export const browserToolPolicy = operation({
   async call(ctx: BrowserContext, input) { return ctx.system.setUpdatePolicy(input.policy); },
 });
 export const browserToolInstall = operation({
-  name: "agent_browser_install", description: "Install an exact agent-browser release into AgentStack's private toolchain. Never overwrites an independent global installation.",
+  name: "agent_browser_install", description: "Install an exact agent-browser release into Stack's private toolchain. Never overwrites an independent global installation.",
   input: z.strictObject({ version: z.string().min(1) }), output: browserToolOutput,
   annotations: { title: "Install agent-browser" },
   async call(ctx: BrowserContext, input) { return ctx.system.installBrowser(input.version); },
@@ -212,13 +212,13 @@ export const browserToolAccept = operation({
   async call(ctx: BrowserContext, input) { return ctx.system.acceptUpdate(input.version); },
 });
 export const browserToolUninstall = operation({
-  name: "agent_browser_uninstall", description: "Disable the AgentStack-managed agent-browser binary without removing a foreign or AgentStart-owned executable.",
+  name: "agent_browser_uninstall", description: "Disable the Stack-managed agent-browser binary without removing a foreign or AgentStart-owned executable.",
   input: z.strictObject({}), output: browserToolOutput,
   annotations: { title: "Uninstall managed agent-browser", destructiveHint: true },
   async call(ctx: BrowserContext) { return ctx.system.uninstallBrowser(); },
 });
 export const hypemanDetect = operation({
-  name: "hypeman_detect", description: "Detect the AgentStack-managed, legacy local Mac, and explicitly configured Hypeman roots. Probes only loopback; never contacts Artbird.",
+  name: "hypeman_detect", description: "Detect the Stack-managed, legacy local Mac, and explicitly configured Hypeman roots. Probes only loopback; never contacts Artbird.",
   input: z.strictObject({}), output: hypemanInstallations,
   annotations: { title: "Detect local Hypeman", readOnlyHint: true },
   async call(ctx: BrowserContext) { return { installations: await ctx.system.detectHypeman() }; },
@@ -240,13 +240,13 @@ export const hypemanEnable = operation({
   },
 });
 export const hypemanInstall = operation({
-  name: "hypeman_install", description: "Install the checksum-verified local Hypeman release in AgentStack state. Does not select it or modify the legacy Mac installation.",
+  name: "hypeman_install", description: "Install the checksum-verified local Hypeman release in Stack state. Does not select it or modify the legacy Mac installation.",
   input: z.strictObject({}), output: hypemanInstallations,
   annotations: { title: "Install local Hypeman" },
   async call(ctx: BrowserContext) { return { installations: await ctx.system.installHypeman() }; },
 });
 export const hypemanUninstall = operation({
-  name: "hypeman_uninstall", description: "Uninstall only stopped, disabled AgentStack-owned Hypeman with no browser reservations. Its images and state are discarded only after explicit confirmation; independent installations are never removed.",
+  name: "hypeman_uninstall", description: "Uninstall only stopped, disabled Stack-owned Hypeman with no browser reservations. Its images and state are discarded only after explicit confirmation; independent installations are never removed.",
   input: z.strictObject({ discardData: z.boolean() }), output: hypemanInstallations,
   annotations: { title: "Uninstall local Hypeman", destructiveHint: true },
   async call(ctx: BrowserContext, input) { return { installations: await ctx.system.uninstallHypeman(input.discardData) }; },

@@ -1,4 +1,4 @@
-import { listPackages, socketCall, socketPath, websocketPort, workspaceRoot } from "@agentstack/api";
+import { listPackages, socketCall, socketPath, websocketPort, workspaceRoot } from "@stack/api";
 import { loadCatalog } from "./catalog";
 import { loadResources } from "./resources";
 import type { ContentOrigins } from "./types";
@@ -41,9 +41,9 @@ export async function websocketEndpoints(catalog: PackageDoc[] | null): Promise<
  * settings and defaults. Null when a port is chosen at random or a setting is invalid: the page then offers no links.
  */
 export function contentOrigins(env: NodeJS.ProcessEnv): ContentOrigins | null {
-  if (env.AGENTSTACK_CONTENT_DOCUMENT_ORIGIN || env.AGENTSTACK_CONTENT_ARTIFACT_ORIGIN) {
-    const document = env.AGENTSTACK_CONTENT_DOCUMENT_ORIGIN;
-    const artifact = env.AGENTSTACK_CONTENT_ARTIFACT_ORIGIN;
+  if (env.STACK_CONTENT_DOCUMENT_ORIGIN || env.STACK_CONTENT_ARTIFACT_ORIGIN) {
+    const document = env.STACK_CONTENT_DOCUMENT_ORIGIN;
+    const artifact = env.STACK_CONTENT_ARTIFACT_ORIGIN;
     return document && artifact && document !== artifact ? { document, artifact } : null;
   }
   const port = (primary: string, legacy: string, fallback: number) => {
@@ -51,8 +51,8 @@ export function contentOrigins(env: NodeJS.ProcessEnv): ContentOrigins | null {
     const value = raw === undefined ? fallback : Number(raw);
     return raw === "" || !Number.isInteger(value) || value <= 0 || value > 65535 ? null : value;
   };
-  const document = port("AGENTSTACK_CONTENT_PORT", "AGENTSTACK_WIKI_PORT", 8777);
-  const artifact = port("AGENTSTACK_CONTENT_ARTIFACT_PORT", "AGENTSTACK_WIKI_ARTIFACT_PORT", 8778);
+  const document = port("STACK_CONTENT_PORT", "STACK_WIKI_PORT", 8777);
+  const artifact = port("STACK_CONTENT_ARTIFACT_PORT", "STACK_WIKI_ARTIFACT_PORT", 8778);
   return document && artifact && document !== artifact ? { document: `http://127.0.0.1:${document}`, artifact: `http://127.0.0.1:${artifact}` } : null;
 }
 
@@ -63,8 +63,8 @@ export async function loadSnapshot(remoteOrigin?: string, remoteScope?: "view" |
     const empty = () => ({ data: null, error: null, at: null });
     const url = new URL(remoteOrigin);
     const host = url.hostname.includes(":") ? `[${url.hostname}]` : url.hostname;
-    const origins = { document: `https://${host}:${process.env.AGENTSTACK_ACCESS_PORT ?? 8943}`,
-      artifact: `https://${host}:${process.env.AGENTSTACK_ACCESS_ARTIFACT_PORT ?? 8944}` };
+    const origins = { document: `https://${host}:${process.env.STACK_ACCESS_PORT ?? 8943}`,
+      artifact: `https://${host}:${process.env.STACK_ACCESS_ARTIFACT_PORT ?? 8944}` };
     return { server: empty(), resources: empty(), accounts: empty(), workerAccounts: empty(), workerRuntimes: empty(),
       workerSessions: empty(), usage: empty(), login: empty(), workerLogins: empty(), bots: empty(), botDefaults: empty(),
       voice: empty(), role: empty(), rolePreview: empty(), catalog: empty(),

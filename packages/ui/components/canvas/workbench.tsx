@@ -105,7 +105,7 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
     locationRef.current = next; setLocation(next);
     surfaceRef.current = nextSurface; setSurface(nextSurface);
     if (nextSurface === "right") setContracted(false);
-    document.title = `AgentStack · ${next.reference && nextSurface === "right" ? "API reference" : spaceTitle(next.space)}`;
+    document.title = `Stack · ${next.reference && nextSurface === "right" ? "API reference" : spaceTitle(next.space)}`;
   }, []);
   const setSpace = useCallback((space: SpaceId) => {
     pending.current = null;
@@ -163,7 +163,7 @@ function Shell({ initialLocation }: { initialLocation: BenchLocation }) {
       locationRef.current = next; setLocation(next);
       const nextSurface = activeSurface(query.get("surface"), openDocks(next));
       surfaceRef.current = nextSurface; setSurface(nextSurface);
-      document.title = `AgentStack · ${next.reference && nextSurface === "right" ? "API reference" : spaceTitle(next.space)}`;
+      document.title = `Stack · ${next.reference && nextSurface === "right" ? "API reference" : spaceTitle(next.space)}`;
       // Dock/inspection history must never move the camera.
       if (nodeKeyOrNull(next.focus) !== nodeKeyOrNull(previous.focus) || next.space !== previous.space) {
         if (next.focus && controlsRef.current?.space === next.space) controlsRef.current.goToNode(next.focus);

@@ -25,7 +25,7 @@ GET  https://<tailnet-host>:8943/v1/health
 ```
 
 Every data and health request requires an Access Brain audience bearer token
-and `X-AgentStack-Server-ID` matching its paired server, over direct verified
+and `X-Stack-Server-ID` matching its paired server, over direct verified
 tailnet traffic. `OPTIONS` returns only CORS metadata but
 also requires tailnet provenance. `share_token_reveal` and `share_token_rotate`
 are removed; pair and revoke through Access instead.
@@ -104,7 +104,7 @@ Access stores client/job admission receipts, not a separate ingestion queue.
 
 `status` is `queued` for a new intent and `duplicate` for a replay of an
 identical one. **Both are HTTP 200 and both are successes**: a duplicate means
-AgentStack Brain already holds that exact intent as the job named by `job_id`, so a
+Stack Brain already holds that exact intent as the job named by `job_id`, so a
 client that retries after a timeout cannot create a second job.
 
 `resolved_url` is `null` for text jobs. A text body is never echoed back.

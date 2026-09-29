@@ -1,5 +1,5 @@
 /**
- * Durable share outbox for the AgentStack Chrome client.
+ * Durable share outbox for the Stack Chrome client.
  *
  * A share the ingress never received is not a failed share: it is one that has
  * not been delivered yet. Entries live in `chrome.storage.local` — which
@@ -7,7 +7,7 @@
  * server being down for days — and are redelivered until the ingress admits
  * them or classifies them as unsendable.
  *
- * The outbox holds intent only. It is not a queue in the AgentStack sense: no
+ * The outbox holds intent only. It is not a queue in the Stack sense: no
  * job exists until Admission creates one, so nothing here may be reported to
  * the user as saved. Redelivery is safe without a client idempotency key
  * because the ingress derives the key from the intent, so a share delivered
@@ -17,8 +17,8 @@
 import { isRetryable } from "./shared.js";
 import { updateStorage } from "./storage.js";
 
-export const OUTBOX_KEY = "agentstack.chrome.share.outbox.v1";
-export const OUTBOX_ALARM = "agentstack.chrome.share.outbox.flush";
+export const OUTBOX_KEY = "stack.chrome.share.outbox.v1";
+export const OUTBOX_ALARM = "stack.chrome.share.outbox.flush";
 
 /** Beyond this the oldest pending shares are dropped rather than grown without bound. */
 export const OUTBOX_MAX_ENTRIES = 200;

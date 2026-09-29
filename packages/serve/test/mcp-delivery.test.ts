@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { WebSocketServer } from "ws";
 import { z } from "zod";
-import { botInstance, operation, serveSocket, socketPath, type EventTarget, type InvocationContext } from "@agentstack/api";
+import { botInstance, operation, serveSocket, socketPath, type EventTarget, type InvocationContext } from "@stack/api";
 import { authorizeWorkerRead, createMcpEventSubscriptions, verifiedTarget } from "../src/mcp-delivery.js";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -34,7 +34,7 @@ test("event values start a turn only on a loaded descendant of the Bot's sanctio
     await mkdir(join(root, "packages", name), { recursive: true });
     await writeFile(join(root, "packages", name, "api.yaml"), `name: ${name}\ndescription: Test.\nmcp:\n  description: Test.\n  operations: all\n  events: all\n`);
   }
-  const env = { AGENTSTACK_STATE_DIR: root };
+  const env = { STACK_STATE_DIR: root };
   const http = createServer();
   const wss = new WebSocketServer({ server: http });
   const turns: Array<{ threadId: string; input: Array<{ text: string }> }> = [];

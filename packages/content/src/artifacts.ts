@@ -133,9 +133,9 @@ export interface PublishResult {
 }
 
 export function artifactHome(env: Environ, home: string): string {
-  return env["AGENTSTACK_STATE_DIR"]
-    ? join(env["AGENTSTACK_STATE_DIR"], "wiki", "artifacts")
-    : join(home, ".local", "state", "agentstack", "wiki", "artifacts");
+  return env["STACK_STATE_DIR"]
+    ? join(env["STACK_STATE_DIR"], "wiki", "artifacts")
+    : join(home, ".local", "state", "stack", "wiki", "artifacts");
 }
 
 export function casDirectory(env: Environ, home: string): string {
@@ -639,7 +639,7 @@ function initializeSchema(db: Database): void {
       throw new CliError(
         "unsupported_schema_version",
         `artifact manifest schema version ${version} is newer than supported version ${MANIFEST_SCHEMA_VERSION}`,
-        "Upgrade AgentStack Content; the manifest is authoritative and must not be downgraded.",
+        "Upgrade Stack Content; the manifest is authoritative and must not be downgraded.",
       );
     }
   }

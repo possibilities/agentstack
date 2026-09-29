@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { operation, stateDir, type PackageApi } from "@agentstack/api";
+import { operation, stateDir, type PackageApi } from "@stack/api";
 import { AttentionService } from "./src/service.js";
 import { settings, itemState, attentionReason, statusSchema, itemPage, modelsSchema, messagePageSchema, runPageSchema, eventPageSchema, feedbackPageSchema } from "./src/schema.js";
 import { digest } from "./src/store.js";

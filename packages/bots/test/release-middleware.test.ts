@@ -50,7 +50,7 @@ test("verified release intercepts a second WebSocket client's typed input", { sk
       submitter!.on("message", onMessage);
       submitter!.send(JSON.stringify({ id: current, method, params }));
     });
-    await request("initialize", { clientInfo: { name: "agentstack-release-test", version: "0.0.0" } });
+    await request("initialize", { clientInfo: { name: "stack-release-test", version: "0.0.0" } });
     submitter.send(JSON.stringify({ method: "initialized" }));
     const started = await request("thread/start", {}) as { thread: { id: string } };
     assert.ok(started.thread.id);

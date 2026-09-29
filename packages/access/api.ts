@@ -1,4 +1,4 @@
-import { operation, stateDir, type PackageApi } from "@agentstack/api";
+import { operation, stateDir, type PackageApi } from "@stack/api";
 import { z } from "zod";
 import { AccessStore, scopes } from "./src/store.js";
 import { startIngress, pairInput, redeemInput, refreshInput, handoffInput } from "./src/ingress.js";
@@ -23,7 +23,7 @@ export const api: PackageApi<Context, "access_changed"> = {
   ],
   http: [{ name: "private", kind: "json", authentication: "bearer", description: "Direct TLS tailnet ingress; socket peer and local tailscaled are checked on EVERY request, including pairing and preflight. Pairing uses a separate redemption secret, not the displayed code.", routes: [
     { method: "GET", path: "/v1/access/identity", format: "application/json", description: "Read the stable server identity before sending credentials. Requires verified tailnet provenance, but no bearer. HTTPS authenticates the server; this ID fences accidental replacement and destination changes.", response: envelope(z.object({ serverId: z.uuid() })), error: errorEnvelope },
-    { method: "GET", path: "/v1/access/me", format: "application/json", description: "Verify a Brain audience credential and read its current grant scopes; no data scope is needed. Requires X-AgentStack-Server-ID, as do redemption and all authenticated JSON requests.", response: envelope(z.object({ serverId: z.uuid(), clientId: z.uuid(), credentialId: z.uuid(), scopes: z.array(z.enum(scopes)) })), error: errorEnvelope },
+    { method: "GET", path: "/v1/access/me", format: "application/json", description: "Verify a Brain audience credential and read its current grant scopes; no data scope is needed. Requires X-Stack-Server-ID, as do redemption and all authenticated JSON requests.", response: envelope(z.object({ serverId: z.uuid(), clientId: z.uuid(), credentialId: z.uuid(), scopes: z.array(z.enum(scopes)) })), error: errorEnvelope },
     { method: "POST", path: "/v1/access/pair", format: "application/json", description: "Begin a retry-safe expiring pairing; persist a random 32-byte base64url redemption secret before sending. No bearer required.", request: pairInput, response: pairResponse, error: errorEnvelope },
     { method: "POST", path: "/v1/access/redeem", format: "application/json", description: "Redeem an approved pairing or recover the identical receipt before expiry. Authenticates with redemption secret.", request: redeemInput, response: redeemResponse, error: errorEnvelope },
     { method: "POST", path: "/v1/access/refresh", format: "application/json", description: "Rotate refresh credential and issue a five-minute audience token. Persist request ID before sending; exact retries recover for five minutes.", request: refreshInput, response: refreshResponse, error: errorEnvelope },

@@ -249,7 +249,7 @@ function aliasBlock(path: string[], command: ContractCommand): string[] {
 
 function commandHelp(path: string[], command: ContractCommand): string {
   const lines: string[] = [
-    `AgentStack Brain ${path.join(" ")} — ${command.summary}`,
+    `Stack Brain ${path.join(" ")} — ${command.summary}`,
     "",
     "Usage:",
     ...usageLines(path, command),
@@ -311,7 +311,7 @@ function exitCodeBlock(): string[] {
 
 function buildTopHelp(): string {
   const lines: string[] = [
-    ...wrap(`AgentStack Brain — ${AGENT_CONTRACT.meta.purpose}`, ""),
+    ...wrap(`Stack Brain — ${AGENT_CONTRACT.meta.purpose}`, ""),
     "",
     "Usage:",
     "  node packages/brain/dist/src/cli.js [global options] <command> [command options]",
@@ -354,7 +354,7 @@ function buildAgentHelp(): string {
   );
   const envelope = AGENT_CONTRACT.concepts.output_contract.envelope;
   const lines: string[] = [
-    ...wrap(`AgentStack Brain — ${AGENT_CONTRACT.meta.purpose}`, ""),
+    ...wrap(`Stack Brain — ${AGENT_CONTRACT.meta.purpose}`, ""),
     "",
     ...wrap(AGENT_CONTRACT.guidance, ""),
     ...agentDefaultsBlock(),

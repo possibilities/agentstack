@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { join, dirname, basename, isAbsolute, relative, sep } from "node:path";
 import { renderInstructions, type RoleSnapshot } from "./store.js";
 import { mcpRecord, skillRecord, trustedProjectRecord, type RoleMcpServer, type TrustedProject } from "./resources.js";
-import { mcpToolTimeoutSeconds, parseBotMcpIdentity } from "@agentstack/api";
+import { mcpToolTimeoutSeconds, parseBotMcpIdentity } from "@stack/api";
 
 const namePattern = /^[a-z][a-z0-9-]{0,31}$/;
 const toml = (value: string) => JSON.stringify(value);
@@ -70,7 +70,7 @@ export async function materializeRole(stateDir: string, botId: string, snapshot:
       catch { throw new Error(`invalid owner MCP entry: ${name}`); }
       if (!namePattern.test(name) || parsed.protocol !== "http:" || parsed.hostname !== "127.0.0.1" || !parsed.port || parsed.pathname !== `/mcp/${name}` || parsed.hash)
         throw new Error(`invalid owner MCP entry: ${name}`);
-      if (parsed.search && parseBotMcpIdentity(parsed, { AGENTSTACK_STATE_DIR: stateDir })?.botId !== botId) throw new Error(`owner MCP entry ${name} belongs to another bot`);
+      if (parsed.search && parseBotMcpIdentity(parsed, { STACK_STATE_DIR: stateDir })?.botId !== botId) throw new Error(`owner MCP entry ${name} belongs to another bot`);
       lines.push(`[mcp_servers.${name}]`, `url = ${JSON.stringify(url)}`, "enabled = true", `tool_timeout_sec = ${mcpToolTimeoutSeconds(name)}`, "");
     }
     const ownerNames = new Set(Object.keys(mcpServers).map((name) => name.toLowerCase()));

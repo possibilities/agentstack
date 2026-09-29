@@ -19,7 +19,7 @@ test("connection persists pairing/refresh intent before sending and recovers an 
       if (losePair) { losePair = false; throw new Error("pair receipt lost"); }
       return Response.json({ ok: true, data: { id: "pairing-id", code: "APPROVAL", expiresAt: Date.now() + 600_000, serverId: "server-one" } });
     }
-    assert.equal(options.headers["X-AgentStack-Server-ID"], "server-one");
+    assert.equal(options.headers["X-Stack-Server-ID"], "server-one");
     if (url.endsWith("/redeem")) return Response.json({ ok: true, data: { refreshToken: "refresh-1", serverId: "server-one" } });
     if (url.endsWith("/refresh")) {
       assert.equal(state.pendingRefresh.requestId, body.requestId);
@@ -72,7 +72,7 @@ test("connection status is authenticated and local forget never claims revocatio
   let revoked = false;
   t.mock.method(globalThis, "fetch", async (url, options) => {
     if (url.endsWith("/identity")) return Response.json({ ok: true, data: { serverId: "original" } });
-    assert.equal(options.headers["X-AgentStack-Server-ID"], "original");
+    assert.equal(options.headers["X-Stack-Server-ID"], "original");
     assert.equal(options.headers.authorization, "Bearer access");
     if (revoked) return Response.json({ ok: false, error: { code: "credential_revoked" } }, { status: 401 });
     assert.ok(url.endsWith("/me"));

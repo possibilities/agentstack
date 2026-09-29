@@ -61,7 +61,7 @@ function ledgerStatus(ledger) {
       ...known,
       detail:
         ledger.documentId === null
-          ? "Searchable in AgentStack."
+          ? "Searchable in Stack."
           : `Document ${ledger.documentId}.`,
     };
   }

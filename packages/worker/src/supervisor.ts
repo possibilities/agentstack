@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { accountEnvironment, accountRoot, type WorkerAccount } from "@agentstack/auth";
-import { socketCall, socketPath, socketSubscribe, type SocketSubscription } from "@agentstack/api";
+import { accountEnvironment, accountRoot, type WorkerAccount } from "@stack/auth";
+import { socketCall, socketPath, socketSubscribe, type SocketSubscription } from "@stack/api";
 import { AcpProcess, record } from "./acp.js";
 import type { WorkerBackend } from "./backend.js";
 import { ClaudeBackend, CLAUDE_SDK_VERSION, CLAUDE_CODE_VERSION, type ClaudeQueryFactory } from "./claude.js";
@@ -36,9 +36,9 @@ export class WorkerSupervisor {
   constructor(private readonly stateDir: string, private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly dependencies: { claudeQuery?: ClaudeQueryFactory } = {}) {
     const home = env.HOME ?? homedir();
-    const opencodeV2 = env.AGENTSTACK_OPENCODE_BIN ?? join(home, ".local", "bin", "opencode");
+    const opencodeV2 = env.STACK_OPENCODE_BIN ?? join(home, ".local", "bin", "opencode");
     this.bin = { codex: opencodeV2, grok: opencodeV2,
-      devin: env.AGENTSTACK_DEVIN_BIN ?? join(home, ".local", "share", "devin", "cli", "_versions", "current", "bin", "devin") };
+      devin: env.STACK_DEVIN_BIN ?? join(home, ".local", "share", "devin", "cli", "_versions", "current", "bin", "devin") };
   }
 
   start(): void {

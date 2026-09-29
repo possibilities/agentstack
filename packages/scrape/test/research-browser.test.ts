@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { operation, serveSocket, socketPath } from "@agentstack/api";
+import { operation, serveSocket, socketPath } from "@stack/api";
 import { z } from "zod";
 import { publicEgress, withEgressPolicy } from "../src/egress.js";
 import { runAgentBrowser, withBrowserSession, withBrowserNetworkPolicy } from "../src/browser.js";
@@ -12,7 +12,7 @@ test("research requires an enforcing owner provider and cannot reuse pinned prof
   const root = mkdtempSync(join(tmpdir(), "as-research-browser-"));
   const tool = join(root, "agent-browser"), log = join(root, "argv.jsonl");
   writeFileSync(tool, `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(log)},JSON.stringify(process.argv.slice(2))+'\\n'); console.log('ok');\n`, { mode: 0o700 });
-  const env = { ...process.env, HOME: root, AGENTSTACK_STATE_DIR: root, AGENTSCRAPE_AGENT_BROWSER_BIN: tool, AGENTSCRAPE_BROWSER_SESSION: "existing-signed-in-profile" };
+  const env = { ...process.env, HOME: root, STACK_STATE_DIR: root, AGENTSCRAPE_AGENT_BROWSER_BIN: tool, AGENTSCRAPE_BROWSER_SESSION: "existing-signed-in-profile" };
   let acquired = 0, closed = 0;
   const execute = () => withEgressPolicy(publicEgress, () => {}, () => withBrowserNetworkPolicy(true, () => withBrowserSession("caller-session", () => runAgentBrowser(["eval", "1"], "caller-session", "signed-in-profile"))), env);
   try {

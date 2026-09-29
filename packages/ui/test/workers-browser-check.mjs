@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { publishedJsonSchema, serveSocket, serveWebSocket, socketPath } from "@agentstack/api";
+import { publishedJsonSchema, serveSocket, serveWebSocket, socketPath } from "@stack/api";
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as workerApi } from "../../worker/dist/api.js";
 import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, ui, authorizeBrowser } from "./browser-fixture.mjs";
@@ -19,7 +19,7 @@ const require = createRequire(import.meta.url);
 const dir = await mkdtemp(join("/tmp", "as-workers-ui-"));
 const evidence = process.env.WORKERS_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
-const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
+const env = { ...process.env, STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
 
 const account = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const wid = (c) => `${c.repeat(8)}-0000-4000-8000-000000000000`;
@@ -29,7 +29,7 @@ const claude = account(3), codex = account(4);
 const workerAccounts = [{ id: claude, provider: "claude", enabled: true, ready: true, removing: false, linkedAccounts: [] },
   { id: codex, provider: "codex", enabled: true, ready: true, removing: false, linkedAccounts: [] }];
 const session = (id, extra) => ({ id, botId: "bot-1", threadId: "thread-1", accountId: claude, provider: "claude", model: "claude-opus-5-5", effort: "high",
-  repo: "/src/agentstack", cwd: `/state/workers/worktrees/${id}`, branch: `agentstack-worker-${id}`, baseCommit: "025e608aa1b2c3d4", sourceDirty: false,
+  repo: "/src/stack", cwd: `/state/workers/worktrees/${id}`, branch: `stack-worker-${id}`, baseCommit: "025e608aa1b2c3d4", sourceDirty: false,
   roleRevision: 3, sessionId: "native-session-1", runtimeInstance: account(90), phase: "idle", currentTurnId: null, issue: null, createdAt: now - 600_000, updatedAt: now - 60_000, ...extra });
 const workers = [
   session(wid("a"), { phase: "awaiting_input", currentTurnId: tid(2), updatedAt: now - 5_000 }),
@@ -89,7 +89,7 @@ const handlers = {
     if (id === wid("d")) throw new Error("the Worker's worktree is no longer available");
     const files = { "src/scheduler.ts": "diff --git a/src/scheduler.ts b/src/scheduler.ts\n--- a/src/scheduler.ts\n+++ b/src/scheduler.ts\n@@ -1,2 +1,2 @@\n-const wait = 0;\n+const wait = await settled();\n",
       "test/scheduler.test.ts": "diff --git a/test/scheduler.test.ts b/test/scheduler.test.ts\nnew file mode 100644\n--- /dev/null\n+++ b/test/scheduler.test.ts\n@@ -0,0 +1 @@\n+test(\"no race\");\n" };
-    return { workerId: id, branch: `agentstack-worker-${id}`, baseCommit: "025e608aa1b2c3d4", head: "9f8e7d6c5b4a3210",
+    return { workerId: id, branch: `stack-worker-${id}`, baseCommit: "025e608aa1b2c3d4", head: "9f8e7d6c5b4a3210",
       commits: [{ sha: "9f8e7d6c5b4a3210", subject: "Fix the scheduler race", at: now - 100_000 }], commitsTruncated: false,
       files: [{ path: "src/scheduler.ts", oldPath: null, status: "modified", additions: 1, deletions: 1, binary: false },
         { path: "test/scheduler.test.ts", oldPath: null, status: "untracked", additions: null, deletions: null, binary: false }], filesTruncated: false,
@@ -149,7 +149,7 @@ try {
       events: { topics: topics[name], scope: name === "bots" || name === "worker" ? { valid: () => true, description: "Fixture", example: "id" } : undefined } }));
   }
   const nextPort = await port();
-  env.AGENTSTACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${nextPort}`;
+  env.STACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${nextPort}`;
   const origin = `http://127.0.0.1:${nextPort}`;
   next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "start", "--hostname", "127.0.0.1", "--port", String(nextPort)], { cwd: ui, env, stdio: ["ignore", "pipe", "pipe"] });
   next.stdout.on("data", (chunk) => { log += chunk; }); next.stderr.on("data", (chunk) => { log += chunk; });
@@ -171,22 +171,22 @@ try {
   const row = (text) => list.locator("[data-worker]").filter({ hasText: text });
 
   // The list groups by what needs a look; closed Workers start collapsed.
-  await row("agentstack · aaaaaa").waitFor();
+  await row("stack · aaaaaa").waitFor();
   await list.getByText("Needs attention· 2").or(list.getByRole("button", { name: /Needs attention/ })).first().waitFor();
-  await row("agentstack · aaaaaa").getByText("Waiting for its Bot to answer a permission request").waitFor();
+  await row("stack · aaaaaa").getByText("Waiting for its Bot to answer a permission request").waitFor();
   await row("brain · bbbbbb").getByText("Operator", { exact: true }).waitFor();
   await row("brain · bbbbbb").getByText("Idle · last turn completed · end_turn").waitFor();
-  assert.equal(await row("agentstack · dddddd").count(), 0, "closed Workers start collapsed");
+  assert.equal(await row("stack · dddddd").count(), 0, "closed Workers start collapsed");
   await list.getByRole("button", { name: /Closed/ }).click();
-  await row("agentstack · dddddd").waitFor();
+  await row("stack · dddddd").waitFor();
   await worker.getByText("No Worker selected", { exact: true }).waitFor();
   await runtimes.getByText("opencode exited (1)", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Spaces · Workers" }).waitFor();
   await page.screenshot({ path: join(evidence, "workers-list.png"), animations: "disabled" });
 
   // Choosing shows the conversation: joined agent text as markdown, collapsed tool updates, the latest plan.
-  await row("agentstack · aaaaaa").click();
-  await worker.getByRole("heading", { name: /agentstack · aaaaaa/ }).waitFor();
+  await row("stack · aaaaaa").click();
+  await worker.getByRole("heading", { name: /stack · aaaaaa/ }).waitFor();
   await worker.getByText("Fix the flaky scheduler test", { exact: true }).waitFor();
   await worker.locator("strong", { hasText: "fixed" }).waitFor();
   await worker.getByText("Edit src/scheduler.ts", { exact: true }).waitFor();
@@ -237,23 +237,23 @@ try {
   await page.screenshot({ path: join(evidence, "worker-session.png"), animations: "disabled" });
 
   // A Worker whose last turn is unknown says so; its Bot recovers it.
-  await row("agentstack · cccccc").click();
+  await row("stack · cccccc").click();
   await worker.getByText(/Turn outcome is unknown after server restart/).waitFor();
   // A removed worktree reads as an error in Changes, not a crash.
-  await row("agentstack · dddddd").click();
+  await row("stack · dddddd").click();
   await worker.getByRole("tab", { name: "Changes" }).click();
   await worker.getByText("the Worker's worktree is no longer available", { exact: false }).waitFor();
   await worker.getByRole("tab", { name: "Conversation" }).click();
-  await row("agentstack · cccccc").click();
+  await row("stack · cccccc").click();
 
   // A second window keeps its own Worker while the primary follows the list.
   await worker.getByRole("button", { name: "New Worker window" }).click();
   const second = page.locator('[data-window="worker-2"]');
-  await second.getByRole("heading", { name: /agentstack · cccccc/ }).waitFor();
+  await second.getByRole("heading", { name: /stack · cccccc/ }).waitFor();
   // Opening a window pans the camera to it; the list row is still the control, just off-screen.
   await row("brain · bbbbbb").dispatchEvent("click");
   await worker.getByRole("heading", { name: /brain · bbbbbb/ }).waitFor();
-  await second.getByRole("heading", { name: /agentstack · cccccc/ }).waitFor();
+  await second.getByRole("heading", { name: /stack · cccccc/ }).waitFor();
   await second.getByRole("button", { name: "Close Worker window" }).click();
   await second.waitFor({ state: "detached" });
 

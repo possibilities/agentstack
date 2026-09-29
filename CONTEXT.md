@@ -2,11 +2,11 @@
 
 ## Notification
 
-A durable AgentStack-owned message with a stable ID. It is open or dismissed; dismissal happens once and records its outcome (closed, opened, action, replied or replaced), so answering or clicking through is what acknowledges it. A group replaces the open notification with the same key. Its actions, reply prompt and open URL are data; presentation is separate from storage and nothing executes. _Avoid_: operating-system notification, acknowledgment as a separate state, callback
+A durable Stack-owned message with a stable ID. It is open or dismissed; dismissal happens once and records its outcome (closed, opened, action, replied or replaced), so answering or clicking through is what acknowledges it. A group replaces the open notification with the same key. Its actions, reply prompt and open URL are data; presentation is separate from storage and nothing executes. _Avoid_: operating-system notification, acknowledgment as a separate state, callback
 
 ## Package API
 
-Typed operations a workspace package exports so agentstack can serve them. Descriptions and schemas are written for selection, in the same spirit as an MCP tool or a skill.
+Typed operations a workspace package exports so stack can serve them. Descriptions and schemas are written for selection, in the same spirit as an MCP tool or a skill.
 
 _Avoid_: MCP server, endpoint, route
 
@@ -24,7 +24,7 @@ A five-minute Access session for one locally approved browser-kind client on the
 
 ## Local operator session
 
-An eight-hour local UI or Inspector browser session established by a one-use capability minted through the private server socket and opened by `agentstack open`. It is bound to one exact origin and audience. UI server renders require it; each local WebSocket reconnect exchanges it for a one-use 30-second ticket. Server restart or explicit local revocation invalidates sessions and the native operator bearer credential. Bot/Worker identities and remote Access sessions remain independent. _Avoid_: anonymous loopback authority, OS sandbox, Access grant
+An eight-hour local UI or Inspector browser session established by a one-use capability minted through the private server socket and opened by `stack open`. It is bound to one exact origin and audience. UI server renders require it; each local WebSocket reconnect exchanges it for a one-use 30-second ticket. Server restart or explicit local revocation invalidates sessions and the native operator bearer credential. Bot/Worker identities and remote Access sessions remain independent. _Avoid_: anonymous loopback authority, OS sandbox, Access grant
 
 ## Content handoff
 
@@ -32,7 +32,7 @@ A one-use, one-minute secret for opening one document, Content item or immutable
 
 ## Browser profile
 
-A durable, empty-at-creation Chrome user-data volume with one server-supervised Kernel/Hypeman browser while AgentStack runs. Each Bot has an exclusive default; additional profiles may belong exclusively to that Bot or remain unassigned. Deleting a Bot retains its profiles unassigned. Only explicit profile deletion discards their data. Planned server shutdown closes Chrome before stopping the exact VM; restart retains the volume and refreshes its guest address and CDP relay. _Avoid_: disposable task, shared account profile, sleeping browser
+A durable, empty-at-creation Chrome user-data volume with one server-supervised Kernel/Hypeman browser while Stack runs. Each Bot has an exclusive default; additional profiles may belong exclusively to that Bot or remain unassigned. Deleting a Bot retains its profiles unassigned. Only explicit profile deletion discards their data. Planned server shutdown closes Chrome before stopping the exact VM; restart retains the volume and refreshes its guest address and CDP relay. _Avoid_: disposable task, shared account profile, sleeping browser
 
 ## Browser controller
 
@@ -60,7 +60,7 @@ A durable, revisionless request by a verified Bot thread to watch one MCP-select
 
 ## Codex account
 
-An AgentStack-owned Codex sign-in credential with an immutable account ID managed by the `auth` Package API for Bots. A new sign-in whose known native ChatGPT identity is already registered is rejected; existing duplicates are not removed. Creating one also creates its paired Codex Worker account for the same ChatGPT login, which needs its own sign-in; both inventories report the pair in `linkedAccounts`, and removing the Bot account removes its paired Worker. Accounts can be enabled or disabled; `bot_start` requires an explicit enabled Bot account ID. An existing Bot changes account only through assignment, then the next start after a stop. A running Bot reports both its assignment and its launched identity. Removing either its assigned or launched Bot account deletes that Bot; removing a Worker account does not. Accounts never take a durable human-facing ordinal. A UI may present dense `codex-bot-account-N` labels derived from the Bot account list. _Avoid_: active account, Codex home, capability profile
+An Stack-owned Codex sign-in credential with an immutable account ID managed by the `auth` Package API for Bots. A new sign-in whose known native ChatGPT identity is already registered is rejected; existing duplicates are not removed. Creating one also creates its paired Codex Worker account for the same ChatGPT login, which needs its own sign-in; both inventories report the pair in `linkedAccounts`, and removing the Bot account removes its paired Worker. Accounts can be enabled or disabled; `bot_start` requires an explicit enabled Bot account ID. An existing Bot changes account only through assignment, then the next start after a stop. A running Bot reports both its assignment and its launched identity. Removing either its assigned or launched Bot account deletes that Bot; removing a Worker account does not. Accounts never take a durable human-facing ordinal. A UI may present dense `codex-bot-account-N` labels derived from the Bot account list. _Avoid_: active account, Codex home, capability profile
 
 ## Worker account
 
@@ -68,7 +68,7 @@ A stable account ID for an isolated, native sign-in managed through `auth`. Code
 
 ## ACP runtime
 
-An server-supervised stdio ACP process for one ready Worker account: OpenCode for Grok or Codex, Devin CLI for Devin. Its pipe is private to AgentStack and is not itself a Package API Transport. The `worker` Package API reports health and account-bound capabilities.
+An server-supervised stdio ACP process for one ready Worker account: OpenCode for Grok or Codex, Devin CLI for Devin. Its pipe is private to Stack and is not itself a Package API Transport. The `worker` Package API reports health and account-bound capabilities.
 
 ## Claude runtime
 
@@ -94,7 +94,7 @@ _Avoid_: per-chat cost, unique RAM, complete accounting
 
 ## Worker
 
-An AgentStack-owned native session started by a Bot (or the local operator) under one enabled Worker account in an owned Git worktree. Its backend is ACP or the Claude Agent SDK. It retains its account, model/effort, Role revision, transcript and origin across turns. Closing a Worker retains the worktree and branch for review. _Avoid_: Bot, active account, disposable prompt
+An Stack-owned native session started by a Bot (or the local operator) under one enabled Worker account in an owned Git worktree. Its backend is ACP or the Claude Agent SDK. It retains its account, model/effort, Role revision, transcript and origin across turns. Closing a Worker retains the worktree and branch for review. _Avoid_: Bot, active account, disposable prompt
 
 ## Worker turn
 
@@ -112,11 +112,11 @@ _Avoid_: turn, completion, job
 
 ## Main thread
 
-The single Codex thread ID retained by a Bot. A fresh Bot has no main thread until the first persistent root thread created by a connected UI has a durable turn; later Bot launches resume that ID. Only this root and its descendants belong to AgentStack's view of the Bot. Other Codex top-level threads on the same socket are ignored.
+The single Codex thread ID retained by a Bot. A fresh Bot has no main thread until the first persistent root thread created by a connected UI has a durable turn; later Bot launches resume that ID. Only this root and its descendants belong to Stack's view of the Bot. Other Codex top-level threads on the same socket are ignored.
 
 ## Chat
 
-A Codex app-server thread in an AgentStack-owned Bot's sanctioned main-thread lineage. Historical search and raw records belong to the Bot's history, while live turns, items and interactions come from its owned app-server. Other top-level threads and Worker sessions are not chats. _Avoid_: session, Worker thread
+A Codex app-server thread in an Stack-owned Bot's sanctioned main-thread lineage. Historical search and raw records belong to the Bot's history, while live turns, items and interactions come from its owned app-server. Other top-level threads and Worker sessions are not chats. _Avoid_: session, Worker thread
 
 ## Chat window
 
@@ -132,11 +132,11 @@ A Codex child thread whose parent chain reaches a Bot's sanctioned main thread. 
 
 ## Bot
 
-A Codex app-server process with, after its first turn, a durable main thread. By default it is numbered `bot-N` with a private workspace and copies the current Bot defaults: Sol at medium reasoning effort, unrestricted sandbox, and no approval prompts. The Bots Package API can change defaults for future Bots; `bot_start` requires an explicit enabled Codex account and can override a Bot's ID, working directory, saved settings, and launch arguments. Legacy unbound Bots require assignment before a turn. Bots restart on AgentStack startup with their saved account and settings and resume their main thread when one exists.
+A Codex app-server process with, after its first turn, a durable main thread. By default it is numbered `bot-N` with a private workspace and copies the current Bot defaults: Sol at medium reasoning effort, unrestricted sandbox, and no approval prompts. The Bots Package API can change defaults for future Bots; `bot_start` requires an explicit enabled Codex account and can override a Bot's ID, working directory, saved settings, and launch arguments. Legacy unbound Bots require assignment before a turn. Bots restart on Stack startup with their saved account and settings and resume their main thread when one exists.
 
 ## Role
 
-The single AgentStack-owned configuration shared by every new Bot launch: ordered developer-instruction fragments, enabled skills, internal server MCP connections, and additional enabled MCP servers. Each Bot receives a private launch snapshot through codexnk's required `--capabilities` directory. Edits affect later launches, not a running process. _Avoid_: capability profile, system-prompt flag, live prompt file
+The single Stack-owned configuration shared by every new Bot launch: ordered developer-instruction fragments, enabled skills, internal server MCP connections, and additional enabled MCP servers. Each Bot receives a private launch snapshot through codexnk's required `--capabilities` directory. Edits affect later launches, not a running process. _Avoid_: capability profile, system-prompt flag, live prompt file
 
 ## Trusted project
 
@@ -160,7 +160,7 @@ A durable, ordered developer-instruction body with a stable ID and human-only ti
 
 ## Role skill
 
-A named, enabled or disabled skill record containing Markdown instructions and optional supporting files. AgentStack stores the bytes in the Role and writes only enabled skills to a Bot's private launch snapshot. Codex also discovers project skills, while the three-axis launch excludes home-level skills. Role skill selection does not suppress project, bundled, or explicitly added skill roots.
+A named, enabled or disabled skill record containing Markdown instructions and optional supporting files. Stack stores the bytes in the Role and writes only enabled skills to a Bot's private launch snapshot. Codex also discovers project skills, while the three-axis launch excludes home-level skills. Role skill selection does not suppress project, bundled, or explicitly added skill roots.
 
 ## Role MCP server
 
@@ -178,11 +178,11 @@ _Avoid_: voice agent, voice thread
 
 ## Vault
 
-The `content` Package API's directory of plain-text wiki documents. Files are authoritative; its SQLite Index is derived and reconciles on reads. This vault remains under AgentStack's `wiki` state directory to preserve existing documents, separate from the original agentwiki vault. _Avoid_: notebook, workspace
+The `content` Package API's directory of plain-text wiki documents. Files are authoritative; its SQLite Index is derived and reconciles on reads. This vault remains under Stack's `wiki` state directory to preserve existing documents, separate from the original agentwiki vault. _Avoid_: notebook, workspace
 
 ## Artifact
 
-A named static file or directory held by `content` with an immutable content-hash Version and a mutable latest pointer. Its manifest and bytes live in AgentStack state, and a stub Document in the Vault makes it searchable and linkable. _Avoid_: attachment, upload
+A named static file or directory held by `content` with an immutable content-hash Version and a mutable latest pointer. Its manifest and bytes live in Stack state, and a stub Document in the Vault makes it searchable and linkable. _Avoid_: attachment, upload
 
 ## Artifact origin
 
@@ -208,7 +208,7 @@ _Avoid_: shared world, space tabs
 
 ## Brain
 
-The `brain` Package API's isolated research index and durable ingestion system. Its database and research artifacts live under AgentStack state; Access owns shared device credentials. It collects material for retrieval; the Content Vault holds authored wiki documents.
+The `brain` Package API's isolated research index and durable ingestion system. Its database and research artifacts live under Stack state; Access owns shared device credentials. It collects material for retrieval; the Content Vault holds authored wiki documents.
 
 _Avoid_: external research service, Content Vault
 
@@ -218,7 +218,7 @@ The `xcom` Package API's best-effort, private cache of observed posts from the a
 
 ## Scrape
 
-The `scrape` Package API's extraction, preset, link and source-discovery engine. Brain consumes its typed library interface for Ingestion jobs; standalone scrape-to-file jobs live under isolated AgentStack state and are not Brain jobs. A preset's failure to match the provider's current content shape is a classified failure requiring a preset update, not permission for generic extraction. Browser page actions still belong to agent-browser. The local UI operates its canary checks and queue over the WebSocket; agents do not receive them over MCP. _Avoid_: Brain ingestion worker, browser lifecycle, separate Agentscrape service
+The `scrape` Package API's extraction, preset, link and source-discovery engine. Brain consumes its typed library interface for Ingestion jobs; standalone scrape-to-file jobs live under isolated Stack state and are not Brain jobs. A preset's failure to match the provider's current content shape is a classified failure requiring a preset update, not permission for generic extraction. Browser page actions still belong to agent-browser. The local UI operates its canary checks and queue over the WebSocket; agents do not receive them over MCP. _Avoid_: Brain ingestion worker, browser lifecycle, separate Agentscrape service
 
 ## Admission
 
@@ -278,7 +278,7 @@ One local-user process execution supervised by Proc's IPC guardian, with a calle
 
 ## Share ingress
 
-Brain's authenticated inbound HTTP listener for AgentStack device clients. It resolves each share into the same Admission boundary and owns no separate queue or index. Network reachability alone is not authorization.
+Brain's authenticated inbound HTTP listener for Stack device clients. It resolves each share into the same Admission boundary and owns no separate queue or index. Network reachability alone is not authorization.
 
 _Avoid_: public API, research extractor
 

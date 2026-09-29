@@ -37,7 +37,7 @@ test("semantic selection errors fail discovery and startup before creating a con
     for (const selection of ["operations: [missing]\n  events: all", "operations: all\n  events: [missing]", "operations: all\n  events: []\n  workerOperations: [missing]"]) {
       await writeFile(join(dir, "api.yaml"), `${header}mcp:\n  description: Selected.\n  ${selection}\n`);
       await assert.rejects(loadCatalog({}, root), /selects unknown name/);
-      await assert.rejects(serveApi({ root, name: "demo", transport: "socket", env: { AGENTSTACK_STATE_DIR: root } }), /selects unknown name/);
+      await assert.rejects(serveApi({ root, name: "demo", transport: "socket", env: { STACK_STATE_DIR: root } }), /selects unknown name/);
     }
   } finally { await rm(root, { recursive: true, force: true }); }
 });

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import { renderInstructions, skillRecord, type RoleSnapshot } from "@agentstack/roles";
+import { renderInstructions, skillRecord, type RoleSnapshot } from "@stack/roles";
 
 export type ClaimedWorktree = { repo: string; cwd: string; branch: string; baseCommit: string; sourceDirty: boolean;
   roleRevision: number; instructions: string };
@@ -53,7 +53,7 @@ export async function claimWorktree(stateDir: string, id: string, source: string
   const parent = join(stateDir, "workers", "worktrees");
   await mkdir(parent, { recursive: true, mode: 0o700 });
   const cwd = join(parent, id);
-  const branch = `agentstack-worker-${id}`;
+  const branch = `stack-worker-${id}`;
   await absent(cwd);
   await git(repo, ["worktree", "add", "-b", branch, cwd, baseCommit]);
   try {
@@ -65,7 +65,7 @@ export async function claimWorktree(stateDir: string, id: string, source: string
       await mkdir(directory, { mode: 0o700 });
       // Self-ignored files belong to this worktree alone; never edit the shared Git exclude or a tracked root .gitignore.
       await writeFile(join(directory, ".gitignore"), "*\n", { mode: 0o600 });
-      await writeFile(join(directory, "agentstack-owner.json"), JSON.stringify({ id }), { mode: 0o600 });
+      await writeFile(join(directory, "stack-owner.json"), JSON.stringify({ id }), { mode: 0o600 });
       await mkdir(join(directory, "skills"), { mode: 0o700 });
     }
     for (const skill of snapshot.skills) {
@@ -76,7 +76,7 @@ export async function claimWorktree(stateDir: string, id: string, source: string
     if (instructions) {
       const prime = join(devin, "skills", "prime");
       await mkdir(prime, { mode: 0o700 });
-      await writeFile(join(prime, "SKILL.md"), `---\nname: prime\ndescription: Load this worker's AgentStack Role instructions when explicitly requested\ntriggers: [user]\n---\n\n${instructions}\n`, { mode: 0o600 });
+      await writeFile(join(prime, "SKILL.md"), `---\nname: prime\ndescription: Load this worker's Stack Role instructions when explicitly requested\ntriggers: [user]\n---\n\n${instructions}\n`, { mode: 0o600 });
     }
     if (await git(cwd, ["status", "--porcelain=v1", "--untracked-files=all"])) throw new Error("managed worker files are visible to Git; refusing to start");
     return { repo, cwd, branch, baseCommit, sourceDirty, roleRevision: snapshot.revision, instructions };
@@ -87,7 +87,7 @@ export async function claimWorktree(stateDir: string, id: string, source: string
 }
 
 export async function removeWorktree(claim: Pick<ClaimedWorktree, "repo" | "cwd" | "branch">, id: string): Promise<void> {
-  if (!claim.cwd.endsWith(`/workers/worktrees/${id}`) || claim.branch !== `agentstack-worker-${id}`) throw new Error("unrecognized worker worktree claim");
+  if (!claim.cwd.endsWith(`/workers/worktrees/${id}`) || claim.branch !== `stack-worker-${id}`) throw new Error("unrecognized worker worktree claim");
   const listed = await git(claim.repo, ["worktree", "list", "--porcelain"]);
   const expected = await realpath(claim.cwd).catch(() => claim.cwd);
   let exact = false;
@@ -102,7 +102,7 @@ export async function removeWorktree(claim: Pick<ClaimedWorktree, "repo" | "cwd"
     return;
   }
   try {
-    const marker = JSON.parse(await readFile(join(claim.cwd, ".devin", "agentstack-owner.json"), "utf8")) as { id?: string };
+    const marker = JSON.parse(await readFile(join(claim.cwd, ".devin", "stack-owner.json"), "utf8")) as { id?: string };
     if (marker.id !== id) throw new Error("worker worktree ownership marker changed");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -124,7 +124,7 @@ export async function claudeRole(stateDir: string, id: string, snapshot: RoleSna
   // The snapshot is immutable; recreation on explicit recovery never changes ambient configuration.
   await rm(pluginPath, { recursive: true, force: true });
   await mkdir(join(pluginPath, ".claude-plugin"), { recursive: true, mode: 0o700 });
-  await writeFile(join(pluginPath, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "agentstack-role", version: "1.0.0" }), { mode: 0o600 });
+  await writeFile(join(pluginPath, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "stack-role", version: "1.0.0" }), { mode: 0o600 });
   await mkdir(join(pluginPath, "skills"), { mode: 0o700 });
   for (const skill of snapshot.skills) await writeSkill(join(pluginPath, "skills"), skill);
   return { instructions: renderInstructions(snapshot), pluginPath };

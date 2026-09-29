@@ -24,9 +24,9 @@ import {
   postShare,
 } from "./shared.js";
 
-const MENU_PAGE = "agentstack-share-page";
-const MENU_LINK = "agentstack-share-link";
-const MENU_SELECTION = "agentstack-share-selection";
+const MENU_PAGE = "stack-share-page";
+const MENU_LINK = "stack-share-link";
+const MENU_SELECTION = "stack-share-selection";
 
 function notify(title, message) {
   chrome.notifications.create({
@@ -86,7 +86,7 @@ const DROP_TITLE = {
 
 const DROP_DETAIL = {
   expired: (entry) =>
-    `AgentStack never became reachable for ${describe(entry.payload)}.`,
+    `Stack never became reachable for ${describe(entry.payload)}.`,
   overflow: (entry) =>
     `The outbox is full, so ${describe(entry.payload)} was dropped as the oldest waiting share.`,
   rejected: (entry, result) =>
@@ -158,7 +158,7 @@ async function drainOutbox({ force = false } = {}) {
 
 /**
  * Holds a share the ingress has not accepted and tells the user it is kept, not
- * saved: nothing is durable in AgentStack until Admission answers.
+ * saved: nothing is durable in Stack until Admission answers.
  */
 async function send(payload) {
   const config = await loadConfig();
@@ -175,7 +175,7 @@ async function send(payload) {
   await scheduleFlush(Date.now(), config?.destination ?? null);
   const summary = await drainOutbox({ force: true });
   if (summary.unconfigured) {
-    notify("Held for later", "Pair with AgentStack and grant host permission in Settings.");
+    notify("Held for later", "Pair with Stack and grant host permission in Settings.");
     await chrome.runtime.openOptionsPage();
   } else {
     const settled = summary.settled.find((item) => item.entry.id === entry.id);
@@ -226,17 +226,17 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: MENU_PAGE,
-      title: "Send this page to AgentStack",
+      title: "Send this page to Stack",
       contexts: ["page"],
     });
     chrome.contextMenus.create({
       id: MENU_LINK,
-      title: "Send this link to AgentStack",
+      title: "Send this link to Stack",
       contexts: ["link"],
     });
     chrome.contextMenus.create({
       id: MENU_SELECTION,
-      title: "Send selection to AgentStack",
+      title: "Send selection to Stack",
       contexts: ["selection"],
     });
   });
@@ -257,7 +257,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // there is no onClicked here. Sharing the current page stays one keystroke
 // away on the command, and one click away inside the popover.
 chrome.commands.onCommand.addListener((command) => {
-  if (command === "agentstack.share-current-page") void shareCurrentPage();
+  if (command === "stack.share-current-page") void shareCurrentPage();
 });
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -299,38 +299,38 @@ async function refreshHistory() {
 /** The Options page and the popover drive the client through these messages. */
 chrome.runtime.onMessage.addListener((message, _sender, respond) => {
   if (_sender.id !== chrome.runtime.id || !["options.html", "popup.html"].some(path => _sender.url === chrome.runtime.getURL(path))) return false;
-  if (message?.type === "agentstack.connection") {
+  if (message?.type === "stack.connection") {
     if (!["state", "pair", "complete", "check", "disconnect", "forget"].includes(message.action)) return false;
     connectionMessage(message).then(respond, error => respond({ error: error.message }));
     return true;
   }
-  if (message?.type === "agentstack.outbox-status") {
+  if (message?.type === "stack.outbox-status") {
     void outboxCount().then((pending) => respond({ pending }));
     return true;
   }
-  if (message?.type === "agentstack.outbox-flush") {
+  if (message?.type === "stack.outbox-flush") {
     void drainOutbox({ force: true }).then((summary) => respond(summary));
     return true;
   }
-  if (message?.type === "agentstack.history-refresh") {
+  if (message?.type === "stack.history-refresh") {
     void refreshHistory().then(async (result) =>
       respond({ ...result, pending: await outboxCount() }),
     );
     return true;
   }
-  if (message?.type === "agentstack.history-clear") {
+  if (message?.type === "stack.history-clear") {
     void clearHistory().then((discarded) => respond({ discarded }));
     return true;
   }
-  if (message?.type === "agentstack.history-remove") {
+  if (message?.type === "stack.history-remove") {
     void removeHistory(message.id).then((removed) => respond({ removed }));
     return true;
   }
-  if (message?.type === "agentstack.share-current-page") {
+  if (message?.type === "stack.share-current-page") {
     void shareCurrentPage().then(() => respond({ done: true }));
     return true;
   }
-  if (message?.type === "agentstack.outbox-clear") {
+  if (message?.type === "stack.outbox-clear") {
     void (async () => {
       const entries = await discardOutbox();
       const discarded = entries.length;

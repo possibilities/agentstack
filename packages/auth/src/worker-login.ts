@@ -48,8 +48,8 @@ function shellQuote(value: string): string { return `'${value.replaceAll("'", "'
 
 function nativeCommand(env: NodeJS.ProcessEnv): WorkerCommand {
   const home = env.HOME ?? homedir();
-  const opencode = env.AGENTSTACK_OPENCODE_BIN ?? join(home, ".local", "bin", "opencode");
-  const devin = env.AGENTSTACK_DEVIN_BIN ?? join(home, ".local", "share", "devin", "cli", "_versions", "current", "bin", "devin");
+  const opencode = env.STACK_OPENCODE_BIN ?? join(home, ".local", "bin", "opencode");
+  const devin = env.STACK_DEVIN_BIN ?? join(home, ".local", "share", "devin", "cli", "_versions", "current", "bin", "devin");
   const claude = claudeLoginInvocation(env);
   return (account) => {
     if (account.provider === "claude") return claude;

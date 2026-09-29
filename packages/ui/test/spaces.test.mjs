@@ -199,7 +199,7 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
 
   // Workers: permission waits, recovery, failures and runtime errors; idle, running and closed Workers are quiet.
   const session = (id, phase, issue = null) => ({ id, botId: "bot-1", threadId: "t", accountId: "w1", provider: "claude", model: "opus", effort: "high",
-    repo: "/src/agentstack", cwd: null, branch: null, baseCommit: null, sourceDirty: false, roleRevision: 1, sessionId: null, runtimeInstance: null,
+    repo: "/src/stack", cwd: null, branch: null, baseCommit: null, sourceDirty: false, roleRevision: 1, sessionId: null, runtimeInstance: null,
     phase, currentTurnId: null, issue, createdAt: 1, updatedAt: 1 });
   const sessions = spaceAttention({
     ...quiet,
@@ -208,8 +208,8 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
     workerRuntimes: { data: [{ id: "w1", provider: "claude", backend: "claude-sdk", processModel: "session", pids: [], state: "error", pid: null, instance: null, error: "sdk missing" }], error: null, at: null },
     status: { worker: "closed" },
   });
-  assert.deepEqual(sessions.workers, ["agentstack · aaaaaa: Waiting for its Bot to answer a permission request", "agentstack · bbbbbb: Server restarted",
-    "agentstack · cccccc: Failed", "claude runtime error: sdk missing", "worker reconnecting"]);
+  assert.deepEqual(sessions.workers, ["stack · aaaaaa: Waiting for its Bot to answer a permission request", "stack · bbbbbb: Server restarted",
+    "stack · cccccc: Failed", "claude runtime error: sdk missing", "worker reconnecting"]);
 
   // System: a stopped child, a closed server channel, a status read error, resource errors and stale attribution.
   const system = spaceAttention({
@@ -304,7 +304,7 @@ test("spaceAttention flags Browse handoffs awaiting a human, their issues, faile
   const profile = (patch) => ({ id: "p", botId: "bot-2", label: "default", default: true, createdAt: "2026-09-28T09:00:00Z", state: "ready", error: null, observedAt: null, cdpUrl: null, observation: null, ...patch });
   const resource = (data) => ({ data, error: null, at: 1 });
   const toolchain = (selected) => resource({ status: { provider: "hypeman", mode: "durable", sessions: 0, profiles: 1 }, agentBrowser: {}, detected: [],
-    hypeman: [{ root: "/h", installed: true, selected, source: "agentstack", running: true, issue: null }] });
+    hypeman: [{ root: "/h", installed: true, selected, source: "stack", running: true, issue: null }] });
   const calm = spaceAttention({ ...quiet, browserHandoffs: resource([handoff({ state: "resolved", outcome: "completed" }), handoff({ id: "h2", state: "human_controlling" })]),
     browserProfiles: resource([profile({})]), browserToolchain: toolchain(true) });
   assert.deepEqual(calm.browse, []);

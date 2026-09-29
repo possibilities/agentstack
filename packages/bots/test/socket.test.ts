@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { serveApi, socketCall, socketSubscribe, type ServedApi, type SocketSubscription } from "@agentstack/api";
+import { serveApi, socketCall, socketSubscribe, type ServedApi, type SocketSubscription } from "@stack/api";
 import { StateStore } from "../src/store.js";
 import { chatRpc } from "../src/chats.js";
 
@@ -15,9 +15,9 @@ function call(socket: string, name: string, args: Record<string, unknown> = {}):
 }
 
 test("bots own the complete app-server lifecycle on one socket", { timeout: 120_000 }, async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-bots-state-"));
-  const home = await mkdtemp(join(tmpdir(), "agentstack-bots-home-"));
-  const external = await mkdtemp(join(tmpdir(), "agentstack-bots-external-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-bots-state-"));
+  const home = await mkdtemp(join(tmpdir(), "stack-bots-home-"));
+  const external = await mkdtemp(join(tmpdir(), "stack-bots-external-"));
   const savedHome = process.env.HOME;
   process.env.HOME = home;
   const runtime = join(home, ".local", "libexec", "codexnk", "codex");
@@ -27,7 +27,7 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
   const account = store.addAccount(JSON.stringify({ tokens: { refresh_token: "test", access_token: "access", id_token: "fixture.jwt.signature" } })).id;
   const otherAccount = store.addAccount(JSON.stringify({ tokens: { refresh_token: "other", access_token: "access", id_token: "fixture.jwt.signature" } })).id;
   store.close();
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir };
+  const env = { ...process.env, STACK_STATE_DIR: stateDir };
   const auth = await serveApi({ name: "auth", transport: "socket", env });
   let bots: ServedApi | undefined = await serveApi({ name: "bots", transport: "socket", env });
   const socket = bots.socketPath ?? "";
@@ -204,10 +204,10 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
 });
 
 test("bots refuse a workspace root that is not a real directory", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "agentstack-bots-rootstate-"));
-  const target = await mkdtemp(join(tmpdir(), "agentstack-bots-roottarget-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-bots-rootstate-"));
+  const target = await mkdtemp(join(tmpdir(), "stack-bots-roottarget-"));
   const root = join(stateDir, "bots");
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: stateDir };
+  const env = { ...process.env, STACK_STATE_DIR: stateDir };
   try {
     await symlink(target, root);
     await assert.rejects(serveApi({ name: "bots", transport: "socket", env }), /not a directory/);

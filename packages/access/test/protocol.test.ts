@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { request as httpsRequest } from "node:https";
-import { serveHttp, type HttpPeer } from "@agentstack/api";
+import { serveHttp, type HttpPeer } from "@stack/api";
 import { AccessStore } from "../src/store.js";
 import { handler } from "../src/ingress.js";
 import { snapshotSchema } from "../src/schema.js";
@@ -14,7 +14,7 @@ import { snapshotSchema } from "../src/schema.js";
 const key = () => randomBytes(32).toString("base64url");
 const peer = { remoteAddress: "100.80.0.2", localAddress: "100.80.0.1", remotePort: 1 };
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-access-protocol-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-access-protocol-"));
   let now = Date.now();
   const store = new AccessStore(root, () => now);
   return { root, store, advance(ms: number) { now += ms; }, close() { store.close(); rmSync(root, { recursive: true, force: true }); } };
@@ -37,7 +37,7 @@ test("identity fences admission and rotation; me and disconnect need no data sco
     f.store.updateGrant(principal.grantId, 1, [], []);
     const request = (path: string, identity: string | null, payload?: unknown) => new Request(`https://test${path}`, {
       method: payload === undefined ? "GET" : "POST",
-      headers: { authorization: `Bearer ${token.accessToken}`, "content-type": "application/json", ...(identity ? { "x-agentstack-server-id": identity } : {}) },
+      headers: { authorization: `Bearer ${token.accessToken}`, "content-type": "application/json", ...(identity ? { "x-stack-server-id": identity } : {}) },
       ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
     });
     for (const identity of [null, randomUUID()]) {
@@ -50,7 +50,7 @@ test("identity fences admission and rotation; me and disconnect need no data sco
     assert.equal(me.status, 200);
     assert.deepEqual((await me.json()).data, { serverId: f.store.serverId, clientId: receipt.clientId, credentialId: receipt.credentialId, scopes: [] });
     const preflight = await serve(new Request("https://test/v1/access/me", { method: "OPTIONS", headers: { origin: `chrome-extension://${"a".repeat(32)}` } }), peer);
-    assert.match(preflight.headers.get("access-control-allow-headers")!, /x-agentstack-server-id/);
+    assert.match(preflight.headers.get("access-control-allow-headers")!, /x-stack-server-id/);
     for (const header of ["forwarded", "x-forwarded-for", "tailscale-user-login"]) {
       const spoof = request("/v1/access/me", f.store.serverId);
       spoof.headers.set(header, "100.80.0.2");
@@ -106,7 +106,7 @@ test("real TLS listener passes kernel peers and ignores spoofed network headers"
     let observedUrl = "";
     // The production verifier must reject this real loopback connection before
     // invoking tailscale, even if every HTTP header claims a tailnet address.
-    const ingress = handler({ store: f.store, env: { AGENTSTACK_TAILSCALE_BIN: "/nonexistent-test-only" }, origin: "documents" });
+    const ingress = handler({ store: f.store, env: { STACK_TAILSCALE_BIN: "/nonexistent-test-only" }, origin: "documents" });
     server = await serveHttp({ host: "127.0.0.1", port: 0, tls: { key: readFileSync(privateKey), cert: readFileSync(cert) }, forceCloseConnections: true,
       handle(request, actualPeer) { observed = actualPeer; observedUrl = request.url; return ingress(request, actualPeer); } });
     const response = await new Promise<{ status: number; body: string }>((resolve, reject) => {

@@ -1,4 +1,4 @@
-/* AgentStack canvas neutrals, adapted to a compact native-browser surface. */
+/* Stack canvas neutrals, adapted to a compact native-browser surface. */
 :root {
   color-scheme: light dark;
   --background: #fff;

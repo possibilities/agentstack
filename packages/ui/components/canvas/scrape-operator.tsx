@@ -24,7 +24,7 @@ function unavailable(endpoints: Record<string, string>, status: Record<string, s
 }
 
 /**
- * Official and AgentStack-local presets, grouped by the host each claims. A claimed host fails
+ * Official and Stack-local presets, grouped by the host each claims. A claimed host fails
  * closed for URLs no pattern matches; `*` presets run only when chosen explicitly.
  */
 export function PresetsWindow() {
@@ -323,7 +323,7 @@ export function QueueWindow() {
               onChange={(event) => { setDraft({ ...draft, url: event.target.value }); setSubmitError(null); }} className="h-7 font-mono text-[0.74rem]" />
           </label>
           <label className="flex flex-col gap-1">
-            <span className={fieldLabel}>Destination file on the AgentStack machine</span>
+            <span className={fieldLabel}>Destination file on the Stack machine</span>
             <Input value={draft.destination} disabled={submitting} placeholder="~/notes/page.md" spellCheck={false} autoComplete="off"
               onChange={(event) => { setDraft({ ...draft, destination: event.target.value }); setSubmitError(null); }} className="h-7 font-mono text-[0.74rem]" />
             <span className="px-0.5 text-[0.64rem] text-muted-foreground">Processing overwrites this file. This is not Brain admission.</span>

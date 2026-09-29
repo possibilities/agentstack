@@ -63,8 +63,8 @@ The integrated reader continues to consume the authoritative `docs_snapshot`.
 `docs_list` and `docs_get` remain available. There is no copied documentation
 source or replacement Markdown rendering.
 
-Remove `@agentstack/docs`, its owner-managed listener, `agentstack docs`,
-`agentstack-docs`, `AGENTSTACK_DOCS_PORT`, `owner_status.docsUrl`, and the reference
+Remove `@stack/docs`, its owner-managed listener, `stack docs`,
+`stack-docs`, `STACK_DOCS_PORT`, `owner_status.docsUrl`, and the reference
 startup URL output. Old docs-origin HTML, Markdown, revision and asset URLs are
 retired without aliases. The UI entry `/` redirects to `/x` (Fleet), with no
 separate index page. (Amended 2026-09-26: System's only surface link is MCP

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { egressPolicy, publicEgress, EgressRefused, type EgressPolicy } from "@agentstack/scrape/network";
+import { egressPolicy, publicEgress, EgressRefused, type EgressPolicy } from "@stack/scrape/network";
 import type { ResearchStore } from "./store.js";
 
 export const grantScope = z.discriminatedUnion("kind", [

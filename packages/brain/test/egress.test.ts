@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
-import { currentEgress, EgressRefused } from "@agentstack/scrape/network";
+import { currentEgress, EgressRefused } from "@stack/scrape/network";
 import { ResearchEgress } from "../src/egress.js";
 import { ResearchStore } from "../src/store.js";
 import { ResearchCache } from "../src/db.js";
@@ -23,7 +23,7 @@ function fixture(t: import("node:test").TestContext) {
 
 test("grants are operator-only socket policy; ordinary shares cannot request private authority", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "as-egress-api-"));
-  const ctx = await createBrainContext({ HOME: root, AGENTSTACK_STATE_DIR: root, AGENTSTACK_BRAIN_SHARE_PORT: "0" }, { pollMs: 60_000 });
+  const ctx = await createBrainContext({ HOME: root, STACK_STATE_DIR: root, STACK_BRAIN_SHARE_PORT: "0" }, { pollMs: 60_000 });
   t.after(async () => { await closeBrainContext(ctx); rmSync(root, { recursive: true, force: true }); });
   const job = ctx.store.enqueueJob({ idempotencyKey: "private", kind: "url", intent: intent("http://10.0.0.1/doc.md") }).job;
   const create = api.operations.find((op) => op.name === "egress_grant_create")!;

@@ -40,7 +40,7 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
       expiresAt = Date.now() + 8 * 60 * 60_000;
     } else {
       if (request.headers.authorization || !request.headers.origin || typeof header !== "string") throw new LocalAuthError();
-      const match = /^agentstack-local\.([A-Za-z0-9_-]{43})$/.exec(header);
+      const match = /^stack-local\.([A-Za-z0-9_-]{43})$/.exec(header);
       if (!match) throw new LocalAuthError();
       const session = auth.consumeTicket(match[1]!, request.headers.origin);
       check = () => { auth.sessionDigest(session.digest, session.origin); };
@@ -249,8 +249,8 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
 
 function originAllowed(header: string | undefined, env: NodeJS.ProcessEnv): boolean {
   if (header === undefined) return true;
-  if (env.AGENTSTACK_WEBSOCKET_ORIGIN) return header === env.AGENTSTACK_WEBSOCKET_ORIGIN;
-  const port = env.AGENTSTACK_UI_PORT ?? "8745";
+  if (env.STACK_WEBSOCKET_ORIGIN) return header === env.STACK_WEBSOCKET_ORIGIN;
+  const port = env.STACK_UI_PORT ?? "8745";
   return [`http://127.0.0.1:${port}`, `http://localhost:${port}`].includes(header);
 }
 

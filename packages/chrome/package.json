@@ -1,5 +1,5 @@
 {
-  "name": "@agentstack/chrome",
+  "name": "@stack/chrome",
   "version": "0.1.0",
   "private": true,
   "type": "module",

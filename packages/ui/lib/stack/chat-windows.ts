@@ -7,7 +7,7 @@ export type ChatWindow = { id: string; botId: string | null };
 export type ChatWindows = readonly ChatWindow[];
 
 export const primaryChat = "chat";
-const storageKey = "agentstack.uix.chats.v1";
+const storageKey = "stack.uix.chats.v1";
 
 type Listener = () => void;
 

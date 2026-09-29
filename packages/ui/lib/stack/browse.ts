@@ -83,7 +83,7 @@ export type HandoffArgs = { id: string; expectedRevision: number; requestId: str
 /** One intended take or finish, with the exact arguments an identical retry must resend. */
 export type HandoffIntent = { kind: "take" | "finish"; args: HandoffArgs };
 
-const intentKey = (handoffId: string) => `agentstack.uix.browse.intent.${handoffId}`;
+const intentKey = (handoffId: string) => `stack.uix.browse.intent.${handoffId}`;
 
 export function loadIntent(storage: Pick<Storage, "getItem"> | null, handoffId: string): HandoffIntent | null {
   try {

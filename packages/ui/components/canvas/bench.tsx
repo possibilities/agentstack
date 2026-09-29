@@ -43,7 +43,7 @@ type Gesture =
   | { id: string; kind: "resize"; width?: number; height?: number; fit: number | null; grooved: boolean; free: boolean };
 
 export type BenchControls = { space: SpaceId; fit(): void; tidy(): void; goToNode(ref: NodeRef): void; zoom(factor: number): void };
-const legacyStorageKey = "agentstack.uix.bench.v1";
+const legacyStorageKey = "stack.uix.bench.v1";
 
 export function Bench({ space, blocked, onControls, onScale, onArrive }: {
   space: SpaceId; blocked: boolean; onControls(controls: BenchControls | null): void; onScale(scale: number): void; onArrive(ref: NodeRef): void;
@@ -53,7 +53,7 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
   const { windows: workers } = useWorkerWindows();
   const { windows: viewers } = useViewerWindows();
   const { windows: procRuns } = useProcWindows();
-  const storageKey = `agentstack.uix.bench.v2.${space}`;
+  const storageKey = `stack.uix.bench.v2.${space}`;
   const regions = spaces.filter((s) => s.id === space).map((s) => ({ ...s, defs: spaceViews[s.id].windows(state, { chats, workers, viewers, procRuns }) }));
   const signature = JSON.stringify(regions.map((s) => ({ id: s.id, defs: s.defs.map(({ id, width, height, column, fixed }) => ({ id, width, height, column, fixed })) })));
   // Content refreshes cannot affect footprint or layout. Only registration geometry can.
@@ -365,7 +365,7 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
           const start = camera;
           drag(event, (x, y) => setCamera({ ...start, x: start.x + x, y: start.y + y }));
         }}>
-        <h1 className="sr-only">AgentStack open bench</h1>
+        <h1 className="sr-only">Stack open bench</h1>
         <p id={`bench-gestures-${space}`} className="sr-only">Drag empty space, scroll, or use arrow keys to pan. Pinch or use plus and minus to zoom. Drag a window edge to resize it; windows snap to the dot grid unless Option is held. F fits the bench; T resets window positions. Select a card name to inspect it. Command K opens navigation.</p>
         <div ref={setWorld} className={cn("absolute top-0 left-0 origin-top-left", !ready && "invisible", animating && "transition-transform duration-300 ease-out motion-reduce:transition-none", dragging && "select-none")}
           style={{ transform: `translate3d(${camera.x}px,${camera.y}px,0) scale(${camera.k})` }}>

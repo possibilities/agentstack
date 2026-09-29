@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { operation, type PackageApi } from "@agentstack/api";
+import { operation, type PackageApi } from "@stack/api";
 import { ArchiveStore, archivePath, type Filters } from "./src/store.js";
 import { ArchiveSync, cliProvider } from "./src/sync.js";
 
@@ -131,10 +131,10 @@ export const api: PackageApi<XcomContext> = {
   ],
   async createContext(env) {
     const store = new ArchiveStore(archivePath(env));
-    const setting = env.AGENTSTACK_XCOM_AUTO_SYNC ?? "0";
-    if (setting !== "0" && setting !== "1") { store.close(); throw new Error("AGENTSTACK_XCOM_AUTO_SYNC must be 0 or 1"); }
+    const setting = env.STACK_XCOM_AUTO_SYNC ?? "0";
+    if (setting !== "0" && setting !== "1") { store.close(); throw new Error("STACK_XCOM_AUTO_SYNC must be 0 or 1"); }
     const autoSync = setting === "1";
-    const sync = new ArchiveSync(store, cliProvider(env.AGENTSTACK_XCOM_TWITTER ?? "twitter"), { auto: autoSync });
+    const sync = new ArchiveSync(store, cliProvider(env.STACK_XCOM_TWITTER ?? "twitter"), { auto: autoSync });
     return { store, sync, autoSync };
   },
   prepareCloseContext(ctx) { ctx.sync.controller.abort(); },

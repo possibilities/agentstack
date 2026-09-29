@@ -1,6 +1,6 @@
 # Proc: local schedules and processes
 
-Proc is a server-supervised Package API. Its full operations and events are available over the local socket, Bot MCP, and loopback WebSocket, with operation-level ownership checks. Worker-bound calls have no Proc ownership contract and are refused. Proc runs as the server user, **not** in a sandbox; schedules and process launches are intentional execution authority, even when admitted by an agent. It has no HTTP device route or dedicated UI controls. Its SQLite ledger lives in `<AGENTSTACK_STATE_DIR>/proc/proc.sqlite`. Only Proc's own older schema is migrated; no external process or scheduler state is imported.
+Proc is a server-supervised Package API. Its full operations and events are available over the local socket, Bot MCP, and loopback WebSocket, with operation-level ownership checks. Worker-bound calls have no Proc ownership contract and are refused. Proc runs as the server user, **not** in a sandbox; schedules and process launches are intentional execution authority, even when admitted by an agent. It has no HTTP device route or dedicated UI controls. Its SQLite ledger lives in `<STACK_STATE_DIR>/proc/proc.sqlite`. Only Proc's own older schema is migrated; no external process or scheduler state is imported.
 
 ## Schedules
 

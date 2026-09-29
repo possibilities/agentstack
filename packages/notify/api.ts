@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { operation, stateDir, type PackageApi } from "@agentstack/api";
+import { operation, stateDir, type PackageApi } from "@stack/api";
 import { content, notification, page } from "./src/schema.js";
 import { NotificationStore } from "./src/store.js";
 

@@ -9,7 +9,7 @@ import { AuthStore } from "../src/store.js";
 import { accountEnvironment, accountRoot, credentialEvidence, loginCommand, prepareAccountProfile } from "../src/worker-accounts.js";
 
 test("two native account profiles keep sign-ins and configuration separate", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-worker-accounts-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-worker-accounts-"));
   const store = new AuthStore(dir);
   try {
     const a = store.prepareWorker("grok");

@@ -7,8 +7,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { z } from "zod";
 import type { Options, PermissionResult, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { operation, parseWorkerMcpIdentity, serveSocket, socketPath } from "@agentstack/api";
-import { type RoleSnapshot } from "@agentstack/roles";
+import { operation, parseWorkerMcpIdentity, serveSocket, socketPath } from "@stack/api";
+import { type RoleSnapshot } from "@stack/roles";
 import { ClaudeBackend, type ClaudeQuery, type ClaudeQueryFactory } from "../src/claude.js";
 import { WorkerManager } from "../src/manager.js";
 import { WorkerSupervisor } from "../src/supervisor.js";
@@ -122,7 +122,7 @@ test("Claude SDK workers preserve account/session continuity, exact permission a
   await git(repo, ["config", "user.email", "fixture@example.invalid"]);
   await writeFile(join(repo, "file.txt"), "fixture"); await git(repo, ["add", "."]); await git(repo, ["commit", "-m", "fixture"]);
   const accounts = [randomUUID(), randomUUID()].map((id) => ({ id, provider: "claude" as const, ready: true, enabled: true, removing: false }));
-  const env = { PATH: process.env.PATH, HOME: root, AGENTSTACK_STATE_DIR: root, ANTHROPIC_API_KEY: "ambient-secret",
+  const env = { PATH: process.env.PATH, HOME: root, STACK_STATE_DIR: root, ANTHROPIC_API_KEY: "ambient-secret",
     CLAUDE_CODE_OAUTH_TOKEN: "ambient-token", CLAUDE_CODE_RESUME_INTERRUPTED_TURN: "1" };
   const socket = async (name: string, operationName: string, value: unknown) => serveSocket({
     info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {},
@@ -236,7 +236,7 @@ test("Claude SDK workers preserve account/session continuity, exact permission a
 });
 
 test("native Claude SDK no-turn catalog in a credential-free disposable profile", {
-  skip: process.env.AGENTSTACK_NATIVE_CLAUDE_PROBE !== "1", timeout: 30_000,
+  skip: process.env.STACK_NATIVE_CLAUDE_PROBE !== "1", timeout: 30_000,
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), "as-claude-no-turn-"));
   const config = join(root, "config"); await mkdir(config);

@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 test("directory traversal streams, skips sensitive components, and reports hard truncation", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "agentstack-brain-directory-"));
+  const dir = mkdtempSync(join(tmpdir(), "stack-brain-directory-"));
   dirs.push(dir);
   const root = join(dir, "root");
   mkdirSync(root);
@@ -51,7 +51,7 @@ test("directory traversal streams, skips sensitive components, and reports hard 
 });
 
 test("selected directory root rejects sensitive resolved path components", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "agentstack-brain-directory-root-"));
+  const dir = mkdtempSync(join(tmpdir(), "stack-brain-directory-root-"));
   dirs.push(dir);
   const sensitiveParent = join(dir, ".ssh");
   const root = join(sensitiveParent, "research");
@@ -73,7 +73,7 @@ test("selected directory root rejects sensitive resolved path components", async
 });
 
 test("max-files reports truncation only when another candidate exists", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "agentstack-brain-directory-max-"));
+  const dir = mkdtempSync(join(tmpdir(), "stack-brain-directory-max-"));
   dirs.push(dir);
   const root = join(dir, "root");
   mkdirSync(root);

@@ -1,6 +1,6 @@
 import { admitSubmission } from "./admission.js";
 import type { Server } from "node:http";
-import { operation, serveHttp } from "@agentstack/api";
+import { operation, serveHttp } from "@stack/api";
 import { z } from "zod";
 import { ArtifactStore } from "./artifacts.js";
 import { CliError } from "./errors.js";

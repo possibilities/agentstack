@@ -10,7 +10,7 @@ import { StateStore, type StoredServer } from "../src/store.js";
 const auth = (stamp: string, token: string) => JSON.stringify({ last_refresh: stamp, tokens: { refresh_token: token, access_token: "access", id_token: "fixture.jwt.signature", account_id: "one" } });
 
 test("watcher imports a completed refresh and recovery catches one missed while offline", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-runtime-watch-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-runtime-watch-"));
   const store = new StateStore(root);
   const monitor = new RuntimeAuth(store);
   try {
@@ -42,7 +42,7 @@ test("watcher imports a completed refresh and recovery catches one missed while 
 });
 
 test("a superseded runtime is retained for diagnosis without blocking the next generation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-runtime-superseded-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-runtime-superseded-"));
   const store = new StateStore(root);
   const monitor = new RuntimeAuth(store);
   try {

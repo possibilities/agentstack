@@ -23,7 +23,7 @@ export class ClaudeCredentialError extends Error {
 
 export function claudeRuntimePath(env: NodeJS.ProcessEnv = process.env): string {
   const home = env.HOME ?? homedir();
-  const configured = env.AGENTSTACK_CLAUDE_BIN;
+  const configured = env.STACK_CLAUDE_BIN;
   return configured ? isAbsolute(configured) ? configured : resolve(home, configured.replace(/^~\//, "")) : join(home, ".local", "bin", "claude");
 }
 
@@ -94,7 +94,7 @@ async function ownedProfile(stateDir: string, id: string): Promise<string> {
   const root = claudeConfigRoot(stateDir, id);
   for (const path of [resolve(stateDir), resolve(stateDir, "worker-accounts"), resolve(stateDir, "worker-accounts", id), root])
     await privateDirectory(path);
-  const marker = await privateJson(join(root, ".agentstack-profile.json"));
+  const marker = await privateJson(join(root, ".stack-profile.json"));
   if (marker?.version !== 1 || marker.service !== claudeKeychainService(root)) throw new ClaudeCredentialError("credentials_unsafe");
   return root;
 }
@@ -124,7 +124,7 @@ export async function prepareClaudeProfile(stateDir: string, id: string, options
   for (const path of [resolve(stateDir), resolve(stateDir, "worker-accounts"), resolve(stateDir, "worker-accounts", id), root])
     await privateDirectory(path);
   if (onMac(options)) await linkUserKeychains(resolve(stateDir, "worker-accounts", id));
-  const marker = await privateJson(join(root, ".agentstack-profile.json"), true);
+  const marker = await privateJson(join(root, ".stack-profile.json"), true);
   if (marker) { await ownedProfile(stateDir, id); return; }
   // A fresh profile must not claim an existing native store or an 8-digit service-hash collision.
   if (await privateJson(join(root, ".credentials.json"), true) || await privateJson(join(root, ".claude.json"), true))
@@ -133,7 +133,7 @@ export async function prepareClaudeProfile(stateDir: string, id: string, options
     const prior = await (options.security ?? security)(["find-generic-password", "-s", claudeKeychainService(root)]);
     if (prior.code !== 44) throw new ClaudeCredentialError(prior.code === 0 ? "keychain_conflict" : "keychain_unavailable");
   }
-  await writeFile(join(root, ".agentstack-profile.json"), JSON.stringify({ version: 1, service: claudeKeychainService(root) }), { mode: 0o600, flag: "wx" });
+  await writeFile(join(root, ".stack-profile.json"), JSON.stringify({ version: 1, service: claudeKeychainService(root) }), { mode: 0o600, flag: "wx" });
 }
 
 export async function readClaudeCredentials(stateDir: string, id: string, options: ClaudeCredentialOptions = {}): Promise<{
@@ -164,7 +164,7 @@ export async function readClaudeCredentials(stateDir: string, id: string, option
 /** Only the exact service reserved by this profile may be deleted. A failure leaves removal retryable. */
 export async function removeClaudeCredentials(stateDir: string, id: string, options: ClaudeCredentialOptions = {}): Promise<void> {
   const root = claudeConfigRoot(stateDir, id);
-  const marker = await privateJson(join(root, ".agentstack-profile.json"), true);
+  const marker = await privateJson(join(root, ".stack-profile.json"), true);
   if (!marker) return; // Preparation failed before a service was claimed; no native login could start.
   await ownedProfile(stateDir, id);
   if (!onMac(options)) return;

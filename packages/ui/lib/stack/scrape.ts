@@ -2,7 +2,7 @@ import type { ScrapeCanaryStatus, ScrapeFailureClass, ScrapePreset, ScrapeQueueJ
 
 /**
  * Remote Access sessions receive only Scrape's read-only operations: fetching, canaries and the
- * queue reach the network or write files on the AgentStack machine, so they stay on the local UI.
+ * queue reach the network or write files on the Stack machine, so they stay on the local UI.
  */
 export function scrapeLocalReason(remote: unknown): string | null {
   return remote ? "Available only on the local UI" : null;

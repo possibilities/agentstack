@@ -1,8 +1,8 @@
 import { access, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
-import { socketCall, socketPath, workerMcpUrl } from "@agentstack/api";
-import { mcpRecord, type RoleSnapshot } from "@agentstack/roles";
+import { socketCall, socketPath, workerMcpUrl } from "@stack/api";
+import { mcpRecord, type RoleSnapshot } from "@stack/roles";
 
 export type AcpMcp = { name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> } |
   { type: "http"; name: string; url: string; headers: Array<{ name: string; value: string }> };

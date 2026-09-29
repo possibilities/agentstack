@@ -21,7 +21,7 @@ Initial Worker selections:
 
 Worker record handlers independently verify the exact Worker ID, durable runtime instance, currently connected account runtime and live Worker phase. The inventory is filtered to that one Worker. Reads do not grant lifecycle/mutation authority; the existing Bot/operator ownership path remains separate. Historical inspection by operators remains available. Shared Brain/Content/Role reads deliberately have shared rather than per-Worker ownership; user-authored content can contain sensitive text and must be treated accordingly.
 
-Discovery publishes each transport's effective `workerOperations` (`[]` outside MCP). UIX validates MCP discovery metadata and its existing API reference displays the selection, separate from read-only badges. It adds no policy editor or new workbench. Worker launch still passes configured Role MCP servers through as before; this policy governs AgentStack Package APIs, not third-party MCP servers, OS tools or unrestricted same-user filesystem/socket access.
+Discovery publishes each transport's effective `workerOperations` (`[]` outside MCP). UIX validates MCP discovery metadata and its existing API reference displays the selection, separate from read-only badges. It adds no policy editor or new workbench. Worker launch still passes configured Role MCP servers through as before; this policy governs Stack Package APIs, not third-party MCP servers, OS tools or unrestricted same-user filesystem/socket access.
 
 ## Migration and verification
 

@@ -84,10 +84,10 @@ class Connection {
       if (target.protocol === "ws:" && ["127.0.0.1", "localhost", "[::1]"].includes(target.hostname)) {
         const response = await fetch("/connect/local/ticket", { method: "POST", credentials: "same-origin", cache: "no-store",
           headers: { "content-type": "application/json" }, body: "{}" });
-        if (!response.ok) throw new Error("Local session expired. Run agentstack open to reconnect.");
+        if (!response.ok) throw new Error("Local session expired. Run stack open to reconnect.");
         const { ticket } = await response.json() as { ticket: string };
         if (!/^[A-Za-z0-9_-]{43}$/.test(ticket)) throw new Error("Invalid WebSocket ticket");
-        protocols = [`agentstack-local.${ticket}`];
+        protocols = [`stack-local.${ticket}`];
       }
     } catch (error) {
       if (generation === this.generation && this.channels.size) {

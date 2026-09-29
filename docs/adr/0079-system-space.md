@@ -13,7 +13,7 @@ Accounts and Lab; the four spaces pack as a square. Everything the left System
 dock showed is now windows there, joined by new windows for the owner resource
 observations of ADR 0054: **Owner** (status, runtime vitals, URLs, children),
 **Packages** (channels, MCP endpoints, subscription health), **Resources**
-(freshness, AgentStack totals, per-scope charts and breakdown), **Host**
+(freshness, Stack totals, per-scope charts and breakdown), **Host**
 (machine identity, memory, load), **Processes** (the observed process tree)
 and **Sampling** (attempts, coverage, retention, capabilities), plus
 **Activity** (the dock's notice list). The `resource` and `process` node kinds

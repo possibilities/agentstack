@@ -1,47 +1,47 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">AgentStack</string>
-    <string name="share_target_label">AgentStack</string>
+    <string name="app_name">Stack</string>
+    <string name="share_target_label">Stack</string>
 
     <string name="server_url_label">Server URL</string>
     <string name="token_label">Share token</string>
     <string name="save">Save</string>
     <string name="test">Test connection</string>
     <string name="share_heading">Share to Brain</string>
-    <string name="setup_hint">Use the AgentStack address reachable from this device and the token from its Brain share listener. Loopback (127.0.0.1) refers to this device, not your computer.</string>
+    <string name="setup_hint">Use the Stack address reachable from this device and the token from its Brain share listener. Loopback (127.0.0.1) refers to this device, not your computer.</string>
 
     <string name="saved">Saved.</string>
     <string name="settings_not_saved">Settings could not be saved. Try again.</string>
     <string name="testing">Testing…</string>
-    <string name="connected">Connected. AgentStack is ready to receive shares.</string>
+    <string name="connected">Connected. Stack is ready to receive shares.</string>
     <string name="bad_server_url">Enter an HTTPS server origin without a path, credentials, query, or fragment.</string>
     <string name="missing_token">Enter the share token.</string>
 
-    <string name="sending">Sending to AgentStack…</string>
-    <string name="not_configured">Set the AgentStack server URL and token first.</string>
+    <string name="sending">Sending to Stack…</string>
+    <string name="not_configured">Set the Stack server URL and token first.</string>
     <string name="nothing_to_share">Nothing shareable was received.</string>
     <string name="queued">Admitted to Brain (job %1$d). Indexing is pending.</string>
     <string name="duplicate">Already admitted (job %1$d).</string>
     <string name="indexed">Already indexed in Brain (document %1$d).</string>
-    <string name="rejected">AgentStack rejected it: %1$s</string>
-    <string name="unreachable">Could not reach AgentStack. Is the tailnet up?</string>
+    <string name="rejected">Stack rejected it: %1$s</string>
+    <string name="unreachable">Could not reach Stack. Is the tailnet up?</string>
 
     <!--
-      Held is deliberately not "saved": nothing exists in AgentStack until the
+      Held is deliberately not "saved": nothing exists in Stack until the
       ingress admits the share, so the wording must not imply a job exists.
     -->
-    <string name="held">Could not reach AgentStack. Held to send later (waiting: %1$d).</string>
+    <string name="held">Could not reach Stack. Held to send later (waiting: %1$d).</string>
     <string name="held_detail">%1$s Held to send later (waiting: %2$d).</string>
     <string name="held_unconfigured">Held until the server URL and token are set (waiting: %1$d).</string>
 
     <string name="recent_heading">Recent links</string>
     <string name="recent_link">Recent link</string>
-    <string name="recent_hint">The newest 20 links stay on this device. Removing one clears its local reminder only; it does not delete anything from AgentStack or cancel delivery.</string>
+    <string name="recent_hint">The newest 20 links stay on this device. Removing one clears its local reminder only; it does not delete anything from Stack or cancel delivery.</string>
     <string name="recent_notifications_on">Notifications are on. Each shared link stays available with Open and Remove actions.</string>
     <string name="recent_notifications_off">Notifications are off. Recent links are still kept here.</string>
     <string name="recent_enable_notifications">Enable notifications</string>
     <string name="recent_notification_channel">Recent links</string>
-    <string name="recent_notification_channel_description">Ongoing reminders for links shared with AgentStack</string>
+    <string name="recent_notification_channel_description">Ongoing reminders for links shared with Stack</string>
     <string name="recent_open">Open</string>
     <string name="recent_remove">Remove</string>
     <string name="recent_open_named">Open %1$s</string>
@@ -68,8 +68,8 @@
     <string name="outbox_dropped_expired">Abandoned after 7 days: %1$s</string>
     <string name="outbox_dropped_overflow">Dropped because the outbox was full: %1$s</string>
     <string name="outbox_dropped_discarded">Discarded on this device: %1$s</string>
-    <string name="outbox_dropped_rejected">Rejected by AgentStack: %1$s</string>
+    <string name="outbox_dropped_rejected">Rejected by Stack: %1$s</string>
     <string name="outbox_unreadable">The outbox cannot be read. Delivery is paused and its file is unchanged. Back up and repair the app-private file %1$s with developer assistance, then reopen Settings and choose Send now. Do not clear app storage to fix this.</string>
-    <string name="outbox_share_not_held">This share was not sent or held. Open AgentStack Settings to resolve the outbox problem, then share it again.</string>
+    <string name="outbox_share_not_held">This share was not sent or held. Open Stack Settings to resolve the outbox problem, then share it again.</string>
     <string name="outbox_delivery_unconfirmed">This share has no confirmed admission.</string>
 </resources>

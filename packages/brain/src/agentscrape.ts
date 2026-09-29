@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { fetchMarkdown as scrapeFetchMarkdown, fetchLinks as scrapeFetchLinks, structuredJson, AgentscrapeNetworkPolicyError } from "@agentstack/scrape/engine";
-import { discoverFeed, discoverFeedLive } from "@agentstack/scrape/feed";
-import { currentEgress, publicEgress, withEgressPolicy, EgressRefused } from "@agentstack/scrape/network";
+import { fetchMarkdown as scrapeFetchMarkdown, fetchLinks as scrapeFetchLinks, structuredJson, AgentscrapeNetworkPolicyError } from "@stack/scrape/engine";
+import { discoverFeed, discoverFeedLive } from "@stack/scrape/feed";
+import { currentEgress, publicEgress, withEgressPolicy, EgressRefused } from "@stack/scrape/network";
 import { brainEnvironment } from "./paths.js";
 import { sanitizeExternalError } from "./sanitize.js";
 import { codePointLength } from "./text.js";
@@ -347,7 +347,7 @@ function retrySettings(options: AgentscrapeRetryOptions | undefined): {
   const initialDelayMs = nonnegativeInteger(
     options?.initialDelayMs ??
       envDelay(
-        "AGENTSTACK_BRAIN_AGENTSCRAPE_RETRY_INITIAL_MS",
+        "STACK_BRAIN_AGENTSCRAPE_RETRY_INITIAL_MS",
         AGENTSCRAPE_RETRY_INITIAL_MS,
       ),
     "retry initial delay",
@@ -355,7 +355,7 @@ function retrySettings(options: AgentscrapeRetryOptions | undefined): {
   );
   const maxDelayMs = nonnegativeInteger(
     options?.maxDelayMs ??
-      envDelay("AGENTSTACK_BRAIN_AGENTSCRAPE_RETRY_MAX_MS", AGENTSCRAPE_RETRY_MAX_MS),
+      envDelay("STACK_BRAIN_AGENTSCRAPE_RETRY_MAX_MS", AGENTSCRAPE_RETRY_MAX_MS),
     "retry max delay",
     AGENTSCRAPE_RETRY_CONFIG_MAX_MS,
   );
@@ -459,7 +459,7 @@ export async function scrapeWithAgentscrape(
       );
       if (delayMs !== lastDiagnosticDelay) {
         const diagnostic =
-          `AgentStack Brain: Agentscrape unavailable; retrying provider command ` +
+          `Stack Brain: Agentscrape unavailable; retrying provider command ` +
           `(attempt ${attempt + 1}, delay ${delayMs}ms)\n`;
         try {
           retry.writeDiagnostic(diagnostic);

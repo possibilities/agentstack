@@ -6,8 +6,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { operation, parseWorkerMcpIdentity, serveApi, serveSocket, socketCall, socketPath } from "@agentstack/api";
-import { type RoleSnapshot } from "@agentstack/roles";
+import { operation, parseWorkerMcpIdentity, serveApi, serveSocket, socketCall, socketPath } from "@stack/api";
+import { type RoleSnapshot } from "@stack/roles";
 import { WorkerSupervisor } from "../src/supervisor.js";
 import { WorkerManager } from "../src/manager.js";
 import { claimWorktree, removeWorktree } from "../src/worktree.js";
@@ -38,7 +38,7 @@ async function repoFixture(root: string): Promise<string> {
 }
 
 test("worker Role resources are private and ignored in only the owned worktree", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-worker-tree-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-worker-tree-"));
   try {
     const repo = await repoFixture(root);
     const id = randomUUID();
@@ -55,8 +55,8 @@ test("worker Role resources are private and ignored in only the owned worktree",
     assert.equal(await run(repo, ["rev-parse", "--verify", claimed.branch]), claimed.baseCommit);
     const interruptedId = randomUUID();
     const orphan = join(root, "workers", "worktrees", interruptedId);
-    await run(repo, ["worktree", "add", "-b", `agentstack-worker-${interruptedId}`, orphan, "HEAD"]);
-    await removeWorktree({ repo, cwd: orphan, branch: `agentstack-worker-${interruptedId}` }, interruptedId);
+    await run(repo, ["worktree", "add", "-b", `stack-worker-${interruptedId}`, orphan, "HEAD"]);
+    await removeWorktree({ repo, cwd: orphan, branch: `stack-worker-${interruptedId}` }, interruptedId);
     await assert.rejects(stat(orphan), /ENOENT/);
     await mkdir(join(repo, ".devin"));
     await writeFile(join(repo, ".devin", "config.json"), "{}");
@@ -140,12 +140,12 @@ process.stdin.on('data', (chunk) => {
 });`;
 
 test("durable ACP workers dispatch, follow up, answer permissions, and load after server restart", { timeout: 30_000 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-worker-execution-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-worker-execution-"));
   const repo = await repoFixture(root);
   const binary = join(root, "acp-fixture");
   await writeFile(binary, acpFixture);
   await chmod(binary, 0o700);
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: root, AGENTSTACK_OPENCODE_BIN: binary };
+  const env = { ...process.env, STACK_STATE_DIR: root, STACK_OPENCODE_BIN: binary };
   const auth = await serveApi({ name: "auth", transport: "socket", env });
   const roles = await serveSocket({ info: { name: "roles", description: "Roles", transportDescription: "Socket", path: socketPath("roles", env) },
     context: {}, operations: [operation({ name: "role_launch_snapshot", description: "Role", input: z.object({}), output: z.any(),

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { operation, type PackageApi } from "@agentstack/api";
+import { operation, type PackageApi } from "@stack/api";
 import { convertHtml, fetchLinks, fetchMarkdown, submitScrapeJob, closeBrowserSession, structuredJson } from "./src/api.js";
 import { runAgentBrowser, requireAgentBrowserSuccess, findAgentBrowserExecutable } from "./src/browser.js";
 import { canaryInventory, checkPresets } from "./src/canary.js";
@@ -113,7 +113,7 @@ export const api: PackageApi<Context, "scrape_queue_changed"> = {
     operation({ name: "scrape_convert_html_directory", description: "Recursively convert a local directory in place using transactional file replacement. Mutates operator-selected files.",
       input: z.strictObject({ path: z.string().min(1) }), output: z.strictObject({ converted: z.number().int().nonnegative() }),
       async call(ctx, { path }) { active(ctx); return { converted: convertHtmlDirectory(path) }; } }),
-    operation({ name: "scrape_presets_list", description: "List official and isolated AgentStack-local extraction presets, including claimed domains and modes.", input: z.strictObject({}), output: z.strictObject({ presets: z.array(presetRecord) }), annotations: read,
+    operation({ name: "scrape_presets_list", description: "List official and isolated Stack-local extraction presets, including claimed domains and modes.", input: z.strictObject({}), output: z.strictObject({ presets: z.array(presetRecord) }), annotations: read,
       async call(ctx) { active(ctx); return { presets: loadRegistry().presets }; } }),
     operation({ name: "scrape_preset_show", description: "Inspect one preset's selectors, URL patterns, and output contract.", input: z.strictObject({ name: preset }), output: z.strictObject({ preset: presetRecord.nullable() }), annotations: read,
       async call(ctx, { name }) { active(ctx); return { preset: loadRegistry().byName(name) }; } }),
@@ -123,17 +123,17 @@ export const api: PackageApi<Context, "scrape_queue_changed"> = {
     operation({ name: "scrape_preset_validate", description: "Validate an operator-supplied local preset file against the exact preset schema.",
       input: z.strictObject({ path: z.string().min(1) }), output: z.strictObject({ problems: z.array(z.string()) }), annotations: read,
       async call(ctx, { path }) { active(ctx); return { problems: validatePresetFile(path) }; } }),
-    operation({ name: "scrape_corpus_replay", description: "Replay all shipped and AgentStack-local captured preset fixtures offline; failures name the broken preset.",
+    operation({ name: "scrape_corpus_replay", description: "Replay all shipped and Stack-local captured preset fixtures offline; failures name the broken preset.",
       input: z.strictObject({ preset: preset.optional() }), output: z.strictObject({ passed: z.number().int(), failed: z.number().int(), lines: z.array(z.string()) }), annotations: read,
       async call(ctx, { preset }) { active(ctx); return testCorpus(preset); } }),
-    operation({ name: "scrape_corpus_capture", description: "Capture sensitive provider evidence for one content preset under isolated AgentStack state. Requires explicit browser egress consent; never auto-sanitizes captured raw HTML.",
+    operation({ name: "scrape_corpus_capture", description: "Capture sensitive provider evidence for one content preset under isolated Stack state. Requires explicit browser egress consent; never auto-sanitizes captured raw HTML.",
       input: z.strictObject({ url, preset: preset.optional(), expectFailure: z.string().optional(), allowPrivateNetwork: z.boolean().default(false) }), output: z.strictObject({ path: z.string() }),
       async call(ctx, input) { const path = await captureCorpus(input.url, { ...input, signal: active(ctx) }); return { path }; } }),
     operation({ name: "scrape_presets_check", description: "Run live canaries from the shipped or operator-supplied local canary file. Pass without drift proves only configured samples; not_configured is not success. Reuses but never closes an operator-selected signed-in browser session. Requires explicit browser egress consent.",
       input: z.strictObject({ presets: z.array(preset).max(32).optional(), canaryPath: z.string().min(1).optional(), session: z.string().min(1).max(128).optional(), allowPrivateNetwork: z.boolean().default(false) }),
       output: z.strictObject({ checked_at: z.string(), results: z.array(z.object({ preset: z.string(), status: z.enum(["pass", "drift", "operational_failure", "not_configured"]), detail: z.string() })) }),
       async call(ctx, input) { return checkPresets({ ...input, signal: active(ctx) }); } }),
-    operation({ name: "scrape_queue_submit", description: "Submit a standalone scrape-to-file job to AgentStack-local queue. Output destination is an operator-controlled machine path; this is not Brain admission.",
+    operation({ name: "scrape_queue_submit", description: "Submit a standalone scrape-to-file job to Stack-local queue. Output destination is an operator-controlled machine path; this is not Brain admission.",
       input: z.strictObject({ url, destination: z.string().min(1), summarize: z.boolean().optional(), frontmatter: z.record(z.string(), z.unknown()).optional(), allowPrivateNetwork: z.boolean().optional() }),
       output: z.strictObject({ path: z.string() }), async call(ctx, { url, destination, ...options }) { active(ctx); const path = submitScrapeJob(url, destination, options); ctx.changed?.(); return { path }; } }),
     operation({ name: "scrape_queue_list", description: "List scrape-to-file jobs as pending, retrying or failed without claiming, repairing or processing them. Failed records keep no failure reason, and frontmatter values are omitted. A concurrent processor can move a job between states during the scan.",

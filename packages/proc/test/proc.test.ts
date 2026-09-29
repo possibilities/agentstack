@@ -4,14 +4,14 @@ import { lstat, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { operation, serveApi, serveSocket, socketCall, socketPath, socketSubscribe } from "@agentstack/api";
+import { operation, serveApi, serveSocket, socketCall, socketPath, socketSubscribe } from "@stack/api";
 import { z } from "zod";
 import { ProcStore } from "../src/store.js";
 import { ProcService } from "../src/service.js";
 
 async function fixture(t: import("node:test").TestContext) {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-proc-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: root };
+  const root = await mkdtemp(join(tmpdir(), "stack-proc-"));
+  const env = { ...process.env, STACK_STATE_DIR: root };
   const proc = await serveApi({ name: "proc", transport: "socket", env });
   t.after(async () => { await proc.close(); await rm(root, { recursive: true, force: true }); });
   const call = (name: string, args: object = {}) => socketCall(socketPath("proc", env), "tools/call", { name, arguments: args });
@@ -156,8 +156,8 @@ test("a scheduled argv process links its execution and a live follower can run w
 });
 
 test("a lost guardian marks outcome unknown and kills its guarded process group", { skip: process.platform === "win32", timeout: 10_000 }, async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-proc-guardian-"));
-  const service = new ProcService(new ProcStore(root), { ...process.env, AGENTSTACK_STATE_DIR: root });
+  const root = await mkdtemp(join(tmpdir(), "stack-proc-guardian-"));
+  const service = new ProcService(new ProcStore(root), { ...process.env, STACK_STATE_DIR: root });
   t.after(async () => { await service.close(); await rm(root, { recursive: true, force: true }); });
   const run = service.startRun({ command: process.execPath, args: ["-e", "setInterval(()=>{},1000)"], timeoutMs: null, retainOutput: true });
   const running = await until(async () => service.store.getRun(run.id), (record) => record.state === "running");
@@ -189,7 +189,7 @@ test("long Unicode lines preserve code points and bounded output reports truncat
 });
 
 test("private store refuses a symlink and prunes only old terminal history", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-proc-state-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-proc-state-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   await symlink(root, join(root, "alias"));
   assert.throws(() => new ProcStore(join(root, "alias")), /proc_state_directory_unsafe/);
@@ -205,8 +205,8 @@ test("private store refuses a symlink and prunes only old terminal history", asy
 });
 
 test("ambiguous API dispatch is unknown and never replayed as the same one-shot", { timeout: 5_000 }, async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-proc-unknown-"));
-  const env = { ...process.env, AGENTSTACK_STATE_DIR: root };
+  const root = await mkdtemp(join(tmpdir(), "stack-proc-unknown-"));
+  const env = { ...process.env, STACK_STATE_DIR: root };
   const target = await serveSocket({ info: { name: "fixture", description: "fixture", transportDescription: "fixture", path: socketPath("fixture", env) },
     context: {}, operations: [operation({ name: "effect", description: "Potentially did work", input: z.strictObject({}),
       output: z.strictObject({ ok: z.boolean() }), async call() { return { ok: true }; } })] });

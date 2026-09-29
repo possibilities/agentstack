@@ -30,7 +30,7 @@ afterEach(() => {
 });
 
 function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "agentstack-brain-ingest-"));
+  const dir = mkdtempSync(join(tmpdir(), "stack-brain-ingest-"));
   dirs.push(dir);
   return dir;
 }

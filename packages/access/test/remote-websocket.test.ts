@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
-import { operation, serveSocket, socketPath } from "@agentstack/api";
+import { operation, serveSocket, socketPath } from "@stack/api";
 import { z } from "zod";
 import { AccessStore } from "../src/store.js";
 import { startRemoteUi } from "../src/remote-ui.js";
@@ -35,9 +35,9 @@ const call = async (ws: WebSocket, name: string) => {
 };
 
 test("TLS WebSocket intersects live exposure, refuses cross-origin, and closes immediately on grant narrowing and revocation", async () => {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-remote-ws-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-remote-ws-"));
   const store = new AccessStore(root);
-  const env = { AGENTSTACK_STATE_DIR: root };
+  const env = { STACK_STATE_DIR: root };
   const directory = join(root, "packages", "notify"); mkdirSync(directory, { recursive: true });
   writeFileSync(join(directory, "api.yaml"), "name: notify\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: [notification_counts, notification_dismiss]\n  events: [changed]\n  description: WebSocket.\n");
   let writes = 0;
@@ -58,7 +58,7 @@ test("TLS WebSocket intersects live exposure, refuses cross-origin, and closes i
   store.approve(pairing.id, pairing.code, true, ["ui:view"]);
   const credential = store.redeem(pairing.id, keyMaterial);
   const issued = store.startUi(credential.refreshToken, randomUUID());
-  const cookie = `__Host-agentstack_ui=${issued.accessToken}`;
+  const cookie = `__Host-stack_ui=${issued.accessToken}`;
   let viewer: WebSocket | undefined, controller: WebSocket | undefined;
   try {
     await assert.rejects(open(url, origin), /403/);
@@ -73,7 +73,7 @@ test("TLS WebSocket intersects live exposure, refuses cross-origin, and closes i
     store.updateGrant(store.inventory().grants[0]!.id, 1, ["ui:view", "ui:control"], []);
     await new Promise<void>(resolve => viewer!.once("close", () => resolve()));
     const next = store.startUi(issued.refreshToken, randomUUID());
-    controller = await open(url, origin, `__Host-agentstack_ui=${next.accessToken}`);
+    controller = await open(url, origin, `__Host-stack_ui=${next.accessToken}`);
     const forged = frame(controller);
     controller.send(JSON.stringify({ id: "forged", method: "tools/call", params: {
       package: "notify", name: "notification_dismiss", arguments: {}, invocation: {},
@@ -86,12 +86,12 @@ test("TLS WebSocket intersects live exposure, refuses cross-origin, and closes i
     store.updateGrant(store.inventory().grants[0]!.id, 2, ["ui:view"], []);
     await closed;
     const narrowed = store.startUi(next.refreshToken, randomUUID());
-    controller = await open(url, origin, `__Host-agentstack_ui=${narrowed.accessToken}`);
+    controller = await open(url, origin, `__Host-stack_ui=${narrowed.accessToken}`);
     assert.match((await call(controller, "notification_dismiss")).error.message, /not available/);
     const revoked = new Promise<void>(resolve => controller!.once("close", () => resolve()));
     store.revoke("credential", credential.credentialId);
     await revoked;
-    await assert.rejects(open(url, origin, `__Host-agentstack_ui=${next.accessToken}`), /403/);
+    await assert.rejects(open(url, origin, `__Host-stack_ui=${next.accessToken}`), /403/);
     online = false;
     await assert.rejects(open(url, origin, cookie), /403/);
     assert.ok(store.inventory().audit.some((item: any) => item.action === "ui_mutation"));
@@ -101,9 +101,9 @@ test("TLS WebSocket intersects live exposure, refuses cross-origin, and closes i
 });
 
 test("remote control sessions receive only Scrape's read-only operations; fetching and queue writes stay local", async () => {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-remote-scrape-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-remote-scrape-"));
   const store = new AccessStore(root);
-  const env = { AGENTSTACK_STATE_DIR: root };
+  const env = { STACK_STATE_DIR: root };
   const directory = join(root, "packages", "scrape"); mkdirSync(directory, { recursive: true });
   writeFileSync(join(directory, "api.yaml"), "name: scrape\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: [scrape_queue_list, scrape_queue_submit, scrape_fetch]\n  events: all\n  description: WebSocket.\n");
   let writes = 0;
@@ -129,7 +129,7 @@ test("remote control sessions receive only Scrape's read-only operations; fetchi
     return response;
   };
   try {
-    ws = await open(`wss://127.0.0.1:${port}/websocket`, `https://127.0.0.1:${port}`, `__Host-agentstack_ui=${issued.accessToken}`);
+    ws = await open(`wss://127.0.0.1:${port}/websocket`, `https://127.0.0.1:${port}`, `__Host-stack_ui=${issued.accessToken}`);
     assert.deepEqual((await send("tools/list", {})).result.tools.map((tool: { name: string }) => tool.name), ["scrape_queue_list"]);
     assert.equal((await send("tools/call", { name: "scrape_queue_list", arguments: {} })).result.ok, true);
     for (const name of ["scrape_queue_submit", "scrape_fetch"])
@@ -141,9 +141,9 @@ test("remote control sessions receive only Scrape's read-only operations; fetchi
 });
 
 test("remote UI cannot read arbitrary Brain share job IDs even with control scope", async () => {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-remote-brain-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-remote-brain-"));
   const store = new AccessStore(root);
-  const env = { AGENTSTACK_STATE_DIR: root };
+  const env = { STACK_STATE_DIR: root };
   const directory = join(root, "packages", "brain"); mkdirSync(directory, { recursive: true });
   writeFileSync(join(directory, "api.yaml"), "name: brain\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: [jobs_show, share_read_states]\n  events: []\n  description: WebSocket.\n");
   let shareReads = 0;
@@ -168,7 +168,7 @@ test("remote UI cannot read arbitrary Brain share job IDs even with control scop
     return response;
   };
   try {
-    ws = await open(`wss://127.0.0.1:${port}/websocket`, `https://127.0.0.1:${port}`, `__Host-agentstack_ui=${issued.accessToken}`);
+    ws = await open(`wss://127.0.0.1:${port}/websocket`, `https://127.0.0.1:${port}`, `__Host-stack_ui=${issued.accessToken}`);
     assert.deepEqual((await send("tools/list", {})).result.tools.map((tool: { name: string }) => tool.name), ["jobs_show"]);
     assert.equal((await send("tools/call", { name: "jobs_show", arguments: {} })).result.ok, true);
     assert.match((await send("tools/call", { name: "share_read_states", arguments: {} })).error.message, /not available/);
@@ -179,9 +179,9 @@ test("remote UI cannot read arbitrary Brain share job IDs even with control scop
 });
 
 test("remote UI sessions receive no Proc operations or events at all", async () => {
-  const root = mkdtempSync(join(tmpdir(), "agentstack-remote-proc-"));
+  const root = mkdtempSync(join(tmpdir(), "stack-remote-proc-"));
   const store = new AccessStore(root);
-  const env = { AGENTSTACK_STATE_DIR: root };
+  const env = { STACK_STATE_DIR: root };
   const directory = join(root, "packages", "proc"); mkdirSync(directory, { recursive: true });
   writeFileSync(join(directory, "api.yaml"), "name: proc\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: [proc_run_list, proc_run_read, proc_run_start]\n  events: [proc_runs_changed]\n  description: WebSocket.\n");
   let reads = 0;
@@ -207,7 +207,7 @@ test("remote UI sessions receive no Proc operations or events at all", async () 
     return response;
   };
   try {
-    ws = await open(`wss://127.0.0.1:${port}/websocket`, `https://127.0.0.1:${port}`, `__Host-agentstack_ui=${issued.accessToken}`);
+    ws = await open(`wss://127.0.0.1:${port}/websocket`, `https://127.0.0.1:${port}`, `__Host-stack_ui=${issued.accessToken}`);
     // Proc output and schedule input are server-local secrets; nothing crosses
     // the remote boundary even for a read-only operation or control grant.
     assert.deepEqual((await send("tools/list", {})).result.tools, []);

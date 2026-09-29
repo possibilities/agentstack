@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { request } from "node:https";
 import { randomBytes, randomUUID } from "node:crypto";
-import { serveHttp } from "@agentstack/api";
+import { serveHttp } from "@stack/api";
 import { AccessStore } from "../src/store.js";
 import { handler } from "../src/ingress.js";
 
@@ -20,10 +20,10 @@ test("actual TLS propagates kernel peers and fences scoped artifact views and do
   const peers: unknown[] = [];
   let permit = true;
   const ingress = await serveHttp({ host: "127.0.0.1", port: 0, tls, forceCloseConnections: true, handle: handler({ store,
-    env: { AGENTSTACK_CONTENT_ARTIFACT_PORT: String(backend.port) }, origin: "artifacts",
+    env: { STACK_CONTENT_ARTIFACT_PORT: String(backend.port) }, origin: "artifacts",
     verify: async peer => { peers.push(peer); if (!permit) throw new Error("tailnet unavailable"); } }) });
   const strict = await serveHttp({ host: "127.0.0.1", port: 0, tls, forceCloseConnections: true, handle: handler({ store, env: {}, origin: "documents" }) });
-  const documents = await serveHttp({ host: "127.0.0.1", port: 0, tls, forceCloseConnections: true, handle: handler({ store, env: { AGENTSTACK_CONTENT_PORT: String(backend.port) }, origin: "documents", verify: async () => {} }) });
+  const documents = await serveHttp({ host: "127.0.0.1", port: 0, tls, forceCloseConnections: true, handle: handler({ store, env: { STACK_CONTENT_PORT: String(backend.port) }, origin: "documents", verify: async () => {} }) });
   const send = (port: number, path: string, headers: Record<string, string> = {}, body?: unknown): Promise<{ status: number; headers: any; body: string }> => new Promise((resolve, reject) => {
     const req = request({ hostname: "127.0.0.1", port, path, rejectUnauthorized: false, method: body ? "POST" : "GET", headers: { ...headers, ...(body ? { "content-type": "application/json" } : {}) } }, response => {
       let text = ""; response.on("data", chunk => { text += chunk; }); response.on("end", () => resolve({ status: response.statusCode!, headers: response.headers, body: text }));

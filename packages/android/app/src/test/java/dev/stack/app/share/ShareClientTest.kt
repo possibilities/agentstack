@@ -1,4 +1,4 @@
-package dev.agentstack.app.share
+package dev.stack.app.share
 
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -31,7 +31,7 @@ class ShareClientTest {
             assertTrue(result is ShareResult.Rejected)
             assertEquals(307, result.status)
             val request = headers.get(5, java.util.concurrent.TimeUnit.SECONDS)
-            assertTrue(request.contains("X-AgentStack-Server-ID: original-server", ignoreCase = true))
+            assertTrue(request.contains("X-Stack-Server-ID: original-server", ignoreCase = true))
             assertTrue(request.contains("Authorization: Bearer scoped-token", ignoreCase = true))
         } finally { server.close(); worker.join(5000) }
     }

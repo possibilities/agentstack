@@ -6,7 +6,7 @@ Status: superseded by [ADR 0095](0095-one-dismissal-with-an-outcome.md), 2026-09
 ## Decision
 
 `notifications` is an owner-managed Package API with socket, MCP and loopback
-WebSocket transports. It persists every notification under AgentStack state,
+WebSocket transports. It persists every notification under Stack state,
 including messages a future UI may display only transiently. Sending returns a
 stable ID. Callers can update text or source by ID with a revision fence; no
 separate group/replacement key exists. An optional caller-supplied UUID makes

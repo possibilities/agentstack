@@ -28,7 +28,7 @@ test("scheduled invocation provenance crosses the socket and mismatched identiti
 });
 
 test("socket advertises and calls a typed operation", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-socket-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-socket-"));
   const path = join(dir, "demo.sock");
   const ping = operation({
     name: "ping",
@@ -73,7 +73,7 @@ test("socket advertises and calls a typed operation", async () => {
 });
 
 test("socketCall rejects malformed, incomplete, and silent responses", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-socket-peer-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-socket-peer-"));
   try {
     for (const [name, reply, pattern] of [
       ["json", "{bad}\n", /JSON/],
@@ -105,7 +105,7 @@ test("socketCall rejects malformed, incomplete, and silent responses", async () 
 });
 
 test("socket rejects null frames and waits for active calls before closing", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-socket-drain-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-socket-drain-"));
   const path = join(dir, "demo.sock");
   let entered: () => void = () => undefined;
   const started = new Promise<void>((resolve) => { entered = resolve; });

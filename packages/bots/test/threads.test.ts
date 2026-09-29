@@ -74,7 +74,7 @@ test("a parent cycle retains every thread", () => {
 });
 
 test("thread reads retain successes and notifications invalidate the watcher", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agentstack-thread-ws-"));
+  const dir = await mkdtemp(join(tmpdir(), "stack-thread-ws-"));
   const path = join(dir, "app.sock");
   const http = createServer();
   const wss = new WebSocketServer({ server: http });

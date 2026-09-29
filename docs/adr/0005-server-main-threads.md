@@ -12,13 +12,13 @@ one on their next launch.
 After reaping the previous owner's children, startup attempts to launch every
 recorded Server, including manually created Servers and Bots. One failed launch
 does not prevent the others from starting. An explicit stop stops the current
-process but retains the thread; the next AgentStack startup resumes it.
+process but retains the thread; the next Stack startup resumes it.
 Restarts use the Server's recorded Codex account rather than the active account
 selected for new Servers. A removed account blocks that Server's restart instead
 of silently continuing its thread under a different identity.
 
 Codex allocates IDs at `thread/start`, so a lost response cannot prove whether
-the call created a thread. Before asking Codex to allocate one, AgentStack
+the call created a thread. Before asking Codex to allocate one, Stack
 persists an unconfirmed-start marker. If the response or durable ID write is
 interrupted, it refuses to start another thread under that Server ID until its
 history is inspected. This sacrifices automatic recovery from an ambiguous

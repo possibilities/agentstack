@@ -2,7 +2,7 @@ import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
-import { configuredMcpPackages, mcpPort, operation, workspaceRoot, type PackageApi } from "@agentstack/api";
+import { configuredMcpPackages, mcpPort, operation, workspaceRoot, type PackageApi } from "@stack/api";
 import { matchingProjects, serverMcpOrigins, roleMcpConfig, roleMcpConflict } from "./src/bundle.js";
 import { RoleStore, instructionLimitBytes, renderSegments, snapshotLimitChars } from "./src/store.js";
 import { mcpDefinition, mcpRecord, projectPath, resourceName, resourceDescription, skillBody, skillFiles, skillRecord, trustedProjectRecord } from "./src/resources.js";
@@ -168,7 +168,7 @@ export const fragmentMove = operation({
 });
 
 export const skillCreate = operation({
-  name: "skill_create", description: "Add a role-owned skill. AgentStack generates SKILL.md frontmatter from the name and description; supporting files are private base64-encoded bytes. Only enabled skills enter later bot launches.",
+  name: "skill_create", description: "Add a role-owned skill. Stack generates SKILL.md frontmatter from the name and description; supporting files are private base64-encoded bytes. Only enabled skills enter later bot launches.",
   input: write.extend({ name: resourceName, description: resourceDescription.min(1), body: skillBody, files: skillFiles.optional(), enabled: z.boolean().optional() }),
   output: snapshot, annotations: { title: "Create role skill" },
   async call(ctx: RolesContext, input) { return changed(ctx, ctx.store.createSkill(input.expectedRevision, input.name, input.description, input.body, input.files, input.enabled)); },
@@ -255,8 +255,8 @@ export const api: PackageApi<RolesContext, keyof typeof topics> = {
   },
   async createContext(env) {
     // The server serves MCP on its configured port; Bots also report the bound one.
-    const ports = [mcpPort(env), Number(env.AGENTSTACK_SERVER_MCP_PORT)].filter((port) => Number.isInteger(port) && port > 0);
-    return { store: new RoleStore(env.AGENTSTACK_STATE_DIR ?? join(homedir(), ".local", "state", "agentstack")), mcpOrigins: ports.flatMap(serverMcpOrigins) };
+    const ports = [mcpPort(env), Number(env.STACK_SERVER_MCP_PORT)].filter((port) => Number.isInteger(port) && port > 0);
+    return { store: new RoleStore(env.STACK_STATE_DIR ?? join(homedir(), ".local", "state", "stack")), mcpOrigins: ports.flatMap(serverMcpOrigins) };
   },
   async closeContext(ctx) { ctx.store.close(); },
 };

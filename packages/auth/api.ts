@@ -1,6 +1,6 @@
 import { chmod, mkdir, rm } from "node:fs/promises";
 import { z } from "zod";
-import { operation, socketCall, socketPath, type PackageApi } from "@agentstack/api";
+import { operation, socketCall, socketPath, type PackageApi } from "@stack/api";
 import { stateDir } from "./src/paths.js";
 import { AuthStore, type Account } from "./src/store.js";
 import { LoginManager, type LoginState } from "./src/login.js";

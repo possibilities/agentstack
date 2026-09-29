@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { mcpPort, runApi, runMcp, runWebSocket, serveApi, serveMcp, socketCall, socketPath, websocketPort, withLocalAuth } from "@agentstack/api";
+import { mcpPort, runApi, runMcp, runWebSocket, serveApi, serveMcp, socketCall, socketPath, websocketPort, withLocalAuth } from "@stack/api";
 import { spawn } from "node:child_process";
-import { contentNetworkConfig } from "@agentstack/content";
+import { contentNetworkConfig } from "@stack/content";
 import { lookup } from "node:dns/promises";
 import { connect } from "node:net";
 import { accessChild, apiChild, signalChild, authChild, brainChild, xcomChild, browseChild, contentChild, inferChild, notifyChild, procChild, rolesChild, scrapeChild, usageChild, workerChild, websocketChild } from "./children.js";
@@ -18,7 +18,7 @@ const command = process.argv[2];
 
 if (command === "open") {
   const target = process.argv[3] ?? "ui";
-  if (!["ui", "inspector"].includes(target) || process.argv.length > 5) throw new Error("usage: agentstack open [ui|inspector] [configured-development-origin]");
+  if (!["ui", "inspector"].includes(target) || process.argv.length > 5) throw new Error("usage: stack open [ui|inspector] [configured-development-origin]");
   const result = await socketCall(socketPath("serve"), "tools/call", { name: "serve_local_connect", arguments: { target, ...(process.argv[4] ? { origin: process.argv[4] } : {}) } }) as { url: string };
   const child = spawn(process.platform === "darwin" ? "open" : "xdg-open", [result.url], { stdio: "ignore" });
   await new Promise<void>((resolve, reject) => { child.once("error", reject); child.once("exit", code => code === 0 ? resolve() : reject(new Error("browser opener failed"))); });
@@ -26,7 +26,7 @@ if (command === "open") {
 }
 if (command === "revoke-local") {
   await socketCall(socketPath("serve"), "tools/call", { name: "serve_local_revoke", arguments: {} });
-  console.error("Local sessions and operator credentials revoked. Run agentstack open to reconnect.");
+  console.error("Local sessions and operator credentials revoked. Run stack open to reconnect.");
   process.exit(0);
 }
 
@@ -37,7 +37,7 @@ if (command === "api") {
 } else if (command === "websocket") {
   await runWebSocket();
 } else if (command !== "serve") {
-  console.error("usage: agentstack serve\nusage: agentstack open [ui|inspector] [configured-development-origin]\nusage: agentstack revoke-local\nusage: agentstack api <package> <transport>\nusage: agentstack mcp\nusage: agentstack websocket");
+  console.error("usage: stack serve\nusage: stack open [ui|inspector] [configured-development-origin]\nusage: stack revoke-local\nusage: stack api <package> <transport>\nusage: stack mcp\nusage: stack websocket");
   process.exit(1);
 }
 
@@ -48,41 +48,41 @@ const existing = await socketCall(socketPath("serve"), "tools/call", {
   name: "serve_status", arguments: {},
 }, { timeoutMs: 1_000 }).catch(() => null) as { pid?: unknown; indexUrl?: unknown; uiUrl?: unknown } | null;
 if (existing && typeof existing.pid === "number") {
-  console.error(`AgentStack is already running (pid ${existing.pid}).${typeof existing.indexUrl === "string" ? ` UI entry: ${existing.indexUrl}` : ""}${typeof existing.uiUrl === "string" ? ` UI canvas: ${existing.uiUrl}` : ""}`);
+  console.error(`Stack is already running (pid ${existing.pid}).${typeof existing.indexUrl === "string" ? ` UI entry: ${existing.indexUrl}` : ""}${typeof existing.uiUrl === "string" ? ` UI canvas: ${existing.uiUrl}` : ""}`);
   process.exit(0);
 }
 
 const inspectorListenPort = inspectorPort(process.env);
 const uiListenPort = uiPort(process.env);
-const contentPort = Number(process.env.AGENTSTACK_CONTENT_PORT ?? process.env.AGENTSTACK_WIKI_PORT ?? 8777);
-const contentArtifactPort = Number(process.env.AGENTSTACK_CONTENT_ARTIFACT_PORT ?? process.env.AGENTSTACK_WIKI_ARTIFACT_PORT ?? 8778);
-const accessHost = process.env.AGENTSTACK_ACCESS_HOST;
-const accessPort = Number(process.env.AGENTSTACK_ACCESS_PORT ?? 8943);
-const accessArtifactPort = Number(process.env.AGENTSTACK_ACCESS_ARTIFACT_PORT ?? 8944);
-const accessUiPort = Number(process.env.AGENTSTACK_ACCESS_UI_PORT ?? 8945);
+const contentPort = Number(process.env.STACK_CONTENT_PORT ?? process.env.STACK_WIKI_PORT ?? 8777);
+const contentArtifactPort = Number(process.env.STACK_CONTENT_ARTIFACT_PORT ?? process.env.STACK_WIKI_ARTIFACT_PORT ?? 8778);
+const accessHost = process.env.STACK_ACCESS_HOST;
+const accessPort = Number(process.env.STACK_ACCESS_PORT ?? 8943);
+const accessArtifactPort = Number(process.env.STACK_ACCESS_ARTIFACT_PORT ?? 8944);
+const accessUiPort = Number(process.env.STACK_ACCESS_UI_PORT ?? 8945);
 if (accessHost) {
-  const origin = process.env.AGENTSTACK_ACCESS_UI_ORIGIN;
-  let validOrigin = origin === undefined && process.env.AGENTSTACK_ACCESS_UI_PORT === undefined;
+  const origin = process.env.STACK_ACCESS_UI_ORIGIN;
+  let validOrigin = origin === undefined && process.env.STACK_ACCESS_UI_PORT === undefined;
   try {
     if (origin) {
       const parsed = new URL(origin);
       validOrigin = parsed.protocol === "https:" && parsed.origin === origin && Number(parsed.port) === accessUiPort && !parsed.username && !parsed.password;
     }
   } catch { /* fail closed below */ }
-  if (!validOrigin || !process.env.AGENTSTACK_ACCESS_TLS_CERT || !process.env.AGENTSTACK_ACCESS_TLS_KEY
+  if (!validOrigin || !process.env.STACK_ACCESS_TLS_CERT || !process.env.STACK_ACCESS_TLS_KEY
     || ![accessPort, accessArtifactPort, ...(origin ? [accessUiPort] : [])].every(value => Number.isInteger(value) && value > 0 && value <= 65535)
     || new Set([accessPort, accessArtifactPort, ...(origin ? [accessUiPort] : [])]).size !== (origin ? 3 : 2)) {
-    console.error("Access needs distinct valid ports and TLS key/cert; remote UI also needs AGENTSTACK_ACCESS_UI_ORIGIN matching its port");
+    console.error("Access needs distinct valid ports and TLS key/cert; remote UI also needs STACK_ACCESS_UI_ORIGIN matching its port");
     process.exit(1);
   }
 }
 let contentHost: string;
 try { contentHost = contentNetworkConfig(process.env).host; }
 catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); }
-const brainSharePort = Number(process.env.AGENTSTACK_BRAIN_SHARE_PORT ?? 8877);
-const brainShareHost = process.env.AGENTSTACK_BRAIN_SHARE_HOST ?? "127.0.0.1";
-for (const [name, value] of [["AGENTSTACK_CONTENT_PORT", contentPort], ["AGENTSTACK_CONTENT_ARTIFACT_PORT", contentArtifactPort], ["AGENTSTACK_BRAIN_SHARE_PORT", brainSharePort]] as const) {
-  if (!Number.isInteger(value) || value < 0 || value > 65535 || process.env[name] === "" || (name === "AGENTSTACK_CONTENT_PORT" && process.env.AGENTSTACK_CONTENT_PORT === undefined && process.env.AGENTSTACK_WIKI_PORT === "") || (name === "AGENTSTACK_CONTENT_ARTIFACT_PORT" && process.env.AGENTSTACK_CONTENT_ARTIFACT_PORT === undefined && process.env.AGENTSTACK_WIKI_ARTIFACT_PORT === "")) {
+const brainSharePort = Number(process.env.STACK_BRAIN_SHARE_PORT ?? 8877);
+const brainShareHost = process.env.STACK_BRAIN_SHARE_HOST ?? "127.0.0.1";
+for (const [name, value] of [["STACK_CONTENT_PORT", contentPort], ["STACK_CONTENT_ARTIFACT_PORT", contentArtifactPort], ["STACK_BRAIN_SHARE_PORT", brainSharePort]] as const) {
+  if (!Number.isInteger(value) || value < 0 || value > 65535 || process.env[name] === "" || (name === "STACK_CONTENT_PORT" && process.env.STACK_CONTENT_PORT === undefined && process.env.STACK_WIKI_PORT === "") || (name === "STACK_CONTENT_ARTIFACT_PORT" && process.env.STACK_CONTENT_ARTIFACT_PORT === undefined && process.env.STACK_WIKI_ARTIFACT_PORT === "")) {
     console.error(`${name} must be a port from 0 to 65535`);
     process.exit(1);
   }
@@ -95,7 +95,7 @@ let brainShareAddress: string;
 try {
   ({ address: brainShareAddress } = await lookup(brainShareHost));
 } catch {
-  console.error(`AGENTSTACK_BRAIN_SHARE_HOST could not be resolved: ${brainShareHost}`);
+  console.error(`STACK_BRAIN_SHARE_HOST could not be resolved: ${brainShareHost}`);
   process.exit(1);
 }
 if (contentPort !== 0 && contentPort === contentArtifactPort) {
@@ -103,23 +103,23 @@ if (contentPort !== 0 && contentPort === contentArtifactPort) {
   process.exit(1);
 }
 const listeners: Array<readonly [string, number, string, string]> = [
-  ["MCP", mcpPort(process.env), "AGENTSTACK_MCP_PORT", "127.0.0.1"],
-  ["WebSocket", websocketPort(process.env), "AGENTSTACK_WEBSOCKET_PORT", "127.0.0.1"],
-  ["Inspector", inspectorListenPort, "AGENTSTACK_INSPECTOR_PORT", "127.0.0.1"],
-  ["UI canvas", uiListenPort, "AGENTSTACK_UI_PORT", "127.0.0.1"],
-  ["Content documents", contentPort, "AGENTSTACK_CONTENT_PORT", contentHost],
-  ["Content artifacts", contentArtifactPort, "AGENTSTACK_CONTENT_ARTIFACT_PORT", contentHost],
-  ["Brain share", brainSharePort, "AGENTSTACK_BRAIN_SHARE_PORT", brainShareHost],
+  ["MCP", mcpPort(process.env), "STACK_MCP_PORT", "127.0.0.1"],
+  ["WebSocket", websocketPort(process.env), "STACK_WEBSOCKET_PORT", "127.0.0.1"],
+  ["Inspector", inspectorListenPort, "STACK_INSPECTOR_PORT", "127.0.0.1"],
+  ["UI canvas", uiListenPort, "STACK_UI_PORT", "127.0.0.1"],
+  ["Content documents", contentPort, "STACK_CONTENT_PORT", contentHost],
+  ["Content artifacts", contentArtifactPort, "STACK_CONTENT_ARTIFACT_PORT", contentHost],
+  ["Brain share", brainSharePort, "STACK_BRAIN_SHARE_PORT", brainShareHost],
   ...(accessHost ? [
-    ["Access documents", accessPort, "AGENTSTACK_ACCESS_PORT", accessHost],
-    ["Access artifacts", accessArtifactPort, "AGENTSTACK_ACCESS_ARTIFACT_PORT", accessHost],
-    ...(process.env.AGENTSTACK_ACCESS_UI_ORIGIN ? [["Access UI", accessUiPort, "AGENTSTACK_ACCESS_UI_PORT", accessHost]] as const : []),
+    ["Access documents", accessPort, "STACK_ACCESS_PORT", accessHost],
+    ["Access artifacts", accessArtifactPort, "STACK_ACCESS_ARTIFACT_PORT", accessHost],
+    ...(process.env.STACK_ACCESS_UI_ORIGIN ? [["Access UI", accessUiPort, "STACK_ACCESS_UI_PORT", accessHost]] as const : []),
   ] as const : []),
 ];
 // Resolve the share host as net.Server.listen does so aliases and wildcard
 // binds cannot conceal a collision with the server's IPv4 loopback listeners.
 const contentAddress = contentHost === "127.0.0.1" ? contentHost : (await lookup(contentHost).catch(() => {
-  console.error("AGENTSTACK_CONTENT_HOST could not be resolved"); process.exit(1);
+  console.error("STACK_CONTENT_HOST could not be resolved"); process.exit(1);
 })).address;
 const bindAddress = (host: string) => host === brainShareHost ? brainShareAddress : host === contentHost ? contentAddress : host;
 const loopbackBinds = new Set(["127.0.0.1", "0.0.0.0", "::", "::ffff:127.0.0.1"]);
@@ -139,7 +139,7 @@ for (const [transport, port, setting, host] of listeners) {
     probe.once("connect", () => finish(true));
     probe.once("error", () => finish(false));
   })) {
-    console.error(`${transport} port ${port} is already in use on ${host}. An AgentStack server may already be running; check its server socket or choose another ${setting}.`);
+    console.error(`${transport} port ${port} is already in use on ${host}. An Stack server may already be running; check its server socket or choose another ${setting}.`);
     process.exit(1);
   }
 }
@@ -197,7 +197,7 @@ server = startServer([apiChild(), accessChild(), authChild(), rolesChild(), brow
   statusSource.notify();
   if (!closing && server.children().some((child) => !child.running)) {
     childFailed = true;
-    console.error("a required child stopped; shutting down agentstack");
+    console.error("a required child stopped; shutting down stack");
     shutdown();
   }
 }, [["access"], ["proc"], ["signal"], ["infer"], ["auth"], ["worker"], ["bots"], ["usage"], ["brain"], ["xcom"], ["scrape"], ["browse"], ["content"], ["roles"], ["notify"], ["api"]]);
@@ -210,10 +210,10 @@ statusSource.setUiUrl(uiUrl);
 statusSource.setInspectorUrl(`http://127.0.0.1:${inspectorListenPort}/`);
 
 if (events.socketPath) console.error(events.socketPath);
-console.error(`AgentStack UI entry: ${indexUrl}`);
-console.error(`AgentStack UI canvas: ${uiUrl}`);
+console.error(`Stack UI entry: ${indexUrl}`);
+console.error(`Stack UI canvas: ${uiUrl}`);
 for (const [name, url] of Object.entries(mcp.urls)) console.error(`${name} MCP: ${url}`);
-console.error(`AgentStack Inspector: http://127.0.0.1:${inspectorListenPort}/`);
+console.error(`Stack Inspector: http://127.0.0.1:${inspectorListenPort}/`);
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

@@ -1,4 +1,4 @@
-# AgentStack Brain backend
+# Stack Brain backend
 
 Ported from source snapshot `abbed107948dcafd0e3a786ebb4d9e1283cca65a`; the source's MIT license is retained in `LICENSE`.
 
@@ -6,14 +6,14 @@ Ported from source snapshot `abbed107948dcafd0e3a786ebb4d9e1283cca65a`; the sour
 
 `api.createContext` creates an empty schema-v12 SQLite index, starts a cancellable ingestion worker, and starts authenticated share ingress. It never imports a source manifest or admits a due Source Run automatically. Source Run admission remains explicit through `sources_sync`; the worker executes already-admitted jobs. SQLite schemas and content-addressed Artifact layouts are retained; Node's `DatabaseSync` replaces the original SQLite runtime, including read-only connections and nested/immediate transactions.
 
-All default state is under `<AGENTSTACK_STATE_DIR>/brain`, or `~/.local/state/agentstack/brain`:
+All default state is under `<STACK_STATE_DIR>/brain`, or `~/.local/state/stack/brain`:
 
 - `research.db` and SQLite sidecars
 - `artifacts/`
 - `share-ingress.json` (private listener registration, removed on clean shutdown)
 - `doctor-notify.json` (only after explicit notification)
 
-The internal share listener requires `AGENTSTACK_BRAIN_SHARE_HOST=127.0.0.1` and uses `AGENTSTACK_BRAIN_SHARE_PORT` (default `8877`; zero allocates an ephemeral port). Its liveness credential is ephemeral. Devices use the shared Access tailnet ingress and individually approved credentials. `brain_status.shareTokenFile` is null; shared-token reveal and rotation have been removed. Existing token files are not imported or accepted. See [Access setup](../../docs/access.md).
+The internal share listener requires `STACK_BRAIN_SHARE_HOST=127.0.0.1` and uses `STACK_BRAIN_SHARE_PORT` (default `8877`; zero allocates an ephemeral port). Its liveness credential is ephemeral. Devices use the shared Access tailnet ingress and individually approved credentials. `brain_status.shareTokenFile` is null; shared-token reveal and rotation have been removed. Existing token files are not imported or accepted. See [Access setup](../../docs/access.md).
 
 The worker polls at one second. Expired-lease recovery and a bounded self-health probe run every 60 seconds. `brain_status.health` reports `ingestion_worker_failed`, `ingestion_maintenance_failed` or `share_ingress_unhealthy`; the package does not terminate its hosting process on a health failure. The owner owns process restart policy. The `prepareCloseContext` lifecycle hook aborts extraction and operation waits before socket draining. Final context closure clears maintenance, closes HTTP connections, awaits owned work and closes SQLite. URL extraction and discovery call the in-package Scrape engine directly. Its browser adapter uses bounded subprocesses; managed cancellation reaches direct HTTP and browser routes through AbortSignals.
 
@@ -25,9 +25,9 @@ Every Package API response and published root output schema is an object, includ
 
 Inputs derive from the internal operator contract; output schemas are generated from the domain TypeScript types by `scripts/generate-output-schemas.mjs`. `generate:schemas` refreshes them and the test command checks drift. The JavaScript compiler API used for generation is separately pinned as `typescript-compiler`; the workspace compiler remains `typescript`.
 
-Brain publishes only AgentStack Package API operations; no separate Brain executable or operator CLI is built. Internal dispatch remains the implementation of the typed operations, and command-contract regressions use a test-only dispatch entry. The original standalone transport, share-serving/Portless wrappers and installation/service scripts are replaced by AgentStack lifecycle and shared transports. No source activation or real-network smoke is installed. The bundled `config/sources.example.json` is empty.
+Brain publishes only Stack Package API operations; no separate Brain executable or operator CLI is built. Internal dispatch remains the implementation of the typed operations, and command-contract regressions use a test-only dispatch entry. The original standalone transport, share-serving/Portless wrappers and installation/service scripts are replaced by Stack lifecycle and shared transports. No source activation or real-network smoke is installed. The bundled `config/sources.example.json` is empty.
 
-New backup manifests use `kind: "agentstack_brain_backup"`. SQLite remains compatible, but old application-specific backup-manifest discriminators are not accepted by this verifier. A backup retains its external content-addressed Artifact inventory: preserving the database snapshot alone is not a full Artifact backup.
+New backup manifests use `kind: "stack_brain_backup"`. SQLite remains compatible, but old application-specific backup-manifest discriminators are not accepted by this verifier. A backup retains its external content-addressed Artifact inventory: preserving the database snapshot alone is not a full Artifact backup.
 
 ## Verification
 

@@ -1,4 +1,4 @@
-import { botMcpUrl, configuredMcpPackages } from "@agentstack/api";
+import { botMcpUrl, configuredMcpPackages } from "@stack/api";
 
 /** Resolve the server's current exposed Package APIs at each bot launch. */
 export async function serverMcpUrls(root: string, port: number, botId: string, endpoint: string, env: NodeJS.ProcessEnv = process.env): Promise<Record<string, string>> {

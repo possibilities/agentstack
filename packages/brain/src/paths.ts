@@ -4,14 +4,14 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { CliError } from "./errors.js";
 
-const DEFAULT_DATABASE_DISPLAY = "~/.local/state/agentstack/brain/research.db";
+const DEFAULT_DATABASE_DISPLAY = "~/.local/state/stack/brain/research.db";
 const environment = new AsyncLocalStorage<{ env: NodeJS.ProcessEnv; signal?: AbortSignal }>();
 
 export function brainEnvironment(): NodeJS.ProcessEnv { return environment.getStore()?.env ?? process.env; }
 export function brainSignal(): AbortSignal | undefined { return environment.getStore()?.signal; }
 export function withBrainEnvironment<T>(env: NodeJS.ProcessEnv, body: () => T, signal?: AbortSignal): T { return environment.run({ env, signal }, body); }
 export function brainStateRoot(env: NodeJS.ProcessEnv = brainEnvironment(), home?: string): string {
-  return join(env.AGENTSTACK_STATE_DIR ?? join(home ?? env.HOME ?? homedir(), ".local", "state", "agentstack"), "brain");
+  return join(env.STACK_STATE_DIR ?? join(home ?? env.HOME ?? homedir(), ".local", "state", "stack"), "brain");
 }
 
 interface PathState {
@@ -69,12 +69,12 @@ export function assertDefaultDatabaseTargetSafe(
     (directoryState.symlink || !directoryState.directory)
   )
     locationConflict(
-      `AgentStack Brain data directory must be a real directory: ${dataDirectory}`,
+      `Stack Brain data directory must be a real directory: ${dataDirectory}`,
       `Create ${dirname(DEFAULT_DATABASE_DISPLAY)} as a private directory, not a symlink.`,
     );
   if (targetState.exists && (targetState.symlink || !targetState.regularFile))
     locationConflict(
-      `AgentStack Brain default database must be a regular file: ${target}`,
+      `Stack Brain default database must be a regular file: ${target}`,
       `Restore a verified standalone database at ${DEFAULT_DATABASE_DISPLAY}.`,
     );
 }

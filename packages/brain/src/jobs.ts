@@ -807,7 +807,7 @@ export function doctor(
   checks.push({
     name: "scrape",
     status: "ok",
-    detail: "AgentStack Scrape engine is bundled; optional provider capabilities are reported by scrape_status",
+    detail: "Stack Scrape engine is bundled; optional provider capabilities are reported by scrape_status",
   });
   checks.push(...extra);
   return {

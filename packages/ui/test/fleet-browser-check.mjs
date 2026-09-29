@@ -8,7 +8,7 @@ import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { publishedJsonSchema, serveSocket, serveWebSocket, socketPath } from "@agentstack/api";
+import { publishedJsonSchema, serveSocket, serveWebSocket, socketPath } from "@stack/api";
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as inferApi } from "../../infer/dist/api.js";
 import { ChatUploads } from "../../bots/dist/src/chats.js";
@@ -22,10 +22,10 @@ const require = createRequire(import.meta.url);
 const ui = dirname(dirname(fileURLToPath(import.meta.url)));
 const root = dirname(dirname(ui));
 const base = process.env.TMPDIR ?? "/tmp";
-const dir = await mkdtemp(join(base, "agentstack-fleet-browser-"));
+const dir = await mkdtemp(join(base, "stack-fleet-browser-"));
 const evidence = process.env.FLEET_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
-const env = { ...process.env, AGENTSTACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
+const env = { ...process.env, STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 // Each Codex Bot account is paired with a Codex Worker account; one awaits its own sign-in.
 const botAccounts = [{ id: id(1), enabled: true, removing: false, linkedAccounts: [{ scope: "worker", id: id(3) }] }, { id: id(2), enabled: false, removing: false, linkedAccounts: [] },
@@ -124,16 +124,16 @@ function operations(names, api) {
 async function port() { const server = createServer(); await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve)); const value = server.address().port; await new Promise((resolve) => server.close(resolve)); return value; }
 try {
   websocket = await serveWebSocket({ env, root: await fixtureWorkspace(dir, ["serve", "auth", "bots", "usage", "worker", "infer", "api"]), port: 0 });
-  const catalog = Object.entries({ bots: botsApi, usage: usageApi, worker: workerApi, infer: inferApi }).map(([name, api]) => ({ name, packageName: `@agentstack/${name}`, description: `${name} fixture`, events: api.events?.topics ?? {}, eventScope: null,
+  const catalog = Object.entries({ bots: botsApi, usage: usageApi, worker: workerApi, infer: inferApi }).map(([name, api]) => ({ name, packageName: `@stack/${name}`, description: `${name} fixture`, events: api.events?.topics ?? {}, eventScope: null,
     transports: [transport(websocket.url, api.operations.map((operation) => operation.name), Object.keys(api.events?.topics ?? {}))],
     operations: api.operations.map((operation) => ({ name: operation.name, title: operation.annotations?.title ?? null, description: operation.description, annotations: operation.annotations ?? {}, inputSchema: publishedJsonSchema(operation.input), outputSchema: publishedJsonSchema(operation.output) })) }));
-  for (const name of ["auth", "serve", "api"]) catalog.push({ name, packageName: `@agentstack/${name}`, description: "Fixture", events: {}, eventScope: null, operations: [], transports: [transport(websocket.url)] });
+  for (const name of ["auth", "serve", "api"]) catalog.push({ name, packageName: `@stack/${name}`, description: "Fixture", events: {}, eventScope: null, operations: [], transports: [transport(websocket.url)] });
   handlers.docs_snapshot = () => ({ packages: catalog });
   const definitions = { serve: ["serve_status"], auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"], bots: Object.keys(handlers).filter((name) => /^(bot_|voice_|chat_)/.test(name)), usage: ["usage_snapshot"], worker: ["worker_list", "worker_runtime_list", "worker_catalog"], infer: ["infer_model_list", "infer_discover", "infer_start", "infer_request_list", "infer_request_get"], api: ["docs_snapshot"] };
   const topics = { serve: { pids_changed: "Fixture" }, auth: Object.fromEntries(["accounts_changed", "worker_accounts_changed", "login_changed", "worker_login_changed"].map((name) => [name, "Fixture"])), bots: botsApi.events.topics, worker: workerApi.events.topics, usage: usageApi.events.topics, infer: inferApi.events.topics, api: {} };
   for (const [name, names] of Object.entries(definitions)) served.set(name, await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {}, operations: operations(names, { bots: botsApi, infer: inferApi }[name]), events: { topics: topics[name], scope: name === "bots" ? { valid: () => true, description: "Fixture", example: "bot-1" } : undefined } }));
   const nextPort = await port();
-  env.AGENTSTACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${nextPort}`;
+  env.STACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${nextPort}`;
   next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), process.env.NEXT_MODE === "dev" ? "dev" : "start", "--hostname", "127.0.0.1", "--port", String(nextPort)], { cwd: ui, env, stdio: ["ignore", "pipe", "pipe"] });
   next.stdout.on("data", (chunk) => { log += chunk; }); next.stderr.on("data", (chunk) => { log += chunk; });
   const origin = `http://127.0.0.1:${nextPort}`;

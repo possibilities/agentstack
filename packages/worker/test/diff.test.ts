@@ -26,7 +26,7 @@ test("git -z listings parse paths with spaces, renames and binary counts", () =>
 });
 
 test("worker diffs read commits, uncommitted and untracked work without writing or running diff programs", async () => {
-  const root = await mkdtemp(join(tmpdir(), "agentstack-worker-diff-"));
+  const root = await mkdtemp(join(tmpdir(), "stack-worker-diff-"));
   try {
     const repo = join(root, "repo");
     await mkdir(repo);
@@ -40,7 +40,7 @@ test("worker diffs read commits, uncommitted and untracked work without writing 
     await run(repo, ["commit", "-m", "base"]);
     const base = await run(repo, ["rev-parse", "HEAD"]);
     const cwd = join(root, "worktree");
-    await run(repo, ["worktree", "add", "-b", "agentstack-worker-fixture", cwd, base]);
+    await run(repo, ["worktree", "add", "-b", "stack-worker-fixture", cwd, base]);
 
     // A committed rename and edit, then uncommitted and untracked work.
     await run(cwd, ["mv", "old name.ts", "new name.ts"]);

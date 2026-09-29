@@ -7,7 +7,7 @@ import { codexRuntimePath } from "../src/paths.js";
 import { appServerArgs, waitForReady } from "../src/supervisor.js";
 import { appServerSocket } from "../src/threads.js";
 
-test("installed codexnk retains its private runtime and honors Bot launch defaults", { skip: !process.env.AGENTSTACK_TEST_REAL_CODEX }, async () => {
+test("installed codexnk retains its private runtime and honors Bot launch defaults", { skip: !process.env.STACK_TEST_REAL_CODEX }, async () => {
   const root = await mkdtemp("/tmp/as-full-");
   const identity = join(root, "identity");
   const capabilities = join(root, "capabilities");
@@ -48,7 +48,7 @@ test("installed codexnk retains its private runtime and honors Bot launch defaul
       ws!.on("message", onMessage);
       ws!.send(JSON.stringify({ id, method, params }));
     });
-    await request(1, "initialize", { clientInfo: { name: "agentstack-test", version: "0.0.0" }, capabilities: { experimentalApi: true, requestAttestation: false } });
+    await request(1, "initialize", { clientInfo: { name: "stack-test", version: "0.0.0" }, capabilities: { experimentalApi: true, requestAttestation: false } });
     ws.send(JSON.stringify({ method: "initialized" }));
     const result = await request(2, "config/read", { includeLayers: false, cwd: root });
     const config = result.config as { model?: string; model_reasoning_effort?: string; approval_policy?: string; sandbox_mode?: string };

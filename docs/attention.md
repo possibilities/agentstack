@@ -1,6 +1,6 @@
 # Headless conversation attention
 
-`attention` runs under the AgentStack server. It starts paused on a new installation;
+`attention` runs under the Stack server. It starts paused on a new installation;
 its enabled state, defaults and source checkpoints survive server restarts.
 
 ## Configuration and activation
@@ -75,8 +75,8 @@ the original frozen input/context with current defaults and prompt, appending a
 non-promoting evaluation attempt. Repeating the admission key does not enqueue
 another run. Processing must be enabled to execute queued evaluations.
 
-SQLite stores live under `<AGENTSTACK_STATE_DIR>/attention` and
-`<AGENTSTACK_STATE_DIR>/infer`. Trace retention is durable. Subscription inference
+SQLite stores live under `<STACK_STATE_DIR>/attention` and
+`<STACK_STATE_DIR>/infer`. Trace retention is durable. Subscription inference
 does not expose a reliable dollar price: token usage is observed, dollar cost is
 unavailable rather than reported as zero. A provider timeout or lost response is
 unknown and is never silently retried.

@@ -139,7 +139,7 @@ same paragraph`;
 });
 
 test("stored Markdown chunks retain stable provenance across explicit rebuilds", () => {
-  const directory = mkdtempSync(join(tmpdir(), "agentstack-brain-chunking-"));
+  const directory = mkdtempSync(join(tmpdir(), "stack-brain-chunking-"));
   directories.push(directory);
   const path = join(directory, "research.db");
   const revisionDigest = sha256Text("captured artifact bytes");

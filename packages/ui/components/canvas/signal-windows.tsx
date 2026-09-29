@@ -186,7 +186,7 @@ function OpenChatButton({ conversation }: { conversation: string }) {
 }
 
 function feedbackAuthor(): string {
-  try { return window.localStorage.getItem("agentstack.uix.signal.author.v1") || "human"; } catch { return "human"; }
+  try { return window.localStorage.getItem("stack.uix.signal.author.v1") || "human"; } catch { return "human"; }
 }
 
 /** Attributed evaluation evidence. The key is fixed while the dialog is open, so a retried submission never records twice. */
@@ -213,7 +213,7 @@ function FeedbackDialog({ open, onOpenChange, messageId, runId, subject }: { ope
     setError(null);
     try {
       await store.signalAction("attention_feedback", { id, messageId, ...(runId ? { runId } : {}), kind, author: author.trim(), body: body.trim() });
-      try { window.localStorage.setItem("agentstack.uix.signal.author.v1", author.trim()); } catch { /* optional persistence */ }
+      try { window.localStorage.setItem("stack.uix.signal.author.v1", author.trim()); } catch { /* optional persistence */ }
       toast.success("Feedback recorded");
       onOpenChange(false);
     } catch (cause) {

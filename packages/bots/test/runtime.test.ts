@@ -6,7 +6,7 @@ import test from "node:test";
 import { installedRuntimeVersion } from "../src/runtime.js";
 
 test("runtime version follows the installed release receipt and fails safely", async () => {
-  const home = await mkdtemp(join(tmpdir(), "agentstack-version-"));
+  const home = await mkdtemp(join(tmpdir(), "stack-version-"));
   const previousHome = process.env.HOME;
   process.env.HOME = home;
   try {
