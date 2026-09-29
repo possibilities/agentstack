@@ -55,5 +55,5 @@ as well as after Role changes. A Role revision alone is not a fingerprint of all
 runtime-installed packages.
 
 The separate manual UI handoff is
-[`roles-internal-mcp-ui-handoff.md`](../handoffs/roles-internal-mcp-ui-handoff.md).
+`~/scratch/roles-internal-mcp-ui-handoff.md`.
 The API work does not add UI controls or restart running sessions.

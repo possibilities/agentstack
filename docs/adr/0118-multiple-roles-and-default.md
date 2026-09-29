@@ -74,6 +74,6 @@ specific Role, or resolves the default if the ID is omitted.
 
 The human explicitly separated API delivery from UI redesign and accepted the
 interim Roles UI incompatibility. The manual handoff is
-[`roles-multirole-ui-handoff.md`](../handoffs/roles-multirole-ui-handoff.md).
+`~/scratch/roles-multirole-ui-handoff.md`.
 No service restart is part of this change. The related internal MCP controls
 have their own decision, [ADR 0119](0119-per-role-internal-mcp.md).
