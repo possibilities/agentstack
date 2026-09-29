@@ -18,7 +18,7 @@ export const workCreate = operation({ name: "work_create",
   async call(ctx: HudContext, { requestId, ...input }, invocation) { return ctx.service.apply(requestId, [{ action: "create", ...input }], invocation); },
 });
 export const workUpdate = operation({ name: "work_update",
-  description: "Patch selected work fields against expectedRevision; omitted fields stay unchanged and arrays replace whole arrays. Parent moves and objective/dependency changes advance scopeRevision. Completion requires completed dependencies and terminal children. Reopen closed scope before revising it. This never starts, stops or approves native execution.",
+  description: "Patch selected work fields against expectedRevision; omitted fields stay unchanged and arrays replace whole arrays. Parent moves and objective/dependency changes advance scopeRevision. Completion requires completed dependencies and terminal descendants. Reopen closed scope before revising it. This never starts, stops or approves native execution.",
   input: s.update.extend({ requestId }), output: s.receipt, annotations: write,
   async call(ctx: HudContext, { requestId, ...input }, invocation) { return ctx.service.apply(requestId, [{ action: "update", ...input }], invocation); },
 });

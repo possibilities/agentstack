@@ -49,7 +49,7 @@ test("shared work is atomic, revision-safe, recoverable, and keeps metadata out 
     assert.match(String((contenders.find(result => result.status === "rejected") as PromiseRejectedResult).reason), /work_revision_conflict/);
 
     const metadataRequest = { requestId: randomUUID(), id: parent, expectedRevision: 1, namespace: "agent.routing",
-      value: { correlation: "opaque-token", disabled: false, empty: "", unset: null, nested: { b: 2, a: 1 } } };
+      value: { correlation: "opaque-token", disabled: false, empty: "", unset: null, nested: { b: 2, a: 1, "é": 3, "e\u0301": 4 } } };
     await call("work_metadata_set", metadataRequest);
     assert.equal((await call<WorkItem>("work_get", { id: parent })).scopeRevision, 1);
     assert.deepEqual((await call<{ namespaces: object }>("work_metadata_get", { id: parent })).namespaces, { "agent.routing": metadataRequest.value });
@@ -95,7 +95,7 @@ test("shared work is atomic, revision-safe, recoverable, and keeps metadata out 
     await server.close();
     server = await serveApi({ name: "hud", transport: "socket", env });
     assert.deepEqual(await call<WorkItem>("work_get", { id: child }), changed);
-    assert.equal((await call("work_metadata_set", { ...metadataRequest, value: { ...metadataRequest.value, nested: { a: 1, b: 2 } } })).duplicate, true);
+    assert.equal((await call("work_metadata_set", { ...metadataRequest, value: { ...metadataRequest.value, nested: { "e\u0301": 4, "é": 3, a: 1, b: 2 } } })).duplicate, true);
     assert.equal((await call("work_batch", create)).duplicate, true, "recovery returns the original receipt after later edits");
     const added = randomUUID();
     await call("work_batch", { requestId: randomUUID(), changes: [
