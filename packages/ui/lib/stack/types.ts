@@ -107,6 +107,12 @@ export type MainChatLive = { threadId: string | null; instance: string | null; r
 /** Newest first; entries are native `{ turnId, item, startedAtMs, completedAtMs }` or an `omitted` summary. */
 export type MainChatItems = { threadId: string; data: Array<Record<string, unknown>>; nextCursor: string | null };
 export type ChatHit = Chat & { line: number; role: string; snippet: string; score: number };
+/** Receipt-time native status before send; admission and model consumption may happen later. */
+export type ChatThreadState = { status: Record<string, unknown> | null; activity: "working" | "waiting" | "idle" | "unknown"; observedAt: string; error: string | null };
+export type ChatSendResult = { turn: Record<string, unknown>; threadState: ChatThreadState };
+export type ChatOpenResult = ChatSendResult & { threadId: string };
+export type ChatSteerResult = { turnId: string; threadState: ChatThreadState };
+export type ChatEnqueueResult = ChatQueueEntry & { threadState: ChatThreadState };
 export type ChatQueueEntry = { id: string; botId: string; threadId: string; input: unknown[];
   state: "pending" | "dispatching" | "sent" | "unknown" | "cancelled"; turnId: string | null; issue: string | null };
 

@@ -17,6 +17,21 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export type ChatRow = { botId: string; threadId: string; parentThreadId: string | null; title: string; cwd: string; createdAt: string; updatedAt: string; messageCount: number };
 export type ChatHit = ChatRow & { line: number; role: string; snippet: string; score: number };
 export type QueuedChat = { id: string; botId: string; threadId: string; input: unknown[]; state: "pending" | "dispatching" | "sent" | "unknown" | "cancelled"; turnId: string | null; issue: string | null };
+export type ThreadStateObservation = { status: RecordValue | null; activity: "working" | "waiting" | "idle" | "unknown"; observedAt: string; error: string | null };
+
+/** A receipt-time observation, never a start/steer precondition or an admission outcome. */
+export async function observeThreadState(url: string, threadId: string): Promise<ThreadStateObservation> {
+  try {
+    const status = object(object((await chatRpc(url, "thread/read", { threadId }, 2_000)).thread).status);
+    if (typeof status.type !== "string") throw new Error("thread/read returned no thread status");
+    const flags = Array.isArray(status.activeFlags) ? status.activeFlags : [];
+    return { status, activity: status.type === "idle" ? "idle" : status.type === "active"
+      ? flags.includes("waitingOnApproval") || flags.includes("waitingOnUserInput") ? "waiting" : "working" : "unknown",
+    observedAt: new Date().toISOString(), error: null };
+  } catch (error) {
+    return { status: null, activity: "unknown", observedAt: new Date().toISOString(), error: String(error) };
+  }
+}
 async function fileText(path: string): Promise<string> {
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try { return await handle.readFile("utf8"); } finally { await handle.close(); }
@@ -335,11 +350,10 @@ export class ChatIndex {
   }
 }
 
-/** Persist first, dispatch only when idle, never retry a possibly accepted turn. */
+/** Persist first, submit in admission order, and let Codex start or steer. Never retry a possibly accepted input. */
 export class ChatQueue {
   private draining = new Set<string>();
   private pendingWakes = new Set<string>();
-  private retries = new Map<string, ReturnType<typeof setTimeout>>();
   private tasks = new Set<Promise<void>>();
   private closed = false;
   onChange: ((botId: string) => void) | undefined;
@@ -347,8 +361,6 @@ export class ChatQueue {
   wake(botId: string, threadId: string): void {
     if (this.closed) return;
     const key = `${botId}:${threadId}`;
-    const retry = this.retries.get(key);
-    if (retry) { clearTimeout(retry); this.retries.delete(key); }
     if (this.draining.has(key)) { this.pendingWakes.add(key); return; }
     this.draining.add(key);
     const task = this.drain(botId, threadId).catch((error) => console.error(`chat queue ${key}: ${error}`)).finally(() => {
@@ -361,8 +373,6 @@ export class ChatQueue {
   wakeBot(botId: string): void { if (!this.closed) for (const id of this.index.pendingPairs(botId)) this.wake(botId, id); }
   async close(): Promise<void> {
     this.closed = true;
-    for (const retry of this.retries.values()) clearTimeout(retry);
-    this.retries.clear();
     await Promise.all(this.tasks);
   }
   private async drain(botId: string, threadId: string): Promise<void> {
@@ -371,30 +381,17 @@ export class ChatQueue {
       if (!next) return;
       const bot = this.bot(botId);
       if (!bot || !this.index.allowed(botId, threadId, bot.mainThreadId) || bot.state !== "running" || bot.recoveryIssue || !bot.runningAccount) return;
-      let status: unknown;
-      try { status = object((await chatRpc(live(bot), "thread/read", { threadId })).thread).status; }
-      catch {
-        // No submission was attempted. Retry a transient read even if no further
-        // socket notification arrives; a stop or close cancels dispatch safely.
-        const key = `${botId}:${threadId}`;
-        if (!this.closed && !this.retries.has(key)) {
-          const timer = setTimeout(() => { this.retries.delete(key); this.wake(botId, threadId); }, 1_000);
-          timer.unref();
-          this.retries.set(key, timer);
-        }
-        return;
-      }
-      if (text(object(status).type) !== "idle") return;
       try {
-        // A cancellation may have arrived during the read. Check again before submission.
         if (this.closed) return;
         if (this.index.queued(next.id)?.state !== "pending") continue;
         this.index.setQueued(next.id, "dispatching");
         this.onChange?.(botId);
         const result = await chatRpc(live(bot), "turn/start", { threadId, input: next.input, clientUserMessageId: next.id });
-        this.index.setQueued(next.id, "sent", text(object(result.turn).id));
+        const turnId = text(object(result.turn).id);
+        if (!turnId) throw new Error("turn/start returned no turn ID; delivery outcome is unknown");
+        this.index.setQueued(next.id, "sent", turnId);
         this.onChange?.(botId);
-        return; // Wait for the turn/completed invalidation before dispatching the next.
+        // The next message can be admitted into this same turn; completion is Codex's concern.
       } catch (error) {
         // The request may have reached Codex. Never automatically resubmit it.
         this.index.setQueued(next.id, "unknown", null, String(error));
@@ -507,12 +504,12 @@ export class ChatUploads {
 }
 
 /** One RPC per connection. Closing before an acknowledgement is an unknown outcome for mutations. */
-export async function chatRpc(url: string, method: string, params: RecordValue): Promise<RecordValue> {
+export async function chatRpc(url: string, method: string, params: RecordValue, timeoutMs = 15_000): Promise<RecordValue> {
   const ws = appServerSocket(url);
   return new Promise((resolve, reject) => {
     let stage = 0;
     let settled = false;
-    const timer = setTimeout(() => finish(new Error(`${method}: timeout; if mutating, outcome is unknown—read thread state before retrying`)), 15000);
+    const timer = setTimeout(() => finish(new Error(`${method}: timeout; if mutating, outcome is unknown—read thread state before retrying`)), timeoutMs);
     const finish = (error?: Error, result?: RecordValue) => {
       if (settled) return;
       settled = true;

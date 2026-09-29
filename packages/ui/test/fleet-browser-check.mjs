@@ -78,8 +78,8 @@ const handlers = {
   worker_list: () => ({ workers: [] }), worker_runtime_list: () => ({ runtimes: workerAccounts.map((account) => ({ id: account.id, provider: account.provider, state: "running", instance: id(20), pid: 100, error: null })) }),
   worker_catalog: ({ accountId }) => ({ accountId, provider: workerAccounts.find((account) => account.id === accountId).provider, observedAt: new Date().toISOString(), source: "acp-session", runtimeVersion: "2.1.0", modelConfigId: "model", models: [{ id: "model-native-1", name: "Native model one", efforts: ["low", "medium", "high"], effortConfigId: "effort" }], nativeModelIds: accountId === id(5) ? ["devin-native-model"] : [], stale: false, error: null }),
   chat_list: async ({ botId }) => { await chatReadGate?.promise; return { chats: [{ botId, threadId: id(10), parentThreadId: null, title: "Main thread fixture", cwd: "/fixture", createdAt: "2026-09-25", updatedAt: "2026-09-25", messageCount: 2 }] }; },
-  chat_send: () => ({ turn: { id: "fixture-turn", status: "inProgress" } }),
-  chat_enqueue: (input) => ({ ...input, state: "pending", turnId: null, issue: null }),
+  chat_send: () => ({ turn: { id: "fixture-turn", status: "inProgress" }, threadState: { status: { type: "active" }, activity: "working", observedAt: new Date().toISOString(), error: null } }),
+  chat_enqueue: (input) => ({ ...input, state: "pending", turnId: null, issue: null, threadState: { status: { type: "idle" }, activity: "idle", observedAt: new Date().toISOString(), error: null } }),
   chat_upload_start: ({ botId, id, name, bytes, sha256 }) => uploads.start(botId, id, name, bytes, sha256),
   chat_upload_status: ({ botId, id }) => uploads.status(botId, id),
   chat_upload_chunk: async ({ botId, id, offset, data }) => {

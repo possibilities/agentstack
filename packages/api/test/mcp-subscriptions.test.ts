@@ -282,7 +282,7 @@ test("durable watches reauthorize refresh and discard values read across a polic
   } finally { release?.(); await service.close(); await socket.close(); await rm(root, { recursive: true, force: true }); }
 });
 
-test("queued deliveries reauthorize after the previous turn and respect unsubscribe", async () => {
+test("subscriptions on one thread submit independently and cancellation fences an in-flight value", async () => {
   const root = await mkdtemp(join(tmpdir(), "as-queued-events-"));
   const env = { STACK_STATE_DIR: root };
   await manifest(root, "sample");
@@ -294,27 +294,22 @@ test("queued deliveries reauthorize after the previous turn and respect unsubscr
   });
   const delivered: EventValue[] = [];
   let release: (() => void) | undefined;
-  const service = new McpEventSubscriptions(env, async () => undefined, async (event) => {
+  const service = new McpEventSubscriptions(env, async () => undefined, async (event, _signal, authorize) => {
+    if (event.subscription.readArguments.slot === 1) await new Promise<void>((resolve) => { release = resolve; });
+    await authorize();
     delivered.push(event);
-    await new Promise<void>((resolve) => { release = resolve; });
   }, undefined, undefined, root);
   try {
     for (const slot of [1, 2]) await service.subscribe("sample", { topic: "changed", readOperation: "snapshot", readArguments: { slot } }, caller);
     value++;
     socket.publish?.("changed");
-    await until(() => delivered.length === 1 && service.status(caller).subscriptions.every((row) => row.state === "delivering"));
-    await manifest(root, "sample", "[]", "all");
-    release!();
-    await until(() => service.status(caller).subscriptions.some((row) => row.state === "error"));
-    assert.equal(delivered.length, 1);
-    await manifest(root, "sample");
-    value++;
-    socket.publish?.("changed");
-    await until(() => delivered.length === 2 && service.status(caller).subscriptions.every((row) => row.state === "delivering"));
-    const queued = service.status(caller).subscriptions.find((row) => row.id !== delivered[1]!.subscription.id)!;
-    await service.unsubscribe(queued.id, caller);
+    await until(() => delivered.length === 1 && Boolean(release));
+    assert.equal(delivered[0]?.subscription.readArguments.slot, 2, "one slow admission must not block another subscription on the same thread");
+    const blocked = service.status(caller).subscriptions.find((row) => row.readArguments.slot === 1)!;
+    await service.unsubscribe(blocked.id, caller);
     release!();
     await until(() => service.status(caller).subscriptions[0]?.state === "active");
-    assert.equal(delivered.length, 2, "unsubscribing fences a value already waiting in the thread queue");
+    await pause(30);
+    assert.equal(delivered.length, 1, "unsubscribing fences the blocked submission");
   } finally { release?.(); await service.close(); await socket.close(); await rm(root, { recursive: true, force: true }); }
 });

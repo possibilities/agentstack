@@ -8,7 +8,7 @@ import { codexRuntimePath } from "./paths.js";
 import { DEFAULT_BOT_SETTINGS, StateStore, type BotSettings, type StoredServer } from "./store.js";
 import { RuntimeAuth, type SyncStatus } from "./runtime-auth.js";
 import { bindMainThread, findEligibleMainThread } from "./threads.js";
-import { chatRpc } from "./chats.js";
+import { chatRpc, observeThreadState, type ThreadStateObservation } from "./chats.js";
 import { RoleStore, materializeRole, removeRole } from "@stack/roles";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -198,7 +198,7 @@ export class Supervisor {
   }
 
   /** Create the first durable UI chat under the per-Bot lifecycle fence. */
-  openMainChat(id: string, input: Record<string, unknown>[]): Promise<{ threadId: string; turn: Record<string, unknown> }> {
+  openMainChat(id: string, input: Record<string, unknown>[]): Promise<{ threadId: string; turn: Record<string, unknown>; threadState: ThreadStateObservation }> {
     return this.enqueue(id, async () => {
       const record = this.records.get(id);
       if (!record || record.state !== "running" || !record.url || !record.launchedAccount || this.recoveryIssues.has(id)) throw new Error("Bot is not a verified, account-bound running process");
@@ -214,6 +214,7 @@ export class Supervisor {
       const started = await chatRpc(record.url, "thread/start", { cwd: record.cwd });
       const threadId = (started.thread as { id?: unknown } | undefined)?.id;
       if (typeof threadId !== "string") throw new Error("thread/start returned no thread ID; inspect Codex before retrying");
+      const threadState = await observeThreadState(record.url, threadId);
       // The first real turn, not thread/start, is the durable binding boundary.
       const sent = await chatRpc(record.url, "turn/start", { threadId, input });
       const turn = sent.turn;
@@ -224,7 +225,7 @@ export class Supervisor {
       try { await this.persist(record); }
       catch (error) { record.mainThreadId = null; throw error; }
       this.notify(id);
-      return { threadId, turn: turn as Record<string, unknown> };
+      return { threadId, turn: turn as Record<string, unknown>, threadState };
     });
   }
 

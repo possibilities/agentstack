@@ -8,6 +8,7 @@ import test from "node:test";
 import { WebSocketServer } from "ws";
 import { ChatIndex, ChatQueue, ChatUploads, chatRpc } from "../src/chats.js";
 import type { ServerView } from "../src/supervisor.js";
+import { chatSend, chatSteer, chatEnqueue, type BotsContext } from "../api.js";
 
 const rootId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const childId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -94,20 +95,16 @@ test("a symlinked history root cannot redirect indexing outside the Bot's state"
   } finally { index?.close(); await rm(state, { recursive: true, force: true }); await rm(external, { recursive: true, force: true }); }
 });
 
-test("queue admits once, sends only while idle, and preserves an unknown dispatch fence across restart", async () => {
+test("queue admits once, drains while Codex is working, and preserves an unknown dispatch fence across restart", async () => {
   const state = await mkdtemp(join(tmpdir(), "stack-queue-"));
   const server = createServer();
   const wss = new WebSocketServer({ server });
-  let status = "active";
-  let failRead = false;
   const accepted: string[] = [];
   wss.on("connection", (peer) => peer.on("message", (raw) => {
     const frame = JSON.parse(String(raw)) as { id?: number; method: string; params: { clientUserMessageId?: string } };
     if (frame.method === "initialize") peer.send(JSON.stringify({ id: frame.id, result: {} }));
-    else if (frame.method === "thread/read") peer.send(JSON.stringify(failRead
-      ? { id: frame.id, error: { message: "temporary status failure" } }
-      : { id: frame.id, result: { thread: { status: { type: status } } } }));
-    else if (frame.method === "turn/start") { accepted.push(frame.params.clientUserMessageId!); status = "active"; peer.send(JSON.stringify({ id: frame.id, result: { turn: { id: "turn-one" } } })); }
+    else if (frame.method === "thread/read") peer.send(JSON.stringify({ id: frame.id, result: { thread: { status: { type: "active" } } } }));
+    else if (frame.method === "turn/start") { accepted.push(frame.params.clientUserMessageId!); peer.send(JSON.stringify({ id: frame.id, result: { turn: { id: "turn-one" } } })); }
   }));
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -123,29 +120,84 @@ test("queue admits once, sends only while idle, and preserves an unknown dispatc
     assert.equal(index.enqueue("bot-1", rootId, id, [{ type: "text", text: "first" }]).state, "pending");
     assert.equal(index.enqueue("bot-1", rootId, id, [{ type: "text", text: "first" }]).state, "pending");
     assert.throws(() => index!.enqueue("bot-1", otherId, id, [{ type: "text", text: "first" }]), /different content or destination/);
-    queue.wake("bot-1", rootId);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    assert.deepEqual(accepted, []);
-    status = "idle";
-    failRead = true;
-    queue.wake("bot-1", rootId);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    assert.equal(index.queued(id)?.state, "pending");
-    assert.deepEqual(accepted, []);
-    failRead = false;
-    for (let n = 0; n < 150 && !accepted.length; n++) await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.deepEqual(accepted, [id]);
-    assert.equal(index.queued(id)?.state, "sent");
-    assert.equal(index.queued(id)?.turnId, "turn-one");
     const second = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
     index.enqueue("bot-1", rootId, second, [{ type: "text", text: "second" }]);
-    index.setQueued(second, "dispatching");
+    queue.wake("bot-1", rootId);
+    for (let n = 0; n < 150 && index.queued(second)?.state !== "sent"; n++) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.deepEqual(accepted, [id, second]);
+    assert.equal(index.queued(id)?.state, "sent");
+    assert.equal(index.queued(id)?.turnId, "turn-one");
+    assert.equal(index.queued(second)?.turnId, "turn-one", "both messages can be admitted to the same active turn");
+    const third = randomUUID();
+    index.enqueue("bot-1", rootId, third, [{ type: "text", text: "third" }]);
+    index.setQueued(third, "dispatching");
+    index.enqueue("bot-1", rootId, randomUUID(), [{ type: "text", text: "behind unknown" }]);
     await queue.close();
     index.close(); index = new ChatIndex(state);
-    assert.equal(index.queued(second)?.state, "unknown");
+    assert.equal(index.queued(third)?.state, "unknown");
     assert.equal(index.nextQueued("bot-1", rootId), null);
     assert.deepEqual((await chatRpc(url, "thread/read", { threadId: rootId })).thread, { status: { type: "active" } });
   } finally { index?.close(); await new Promise<void>((resolve) => wss.close(() => server.close(() => resolve()))); await rm(state, { recursive: true, force: true }); }
+});
+
+test("chat submissions return receipt-time state and admit working threads even when observation fails", async () => {
+  const state = await mkdtemp(join(tmpdir(), "stack-chat-send-"));
+  const server = createServer();
+  const wss = new WebSocketServer({ server });
+  let status: Record<string, unknown> = { type: "idle" };
+  let failRead = false;
+  const submitted: string[] = [];
+  wss.on("connection", (peer) => peer.on("message", (raw) => {
+    const frame = JSON.parse(String(raw));
+    if (frame.method === "initialize") peer.send(JSON.stringify({ id: frame.id, result: {} }));
+    if (frame.method === "thread/read") peer.send(JSON.stringify(failRead
+      ? { id: frame.id, error: { message: "status unavailable" } }
+      : { id: frame.id, result: { thread: { status } } }));
+    if (frame.method === "turn/start" || frame.method === "turn/steer") {
+      submitted.push(frame.method);
+      // Deliberately change state between observation and acknowledgement.
+      status = { type: "active", activeFlags: [] };
+      peer.send(JSON.stringify({ id: frame.id, result: frame.method === "turn/steer" ? { turnId: "active" } : { turn: { id: "active" } } }));
+    }
+  }));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const chats = new ChatIndex(state);
+  const bot = { id: "bot-1", mainThreadId: rootId, state: "running", runningAccount: "test", cwd: state,
+    url: `ws://127.0.0.1:${address.port}`, recoveryIssue: null } as ServerView;
+  const queue = new ChatQueue(chats, () => bot);
+  const ctx = { chats, queue, supervisor: { list: () => [bot] } } as unknown as BotsContext;
+  const input = { botId: bot.id, threadId: rootId, input: [{ type: "text" as const, text: "hello" }] };
+  try {
+    await fixture(state, rootId, null, "chat send");
+    const idle = await chatSend.call(ctx, input);
+    assert.deepEqual(idle.threadState.status, { type: "idle" });
+    assert.equal(idle.threadState.activity, "idle");
+    assert.ok(Number.isFinite(Date.parse(idle.threadState.observedAt)));
+    const working = await chatSend.call(ctx, input);
+    assert.equal(working.threadState.activity, "working");
+    assert.deepEqual(working.turn, idle.turn);
+    status = { type: "active", activeFlags: ["waitingOnApproval"] };
+    const waiting = await chatSteer.call(ctx, { ...input, expectedTurnId: "active" });
+    assert.equal(waiting.threadState.activity, "waiting");
+    assert.deepEqual(waiting.threadState.status, { type: "active", activeFlags: ["waitingOnApproval"] });
+    failRead = true;
+    const unavailable = await chatSend.call(ctx, input);
+    assert.equal(unavailable.threadState.activity, "unknown");
+    assert.equal(unavailable.threadState.status, null);
+    assert.match(unavailable.threadState.error!, /status unavailable/);
+    const queued = await chatEnqueue.call(ctx, { ...input, id: randomUUID() });
+    assert.equal(queued.threadState.activity, "unknown");
+    for (let n = 0; n < 150 && chats.queued(queued.id)?.state !== "sent"; n++) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(chats.queued(queued.id)?.state, "sent");
+    assert.deepEqual(submitted, ["turn/start", "turn/start", "turn/steer", "turn/start", "turn/start"]);
+  } finally {
+    await queue.close(); chats.close();
+    for (const peer of wss.clients) peer.terminate();
+    await new Promise<void>((resolve) => wss.close(() => server.close(() => resolve())));
+    await rm(state, { recursive: true, force: true });
+  }
 });
 
 test("chunked uploads resume by actual offset, validate bytes, and stay Bot-scoped", async () => {

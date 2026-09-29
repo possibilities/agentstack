@@ -28,7 +28,7 @@ test("Worker UI progress and rich reads cannot become originating-Bot wakeups", 
   await assert.rejects(authorizeWorkerRead({ ...subscription, readOperation: "worker_read" }, {}), /exact worker_changed scope/);
 });
 
-test("event values start a turn only on a loaded descendant of the Bot's sanctioned main thread", { timeout: 15_000 }, async () => {
+test("event values are admitted on idle and working sanctioned threads without waiting for completion", { timeout: 15_000 }, async () => {
   const root = await mkdtemp("/tmp/as-turn-events-");
   for (const name of ["sample", "worker", "browse"]) {
     await mkdir(join(root, "packages", name), { recursive: true });
@@ -37,11 +37,19 @@ test("event values start a turn only on a loaded descendant of the Bot's sanctio
   const env = { STACK_STATE_DIR: root };
   const http = createServer();
   const wss = new WebSocketServer({ server: http });
-  const turns: Array<{ threadId: string; input: Array<{ text: string }> }> = [];
+  const turns: Array<{ threadId: string; input: unknown[]; toolOutput: { namespace: string; name: string; output: string } }> = [];
   let childActivity: "idle" | "active" = "idle";
+  let holdEventConnection = false;
+  let releaseConnection: (() => void) | undefined;
+  let rejectSubmission = false;
+  let attempts = 0;
   wss.on("connection", (peer) => peer.on("message", (raw) => {
     const frame = JSON.parse(String(raw)) as { id?: number; method?: string; params?: Record<string, unknown> };
     if (!frame.id || !frame.method) return;
+    if (frame.method === "initialize" && (frame.params?.clientInfo as { name?: string })?.name === "stack-events" && holdEventConnection) {
+      releaseConnection = () => peer.send(JSON.stringify({ id: frame.id, result: {} }));
+      return;
+    }
     let result: unknown = {};
     if (frame.method === "thread/loaded/list") result = { data: ["main", "child", "foreign"] };
     if (frame.method === "thread/read") {
@@ -49,13 +57,12 @@ test("event values start a turn only on a loaded descendant of the Bot's sanctio
       result = { thread: { id, parentThreadId: id === "child" ? "main" : null, status: { type: id === "child" ? childActivity : "idle" } } };
     }
     if (frame.method === "turn/start") {
+      attempts++;
+      if (rejectSubmission) { peer.send(JSON.stringify({ id: frame.id, error: { message: "cannot steer a compact turn" } })); return; }
       turns.push(frame.params as typeof turns[number]);
-      result = { turn: { id: `turn-${turns.length}` } };
+      result = { turn: { id: "same-active-turn" } };
     }
     peer.send(JSON.stringify({ id: frame.id, result }));
-    if (frame.method === "turn/start") {
-      setTimeout(() => peer.send(JSON.stringify({ method: "turn/completed", params: { threadId: frame.params?.threadId, turn: { id: `turn-${turns.length}` } } })), 10);
-    }
   }));
   await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
   const address = http.address();
@@ -97,17 +104,17 @@ test("event values start a turn only on a loaded descendant of the Bot's sanctio
     await assert.rejects(verifiedTarget({ botId: "bot-1", instance: "0".repeat(32), threadId: "child" }, env), /not verified/);
     const initial = await subscriptions.subscribe("sample", { topic: "changed", readOperation: "snapshot" }, invocation);
     assert.deepEqual(initial.value, { value: 0 });
-    childActivity = "active";
     value = 1;
     sample.publish?.("changed");
-    await pause(100);
-    assert.equal(turns.length, 0, "busy thread must not receive another turn");
-    childActivity = "idle";
     await until(() => turns.length === 1);
     assert.equal(turns[0]?.threadId, "child");
-    assert.match(turns[0]?.input[0]?.text ?? "", /Current value: \{"value":1\}/);
-    assert.match(turns[0]?.input[0]?.text ?? "", /Topic: changed/);
+    assert.deepEqual(turns[0]?.input, []);
+    assert.equal(turns[0]?.toolOutput.namespace, "stack");
+    assert.equal(turns[0]?.toolOutput.name, "subscription_update");
+    assert.match(turns[0]?.toolOutput.output ?? "", /Current value: \{"value":1\}/);
+    assert.match(turns[0]?.toolOutput.output ?? "", /Topic: changed/);
     await until(() => typeof subscriptions.status(invocation).subscriptions[0]?.lastDeliveredAt === "number");
+    childActivity = "active";
     const choice = { topic: "worker_changed", scope: workerId, readOperation: "worker_status", readArguments: { id: workerId } };
     await assert.rejects(subscriptions.subscribe("worker", { ...choice, readArguments: { id: "other" } }, invocation), /exact worker_changed scope/);
     await assert.rejects(subscriptions.subscribe("worker", choice, { ...invocation, threadId: "main" }), /not owned by this Bot thread/);
@@ -117,8 +124,8 @@ test("event values start a turn only on a loaded descendant of the Bot's sanctio
     workers.publish?.("worker_changed", workerId);
     await until(() => turns.length === 2);
     assert.equal(turns[1]?.threadId, "child");
-    assert.match(turns[1]?.input[0]?.text ?? "", /Topic: worker_changed · Scope:/);
-    assert.match(turns[1]?.input[0]?.text ?? "", /"stopReason":"end_turn"/);
+    assert.match(turns[1]?.toolOutput.output ?? "", /Topic: worker_changed · Scope:/);
+    assert.match(turns[1]?.toolOutput.output ?? "", /"stopReason":"end_turn"/);
     workerServer = "bot-2";
     workerPhase = "idle";
     workers.publish?.("worker_changed", workerId);
@@ -133,19 +140,43 @@ test("event values start a turn only on a loaded descendant of the Bot's sanctio
     assert.equal(turns.length, 2, "intermediate handoff states do not wake the Chat");
     handback = { state: "resolved", outcome: "completed", note: "Signed in" }; browser.publish?.("browser_handoffs_changed");
     await until(() => turns.length === 3);
-    assert.equal(turns[2]?.threadId, "child"); assert.match(turns[2]?.input[0]?.text ?? "", /"outcome":"completed"/);
+    assert.equal(turns[2]?.threadId, "child"); assert.match(turns[2]?.toolOutput.output ?? "", /"outcome":"completed"/);
     await until(() => typeof subscriptions.status(invocation).subscriptions.find((s) => s.id === subscribed.subscription.id)?.lastDeliveredAt === "number");
     const completedBeforeSubscribe = await subscriptions.subscribe("browse", { ...handoffChoice, readArguments: { ...handoffChoice.readArguments, requestId: "22222222-2222-4222-8222-222222222222" } }, invocation);
     assert.deepEqual(completedBeforeSubscribe.value, { result: handback }, "a completion before subscribe is returned initially, never lost awaiting a future notice");
     assert.equal(turns.length, 3);
-    childActivity = "active";
     value = 2;
     sample.publish?.("changed");
-    await until(() => subscriptions.status(invocation).subscriptions.find((s) => s.id === initial.subscription.id)?.state === "delivering");
+    await until(() => turns.length === 4);
+    await until(() => subscriptions.status(invocation).subscriptions.find((s) => s.id === initial.subscription.id)?.state === "active");
+    assert.match(turns[3]?.toolOutput.output ?? "", /Current value: \{"value":2\}/);
+
+    holdEventConnection = true;
+    value = 3;
+    sample.publish?.("changed");
+    await until(() => Boolean(releaseConnection));
     await writeFile(join(root, "packages", "sample", "api.yaml"), "name: sample\ndescription: Test.\nmcp:\n  description: Test.\n  operations: all\n  events: []\n");
-    childActivity = "idle";
+    releaseConnection!(); releaseConnection = undefined;
     await until(() => subscriptions.status(invocation).subscriptions.find((s) => s.id === initial.subscription.id)?.state === "error");
-    assert.equal(turns.length, 3, "revocation during the idle wait must fence turn/start");
+    assert.equal(turns.length, 4, "revocation during connection setup must fence submission");
+
+    await writeFile(join(root, "packages", "sample", "api.yaml"), "name: sample\ndescription: Test.\nmcp:\n  description: Test.\n  operations: all\n  events: all\n");
+    holdEventConnection = false;
+    rejectSubmission = true;
+    sample.publish?.("changed");
+    await until(() => attempts === 5);
+    await until(() => subscriptions.status(invocation).subscriptions.find((s) => s.id === initial.subscription.id)?.lastError?.includes("compact") === true);
+    await pause(100);
+    assert.equal(attempts, 5, "a refusal is recorded without blind retry");
+
+    rejectSubmission = false;
+    holdEventConnection = true;
+    sample.publish?.("changed");
+    await until(() => Boolean(releaseConnection));
+    await subscriptions.unsubscribe(initial.subscription.id, invocation);
+    releaseConnection!(); releaseConnection = undefined;
+    await pause(100);
+    assert.equal(attempts, 5, "unsubscribe during connection setup fences submission");
   } finally {
     await subscriptions.close();
     await browser.close();

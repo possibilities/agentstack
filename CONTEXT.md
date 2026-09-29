@@ -56,7 +56,7 @@ _Avoid_: stream, feed, pubsub
 
 ## MCP event subscription
 
-A durable, revisionless request by a verified Bot thread to watch one MCP-selected Package API topic and re-read one exposed read-only operation after each invalidation. The server records the request, reconnects and resnapshots after interruptions, coalesces unchanged values, and starts a Codex turn on that same sanctioned thread for a changed value. Current exposure is checked around reads and before delivery, including after queued or idle waits; removed or invalid configuration fences subsequent work. The initial value is returned to the subscribing tool call; event notices themselves carry no values.
+A durable, revisionless request by a verified Bot thread to watch one MCP-selected Package API topic and re-read one exposed read-only operation after each invalidation. The server records the request, reconnects and resnapshots after interruptions, suppresses unchanged values, and submits changed snapshots as standalone tool output through Codex `turn/start` on that same sanctioned thread. Codex wakes an idle loaded thread or queues input in an active regular turn; Stack waits only for admission acknowledgement, never idle or completion. Current exposure is checked around reads and immediately before submission, including after connection setup; removed or invalid configuration fences subsequent work. The initial value is returned to the subscribing tool call; event notices themselves carry no values. See [ADR 0120](docs/adr/0120-codex-native-input-admission.md).
 
 ## Codex account
 

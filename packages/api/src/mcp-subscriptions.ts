@@ -46,7 +46,6 @@ function publicView(state: RecordState): EventSubscription {
 /** Durable subscriptions: invalidation notices trigger fresh reads, never replayed payloads. */
 export class McpEventSubscriptions {
   private readonly records = new Map<string, RecordState>();
-  private readonly deliveries = new Map<string, Promise<void>>();
   private readonly db: DatabaseSync;
   private closed = false;
 
@@ -299,18 +298,12 @@ export class McpEventSubscriptions {
           const encoded = JSON.stringify(value);
           const hash = valueHash(value);
           if (!state.reconnect && hash === state.lastValueHash) { state.state = "active"; continue; }
-          const key = `${state.botId}:${state.instance}:${state.threadId}`;
-          const previous = this.deliveries.get(key) ?? Promise.resolve();
           const authorize = () => this.authorize(state);
-          const next = previous.catch(() => undefined).then(async () => {
-            await authorize();
-            return this.deliver({ subscription: publicView(state), reason: state.reconnect ? "reconnected" : "changed",
-              value: encoded.length <= maxValueChars ? value : { readOperation: state.readOperation, readArguments: state.readArguments, bytes: Buffer.byteLength(encoded), note: "Value exceeds turn limit; call the read operation directly." },
-              truncated: encoded.length > maxValueChars }, state.abort.signal, authorize);
-          });
-          this.deliveries.set(key, next);
-          try { await next; }
-          finally { if (this.deliveries.get(key) === next) this.deliveries.delete(key); }
+          await authorize();
+          await this.deliver({ subscription: publicView(state), reason: state.reconnect ? "reconnected" : "changed",
+            value: encoded.length <= maxValueChars ? value : { readOperation: state.readOperation, readArguments: state.readArguments, bytes: Buffer.byteLength(encoded), note: "Value exceeds turn limit; call the read operation directly." },
+            truncated: encoded.length > maxValueChars }, state.abort.signal, authorize);
+          // Admission ACK only: later snapshots must not wait for the agent's turn to finish.
           state.lastDeliveredAt = Date.now();
           state.lastValueHash = hash;
           state.lastError = null;

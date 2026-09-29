@@ -17,11 +17,11 @@ export type ServedMcp = { port: number; urls: Record<string, string>; close(): P
 
 const subscriptionTools: Tool[] = [
   { name: "events_catalog", description: "List this Package API's event topics, scope rule, and read-only operations that can supply subscription values.", inputSchema: { type: "object", properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true } },
-  { name: "events_subscribe", description: "Subscribe this Bot thread to a topic and read-only snapshot operation. Return the first value now; later changes arrive as Codex turns. Repeating the same request returns the existing subscription.", inputSchema: {
+  { name: "events_subscribe", description: "Subscribe this Bot thread to a topic and read-only snapshot operation. Return the first value now; later changed snapshots arrive as standalone tool output through Codex start-or-steer. Idle threads wake; working threads receive pending input at Codex's processing boundary. Stack never waits for idle or turn completion. Repeating the same request returns the existing subscription.", inputSchema: {
     type: "object", properties: { topic: { type: "string" }, scope: { type: "string" }, readOperation: { type: "string" }, readArguments: { type: "object", additionalProperties: true } },
     required: ["topic", "readOperation"], additionalProperties: false,
   } },
-  { name: "events_status", description: "List this Bot thread's durable event subscriptions and delivery state, including failures that need attention.", inputSchema: { type: "object", properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true } },
+  { name: "events_status", description: "List this Bot thread's durable event subscriptions and submission failures. lastDeliveredAt is the last Codex admission acknowledgement, not proof of model consumption or completed work.", inputSchema: { type: "object", properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true } },
   { name: "events_unsubscribe", description: "Stop one exact subscription for this Bot thread.", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false } },
 ];
 

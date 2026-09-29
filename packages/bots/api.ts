@@ -12,7 +12,7 @@ import { StateStore } from "./src/store.js";
 import { Supervisor, type ServerView } from "./src/supervisor.js";
 import { watchThreadEvents } from "./src/threads.js";
 import { VoiceCalls } from "./src/voice.js";
-import { ChatIndex, ChatQueue, ChatUploads, chatRpc, live } from "./src/chats.js";
+import { ChatIndex, ChatQueue, ChatUploads, chatRpc, live, observeThreadState } from "./src/chats.js";
 import { LiveChats, boundedMainItems } from "./src/chat-live.js";
 import { chatTreePage, readChatTree, pageChatTree, chatTreeDetail as treeDetail, detailChunk } from "./src/chat-tree.js";
 
@@ -223,7 +223,7 @@ async function allowed(ctx: BotsContext, id: string, target: string): Promise<Se
 function unchanged(ctx: BotsContext, bot: ServerView): void {
   const current = botFor(ctx, bot.id);
   if (current.url !== bot.url || current.pid !== bot.pid || current.mainThreadId !== bot.mainThreadId || current.state !== bot.state || current.recoveryIssue !== bot.recoveryIssue)
-    throw new Error("Bot changed while reading chat tree; refresh bot_list");
+    throw new Error("Bot changed while handling chat; refresh bot_list");
 }
 async function interactive(ctx: BotsContext, id: string, target: string): Promise<ServerView> {
   const bot = await allowed(ctx, id, target);
@@ -338,15 +338,27 @@ export const chatMainItems = operation({
     return { threadId: bot.mainThreadId, ...data };
   },
 });
+const threadStateObservation = z.strictObject({
+  status: raw.nullable().describe("Native thread status read while handling this request, before submission; null if unavailable."),
+  activity: z.enum(["working", "waiting", "idle", "unknown"]),
+  observedAt: z.string(), error: z.string().nullable(),
+}).describe("Receipt-time observation, not an atomic admission result. State may change before Codex accepts the input; an observation failure does not block sending.");
 export const chatSend = operation({
-  name: "chat_send", description: "Start a Codex turn on a sanctioned live thread. Fails if Codex cannot accept it; an interrupted RPC may have started the turn, so inspect history before retrying. An active turn may be steered by Codex; use chat_steer for explicit expected-turn protection.",
+  name: "chat_send", description: "Submit a message through Codex start-or-steer: wake an idle thread or add pending input to a working turn. Return on admission, without waiting for idle, model consumption or completion. threadState is Stack's pre-send observation, not proof of started versus steered. A lost RPC response is unknown; inspect history before retrying. Use chat_steer only for explicit expected-turn protection.",
   input: z.strictObject({ botId, threadId, input: z.array(inputPart).min(1), clientUserMessageId: z.uuid().optional(), model: z.string().optional(), effort: z.enum(["low", "medium", "high", "xhigh", "max", "ultra"]).optional() }),
-  output: z.strictObject({ turn: raw }), annotations: { title: "Send chat message" },
-  async call(ctx: BotsContext, { botId: id, threadId: target, input, ...args }) { const bot = await interactive(ctx, id, target); return z.strictObject({ turn: raw }).parse(await chatRpc(live(bot), "turn/start", { threadId: target, input: await inputParts(ctx, bot, input), ...args })); },
+  output: z.strictObject({ turn: raw, threadState: threadStateObservation }), annotations: { title: "Send chat message" },
+  async call(ctx: BotsContext, { botId: id, threadId: target, input, ...args }) {
+    const bot = await interactive(ctx, id, target);
+    const threadState = await observeThreadState(live(bot), target);
+    const prepared = await inputParts(ctx, bot, input);
+    unchanged(ctx, bot);
+    const result = z.strictObject({ turn: raw }).parse(await chatRpc(live(bot), "turn/start", { threadId: target, input: prepared, ...args }));
+    return { ...result, threadState };
+  },
 });
 export const chatOpen = operation({
-  name: "chat_open", description: "Create the Bot's first durable main thread and start its first turn. An already adopted Bot rejects this; a lost response may have created the root or turn, so inspect bot_list and history before retrying.",
-  input: z.strictObject({ botId, input: z.array(inputPart).min(1) }), output: z.strictObject({ threadId, turn: raw }), annotations: { title: "Open first chat" },
+  name: "chat_open", description: "Create the Bot's first durable main thread and submit its first input. Return on admission, not turn completion, with a pre-send threadState observation. An already adopted Bot rejects this; a lost response may have created the root or turn, so inspect bot_list and history before retrying.",
+  input: z.strictObject({ botId, input: z.array(inputPart).min(1) }), output: z.strictObject({ threadId, turn: raw, threadState: threadStateObservation }), annotations: { title: "Open first chat" },
   async call(ctx: BotsContext, { botId: id, input }) {
     const bot = botFor(ctx, id);
     const result = await ctx.supervisor.openMainChat(id, await inputParts(ctx, bot, input));
@@ -355,9 +367,16 @@ export const chatOpen = operation({
   },
 });
 export const chatSteer = operation({
-  name: "chat_steer", description: "Steer exactly the expected active Codex turn; rejects a changed or completed turn rather than sending to a different one.",
-  input: z.strictObject({ botId, threadId, expectedTurnId: z.string().min(1), input: z.array(inputPart).min(1), clientUserMessageId: z.uuid().optional() }), output: z.strictObject({ turnId: z.string() }), annotations: { title: "Steer chat turn" },
-  async call(ctx: BotsContext, { botId: id, threadId: target, input, ...args }) { const bot = await interactive(ctx, id, target); return z.strictObject({ turnId: z.string() }).parse(await chatRpc(live(bot), "turn/steer", { threadId: target, input: await inputParts(ctx, bot, input), ...args })); },
+  name: "chat_steer", description: "Submit input to exactly the expected active Codex turn; rejects a changed or completed turn rather than waking an idle thread. Returns admission plus Stack's pre-send threadState observation, without waiting for consumption or completion.",
+  input: z.strictObject({ botId, threadId, expectedTurnId: z.string().min(1), input: z.array(inputPart).min(1), clientUserMessageId: z.uuid().optional() }), output: z.strictObject({ turnId: z.string(), threadState: threadStateObservation }), annotations: { title: "Steer chat turn" },
+  async call(ctx: BotsContext, { botId: id, threadId: target, input, ...args }) {
+    const bot = await interactive(ctx, id, target);
+    const threadState = await observeThreadState(live(bot), target);
+    const prepared = await inputParts(ctx, bot, input);
+    unchanged(ctx, bot);
+    const result = z.strictObject({ turnId: z.string() }).parse(await chatRpc(live(bot), "turn/steer", { threadId: target, input: prepared, ...args }));
+    return { ...result, threadState };
+  },
 });
 export const chatInterrupt = operation({
   name: "chat_interrupt", description: "Interrupt exactly this active turn. A stale turn ID cannot interrupt a newer turn.",
@@ -366,15 +385,17 @@ export const chatInterrupt = operation({
 });
 const queuedChat = z.strictObject({ id: z.uuid(), botId, threadId, input: z.array(z.unknown()), state: z.enum(["pending", "dispatching", "sent", "unknown", "cancelled"]), turnId: z.string().nullable(), issue: z.string().nullable() });
 export const chatEnqueue = operation({
-  name: "chat_enqueue", description: "Durably queue a message for a sanctioned thread. A client-generated UUID is the admission key; reusing it with different content fails. Dispatch waits for an idle turn. An uncertain dispatch blocks later messages until explicitly reconciled.",
-  input: z.strictObject({ botId, threadId, id: z.uuid(), input: z.array(inputPart).min(1) }), output: queuedChat, annotations: { title: "Queue chat message", idempotentHint: true },
+  name: "chat_enqueue", description: "Durably admit a message for automatic Codex start-or-steer submission, without waiting for idle or turn completion. A client-generated UUID is the admission key; reusing it with different content fails. Return queue admission and a receipt-time threadState observation; sent means Codex acknowledged, not completed. An uncertain dispatch blocks later messages until explicitly reconciled.",
+  input: z.strictObject({ botId, threadId, id: z.uuid(), input: z.array(inputPart).min(1) }), output: queuedChat.extend({ threadState: threadStateObservation }), annotations: { title: "Queue chat message", idempotentHint: true },
   async call(ctx: BotsContext, { botId: id, threadId: target, id: key, input }) {
     const bot = await interactive(ctx, id, target);
+    const threadState = await observeThreadState(live(bot), target);
     const prepared = await inputParts(ctx, bot, input);
+    unchanged(ctx, bot);
     const item = ctx.chats.enqueue(id, target, key, prepared);
     ctx.queue.onChange?.(id);
     ctx.queue.wake(id, target);
-    return item;
+    return { ...item, threadState };
   },
 });
 export const chatQueueList = operation({

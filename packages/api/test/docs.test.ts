@@ -195,6 +195,11 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(speech.annotations.idempotentHint, undefined);
     assert.deepEqual(Object.keys(bots.operations.find((operation) => operation.name === "chat_search")?.inputSchema.properties ?? {}).sort(), ["botId", "limit", "offset", "query"]);
     assert.deepEqual(Object.keys(bots.operations.find((operation) => operation.name === "chat_records")?.outputSchema.properties ?? {}).sort(), ["nextLine", "records"]);
+    for (const name of ["chat_send", "chat_open", "chat_steer", "chat_enqueue"]) {
+      const output = bots.operations.find((operation) => operation.name === name)!.outputSchema;
+      assert.ok((output.required as string[]).includes("threadState"));
+      assert.match(JSON.stringify((output.properties as Record<string, unknown>).threadState), /Receipt-time observation/);
+    }
     const tree = bots.operations.find((operation) => operation.name === "chat_tree") as OperationDoc;
     assert.equal(tree.annotations.readOnlyHint, true);
     assert.deepEqual(Object.keys(tree.outputSchema.properties ?? {}).sort(), ["coverage", "nextOffset", "observedAt", "rootThreadId", "rows", "snapshot", "total"]);
