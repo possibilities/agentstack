@@ -17,7 +17,7 @@ export const spaces: { id: SpaceId; title: string; description: string; key: str
   { id: "inbox", title: "Inbox", description: "Notifications to read, answer and dismiss", key: "6" },
   { id: "signal", title: "Signal", description: "What conversations ask of you, and how it was interpreted", key: "7" },
   { id: "content", title: "Content", description: "Vault documents, collections, files and Artifacts", key: "8" },
-  { id: "workers", title: "Workers", description: "What Workers started by Bots are doing, read-only", key: "9" },
+  { id: "workers", title: "Workers", description: "What Workers started by Bots are doing, and their saved model settings", key: "9" },
   { id: "scrape", title: "Scrape", description: "Extraction, feeds, presets and their health, and the scrape-to-file queue", key: "0" },
   // The digits are taken; b is free on the bench.
   { id: "browse", title: "Browse", description: "Bot browser profiles, human handoffs and the browser toolchain", key: "b" },

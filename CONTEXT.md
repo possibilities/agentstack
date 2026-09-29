@@ -135,7 +135,7 @@ A Fleet window that follows one Bot's main thread: human and assistant text, str
 
 ## Worker window
 
-A read-only Workers-space window that follows one Worker: its summary, pending permissions, conversation, turns, tools, records and session metadata. The primary Worker window follows the Workers list; additional windows keep their own Worker until closed. The arrangement is browser-local. Its Bot, not the window, answers and steers the Worker. _Avoid_: Worker chat, Worker console
+A Workers-space window that follows one Worker: its summary, pending permissions, conversation, turns, tools, records and session metadata, all read-only, plus its managed model and effort settings, which it can save and apply to the exact idle runtime. The primary Worker window follows the Workers list; additional windows keep their own Worker until closed. The arrangement is browser-local. Its Bot, not the window, answers and steers the Worker. _Avoid_: Worker chat, Worker console
 
 ## Bot subagent
 

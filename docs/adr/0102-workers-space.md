@@ -7,6 +7,8 @@ API ([ADR 0038](0038-durable-acp-worker-execution.md),
 It supersedes the deferral of dedicated Worker views in
 [ADR 0039](0039-worker-wakeups-and-scoped-mcp.md) and
 [ADR 0055](0055-agent-tree-observability.md); the rest of both stands.
+Superseded in part by [ADR 0130](0130-managed-settings-editors.md), 2026-09-29:
+the space also edits and applies managed Worker model and effort settings.
 
 ## Decision
 

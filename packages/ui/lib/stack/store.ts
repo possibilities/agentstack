@@ -13,6 +13,8 @@ import { acceptCatalog, acceptRoleRead, contextKey, normalizeContext, roleReadOf
 import { brainCallError, jobViews, mergeJobs, submissionLabel, terminalStates, type BrainJobView, type CallError } from "./brain";
 import type { BrainAdmission, BrainJob, BrainJobRecord, BrainJobStats, BrainShareState, BrainSource, BrainStats, BrainStatus, BrainTag } from "./types";
 import type { ProcRun, ProcScheduleListItem, ProcStatus } from "./types";
+import type { SettingsCatalog, SettingsView } from "./types";
+import { catalogRequest, readRequest, settingsKey, settingsPackage, type SettingsTarget } from "./settings";
 
 export type StackState = Snapshot & {
   access: Resource<AccessSnapshot>;
@@ -132,6 +134,10 @@ export type StackState = Snapshot & {
   procScheduleGeneration: number;
   /** Bumped on a watched run's scoped notices and (re)subscription; its window re-reads on it. */
   procRunGenerations: Record<string, number>;
+  /** Managed settings views editors watch, by `settingsKey`. Shared saved evidence; drafts stay in each editor. */
+  settingsViews: Record<string, Resource<SettingsView>>;
+  /** Managed settings catalogs editors watch: `bots`, or `worker:<provider>`. */
+  settingsCatalogs: Record<string, Resource<SettingsCatalog>>;
 };
 
 export type BrainSubmission = { key: string; label: string; kind: "url" | "text"; at: number; pending: boolean; admission: BrainAdmission | null; error: CallError | null; share: BrainShareState | null };
@@ -161,6 +167,8 @@ const contentWrites = new Set(["collection_create", "collection_update", "collec
 /** Every Role shim write, settled either way, rereads the listing: it is the only record of what is installed. */
 const shimWrites = new Set(["role_shim_create", "role_shim_update", "role_shim_delete"]);
 const itemPage = 100;
+/** Managed settings writes; each re-reads what it targets once settled, since a lost acknowledgement may still have written. */
+const settingsWrites = new Set(["bot_settings_patch", "bot_settings_apply", "worker_settings_patch", "worker_settings_apply"]);
 export const contentDocumentLimit = 200;
 
 type ResourceKey = ContentKey | "access" | "server" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "roleCatalog" | "role" | "rolePreview" | "roleLaunch" | "roleInternal" | "roleShims" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts" | "signalStatus" | "scrapeStatus" | "scrapePresets" | "scrapeCanaries" | "scrapeQueue"
@@ -250,6 +258,11 @@ export class StackStore {
   private procChannels = new Map<string, Channel>();
   private statusInflight = new Map<string, Promise<void>>();
   private statusDirty = new Set<string>();
+  private settingsWatchers = new Map<string, { target: SettingsTarget; count: number }>();
+  private settingsCatalogWatchers = new Map<string, number>();
+  /** Settings reads in flight by view or catalog key; a notice during one schedules a single follow-up. */
+  private settingsInflight = new Set<string>();
+  private settingsDirty = new Set<string>();
 
   constructor(snapshot: Snapshot) {
     this.state = {
@@ -280,6 +293,7 @@ export class StackStore {
       brainDocumentRecords: {}, brainSubmissions: [],
       procSchedules: { data: null, error: null, at: null }, procRuns: { data: null, error: null, at: null },
       procStatus: { data: null, error: null, at: null }, procScheduleGeneration: 0, procRunGenerations: {},
+      settingsViews: {}, settingsCatalogs: {},
     };
     this.serverState = this.state;
     for (const account of snapshot.workerAccounts.data ?? []) if (this.catalogAccountAvailable(account.id)) this.catalogAvailable.add(account.id);
@@ -326,15 +340,15 @@ export class StackStore {
       if (topic === "login_changed") this.refresh("login");
       if (topic === "worker_login_changed") this.refresh("workerLogins");
     }, ["accounts_changed", "login_changed", "worker_accounts_changed", "worker_login_changed"]);
-    open("bots", () => { this.refresh("bots"); this.refresh("botDefaults"); this.refresh("voice"); }, (topic) => {
-      if (topic === "bots_changed") this.refresh("bots");
-      if (topic === "defaults_changed") this.refresh("botDefaults");
-      if (topic === "voice_changed") this.refresh("voice");
+    open("bots", () => { this.refresh("bots"); this.refresh("botDefaults"); this.refresh("voice"); this.refreshSettings("bots"); }, (topic) => {
+      if (topic === "bots_changed") { this.refresh("bots"); this.refreshSettings("bots", "bot"); }
+      if (topic === "defaults_changed") { this.refresh("botDefaults"); this.refreshSettings("bots"); }
+      if (topic === "voice_changed") { this.refresh("voice"); this.refreshSettings("bots", "bot"); }
     }, ["bots_changed", "defaults_changed", "voice_changed"]);
     // Cards and the Workers list use the global inventory invalidation. Worker windows
     // subscribe to worker_progress + worker_changed scoped by Worker ID (watchWorker).
-    open("worker", () => { this.refresh("workerRuntimes"); this.refresh("workerSessions"); this.reconcileCatalogs(true); }, () => {
-      this.refresh("workerRuntimes"); this.refresh("workerSessions"); this.reconcileCatalogs(true);
+    open("worker", () => { this.refresh("workerRuntimes"); this.refresh("workerSessions"); this.reconcileCatalogs(true); this.refreshSettings("worker"); }, () => {
+      this.refresh("workerRuntimes"); this.refresh("workerSessions"); this.reconcileCatalogs(true); this.refreshSettings("worker");
     }, ["workers_changed"]);
     open("usage", () => this.refresh("usage"), () => this.refresh("usage"), ["usage_changed"]);
     // Reads only: discovery (infer_discover) and requests (infer_start) are explicit actions.
@@ -425,12 +439,13 @@ export class StackStore {
     if (this.state.remote && pkg === "roles" && name.startsWith("role_shim_")) throw new Error("Role shims are available only on the local UI");
     const channel = this.main.get(pkg);
     if (!channel || channel.status !== "open") throw new Error(`${pkg} WebSocket is not connected`);
-    const request = channel.call<T>(name, args);
+    const request = settingsWrites.has(name) ? channel.call<T>(name, args).finally(() => this.settingsSettled(pkg, name, args)) : channel.call<T>(name, args);
     const result = await (pkg === "bots" ? request.finally(() => {
       // A lost mutation acknowledgement may still have changed the Bot. Re-read,
       // never replay the operation automatically.
       if (pkg === "bots" && ["bot_start", "bot_stop", "bot_assign", "bot_remove", "bot_settings_patch", "bot_settings_apply", "chat_open"].includes(name)) this.refresh("bots");
       if (pkg === "bots" && (name === "bot_defaults_set" || name === "bot_settings_patch" && !args.id)) this.refresh("botDefaults");
+      if (pkg === "bots" && name === "bot_defaults_set") this.refreshSettings("bots");
     }) : pkg === "access" && name !== "access_snapshot" ? request.finally(() => this.refresh("access"))
       // A lost acknowledgement may still have written; re-read either way, never replay.
       : pkg === "content" && contentWrites.has(name) ? request.finally(() => this.invalidateContent())
@@ -1019,11 +1034,14 @@ export class StackStore {
         if (this.workerChannels.get(id) !== channel) return;
         this.bumpWorker(id);
         this.readWorkerStatus(id);
+        this.readSettings(`worker:${id}`);
       },
       onNotice: (topic) => {
         if (this.workerChannels.get(id) !== channel) return;
         this.bumpWorker(id);
         if (topic === "worker_changed") this.readWorkerStatus(id);
+        // Progress also carries native settings observations; reads coalesce while it streams.
+        this.readSettings(`worker:${id}`);
       },
     });
     this.workerChannels.set(id, channel);
@@ -1090,6 +1108,96 @@ export class StackStore {
 
   private bumpProcRun(id: string): void {
     this.set({ procRunGenerations: { ...this.state.procRunGenerations, [id]: (this.state.procRunGenerations[id] ?? 0) + 1 } });
+  }
+
+  /**
+   * Reference-counted watch of one managed settings view. Every editor of a target shares the saved view and
+   * its evidence; each keeps its own draft. A Worker view also holds that Worker's scoped subscription.
+   */
+  watchSettings = (target: SettingsTarget): (() => void) => {
+    const key = settingsKey(target);
+    const watcher = this.settingsWatchers.get(key);
+    this.settingsWatchers.set(key, { target, count: (watcher?.count ?? 0) + 1 });
+    const unwatchWorker = target.kind === "worker" ? this.watchWorker(target.id) : null;
+    if (!watcher) this.readSettings(key);
+    return () => {
+      unwatchWorker?.();
+      const current = this.settingsWatchers.get(key);
+      if (current && current.count > 1) { this.settingsWatchers.set(key, { ...current, count: current.count - 1 }); return; }
+      this.settingsWatchers.delete(key);
+      this.settingsDirty.delete(key);
+      if (this.state.settingsViews[key]) {
+        const settingsViews = { ...this.state.settingsViews };
+        delete settingsViews[key];
+        this.set({ settingsViews });
+      }
+    };
+  };
+
+  /** Reference-counted watch of a settings catalog; its application defaults change with the defaults document. */
+  watchSettingsCatalog = (key: string): (() => void) => {
+    const count = (this.settingsCatalogWatchers.get(key) ?? 0) + 1;
+    this.settingsCatalogWatchers.set(key, count);
+    if (count === 1) this.readSettingsCatalog(key);
+    return () => {
+      const remaining = (this.settingsCatalogWatchers.get(key) ?? 0) - 1;
+      if (remaining > 0) { this.settingsCatalogWatchers.set(key, remaining); return; }
+      this.settingsCatalogWatchers.delete(key);
+      this.settingsDirty.delete(`catalog:${key}`);
+      if (this.state.settingsCatalogs[key]) {
+        const settingsCatalogs = { ...this.state.settingsCatalogs };
+        delete settingsCatalogs[key];
+        this.set({ settingsCatalogs });
+      }
+    };
+  };
+
+  /** Re-read every watched view (optionally of one kind) and catalog of a package. */
+  private refreshSettings(pkg: "bots" | "worker", kind?: SettingsTarget["kind"]): void {
+    for (const [key, { target }] of this.settingsWatchers) if (settingsPackage(target) === pkg && (!kind || target.kind === kind)) this.readSettings(key);
+    if (!kind) for (const key of this.settingsCatalogWatchers.keys()) if ((key === "bots") === (pkg === "bots")) this.readSettingsCatalog(key);
+  }
+
+  /** A settings write settled either way: its target, and for a defaults edit the catalogs and views quoting it, are re-read. */
+  private settingsSettled(pkg: string, name: string, args: Record<string, unknown>): void {
+    if (pkg === "bots") {
+      if (typeof args.id === "string") this.readSettings(`bot:${args.id}`);
+      else this.refreshSettings("bots");
+      return;
+    }
+    const target = (name === "worker_settings_apply" ? { id: args.id } : args.target) as { id?: unknown; provider?: unknown } | undefined;
+    if (typeof target?.id === "string") this.readSettings(`worker:${target.id}`);
+    else this.refreshSettings("worker");
+  }
+
+  private readSettings(key: string): void {
+    const watcher = this.settingsWatchers.get(key);
+    if (!watcher) return;
+    if (this.settingsInflight.has(key)) { this.settingsDirty.add(key); return; }
+    this.settingsInflight.add(key);
+    const { pkg, name, args } = readRequest(watcher.target);
+    void this.call<SettingsView>(pkg, name, args)
+      .then((data) => ({ data, error: null, at: Date.now() }), (error: Error) => ({ data: this.state.settingsViews[key]?.data ?? null, error: error.message, at: Date.now() }))
+      .then((next) => { if (this.settingsWatchers.has(key)) this.set({ settingsViews: { ...this.state.settingsViews, [key]: next } }); })
+      .finally(() => {
+        this.settingsInflight.delete(key);
+        if (this.settingsDirty.delete(key)) this.readSettings(key);
+      });
+  }
+
+  private readSettingsCatalog(key: string): void {
+    if (!this.settingsCatalogWatchers.has(key)) return;
+    const flight = `catalog:${key}`;
+    if (this.settingsInflight.has(flight)) { this.settingsDirty.add(flight); return; }
+    this.settingsInflight.add(flight);
+    const { pkg, name, args } = catalogRequest(key);
+    void this.call<SettingsCatalog>(pkg, name, args)
+      .then((data) => ({ data, error: null, at: Date.now() }), (error: Error) => ({ data: this.state.settingsCatalogs[key]?.data ?? null, error: error.message, at: Date.now() }))
+      .then((next) => { if (this.settingsCatalogWatchers.has(key)) this.set({ settingsCatalogs: { ...this.state.settingsCatalogs, [key]: next } }); })
+      .finally(() => {
+        this.settingsInflight.delete(flight);
+        if (this.settingsDirty.delete(flight)) this.readSettingsCatalog(key);
+      });
   }
 
   dismissWorkerAttempt = (accountId: string): void => {
@@ -1339,12 +1447,14 @@ export class StackStore {
         },
         // onOpen also runs when the underlying socket subscription reconnects
         // without closing the browser WebSocket. Missed notices are not replayed.
-        onOpen: () => { if (this.scopedChannels.get(id) === channel) this.invalidateBot(id); },
+        onOpen: () => { if (this.scopedChannels.get(id) !== channel) return; this.invalidateBot(id); this.readSettings(`bot:${id}`); },
         onNotice: (topic) => {
           this.log(pkg, topic, id);
           if (topic === "bots_changed") {
             this.refresh("bots");
           }
+          // threads_changed is an invalidation, not proof the main thread changed; the read decides.
+          if (topic === "bots_changed" || topic === "threads_changed") this.readSettings(`bot:${id}`);
         },
       });
       this.scopedChannels.set(id, channel);

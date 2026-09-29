@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { Empty, Flash, NodeLink, Orb, StatusDot, Time, type Tone } from "./primitives";
 import { useStack, useWorkbench, useWorkerWindows } from "./provider";
 import { Window } from "./window";
+import { WorkerDefaultsButton } from "./worker-settings";
 
 export const phaseTone: Record<WorkerSession["phase"], Tone> = {
   preparing: "info", running: "success", cancelling: "info", awaiting_input: "warning",
@@ -30,7 +31,8 @@ export function useShowWorker(): (id: string) => void {
 
 /**
  * Every Worker in worker_list, grouped by what it needs. Choosing one shows it
- * in the Worker window. Bots start and steer Workers; this space only reads.
+ * in the Worker window. Bots start and steer Workers; this space reads them and
+ * edits only managed model and effort settings, including provider defaults.
  */
 export function WorkersWindow() {
   const { workerSessions, workerAccounts, bots, status, endpoints } = useStack();
@@ -62,7 +64,8 @@ export function WorkersWindow() {
 
   return (
     <Window id="workers" title="Workers" subtitle="worker" icon={HammerIcon} accent="worker" count={workerSessions.data ? shown.length : null}
-      status={status.worker} endpoint={endpoints.worker} updatedAt={workerSessions.at} error={workerSessions.error} empty={!all.length}>
+      status={status.worker} endpoint={endpoints.worker} updatedAt={workerSessions.at} error={workerSessions.error} empty={!all.length}
+      actions={endpoints.worker ? <WorkerDefaultsButton /> : undefined}>
       {!endpoints.worker ? <Empty icon={HammerIcon} title="Worker isn’t served by this server" />
         : !workerSessions.data ? <Empty icon={HammerIcon} title={workerSessions.error ? "Workers unavailable" : "Reading Workers…"} />
         : !all.length ? <Empty icon={HammerIcon} title="No Workers yet" />

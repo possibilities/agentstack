@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, use, useId, useRef, useState } from "react";
-import { ChevronRightIcon, EllipsisIcon, PhoneIcon, PlayIcon, PlusIcon, Settings2Icon, SquareIcon, SquareTerminalIcon, TerminalIcon, Trash2Icon, UserRoundIcon } from "lucide-react";
+import { ChevronRightIcon, EllipsisIcon, PhoneIcon, PlayIcon, PlusIcon, Settings2Icon, SlidersHorizontalIcon, SquareIcon, SquareTerminalIcon, TerminalIcon, Trash2Icon, UserRoundIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -20,10 +20,12 @@ import { cn } from "@/lib/utils";
 import { Orb } from "./primitives";
 import { useChatWindows, useStack, useStore, useWorkbench } from "./provider";
 import { BotOperations } from "./bot-operations";
+import { BotSettingsPanel } from "./bot-settings";
 import { footerButton } from "./window";
 import { useVoice } from "./voice";
 
-type Mode = "create" | "start" | "assign" | "stop" | "remove" | "defaults" | "tools";
+/** `settings` and `defaults` open the managed settings editor; the rest are lifecycle and tool dialogs. */
+type Mode = "create" | "start" | "assign" | "stop" | "remove" | "defaults" | "settings" | "tools";
 type Target = { mode: Mode; bot?: Bot };
 const ActionsContext = createContext<((mode: Mode, bot?: Bot) => void) | null>(null);
 
@@ -39,19 +41,20 @@ export function BotActionsProvider({ children }: { children: React.ReactNode }) 
   const [uploads] = useState(() => new BotUploads((name, input) => store.call("bots", name, input)));
   return <ActionsContext value={(mode, bot) => setTarget({ mode, bot })}>
     {children}
-    {target ? <BotDialog key={`${target.mode}:${target.bot?.id ?? ""}`} target={target} uploads={uploads} close={() => setTarget(null)} /> : null}
+    {target?.mode === "settings" || target?.mode === "defaults" ? <SettingsDialog key={`${target.mode}:${target.bot?.id ?? ""}`} botId={target.mode === "settings" ? target.bot?.id ?? null : null} close={() => setTarget(null)} />
+      : target ? <BotDialog key={`${target.mode}:${target.bot?.id ?? ""}`} target={target as Target & { mode: DialogMode }} uploads={uploads} close={() => setTarget(null)} /> : null}
   </ActionsContext>;
 }
 
 export function BotWindowActions() {
   const open = useBotActions();
-  const { status, remote } = useStack();
+  const { status } = useStack();
   return <>
     <Tooltip>
-       <TooltipTrigger render={<Button variant="ghost" size="icon-xs" aria-label="Edit Bot defaults" title={remote?.scope === "view" ? "Requires ui:control" : undefined} disabled={status.bots !== "open" || remote?.scope === "view"} onClick={() => open("defaults")} />}>
+       <TooltipTrigger render={<Button variant="ghost" size="icon-xs" aria-label="Bot defaults" disabled={status.bots !== "open"} onClick={() => open("defaults")} />}>
         <Settings2Icon />
       </TooltipTrigger>
-      <TooltipContent side="bottom">Defaults</TooltipContent>
+      <TooltipContent side="bottom">Defaults for new Bots</TooltipContent>
     </Tooltip>
   </>;
 }
@@ -92,6 +95,7 @@ export function BotLifecycleControls({ bot }: { bot: Bot }) {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-44">
         <DropdownMenuGroup>
+          <DropdownMenuItem disabled={offline} onClick={() => open("settings", bot)}><SlidersHorizontalIcon />Settings…</DropdownMenuItem>
           <DropdownMenuItem disabled={offline || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires ui:control" : undefined} onClick={() => open("assign", bot)}><UserRoundIcon />Assign account…</DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
@@ -225,7 +229,37 @@ function nextBotId(bots: Bot[] | null): string {
   return `bot-${Math.max(0, ...numbers) + 1}`;
 }
 
-function BotDialog({ target, uploads, close }: { target: Target; uploads: BotUploads; close(): void }) {
+type DialogMode = Exclude<Mode, "defaults" | "settings">;
+
+/**
+ * The managed settings editor for one Bot, or for the defaults copied into new Bots. Closing with unsaved
+ * edits asks first; nothing here starts, stops or reconnects a Bot except its explicit Start with saved settings.
+ */
+function SettingsDialog({ botId, close }: { botId: string | null; close(): void }) {
+  const [dirty, setDirty] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const request = () => { if (dirty) setConfirming(true); else close(); };
+  return <Dialog open onOpenChange={(open) => { if (!open) request(); }}>
+    <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
+      <DialogHeader>
+        <DialogTitle>{botId ? `${botId} settings` : "Defaults for new Bots"}</DialogTitle>
+        <DialogDescription>{botId ? "Saved preferences, what its runtime loaded, and what Codex reports." : "Copied into each new Bot at creation. Existing Bots keep their own settings."}</DialogDescription>
+      </DialogHeader>
+      {confirming ? (
+        <Alert>
+          <AlertDescription className="flex flex-wrap items-center gap-2">
+            <span className="mr-auto">Discard unsaved settings edits?</span>
+            <Button size="xs" variant="ghost" onClick={() => setConfirming(false)}>Keep editing</Button>
+            <Button size="xs" variant="destructive" onClick={close}>Discard and close</Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      <BotSettingsPanel target={botId ? { kind: "bot", id: botId } : { kind: "bot-defaults" }} onDirtyChange={setDirty} />
+    </DialogContent>
+  </Dialog>;
+}
+
+function BotDialog({ target, uploads, close }: { target: Target & { mode: DialogMode }; uploads: BotUploads; close(): void }) {
   const state = useStack();
   const store = useStore();
   const { mode } = target;
@@ -239,7 +273,7 @@ function BotDialog({ target, uploads, close }: { target: Target; uploads: BotUpl
   // Saved launch arguments are secret and never read back; starting can keep, replace or clear them.
   const [clearArgs, setClearArgs] = useState(false);
   const [advanced, setAdvanced] = useState(false);
-  const [settings, setSettings] = useState<Partial<BotSettings>>(() => mode === "defaults" ? state.botDefaults.data ?? {} : {});
+  const [settings, setSettings] = useState<Partial<BotSettings>>({});
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
   const toolPendingRef = useRef(false);
@@ -249,18 +283,17 @@ function BotDialog({ target, uploads, close }: { target: Target; uploads: BotUpl
   const [argsInvalid, setArgsInvalid] = useState(false);
   const formId = useId();
   const name = target.bot?.id;
-  const titles: Record<Mode, string> = { create: "Create Bot", start: `Start ${name}`, assign: `Assign ${name}`, stop: `Stop ${name}?`, remove: `Remove ${name}?`, defaults: "Bot defaults", tools: `${name} tools` };
+  const titles: Record<DialogMode, string> = { create: "Create Bot", start: `Start ${name}`, assign: `Assign ${name}`, stop: `Stop ${name}?`, remove: `Remove ${name}?`, tools: `${name} tools` };
   const launch = mode === "create" || mode === "start";
-  const descriptions: Record<Mode, string> = {
-    create: "Starts under the chosen Bot account.",
+  const descriptions: Record<DialogMode, string> = {
+    create: "Starts under the chosen Bot account with a copy of the current defaults. Edit its full settings once it exists.",
     start: "Overrides apply to this and later starts.",
     assign: "Takes effect on the next start.",
     stop: "Keeps its record, workspace, and main thread.",
     remove: "Deletes its runtime, uploads, and private workspace. An external directory is kept.",
-    defaults: "Applied to new Bots only.",
     tools: "Chat, history, queue, uploads, and voice.",
   };
-  const submitLabels: Record<Exclude<Mode, "tools">, string> = { defaults: "Save defaults", assign: "Assign", create: "Create and start", start: "Start Bot", stop: "Stop Bot", remove: "Remove Bot" };
+  const submitLabels: Record<Exclude<DialogMode, "tools">, string> = { assign: "Assign", create: "Create and start", start: "Start Bot", stop: "Stop Bot", remove: "Remove Bot" };
   const selectedAccount = state.accounts.data?.find((item) => item.id === account);
   const accountValid = selectedAccount?.enabled && !selectedAccount.removing;
   const invalid = Boolean(target.bot && !bot) || state.status.bots !== "open" || (launch && (!accountValid || (bot && (bot.state !== "stopped" || Boolean(bot.recoveryIssue))))) || (mode === "assign" && !accountValid);
@@ -281,13 +314,12 @@ function BotDialog({ target, uploads, close }: { target: Target; uploads: BotUpl
         input.args = parsed;
       }
     } else if (mode === "assign") input.account = account;
-    else if (mode === "defaults") input = savedSettings;
-    const operation = mode === "defaults" ? "bot_defaults_set" : mode === "create" ? "bot_start" : `bot_${mode}`;
+    const operation = mode === "create" ? "bot_start" : `bot_${mode}`;
     pendingRef.current = true;
     setPending(true);
     try {
       const result = await store.call<Bot>("bots", operation, input);
-      toast.success(mode === "defaults" ? "Defaults saved" : `${result.id ?? bot?.id} ${launch ? "started" : mode === "assign" ? "assigned" : mode === "stop" ? "stopped" : "removed"}`);
+      toast.success(`${result.id ?? bot?.id} ${launch ? "started" : mode === "assign" ? "assigned" : mode === "stop" ? "stopped" : "removed"}`);
       close();
     } catch (cause) { setError(`${cause instanceof Error ? cause.message : String(cause)}. Check the Bot's state before retrying.`); }
     finally { pendingRef.current = false; setPending(false); }
@@ -295,7 +327,7 @@ function BotDialog({ target, uploads, close }: { target: Target; uploads: BotUpl
 
   const wide = mode === "tools";
   return <Dialog open onOpenChange={(open) => { if (!open && !pendingRef.current && !toolPendingRef.current) close(); }}>
-    <DialogContent showCloseButton={!pending && !toolPending} className={cn("max-h-[90dvh] overflow-y-auto", wide ? "sm:max-w-3xl" : launch || mode === "defaults" ? "sm:max-w-md" : "sm:max-w-sm")}>
+    <DialogContent showCloseButton={!pending && !toolPending} className={cn("max-h-[90dvh] overflow-y-auto", wide ? "sm:max-w-3xl" : launch ? "sm:max-w-md" : "sm:max-w-sm")}>
       <DialogHeader><DialogTitle>{titles[mode]}</DialogTitle><DialogDescription>{descriptions[mode]}</DialogDescription></DialogHeader>
       {mode === "tools" ? bot ? <BotOperations bot={bot} uploads={uploads} onPendingChange={toolPendingChanged} /> : <p>This Bot was removed.</p> : <form onSubmit={(event) => void submit(event)} className="flex flex-col gap-5">
         <FieldSet disabled={pending} aria-label="Bot settings" className="gap-5">
@@ -337,7 +369,6 @@ function BotDialog({ target, uploads, close }: { target: Target; uploads: BotUpl
               ) : null}
             </div>
           ) : null}
-          {mode === "defaults" ? <SettingsFields value={settings} onChange={setSettings} defaults={state.botDefaults.data} inheritLabel="Current" /> : null}
         </FieldSet>
         {bot?.recoveryIssue ? <Alert><AlertDescription>{bot.recoveryIssue}</AlertDescription></Alert> : null}
         {target.bot && !bot ? <Alert><AlertDescription>This Bot is gone.</AlertDescription></Alert> : null}

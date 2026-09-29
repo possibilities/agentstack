@@ -20,9 +20,10 @@ import { RecordTree } from "./record-tree";
 import { useNow, useStack, useStore, useWorkbench, useWorkerWindows } from "./provider";
 import { phaseTitle, phaseTone } from "./worker-windows";
 import { Window } from "./window";
+import { WorkerSettingsTab } from "./worker-settings";
 
-type Tab = "conversation" | "changes" | "turns" | "tools" | "records" | "session";
-const tabs: Array<[Tab, string]> = [["conversation", "Conversation"], ["changes", "Changes"], ["turns", "Turns"], ["tools", "Tools"], ["records", "Records"], ["session", "Session"]];
+type Tab = "conversation" | "changes" | "turns" | "tools" | "records" | "session" | "settings";
+const tabs: Array<[Tab, string]> = [["conversation", "Conversation"], ["changes", "Changes"], ["turns", "Turns"], ["tools", "Tools"], ["records", "Records"], ["session", "Session"], ["settings", "Settings"]];
 
 /** Keep a Worker's scoped subscription and status while a window shows it; its generation drives re-reads. */
 function useWatchedWorker(id: string | null): { status: WorkerStatus | null; statusError: string | null; generation: number } {
@@ -142,7 +143,10 @@ async function readTools(store: StackStore, id: string, pages: number): Promise<
   return { tools, tasks, hasMore };
 }
 
-/** One Worker, read-only: what it was asked, what it did, and what it is waiting for. Its Bot answers and steers it. */
+/**
+ * One Worker: what it was asked, what it did, and what it is waiting for. Its Bot answers and steers it; the
+ * window reads, except for its managed model and effort settings (ADR 0130).
+ */
 export function WorkerWindow({ id }: { id: string }) {
   const { windows, workerWindows } = useWorkerWindows();
   const { workerSessions, workerAccounts } = useStack();
@@ -197,6 +201,7 @@ export function WorkerWindow({ id }: { id: string }) {
               : tab === "turns" ? <TurnsTab key={worker.id} worker={worker} generation={generation} />
               : tab === "tools" ? <ToolsTab key={worker.id} worker={worker} generation={generation} />
               : tab === "records" ? <RecordsTab key={worker.id} worker={worker} generation={generation} />
+              : tab === "settings" ? <WorkerSettingsTab key={worker.id} worker={worker} status={status} />
               : <SessionTab key={worker.id} worker={worker} generation={generation} />}
             <StatusLine worker={worker} status={status} />
           </>
@@ -277,8 +282,8 @@ function Summary({ worker, status, statusError }: { worker: WorkerSession; statu
         <span className="font-medium">{phaseTitle[worker.phase]}</span>
         {active && started ? <span className="text-[0.72rem] text-muted-foreground tabular-nums">turn {span(now - started)}</span> : null}
         {turn && !active ? <span className="truncate text-[0.72rem] text-muted-foreground">last turn {turn.phase}{turn.stopReason ? ` · ${turn.stopReason}` : ""}</span> : null}
-        <span className="ml-auto flex shrink-0 items-center gap-1 text-[0.68rem] text-muted-foreground" title="Bots start and steer Workers; this space only reads">
-          <LockIcon className="size-3" />Read only
+        <span className="ml-auto flex shrink-0 items-center gap-1 text-[0.68rem] text-muted-foreground" title="Bots start and steer Workers; this window edits only saved model and effort settings">
+          <LockIcon className="size-3" />Read only · settings
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-1">
