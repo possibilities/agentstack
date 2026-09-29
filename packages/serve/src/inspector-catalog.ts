@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { watch, type FSWatcher } from "node:fs";
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { configuredMcpPackages, socketPath, workspaceRoot, operatorHeaders } from "@stack/api";
+import { configuredMcpServers, socketPath, workspaceRoot, operatorHeaders, mcpToolTimeoutSeconds } from "@stack/api";
 
 export type InspectorCatalog = { path: string; close(): Promise<void> };
 
@@ -25,14 +25,14 @@ export async function serveInspectorCatalog(options: {
   let pending = Promise.resolve();
 
   const sync = async (): Promise<void> => {
-    const packages = await configuredMcpPackages(root);
+    const packages = await configuredMcpServers(root);
     const content = `${JSON.stringify({
       mcpServers: Object.fromEntries(packages.map(({ name }) => [name, {
         type: "http",
         url: `http://127.0.0.1:${options.mcpPort}/mcp/${name}`,
         suppressNotificationStream: true,
         headers: operatorHeaders(env),
-        ...(name === "auth" ? { requestTimeout: 300_000 } : {}),
+        requestTimeout: mcpToolTimeoutSeconds(name) * 1000,
       }])),
     }, null, 2)}\n`;
     if (content === last && await readFile(path, "utf8").catch(() => null) === content) return;

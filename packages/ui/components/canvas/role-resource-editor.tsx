@@ -423,7 +423,7 @@ export function NewSkillEditor({ enabled }: { enabled: boolean }) {
 /* ─── MCP servers ────────────────────────────────────────────────────── */
 
 /**
- * What blocks saving a server: its name, including a clash with a Stack server (an internal Package API), then its
+ * What blocks saving a server: its name, including a clash with a default Stack MCP server, then its
  * connection. `internal` is every internal name, switched off or not: turning a built-in off frees nothing.
  */
 function mcpProblems(value: (field: string) => string, others: string[], internal: string[]) {
@@ -497,7 +497,7 @@ function McpFields({ id, value, set, nameProblem }: { id: string; value(field: s
   return (
     <>
       <NameField id={id} value={value("name")} onChange={(next) => set("name", next)} issue={nameProblem}
-        hint="The [mcp_servers] table name in each launch config. It cannot match an internal Package API." />
+        hint="The [mcp_servers] table name in each launch config. It cannot match a default Stack MCP server." />
       <DescriptionField id={id} value={value("description")} onChange={(next) => set("description", next)}
         placeholder="What it provides and who maintains it" hint="Only people see this. It never reaches a Bot." />
       <div className="flex flex-col gap-2.5 rounded-xl border bg-background/50 px-3 py-2.5">

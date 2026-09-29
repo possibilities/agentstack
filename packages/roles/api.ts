@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { fragmentConditions, renderContext } from "./src/conditions.js";
-import { configuredMcpPackages, mcpPort, operation, workspaceRoot, type PackageApi } from "@stack/api";
+import { configuredMcpServers, mcpPort, operation, workspaceRoot, type PackageApi } from "@stack/api";
 import { matchingProjects, serverMcpOrigins, roleMcpConfig, roleMcpConflict } from "./src/bundle.js";
 import { RoleStore, instructionLimitBytes, renderSegments, snapshotLimitChars, roleName, roleDescription } from "./src/store.js";
 import { mcpDefinition, mcpRecord, projectPath, resourceName, resourceDescription, skillBody, skillFiles, skillRecord, trustedProjectRecord } from "./src/resources.js";
@@ -25,7 +25,7 @@ const index = z.number().int().nonnegative().describe("Zero-based position withi
 const role = z.strictObject({ id: roleId, name: roleName, description: roleDescription, revision, ...stamps });
 const catalog = z.strictObject({ revision: catalogRevision, defaultRoleId: roleId.nullable(), workerDefaultRoleId: roleId.nullable(), roles: z.array(role) });
 const launchSnapshot = role.extend({ categories: z.array(category), skills: z.array(skillRecord), mcpServers: z.array(mcpRecord), trustedProjects: z.array(trustedProjectRecord),
-  disabledInternalMcpServers: z.array(z.string()).describe("Internal Package API names disabled for this Role. Other configured internal MCP servers are enabled, including newly added ones.") });
+  disabledInternalMcpServers: z.array(z.string()).describe("Internal MCP server names disabled for this Role. Other configured internal MCP servers are enabled, including newly added ones.") });
 const snapshot = launchSnapshot.extend({ mcpServers: z.array(mcpRecord.omit({ definition: true }).extend({ transport: z.enum(["http", "stdio"]) })) });
 const receipt = z.strictObject({ roleId, revision }).describe("Applied Role revision. Reread the selected Role to refresh content.");
 const segment = z.strictObject({ categoryId: id, fragmentId: id,
@@ -39,7 +39,7 @@ const launchPreview = z.strictObject({
   instructions: z.strictObject({ bytes: count.describe("UTF-8 size of SYSTEM_APPEND.md."), limitBytes: count, fragments: count.describe("Fragments that render.") }),
   skills: z.array(z.strictObject({ id, name: resourceName, description: resourceDescription, files: count.describe("Supporting files beside SKILL.md."),
     bytes: count.describe("Decoded size of the body and supporting files.") })).describe("Enabled role skills in order; each becomes skills/<name>/SKILL.md."),
-  internalMcpServers: z.array(z.strictObject({ name: z.string(), enabled: z.boolean() })).describe("Configured internal Package API MCP servers and their enablement for this Role. Only enabled ones enter new Bot and Worker launches."),
+  internalMcpServers: z.array(z.strictObject({ name: z.string(), enabled: z.boolean() })).describe("The default MCP fleet and its enablement for this Role. Only enabled servers enter new Bot and Worker launches."),
   mcpServers: z.array(z.strictObject({ id, name: resourceName, type: z.enum(["http", "stdio"]) })).describe("Enabled role MCP servers in order."),
   config: z.string().describe("The config.toml tables the Role contributes for its enabled MCP servers, exactly as launches write them."),
   trustedProjects: z.array(z.strictObject({ id, path: projectPath })).describe("Enabled trusted project roots in order."),
@@ -58,11 +58,11 @@ function summarize(result: z.infer<typeof launchSnapshot>): z.infer<typeof snaps
   return { ...result, mcpServers: result.mcpServers.map(({ definition, ...record }) => ({ ...record, transport: definition.type })) };
 }
 function changed(ctx: RolesContext, result: z.infer<typeof launchSnapshot>) { ctx.changed?.(); return { roleId: result.id, revision: result.revision }; }
-const internalMcpNames = async () => (await configuredMcpPackages(workspaceRoot(import.meta.dirname))).map((pkg) => pkg.name);
+const internalMcpNames = async () => (await configuredMcpServers(workspaceRoot(import.meta.dirname))).map((pkg) => pkg.name);
 /** Refuse a role MCP server a launch would refuse, whether or not it is enabled now. */
 async function ensureRoleMcp(ctx: RolesContext, name?: string, definition?: z.infer<typeof mcpDefinition>): Promise<void> {
   const origins = new Set(ctx.mcpOrigins ?? []);
-  if (name && (await internalMcpNames()).some((internal) => internal.toLowerCase() === name.toLowerCase())) throw new Error(`role MCP server ${name} collides with an internal Package API`);
+  if (name && (await internalMcpNames()).some((internal) => internal.toLowerCase() === name.toLowerCase())) throw new Error(`role MCP server ${name} collides with an internal MCP server`);
   if (definition?.type === "http" && origins.has(new URL(definition.url).origin)) throw new Error("role MCP server URL cannot alias the internal MCP listener");
 }
 
@@ -99,7 +99,7 @@ export const roleDelete = operation({
   async call(ctx: RolesContext, { roleId, expectedRevision }) { const result = ctx.store.deleteRole(expectedRevision, roleId); ctx.changed?.(); return result; },
 });
 export const roleInternalMcpList = operation({
-  name: "role_internal_mcp_list", description: "List the currently configured Stack Package API MCP servers and whether each is enabled in this Role. All are on unless explicitly disabled; newly configured internal servers are on by default. These switches control launch connections, not Package API exposure or running sessions.",
+  name: "role_internal_mcp_list", description: "List Stack's default MCP fleet (Package APIs and Codex tool bridges) and whether each is enabled in this Role. All are on unless explicitly disabled; new servers are on by default. These switches control launch connections, not tool availability or running sessions.",
   input: selection, output: z.strictObject({ roleId, revision, servers: z.array(z.strictObject({ name: z.string(), enabled: z.boolean() })) }),
   annotations: { title: "List internal role MCP servers", readOnlyHint: true },
   async call(ctx: RolesContext, { roleId }) {

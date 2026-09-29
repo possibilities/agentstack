@@ -58,6 +58,13 @@ A named change notice a Package API publishes on an event-capable transport. Top
 
 _Avoid_: stream, feed, pubsub
 
+## Default MCP fleet
+
+The Role-selectable HTTP MCP connections supplied by Stack: Package APIs and the
+five Codex tool bridges described in [ADR 0129](docs/adr/0129-codex-tools-in-default-mcp-fleet.md).
+All are enabled unless a Role excludes them. The bridges are not Package APIs;
+they have no socket operations or generated event subscriptions.
+
 ## MCP event subscription
 
 A durable, revisionless request by a verified Bot thread to watch one MCP-selected Package API topic and re-read one exposed read-only operation after each invalidation. The server records the request, reconnects and resnapshots after interruptions, suppresses unchanged values, and submits changed snapshots as standalone tool output through Codex `turn/start` on that same sanctioned thread. Codex wakes an idle loaded thread or queues input in an active regular turn; Stack waits only for admission acknowledgement, never idle or completion. Current exposure is checked around reads and immediately before submission, including after connection setup; removed or invalid configuration fences subsequent work. The initial value is returned to the subscribing tool call; event notices themselves carry no values. See [ADR 0120](docs/adr/0120-codex-native-input-admission.md).

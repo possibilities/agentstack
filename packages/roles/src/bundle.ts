@@ -35,7 +35,7 @@ export function serverMcpOrigins(port: number): string[] {
  */
 export function roleMcpConflict(server: RoleMcpServer, ownerNames: ReadonlySet<string>, ownerOrigins: ReadonlySet<string>): string | null {
   if (!server.enabled) return null;
-  if (ownerNames.has(server.name.toLowerCase())) return `role MCP server ${server.name} collides with an internal Package API`;
+  if (ownerNames.has(server.name.toLowerCase())) return `role MCP server ${server.name} collides with an internal MCP server`;
   if (server.definition.type === "http" && ownerOrigins.has(new URL(server.definition.url).origin)) return `role MCP server ${server.name} cannot alias the internal MCP listener`;
   return null;
 }

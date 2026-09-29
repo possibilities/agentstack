@@ -159,7 +159,7 @@ test("role skill and MCP operations support complete create, update, disable, re
     assert.deepEqual(launch.mcpServers[0]?.definition, definition, "launch state retains the real connection definition");
     const editor = await socketCall(path, "tools/call", { name: "role_editor_snapshot", arguments: { roleId } });
     assert.deepEqual(editor, launch, "the operator editor retains complete definitions independently of safe summaries");
-    await assert.rejects(call("mcp_server_create", { expectedRevision: http.revision, name: "bots", description: "Collision", definition: { type: "http", url: "https://mcp.example.test/tools" } }), /collides with an internal Package API/);
+    await assert.rejects(call("mcp_server_create", { expectedRevision: http.revision, name: "bots", description: "Collision", definition: { type: "http", url: "https://mcp.example.test/tools" } }), /collides with an internal MCP server/);
     const mcpId = http.mcpServers[0]!.id;
     const changed = await call("mcp_server_update", { expectedRevision: http.revision, id: mcpId, enabled: false, definition: { type: "stdio", command: "/usr/bin/env", args: ["private-argument"], env: { TOKEN: "private-env" } } });
     assert.equal(JSON.stringify(changed).includes("private-"), false);

@@ -41,7 +41,7 @@ export {
 } from "./socket.js";
 export { serveWebSocket, type ServedWebSocket, type RemoteWebSocketAdmission } from "./websocket.js";
 export { serveHttp, type HttpPeer } from "./http.js";
-export { configuredMcpPackages, serveMcp, type ServedMcp } from "./mcp.js";
+export { configuredMcpPackages, configuredMcpServers, serveMcp, type ServedMcp } from "./mcp.js";
 export { McpEventSubscriptions, type EventTarget, type EventValue, type EventSubscription } from "./mcp-subscriptions.js";
 export { runMcp } from "./run-mcp.js";
 export { runWebSocket } from "./run-websocket.js";

@@ -37,7 +37,7 @@ export async function sessionMcpServers(snapshot: RoleSnapshot, env: NodeJS.Proc
   for (const value of snapshot.mcpServers) {
     const item = mcpRecord.parse(value);
     if (!item.enabled) continue;
-    if (names.has(item.name.toLowerCase())) throw new Error(`Role MCP server ${item.name} collides with an internal Package API`);
+    if (names.has(item.name.toLowerCase())) throw new Error(`Role MCP server ${item.name} collides with an internal MCP server`);
     names.add(item.name.toLowerCase());
     if (item.definition.type === "stdio") {
       const values = { ...item.definition.env };

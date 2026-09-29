@@ -15,11 +15,12 @@ test("Inspector's read-only server file follows Package API configuration", { ti
   const catalog = await serveInspectorCatalog({ root, env: { STACK_STATE_DIR: join(root, "state") }, mcpPort: 7823 });
   const names = async () => Object.keys((JSON.parse(await readFile(catalog.path, "utf8")) as { mcpServers: Record<string, unknown> }).mcpServers);
   try {
-    assert.deepEqual(await names(), ["alpha"]);
+    const bridges = ["computer-use", "chrome", "messages", "computer-history", "openai-developer-docs"];
+    assert.deepEqual(await names(), ["alpha", ...bridges]);
     const beta = join(root, "packages", "beta");
     await mkdir(beta);
     await writeFile(join(beta, "api.yaml"), "name: beta\ndescription: Beta.\nmcp:\n  description: Beta HTTP.\n  operations: all\n  events: all\n");
-    await waitFor(async () => (await names()).join() === "alpha,beta");
+    await waitFor(async () => (await names()).join() === ["alpha", "beta", ...bridges].join());
     const config = JSON.parse(await readFile(catalog.path, "utf8")) as { mcpServers: Record<string, { url: string; suppressNotificationStream: boolean; headers: Record<string, string> }> };
     assert.equal(config.mcpServers.beta?.url, "http://127.0.0.1:7823/mcp/beta");
     assert.equal(config.mcpServers.beta?.suppressNotificationStream, true);
@@ -28,7 +29,7 @@ test("Inspector's read-only server file follows Package API configuration", { ti
     withLocalAuth(env, auth => auth.rotate());
     await waitFor(async () => JSON.parse(await readFile(catalog.path, "utf8")).mcpServers.beta.headers.authorization === operatorHeaders(env).authorization);
     await writeFile(join(alpha, "api.yaml"), "name: alpha\ndescription: Alpha.\nsocket:\n  description: Alpha socket.\n");
-    await waitFor(async () => (await names()).join() === "beta");
+    await waitFor(async () => (await names()).join() === ["beta", ...bridges].join());
   } finally {
     await catalog.close();
     assert.equal(existsSync(catalog.path), false);

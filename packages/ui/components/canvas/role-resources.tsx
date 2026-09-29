@@ -123,8 +123,8 @@ export function RoleMcpServersWindow() {
 }
 
 /**
- * The internal Package API servers this Role's later launches connect to, one switch each. They come from the
- * packages' manifests, so they are neither created nor deleted here; a switch changes only this Role.
+ * The default MCP fleet this Role's later launches connect to, one switch each. They come from the
+ * shared fleet catalog, so they are neither created nor deleted here; a switch changes only this Role.
  */
 function StackServers() {
   const { roleInternal, status, remote } = useStack();
@@ -153,7 +153,7 @@ function StackServers() {
       )}
       {list && !on && total ? <p className="px-1.5 text-[0.7rem] text-muted-foreground">Every Stack server is off; later launches receive none of them.</p> : null}
       <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">
-        Switches apply to later Bot launches and new Workers; running sessions keep their connections. New Stack packages start on.
+        Switches apply to later Bot launches and new Workers; running sessions keep their connections. New Stack servers start on.
       </p>
     </Section>
   );

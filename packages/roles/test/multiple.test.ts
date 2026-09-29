@@ -162,6 +162,8 @@ test("socket clients select Roles explicitly and configure internal MCP enableme
     assert.ok(listing.servers.length > 1);
     assert.ok(listing.servers.every(({ enabled }) => enabled));
     assert.ok(listing.servers.some(({ name }) => name === "roles"));
+    const bridges = ["computer-use", "chrome", "messages", "computer-history", "openai-developer-docs"];
+    for (const name of bridges) assert.ok(listing.servers.some(server => server.name === name && server.enabled));
     await assert.rejects(call("category_create", { expectedRevision: 0, title: "Unscoped" }), /roleId/);
     await assert.rejects(call("role_snapshot"), /roleId/);
     await assert.rejects(call("role_internal_mcp_update", { roleId: first, expectedRevision: 0, name: "not-an-internal-package", enabled: false }), /unknown internal MCP/);
@@ -190,6 +192,12 @@ test("socket clients select Roles explicitly and configure internal MCP enableme
     const renamed = await call("role_update", { roleId: second, expectedRevision: 0, name: "Current" });
     assert.deepEqual(renamed, { roleId: second, revision: 1 });
     assert.equal((await call<RoleSnapshot>("role_snapshot", { roleId: second })).name, "Current");
+    let revision = 1;
+    for (const name of bridges) {
+      const disabled = await call<{ revision: number }>("role_internal_mcp_update", { roleId: second, expectedRevision: revision, name, enabled: false });
+      revision = disabled.revision;
+    }
+    for (const audience of ["bot", "worker"]) assert.deepEqual((await call<RoleSnapshot>("role_launch_snapshot", { roleId: second, audience })).disabledInternalMcpServers.slice().sort(), bridges.slice().sort());
     catalog = await call<RoleCatalog>("roles_snapshot");
     const deleted = await call<RoleCatalog>("role_delete", { roleId: first, expectedRevision: catalog.revision });
     assert.equal(deleted.defaultRoleId, second);

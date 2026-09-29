@@ -510,7 +510,7 @@ export const internalCounts = (servers: readonly RoleInternalServer[]): { on: nu
   ({ on: servers.filter((server) => server.enabled).length, total: servers.length });
 
 /**
- * Every internal Package API name the page knows, switched on or off: an external MCP server may never take
+ * Every default MCP server name the page knows, switched on or off: an external MCP server may never take
  * one, so a disabled built-in still reserves its name.
  */
 export function internalNames(internal: Pick<RoleInternalMcp, "servers"> | null, launch: Pick<RoleLaunchPreview, "internalMcpServers"> | null): string[] {

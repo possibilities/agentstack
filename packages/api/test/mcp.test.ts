@@ -44,8 +44,10 @@ test("one HTTP process exposes each configured Package API and forwards operatio
   try {
     assert.equal((await fetch(served.urls.auth!, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status, 401);
     assert.equal((await fetch(served.urls.auth!, { method: "POST", headers: { authorization: "Bearer wrong" }, body: "{}" })).status, 401);
-    assert.deepEqual(Object.keys(served.urls), ["auth", "bots", "brain", "browse", "content", "notify", "roles", "scrape", "serve", "usage", "worker"]);
-    for (const [name, url] of Object.entries(served.urls)) {
+    const packageNames = ["auth", "bots", "brain", "browse", "content", "notify", "roles", "scrape", "serve", "usage", "worker"];
+    assert.deepEqual(Object.keys(served.urls), [...packageNames, "computer-use", "chrome", "messages", "computer-history", "openai-developer-docs"]);
+    for (const name of packageNames) {
+      const url = served.urls[name]!;
       const client = new Client({ name: "test", version: "1.0.0" });
       await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: operatorHeaders(env) } }));
       try {

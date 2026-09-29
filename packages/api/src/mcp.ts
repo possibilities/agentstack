@@ -12,6 +12,8 @@ import type { PackageConfig } from "./config.js";
 import { socketExposure, currentWorkerCatalog } from "./exposure.js";
 import { forwardTimeout } from "./forward-timeout.js";
 import { LocalAuth } from "./local-auth.js";
+import { codexMcpServers, codexMcpDefinition } from "./codex-mcp/catalog.js";
+import { CodexMcpHttp } from "./codex-mcp/http.js";
 
 export type ServedMcp = { port: number; urls: Record<string, string>; close(): Promise<void> };
 
@@ -33,6 +35,12 @@ export async function configuredMcpPackages(root: string): Promise<Array<{ name:
     name: item.config.name,
     description: item.config.description,
   }));
+}
+
+export async function configuredMcpServers(root: string): Promise<Array<{ name: string; description: string }>> {
+  const packages = await configuredMcpPackages(root);
+  if (packages.some(pkg => codexMcpDefinition(pkg.name))) throw new Error("Package API name collides with a built-in Codex MCP server");
+  return [...packages, ...codexMcpServers.map(({ name, description }) => ({ name, description }))];
 }
 
 async function verifiedBot(botId: string, instance: string, env: NodeJS.ProcessEnv): Promise<void> {
@@ -63,15 +71,17 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
   const port = options.port ?? mcpPort(env);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("MCP port must be an integer from 0 to 65535");
   const root = options.root ?? workspaceRoot(import.meta.dirname);
-  const packages = await configuredMcpPackages(root);
+  const packages = await configuredMcpServers(root);
   if (packages.length === 0) throw new Error("no Package APIs configure mcp");
   const auth = new LocalAuth(env);
+  const codex = new CodexMcpHttp(env);
 
   const server = createServer(async (request, response) => {
     let target: URL;
     try { target = new URL(request.url ?? "/", "http://127.0.0.1"); }
     catch { response.writeHead(400).end(); return; }
     const name = target.origin === "http://127.0.0.1" ? /^\/mcp\/([a-z][a-z0-9-]{0,31})$/.exec(target.pathname)?.[1] : undefined;
+    const bridge = codexMcpDefinition(name);
     let definition: { name: string; description: string } | undefined;
     let config: PackageConfig | undefined;
     try {
@@ -83,11 +93,11 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
       response.writeHead(503).end();
       return;
     }
-    if (!name || !definition || !config) {
+    if (!name || !bridge && (!definition || !config)) {
       response.writeHead(404).end();
       return;
     }
-    if (request.method !== "POST") {
+    if (!bridge && request.method !== "POST") {
       response.writeHead(405, { Allow: "POST" }).end();
       return;
     }
@@ -107,8 +117,16 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
       if ((identity || workerIdentity) && request.headers.authorization) throw new Error("ambiguous identity");
       await checkAuthority();
     } catch { response.writeHead(401, { "www-authenticate": "Bearer", "cache-control": "no-store" }).end("Unauthorized"); return; }
+    if (bridge) {
+      const address = server.address();
+      if (!address || typeof address === "string") { response.writeHead(503).end(); return; }
+      const owner = identity ? `bot:${identity.botId}:${identity.instance}` : workerIdentity ? `worker:${workerIdentity.workerId}:${workerIdentity.instance}` : "operator";
+      try { await codex.handle(request, response, bridge, owner, [`127.0.0.1:${address.port}`, `localhost:${address.port}`], checkAuthority); }
+      catch { if (!response.headersSent) response.writeHead(500).end(); else response.end(); }
+      return;
+    }
     let selection: Awaited<ReturnType<typeof socketExposure>>;
-    try { selection = await socketExposure(config, "mcp", env); }
+    try { selection = await socketExposure(config!, "mcp", env); }
     catch (error) {
       console.error(`MCP configuration unavailable: ${error instanceof Error ? error.message : String(error)}`);
       response.writeHead(503).end();
@@ -127,7 +145,7 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
       allowedHosts: hosts,
       allowedOrigins: hosts.map((host) => `http://${host}`),
     });
-    const mcp = new Server({ name, version: "0.0.0" }, { capabilities: { tools: {} }, instructions: definition.description });
+    const mcp = new Server({ name, version: "0.0.0" }, { capabilities: { tools: {} }, instructions: definition!.description });
     const eventTools = (topics: string[]) => !workerIdentity && options.subscriptions && topics.length > 0 ? subscriptionTools : [];
     mcp.setRequestHandler(ListToolsRequestSchema, async () => {
       await checkAuthority();
@@ -207,7 +225,7 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, "127.0.0.1", () => { server.off("error", reject); resolve(); });
-  }).catch((error) => { auth.close(); throw error; });
+  }).catch(async (error) => { await codex.close(); auth.close(); throw error; });
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("MCP server has no TCP address");
   const urls = Object.fromEntries(packages.map(({ name }) => [name, `http://127.0.0.1:${address.port}/mcp/${name}`]));
@@ -216,9 +234,9 @@ export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string
     port: address.port,
     urls,
     close() {
-      closing ??= new Promise<void>((resolve, reject) => {
+      closing ??= codex.close().then(() => new Promise<void>((resolve, reject) => {
         server.close((error) => { auth.close(); error ? reject(error) : resolve(); });
-      });
+      }));
       return closing;
     },
   };

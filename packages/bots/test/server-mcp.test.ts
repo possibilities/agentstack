@@ -18,12 +18,14 @@ test("bot MCP URLs follow the owner catalog and bind each connection to its laun
     const env = { STACK_STATE_DIR: join(root, "state") };
     const endpoint = "unix:///tmp/stack-app/first.sock";
     const first = await serverMcpUrls(root, 43123, "bot-1", endpoint, env);
-    assert.deepEqual(Object.keys(first), ["alpha"]);
+    const bridges = ["computer-use", "chrome", "messages", "computer-history", "openai-developer-docs"];
+    assert.deepEqual(Object.keys(first), ["alpha", ...bridges]);
+    for (const name of bridges) assert.deepEqual(parseBotMcpIdentity(new URL(first[name]!), env), { botId: "bot-1", instance: botInstance(endpoint) });
     assert.deepEqual(parseBotMcpIdentity(new URL(first.alpha!), env), { botId: "bot-1", instance: botInstance(endpoint) });
     assert.equal(new URL(first.alpha!).pathname, "/mcp/alpha");
     await writeFile(join(beta, "api.yaml"), "name: beta\ndescription: Beta.\nmcp:\n  description: Beta HTTP.\n  operations: all\n  events: all\n");
     const next = await serverMcpUrls(root, 43123, "bot-1", "unix:///tmp/stack-app/second.sock", env);
-    assert.deepEqual(Object.keys(next), ["alpha", "beta"]);
+    assert.deepEqual(Object.keys(next), ["alpha", "beta", ...bridges]);
     assert.notEqual(next.alpha, first.alpha);
     assert.equal(new URL(next.beta!).pathname, "/mcp/beta");
   } finally {
