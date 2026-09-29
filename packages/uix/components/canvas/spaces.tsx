@@ -1,9 +1,10 @@
 "use client";
 
-import { ActivityIcon, BellIcon, HammerIcon, BlocksIcon, BotIcon, BoxesIcon, EyeIcon, LibraryIcon, NotebookTextIcon, ChartLineIcon, CpuIcon, FilePenLineIcon, FileTextIcon, FlaskConicalIcon, FolderLockIcon, GaugeIcon, HistoryIcon, InboxIcon, KeyRoundIcon, ListTreeIcon, MegaphoneIcon, MessageSquareWarningIcon, MessagesSquareIcon, PackageIcon, PlugIcon, RadarIcon, RadioIcon, ScanLineIcon, ScrollTextIcon, ServerIcon, SparklesIcon, SquareTerminalIcon, UserCogIcon } from "lucide-react";
+import { ActivityIcon, BellIcon, CalendarClockIcon, ChartGanttIcon, HammerIcon, BlocksIcon, BotIcon, BoxesIcon, EyeIcon, LibraryIcon, NotebookTextIcon, ChartLineIcon, CpuIcon, FilePenLineIcon, FileTextIcon, FlaskConicalIcon, FolderLockIcon, GaugeIcon, HistoryIcon, InboxIcon, KeyRoundIcon, ListTreeIcon, MegaphoneIcon, MessageSquareWarningIcon, MessagesSquareIcon, PackageIcon, PlugIcon, RadarIcon, RadioIcon, ScanLineIcon, ScrollTextIcon, ServerIcon, SparklesIcon, SquareTerminalIcon, UserCogIcon } from "lucide-react";
 import type { ChatWindows } from "@/lib/stack/chat-windows";
 import type { WorkerWindows } from "@/lib/stack/worker-windows";
 import type { ViewerWindows } from "@/lib/stack/browse-viewers";
+import type { ProcRunWindows } from "@/lib/stack/proc-windows";
 import { CableIcon, HardDriveIcon, LifeBuoyIcon, MonitorIcon, WrenchIcon } from "lucide-react";
 import { HandoffsWindow, ViewerWindow } from "./browse-handoffs";
 import { ControllersWindow, ProfilesWindow, ToolchainWindow } from "./browse-operator";
@@ -40,6 +41,11 @@ import { ContentLibraryWindow } from "./content-library";
 import { ContentPreviewWindow } from "./content-preview";
 import { WorkerRuntimesWindow, WorkersWindow } from "./worker-windows";
 import { WorkerWindow } from "./worker-session";
+import { ProcSchedulesWindow } from "./proc-schedules";
+import { ProcScheduleWindow } from "./proc-schedule";
+import { ProcRunsWindow } from "./proc-runs";
+import { ProcRunWindow } from "./proc-run";
+import { ProcTimelineWindow } from "./proc-timeline";
 
 export type WindowDef = {
   /** Globally unique across spaces; also used by Window and node destinations. */
@@ -59,7 +65,7 @@ export type WindowDef = {
 export const spaceViews: Record<SpaceId, {
   icon: React.ComponentType<{ className?: string }>;
   accent: Accent;
-  windows(state: StackState, arrangement: { chats: ChatWindows; workers: WorkerWindows; viewers: ViewerWindows }): WindowDef[];
+  windows(state: StackState, arrangement: { chats: ChatWindows; workers: WorkerWindows; viewers: ViewerWindows; procRuns: ProcRunWindows }): WindowDef[];
 }> = {
   fleet: {
     icon: BotIcon,
@@ -190,6 +196,19 @@ export const spaceViews: Record<SpaceId, {
       { id: "brain-ingest", title: "Ingest", icon: ImportIcon, accent: "brain", width: 400, height: 560, column: 2, element: <IngestWindow /> },
       { id: "brain-jobs", title: "Jobs", icon: ListChecksIcon, accent: "brain", width: 480, height: 780, column: 3, fixed: true, element: <JobsWindow /> },
       { id: "brain-sources", title: "Sources", icon: SatelliteDishIcon, accent: "brain", width: 460, height: 640, column: 4, element: <SourcesWindow /> },
+    ],
+  },
+  proc: {
+    icon: CalendarClockIcon,
+    accent: "proc",
+    windows: (_state, { procRuns }) => [
+      { id: "proc-schedules", title: "Schedules", icon: CalendarClockIcon, accent: "proc", width: 440, height: 720, column: 0, fixed: true, element: <ProcSchedulesWindow /> },
+      { id: "proc-schedule", title: "Schedule", icon: CalendarClockIcon, accent: "proc", width: 520, height: 780, column: 1, element: <ProcScheduleWindow /> },
+      { id: "proc-runs", title: "Runs", icon: SquareTerminalIcon, accent: "proc", width: 440, height: 720, column: 2, fixed: true, element: <ProcRunsWindow /> },
+      // The primary Run window follows the list; each additional one keeps its run until closed.
+      ...procRuns.map((window, index) => ({ id: window.id, title: "Run", icon: SquareTerminalIcon, accent: "proc" as const, width: 680, height: 780, column: index + 3, fixed: true,
+        element: <ProcRunWindow id={window.id} /> })),
+      { id: "proc-timeline", title: "Timeline", icon: ChartGanttIcon, accent: "proc", width: 760, height: 460, column: procRuns.length + 3, element: <ProcTimelineWindow /> },
     ],
   },
 };

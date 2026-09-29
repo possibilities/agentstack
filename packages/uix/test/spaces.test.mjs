@@ -49,6 +49,10 @@ test("homeOf distinguishes spatial records from reference destinations", () => {
   assert.deepEqual(homeOf({ kind: "research-document", id: "42" }), { kind: "space", space: "brain", window: "brain-reader" });
   assert.deepEqual(homeOf({ kind: "ingestion-job", id: "7" }), { kind: "space", space: "brain", window: "brain-jobs" });
   assert.deepEqual(homeOf({ kind: "research-source", id: "hn-front" }), { kind: "space", space: "brain", window: "brain-sources" });
+  assert.deepEqual(homeOf({ kind: "proc-schedule", id: "s1" }), { kind: "space", space: "proc", window: "proc-schedules" });
+  assert.deepEqual(homeOf({ kind: "proc-execution", id: "e1" }), { kind: "space", space: "proc", window: "proc-schedule" });
+  assert.deepEqual(homeOf({ kind: "proc-run", id: "r1" }), { kind: "space", space: "proc", window: "proc-runs" });
+  assert.deepEqual(homeOf({ kind: "proc-run-window", id: "proc-run-2" }), { kind: "space", space: "proc", window: "proc-run-2" });
   assert.deepEqual(homeOf({ kind: "package", id: "bots" }), { kind: "reference" });
   assert.deepEqual(homeOf({ kind: "operation", id: "bot_start", pkg: "bots" }), { kind: "reference" });
   assert.deepEqual(homeOf({ kind: "usage" }), { kind: "space", space: "accounts", window: "usage" });
@@ -85,6 +89,7 @@ test("parseSpacePath resolves /x and single space segments only", () => {
   assert.equal(parseSpacePath("/x/scrape"), "scrape");
   assert.equal(parseSpacePath("/x/browse"), "browse");
   assert.equal(parseSpacePath("/x/brain"), "brain");
+  assert.equal(parseSpacePath("/x/proc"), "proc");
   assert.equal(parseSpacePath("/x/nope"), null);
   assert.equal(parseSpacePath("/x/api/extra"), null);
   assert.equal(parseSpacePath("/y"), null);
@@ -133,6 +138,10 @@ test("parseNodeKey inverts nodeKey for every kind and rejects malformed keys", (
     { kind: "research-document", id: "42" },
     { kind: "ingestion-job", id: "7" },
     { kind: "research-source", id: "hn-front" },
+    { kind: "proc-schedule", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" },
+    { kind: "proc-execution", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d3" },
+    { kind: "proc-run", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d4" },
+    { kind: "proc-run-window", id: "proc-run-2" },
   ];
   for (const ref of refs) assert.deepEqual(parseNodeKey(nodeKey(ref)), ref);
   for (const bad of ["", "bogus", "account:", "operation:bots"]) assert.equal(parseNodeKey(bad), null);
@@ -153,7 +162,7 @@ const quiet = {
 };
 
 test("spaceAttention reports human reasons per space and ignores healthy state", () => {
-  assert.deepEqual(spaceAttention(quiet), { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], brain: [], api: [] });
+  assert.deepEqual(spaceAttention(quiet), { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], brain: [], proc: [], api: [] });
   assert.deepEqual(spaceAttention({ ...quiet, notifyCounts: { data: { open: 0, total: 4, sources: [] }, error: null, at: null } }).inbox, []);
   assert.deepEqual(spaceAttention({ ...quiet, notifyCounts: { data: { open: 1, total: 4, sources: [] }, error: null, at: null } }).inbox, ["1 open notification"]);
   const inbox = spaceAttention({ ...quiet, notifyCounts: { data: { open: 3, total: 4, sources: [] }, error: null, at: null }, status: { notify: "closed" } });
@@ -230,7 +239,46 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
 
   // Idle and connecting channels are normal, not attention.
   const waiting = spaceAttention({ ...quiet, status: { auth: "connecting", bots: "idle", owner: "connecting", api: "idle" } });
-  assert.deepEqual(waiting, { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], brain: [], api: [] });
+  assert.deepEqual(waiting, { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], brain: [], proc: [], api: [] });
+});
+
+test("spaceAttention flags Proc's legacy and held schedules, operator failures, capacity and channel — but never Bot-owned failures", () => {
+  const apiAction = { type: "api", package: "notify", operation: "notify_push", input: {} };
+  const operator = { kind: "operator" };
+  const bot = { kind: "bot", botId: "bot-1", mainThreadId: "main-1", threadId: "t-1" };
+  const schedule = (id, extra = {}) => ({ id, revision: 1, label: id, action: apiAction, firstAt: "2026-01-01T00:00:00Z", everyMs: null, enabled: true,
+    system: false, createdBy: operator, lastEditedBy: operator, authority: operator,
+    blockedReason: null, retryAt: null, removedAt: null, nextAt: null, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z",
+    recent: [], ...extra });
+  const run = (state, at) => ({ id: `ex-${state}`, startedAt: at, state, error: null });
+  const resource = (data) => ({ data, error: null, at: 1 });
+  const procStatus = (running, capacity = 16) => resource({ running, capacity, inFlightCalls: 0, callCapacity: 16,
+    schedules: { total: 0, enabled: 0, held: 0, blocked: 0, legacy: 0, removed: 0 },
+    lastSweepAt: null, lastPruneAt: null, closing: false, retentionDays: 30, output: { maxBytes: 2_000_000, maxLines: 10_000 } });
+
+  // Quiet: healthy schedules, a disabled legacy... no, the spec — nothing.
+  assert.deepEqual(spaceAttention({ ...quiet, procSchedules: resource([schedule("s1")]), procStatus: procStatus(0) }).proc, []);
+
+  const noisy = spaceAttention({ ...quiet, status: { proc: "closed" },
+    procSchedules: resource([
+      schedule("legacy", { label: null, authority: null, enabled: false, blockedReason: "legacy_reauthorization_required" }),
+      schedule("held", { blockedReason: "bot_removed", retryAt: null }),
+      schedule("failing", { recent: [run("failed", "2026-01-02T00:00:00Z")] }),
+      schedule("bot-owned-failed", { authority: bot, createdBy: { kind: "bot", botId: "bot-1", threadId: "t-1" }, recent: [run("failed", "2026-01-02T00:00:00Z")] }),
+      schedule("removed-legacy", { authority: null, removedAt: "2026-01-03T00:00:00Z" }),
+    ]),
+    procStatus: procStatus(16),
+  });
+  assert.deepEqual(noisy.proc, [
+    "proc reconnecting",
+    "notify.notify_push needs reauthorization",
+    "held: Its Bot was removed",
+    "failing last run failed",
+    "All 16 process slots busy",
+  ]);
+  // Bot-owned failures stay informational: no "last run" flag for the Bot's schedule.
+  assert.ok(!noisy.proc.some((item) => item.includes("bot-owned-failed")));
+  assert.deepEqual(noisy.system, ["proc reconnecting"]);
 });
 
 test("spaceAttention flags Signal's unreadable sources, failed interpretation and channel, but not a deliberate pause", () => {

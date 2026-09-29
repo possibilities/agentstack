@@ -68,7 +68,7 @@ export async function loadSnapshot(remoteOrigin?: string, remoteScope?: "view" |
     return { owner: empty(), resources: empty(), accounts: empty(), workerAccounts: empty(), workerRuntimes: empty(),
       workerSessions: empty(), usage: empty(), login: empty(), workerLogins: empty(), bots: empty(), botDefaults: empty(),
       voice: empty(), role: empty(), rolePreview: empty(), catalog: empty(),
-      endpoints: Object.fromEntries((await listPackages(workspaceRoot(process.cwd()))).filter(({ config }) => config.websocket && !["access", "auth", "browse"].includes(config.name))
+      endpoints: Object.fromEntries((await listPackages(workspaceRoot(process.cwd()))).filter(({ config }) => config.websocket && !["access", "auth", "browse", "proc"].includes(config.name))
         .map(({ config }) => [config.name, `${remoteOrigin.replace(/^https:/, "wss:")}/websocket`])),
       contentOrigins: origins, remote: { scope: remoteScope, scopes: remoteScopes, contentOrigins: origins } };
   }

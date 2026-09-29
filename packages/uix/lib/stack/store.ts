@@ -11,6 +11,7 @@ import type { AgentBrowserInstallation, AgentBrowserStatus, BrowserController, B
 import type { Account, AttentionItem, AttentionMessage, AttentionPage, AttentionRun, AttentionStatus, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, OwnerResources, OwnerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RoleLaunchPreview, RolePreview, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerListItem, WorkerLogin, WorkerRuntime, WorkerStatus } from "./types";
 import { brainCallError, jobViews, mergeJobs, submissionLabel, terminalStates, type BrainJobView, type CallError } from "./brain";
 import type { BrainAdmission, BrainJob, BrainJobRecord, BrainJobStats, BrainShareState, BrainSource, BrainStats, BrainStatus, BrainTag } from "./types";
+import type { ProcRun, ProcScheduleListItem, ProcStatus } from "./types";
 
 export type StackState = Snapshot & {
   access: Resource<AccessSnapshot>;
@@ -101,6 +102,15 @@ export type StackState = Snapshot & {
   brainDocumentRecords: Record<string, Record<string, unknown>>;
   /** Submissions made from this page. Labels exist only here: job reads never return submitted content. */
   brainSubmissions: BrainSubmission[];
+  /** proc_schedule_list's page, including removed tombstones. */
+  procSchedules: Resource<ProcScheduleListItem[]>;
+  /** proc_run_list's newest page and its continuation; older pages stay in the Runs window. */
+  procRuns: Resource<{ runs: ProcRun[]; nextCursor: string | null }>;
+  procStatus: Resource<ProcStatus>;
+  /** Bumped on every proc_schedules_changed notice; Schedule views re-read on it. */
+  procScheduleGeneration: number;
+  /** Bumped on a watched run's scoped notices and (re)subscription; its window re-reads on it. */
+  procRunGenerations: Record<string, number>;
 };
 
 export type BrainSubmission = { key: string; label: string; kind: "url" | "text"; at: number; pending: boolean; admission: BrainAdmission | null; error: CallError | null; share: BrainShareState | null };
@@ -132,7 +142,8 @@ export const contentDocumentLimit = 200;
 
 type ResourceKey = ContentKey | "access" | "owner" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "role" | "rolePreview" | "roleLaunch" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts" | "signalStatus" | "scrapeStatus" | "scrapePresets" | "scrapeCanaries" | "scrapeQueue"
   | "browserProfiles" | "browserControllers" | "browserHandoffs" | "browserToolchain"
-  | "brainStatus" | "brainStats" | "brainTags" | "brainJobStats" | "brainJobs" | "brainSources";
+  | "brainStatus" | "brainStats" | "brainTags" | "brainJobStats" | "brainJobs" | "brainSources"
+  | "procSchedules" | "procRuns" | "procStatus";
 
 /** Which reads each browse write can change; each is re-read afterwards, since a lost acknowledgement may still have acted. */
 function browseReads(name: string): ResourceKey[] {
@@ -191,6 +202,8 @@ export class StackStore {
   private remoteInflight: Promise<void> | null = null;
   private workerWatchers = new Map<string, number>();
   private workerChannels = new Map<string, Channel>();
+  private procRunWatchers = new Map<string, number>();
+  private procChannels = new Map<string, Channel>();
   private statusInflight = new Map<string, Promise<void>>();
   private statusDirty = new Set<string>();
 
@@ -219,6 +232,8 @@ export class StackStore {
       brainJobStats: { data: null, error: null, at: null }, brainJobView: { view: "attention", run: null }, brainJobs: { data: null, error: null, at: null },
       brainJobRecords: {}, brainSources: { data: null, error: null, at: null }, brainIndexGeneration: 0, brainReader: null, brainQuery: null,
       brainDocumentRecords: {}, brainSubmissions: [],
+      procSchedules: { data: null, error: null, at: null }, procRuns: { data: null, error: null, at: null },
+      procStatus: { data: null, error: null, at: null }, procScheduleGeneration: 0, procRunGenerations: {},
     };
     this.serverState = this.state;
     for (const account of snapshot.workerAccounts.data ?? []) if (this.catalogAccountAvailable(account.id)) this.catalogAvailable.add(account.id);
@@ -307,17 +322,31 @@ export class StackStore {
       if (topic === "sources_changed") this.refresh("brainSources");
       if (topic === "index_changed") this.invalidateBrainIndex();
     }, ["jobs_changed", "sources_changed", "index_changed"], { silent: ["jobs_changed"] });
+    // Proc is owner-local: process output and schedule definitions never reach a remote session.
+    // proc_output_changed fires once per line; only a scoped Run window subscribes to it.
+    if (!this.state.remote) open("proc", () => this.refreshProc(), (topic) => {
+      if (topic === "proc_schedules_changed") {
+        this.refresh("procSchedules");
+        this.refresh("procStatus");
+        this.set({ procScheduleGeneration: this.state.procScheduleGeneration + 1 });
+      } else if (topic === "proc_runs_changed") {
+        this.refresh("procRuns");
+        this.refresh("procStatus");
+      }
+    }, ["proc_schedules_changed", "proc_runs_changed"], { silent: ["proc_schedules_changed"] });
     this.reconcileScoped();
     for (const id of this.workerWatchers.keys()) this.openWorkerChannel(id);
+    for (const id of this.procRunWatchers.keys()) this.openProcChannel(id);
   }
 
   stop(): void {
     this.catalogDirty.clear();
     for (const id of this.catalogAvailable) this.catalogGeneration.set(id, (this.catalogGeneration.get(id) ?? 0) + 1);
-    for (const channel of [...this.main.values(), ...this.scopedChannels.values(), ...this.workerChannels.values()]) channel.dispose();
+    for (const channel of [...this.main.values(), ...this.scopedChannels.values(), ...this.workerChannels.values(), ...this.procChannels.values()]) channel.dispose();
     this.main.clear();
     this.scopedChannels.clear();
     this.workerChannels.clear();
+    this.procChannels.clear();
   }
   syncRemote = (): Promise<void> => {
     if (!this.state.remote) return Promise.resolve();
@@ -341,7 +370,7 @@ export class StackStore {
       const annotation = this.state.catalog.data?.find(doc => doc.name === pkg)?.operations.find(operation => operation.name === name)?.annotations;
       if (annotation && annotation.readOnlyHint !== true) throw new Error("Read-only remote session: this operation requires uix:control");
     }
-    if (this.state.remote && ["access", "auth", "browse"].includes(pkg)) throw new Error(`${pkg} controls are available only on the local UIX`);
+    if (this.state.remote && ["access", "auth", "browse", "proc"].includes(pkg)) throw new Error(`${pkg} controls are available only on the local UIX`);
     if (this.state.remote && pkg === "bots" && name.startsWith("voice_")) throw new Error("Voice calls are available only on the local UIX");
     const channel = this.main.get(pkg);
     if (!channel || channel.status !== "open") throw new Error(`${pkg} WebSocket is not connected`);
@@ -893,6 +922,51 @@ export class StackStore {
     this.statusInflight.set(id, run);
   }
 
+  private refreshProc(): void {
+    this.refresh("procSchedules");
+    this.refresh("procRuns");
+    this.refresh("procStatus");
+  }
+
+  /**
+   * Reference-counted scoped subscription to one run's proc_output_changed and
+   * proc_runs_changed notices. Every notice and (re)subscription bumps that run's
+   * generation, since missed notices are not replayed; the Run window re-reads
+   * the record and continues output from its last seq on each bump.
+   */
+  watchProcRun = (id: string): (() => void) => {
+    const watchers = (this.procRunWatchers.get(id) ?? 0) + 1;
+    this.procRunWatchers.set(id, watchers);
+    if (watchers === 1) this.openProcChannel(id);
+    return () => {
+      const remaining = (this.procRunWatchers.get(id) ?? 0) - 1;
+      if (remaining > 0) { this.procRunWatchers.set(id, remaining); return; }
+      this.procRunWatchers.delete(id);
+      this.procChannels.get(id)?.dispose();
+      this.procChannels.delete(id);
+      if (this.state.procRunGenerations[id]) {
+        const procRunGenerations = { ...this.state.procRunGenerations };
+        delete procRunGenerations[id];
+        this.set({ procRunGenerations });
+      }
+    };
+  };
+
+  private openProcChannel(id: string): void {
+    const url = this.state.endpoints.proc;
+    if (!url || this.state.remote || this.procChannels.has(id)) return;
+    const channel = new Channel(url, "proc", {
+      onOpen: () => { if (this.procChannels.get(id) === channel) this.bumpProcRun(id); },
+      onNotice: () => { if (this.procChannels.get(id) === channel) this.bumpProcRun(id); },
+    });
+    this.procChannels.set(id, channel);
+    channel.subscribe(["proc_output_changed", "proc_runs_changed"], id).connect();
+  }
+
+  private bumpProcRun(id: string): void {
+    this.set({ procRunGenerations: { ...this.state.procRunGenerations, [id]: (this.state.procRunGenerations[id] ?? 0) + 1 } });
+  }
+
   dismissWorkerAttempt = (accountId: string): void => {
     if (!this.state.workerAttempts[accountId]) return;
     const workerAttempts = { ...this.state.workerAttempts };
@@ -1011,6 +1085,9 @@ export class StackStore {
         const read = (state?: string) => call<{ jobs: BrainJob[] }>("brain", "jobs_list", { state, run: run ?? undefined, limit: brainJobLimit }).then((result) => result.jobs);
         return (states ? Promise.all(states.map(read)) : read().then((jobs) => [jobs])).then((lists) => ({ view, run, jobs: mergeJobs(lists) }));
       }
+      case "procSchedules": return call<{ schedules: ProcScheduleListItem[] }>("proc", "proc_schedule_list", { limit: 100, includeRemoved: true }).then((result) => result.schedules);
+      case "procRuns": return call<{ runs: ProcRun[]; nextCursor: string | null }>("proc", "proc_run_list", { limit: 100 });
+      case "procStatus": return call<ProcStatus>("proc", "proc_status");
     }
   }
 

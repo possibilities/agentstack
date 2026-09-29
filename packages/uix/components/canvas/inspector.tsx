@@ -31,6 +31,7 @@ import { OperationBadges, RecoveryWarning } from "./windows";
 import { AttentionItemDetail, AttentionMessageDetail, TraceViewer } from "./signal-windows";
 import { useShowWorker } from "./worker-windows";
 import { workerLabel } from "@/lib/stack/workers";
+import { ownerOf, runTitle, scheduleTitle } from "@/lib/stack/proc";
 import { controllerKey, handoffOutcomes, handoffStates, heldBy, profileName } from "@/lib/stack/browse";
 
 type View = {
@@ -479,10 +480,113 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         events: state.events.filter((event) => event.pkg === "brain"),
       };
     }
+    case "proc-schedule": {
+      const schedule = state.procSchedules.data?.find((item) => item.id === ref.id);
+      if (!schedule) return null;
+      const related: View["related"] = [];
+      const owner = ownerOf(schedule.authority);
+      if (owner.kind === "bot" && state.bots.data?.some((bot) => bot.id === owner.botId)) related.push({ ref: { kind: "bot", id: owner.botId }, label: `${owner.botId} · owns it` });
+      if (schedule.action.type === "api") related.push({ ref: { kind: "operation", pkg: schedule.action.package, id: schedule.action.operation }, label: `${schedule.action.package}.${schedule.action.operation}` });
+      return {
+        eyebrow: `Schedule · ${schedule.removedAt ? "removed" : schedule.enabled ? "enabled" : "disabled"}`, accent: "proc", title: scheduleTitle(schedule),
+        record: { ...schedule }, fields: procFields(catalog, "proc_schedule_get"), related,
+        operations: { pkg: "proc", list: procOperations(catalog) },
+        events: state.events.filter((event) => event.pkg === "proc"),
+      };
+    }
+    case "proc-run": {
+      const listed = state.procRuns.data?.runs.find((item) => item.id === ref.id);
+      const related: View["related"] = [];
+      if (listed?.scheduleId) related.push({ ref: { kind: "proc-schedule", id: listed.scheduleId }, label: "Its schedule" });
+      if (listed?.scheduleExecutionId) related.push({ ref: { kind: "proc-execution", id: listed.scheduleExecutionId }, label: "Its execution" });
+      const owner = listed ? ownerOf(listed.createdBy) : null;
+      if (owner?.kind === "bot" && state.bots.data?.some((bot) => bot.id === owner.botId)) related.push({ ref: { kind: "bot", id: owner.botId }, label: `${owner.botId} · owns it` });
+      return {
+        eyebrow: `Process run${listed ? ` · ${listed.state.replace("_", " ")}` : ""}`, accent: "proc",
+        title: listed ? runTitle(listed) : `Run ${ref.id.slice(0, 8)}`,
+        record: listed ? { ...listed } : undefined, fields: procFields(catalog, "proc_run_get"),
+        body: listed ? undefined : <ProcRecordBody operation="proc_run_get" id={ref.id} />, related,
+        operations: { pkg: "proc", list: procOperations(catalog) },
+        events: state.events.filter((event) => event.pkg === "proc"),
+      };
+    }
+    case "proc-execution": {
+      return {
+        eyebrow: "Schedule execution", accent: "proc", title: `Execution ${ref.id.slice(0, 8)}`,
+        fields: procFields(catalog, "proc_execution_get"),
+        body: <ProcRecordBody operation="proc_execution_get" id={ref.id} />,
+        operations: { pkg: "proc", list: procOperations(catalog) },
+        events: state.events.filter((event) => event.pkg === "proc"),
+      };
+    }
+    case "proc-run-window":
+      return null; // Run windows are views onto a run, not records.
     case "package":
     case "operation":
       return null; // Reference destinations are rendered in the shared dock's reading mode.
   }
+}
+
+/** The Proc space acts on records; the inspector lists only the read side, as Workers does. */
+function procOperations(catalog: PackageDoc[] | null): OperationDoc[] {
+  return catalog?.find((doc) => doc.name === "proc")?.operations.filter((operation) => operation.annotations?.readOnlyHint) ?? [];
+}
+
+/** Explanations the Proc space writes in words; appended to the schema's own descriptions. */
+const procFieldNotes: Record<string, string> = {
+  state: "\"failed\" is a reported failure; \"refused\" was never sent; \"unknown\" was interrupted before the outcome was proven and is not a proven failure.",
+  removedAt: "Set when the schedule was removed: admissions stop, and its executions and history are kept.",
+  envKeys: "Environment variable names only; values are never recorded and cannot be shown.",
+  retainOutput: "When false, stored output is deleted once the run ends.",
+  outputTruncated: "Later output was discarded once Proc's bound was reached.",
+  gap: "A stretch of lines between the cursor and the next sequence was dropped or not retained.",
+};
+
+/** Field descriptions for a Proc record, with UI notes appended. */
+function procFields(catalog: PackageDoc[] | null, operation: string): Map<string, Field> {
+  const fields = new Map(fieldsOf(findOperation(catalog, "proc", operation)?.outputSchema).map((field) => [field.name, field]));
+  const merged = new Map<string, Field>();
+  for (const [name, field] of fields) {
+    const note = procFieldNotes[name];
+    merged.set(name, note ? { ...field, description: [field.description, note].filter(Boolean).join(" ") } : field);
+  }
+  return merged;
+}
+
+/** A Proc record that isn't in a list page is read by ID and shown field by field. */
+function ProcRecordBody({ operation, id }: { operation: "proc_run_get" | "proc_execution_get"; id: string }) {
+  const { catalog } = useStack();
+  const call = useOperation<Record<string, unknown>>("proc", operation);
+  const [record, setRecord] = useState<Record<string, unknown> | null>(null);
+  useEffect(() => {
+    let live = true;
+    void call.run({ id }).then((result) => { if (live) setRecord(result); }, () => undefined);
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [operation, id]);
+  const fields = procFields(catalog.data, operation);
+  if (!record) return <p className="text-sm text-muted-foreground">{call.error ? `Read failed: ${call.error}` : "Reading record…"}</p>;
+  return <FieldList record={record} fields={fields} />;
+}
+
+function FieldList({ record, fields }: { record: Record<string, unknown>; fields?: Map<string, Field> }) {
+  return (
+    <dl className="flex flex-col divide-y rounded-xl border bg-background/50">
+      {Object.entries(record).map(([key, value]) => {
+        const field = fields?.get(key);
+        return (
+          <div key={key} className="flex flex-col gap-1 px-3 py-2.5">
+            <div className="flex items-baseline justify-between gap-3">
+              <dt className="font-mono text-[0.72rem] text-muted-foreground">{key}</dt>
+              {field ? <span className="font-mono text-[0.62rem] text-muted-foreground/70">{field.type}</span> : null}
+            </div>
+            <dd className="text-[0.8rem]"><Value value={value} /></dd>
+            {field?.description ? <p className="text-[0.7rem] text-pretty text-muted-foreground">{field.description}</p> : null}
+          </div>
+        );
+      })}
+    </dl>
+  );
 }
 
 function browseOperations(catalog: PackageDoc[] | null, names: string[]): OperationDoc[] {
@@ -609,6 +713,7 @@ function referencePackage(ref: NodeRef): string {
   if (ref.kind === "notification") return "notify";
   if (ref.kind === "document" || ref.kind === "collection" || ref.kind === "item" || ref.kind === "artifact") return "content";
   if (ref.kind === "worker-catalog" || ref.kind === "worker" || ref.kind === "worker-runtime" || ref.kind === "worker-window") return "worker";
+  if (ref.kind === "proc-schedule" || ref.kind === "proc-execution" || ref.kind === "proc-run" || ref.kind === "proc-run-window") return "proc";
   if (ref.kind === "usage" || ref.kind === "usage-account" || ref.kind === "grok-bot-usage") return "usage";
   if (ref.kind === "preset" || ref.kind === "scrape-job") return "scrape";
   if (ref.kind === "browser-profile" || ref.kind === "browser-handoff" || ref.kind === "browser-controller" || ref.kind === "browser-viewer") return "browse";
@@ -828,21 +933,7 @@ export function Inspector({ hidden = false, onGone, pinned, onPinnedChange }: { 
             {view.recoveryIssue ? <RecoveryWarning message={view.recoveryIssue} /> : null}
             {view.record ? (
               <Block title="Fields" aside={<CopyButton value={JSON.stringify(view.record, null, 2)} label="JSON" className="opacity-100" />}>
-                <dl className="flex flex-col divide-y rounded-xl border bg-background/50">
-                  {Object.entries(view.record).map(([key, value]) => {
-                    const field = view.fields?.get(key);
-                    return (
-                      <div key={key} className="flex flex-col gap-1 px-3 py-2.5">
-                        <div className="flex items-baseline justify-between gap-3">
-                          <dt className="font-mono text-[0.72rem] text-muted-foreground">{key}</dt>
-                          {field ? <span className="font-mono text-[0.62rem] text-muted-foreground/70">{field.type}</span> : null}
-                        </div>
-                        <dd className="text-[0.8rem]"><Value value={value} /></dd>
-                        {field?.description ? <p className="text-[0.7rem] text-pretty text-muted-foreground">{field.description}</p> : null}
-                      </div>
-                    );
-                  })}
-                </dl>
+                <FieldList record={view.record} fields={view.fields} />
               </Block>
             ) : null}
             {view.related?.length ? (

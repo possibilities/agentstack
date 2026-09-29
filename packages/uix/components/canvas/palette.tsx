@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ImportIcon, ListChecksIcon, SatelliteDishIcon, SearchIcon } from "lucide-react";
-import { BellIcon, BlocksIcon, HammerIcon, BookOpenIcon, BotIcon, BoxesIcon, FileTextIcon, NotebookTextIcon, UploadIcon, CircleCheckIcon, CpuIcon, FilePlusIcon, FolderIcon, FolderLockIcon, FolderPlusIcon, MicIcon, MicOffIcon, PhoneIcon, PhoneOffIcon, PlugIcon, RefreshCwIcon, ScrollTextIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
+import { BellIcon, BlocksIcon, CalendarClockIcon, HammerIcon, BookOpenIcon, BotIcon, BoxesIcon, FileTextIcon, NotebookTextIcon, UploadIcon, CircleCheckIcon, CpuIcon, FilePlusIcon, FolderIcon, FolderLockIcon, FolderPlusIcon, MicIcon, MicOffIcon, PhoneIcon, PhoneOffIcon, PlugIcon, RefreshCwIcon, ScrollTextIcon, SquareTerminalIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
 import { operationTitle } from "@/lib/stack/catalog";
 import { accountLabels, addableWorkerProviders, pairedWorker, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
@@ -15,16 +15,18 @@ import { useBotActions } from "./bot-actions";
 import { useNotifyActions } from "./notify-actions";
 import { useRoleActions, type RoleTarget } from "./role-actions";
 import { Orb, StatusDot } from "./primitives";
-import { useStack, useStore, useWorkbench } from "./provider";
+import { useStack, useStore, useWorkbench, useProcWindows } from "./provider";
 import { spaceViews } from "./spaces";
 import { useVoice } from "./voice";
 import { useShowWorker } from "./worker-windows";
+import { useShowProcRun } from "./proc-runs";
 import { workerAttention, workerLabel, workerOrigin } from "@/lib/stack/workers";
+import { ownerLabel, ownerOf, runTitle, runView, scheduleTitle } from "@/lib/stack/proc";
 
 export type PaletteAction = { id: string; label: string; shortcut?: string; icon: React.ComponentType; run(): void };
 
 export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpenChange(open: boolean): void; actions: PaletteAction[] }) {
-  const { bots, accounts, workerAccounts, workerSessions, owner, catalog, attempt, role, notificationRecords, contentDocuments, contentItems, contentArtifacts, status, brainSources } = useStack();
+  const { bots, accounts, workerAccounts, workerSessions, owner, catalog, attempt, role, notificationRecords, contentDocuments, contentItems, contentArtifacts, status, brainSources, procSchedules, procRuns } = useStack();
   const store = useStore();
   const notify = useNotifyActions();
   // Notifications the page has loaded, newest first; the palette never pages the ledger itself.
@@ -50,6 +52,8 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
   const voice = useVoice();
   const { goTo, setSpace } = useWorkbench();
   const showWorker = useShowWorker();
+  const showProcRun = useShowProcRun();
+  const { procWindows } = useProcWindows();
   // Open Workers first, then the most recently updated closed ones.
   const workers = [...(workerSessions.data ?? [])].sort((a, b) => Number(a.phase === "closed") - Number(b.phase === "closed") || b.updatedAt - a.updatedAt).slice(0, 40);
   const labels = accountLabels(accounts.data);
@@ -135,6 +139,29 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
                   <span className="truncate text-xs text-muted-foreground">{workerOrigin(worker.botId)}</span>
                   <StatusDot tone={workerAttention(worker) ? "warning" : worker.phase === "running" ? "success" : "muted"} />
                   <CommandShortcut className="tracking-normal">{worker.phase.replace("_", " ")}</CommandShortcut>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          ) : null}
+          {procSchedules.data?.length || procRuns.data?.runs.length ? (
+            <CommandGroup heading="Proc">
+              {(procSchedules.data ?? []).filter((schedule) => !schedule.removedAt).slice(0, 30).map((schedule) => (
+                <CommandItem key={schedule.id}
+                  value={`proc schedule ${scheduleTitle(schedule)} ${schedule.action.type === "api" ? `${schedule.action.package}.${schedule.action.operation}` : schedule.action.process.command} ${ownerLabel(ownerOf(schedule.authority))} ${schedule.id}`}
+                  onSelect={() => { procWindows.selectSchedule(schedule.id); go({ kind: "proc-schedule", id: schedule.id }); }}>
+                  <CalendarClockIcon />
+                  <span className="truncate">{scheduleTitle(schedule)}</span>
+                  <StatusDot tone={schedule.enabled && !schedule.blockedReason ? "success" : "muted"} />
+                  <CommandShortcut className="tracking-normal">{ownerLabel(ownerOf(schedule.authority))}</CommandShortcut>
+                </CommandItem>
+              ))}
+              {(procRuns.data?.runs ?? []).slice(0, 20).map((run) => (
+                <CommandItem key={run.id} value={`proc run ${runTitle(run)} ${run.command ?? ""} ${run.id}`}
+                  onSelect={() => { onOpenChange(false); showProcRun(run.id); }}>
+                  <SquareTerminalIcon />
+                  <span className="truncate">{runTitle(run)}</span>
+                  <StatusDot tone={runView(run).tone} />
+                  <CommandShortcut className="tracking-normal">{runView(run).word}</CommandShortcut>
                 </CommandItem>
               ))}
             </CommandGroup>

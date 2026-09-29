@@ -270,11 +270,11 @@ _Avoid_: caller network boolean, source credential, indexing permission
 
 ## Proc schedule
 
-A durable, attributed definition for a one-shot or interval invocation of one Package API operation or guarded argv process. Its execution authority is the operator, a sanctioned Bot/root/thread, or a protected system task; operator edits do not promote Bot authority. Proc owns the wake-up, authorized due admission and execution evidence; the target Package API owns its own effects and idempotency. A missed interval is coalesced, not replayed. An interrupted API call has an unknown outcome, never an automatic retry. _Avoid_: Brain Source cadence, agent turn, cron job
+A durable, attributed definition for a one-shot or interval invocation of one Package API operation or guarded argv process. It may carry a short label naming its purpose. Its execution authority is the operator, a sanctioned Bot/root/thread, or a protected system task; operator edits do not promote Bot authority. Proc owns the wake-up, authorized due admission and execution evidence; the target Package API owns its own effects and idempotency. A missed interval is coalesced, not replayed. An interrupted API call has an unknown outcome, never an automatic retry. _Avoid_: Brain Source cadence, agent turn, cron job
 
 ## Proc run
 
-One local-user process execution supervised by Proc's IPC guardian, with a caller-supplied idempotency ID for direct admission, bounded stdout/stderr line records, and a durable exit state. Output change notices contain no lines; consumers read by cursor to survive coalescing. _Avoid_: ACP Worker, Bot, Ingestion worker
+One local-user process execution supervised by Proc's IPC guardian, with a caller-supplied idempotency ID for direct admission, bounded stdout/stderr line records, and a durable exit state. It may carry a short label, and retains its executable, arguments, cwd and environment variable names — never values. Output change notices contain no lines; consumers read by cursor to survive coalescing. _Avoid_: ACP Worker, Bot, Ingestion worker
 
 ## Share ingress
 

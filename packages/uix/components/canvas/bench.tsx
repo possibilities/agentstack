@@ -6,7 +6,7 @@ import { homeOf, spaces, type SpaceId } from "@/lib/stack/spaces";
 import { nodeKey, type NodeRef } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { Lines } from "./lines";
-import { useChatWindows, useStack, useViewerWindows, useWorkerWindows } from "./provider";
+import { useChatWindows, useProcWindows, useStack, useViewerWindows, useWorkerWindows } from "./provider";
 import { spaceViews } from "./spaces";
 import { PlacementContext, type WindowPlacement } from "./window";
 
@@ -52,8 +52,9 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
   const { windows: chats } = useChatWindows();
   const { windows: workers } = useWorkerWindows();
   const { windows: viewers } = useViewerWindows();
+  const { windows: procRuns } = useProcWindows();
   const storageKey = `agentstack.uix.bench.v2.${space}`;
-  const regions = spaces.filter((s) => s.id === space).map((s) => ({ ...s, defs: spaceViews[s.id].windows(state, { chats, workers, viewers }) }));
+  const regions = spaces.filter((s) => s.id === space).map((s) => ({ ...s, defs: spaceViews[s.id].windows(state, { chats, workers, viewers, procRuns }) }));
   const signature = JSON.stringify(regions.map((s) => ({ id: s.id, defs: s.defs.map(({ id, width, height, column, fixed }) => ({ id, width, height, column, fixed })) })));
   // Content refreshes cannot affect footprint or layout. Only registration geometry can.
   const structure = useMemo(() => regions.map((region) => ({

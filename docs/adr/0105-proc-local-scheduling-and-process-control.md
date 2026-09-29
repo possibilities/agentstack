@@ -17,3 +17,5 @@ Processes have direct idempotent admission by caller request ID, bounded per-lin
 ## Limits and follow-up
 
 This is a relative interval and one-shot mechanism, not a civil-time recurrence engine. Clock alarms, timers, reminders, time zones, delivery policy and any UI need their own design. Arbitrary Package API operations cannot promise exactly-once effects across an ambiguous socket call; a target needing deduplication must implement its own request key. Schedule outcome and process exit are separate from the effects of downstream asynchronous jobs.
+
+[ADR 0111](0111-proc-space.md) adds the dedicated Proc space UI this decision deferred.

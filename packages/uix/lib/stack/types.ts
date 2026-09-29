@@ -689,6 +689,42 @@ export type BrainSyncAdmission = { source_id: string; source_database_id: number
 /** `share_read_states`: a job's state and, once indexed, its document. */
 export type BrainShareState = { job_id: number; state: BrainJobState; failure_class: string | null; document_id: number | null };
 
+/** Proc's durable authority: the operator, a Bot bound to its root thread, or the protected system task. */
+export type ProcAuthority =
+  | { kind: "operator" }
+  | { kind: "bot"; botId: string; mainThreadId: string; threadId: string }
+  | { kind: "system"; name: string };
+/** A schedule's creator and editor may predate attribution. */
+export type ProcActor = ProcAuthority | { kind: "legacy_unknown" };
+export type ProcProcessSpec = { command: string; args: string[]; cwd?: string; env?: Record<string, string>; timeoutMs: number | null; retainOutput: boolean };
+export type ProcAction =
+  | { type: "api"; package: string; operation: string; input: unknown }
+  | { type: "process"; process: ProcProcessSpec };
+/** `proc_schedule_get`: the durable schedule record, with a tombstone's `removedAt` when removed. */
+export type ProcSchedule = { id: string; label: string | null; action: ProcAction; firstAt: string; everyMs: number | null; enabled: boolean;
+  revision: number; system: boolean; createdBy: ProcActor; lastEditedBy: ProcActor; authority: ProcAuthority | null;
+  blockedReason: string | null; retryAt: string | null; removedAt: string | null; nextAt: string | null; createdAt: string; updatedAt: string };
+export type ProcExecutionState = "running" | "completed" | "failed" | "refused" | "unknown";
+export type ProcExecutionSummary = { id: string; state: ProcExecutionState; dueAt: string; startedAt: string; finishedAt: string | null; error: string | null };
+/** `proc_schedule_list` entries embed up to 12 newest executions, newest first. */
+export type ProcScheduleListItem = ProcSchedule & { recent: ProcExecutionSummary[] };
+export type ProcExecution = { id: string; scheduleId: string; dueAt: string; state: ProcExecutionState; authority: ProcAuthority | null;
+  action: ProcAction | null; processId: string | null; result: unknown; error: string | null; startedAt: string; finishedAt: string | null };
+export type ProcRunState = "starting" | "running" | "exited" | "failed" | "cancelled" | "unknown";
+/** `proc_run_list` records carry the label and executable path, never arguments, environment or output. */
+export type ProcRun = { id: string; label: string | null; command: string | null; scheduleId: string | null; scheduleExecutionId: string | null;
+  createdBy: ProcActor; state: ProcRunState; pid: number | null; exitCode: number | null; signal: string | null; error: string | null;
+  lineCount: number; outputTruncated: boolean; retainOutput: boolean; startedAt: string; finishedAt: string | null };
+/** The persisted process summary: environment variable names only, never values. */
+export type ProcProcessSummary = { command: string; args: string[]; cwd: string | null; envKeys: string[]; timeoutMs: number | null; retainOutput: boolean };
+export type ProcRunDetail = ProcRun & { process: ProcProcessSummary | null };
+export type ProcOutputLine = { seq: number; stream: "stdout" | "stderr"; text: string; partial: boolean };
+export type ProcOutputPage = { run: ProcRun; lines: ProcOutputLine[]; nextAfter: number; done: boolean; gap: boolean };
+export type ProcStatus = { running: number; capacity: number; inFlightCalls: number; callCapacity: number;
+  schedules: { total: number; enabled: number; held: number; blocked: number; legacy: number; removed: number };
+  lastSweepAt: string | null; lastPruneAt: string | null; closing: boolean; retentionDays: number;
+  output: { maxBytes: number; maxLines: number; lineChunkChars: number } };
+
 export type Snapshot = {
   owner: Resource<OwnerStatus>;
   resources: Resource<OwnerResources>;
@@ -757,6 +793,10 @@ export type NodeRef =
   | { kind: "browser-profile" | "browser-handoff" | "browser-controller" | "browser-viewer"; id: string }
   /** Brain records by their numeric document or job ID, and a Research source by its definition ID. */
   | { kind: "research-document" | "ingestion-job" | "research-source"; id: string }
+  /** Proc records: a schedule, a scheduled execution and a process run, each by ID. */
+  | { kind: "proc-schedule" | "proc-execution" | "proc-run"; id: string }
+  /** A Run window on the bench, by window ID; it has no inspectable record. */
+  | { kind: "proc-run-window"; id: string }
   | { kind: "package"; id: string }
   | { kind: "operation"; id: string; pkg: string }
   /** Content records: a Vault document by slug, a collection by slug, an item by stable ID, an Artifact by name. */

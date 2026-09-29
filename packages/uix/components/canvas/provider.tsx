@@ -5,6 +5,8 @@ import type { SpaceId } from "@/lib/stack/spaces";
 import { ChatWindowStore, type ChatWindows } from "@/lib/stack/chat-windows";
 import { WorkerWindowStore, type WorkerWindows } from "@/lib/stack/worker-windows";
 import { ViewerWindowStore, type ControlGrants, type HandoffActions, type ViewerWindows } from "@/lib/stack/browse-viewers";
+import { ProcWindowStore, type ProcRunWindows } from "@/lib/stack/proc-windows";
+import type { ProcRunFilter, ProcScheduleFilter } from "@/lib/stack/proc";
 import type { WorkerFilter } from "@/lib/stack/workers";
 import { StackStore, type StackConnections, type StackState } from "@/lib/stack/store";
 import type { NodeRef, Snapshot, StackEvent } from "@/lib/stack/types";
@@ -13,12 +15,14 @@ const StoreContext = createContext<StackStore | null>(null);
 const ChatWindowsContext = createContext<ChatWindowStore | null>(null);
 const WorkerWindowsContext = createContext<WorkerWindowStore | null>(null);
 const ViewerWindowsContext = createContext<ViewerWindowStore | null>(null);
+const ProcWindowsContext = createContext<ProcWindowStore | null>(null);
 
 export function StackProvider({ snapshot, children, connections }: { snapshot: Snapshot; children: React.ReactNode; connections?: StackConnections }) {
   const [store] = useState(() => new StackStore(snapshot));
   const [chats] = useState(() => new ChatWindowStore());
   const [workerWindows] = useState(() => new WorkerWindowStore());
   const [viewers] = useState(() => new ViewerWindowStore());
+  const [procWindows] = useState(() => new ProcWindowStore());
   useEffect(() => {
     store.start(connections);
     return () => store.stop();
@@ -43,7 +47,8 @@ export function StackProvider({ snapshot, children, connections }: { snapshot: S
     chats.attach(storage);
     workerWindows.attach(storage);
     viewers.attach(storage);
-  }, [chats, workerWindows, viewers]);
+    procWindows.attach(storage);
+  }, [chats, workerWindows, viewers, procWindows]);
   const bots = useSyncExternalStore(store.subscribe, () => store.getState().bots.data, () => store.getServerState().bots.data);
   useEffect(() => { if (bots) chats.prune(new Set(bots.map((bot) => bot.id))); }, [bots, chats]);
   const workers = useSyncExternalStore(store.subscribe, () => store.getState().workerSessions.data, () => store.getServerState().workerSessions.data);
@@ -53,7 +58,7 @@ export function StackProvider({ snapshot, children, connections }: { snapshot: S
   // A grant ends when its handoff leaves human control; the API has revoked it by then.
   const handoffs = useSyncExternalStore(store.subscribe, () => store.getState().browserHandoffs.data, () => store.getServerState().browserHandoffs.data);
   useEffect(() => { if (handoffs) viewers.pruneGrants(new Set(handoffs.filter((item) => item.state === "human_controlling").map((item) => item.id))); }, [handoffs, viewers]);
-  return <StoreContext value={store}><ChatWindowsContext value={chats}><WorkerWindowsContext value={workerWindows}><ViewerWindowsContext value={viewers}>{children}</ViewerWindowsContext></WorkerWindowsContext></ChatWindowsContext></StoreContext>;
+  return <StoreContext value={store}><ChatWindowsContext value={chats}><WorkerWindowsContext value={workerWindows}><ViewerWindowsContext value={viewers}><ProcWindowsContext value={procWindows}>{children}</ProcWindowsContext></ViewerWindowsContext></WorkerWindowsContext></ChatWindowsContext></StoreContext>;
 }
 
 /** Fleet chat windows and the store that arranges them. */
@@ -71,6 +76,17 @@ export function useWorkerWindows(): { windows: WorkerWindows; filter: WorkerFilt
   const windows = useSyncExternalStore(workerWindows.subscribe, workerWindows.getWindows, workerWindows.getWindows);
   const filter = useSyncExternalStore(workerWindows.subscribe, workerWindows.getFilter, workerWindows.getFilter);
   return { windows, filter, workerWindows };
+}
+
+/** Proc-space Run windows, the Schedule selection and the lists' filters. */
+export function useProcWindows(): { windows: ProcRunWindows; selectedScheduleId: string | null; scheduleFilter: ProcScheduleFilter; runFilter: ProcRunFilter; procWindows: ProcWindowStore } {
+  const procWindows = use(ProcWindowsContext);
+  if (!procWindows) throw new Error("useProcWindows requires StackProvider");
+  const windows = useSyncExternalStore(procWindows.subscribe, procWindows.getWindows, procWindows.getWindows);
+  const selectedScheduleId = useSyncExternalStore(procWindows.subscribe, procWindows.getSelected, procWindows.getSelected);
+  const scheduleFilter = useSyncExternalStore(procWindows.subscribe, procWindows.getScheduleFilter, procWindows.getScheduleFilter);
+  const runFilter = useSyncExternalStore(procWindows.subscribe, procWindows.getRunFilter, procWindows.getRunFilter);
+  return { windows, selectedScheduleId, scheduleFilter, runFilter, procWindows };
 }
 
 /** Browse viewer windows, this page's human control grants, and the store that arranges them. */

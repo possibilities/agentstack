@@ -147,6 +147,19 @@ PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
   node packages/uix/test/brain-browser-check.mjs
 ```
 
+The Proc space's check serves the real Proc API against a disposable state directory, seeded through
+`ProcStore` with a Bot-owned schedule, a legacy unattributed one and a blocked one, and creates its
+live fixtures through the socket: a secret-bearing schedule, a noisy failed run, a long run for Stop
+and a run that keeps no output. It covers grouping and outcome strips, masked/revealed environment,
+Disable/Enable/Remove/Reauthorize, the log reader's tail, backscroll and stderr marks, the not-retained
+banner, timeline marks and click-through, Spaces-menu attention and the Fleet "schedules" link. It uses
+`next dev` unless `PROC_NEXT=start`, and keeps screenshots when `PROC_EVIDENCE_DIR` is set:
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  node packages/uix/test/proc-browser-check.mjs
+```
+
 The bench check uses disposable sockets, a fixture snapshot and its own `next start`
 process. `CHROME_EXECUTABLE` overrides the default macOS Chrome path;
 `NEXT_MODE=dev` selects development verification instead. Screenshots are written

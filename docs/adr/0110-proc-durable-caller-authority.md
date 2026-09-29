@@ -20,4 +20,4 @@ Proc schema v2 migrates its own v1 database transactionally. Existing definition
 
 ## UI
 
-The existing live API reference discovers the new schemas and reauthorization operation. Proc still has no dedicated schedule/run window or reauthorization controls. A System-space view remains a separate human decision.
+Superseded by [ADR 0111](0111-proc-space.md), which adds the dedicated Proc space: schedules, executions, process runs and their output, with the four schedule controls and run stop. The existing live API reference still discovers the schemas and reauthorization operation generically.

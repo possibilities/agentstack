@@ -50,6 +50,7 @@ import { useActivity, useNow, useStack } from "./provider";
 import { useVoice } from "./voice";
 import { footerButton, Section, Window } from "./window";
 import { WorkersLink } from "./worker-windows";
+import { ProcSchedulesLink } from "./proc-schedules";
 
 const activitySpan = 5 * 60_000;
 
@@ -652,6 +653,7 @@ export function BotsWindow() {
                   <BotChip icon={MessageSquareIcon} title={bot.mainThreadId ?? "No main thread yet"} copy={bot.mainThreadId} label="main thread">{bot.mainThreadId ? shortId(bot.mainThreadId) : "No thread"}</BotChip>
                   {bot.url ? <BotChip icon={LinkIcon} title={bot.url} copy={bot.url} label="endpoint">{bot.url.replace(/^\w+:\/\//, "")}</BotChip> : null}
                   <WorkersLink filter={{ botId: bot.id }} />
+                  <ProcSchedulesLink botId={bot.id} />
                 </div>
                 {bot.recoveryIssue ? <RecoveryWarning message={bot.recoveryIssue} /> : null}
                 <BrowserHelpLink handoff={botHandoff(bot.id, browserHandoffs.data)} />
