@@ -89,7 +89,7 @@ export class WorkerSupervisor {
       const child = new ClaudeBackend(accountEnvironment(this.stateDir, account, this.env), this.dependencies.claudeQuery);
       const runtime: Runtime = { account, process: child, backend: "claude-sdk", version: CLAUDE_SDK_VERSION, probeSession: null,
         canClose: true, canLoad: true, supportsHttp: true, instance: randomUUID(),
-        capabilities: { persistentSessions: true, resume: true, processModel: "session", roleInstructions: "system-prompt-append" },
+        capabilities: { persistentSessions: true, resume: true, processModel: "session" },
         agentInfo: { name: "claude-agent-sdk", version: CLAUDE_SDK_VERSION, bundledClaudeCodeVersion: CLAUDE_CODE_VERSION } };
       this.register(runtime);
       return;

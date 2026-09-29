@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process";
 import { lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import { renderInstructions, skillRecord, type RoleSnapshot } from "@stack/roles";
+import { skillRecord, type RoleSnapshot } from "@stack/roles";
 
 export type ClaimedWorktree = { repo: string; cwd: string; branch: string; baseCommit: string; sourceDirty: boolean;
-  roleId: string; roleRevision: number; instructions: string };
+  roleId: string; roleRevision: number };
 
 function git(cwd: string, args: string[]): Promise<string> {
   return new Promise((resolveResult, reject) => {
@@ -47,7 +47,6 @@ export async function claimWorktree(stateDir: string, id: string, source: string
     const skill = skillRecord.parse(value);
     if (skill.enabled && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(skill.name))
       throw new Error(`worker harnesses cannot load role skill ${skill.name}`);
-    if (skill.enabled && skill.name === "prime") throw new Error("Role skill name prime is reserved for the worker's manual /prime command");
   }
   const sourceDirty = Boolean(await git(repo, ["status", "--porcelain=v1", "--untracked-files=normal"]));
   const parent = join(stateDir, "workers", "worktrees");
@@ -72,14 +71,8 @@ export async function claimWorktree(stateDir: string, id: string, source: string
       await writeSkill(join(devin, "skills"), skill);
       await writeSkill(join(opencode, "skills"), skill);
     }
-    const instructions = renderInstructions(snapshot);
-    if (instructions) {
-      const prime = join(devin, "skills", "prime");
-      await mkdir(prime, { mode: 0o700 });
-      await writeFile(join(prime, "SKILL.md"), `---\nname: prime\ndescription: Load this worker's Stack Role instructions when explicitly requested\ntriggers: [user]\n---\n\n${instructions}\n`, { mode: 0o600 });
-    }
     if (await git(cwd, ["status", "--porcelain=v1", "--untracked-files=all"])) throw new Error("managed worker files are visible to Git; refusing to start");
-    return { repo, cwd, branch, baseCommit, sourceDirty, roleId: snapshot.id, roleRevision: snapshot.revision, instructions };
+    return { repo, cwd, branch, baseCommit, sourceDirty, roleId: snapshot.id, roleRevision: snapshot.revision };
   } catch (error) {
     // Preserve the claimed worktree for inspection; a failed role materialization must not erase unknown files.
     throw error;
@@ -118,8 +111,8 @@ export async function saveWorkerRole(stateDir: string, id: string, snapshot: Rol
   await mkdir(join(stateDir, "workers", "roles"), { recursive: true, mode: 0o700 });
   await writeFile(rolePath(stateDir, id), JSON.stringify(snapshot), { mode: 0o600, flag: "wx" });
 }
-/** SDK plugins avoid importing ambient/project Claude settings or pretending Role text is a user turn. */
-export async function claudeRole(stateDir: string, id: string, snapshot: RoleSnapshot): Promise<{ instructions: string; pluginPath: string }> {
+/** SDK plugins deliver only Role skills without importing ambient/project Claude settings. */
+export async function claudeRole(stateDir: string, id: string, snapshot: RoleSnapshot): Promise<{ pluginPath: string }> {
   const pluginPath = join(stateDir, "workers", "roles", id, "claude-plugin");
   // The snapshot is immutable; recreation on explicit recovery never changes ambient configuration.
   await rm(pluginPath, { recursive: true, force: true });
@@ -127,7 +120,7 @@ export async function claudeRole(stateDir: string, id: string, snapshot: RoleSna
   await writeFile(join(pluginPath, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "stack-role", version: "1.0.0" }), { mode: 0o600 });
   await mkdir(join(pluginPath, "skills"), { mode: 0o700 });
   for (const skill of snapshot.skills) await writeSkill(join(pluginPath, "skills"), skill);
-  return { instructions: renderInstructions(snapshot), pluginPath };
+  return { pluginPath };
 }
 export async function loadWorkerRole(stateDir: string, id: string): Promise<RoleSnapshot> {
   const snapshot = JSON.parse(await readFile(rolePath(stateDir, id), "utf8")) as RoleSnapshot;

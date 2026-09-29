@@ -94,7 +94,7 @@ _Avoid_: per-chat cost, unique RAM, complete accounting
 
 ## Worker
 
-An Stack-owned native session started by a Bot (or the local operator) under one enabled Worker account in an owned Git worktree. Its backend is ACP or the Claude Agent SDK. It retains its account, model/effort, Role revision, transcript and origin across turns. Closing a Worker retains the worktree and branch for review. _Avoid_: Bot, active account, disposable prompt
+An Stack-owned native session started by a Bot (or the local operator) under one enabled Worker account in an owned Git worktree. Its backend is ACP or the Claude Agent SDK. It retains its account, model/effort, selected Role ID and revision, transcript and origin across turns. A new Worker uses the current default Role unless creation selects another; it receives enabled skills and MCP connections, never Role instruction fragments. Closing a Worker retains the worktree and branch for review. _Avoid_: Bot, active account, disposable prompt
 
 ## Worker turn
 
@@ -136,11 +136,11 @@ A Codex app-server process with, after its first turn, a durable main thread. By
 
 ## Role
 
-A named Stack-owned configuration with a stable ID and independent revision: ordered developer-instruction fragments, enabled skills, per-Role internal MCP enablement, additional MCP servers and trusted projects. The first created Role is default; any existing Role can be marked default. Every new Bot launch and new Worker captures the current default. Bot launches receive a private snapshot through codexnk's required `--capabilities` directory; Worker recovery retains its saved snapshot. Edits and default changes affect later launches, not a running process. _Avoid_: singleton Role, capability profile, system-prompt flag, live prompt file
+A named Stack-owned configuration with a stable ID and independent revision: ordered developer-instruction fragments, enabled skills, per-Role internal MCP enablement, additional MCP servers and trusted projects. The first created Role is default; any existing Role can be marked default. Every new Bot launch captures the default; a new Worker captures the default unless `worker_start` selects another Role. Bot launches receive a private snapshot through codexnk's required `--capabilities` directory; Workers receive skills and MCP connections but not instruction fragments. Worker recovery retains its saved snapshot. Edits and default changes affect later launches, not a running process. _Avoid_: singleton Role, capability profile, system-prompt flag, live prompt file
 
 ## Default Role
 
-The Role selected in the Role catalog for every later Bot launch and new Worker. Selecting a Role for editing does not make it default. A fresh catalog has no Role until its first creation; afterward exactly one is default. The default cannot be deleted until another Role is selected. A session's `roleId` and `roleRevision` record what it received, not a per-session assignment.
+The Role selected in the Role catalog for every later Bot launch and for new Workers that omit `roleId`. Selecting a Role for editing does not make it default. A fresh catalog has no Role until its first creation; afterward exactly one is default. The default cannot be deleted until another Role is selected. A session's `roleId` and `roleRevision` record the applied snapshot, not a mutable assignment.
 
 ## Internal Role MCP enablement
 
@@ -172,7 +172,7 @@ A named, enabled or disabled skill record containing Markdown instructions and o
 
 ## Role MCP server
 
-An additional named, enabled or disabled HTTP or stdio MCP definition in the Role. Enabled definitions join the server's internal Package API connections only in the Bot's private launch configuration. They do not change ambient Codex configuration or running Bots.
+An additional named, enabled or disabled HTTP or stdio MCP definition in the Role. Enabled definitions join internal Package API connections in a Bot's private launch configuration or a Worker's native session. They do not change ambient configuration or running sessions.
 
 ## MCP invocation context
 

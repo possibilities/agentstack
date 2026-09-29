@@ -116,9 +116,10 @@ export const roleSnapshot = operation({
   async call(ctx: RolesContext, { roleId }) { return summarize(ctx.store.role(roleId).snapshot()); },
 });
 export const roleLaunchSnapshot = operation({
-  name: "role_launch_snapshot", description: "Atomically resolve the default Role and read its complete snapshot for native runtime launch, including credential-bearing MCP definitions. Fails if no Role exists. Keep the result in private launch state and out of model transcripts.",
-  input: z.strictObject({}), output: launchSnapshot, annotations: { title: "Read launch role", readOnlyHint: true },
-  async call(ctx: RolesContext) { return ctx.store.defaultSnapshot(); },
+  name: "role_launch_snapshot", description: "Atomically read the selected Role, or resolve the default when roleId is omitted, for a native launch. Includes credential-bearing MCP definitions; keep this private snapshot out of model transcripts. An unknown selected Role or missing default fails.",
+  input: z.strictObject({ roleId: roleId.optional().describe("Choose a Role for this launch; omit to use the current default.") }),
+  output: launchSnapshot, annotations: { title: "Read launch role", readOnlyHint: true },
+  async call(ctx: RolesContext, { roleId }) { return ctx.store.launchSnapshot(roleId); },
 });
 export const roleEditorSnapshot = operation({
   name: "role_editor_snapshot", description: "Read the complete Role for the operator's resource editor, including credential-bearing MCP connection definitions. Keep this result out of model transcripts.",

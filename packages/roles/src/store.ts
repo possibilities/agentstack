@@ -81,14 +81,17 @@ export class RoleStore {
     return readCatalog(this.db);
   }
 
-  /** Resolve the default and read its content in the same SQLite snapshot. */
-  defaultSnapshot(): RoleSnapshot {
+  /** Resolve an explicit Role or the default and read its content in the same SQLite snapshot. */
+  launchSnapshot(roleId?: string): RoleSnapshot {
     return transaction(this.db, false, () => {
+      if (roleId) return this.role(roleId).readSnapshot();
       const { default_role_id } = this.db.prepare("SELECT default_role_id FROM role_catalog WHERE singleton = 1").get() as { default_role_id: string | null };
       if (!default_role_id) throw new Error("no default role; create the first role before launching");
       return this.role(default_role_id).readSnapshot();
     });
   }
+
+  defaultSnapshot(): RoleSnapshot { return this.launchSnapshot(); }
 
   createRole(expectedRevision: number, name: string, description = ""): RoleCatalog {
     return this.changeCatalog(expectedRevision, () => {

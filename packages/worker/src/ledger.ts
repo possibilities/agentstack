@@ -123,7 +123,7 @@ export class WorkerLedger {
   }
 
   reserve(input: { requestId: string; botId: string; threadId: string; accountId: string; provider: WorkerRecord["provider"];
-    model: string; effort: string | null; repo: string; baseRef: string | null; task: string }): { worker: WorkerRecord; turn: TurnRecord; duplicate: boolean } {
+    model: string; effort: string | null; repo: string; baseRef: string | null; task: string; roleId?: string }): { worker: WorkerRecord; turn: TurnRecord; duplicate: boolean } {
     const inputDigest = digest(input);
     const prior = this.db.prepare("SELECT id, input_digest FROM workers WHERE request_id = ?").get(input.requestId) as { id: string; input_digest: string } | undefined;
     if (prior) {
@@ -144,7 +144,7 @@ export class WorkerLedger {
       this.db.prepare("INSERT INTO turns (id, worker_id, request_id, input_digest, phase, created_at, updated_at, prompt, requested_model, requested_effort) VALUES (?,?,?,?, 'queued',?,?,?,?,?)")
         .run(turnId, id, input.requestId, inputDigest, now, now, input.task, input.model, input.effort);
       this.append(id, turnId, "user", input.task);
-      this.history.append(id, null, "launch", "submitted", { repo: input.repo, baseRef: input.baseRef, model: input.model, effort: input.effort });
+      this.history.append(id, null, "launch", "submitted", { repo: input.repo, baseRef: input.baseRef, roleId: input.roleId ?? null, model: input.model, effort: input.effort });
       this.db.exec("COMMIT");
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
     return { worker: this.worker(id)!, turn: this.turn(turnId)!, duplicate: false };

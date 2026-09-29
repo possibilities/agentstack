@@ -1,5 +1,5 @@
 name: roles
-description: Manage named Roles and their instructions, skills, MCP servers and trusted projects. The default Role supplies every new Bot and Worker launch.
+description: Manage named Roles and their instructions, skills, MCP servers and trusted projects. The default Role supplies every Bot launch and Workers that do not choose another Role at creation.
 socket:
   description: Unix socket for role operations and change events.
 mcp:

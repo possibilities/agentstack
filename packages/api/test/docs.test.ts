@@ -259,6 +259,12 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok(JSON.stringify(loginWorker.inputSchema).includes('"claude"'));
     assert.ok(JSON.stringify(workerAccount.outputSchema).includes('"claude"'));
     const workers = found.get("worker") as PackageDoc;
+    const workerStart = workers.operations.find((operation) => operation.name === "worker_start")!;
+    assert.ok(Object.hasOwn(workerStart.inputSchema.properties ?? {}, "roleId"));
+    assert.equal((workerStart.inputSchema.required as string[]).includes("roleId"), false);
+    const launchRole = roles.operations.find((operation) => operation.name === "role_launch_snapshot")!;
+    assert.ok(Object.hasOwn(launchRole.inputSchema.properties ?? {}, "roleId"));
+    assert.equal((launchRole.inputSchema.required as string[] | undefined)?.includes("roleId") ?? false, false);
     const content = found.get("content") as PackageDoc;
     assert.ok(content.operations.some((op) => op.name === "artifact_publish"));
     assert.ok(content.operations.some((op) => op.name === "content_status"));

@@ -12,7 +12,7 @@ import { readWorktreeDiff, type DiffOptions } from "./diff.js";
 /** worker_list's compact most recent turn; worker_status and worker_turn_list carry the rest. */
 export type ListedTurn = Pick<TurnSummary, "id" | "phase" | "stopReason" | "issue" | "dispatchedAt" | "createdAt" | "updatedAt">;
 
-export type StartInput = { accountId: string; model: string; effort?: string; repo: string; baseRef?: string; task: string; requestId: string };
+export type StartInput = { accountId: string; model: string; effort?: string; repo: string; baseRef?: string; roleId?: string; task: string; requestId: string };
 export type SendInput = { id: string; message: string; requestId: string; model?: string; effort?: string };
 
 export class WorkerManager {
@@ -264,7 +264,7 @@ export class WorkerManager {
     const owner = await this.owner(invocation);
     const intent = { requestId: input.requestId, botId: owner.botId, threadId: owner.threadId, accountId: input.accountId,
       provider: "" as WorkerRecord["provider"], model: input.model, effort: input.effort ?? null, repo: input.repo,
-      baseRef: input.baseRef ?? null, task: input.task };
+      baseRef: input.baseRef ?? null, task: input.task, ...(input.roleId ? { roleId: input.roleId } : {}) };
     const existing = this.ledger.startByRequestId(input.requestId);
     if (existing) {
       ownsWorker(owner, existing);
@@ -279,7 +279,7 @@ export class WorkerManager {
     const id = reserved.worker.id;
     let stage = "Role snapshot";
     try {
-      const snapshot = await roleSnapshot(this.env);
+      const snapshot = await roleSnapshot(this.env, input.roleId);
       stage = "worktree";
       const claim = await claimWorktree(this.stateDir, id, input.repo, input.baseRef, snapshot);
       stage = "Role snapshot";
@@ -307,8 +307,7 @@ export class WorkerManager {
         this.response(id, reserved.turn.id, "session/new", value);
       } finally { if (--creating.count === 0) this.creating.delete(runtime.instance); }
       await this.select(id, reserved.turn.id, runtime, result.sessionId as string, result, input.model, input.effort ?? null);
-      this.prompt(id, reserved.turn.id, claim.instructions && account.provider !== "devin" && account.provider !== "claude"
-        ? `Stack Role instructions for this worker:\n${claim.instructions}\n\nTask:\n${input.task}` : input.task);
+      this.prompt(id, reserved.turn.id, input.task);
     } catch {
       const issue = `${stage} preparation failed; inspect the owned worktree and account runtime`;
       this.ledger.setTurnPhase(reserved.turn.id, "failed", null, issue);

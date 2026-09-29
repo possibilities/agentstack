@@ -132,7 +132,6 @@ test("isolated native Grok and Devin accounts finish Worker turns in owned workt
       else {
         const discovered = await skillList("devin", ["skills", "list"], status.worker.cwd!, accountEnvironment(root, account, env));
         assert.match(discovered, /stack-smoke/);
-        assert.match(discovered, /prime/);
       }
       console.log(JSON.stringify({ provider, model, worktree: true, stopReason: status.turn.stopReason, reply: true, skillsVisible: true }));
       await manager.closeWorker(started.worker.id);

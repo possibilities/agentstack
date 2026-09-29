@@ -73,9 +73,9 @@ export const workerAccountDrain = operation({
 });
 
 export const workerStart = operation({
-  name: "worker_start", description: "Start a persistent Worker session in an owned Git worktree and dispatch its first turn through its native ACP or Claude SDK backend. Choose exact account, model and effort from worker_catalog. Admission returns IDs promptly; read worker_status for completion.",
+  name: "worker_start", description: "Start a Worker in an owned Git worktree and dispatch its first turn through ACP or Claude SDK. Choose an account, model and effort from worker_catalog. Optional roleId selects a Role; omission uses the default. Workers capture enabled Role skills and MCP servers, not instruction fragments. Recovery retains the snapshot. Admission returns promptly; read worker_status for completion.",
   input: z.strictObject({ accountId: id, model: z.string().min(1).max(200), effort: z.string().min(1).max(64).optional(),
-    repo: z.string().min(1).max(4_096), baseRef: z.string().min(1).max(256).optional(), task: z.string().min(1).max(65_536), requestId }),
+    repo: z.string().min(1).max(4_096), baseRef: z.string().min(1).max(256).optional(), roleId: id.optional().describe("Role to capture at creation; omit for the current default. Cannot change on an existing Worker."), task: z.string().min(1).max(65_536), requestId }),
   output: resultSchema, annotations: { title: "Start Worker" },
   async call(ctx: WorkersContext, input, invocation) { return ctx.manager.start(input, invocation); },
 });

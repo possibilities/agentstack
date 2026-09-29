@@ -120,6 +120,11 @@ test("socket clients select Roles explicitly and configure internal MCP enableme
     assert.deepEqual((await call<RoleSnapshot>("role_snapshot", { roleId: second })).disabledInternalMcpServers, []);
     catalog = await call<RoleCatalog>("role_set_default", { expectedRevision: catalog.revision, roleId: second });
     assert.equal((await call<RoleSnapshot>("role_launch_snapshot")).id, second);
+    const selected = await call<RoleSnapshot>("role_launch_snapshot", { roleId: first });
+    assert.equal(selected.id, first);
+    assert.deepEqual(selected.disabledInternalMcpServers, ["roles"]);
+    await assert.rejects(call("role_launch_snapshot", { roleId: randomUUID() }), /unknown role/);
+    assert.equal((await call<RoleSnapshot>("role_launch_snapshot")).id, second);
     const enabled = await call("role_internal_mcp_update", { roleId: first, expectedRevision: disabled.revision, name: "roles", enabled: true });
     assert.deepEqual(enabled, { roleId: first, revision: 2 });
     assert.deepEqual((await call<RoleSnapshot>("role_snapshot", { roleId: first })).disabledInternalMcpServers, []);

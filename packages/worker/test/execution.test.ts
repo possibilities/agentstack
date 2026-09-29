@@ -61,8 +61,7 @@ test("worker Role resources are private and ignored in only the owned worktree",
     assert.equal(claimed.roleRevision, 7);
     assert.equal(claimed.sourceDirty, false);
     assert.equal(await run(claimed.cwd, ["status", "--porcelain=v1", "--untracked-files=all"]), "");
-    assert.match(await readFile(join(claimed.cwd, ".devin", "skills", "prime", "SKILL.md"), "utf8"), /Check your work/);
-    assert.match(await readFile(join(claimed.cwd, ".devin", "skills", "prime", "SKILL.md"), "utf8"), /triggers: \[user\]/);
+    await assert.rejects(stat(join(claimed.cwd, ".devin", "skills", "prime")), /ENOENT/);
     assert.match(await readFile(join(claimed.cwd, ".opencode", "skills", "review", "SKILL.md"), "utf8"), /Review the diff/);
     assert.match(await readFile(join(claimed.cwd, ".devin", "skills", "review", "SKILL.md"), "utf8"), /Review the diff/);
     await assert.rejects(stat(join(repo, ".devin")), /ENOENT/);
@@ -211,6 +210,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     assert.equal(started.worker.roleId, roleId);
     assert.equal(started.worker.roleRevision, applied.revision);
     await assert.rejects(manager.start({ ...start, task: "Different task" }), /requestId was reused/);
+    await assert.rejects(manager.start({ ...start, roleId }), /requestId was reused/);
     const fromApi = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_status", arguments: { id: started.worker.id } }) as { worker: { id: string } };
     assert.equal(fromApi.worker.id, started.worker.id);
     assert.equal((await manager.start(start)).worker.id, started.worker.id);
@@ -243,7 +243,8 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     assert.equal(turnHistory.turns[0]?.prompt, start.task);
     assert.ok(turnHistory.turns[0]?.dispatchedPromptSeq);
     const chunk = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_record_read", arguments: { id, seq: turnHistory.turns[0]!.dispatchedPromptSeq! } }) as { data: string };
-    assert.match(chunk.data, /Check your work/);
+    assert.match(chunk.data, /Write an output file/);
+    assert.equal(chunk.data.includes("Check your work"), false);
     assert.ok(scopedChanges.includes(id));
     assert.deepEqual(JSON.parse(await readFile(join(started.worker.cwd!, "mcp-names.json"), "utf8")), ["roles", "fixture-mcp"]);
     const wiring = JSON.parse(await readFile(join(started.worker.cwd!, "mcp-urls.json"), "utf8")) as Array<{ name: string; url: string }>;
@@ -251,8 +252,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     assert.deepEqual(parseWorkerMcpIdentity(new URL(wiring[0]!.url), env), { workerId: id, instance: started.worker.runtimeInstance });
     assert.equal(JSON.stringify(await manager.status(id)).includes("fixture-secret"), false);
     const output = await readFile(join(started.worker.cwd!, "output.txt"), "utf8");
-    assert.match(output, /Check your work/);
-    assert.match(output, /Write an output file/);
+    assert.equal(output, "Write an output file");
     const beforePrompt = manager.send({ id, message: "NEVER WRITE THIS", effort: "high", requestId: randomUUID() });
     for (let i = 0; i < 100 && (await manager.status(id)).turn?.phase !== "queued"; i++) await new Promise((resolve) => setTimeout(resolve, 5));
     assert.equal((await manager.status(id)).turn?.phase, "queued");
@@ -308,6 +308,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
 
     const reopenedSupervisor = new WorkerSupervisor(root, env);
     manager = new WorkerManager(root, reopenedSupervisor, env);
+    assert.equal((await manager.start(start)).worker.id, id, "a retry keeps its original Worker after the default changes");
     assert.equal((await manager.status(id)).worker.phase, "needs_recovery");
     await reopenedSupervisor.reconcile();
     assert.equal((await manager.resume(id, false)).phase, "idle");
@@ -324,6 +325,15 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     assert.deepEqual(JSON.parse(await readFile(join(next.worker.cwd!, "mcp-names.json"), "utf8")), ["roles", "notify"]);
     await manager.closeWorker(next.worker.id);
     await manager.remove(next.worker.id, true);
+    const chosen = await manager.start({ ...start, roleId, requestId: randomUUID() });
+    for (let i = 0; i < 100 && (await manager.status(chosen.worker.id)).worker.phase !== "idle"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(chosen.worker.roleId, roleId);
+    assert.equal(chosen.worker.roleRevision, roleStore.role(roleId).snapshot().revision);
+    assert.deepEqual(JSON.parse(await readFile(join(chosen.worker.cwd!, "mcp-names.json"), "utf8")), ["fixture-mcp"]);
+    assert.match(await readFile(join(chosen.worker.cwd!, ".opencode", "skills", "review", "SKILL.md"), "utf8"), /Review the diff/);
+    assert.equal(await readFile(join(chosen.worker.cwd!, "output.txt"), "utf8"), start.task);
+    await manager.closeWorker(chosen.worker.id);
+    await manager.remove(chosen.worker.id, true);
   } finally {
     await workerSocket?.close();
     await manager?.close();
