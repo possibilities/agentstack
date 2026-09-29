@@ -177,3 +177,47 @@ test("remote UIX cannot read arbitrary Brain share job IDs even with control sco
     ws?.terminate(); await remote.close(); await backend.close(); store.close(); rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("remote UIX sessions receive no Proc operations or events at all", async () => {
+  const root = mkdtempSync(join(tmpdir(), "agentstack-remote-proc-"));
+  const store = new AccessStore(root);
+  const env = { AGENTSTACK_STATE_DIR: root };
+  const directory = join(root, "packages", "proc"); mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, "api.yaml"), "name: proc\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: [proc_run_list, proc_run_read, proc_run_start]\n  events: [proc_runs_changed]\n  description: WebSocket.\n");
+  let reads = 0;
+  const ok = z.object({ ok: z.boolean() });
+  const backend = await serveSocket({ info: { name: "proc", description: "Demo.", transportDescription: "Socket.", path: socketPath("proc", env) }, context: {},
+    operations: [
+      operation({ name: "proc_run_list", description: "Read.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { reads++; return { ok: true }; } }),
+      operation({ name: "proc_run_read", description: "Read.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { reads++; return { ok: true }; } }),
+      operation({ name: "proc_run_start", description: "Write.", input: z.strictObject({}), output: ok, async call() { return { ok: true }; } }),
+    ], events: { topics: { proc_runs_changed: "Changed." } } });
+  const key = join(root, "key.pem"), cert = join(root, "cert.pem");
+  execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "1", "-subj", "/CN=localhost"], { stdio: "ignore" });
+  const port = await freePort();
+  const remote = await startRemoteUix({ store, env, host: "127.0.0.1", port, root, verify: async () => {} }, { key: readFileSync(key), cert: readFileSync(cert) });
+  const secret = randomBytes(32).toString("base64url");
+  const pairing = store.pair({ requestId: randomUUID(), label: "browser", kind: "browser", scopes: ["uix:view", "uix:control"], redemptionSecret: secret });
+  store.approve(pairing.id, pairing.code, true, ["uix:view", "uix:control"]);
+  const issued = store.startUix(store.redeem(pairing.id, secret).refreshToken, randomUUID());
+  let ws: WebSocket | undefined;
+  const send = async (method: string, params: Record<string, unknown>) => {
+    const response = frame(ws!);
+    ws!.send(JSON.stringify({ id: 1, method, params: { package: "proc", ...params } }));
+    return response;
+  };
+  try {
+    ws = await open(`wss://127.0.0.1:${port}/websocket`, `https://127.0.0.1:${port}`, `__Host-agentstack_uix=${issued.accessToken}`);
+    // Proc output and schedule input are owner-local secrets; nothing crosses
+    // the remote boundary even for a read-only operation or control grant.
+    assert.deepEqual((await send("tools/list", {})).result.tools, []);
+    for (const name of ["proc_run_list", "proc_run_read", "proc_run_start"])
+      assert.match((await send("tools/call", { name, arguments: {} })).error.message, /not available/);
+    assert.equal(reads, 0);
+    const subscribed = frame(ws);
+    ws.send(JSON.stringify({ id: 9, method: "events/subscribe", params: { package: "proc", subscription: "s", topics: ["proc_runs_changed"] } }));
+    assert.match((await subscribed).error.message, /not available/);
+  } finally {
+    ws?.terminate(); await remote.close(); await backend.close(); store.close(); rmSync(root, { recursive: true, force: true });
+  }
+});
