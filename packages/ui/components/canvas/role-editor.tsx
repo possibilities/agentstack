@@ -1,11 +1,12 @@
 "use client";
 
 import { Fragment, useId, useRef, useState } from "react";
-import { FilePenLineIcon, FolderIcon, PlusIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import { FilePenLineIcon, FolderIcon, GitBranchIcon, PlusIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,19 +15,28 @@ import {
   approxTokens,
   blankRoleText,
   categoryText,
+  conditionDimensions,
+  conditionOutcome,
+  conditionValueLimit,
+  contextIssues,
+  contextKey,
+  contextSummary,
   copyTitle,
   defaultDeleteHint,
   defaultsLabel,
   descriptionLimit,
   draftChanges,
+  draftConditions,
   draftConflicts,
   findCategory,
   findFragment,
   formatBytes,
   formatCount,
+  fragmentChanges,
   fragmentState,
   fragmentStateLabel,
   fragmentText,
+  hasConditions,
   keepDraft,
   moveIndex,
   roleErrorText,
@@ -37,7 +47,7 @@ import {
   yieldDraft,
   type FragmentState,
 } from "@/lib/stack/roles";
-import type { RoleCategory, RoleFragment, RoleSnapshot } from "@/lib/stack/types";
+import type { RoleCategory, RoleFragment, RoleRenderContext, RoleSnapshot } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { errorMessage } from "./auth-actions";
 import { CopyButton, Empty, Time } from "./primitives";
@@ -46,14 +56,81 @@ import { targetKey, useRoleActions, useRoleView, type RoleTarget } from "./role-
 import { ConflictNotice, EditorFrame, fieldLabels, Gone, hintClass, labelClass, RecordMenu, SaveBar, saveKeys, useDraft, useFocusField } from "./role-editor-parts";
 import { McpServerEditor, NewMcpServerEditor, NewProjectEditor, NewSkillEditor, ProjectEditor, SkillEditor } from "./role-resource-editor";
 
-const blankText = { title: "", description: "", body: "" };
+const blankText = { title: "", description: "", body: "", conditions: "{}" };
 
 const stateTone: Record<FragmentState, string> = {
   renders: "bg-success/15 text-success",
   off: "bg-muted text-muted-foreground",
   "category-off": "bg-muted text-muted-foreground",
   empty: "bg-warning/15 text-warning",
+  "missing-context": "bg-pkg-roles/10 text-pkg-roles",
+  mismatch: "bg-pkg-roles/10 text-pkg-roles",
 };
+
+/** Why a fragment's switch line reads as it does; an enabled but unmatched fragment is never called off. */
+const enabledNote = (state: FragmentState, conditional: boolean, category: string): string => ({
+  renders: conditional ? "Reaches launches whose context matches its conditions" : "Reaches new launches",
+  off: "Skipped in new launches",
+  "category-off": `Its category, ${category}, is off`,
+  empty: "Nothing to render yet",
+  "missing-context": "On · renders only in a context that has its condition values",
+  mismatch: "On · renders only in a context that matches its conditions",
+})[state];
+
+const outcomeNote = { match: "renders here", missing: "skipped: the context lacks a value these conditions need", mismatch: "skipped: the context differs from these conditions" };
+
+/**
+ * A fragment's conditions as one draft field of canonical JSON. Each filled dimension must equal the rendering
+ * context exactly; the fields are listed from `conditionDimensions`, so a new dimension appears here by itself.
+ */
+function ConditionFields({ id, text, set }: { id: string; text: string; set(text: string): void }) {
+  const { roleContext } = useStack();
+  const conditions = draftConditions(text);
+  const issues = contextIssues(conditions);
+  const conditional = hasConditions(conditions);
+  const outcome = conditionOutcome(conditions, roleContext);
+  const update = (key: keyof RoleRenderContext, value: string) => set(contextKey({ ...conditions, [key]: value }));
+  return (
+    <div role="group" aria-labelledby={`${id}-conditions`} className="flex flex-col gap-2 rounded-xl border bg-background/50 px-3 py-2">
+      <div className="flex items-center gap-1.5">
+        <GitBranchIcon aria-hidden className="size-3.5 text-muted-foreground" />
+        <span id={`${id}-conditions`} className="text-[0.78rem]">Conditions</span>
+        <span className="text-[0.68rem] text-muted-foreground">{conditional ? "all must match" : "none · renders in every context"}</span>
+        {conditional ? <Button type="button" size="xs" variant="ghost" className="ml-auto text-muted-foreground" onClick={() => set("{}")}>Clear all</Button> : null}
+      </div>
+      <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5">
+        {conditionDimensions.map(({ key, label }) => {
+          const value = conditions[key] ?? "";
+          return (
+            <Fragment key={key}>
+              <label htmlFor={`${id}-condition-${key}`} className="text-[0.72rem] text-muted-foreground">{label} equals</label>
+              <InputGroup className="h-7">
+                <InputGroupInput id={`${id}-condition-${key}`} value={value} maxLength={conditionValueLimit} placeholder="Any" autoComplete="off" spellCheck={false}
+                  aria-invalid={issues[key] ? true : undefined} aria-describedby={issues[key] ? `${id}-condition-${key}-issue` : `${id}-conditions-hint`}
+                  onChange={(event) => update(key, event.target.value)} className="font-mono text-[0.75rem]" />
+                {value ? (
+                  <InputGroupAddon align="inline-end">
+                    <InputGroupButton size="icon-xs" aria-label={`Clear ${label.toLowerCase()} condition`} onClick={() => update(key, "")}><XIcon /></InputGroupButton>
+                  </InputGroupAddon>
+                ) : null}
+              </InputGroup>
+              {issues[key] ? <p id={`${id}-condition-${key}-issue`} className="col-start-2 px-0.5 text-[0.68rem] text-destructive">{issues[key]}</p> : null}
+            </Fragment>
+          );
+        })}
+      </div>
+      <p id={`${id}-conditions-hint`} className={hintClass}>
+        Each filled value must equal the rendering context exactly, letter case included. A context without that value skips the fragment.
+        Only <code className="font-mono">stack roles inject --with-model/--with-harness</code> supplies context today; Bots and Workers supply none, so they skip conditional fragments.
+      </p>
+      {conditional ? (
+        <p role="status" className={cn(hintClass, outcome === "match" && "text-foreground")}>
+          Preview context ({contextSummary(roleContext) ?? "none"}): {outcomeNote[outcome]}
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 /**
  * The one editing surface for Role records and Role details. Text edits are drafts until saved; switches and moves
@@ -139,7 +216,7 @@ function Stamps({ record }: { record: { createdAt: number | null; updatedAt: num
 }
 
 function FragmentEditor({ id }: { id: string }) {
-  const { role, status } = useStack();
+  const { role, status, roleContext } = useStack();
   const actions = useRoleActions();
   const { select } = useWorkbench();
   const formId = useId();
@@ -165,9 +242,10 @@ function FragmentEditor({ id }: { id: string }) {
   }
 
   const { fragment, category } = found;
-  const state = fragmentState(fragment, category);
+  const state = fragmentState(fragment, category, roleContext);
   const dirty = Object.keys(draft.changes).length > 0;
-  const valid = draft.value("title").trim().length > 0;
+  const invalid = !draft.value("title").trim() ? "A title is required" : Object.keys(contextIssues(draftConditions(draft.value("conditions")))).length ? "Fix the conditions" : null;
+  const valid = invalid === null;
   const save = () => {
     if (!dirty || !valid || draft.conflicts.length || saving || !connected) return;
     const pendingDraft = draft.draft;
@@ -176,7 +254,7 @@ function FragmentEditor({ id }: { id: string }) {
       const current = findFragment(snapshot, id);
       if (!current) return "This fragment was deleted elsewhere.";
       if (draftConflicts(pendingDraft, fragmentText(current.fragment)).length) return "It changed elsewhere while saving. Choose which version to keep.";
-      return { id, ...draftChanges(pendingDraft, fragmentText(current.fragment)) };
+      return { id, ...fragmentChanges(draftChanges(pendingDraft, fragmentText(current.fragment))) };
     }, `save:${key}`).then(() => draft.clear(), (cause) => setError(errorMessage(cause)));
   };
   const moveTo = (categoryId: string) => actions.act("fragment_move", (snapshot) => {
@@ -188,7 +266,9 @@ function FragmentEditor({ id }: { id: string }) {
     const current = findFragment(snapshot, id);
     if (!current) return "This fragment was deleted elsewhere.";
     const text = { ...fragmentText(current.fragment), ...draft.draft.values };
-    return { categoryId: current.category.id, title: copyTitle(text.title.trim() || current.fragment.title), description: text.description, body: text.body, enabled: current.fragment.enabled, index: current.index + 1 };
+    const conditions = draftConditions(text.conditions);
+    return { categoryId: current.category.id, title: copyTitle(text.title.trim() || current.fragment.title), description: text.description, body: text.body, enabled: current.fragment.enabled, index: current.index + 1,
+      ...(hasConditions(conditions) && !Object.keys(contextIssues(conditions)).length ? { conditions } : {}) };
   }, `duplicate:${id}`).then((snapshot) => {
     const created = addedIds(role.data?.categories.flatMap((item) => item.fragments) ?? [], snapshot.categories.flatMap((item) => item.fragments))[0];
     if (created) actions.open({ kind: "fragment", id: created });
@@ -196,7 +276,7 @@ function FragmentEditor({ id }: { id: string }) {
 
   return (
     <EditorFrame subtitle={`fragment · ${category.title}`}
-      footer={<SaveBar dirty={dirty} conflicts={draft.conflicts.length} pending={saving} invalid={valid ? null : "A title is required"} saveLabel="Save" onSave={save} onRevert={() => { draft.clear(); setError(null); }} />}
+      footer={<SaveBar dirty={dirty} conflicts={draft.conflicts.length} pending={saving} invalid={invalid} saveLabel="Save" onSave={save} onRevert={() => { draft.clear(); setError(null); }} />}
       actions={<RecordMenu label={fragment.title} onInspect={() => select({ kind: "fragment", id })} onDuplicate={duplicate} onDelete={() => actions.confirmDelete({ kind: "fragment", id })} />}>
       <form className="flex flex-col gap-3" aria-label={`Edit ${fragment.title}`} onSubmit={(event) => { event.preventDefault(); save(); }} onKeyDown={saveKeys(save)}>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -214,7 +294,7 @@ function FragmentEditor({ id }: { id: string }) {
           <label htmlFor={`${formId}-enabled`} className="text-[0.78rem]">
             Enabled
             <span className="ml-1.5 text-[0.68rem] text-muted-foreground">
-              {state === "renders" ? "Reaches new launches" : state === "category-off" ? `Its category, ${category.title}, is off` : state === "empty" ? "Nothing to render yet" : "Skipped in new launches"}
+              {enabledNote(state, hasConditions(fragment.conditions), category.title)}
             </span>
           </label>
           <FolderIcon className="size-3.5 justify-self-center text-muted-foreground" aria-hidden />
@@ -226,6 +306,7 @@ function FragmentEditor({ id }: { id: string }) {
             </NativeSelect>
           </div>
         </div>
+        <ConditionFields id={formId} text={draft.value("conditions")} set={(text) => draft.set("conditions", text)} />
         <TextFields id={formId} value={draft.value} set={draft.set} body />
         {error ? <p role="alert" className="px-0.5 text-[0.72rem] text-pretty text-destructive">{error}</p> : null}
       </form>
@@ -234,7 +315,7 @@ function FragmentEditor({ id }: { id: string }) {
 }
 
 function CategoryEditor({ id }: { id: string }) {
-  const { role, status } = useStack();
+  const { role, status, roleContext } = useStack();
   const actions = useRoleActions();
   const { select } = useWorkbench();
   const formId = useId();
@@ -260,7 +341,7 @@ function CategoryEditor({ id }: { id: string }) {
   const { category } = found;
   const dirty = Object.keys(draft.changes).length > 0;
   const valid = draft.value("title").trim().length > 0;
-  const rendering = category.fragments.filter((fragment) => fragmentState(fragment, category) === "renders").length;
+  const rendering = category.fragments.filter((fragment) => fragmentState(fragment, category, roleContext) === "renders").length;
   const save = () => {
     if (!dirty || !valid || draft.conflicts.length || saving || !connected) return;
     const pendingDraft = draft.draft;
@@ -304,7 +385,7 @@ function CategoryEditor({ id }: { id: string }) {
                   className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring">
                   <span className="w-4 shrink-0 text-right text-[0.65rem] text-muted-foreground tabular-nums">{index + 1}</span>
                   <span className="min-w-0 flex-1 truncate text-[0.8rem]">{fragment.title}</span>
-                  <StateBadge state={fragmentState(fragment, category)} />
+                  <StateBadge state={fragmentState(fragment, category, roleContext)} />
                 </button>
               </li>
             ))}
@@ -328,18 +409,21 @@ function NewFragmentEditor({ target }: { target: Extract<RoleTarget, { kind: "ne
   const category = findCategory(role.data, target.categoryId)?.category;
   const connected = status.roles === "open";
   const creating = actions.pending.has(`save:${key}`);
-  const valid = draft.value("title").trim().length > 0;
+  const invalid = !draft.value("title").trim() ? "A title is required" : Object.keys(contextIssues(draftConditions(draft.value("conditions")))).length ? "Fix the conditions" : null;
+  const valid = invalid === null;
   useFocusField(formId);
 
   const create = () => {
     if (!valid || creating || !connected) return;
     const { title, description, body } = { ...blankText, ...draft.draft.values };
+    const conditions = draftConditions(draft.value("conditions"));
     const before = role.data?.categories.flatMap((item) => item.fragments) ?? [];
     setError(null);
     actions.write("fragment_create", (snapshot: RoleSnapshot) => {
       const destination = findCategory(snapshot, target.categoryId)?.category;
       if (!destination) return "That category was deleted. Choose another.";
       return { categoryId: target.categoryId, title, description, body, enabled: target.enabled,
+        ...(hasConditions(conditions) ? { conditions } : {}),
         ...(target.index !== undefined ? { index: Math.min(target.index, destination.fragments.length) } : {}) };
     }, `save:${key}`).then((snapshot) => {
       draft.clear();
@@ -351,7 +435,7 @@ function NewFragmentEditor({ target }: { target: Extract<RoleTarget, { kind: "ne
 
   return (
     <EditorFrame subtitle="new fragment"
-      footer={<SaveBar dirty={connected} conflicts={0} pending={creating} invalid={!category ? "Choose a category" : valid ? null : "A title is required"} saveLabel="Create fragment" onSave={create} note="Not created yet" />}
+      footer={<SaveBar dirty={connected} conflicts={0} pending={creating} invalid={!category ? "Choose a category" : invalid} saveLabel="Create fragment" onSave={create} note="Not created yet" />}
       actions={<Button size="icon-sm" variant="ghost" aria-label="Discard new fragment" onClick={cancel}><XIcon /></Button>}>
       <form className="flex flex-col gap-3" aria-label="New fragment" onSubmit={(event) => { event.preventDefault(); create(); }} onKeyDown={saveKeys(create)}>
         <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 rounded-xl border bg-background/50 px-3 py-2">
@@ -370,6 +454,7 @@ function NewFragmentEditor({ target }: { target: Extract<RoleTarget, { kind: "ne
             <span className="ml-1.5 text-[0.68rem] text-muted-foreground">{target.enabled ? (category && !category.enabled ? "Its category is off" : "Reaches new launches once created") : "Created switched off"}</span>
           </label>
         </div>
+        <ConditionFields id={formId} text={draft.value("conditions")} set={(text) => draft.set("conditions", text)} />
         <TextFields id={formId} value={draft.value} set={draft.set} body />
         {error ? <p role="alert" className="px-0.5 text-[0.72rem] text-pretty text-destructive">{error}</p> : null}
         <Button type="button" size="xs" variant="ghost" className="self-start text-muted-foreground" onClick={cancel}>Discard</Button>

@@ -496,3 +496,116 @@ test("Role reads follow the selected Role: another Role's response never lands, 
     globalThis.WebSocket = original;
   }
 });
+
+test("both previews read with the page's rendering context, and an answer for an earlier context never replaces a newer one", async () => {
+  const original = globalThis.WebSocket;
+  const sockets = new Set();
+  const role = (id, revision) => ({ id, name: `Role ${id}`, description: "", revision, createdAt: null, updatedAt: null });
+  const catalog = { revision: 1, defaultRoleId: "A", workerDefaultRoleId: "A", roles: [role("A", 3), role("B", 1)] };
+  const revisions = { A: 3, B: 1 };
+  const calls = [];
+  const gates = new Map();
+  const hold = (key) => {
+    let release;
+    const promise = new Promise((resolve) => { release = resolve; });
+    gates.set(key, promise);
+    return () => { gates.delete(key); release(); };
+  };
+  // Each answer names the context it was asked with, which the real API does not echo.
+  const tag = (context) => JSON.stringify(context ?? null);
+  const gated = (key, make) => gates.has(key) ? gates.get(key).then(make) : make();
+  const results = {
+    roles_snapshot: () => catalog,
+    role_editor_snapshot: ({ roleId }) => ({ ...role(roleId, revisions[roleId]), categories: [], skills: [], mcpServers: [], trustedProjects: [], disabledInternalMcpServers: [] }),
+    role_preview: (args) => { calls.push(["preview", args.roleId, tag(args.context), "context" in args]);
+      return gated(`preview:${tag(args.context)}`, () => ({ roleId: args.roleId, revision: revisions[args.roleId], rendered: tag(args.context), segments: [], bytes: 0, limitBytes: 262144 })); },
+    role_launch_preview: (args) => { calls.push(["launch", args.roleId, tag(args.context), "context" in args]);
+      return gated(`launch:${tag(args.context)}`, () => ({ roleId: args.roleId, revision: revisions[args.roleId], instructions: { bytes: 0, limitBytes: 1, fragments: args.context ? 1 : 0 }, skills: [],
+        internalMcpServers: [], mcpServers: [], config: tag(args.context), trustedProjects: [], cwds: [], issues: [], snapshotChars: 0, snapshotLimitChars: 1 })); },
+    role_internal_mcp_list: ({ roleId }) => ({ roleId, revision: revisions[roleId], servers: [] }),
+    docs_snapshot: () => ({ packages: [] }),
+  };
+
+  class FakeWebSocket {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    readyState = FakeWebSocket.CONNECTING;
+    subscriptions = new Map();
+    constructor(url) {
+      this.url = url;
+      sockets.add(this);
+      queueMicrotask(() => { this.readyState = FakeWebSocket.OPEN; this.onopen?.(); });
+    }
+    send(raw) {
+      const { id, method, params } = JSON.parse(raw);
+      if (method === "events/subscribe") this.subscriptions.set(params.subscription, params);
+      const reply = (body) => queueMicrotask(() => this.onmessage?.({ data: JSON.stringify({ id, ...body }) }));
+      if (method.startsWith("events/")) return reply({ result: params });
+      Promise.resolve(results[params.name]?.(params.arguments)).then((result) => reply({ result }), (cause) => reply({ error: { message: cause.message } }));
+    }
+    close() { this.readyState = 3; sockets.delete(this); this.onclose?.(); }
+  }
+  const publish = (pkg, topic) => {
+    for (const socket of sockets) for (const subscription of socket.subscriptions.values()) {
+      if (subscription.package === pkg && subscription.topics.includes(topic))
+        socket.onmessage?.({ data: JSON.stringify({ method: "events/changed", params: { package: pkg, subscription: subscription.subscription, topic } }) });
+    }
+  };
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+
+  globalThis.WebSocket = FakeWebSocket;
+  const store = new StackStore({
+    server: resource(null), resources: resource(null), accounts: resource([]), workerAccounts: resource([]), workerRuntimes: resource([]),
+    login: resource(null), workerLogins: resource([]), bots: resource([]), voice: resource(null), catalog: resource(null), roleCatalog: resource(null),
+    endpoints: { roles: "ws://roles-context.invalid/websocket" },
+  });
+  const shows = (context) => {
+    const { rolePreview, roleLaunch, roleContextShown } = store.getState();
+    return rolePreview.data?.rendered === context && roleLaunch.data?.config === context && roleContextShown.rolePreview === JSON.stringify(JSON.parse(context) ?? {}) && roleContextShown.roleLaunch === roleContextShown.rolePreview;
+  };
+  try {
+    store.start();
+    await until(store, () => store.getState().roleCatalog.data !== null);
+    store.selectRole("A");
+    // Without context the argument is omitted, as for a launch that supplies none.
+    await until(store, () => shows("null"));
+    assert.ok(calls.every(([, , , sent]) => !sent));
+
+    store.setRoleContext({ model: "foo", harness: "" });
+    const foo = JSON.stringify({ model: "foo" });
+    await until(store, () => shows(foo));
+    assert.deepEqual(store.getState().roleContext, { model: "foo" }, "empty values are not sent");
+    assert.equal(store.getState().role.data.revision, 3, "a context change rereads only the previews");
+
+    // foo's reads are still in flight when the context moves to bar; foo answers last, at a higher revision.
+    const releasePreview = hold(`preview:${JSON.stringify({ model: "foo", harness: "codex" })}`);
+    const releaseLaunch = hold(`launch:${JSON.stringify({ model: "foo", harness: "codex" })}`);
+    store.setRoleContext({ model: "foo", harness: "codex" });
+    await settle();
+    const bar = JSON.stringify({ model: "bar" });
+    store.setRoleContext({ model: "bar" });
+    await until(store, () => shows(bar));
+    revisions.A = 9;
+    releasePreview();
+    releaseLaunch();
+    await settle();
+    assert.ok(shows(bar), "an earlier context's answer is dropped even at a higher revision");
+
+    // Saves and role_changed reread with the current context; so does another Role, which keeps the page's context.
+    publish("roles", "role_changed");
+    await until(store, () => store.getState().rolePreview.data?.revision === 9);
+    assert.ok(shows(bar));
+    store.selectRole("B");
+    assert.equal(store.getState().rolePreview.data, null);
+    await until(store, () => store.getState().rolePreview.data?.roleId === "B" && shows(bar));
+    assert.ok(calls.filter(([, roleId]) => roleId === "B").every(([, , context]) => context === bar));
+
+    // Clearing returns to the context-free preview.
+    store.setRoleContext({});
+    await until(store, () => shows("null"));
+    assert.equal(calls.at(-1)[3], false);
+  } finally {
+    store.stop();
+    globalThis.WebSocket = original;
+  }
+});

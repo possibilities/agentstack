@@ -312,6 +312,52 @@ try {
   await instructions.getByRole("switch", { name: "Working style enabled" }).click();
   await preview.getByText("Use plain words.", { exact: true }).waitFor();
 
+  // Conditions are fragment metadata: they save with the draft, survive unrelated edits, and a fragment that
+  // lacks its context is never called Off. The shared preview context changes only what the previews show.
+  await open("Plain words").click();
+  const plainForm = editor.getByRole("form", { name: "Edit Plain words" });
+  await plainForm.getByLabel("Model equals", { exact: true }).fill("foo");
+  await plainForm.getByLabel("Harness equals", { exact: true }).fill("codex");
+  await plainForm.getByRole("status").filter({ hasText: "Preview context (none): skipped: the context lacks a value these conditions need" }).waitFor();
+  await plainForm.getByLabel("Model equals", { exact: true }).press("Meta+s");
+  await editor.getByText("All changes saved", { exact: true }).waitFor();
+  const plainId = () => snap(A).then((current) => current.categories.flatMap((category) => category.fragments).find((fragment) => fragment.title === "Plain words"));
+  assert.deepEqual((await plainId()).conditions, { model: "foo", harness: "codex" });
+  await row("Plain words").getByText("model = foo · harness = codex", { exact: true }).waitFor();
+  await row("Plain words").getByText("Needs context", { exact: true }).waitFor();
+  assert.equal(await row("Plain words").getByText("Off", { exact: true }).count(), 0, "an enabled, unmatched fragment is not called Off");
+  await instructions.getByRole("status").filter({ hasText: "1 of 3 fragments render without context" }).waitFor();
+  await page.waitForFunction(() => !document.querySelector('[data-window="role-preview"]')?.textContent?.includes("Use plain words."));
+  // An unrelated body edit writes only the body; the API keeps the conditions.
+  await plainForm.getByLabel("Instructions", { exact: true }).fill("Use plain, short words.");
+  await plainForm.getByLabel("Instructions", { exact: true }).press("Meta+s");
+  await editor.getByText("All changes saved", { exact: true }).waitFor();
+  assert.deepEqual(await until(plainId, (fragment) => fragment.body === "Use plain, short words.", "the body save").then((fragment) => fragment.conditions), { model: "foo", harness: "codex" });
+  // The preview context: a missing value, then a case mismatch, then an exact match.
+  await preview.getByLabel("Model", { exact: true }).fill("foo");
+  await preview.getByLabel("Harness", { exact: true }).fill("Codex");
+  await row("Plain words").getByText("No match", { exact: true }).waitFor();
+  await preview.getByLabel("Harness", { exact: true }).fill("codex");
+  await preview.getByText("Use plain, short words.", { exact: true }).waitFor();
+  await instructions.getByRole("status").filter({ hasText: "2 of 3 fragments render with model = foo · harness = codex" }).waitFor();
+  await preview.getByText("stack roles inject Researcher --with-model foo --with-harness codex -- <cli> …", { exact: true }).waitFor();
+  await editor.getByRole("status").filter({ hasText: "Preview context (model = foo · harness = codex): renders here" }).waitFor();
+  const previewRevision = (await snap(A)).revision;
+  await shot("roles-conditions");
+  // Another window changes the conditions: the row follows and the preview rereads with the same context.
+  await rolesCall("fragment_update", { roleId: A, expectedRevision: previewRevision, id: (await plainId()).id, conditions: { model: "bar" } });
+  await row("Plain words").getByText("No match", { exact: true }).waitFor();
+  await page.waitForFunction(() => !document.querySelector('[data-window="role-preview"]')?.textContent?.includes("Use plain, short words."));
+  assert.equal((await snap(A)).revision, previewRevision + 1, "changing the preview context never wrote to the Role");
+  // Clearing removes every condition with {}.
+  await plainForm.getByRole("button", { name: "Clear all" }).click();
+  await plainForm.getByLabel("Model equals", { exact: true }).press("Meta+s");
+  await editor.getByText("All changes saved", { exact: true }).waitFor();
+  assert.deepEqual(await until(plainId, (fragment) => !Object.keys(fragment.conditions).length, "cleared conditions").then((fragment) => fragment.conditions), {});
+  await preview.getByText("Use plain, short words.", { exact: true }).waitFor();
+  await preview.getByRole("button", { name: "Clear", exact: true }).click();
+  await instructions.getByRole("status").filter({ hasText: "2 of 3 fragments render" }).waitFor();
+
   // Inspection hands back to the editor; the palette finds fragments.
   await instructions.getByRole("button", { name: "Verify actions" }).click();
   await page.getByRole("menuitem", { name: "Inspect record" }).click();

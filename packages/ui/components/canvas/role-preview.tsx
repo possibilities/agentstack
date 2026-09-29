@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { FileTextIcon, TriangleAlertIcon } from "lucide-react";
+import { Fragment, useEffect, useRef, useState } from "react";
+import { FileTextIcon, GitBranchIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { approxTokens, fallbackLimitBytes, fallbackSnapshotLimit, formatBytes, formatCount, internalCounts, launchHint, launchLabel, previewBytes, previewPieces, projectBots, roleLaunches, type LaunchState, type WorkerRoleState } from "@/lib/stack/roles";
-import type { RoleLaunchPreview } from "@/lib/stack/types";
+import { approxTokens, conditionDimensions, conditionValueLimit, contextIssues, contextKey, contextSummary, fallbackLimitBytes, fallbackSnapshotLimit, formatBytes, formatCount, injectCommand, internalCounts, launchHint, normalizeContext, launchLabel, previewBytes, previewPieces, projectBots, roleLaunches, type LaunchState, type WorkerRoleState } from "@/lib/stack/roles";
+import type { RoleLaunchPreview, RoleRenderContext } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { BotTile, CopyButton, Empty, Meter, NodeLink } from "./primitives";
-import { useStack } from "./provider";
+import { useStack, useStore } from "./provider";
 import { useRoleActions, useRoleView } from "./role-actions";
 import { DefaultNote } from "./role-catalog";
 import { Section, Window } from "./window";
@@ -28,9 +30,9 @@ const resourceKinds = new Set(["skill", "mcp-server", "trusted-project", "new-sk
  * trusted projects configure Bots only.
  */
 export function RolePreviewWindow() {
-  const { role, rolePreview, roleLaunch, roleCatalog, bots, workerSessions, status, endpoints } = useStack();
+  const { role, rolePreview, roleLaunch, roleCatalog, roleContext, roleContextShown, bots, workerSessions, status, endpoints } = useStack();
   const actions = useRoleActions();
-  const current = useRoleView();
+  const roleView = useRoleView();
   const [view, setView] = useState<View>("instructions");
   const editingResource = actions.target ? resourceKinds.has(actions.target.kind) : null;
   // Follow the editor: instruction records show the text, resource records show the launch.
@@ -40,7 +42,9 @@ export function RolePreviewWindow() {
   const bytes = preview ? previewBytes(preview) : 0;
   const limit = typeof preview?.limitBytes === "number" ? preview.limitBytes : fallbackLimitBytes;
   const used = Math.min(100, (bytes / limit) * 100);
-  const updating = Boolean(preview && role.data && preview.revision !== role.data.revision);
+  // Behind the Role's revision, or still answering an earlier rendering context.
+  const current = contextKey(roleContext);
+  const updating = Boolean(preview && ((role.data && preview.revision !== role.data.revision) || roleContextShown.rolePreview !== current));
   const launches = roleLaunches(bots.data, workerSessions.data, roleCatalog.data);
   const focused = actions.target?.kind === "fragment" ? actions.target.id : null;
   const list = useRef<HTMLOListElement>(null);
@@ -55,7 +59,7 @@ export function RolePreviewWindow() {
     if (top < 0 || top > scroller.getBoundingClientRect().height - 48) scroller.scrollTop += top / scale - 12;
   }, [focused, preview?.revision]);
 
-  const hint = (launch: Parameters<typeof launchHint>[0]) => launchHint(launch, current.defaultRole) ?? `Launched with ${launchLabel(launch)}, which is what a launch now would apply`;
+  const hint = (launch: Parameters<typeof launchHint>[0]) => launchHint(launch, roleView.defaultRole) ?? `Launched with ${launchLabel(launch)}, which is what a launch now would apply`;
   const differing = workerWords.flatMap(([state, one, many]) => launches.workers[state] ? [`${launches.workers[state]} ${launches.workers[state] === 1 ? one : many}`] : []).join(", ");
   const launched = launches.bots.length || launches.workers.total ? (
     <Section title="Launched" aside={<span className="text-[0.65rem] text-muted-foreground">Bots against the Bot default · Workers against their own Role</span>}>
@@ -76,6 +80,7 @@ export function RolePreviewWindow() {
       </ul>
     </Section>
   ) : null;
+  const context = <RenderContext roleName={roleView.role?.name ?? null} />;
   const tabs = (
     <ToggleGroup value={[view]} onValueChange={(next: string[]) => { if (next.length) setView(next[0] as View); }} spacing={0} size="sm" variant="outline" aria-label="Preview" className="self-start">
       <ToggleGroupItem value="instructions">Instructions</ToggleGroupItem>
@@ -89,22 +94,24 @@ export function RolePreviewWindow() {
   if (view === "launch") {
     const launch = roleLaunch.data;
     return (
-      <Window id="role-preview" title="Preview" subtitle={[current.label, "skills, MCP servers and trust"].filter(Boolean).join(" · ")} icon={FileTextIcon} accent="roles"
+      <Window id="role-preview" title="Preview" subtitle={[roleView.label, "skills, MCP servers and trust"].filter(Boolean).join(" · ")} icon={FileTextIcon} accent="roles"
         status={status.roles} endpoint={endpoints.roles} updatedAt={roleLaunch.at} error={roleLaunch.error} empty={!launch}>
         <DefaultNote />
         {tabs}
-        {launch ? <LaunchView launch={launch} updating={Boolean(role.data && launch.revision !== role.data.revision)} /> : <Empty icon={FileTextIcon} title={current.blank ?? (roleLaunch.error ? "Launch preview unavailable" : "Reading launch…")} />}
+        {context}
+        {launch ? <LaunchView launch={launch} updating={Boolean((role.data && launch.revision !== role.data.revision) || roleContextShown.roleLaunch !== current)} /> : <Empty icon={FileTextIcon} title={roleView.blank ?? (roleLaunch.error ? "Launch preview unavailable" : "Reading launch…")} />}
         {launched}
       </Window>
     );
   }
 
   return (
-    <Window id="role-preview" title="Preview" subtitle={[current.label, "SYSTEM_APPEND.md"].filter(Boolean).join(" · ")} icon={FileTextIcon} accent="roles"
+    <Window id="role-preview" title="Preview" subtitle={[roleView.label, "SYSTEM_APPEND.md"].filter(Boolean).join(" · ")} icon={FileTextIcon} accent="roles"
       status={status.roles} endpoint={endpoints.roles} updatedAt={rolePreview.at} error={rolePreview.error} empty={!preview?.rendered}
       actions={preview?.rendered ? <CopyButton value={preview.rendered} label="rendered instructions" className="opacity-100" /> : undefined}>
       <DefaultNote />
       {tabs}
+      {context}
       {preview ? (
         <div className="flex flex-col gap-1.5">
           <Meter value={100 - used} label="Share of the rendered size limit left" />
@@ -112,7 +119,11 @@ export function RolePreviewWindow() {
             <span>{formatBytes(bytes)} of {formatBytes(limit)} · ≈{formatCount(approxTokens(bytes))} tokens{pieces ? ` · ${pieces.length} fragment${pieces.length === 1 ? "" : "s"}` : ""}</span>
             <span className="ml-auto">{updating ? "Updating…" : `Revision ${preview.revision}`}</span>
           </p>
-          <p className="px-0.5 text-[0.66rem] text-pretty text-muted-foreground">Bots append this to SYSTEM_APPEND.md; Workers that use this Role receive it when they start. Native and repository guidance still apply.</p>
+          <p className="px-0.5 text-[0.66rem] text-pretty text-muted-foreground">
+            {contextSummary(roleContext)
+              ? "What an injected launch with this context receives. Bots and Workers supply no context, so they receive the preview without it."
+              : "Bots append this to SYSTEM_APPEND.md; Workers that use this Role receive it when they start."} Native and repository guidance still apply.
+          </p>
         </div>
       ) : null}
       {launched}
@@ -134,7 +145,7 @@ export function RolePreviewWindow() {
           ))}
         </ol>
       ) : (
-        <Empty icon={FileTextIcon} title={current.blank ?? (preview ? "Nothing renders" : rolePreview.error ? "Preview unavailable" : "Reading preview…")} />
+        <Empty icon={FileTextIcon} title={roleView.blank ?? (preview ? "Nothing renders" : rolePreview.error ? "Preview unavailable" : "Reading preview…")} />
       )}
     </Window>
   );
@@ -144,7 +155,9 @@ const chip = "rounded-md px-1.5 py-0.5 font-mono text-[0.7rem]";
 
 /** Everything but the instruction text that the next launch receives, as `role_launch_preview` reports it. */
 function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating: boolean }) {
-  const { bots } = useStack();
+  const { bots, roleContext } = useStack();
+  // The rendering context changes only the instruction count and size; skills, servers and trust never depend on it.
+  const roleContextSummary = contextSummary(roleContext);
   const actions = useRoleActions();
   const used = Math.min(100, (launch.snapshotChars / (launch.snapshotLimitChars || fallbackSnapshotLimit)) * 100);
   const { on, total } = internalCounts(launch.internalMcpServers);
@@ -154,7 +167,7 @@ function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating:
       <div className="flex flex-col gap-1.5">
         <Meter value={100 - used} label="Share of the Role size budget left" />
         <p role="status" className="flex items-center gap-1 px-0.5 text-[0.68rem] text-muted-foreground tabular-nums">
-          <span>Role {formatCount(launch.snapshotChars)} of {formatCount(launch.snapshotLimitChars)} characters · {launch.instructions.fragments} fragment{launch.instructions.fragments === 1 ? "" : "s"}, {formatBytes(launch.instructions.bytes)}</span>
+          <span>Role {formatCount(launch.snapshotChars)} of {formatCount(launch.snapshotLimitChars)} characters · {launch.instructions.fragments} fragment{launch.instructions.fragments === 1 ? "" : "s"}, {formatBytes(launch.instructions.bytes)}{roleContextSummary ? ` with ${roleContextSummary}` : ""}</span>
           <span className="ml-auto">{updating ? "Updating…" : `Revision ${launch.revision}`}</span>
         </p>
       </div>
@@ -232,5 +245,88 @@ function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating:
         <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">Bots only. Workers that use this Role get no native project trust from these records.</p>
       </Section>
     </>
+  );
+}
+
+/** How long typing waits before the previews are reread with a new context. */
+const contextDelay = 300;
+
+/**
+ * The rendering context both previews use. Editing it only rereads the previews: it changes nothing in the Role and
+ * configures no runtime. Values commit after a pause, or at once on Enter or leaving the field; an invalid one is
+ * never sent.
+ */
+function RenderContext({ roleName }: { roleName: string | null }) {
+  const store = useStore();
+  const { roleContext } = useStack();
+  const [draft, setDraft] = useState<RoleRenderContext>(roleContext);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const issues = contextIssues(draft);
+  const valid = !Object.keys(issues).length;
+  const commit = (next: RoleRenderContext) => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+    if (!Object.keys(contextIssues(next)).length) store.setRoleContext(next);
+  };
+  const change = (next: RoleRenderContext) => {
+    setDraft(next);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => commit(next), contextDelay);
+  };
+  // Leaving with a pause still running applies what was typed rather than dropping it.
+  const latest = useRef(draft);
+  latest.current = draft;
+  useEffect(() => () => {
+    if (!timer.current) return;
+    clearTimeout(timer.current);
+    if (!Object.keys(contextIssues(latest.current)).length) store.setRoleContext(latest.current);
+  }, [store]);
+  const summary = contextSummary(roleContext);
+  const pending = contextKey(draft) !== contextKey(roleContext);
+  return (
+    <section aria-labelledby="role-render-context" className="flex flex-col gap-1.5 rounded-xl border bg-background/50 px-2.5 py-2">
+      <div className="flex items-center gap-1.5">
+        <GitBranchIcon aria-hidden className="size-3.5 text-muted-foreground" />
+        <h3 id="role-render-context" className="text-[0.74rem] font-medium">Rendering context</h3>
+        <span className="text-[0.66rem] text-muted-foreground">{pending && valid ? "Applying…" : summary ? "preview only" : "none"}</span>
+        {Object.keys(draft).length ? (
+          <Button size="xs" variant="ghost" className="ml-auto text-muted-foreground" onClick={() => { setDraft({}); commit({}); }}>Clear</Button>
+        ) : null}
+      </div>
+      <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2.5 gap-y-1">
+        {conditionDimensions.map(({ key, label }) => {
+          const value = draft[key] ?? "";
+          const set = (text: string) => normalizeContext({ ...draft, [key]: text });
+          return (
+            <Fragment key={key}>
+              <label htmlFor={`role-context-${key}`} className="text-[0.7rem] text-muted-foreground">{label}</label>
+              <InputGroup className="h-7">
+                <InputGroupInput id={`role-context-${key}`} value={value} maxLength={conditionValueLimit} placeholder="Not set" autoComplete="off" spellCheck={false}
+                  aria-invalid={issues[key] ? true : undefined} aria-describedby={issues[key] ? `role-context-${key}-issue` : "role-context-hint"}
+                  onChange={(event) => change(set(event.target.value))} onBlur={() => commit(draft)}
+                  onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commit(draft); } }} className="font-mono text-[0.74rem]" />
+                {value ? (
+                  <InputGroupAddon align="inline-end">
+                    <InputGroupButton size="icon-xs" aria-label={`Clear ${label.toLowerCase()} context`} onClick={() => { const next = set(""); setDraft(next); commit(next); }}><XIcon /></InputGroupButton>
+                  </InputGroupAddon>
+                ) : null}
+              </InputGroup>
+              {issues[key] ? <p id={`role-context-${key}-issue`} className="col-start-2 px-0.5 text-[0.66rem] text-destructive">{issues[key]}</p> : null}
+            </Fragment>
+          );
+        })}
+      </div>
+      <p id="role-context-hint" className="px-0.5 text-[0.66rem] text-pretty text-muted-foreground">
+        {summary
+          ? "Shows the fragments whose conditions match exactly, letter case included. This changes nothing in the Role and configures no native runtime; the native command's own model flag is never read."
+          : "Without context, only unconditional fragments render. This is what Bots and Workers receive today, since they supply no context."}
+      </p>
+      {summary ? (
+        <div className="flex items-center gap-1.5">
+          <code className="min-w-0 flex-1 truncate rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem]" title="Only the with- flags supply context; they add no native arguments">{injectCommand(roleName, roleContext)} &lt;cli&gt; …</code>
+          <CopyButton value={`${injectCommand(roleName, roleContext)} `} label="inject command" className="opacity-100" />
+        </div>
+      ) : null}
+    </section>
   );
 }

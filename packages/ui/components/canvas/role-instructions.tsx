@@ -9,6 +9,7 @@ import {
   EllipsisIcon,
   FolderInputIcon,
   FolderPlusIcon,
+  GitBranchIcon,
   GripVerticalIcon,
   ListTreeIcon,
   PencilIcon,
@@ -39,6 +40,7 @@ import {
   approxTokens,
   categoryOrder,
   categoryText,
+  contextSummary,
   copyTitle,
   draftDirty,
   filterRole,
@@ -48,6 +50,7 @@ import {
   fragmentState,
   fragmentText,
   fragmentStateLabel,
+  hasConditions,
   moveIndex,
   roleCounts,
   utf8Bytes,
@@ -93,7 +96,7 @@ function useCategoryMove() {
 }
 
 export function RoleInstructionsWindow() {
-  const { role, rolePreview, status, endpoints, remote } = useStack();
+  const { role, rolePreview, roleContext, status, endpoints, remote } = useStack();
   const actions = useRoleActions();
   const view = useRoleView();
   const [query, setQuery] = useState("");
@@ -103,7 +106,8 @@ export function RoleInstructionsWindow() {
   const moveFragment = useFragmentMove();
   const moveCategory = useCategoryMove();
   const data = role.data;
-  const counts = data ? roleCounts(data) : null;
+  const counts = data ? roleCounts(data, roleContext) : null;
+  const previewing = contextSummary(roleContext);
   const filtered = data ? filterRole(data.categories, query) : [];
   const connected = status.roles === "open" && remote?.scope !== "view";
   const searching = query.trim().length > 0;
@@ -141,7 +145,10 @@ export function RoleInstructionsWindow() {
             <p role="status" className="px-0.5 text-[0.68rem] text-muted-foreground">
               {searching
                 ? `${filtered.reduce((sum, item) => sum + item.fragments.length, 0)} matching fragment${filtered.reduce((sum, item) => sum + item.fragments.length, 0) === 1 ? "" : "s"}`
-                : <>{counts!.rendering} of {counts!.fragments} fragment{counts!.fragments === 1 ? "" : "s"} render{bytes !== null ? <> · ≈{formatCount(approxTokens(bytes))} tokens</> : null}</>}
+                : <>
+                  {counts!.rendering} of {counts!.fragments} fragment{counts!.fragments === 1 ? "" : "s"} render{previewing ? <span title="The rendering context set in Preview">{` with ${previewing}`}</span> : counts!.conditional ? <span title="Bots and Workers render without context, so conditional fragments are skipped">{" without context"}</span> : null}
+                  {bytes !== null ? <> · ≈{formatCount(approxTokens(bytes))} tokens</> : null}
+                </>}
             </p>
           </div>
           {filtered.length ? (
@@ -181,7 +188,7 @@ function CategoryCard({ category, fragments, role, collapsed, onToggle, drag, dr
   last: boolean;
 }) {
   const actions = useRoleActions();
-  const { status, remote } = useStack();
+  const { status, remote, roleContext } = useStack();
   const { select, flash } = useWorkbench();
   const moveCategory = useCategoryMove();
   const connected = status.roles === "open" && remote?.scope !== "view";
@@ -190,7 +197,7 @@ function CategoryCard({ category, fragments, role, collapsed, onToggle, drag, dr
   const key = nodeKey(node);
   const editing = actions.target?.kind === "category" && actions.target.id === category.id;
   const dirty = draftDirty(actions.drafts[key], categoryText(category));
-  const rendering = category.fragments.filter((fragment) => fragmentState(fragment, category) === "renders").length;
+  const rendering = category.fragments.filter((fragment) => fragmentState(fragment, category, roleContext) === "renders").length;
   const dropBefore = drag?.kind === "category" && drop?.kind === "category" && drop.beforeId === category.id;
   const dropAfter = drag?.kind === "category" && drop?.kind === "category" && drop.beforeId === null && last;
   const dropEnd = drag?.kind === "fragment" && drop?.kind === "fragment" && drop.categoryId === category.id && drop.beforeId === null;
@@ -307,7 +314,7 @@ function FragmentRow({ fragment, category, role, drag, drop, setDrag, setDrop, l
   land(): void;
 }) {
   const actions = useRoleActions();
-  const { status, remote } = useStack();
+  const { status, remote, roleContext } = useStack();
   const { select, flash } = useWorkbench();
   const move = useFragmentMove();
   const connected = status.roles === "open" && remote?.scope !== "view";
@@ -317,7 +324,8 @@ function FragmentRow({ fragment, category, role, drag, drop, setDrag, setDrop, l
   const nextId = category.fragments[index + 1]?.id ?? null;
   const editing = actions.target?.kind === "fragment" && actions.target.id === fragment.id;
   const dirty = draftDirty(actions.drafts[key], fragmentText(fragment));
-  const state = fragmentState(fragment, category);
+  const state = fragmentState(fragment, category, roleContext);
+  const conditions = contextSummary(fragment.conditions);
   const tokens = approxTokens(utf8Bytes(fragment.body));
   const others = role.categories.filter((item) => item.id !== category.id);
   const dropHere = drag?.kind === "fragment" && drop?.kind === "fragment" && drop.categoryId === category.id && drop.beforeId === fragment.id;
@@ -326,8 +334,8 @@ function FragmentRow({ fragment, category, role, drag, drop, setDrag, setDrop, l
     actions.write("fragment_create", (snapshot) => {
       const found = findFragment(snapshot, fragment.id);
       if (!found) return "That fragment was deleted.";
-      const { title, description, body, enabled } = found.fragment;
-      return { categoryId: found.category.id, title: copyTitle(title), description, body, enabled, index: found.index + 1 };
+      const { title, description, body, enabled, conditions } = found.fragment;
+      return { categoryId: found.category.id, title: copyTitle(title), description, body, enabled, index: found.index + 1, ...(hasConditions(conditions) ? { conditions } : {}) };
     }, `duplicate:${fragment.id}`).then((snapshot) => {
       const created = addedIds(role.categories.flatMap((item) => item.fragments), snapshot.categories.flatMap((item) => item.fragments))[0];
       if (created) actions.open({ kind: "fragment", id: created });
@@ -377,10 +385,19 @@ function FragmentRow({ fragment, category, role, drag, drop, setDrag, setDrop, l
           {dirty ? <span role="img" aria-label="Unsaved changes" className="size-1.5 shrink-0 rounded-full bg-pkg-roles" /> : null}
         </span>
         {fragment.description ? <span className="line-clamp-1 text-[0.7rem] text-muted-foreground">{fragment.description}</span> : null}
+        {conditions ? (
+          <span className="flex min-w-0 items-center gap-1 text-[0.66rem] text-muted-foreground" title={`Renders only when ${conditions.replaceAll(" · ", " and ")} exactly`}>
+            <GitBranchIcon aria-hidden className="size-3 shrink-0" />
+            <span className="sr-only">Only when </span><span className="truncate font-mono">{conditions}</span>
+          </span>
+        ) : null}
       </button>
       <span className="mt-0.5 flex shrink-0 items-center gap-1.5 text-[0.65rem] text-muted-foreground tabular-nums">
-        {state === "off" || state === "empty" ? (
-          <span className={cn("rounded px-1 py-px font-medium", state === "empty" ? "bg-warning/15 text-warning" : "bg-muted")}>{fragmentStateLabel[state]}</span>
+        {state === "off" || state === "empty" || state === "missing-context" || state === "mismatch" ? (
+          <span className={cn("rounded px-1 py-px font-medium", state === "empty" ? "bg-warning/15 text-warning" : state === "off" ? "bg-muted" : "bg-pkg-roles/10 text-pkg-roles")}
+            title={state === "missing-context" ? "Enabled, but the rendering context lacks a value its conditions need" : state === "mismatch" ? "Enabled, but its conditions differ from the rendering context" : undefined}>
+            {fragmentStateLabel[state]}
+          </span>
         ) : null}
         {fragment.body.trim() ? <span title={`About ${tokens} tokens`}>≈{formatCount(tokens)}</span> : null}
       </span>

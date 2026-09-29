@@ -20,16 +20,84 @@ const category = (id, fragments, fields = {}) => ({ id, title: id, description: 
 test("fragment state names why text does or does not reach a launch", () => {
   assert.equal(roles.fragmentState(fragment("a"), { enabled: true }), "renders");
   assert.equal(roles.fragmentState(fragment("a", { enabled: false }), { enabled: true }), "off");
-  assert.equal(roles.fragmentState(fragment("a", { conditions: { model: "foo" } }), { enabled: true }), "off");
   assert.equal(roles.fragmentState(fragment("a", { body: " \n " }), { enabled: true }), "empty");
   // A disabled category outranks the fragment's own state.
   assert.equal(roles.fragmentState(fragment("a", { enabled: false }), { enabled: false }), "category-off");
   const role = { categories: [category("on", [fragment("a"), fragment("b", { body: "" })]), category("off", [fragment("c")], { enabled: false })] };
-  assert.deepEqual(roles.roleCounts(role), { categories: 2, fragments: 3, rendering: 1 });
+  assert.deepEqual(roles.roleCounts(role), { categories: 2, fragments: 3, rendering: 1, conditional: 0 });
   assert.equal(roles.findFragment(role, "c").category.id, "off");
   assert.equal(roles.findFragment(role, "c").index, 0);
   assert.equal(roles.findFragment(role, "zzz"), null);
   assert.equal(roles.findCategory(role, "off").index, 1);
+});
+
+test("conditions render only on an exact, case-sensitive match of every dimension, and never read as disabled", () => {
+  const on = { enabled: true };
+  const state = (conditions, context) => roles.fragmentState(fragment("a", { conditions }), on, context);
+  // Unconditional, including an older snapshot without the field, renders in every context.
+  assert.equal(roles.fragmentState(fragment("a"), on), "renders");
+  assert.equal(state({}, { model: "foo" }), "renders");
+  // Omitted context is the one Bots and Workers render with: a conditional fragment needs a value it lacks.
+  assert.equal(state({ model: "foo" }), "missing-context");
+  assert.equal(state({ model: "foo" }, { model: "foo" }), "renders");
+  assert.equal(state({ harness: "codex" }, { harness: "codex", model: "anything" }), "renders");
+  assert.equal(state({ model: "foo" }, { model: "Foo" }), "mismatch");
+  assert.equal(state({ model: "foo" }, { model: "foo " }), "mismatch");
+  assert.equal(state({ model: "foo", harness: "codex" }, { model: "foo", harness: "codex" }), "renders");
+  assert.equal(state({ model: "foo", harness: "codex" }, { model: "foo" }), "missing-context");
+  // A differing value outranks a missing one: supplying the missing value would not help.
+  assert.equal(state({ model: "foo", harness: "codex" }, { model: "bar" }), "mismatch");
+  // Switches and an empty body still outrank conditions, and an unmatched fragment is labelled as such.
+  assert.equal(roles.fragmentState(fragment("a", { enabled: false, conditions: { model: "foo" } }), on, {}), "off");
+  assert.equal(roles.fragmentState(fragment("a", { body: " ", conditions: { model: "foo" } }), on, {}), "empty");
+  assert.equal(roles.fragmentState(fragment("a", { conditions: { model: "foo" } }), { enabled: false }, { model: "foo" }), "category-off");
+  assert.notEqual(roles.fragmentStateLabel["missing-context"], roles.fragmentStateLabel.off);
+  assert.notEqual(roles.fragmentStateLabel.mismatch, roles.fragmentStateLabel.off);
+  // Counts follow the same context the preview is read with.
+  const role = { categories: [category("c", [fragment("a"), fragment("b", { conditions: { model: "foo" } }), fragment("d", { conditions: { harness: "codex" } })])] };
+  assert.deepEqual(roles.roleCounts(role), { categories: 1, fragments: 3, rendering: 1, conditional: 2 });
+  assert.equal(roles.roleCounts(role, { model: "foo" }).rendering, 2);
+  assert.equal(roles.roleCounts(role, { model: "foo", harness: "codex" }).rendering, 3);
+});
+
+test("context values are verbatim, validated like the API, and summarized in dimension order", () => {
+  assert.deepEqual(roles.normalizeContext({ harness: "codex", model: "", other: "x" }), { harness: "codex" });
+  assert.equal(roles.contextKey({ harness: "h", model: "m" }), roles.contextKey({ model: "m", harness: "h" }));
+  assert.equal(roles.contextKey({ model: "" }), "{}");
+  assert.equal(roles.hasConditions({ model: "" }), false);
+  assert.deepEqual(roles.contextIssues({ model: "foo" }), {});
+  assert.ok(roles.contextIssues({ model: "  " }).model);
+  assert.ok(roles.contextIssues({ harness: "x".repeat(201) }).harness);
+  assert.deepEqual(roles.contextIssues({ harness: "x".repeat(200) }), {});
+  assert.equal(roles.contextSummary({ harness: "codex", model: "foo" }), "model = foo · harness = codex");
+  assert.equal(roles.contextSummary({}), null);
+  // Only the with- flags carry context; values are shell-quoted and nothing native is implied.
+  assert.equal(roles.injectCommand("Researcher", { model: "foo", harness: "codex" }), "stack roles inject Researcher --with-model foo --with-harness codex --");
+  assert.equal(roles.injectCommand("My role", { model: "it's" }), "stack roles inject 'My role' --with-model 'it'\\''s' --");
+  assert.equal(roles.injectCommand(null, {}), "stack roles inject default --");
+});
+
+test("a fragment draft owns its conditions: unrelated saves keep them, changes replace them whole, clearing sends {}", () => {
+  const saved = roles.fragmentText(fragment("a", { conditions: { model: "foo", harness: "codex" } }));
+  assert.equal(saved.conditions, '{"model":"foo","harness":"codex"}');
+  // A body edit writes only the body; the API then preserves the conditions.
+  const body = roles.editDraft(roles.emptyDraft, "body", "New", saved);
+  assert.deepEqual(roles.fragmentChanges(roles.draftChanges(body, saved)), { body: "New" });
+  // Someone else changes the conditions meanwhile: the body edit follows without conflict and still omits them.
+  const theirs = { ...saved, conditions: roles.contextKey({ model: "bar" }) };
+  assert.deepEqual(roles.draftConflicts(body, theirs), []);
+  assert.deepEqual(roles.fragmentChanges(roles.draftChanges(body, theirs)), { body: "New" });
+  // Editing one dimension submits the complete replacement object.
+  const edited = roles.editDraft(roles.emptyDraft, "conditions", roles.contextKey({ ...roles.draftConditions(saved.conditions), model: "baz" }), saved);
+  assert.deepEqual(roles.fragmentChanges(roles.draftChanges(edited, saved)), { conditions: { model: "baz", harness: "codex" } });
+  // Clearing sends {}, never empty strings.
+  const cleared = roles.editDraft(roles.emptyDraft, "conditions", roles.contextKey({ model: "", harness: "" }), saved);
+  assert.deepEqual(roles.fragmentChanges(roles.draftChanges(cleared, saved)), { conditions: {} });
+  // A concurrent condition change against a condition edit is a conflict to resolve.
+  assert.deepEqual(roles.draftConflicts(edited, theirs), ["conditions"]);
+  // Returning to the saved conditions clears the edit.
+  assert.deepEqual(roles.editDraft(edited, "conditions", saved.conditions, saved), { base: {}, values: {} });
+  assert.deepEqual(roles.draftConditions("not json"), {});
 });
 
 test("search keeps a matching category whole and otherwise filters fragments by every word", () => {
@@ -80,7 +148,7 @@ test("drafts keep only real edits, follow unrelated saves, and surface conflicti
   assert.deepEqual(roles.draftChanges(draft, { ...saved, body: "New" }), {});
   draft = roles.editDraft(draft, "title", "Retitled", saved);
   assert.deepEqual(Object.keys(roles.yieldDraft(draft, rewritten).values), ["title"]);
-  assert.deepEqual(roles.fragmentText(fragment("a")), { title: "A", description: "", body: "a body" });
+  assert.deepEqual(roles.fragmentText(fragment("a")), { title: "A", description: "", body: "a body", conditions: "{}" });
   assert.deepEqual(roles.categoryText(category("k", [])), { title: "k", description: "" });
 });
 

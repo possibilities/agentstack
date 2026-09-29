@@ -1,4 +1,4 @@
-import type { Bot, Role, RoleCatalog, RoleCategory, RoleFragment, RoleInternalMcp, RoleInternalServer, RoleLaunchPreview, RoleMcpDefinition, RoleMcpServer, RolePreview, RoleSkill, RoleSkillFile, RoleSnapshot, RoleTrustedProject, WorkerSession } from "./types";
+import type { Bot, Role, RoleCatalog, RoleCategory, RoleFragment, RoleInternalMcp, RoleInternalServer, RoleLaunchPreview, RoleMcpDefinition, RoleMcpServer, RolePreview, RoleRenderContext, RoleSkill, RoleSkillFile, RoleSnapshot, RoleTrustedProject, WorkerSession } from "./types";
 
 /** Mirrors the Roles API's title limit. */
 export const titleLimit = 200;
@@ -24,15 +24,95 @@ export function formatCount(value: number): string {
   return `${k < 10 ? k.toFixed(1) : Math.round(k)}k`;
 }
 
-/** Why a fragment does or does not reach SYSTEM_APPEND.md. A disabled category outranks the fragment's own state. */
-export type FragmentState = "renders" | "off" | "category-off" | "empty";
+/* ─── Conditions and rendering context ───────────────────────────────── */
 
-export function fragmentState(fragment: Pick<RoleFragment, "enabled" | "body" | "conditions">, category: Pick<RoleCategory, "enabled">): FragmentState {
+/**
+ * The rendering-context dimensions a fragment condition can name, in display order, with the `stack roles inject`
+ * flag that supplies each. Mirrors the Roles API; a new dimension extends this list.
+ */
+export const conditionDimensions = [
+  { key: "model", label: "Model", flag: "--with-model" },
+  { key: "harness", label: "Harness", flag: "--with-harness" },
+] as const satisfies ReadonlyArray<{ key: keyof RoleRenderContext; label: string; flag: string }>;
+export type ConditionKey = typeof conditionDimensions[number]["key"];
+/** Mirrors the Roles API's limit on one condition or context value. */
+export const conditionValueLimit = 200;
+
+/**
+ * Known dimensions in display order, values verbatim. An empty string means the dimension is not set, so it is
+ * dropped; whitespace is kept for validation to refuse rather than silently trimmed.
+ */
+export function normalizeContext(value: Partial<Record<string, unknown>> | null | undefined): RoleRenderContext {
+  const context: RoleRenderContext = {};
+  for (const { key } of conditionDimensions) {
+    const text = value?.[key];
+    if (typeof text === "string" && text !== "") context[key] = text;
+  }
+  return context;
+}
+
+/** One canonical string per context or condition set, for comparison and fencing. `{}` is unconditional. */
+export const contextKey = (value: Partial<Record<string, unknown>> | null | undefined): string => JSON.stringify(normalizeContext(value));
+export const hasConditions = (conditions: RoleRenderContext | null | undefined): boolean => Object.keys(normalizeContext(conditions)).length > 0;
+
+/** Why the API would refuse each value: blank, or longer than its limit. */
+export function contextIssues(context: RoleRenderContext): Partial<Record<ConditionKey, string>> {
+  const issues: Partial<Record<ConditionKey, string>> = {};
+  for (const { key } of conditionDimensions) {
+    const value = context[key];
+    if (value === undefined) continue;
+    if (!value.trim()) issues[key] = "Use a value that is not only spaces, or clear it";
+    else if (value.length > conditionValueLimit) issues[key] = `Use ${conditionValueLimit} characters or fewer`;
+  }
+  return issues;
+}
+
+/** “model = foo · harness = codex”, or null for an unconditional fragment or an empty context. */
+export function contextSummary(context: RoleRenderContext | null | undefined): string | null {
+  const normal = normalizeContext(context);
+  const parts = conditionDimensions.filter(({ key }) => normal[key] !== undefined).map(({ key }) => `${key} = ${normal[key]}`);
+  return parts.length ? parts.join(" · ") : null;
+}
+
+/**
+ * How a fragment's conditions meet a rendering context, as the API evaluates them: every present condition must
+ * equal its context value exactly and case-sensitively. A differing value is a mismatch even when another is also
+ * missing, since supplying the missing one would not help.
+ */
+export type ConditionOutcome = "match" | "missing" | "mismatch";
+
+export function conditionOutcome(conditions: RoleRenderContext | null | undefined, context: RoleRenderContext): ConditionOutcome {
+  let missing = false;
+  for (const [key, value] of Object.entries(normalizeContext(conditions)) as Array<[ConditionKey, string]>) {
+    const given = context[key];
+    if (given === undefined) missing = true;
+    else if (given !== value) return "mismatch";
+  }
+  return missing ? "missing" : "match";
+}
+
+const shellWord = (word: string): string => /^[A-Za-z0-9._/:=@+%,-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
+
+/**
+ * The `stack roles inject` invocation that renders with this context, up to the `--` before the native command.
+ * The flags only supply rendering context; they neither pick nor configure the native CLI or its model.
+ */
+export function injectCommand(roleName: string | null, context: RoleRenderContext): string {
+  const normal = normalizeContext(context);
+  const flags = conditionDimensions.flatMap(({ key, flag }) => normal[key] !== undefined ? [flag, shellWord(normal[key]!)] : []);
+  return ["stack", "roles", "inject", roleName ? shellWord(roleName) : "default", ...flags, "--"].join(" ");
+}
+
+/** Why a fragment does or does not reach SYSTEM_APPEND.md in a rendering context. A disabled category outranks the fragment's own state. */
+export type FragmentState = "renders" | "off" | "category-off" | "empty" | "missing-context" | "mismatch";
+
+/** `context` is the one the preview uses; omitted, it is the empty context Bots and Workers render with today. */
+export function fragmentState(fragment: Pick<RoleFragment, "enabled" | "body" | "conditions">, category: Pick<RoleCategory, "enabled">, context: RoleRenderContext = {}): FragmentState {
   if (!category.enabled) return "category-off";
   if (!fragment.enabled) return "off";
-  // Existing previews have no rendering context. Conditional bodies are skipped.
-  if (Object.keys(fragment.conditions ?? {}).length) return "off";
-  return fragment.body.trim() ? "renders" : "empty";
+  if (!fragment.body.trim()) return "empty";
+  const outcome = conditionOutcome(fragment.conditions, context);
+  return outcome === "match" ? "renders" : outcome === "missing" ? "missing-context" : "mismatch";
 }
 
 export const fragmentStateLabel: Record<FragmentState, string> = {
@@ -40,11 +120,16 @@ export const fragmentStateLabel: Record<FragmentState, string> = {
   off: "Off",
   "category-off": "Category off",
   empty: "Empty",
+  "missing-context": "Needs context",
+  mismatch: "No match",
 };
 
-export function roleCounts(role: Pick<RoleSnapshot, "categories">): { categories: number; fragments: number; rendering: number } {
-  const fragments = role.categories.flatMap((category) => category.fragments.map((fragment) => fragmentState(fragment, category)));
-  return { categories: role.categories.length, fragments: fragments.length, rendering: fragments.filter((state) => state === "renders").length };
+/** Counts in a rendering context; `rendering` equals the preview's segments for that same context. */
+export function roleCounts(role: Pick<RoleSnapshot, "categories">, context: RoleRenderContext = {}): { categories: number; fragments: number; rendering: number; conditional: number } {
+  const fragments = role.categories.flatMap((category) => category.fragments);
+  const states = role.categories.flatMap((category) => category.fragments.map((fragment) => fragmentState(fragment, category, context)));
+  return { categories: role.categories.length, fragments: fragments.length, rendering: states.filter((state) => state === "renders").length,
+    conditional: fragments.filter((fragment) => hasConditions(fragment.conditions)).length };
 }
 
 export function findFragment(role: Pick<RoleSnapshot, "categories"> | null, id: string): { category: RoleCategory; fragment: RoleFragment; index: number } | null {
@@ -115,9 +200,26 @@ export const emptyDraft: Draft = { base: {}, values: {} };
 
 type Fields = Record<string, string>;
 
-/** The text fields a draft edits; switches and moves apply at once instead. */
-export const fragmentText = (fragment: Pick<RoleFragment, "title" | "description" | "body">): Fields =>
-  ({ title: fragment.title, description: fragment.description, body: fragment.body });
+/**
+ * The fields a draft edits; switches and moves apply at once instead. Conditions travel as their canonical JSON, so
+ * a draft owns them like text and an unrelated save leaves them alone. Older snapshots without them are unconditional.
+ */
+export const fragmentText = (fragment: Pick<RoleFragment, "title" | "description" | "body" | "conditions">): Fields =>
+  ({ title: fragment.title, description: fragment.description, body: fragment.body, conditions: contextKey(fragment.conditions) });
+
+/** The conditions a draft's canonical JSON holds; unreadable text is unconditional. */
+export function draftConditions(value: string | undefined): RoleRenderContext {
+  try { const parsed: unknown = JSON.parse(value ?? "{}"); return typeof parsed === "object" && parsed !== null ? normalizeContext(parsed as Record<string, unknown>) : {}; } catch { return {}; }
+}
+
+/**
+ * A fragment write's arguments from draft changes: text as is, and conditions as the complete replacement object,
+ * `{}` to clear them. Unchanged conditions are omitted, which the API preserves.
+ */
+export function fragmentChanges(changes: Fields): Record<string, unknown> {
+  const { conditions, ...text } = changes;
+  return conditions === undefined ? text : { ...text, conditions: draftConditions(conditions) };
+}
 export const categoryText = (category: Pick<RoleCategory, "title" | "description">): Fields =>
   ({ title: category.title, description: category.description });
 

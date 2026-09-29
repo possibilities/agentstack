@@ -8,8 +8,8 @@ import type { ContentArtifact, ContentCollection, ContentDocument, ContentItem, 
 import { scrapeCallError } from "./scrape";
 import type { ScrapeCanaryRun, ScrapePreset, ScrapeQueue, ScrapeReplay, ScrapeStatus } from "./types";
 import type { AgentBrowserInstallation, AgentBrowserStatus, BrowserController, BrowserHandoff, BrowserProfile, BrowserStatus, BrowserToolchain, HypemanInstallation } from "./types";
-import type { Account, AttentionItem, AttentionMessage, AttentionPage, AttentionRun, AttentionStatus, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, ServerResources, ServerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RoleCatalog, RoleInternalMcp, RoleLaunchPreview, RolePreview, RoleShims, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerListItem, WorkerLogin, WorkerRuntime, WorkerStatus } from "./types";
-import { acceptCatalog, acceptRoleRead, roleReadOf } from "./roles";
+import type { Account, AttentionItem, AttentionMessage, AttentionPage, AttentionRun, AttentionStatus, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, ServerResources, ServerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RoleCatalog, RoleInternalMcp, RoleLaunchPreview, RolePreview, RoleRenderContext, RoleShims, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerListItem, WorkerLogin, WorkerRuntime, WorkerStatus } from "./types";
+import { acceptCatalog, acceptRoleRead, contextKey, normalizeContext, roleReadOf } from "./roles";
 import { brainCallError, jobViews, mergeJobs, submissionLabel, terminalStates, type BrainJobView, type CallError } from "./brain";
 import type { BrainAdmission, BrainJob, BrainJobRecord, BrainJobStats, BrainShareState, BrainSource, BrainStats, BrainStatus, BrainTag } from "./types";
 import type { ProcRun, ProcScheduleListItem, ProcStatus } from "./types";
@@ -51,6 +51,14 @@ export type StackState = Snapshot & {
   rolePreview: Resource<RolePreview>;
   /** What the selected Role's launch receives besides instructions, matched against every known Bot working directory. */
   roleLaunch: Resource<RoleLaunchPreview>;
+  /**
+   * The rendering context both previews are read with, set with `setRoleContext`. It is the page's, not a Role's:
+   * it survives Role selection, changes nothing in any Role, and configures no runtime. `{}` previews what a launch
+   * without context renders, which is every Bot and Worker today.
+   */
+  roleContext: RoleRenderContext;
+  /** The `contextKey` each held preview answers, since a preview does not echo its context. */
+  roleContextShown: Partial<Record<PreviewKey, string>>;
   /** The internal Stack MCP servers configured now, each with the selected Role's switch. */
   roleInternal: Resource<RoleInternalMcp>;
   /** Local-only PATH inventory; no Roles window consumes it until the shim UI is requested. */
@@ -195,6 +203,9 @@ const roleKeys = ["role", "rolePreview", "roleLaunch", "roleInternal"] as const;
 type RoleKey = typeof roleKeys[number];
 type RoleData = RoleSnapshot | RolePreview | RoleLaunchPreview | RoleInternalMcp;
 const isRoleKey = (key: ResourceKey): key is RoleKey => (roleKeys as readonly string[]).includes(key);
+/** The Role reads that render instructions, and so also depend on the rendering context. */
+type PreviewKey = "rolePreview" | "roleLaunch";
+const isPreviewKey = (key: ResourceKey): key is PreviewKey => key === "rolePreview" || key === "roleLaunch";
 /** Catalog operations answer with the whole catalog, which replaces the held one when it is not older. */
 const catalogReplies = new Set(["roles_snapshot", "role_create", "role_set_default", "role_set_worker_default", "role_delete"]);
 
@@ -212,7 +223,7 @@ export class StackStore {
   private main = new Map<string, Channel>();
   private scopedChannels = new Map<string, Channel>();
   private inflight = new Map<ResourceKey, Promise<void>>();
-  /** The Role each in-flight Role-scoped read was started for. */
+  /** The scope each in-flight Role-scoped read was started for: its Role, and for previews also the context. */
   private inflightRole = new Map<ResourceKey, string | null>();
   private dirty = new Set<ResourceKey>();
   private seq = 0;
@@ -249,6 +260,7 @@ export class StackStore {
       notifyCounts: { data: null, error: null, at: null }, notificationRecords: {},
       roleId: null, role: { data: null, error: null, at: null }, rolePreview: { data: null, error: null, at: null },
       roleLaunch: { data: null, error: null, at: null }, roleInternal: { data: null, error: null, at: null }, roleShims: { data: null, error: null, at: null },
+      roleContext: {}, roleContextShown: {},
       signalStatus: { data: null, error: null, at: null }, signalGeneration: 0, signalRecords: { items: {}, messages: {}, runs: {} },
       contentDocuments: { data: null, error: null, at: null }, contentTags: { data: null, error: null, at: null },
       contentLibrary: { data: null, error: null, at: null }, contentItems: { data: null, error: null, at: null },
@@ -479,6 +491,29 @@ export class StackStore {
 
   private refreshRole(): void {
     for (const key of roleKeys) this.refresh(key);
+  }
+
+  /**
+   * Preview the selected Role in another rendering context. Only the two previews are reread; the held ones stay
+   * shown until the new context's answers land, and an answer for any other context is dropped.
+   */
+  setRoleContext = (context: RoleRenderContext): void => {
+    const next = normalizeContext(context);
+    if (contextKey(next) === contextKey(this.state.roleContext)) return;
+    this.set({ roleContext: next });
+    this.refresh("rolePreview");
+    this.refresh("roleLaunch");
+  };
+
+  /** What a Role-scoped read is for: its Role, plus the rendering context for the previews. */
+  private readScope(key: RoleKey): string | null {
+    const { roleId } = this.state;
+    return roleId !== null && isPreviewKey(key) ? `${roleId}\n${contextKey(this.state.roleContext)}` : roleId;
+  }
+
+  /** The context argument for a preview read; omitted when empty, as a launch without context omits it. */
+  private contextArgs(): { context?: RoleRenderContext } {
+    return Object.keys(this.state.roleContext).length ? { context: this.state.roleContext } : {};
   }
 
   /** Whether the selected Role exists as far as the loaded catalog says; reads wait until it does. */
@@ -1079,20 +1114,21 @@ export class StackStore {
   private refresh(key: ResourceKey): void {
     // Role reads wait for a selected Role the catalog lists; the catalog's arrival and a selection start them.
     if (isRoleKey(key) && !this.roleReadable()) return;
-    // A read still in flight for another Role does not hold up this one; it is dropped when it lands.
-    if (this.inflight.has(key) && (!isRoleKey(key) || this.inflightRole.get(key) === this.state.roleId)) {
+    // A read still in flight for another Role or context does not hold up this one; it is dropped when it lands.
+    if (this.inflight.has(key) && (!isRoleKey(key) || this.inflightRole.get(key) === this.readScope(key))) {
       this.dirty.add(key);
       return;
     }
-    // The Role a Role-scoped read was started for; its result belongs to no other.
-    const scope = isRoleKey(key) ? this.state.roleId : null;
+    // The Role (and context) a Role-scoped read was started for; its result belongs to no other.
+    const scope = isRoleKey(key) ? this.readScope(key) : null;
+    const shown = isPreviewKey(key) ? contextKey(this.state.roleContext) : null;
     const run = this.load(key)
       .then((data) => ({ data, error: null, at: Date.now() }), (error: Error) => ({ data: this.state[key]?.data ?? null, error: error.message, at: Date.now() }))
       .then((next) => {
         if (isRoleKey(key)) {
-          // Selection moved on, or the Role vanished, while this read was in flight: drop it, data or error alike.
-          // The read started for the new selection serves it.
-          if (scope !== this.state.roleId || !this.roleReadable()) return;
+          // Selection or context moved on, or the Role vanished, while this read was in flight: drop it, data or
+          // error alike. The read started for the new selection or context serves it.
+          if (scope !== this.readScope(key) || !this.roleReadable()) return;
           // A response for any other Role is dropped even at a higher revision; the same Role never rolls back.
           const held = this.state[key].data as RoleData | null;
           if (next.data && !acceptRoleRead(this.state.roleId, held && roleReadOf(held), roleReadOf(next.data as RoleData))) return;
@@ -1109,6 +1145,7 @@ export class StackStore {
         if (key === "brainJobs" && next.data && ((next.data as StackState["brainJobs"]["data"])!.view !== this.state.brainJobView.view || (next.data as StackState["brainJobs"]["data"])!.run !== this.state.brainJobView.run)) { this.dirty.add(key); return; }
         if (key === "contentItems" && next.data && scopeKey((next.data as ContentItemPage).scope) !== scopeKey(this.itemScope)) { this.dirty.add(key); return; }
         if (key === "roleCatalog") this.applyCatalog(next as Resource<RoleCatalog>);
+        else if (isPreviewKey(key) && next.data && shown !== null) this.set({ [key]: next, roleContextShown: { ...this.state.roleContextShown, [key]: shown } } as Partial<StackState>);
         else this.set({ [key]: next } as Partial<StackState>);
         if (key === "signalStatus" && next.data && (next.data as AttentionStatus).changeSeq !== changeSeq) this.bumpSignal();
         if (key === "login") this.reconcileAttempt();
@@ -1153,8 +1190,8 @@ export class StackStore {
       case "roleCatalog": return call<RoleCatalog>("roles", "roles_snapshot");
       case "roleShims": return call<RoleShims>("roles", "role_shim_list");
       case "role": return call<RoleSnapshot>("roles", "role_editor_snapshot", { roleId: this.state.roleId });
-      case "rolePreview": return call<RolePreview>("roles", "role_preview", { roleId: this.state.roleId });
-      case "roleLaunch": return call<RoleLaunchPreview>("roles", "role_launch_preview", { roleId: this.state.roleId, cwds: botCwds(this.state.bots.data).split("\n").filter(Boolean) });
+      case "rolePreview": return call<RolePreview>("roles", "role_preview", { roleId: this.state.roleId, ...this.contextArgs() });
+      case "roleLaunch": return call<RoleLaunchPreview>("roles", "role_launch_preview", { roleId: this.state.roleId, cwds: botCwds(this.state.bots.data).split("\n").filter(Boolean), ...this.contextArgs() });
       case "roleInternal": return call<RoleInternalMcp>("roles", "role_internal_mcp_list", { roleId: this.state.roleId });
       case "usage": return call<UsageSnapshot>("usage", "usage_snapshot");
       case "catalog": return loadCatalog((name, args) => call<never>("api", name, args)) as Promise<PackageDoc[]>;
