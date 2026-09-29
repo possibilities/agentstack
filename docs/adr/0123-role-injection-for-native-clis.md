@@ -60,6 +60,17 @@ built-ins and administrator policy remain native concerns; capability discovery
 is not an OS sandbox. Configuration and attachment arguments that bypass this
 boundary are refused explicitly.
 
+Native arguments after Stack's `--` are passed as one argv vector to the
+selected harness. Stack identifies known attachment, remote-service and
+capability/configuration overrides that would bypass private delivery; it does
+not maintain an allowlist of ordinary model, permission, output or future
+native switches. Other options are forwarded verbatim for native validation.
+An inner native `--` marks the start of positional prompt arguments. Codex's
+private no-daemon switch is inserted for its TUI; OpenCode's private server
+switch is inserted in the root or `run`/`mini` command scope without reordering
+caller tokens. Future native isolation or session-attachment escapes still
+require review; passthrough does not prove all future switches are safe.
+
 ## Native delivery and authentication
 
 Authentication is orthogonal to Role selection. The launcher does not select a

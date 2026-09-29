@@ -214,7 +214,12 @@ test("Role shim API installs a real PATH command, preserves both argument region
     assert.equal(created.path, join(f.bin, "opencode-astra"));
     assert.equal((await stat(created.path)).mode & 0o777, 0o700);
     assert.deepEqual((await f.call("role_shim_list")).shims, [created]);
-    assert.deepEqual(created.args, proposed, "future native options are stored, not filtered by today's inject allowlist");
+    assert.deepEqual(created.args, proposed, "native options survive configuration unchanged");
+    const shimRun = await f.run(["--title", "prompt with spaces"], {}, "opencode-astra");
+    assert.equal(shimRun.code, 0, shimRun.stderr);
+    const shimReport = JSON.parse(shimRun.stdout);
+    assert.deepEqual(shimReport.argv.slice(-5), ["--model", "openai/gpt-6-astra#medium", "--yolo", "--title", "prompt with spaces"]);
+    assert.equal(shimReport.argv[0], "--server");
     await assert.rejects(f.call("role_shim_create", { name: "opencode-astra", args: proposed }), /refusing to replace/);
     await assert.rejects(f.call("role_shim_create", { name: "opencode", args: proposed }), /cannot replace/);
     await assert.rejects(f.call("role_shim_create", { name: "escape", args: ["--", "bash"] }), /claude, codex or opencode/);
@@ -239,6 +244,31 @@ test("Role shim API installs a real PATH command, preserves both argument region
     assert.equal(await readFile(updated.path, "utf8"), "#!/bin/sh\nexit 0\n");
     assert.deepEqual(notices, Array(4).fill("role_shims_changed"));
   } finally { await subscription.close(); await f.close(); }
+});
+
+test("inject forwards evolving native options without disturbing subcommand-scoped private delivery", async () => {
+  const f = await setup();
+  try {
+    const cases = [
+      { harness: "claude", native: ["--yolo", "--restricted", "--model", "test/model", "--", "--settings=prompt text"], prefix: ["--setting-sources", ""] },
+      { harness: "codex", native: ["--enable", "feature_name", "--worktree", "--yolo", "--", "--remote=prompt text"], prefix: ["--no-daemon"] },
+      { harness: "opencode", native: ["--auto", "run", "--yolo", "--model", "openai/gpt-6-astra#medium", "--", "--server=prompt text"], prefix: ["--auto", "run", "--server"] },
+    ] as const;
+    for (const { harness, native, prefix } of cases) {
+      const result = await f.run(["inject", "--", harness, ...native]);
+      assert.equal(result.code, 0, `${harness}: ${result.stderr}`);
+      const report = JSON.parse(result.stdout);
+      assert.deepEqual(report.argv.slice(0, prefix.length), prefix);
+      if (harness === "opencode") assert.deepEqual(report.argv.slice(4), native.slice(2));
+      else assert.deepEqual(report.argv.slice(-native.length), native);
+    }
+    const codexExec = await f.run(["inject", "--", "codex", "--model", "test/model", "exec", "--thread-source", "fixture", "prompt"]);
+    assert.equal(codexExec.code, 0, codexExec.stderr);
+    assert.deepEqual(JSON.parse(codexExec.stdout).argv, ["--model", "test/model", "exec", "--thread-source", "fixture", "prompt"]);
+    const escape = await f.run(["inject", "--", "opencode", "--yolo", "run", "--server=http://127.0.0.1:9"]);
+    assert.equal(escape.code, 1);
+    assert.match(escape.stderr, /--server bypasses a fresh private Role launch/);
+  } finally { await f.close(); }
 });
 
 test("default selection is catalog-marked; empty Roles still isolate; invalid names and bypass modes fail before launch", async () => {
@@ -270,13 +300,14 @@ test("default selection is catalog-marked; empty Roles still isolate; invalid na
       ["inject", "--with-model", "foo", "--with-model", "bar", "--", "claude"],
       ["inject", "--with-harness", "--with-model", "foo", "--", "claude"],
       ["inject", "missing", "--", "claude"], ["inject", "research é", "--", "claude"],
-      ...["--settings=x", "--plugin-dir", "--resume", "-r123", "--bg", "--bare", "--safe-mode", "--system-prompt=x", "attach"].map(flag => ["inject", "--", "claude", flag]),
-      ...["--remote=x", "--profile=x", "-cdeveloper_instructions=x", "--enable", "resume", "app-server"].map(flag => ["inject", "--", "codex", flag]),
+       ...["--settings=x", "--plugin-dir", "--plugin-url=x", "--remote-control", "--resume", "-r123", "--bg", "--bare", "--safe-mode", "--system-prompt=x", "attach"].map(flag => ["inject", "--", "claude", flag]),
+       ...["--remote=x", "--remote-auth-token-env=KEY", "--profile=x", "-pother", "--ignore-user-config", "-cdeveloper_instructions=x", "--no-daemon=false", "resume", "app-server"].map(flag => ["inject", "--", "codex", flag]),
+       ["inject", "--", "codex", "exec", "--ignore-user-config"],
       ["inject", "--", "codex", "exec", "resume"],
       ["inject", "--", "claude", "--model", "--settings=ambient.json"],
       ["inject", "--", "codex", "--model", "--profile=ambient"],
       ["inject", "--", "opencode", "--model", "--server=http://127.0.0.1:9"],
-      ...["--server=x", "--standalone", "--session=x", "-c", "attach", "acp", "serve"].map(flag => ["inject", "--", "opencode", flag]),
+       ...["--server=x", "--standalone", "--session=x", "--continue", "--fork", "-c", "attach", "acp", "serve"].map(flag => ["inject", "--", "opencode", flag]),
     ]) {
       const result = await f.run(args);
       assert.equal(result.code, 1, `${args.join(" ")}: ${result.stderr}`);

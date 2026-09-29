@@ -142,7 +142,7 @@ export async function inject(args: string[]): Promise<number> {
 }
 
 async function launch(args: string[], signal: AbortSignal): Promise<Exit> {
-  const { role, harness, native, command, context } = injectArguments(args);
+  const { role, harness, native, command, commandIndex, context } = injectArguments(args);
   const binary = await executable(harness);
   const snapshot = await snapshotFor(role);
   const servers = await connections(snapshot);
@@ -205,7 +205,10 @@ async function launch(args: string[], signal: AbortSignal): Promise<Exit> {
       // Version-check the exact CLI before the host can open the native database.
       await compatible(binary, harness, env);
       host = await startOpenCodeHost(env, signal);
-      argv = command ? [command, "--server", host.url, ...native.slice(1)] : ["--server", host.url, ...native];
+      // --server belongs to the selected native subcommand, even when root
+      // options precede `run` or `mini`; never reorder caller arguments.
+      argv = commandIndex === undefined ? ["--server", host.url, ...native]
+        : [...native.slice(0, commandIndex + 1), "--server", host.url, ...native.slice(commandIndex + 1)];
     }
     if (harness !== "opencode") await compatible(binary, harness, env);
     signal.throwIfAborted();
