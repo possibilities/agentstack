@@ -61,7 +61,7 @@ export function fixtureDoc(name, api, endpoint, publishedJsonSchema) {
   const topics = api?.events?.topics ?? {};
   return { name, packageName: `@agentstack/${name}`, description: `${name} fixture`, events: topics, eventScope: null,
     transports: [{ type: "websocket", description: "Isolated fixture", supported: true, subscriptions: true, endpoint,
-      operations: operations.map((operation) => operation.name), events: Object.keys(topics), routes: [] }],
+      operations: operations.map((operation) => operation.name), workerOperations: [], events: Object.keys(topics), routes: [] }],
     operations: operations.map((operation) => ({ name: operation.name, title: operation.annotations?.title ?? null, description: operation.description,
       annotations: operation.annotations ?? {}, inputSchema: publishedJsonSchema(operation.input), outputSchema: publishedJsonSchema(operation.output) })) };
 }

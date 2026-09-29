@@ -196,7 +196,7 @@ test("proc opens only schedule and run topics, refreshes its state, and scopes o
   const snapshot = {
     owner: resource(null), resources: resource(null), accounts: resource([]), workerAccounts: resource([]), workerRuntimes: resource([]),
     login: resource(null), workerLogins: resource([]), bots: resource([]), voice: resource(null), catalog: resource(null),
-    endpoints: { proc: "ws://localhost/websocket" },
+    endpoints: { proc: "ws://fixture.invalid/websocket" },
   };
   const store = new StackStore(snapshot);
   try {

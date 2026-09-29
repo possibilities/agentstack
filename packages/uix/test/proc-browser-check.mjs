@@ -12,7 +12,7 @@ import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall,
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as procApi } from "../../proc/dist/api.js";
 import { ProcStore } from "../../proc/dist/src/store.js";
-import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, uix } from "./browser-fixture.mjs";
+import { authorizeBrowser, fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, uix } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -52,6 +52,7 @@ insertExecution.run(seedExecutions[2], seedIds.bot, msAgo(3_600_000), "unknown",
 
 const handlers = {
   owner_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uixUrl: null, inspectorUrl: null }),
+  owner_resource_history: () => ({ snapshots: [], nextCursor: null }),
   owner_resources: () => ({ observation: { snapshotId: null, capturedAt: null, ageMs: null, freshness: "unavailable", lastAttemptAt: null, error: "owner_missing", source: "unsupported", intervalMs: 5_000, staleAfterMs: 15_000, collectionDurationMs: null, coverage: null },
     host: null, capabilities: { rssBytes: false, virtualBytes: false, cpuTimeMs: false, cpuPercent: false, threads: false, diskIoBytes: false, openFileDescriptors: false, networkBytes: false, gpu: false, perSessionAllocation: false },
     retention: { maxSamples: 0, maxProcessRecords: 0, retainedSamples: 0, oldestAttemptAt: null, newestAttemptAt: null, droppedSamples: 0 }, runtime: null,
@@ -77,7 +78,7 @@ try {
   const doc = (name, api) => fixtureDoc(name, api, websocket.url, publishedJsonSchema);
   const catalog = [doc("proc", procApi), doc("bots", botsApi), doc("owner"), doc("auth"), doc("worker"), doc("usage"), doc("api")];
   handlers.docs_snapshot = () => ({ packages: catalog });
-  const definitions = { owner: ["owner_status", "owner_resources"], auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"],
+  const definitions = { owner: ["owner_status", "owner_resources", "owner_resource_history"], auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"],
     worker: ["worker_list", "worker_runtime_list"], bots: ["bot_list", "bot_defaults_get", "voice_status", "chat_list", "chat_thread_read"], usage: ["usage_snapshot"], api: ["docs_snapshot"] };
   const topics = { owner: { pids_changed: "Fixture", resources_changed: "Fixture" },
     auth: { accounts_changed: "Fixture", login_changed: "Fixture", worker_accounts_changed: "Fixture", worker_login_changed: "Fixture" },
@@ -93,7 +94,7 @@ try {
   next.stdout.on("data", (chunk) => { log += chunk; }); next.stderr.on("data", (chunk) => { log += chunk; });
   const origin = `http://127.0.0.1:${nextPort}`;
   for (let attempt = 0; ; attempt++) {
-    try { if ((await fetch(`${origin}/x/proc`)).ok) break; } catch { /* bounded readiness check */ }
+    try { if ((await fetch(`${origin}/connect/local`)).ok) break; } catch { /* bounded readiness check */ }
     if (attempt > 2400 || next.exitCode !== null) throw new Error(log);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -117,6 +118,7 @@ try {
   browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_BIN ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });
   const context = await browser.newContext({ viewport: { width: 2600, height: 1300 }, reducedMotion: "reduce" });
   const page = await context.newPage();
+  await authorizeBrowser(page, origin, env);
   page.setDefaultTimeout(60_000);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
