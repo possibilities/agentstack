@@ -1,4 +1,4 @@
-import { chmodSync, closeSync, constants, existsSync, mkdirSync, openSync, realpathSync, renameSync, statSync } from "node:fs";
+import { chmodSync, closeSync, constants, existsSync, mkdirSync, openSync, realpathSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -56,13 +56,7 @@ export class RoleStore {
     chmodSync(stateDir, 0o700);
     const path = join(stateDir, "roles.sqlite");
     const legacy = join(stateDir, "capabilities.sqlite");
-    if (!existsSync(path) && existsSync(legacy)) {
-      try { renameSync(legacy, path); }
-      catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT" || !existsSync(path)) throw error;
-      }
-    }
-    else if (existsSync(path) && existsSync(legacy)) throw new Error("both roles.sqlite and legacy capabilities.sqlite exist; inspect before continuing");
+    if (existsSync(legacy)) throw new Error("legacy capabilities.sqlite exists; inspect and replace or convert it offline before starting Roles");
     try { closeSync(openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600)); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
     chmodSync(path, 0o600);

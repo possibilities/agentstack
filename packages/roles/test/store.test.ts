@@ -1,17 +1,16 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, rename, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { botMcpUrl } from "@stack/api";
-import { DatabaseSync } from "node:sqlite";
 import { RoleStore, renderInstructions, renderSegments } from "../src/store.js";
 import { materializeRole, removeRole } from "../src/bundle.js";
 
 function openRole(root: string) {
   const owner = new RoleStore(root);
   const catalog = owner.catalog();
-  const id = catalog.defaultRoleId ?? owner.createRole(catalog.revision, "Default").defaultRoleId!;
+  const id = catalog.defaultRoleId!;
   return Object.assign(owner.role(id), { close: () => owner.close() });
 }
 
@@ -100,52 +99,6 @@ test("rendered segments locate each contributing body and skip disabled or blank
   for (const segment of segments) assert.equal(rendered.slice(segment.start, segment.end), segment.fragmentId === "f1" ? "First" : "Sé\ncond");
 });
 
-test("a database from before timestamps keeps its records with unknown times", async () => {
-  const root = await mkdtemp(join(tmpdir(), "stack-role-stamps-"));
-  try {
-    const db = new DatabaseSync(join(root, "roles.sqlite"));
-    db.exec(`
-      CREATE TABLE revision (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), value INTEGER NOT NULL);
-      INSERT INTO revision VALUES (1, 4);
-      CREATE TABLE categories (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL, enabled INTEGER NOT NULL, position INTEGER NOT NULL);
-      CREATE TABLE fragments (id TEXT PRIMARY KEY, category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
-        title TEXT NOT NULL, description TEXT NOT NULL, body TEXT NOT NULL, enabled INTEGER NOT NULL, position INTEGER NOT NULL);
-      INSERT INTO categories VALUES ('00000000-0000-4000-8000-000000000001', 'Old', '', 1, 0);
-      INSERT INTO fragments VALUES ('00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', 'Kept', '', 'Keep me.', 1, 0);
-      CREATE TABLE skills (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, description TEXT NOT NULL,
-        body TEXT NOT NULL, files_json TEXT NOT NULL, enabled INTEGER NOT NULL, position INTEGER NOT NULL);
-      INSERT INTO skills VALUES ('00000000-0000-4000-8000-000000000003', 'review', 'Review work', 'Exact skill body', '[{"path":"check.sh","contentBase64":"dHJ1ZQo="}]', 1, 0);
-      CREATE TABLE role_mcp_servers (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, description TEXT NOT NULL,
-        definition_json TEXT NOT NULL, enabled INTEGER NOT NULL, position INTEGER NOT NULL);
-      INSERT INTO role_mcp_servers VALUES ('00000000-0000-4000-8000-000000000004', 'remote', 'External', '{"type":"http","url":"https://example.test/mcp","httpHeaders":{"Authorization":"Bearer exact-secret"}}', 0, 0);
-      CREATE TABLE trusted_projects (id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, description TEXT NOT NULL,
-        enabled INTEGER NOT NULL, position INTEGER NOT NULL);
-      INSERT INTO trusted_projects VALUES ('00000000-0000-4000-8000-000000000005', '/legacy/project', 'Reviewed', 1, 0);
-    `);
-    db.close();
-    const store = openRole(root);
-    try {
-      let state = store.snapshot();
-      assert.equal(state.revision, 5);
-      assert.equal(state.name, "Manager");
-      assert.deepEqual(state.disabledInternalMcpServers, []);
-      assert.equal(state.createdAt, null);
-      assert.deepEqual(state.skills.map(({ name, body, files, enabled }) => ({ name, body, files, enabled })), [
-        { name: "review", body: "Exact skill body", files: [{ path: "check.sh", contentBase64: "dHJ1ZQo=" }], enabled: true },
-      ]);
-      assert.deepEqual(state.mcpServers[0]?.definition, { type: "http", url: "https://example.test/mcp", httpHeaders: { Authorization: "Bearer exact-secret" } });
-      assert.equal(state.mcpServers[0]?.enabled, false);
-      assert.equal(state.trustedProjects[0]?.path, "/legacy/project");
-      assert.deepEqual(state.categories[0]!.fragments[0], { id: "00000000-0000-4000-8000-000000000002", categoryId: "00000000-0000-4000-8000-000000000001",
-        title: "Kept", description: "", body: "Keep me.", enabled: true, createdAt: null, updatedAt: null });
-      state = store.createFragment(state.revision, state.categories[0]!.id, "New", "Fresh.");
-      assert.equal(state.categories[0]!.fragments[0]!.createdAt, null);
-      assert.equal(typeof state.categories[0]!.fragments[1]!.createdAt, "number");
-      assert.equal(renderInstructions(state), "Keep me.\n\nFresh.");
-    } finally { store.close(); }
-  } finally { await rm(root, { recursive: true, force: true }); }
-});
-
 test("a role snapshots instructions and MCP configuration without argv content", async () => {
   const root = await mkdtemp(join(tmpdir(), "stack-role-snapshot-"));
   const store = openRole(root);
@@ -175,24 +128,6 @@ test("an oversized assembled prompt is rejected before committing an edit", asyn
     assert.throws(() => store.createFragment(state.revision, categoryId, "Too much", "b".repeat(70_000)), /exceed 262144 bytes/);
     assert.deepEqual(store.snapshot(), state);
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
-});
-
-test("a legacy capabilities database keeps its fragments, revision, and launch cleanup", async () => {
-  const root = await mkdtemp(join(tmpdir(), "stack-role-migration-"));
-  const old = openRole(root);
-  try {
-    let state = old.createCategory(0, "Existing");
-    state = old.createFragment(state.revision, state.categories[0]!.id, "Instruction", "Keep this.");
-    old.close();
-    await rename(join(root, "roles.sqlite"), join(root, "capabilities.sqlite"));
-    const role = openRole(root);
-    try { assert.deepEqual(role.snapshot(), state); }
-    finally { role.close(); }
-    const legacyRoot = join(root, "capabilities", "bot-1", "launch-legacy");
-    await mkdir(legacyRoot, { recursive: true });
-    await removeRole(root, "bot-1", legacyRoot);
-    await assert.rejects(lstat(legacyRoot), /ENOENT/);
-  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("enabled role resources materialize privately and disabled items stay out of bot launches", async () => {

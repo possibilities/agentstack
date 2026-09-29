@@ -126,8 +126,6 @@ export async function loadWorkerRole(stateDir: string, id: string): Promise<Role
   const snapshot = JSON.parse(await readFile(rolePath(stateDir, id), "utf8")) as RoleSnapshot;
   if (!Number.isInteger(snapshot.revision) || !Array.isArray(snapshot.skills) || !Array.isArray(snapshot.mcpServers))
     throw new Error("worker role snapshot is invalid");
-  // Legacy immutable snapshots predate internal MCP selection and enabled every internal server.
-  if (snapshot.disabledInternalMcpServers === undefined) snapshot.disabledInternalMcpServers = [];
   if (!Array.isArray(snapshot.disabledInternalMcpServers) || !snapshot.disabledInternalMcpServers.every((name) => typeof name === "string"))
     throw new Error("worker role snapshot has invalid internal MCP selection");
   return snapshot;

@@ -25,17 +25,14 @@ function run(cwd: string, args: string[]): Promise<string> {
     error ? reject(error) : resolve(stdout.trim())));
 }
 
-test("legacy Worker snapshots retain all internal MCP connections on recovery", async () => {
+test("Worker recovery rejects snapshots without an internal MCP selection", async () => {
   const root = await mkdtemp(join(tmpdir(), "stack-worker-legacy-role-"));
   const directory = join(root, "workers", "roles");
   try {
     await mkdir(directory, { recursive: true });
     const { disabledInternalMcpServers: _disabled, id: _id, name: _name, description: _description, createdAt: _created, updatedAt: _updated, ...legacy } = role;
     await writeFile(join(directory, "legacy.json"), JSON.stringify(legacy));
-    const loaded = await loadWorkerRole(root, "legacy");
-    assert.deepEqual(loaded.disabledInternalMcpServers, []);
-    assert.equal(loaded.revision, 7);
-    assert.deepEqual(loaded.mcpServers, legacy.mcpServers);
+    await assert.rejects(loadWorkerRole(root, "legacy"), /invalid internal MCP selection/);
     assert.equal(await readFile(join(directory, "legacy.json"), "utf8"), JSON.stringify(legacy), "the saved launch remains immutable");
   } finally { await rm(root, { recursive: true, force: true }); }
 });

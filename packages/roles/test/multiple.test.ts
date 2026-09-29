@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -8,77 +8,53 @@ import test from "node:test";
 import { serveApi, socketCall } from "@stack/api";
 import { RoleStore, type RoleCatalog, type RoleSnapshot } from "../src/store.js";
 
-test("existing default becomes Manager and an independent instruction-free Worker copy exactly once", async () => {
-  const root = await mkdtemp(join(tmpdir(), "stack-role-pair-migration-"));
+test("fresh Roles start with independent Manager and instruction-free Worker defaults", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stack-role-pair-"));
+  const store = new RoleStore(root);
   try {
-    const before = new RoleStore(root);
-    const managerId = before.catalog().defaultRoleId!;
-    const priorWorkerId = before.catalog().workerDefaultRoleId!;
-    let manager = before.role(managerId).update(0, { name: "Original" });
-    const contents = before.role(managerId);
-    manager = contents.createCategory(manager.revision, "Guidance");
-    manager = contents.createFragment(manager.revision, manager.categories[0]!.id, "Rule", "Keep this for Bots");
-    manager = contents.createSkill(manager.revision, "check", "Review", "First skill");
-    manager = contents.createMcpServer(manager.revision, "external", "", { type: "stdio", command: "node", args: ["-v"] });
-    manager = contents.setInternalMcp(manager.revision, "notify", false);
-    before.close();
-    // Model the catalog written by the previous release without touching an operator store.
-    const db = new DatabaseSync(join(root, "roles.sqlite"));
-    db.exec("PRAGMA foreign_keys = OFF");
-    db.prepare("UPDATE role_catalog SET worker_default_role_id = NULL").run();
-    db.exec("ALTER TABLE role_catalog DROP COLUMN worker_default_role_id");
-    db.prepare("DELETE FROM roles WHERE id = ?").run(priorWorkerId);
-    db.close();
-
-    const migrated = new RoleStore(root);
-    const newWorkerId = migrated.catalog().workerDefaultRoleId;
-    try {
-      const catalog = migrated.catalog();
-      assert.equal(catalog.defaultRoleId, managerId);
-      assert.equal(migrated.defaultSnapshot().name, "Manager");
-      const worker = migrated.launchSnapshot(undefined, "worker");
-      assert.equal(worker.id, catalog.workerDefaultRoleId);
-      assert.notEqual(worker.id, managerId);
-      assert.deepEqual(worker.categories, []);
-      assert.deepEqual(worker.skills.map(({ name, body }) => ({ name, body })), [{ name: "check", body: "First skill" }]);
-      assert.notEqual(worker.skills[0]!.id, manager.skills[0]!.id);
-      assert.deepEqual(worker.mcpServers.map(({ name, definition }) => ({ name, definition })), manager.mcpServers.map(({ name, definition }) => ({ name, definition })));
-      assert.deepEqual(worker.disabledInternalMcpServers, ["notify"]);
-      migrated.role(managerId).updateSkill(catalog.roles[0]!.revision, manager.skills[0]!.id, { body: "Changed later" });
-      assert.equal(migrated.launchSnapshot(undefined, "worker").skills[0]!.body, "First skill");
-    } finally { migrated.close(); }
+    const catalog = store.catalog();
+    assert.equal(catalog.roles.length, 2);
+    assert.equal(store.defaultSnapshot().name, "Manager");
+    assert.equal(store.launchSnapshot(undefined, "worker").name, "Worker");
+    const manager = store.role(catalog.defaultRoleId!);
+    let updated = manager.createCategory(0, "Guidance");
+    updated = manager.createFragment(updated.revision, updated.categories[0]!.id, "Rule", "Manager only");
+    manager.createSkill(updated.revision, "check", "Review", "Manager skill");
+    assert.deepEqual(store.launchSnapshot(undefined, "worker").categories, []);
+    assert.deepEqual(store.launchSnapshot(undefined, "worker").skills, []);
     const reopened = new RoleStore(root);
-    try { assert.equal(reopened.catalog().workerDefaultRoleId, newWorkerId); }
+    try { assert.equal(reopened.catalog().workerDefaultRoleId, catalog.workerDefaultRoleId); }
     finally { reopened.close(); }
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 });
 
-test("migration refuses a pre-existing Manager name without a partial rename or clone", async () => {
-  const root = await mkdtemp(join(tmpdir(), "stack-role-name-conflict-"));
+test("an older Role catalog fails closed without changing its schema or records", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stack-role-older-catalog-"));
+  const store = new RoleStore(root);
+  const managerId = store.catalog().defaultRoleId!;
+  store.close();
   try {
-    const initial = new RoleStore(root);
-    let catalog = initial.catalog();
-    const oldDefault = catalog.defaultRoleId!;
-    const oldWorker = catalog.workerDefaultRoleId!;
-    initial.role(oldDefault).update(0, { name: "Original" });
-    catalog = initial.catalog();
-    catalog = initial.createRole(catalog.revision, "Manager");
-    const existingManager = catalog.roles.at(-1)!.id;
-    initial.close();
     const db = new DatabaseSync(join(root, "roles.sqlite"));
-    db.exec("PRAGMA foreign_keys = OFF");
-    db.exec("UPDATE role_catalog SET worker_default_role_id = NULL; ALTER TABLE role_catalog DROP COLUMN worker_default_role_id");
-    db.prepare("DELETE FROM roles WHERE id = ?").run(oldWorker);
-    const priorRevision = (db.prepare("SELECT revision FROM role_catalog").get() as { revision: number }).revision;
+    db.exec("ALTER TABLE role_catalog DROP COLUMN worker_default_role_id");
     db.close();
-    assert.throws(() => new RoleStore(root), /existing Manager Role/);
+    assert.throws(() => new RoleStore(root), /offline replacement or conversion/);
     const checked = new DatabaseSync(join(root, "roles.sqlite"));
     try {
-      assert.deepEqual(checked.prepare("SELECT id, name FROM roles ORDER BY rowid").all().map((row) => ({ ...row })), [
-        { id: oldDefault, name: "Original" }, { id: existingManager, name: "Manager" },
-      ]);
-      assert.equal((checked.prepare("SELECT revision FROM role_catalog").get() as { revision: number }).revision, priorRevision);
+      assert.equal((checked.prepare("SELECT default_role_id FROM role_catalog").get() as { default_role_id: string }).default_role_id, managerId);
+      assert.equal(checked.prepare("PRAGMA table_info(role_catalog)").all().some((column) => column.name === "worker_default_role_id"), false);
     } finally { checked.close(); }
+
+    const singleton = join(root, "singleton");
+    await mkdir(singleton);
+    const old = new DatabaseSync(join(singleton, "roles.sqlite"));
+    old.exec("CREATE TABLE revision (singleton INTEGER PRIMARY KEY, value INTEGER NOT NULL); INSERT INTO revision VALUES (1, 2)");
+    old.close();
+    assert.throws(() => new RoleStore(singleton), /offline replacement or conversion/);
+    const unchanged = new DatabaseSync(join(singleton, "roles.sqlite"));
+    try {
+      assert.equal((unchanged.prepare("SELECT value FROM revision").get() as { value: number }).value, 2);
+      assert.equal(unchanged.prepare("SELECT name FROM sqlite_master WHERE name = 'roles'").get(), undefined);
+    } finally { unchanged.close(); }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
