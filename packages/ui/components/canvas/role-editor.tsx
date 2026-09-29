@@ -1,8 +1,9 @@
 "use client";
 
-import { useId, useRef, useState } from "react";
-import { FilePenLineIcon, FolderIcon, PlusIcon, XIcon } from "lucide-react";
+import { Fragment, useId, useRef, useState } from "react";
+import { FilePenLineIcon, FolderIcon, PlusIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
@@ -11,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   addedIds,
   approxTokens,
+  blankRoleText,
   categoryText,
   copyTitle,
   descriptionLimit,
@@ -25,6 +27,9 @@ import {
   fragmentText,
   keepDraft,
   moveIndex,
+  roleErrorText,
+  roleNameIssue,
+  roleText,
   titleLimit,
   utf8Bytes,
   yieldDraft,
@@ -33,10 +38,10 @@ import {
 import type { RoleCategory, RoleFragment, RoleSnapshot } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { errorMessage } from "./auth-actions";
-import { Empty, Time } from "./primitives";
+import { CopyButton, Empty, Time } from "./primitives";
 import { useStack, useWorkbench } from "./provider";
-import { targetKey, useRoleActions, type RoleTarget } from "./role-actions";
-import { ConflictNotice, EditorFrame, Gone, hintClass, labelClass, RecordMenu, SaveBar, saveKeys, useDraft, useFocusField } from "./role-editor-parts";
+import { targetKey, useRoleActions, useRoleView, type RoleTarget } from "./role-actions";
+import { ConflictNotice, EditorFrame, fieldLabels, Gone, hintClass, labelClass, RecordMenu, SaveBar, saveKeys, useDraft, useFocusField } from "./role-editor-parts";
 import { McpServerEditor, NewMcpServerEditor, NewProjectEditor, NewSkillEditor, ProjectEditor, SkillEditor } from "./role-resource-editor";
 
 const blankText = { title: "", description: "", body: "" };
@@ -48,12 +53,26 @@ const stateTone: Record<FragmentState, string> = {
   empty: "bg-warning/15 text-warning",
 };
 
-/** The one editing surface for Role records. Text edits are drafts until saved; switches and moves apply at once. */
+/**
+ * The one editing surface for Role records and Role details. Text edits are drafts until saved; switches and moves
+ * apply at once. It shows the selected Role's target, and each Role keeps its own.
+ */
 export function RoleEditorWindow() {
   const { role } = useStack();
-  const { target } = useRoleActions();
+  const { target, roleId } = useRoleActions();
+  const view = useRoleView();
+  if (target?.kind === "new-role") return <NewRoleEditor />;
+  if (view.state === "missing" && roleId) return <DeletedRoleEditor id={roleId} />;
+  if (view.blank) return <EditorFrame empty unscoped><Empty icon={FilePenLineIcon} title={view.blank} /></EditorFrame>;
   if (!target) return <EditorFrame empty><Empty icon={FilePenLineIcon} title={role.data?.categories.length ? "Choose a record to edit" : "Nothing to edit yet"} /></EditorFrame>;
+  // The Role keys the editor, so state made for one never carries over to another.
+  return <Fragment key={roleId}>{editorFor(target)}</Fragment>;
+}
+
+function editorFor(target: RoleTarget) {
   switch (target.kind) {
+    case "role": return <RoleDetailsEditor key={target.id} id={target.id} />;
+    case "new-role": return <NewRoleEditor />;
     case "fragment": return <FragmentEditor key={target.id} id={target.id} />;
     case "category": return <CategoryEditor key={target.id} id={target.id} />;
     case "new-fragment": return <NewFragmentEditor target={target} />;
@@ -392,6 +411,168 @@ function NewCategoryEditor() {
         {error ? <p role="alert" className="px-0.5 text-[0.72rem] text-pretty text-destructive">{error}</p> : null}
         <Button type="button" size="xs" variant="ghost" className="self-start text-muted-foreground" onClick={cancel}>Discard</Button>
       </form>
+    </EditorFrame>
+  );
+}
+
+/* ─── Roles ──────────────────────────────────────────────────────────── */
+
+function RoleFields({ id, value, set, issue, hint }: { id: string; value(field: string): string; set(field: string, value: string): void; issue: string | null; hint: string }) {
+  const name = value("name");
+  return (
+    <>
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={`${id}-name`} className={labelClass}>Name</label>
+        <Input id={`${id}-name`} value={name} maxLength={titleLimit} placeholder="Researcher" autoComplete="off" spellCheck={false}
+          aria-invalid={issue && name ? true : undefined} aria-describedby={`${id}-name-hint`}
+          onChange={(event) => set("name", event.target.value)} className="h-8" />
+        <p id={`${id}-name-hint`} className={cn(hintClass, issue && name && "text-destructive")}>{issue && name ? issue : hint}</p>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={`${id}-description`} className={labelClass}>Description<span className="font-normal"> · optional</span></label>
+        <Textarea id={`${id}-description`} value={value("description")} maxLength={descriptionLimit} rows={3}
+          placeholder="What this Role is for, and who should use it" aria-describedby={`${id}-description-hint`}
+          onChange={(event) => set("description", event.target.value)} className="max-h-40 min-h-16 resize-none text-[0.8rem] md:text-[0.8rem]" />
+        <p id={`${id}-description-hint`} className={hintClass}>Only people see this. It never reaches a Bot.</p>
+      </div>
+    </>
+  );
+}
+
+const nameHint = "Names are unique among Roles; letter case is ignored.";
+
+/** Renames a Role or edits its description. It is saved with the Role's revision, and never changes the default. */
+function RoleDetailsEditor({ id }: { id: string }) {
+  const { roleCatalog, role, status } = useStack();
+  const actions = useRoleActions();
+  const { select } = useWorkbench();
+  const view = useRoleView();
+  const formId = useId();
+  const [error, setError] = useState<string | null>(null);
+  const found = roleCatalog.data?.roles.find((item) => item.id === id) ?? null;
+  const key = `role:${id}`;
+  const draft = useDraft(key, found ? roleText(found) : blankRoleText);
+  const connected = status.roles === "open";
+  const saving = actions.pending.has(`save:${key}`);
+  if (!found) return <EditorFrame empty><Empty icon={FilePenLineIcon} title={role.error ? "Role unavailable" : "Reading Role…"} /></EditorFrame>;
+
+  const dirty = Object.keys(draft.changes).length > 0;
+  const issue = roleNameIssue(draft.value("name"), roleCatalog.data, id);
+  const save = () => {
+    if (!dirty || issue || draft.conflicts.length || saving || !connected) return;
+    const pendingDraft = draft.draft;
+    setError(null);
+    actions.write("role_update", (snapshot) => {
+      const current = roleText(snapshot);
+      if (draftConflicts(pendingDraft, current).length) return "It changed elsewhere while saving. Choose which version to keep.";
+      const { name, ...rest } = draftChanges(pendingDraft, current);
+      return { ...rest, ...(name !== undefined ? { name: name.trim() } : {}) };
+    }, `save:${key}`).then(() => draft.clear(), (cause) => setError(roleErrorText(errorMessage(cause))));
+  };
+
+  return (
+    <EditorFrame subtitle="details"
+      footer={<SaveBar dirty={dirty} conflicts={draft.conflicts.length} pending={saving} invalid={issue} saveLabel="Save" onSave={save} onRevert={() => { draft.clear(); setError(null); }} />}
+      actions={<RecordMenu label={found.name} onInspect={() => select({ kind: "role", id })} onDelete={() => actions.confirmDeleteRole(id)}
+        deleteBlocked={view.isDefault ? "Make another Role default first" : undefined} />}>
+      <form className="flex flex-col gap-3" aria-label={`Edit Role ${found.name}`} onSubmit={(event) => { event.preventDefault(); save(); }} onKeyDown={saveKeys(save)}>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className={cn("rounded px-1.5 py-px text-[0.64rem] font-medium", view.isDefault ? "bg-success/15 text-success" : "bg-muted text-muted-foreground")}>{view.isDefault ? "Default" : "Not the default"}</span>
+          <span className="text-[0.68rem] text-muted-foreground tabular-nums">revision {found.revision}</span>
+          <span className="ml-auto"><Stamps record={found} /></span>
+        </div>
+        <ConflictNotice fields={draft.conflicts} onKeep={() => draft.replace(keepDraft(draft.draft, roleText(found)))} onYield={() => draft.replace(yieldDraft(draft.draft, roleText(found)))} />
+        <RoleFields id={formId} value={draft.value} set={draft.set} issue={issue} hint={nameHint} />
+        {error ? <p role="alert" className="px-0.5 text-[0.72rem] text-pretty text-destructive">{error}</p> : null}
+      </form>
+    </EditorFrame>
+  );
+}
+
+/** A new Role is a draft until created; creating it uses the catalog revision and then selects it. */
+function NewRoleEditor() {
+  const { roleCatalog, status } = useStack();
+  const actions = useRoleActions();
+  const formId = useId();
+  const [error, setError] = useState<string | null>(null);
+  const key = "new-role";
+  const draft = useDraft(key, blankRoleText);
+  const catalog = roleCatalog.data;
+  const connected = status.roles === "open";
+  const creating = actions.pending.has(`save:${key}`);
+  const issue = roleNameIssue(draft.value("name"), catalog);
+  useFocusField(formId, "name");
+
+  const create = () => {
+    if (issue || creating || !connected) return;
+    const { name, description } = { ...blankRoleText, ...draft.draft.values };
+    setError(null);
+    actions.createRole(name, description).catch((cause) => setError(errorMessage(cause)));
+  };
+  const cancel = () => { draft.clear(); actions.open(null); };
+
+  return (
+    <EditorFrame unscoped subtitle="new role"
+      footer={<SaveBar dirty={connected} conflicts={0} pending={creating} invalid={issue} saveLabel="Create role" onSave={create} note="Not created yet" />}
+      actions={<Button size="icon-sm" variant="ghost" aria-label="Discard new role" onClick={cancel}><XIcon /></Button>}>
+      <form className="flex flex-col gap-3" aria-label="New role" onSubmit={(event) => { event.preventDefault(); create(); }} onKeyDown={saveKeys(create)}>
+        <p className={hintClass}>
+          {catalog && !catalog.roles.length
+            ? "This will be the default Role: every Bot launch and new Worker uses it once it exists."
+            : "A new Role starts empty and is not the default. Make it default when it is ready; nothing already running changes."}
+        </p>
+        <RoleFields id={formId} value={draft.value} set={draft.set} issue={issue} hint={nameHint} />
+        {error ? <p role="alert" className="px-0.5 text-[0.72rem] text-pretty text-destructive">{error}</p> : null}
+        <Button type="button" size="xs" variant="ghost" className="self-start text-muted-foreground" onClick={cancel}>Discard</Button>
+      </form>
+    </EditorFrame>
+  );
+}
+
+const draftKinds: Record<string, string> = {
+  role: "Role details", fragment: "Fragment", category: "Category", skill: "Skill", "mcp-server": "MCP server", "trusted-project": "Trusted project",
+  "new-fragment": "New fragment", "new-category": "New category", "new-skill": "New skill", "new-mcp-server": "New MCP server", "new-trusted-project": "New trusted project",
+};
+
+/**
+ * The selected Role was deleted in another window while it held unsaved edits. They are kept readable and
+ * copyable here rather than silently dropped or applied to a different Role.
+ */
+function DeletedRoleEditor({ id }: { id: string }) {
+  const actions = useRoleActions();
+  const view = useRoleView();
+  const name = actions.knownName(id);
+  const entries = Object.entries(actions.drafts).filter(([key]) => key !== "new-role");
+  return (
+    <EditorFrame unscoped subtitle={name ? `${name} · deleted` : "deleted Role"}>
+      <Alert variant="destructive">
+        <TriangleAlertIcon />
+        <AlertTitle>This Role was deleted in another window</AlertTitle>
+        <AlertDescription>
+          Your unsaved edits were not saved and are not applied to any other Role. Copy anything you still need, then discard them{view.defaultRole ? <> to return to “{view.defaultRole.name}”</> : null}.
+        </AlertDescription>
+      </Alert>
+      <ul className="flex flex-col gap-3" aria-label="Unsaved edits">
+        {entries.map(([key, draft]) => {
+          const kind = key.slice(0, key.indexOf(":") < 0 ? key.length : key.indexOf(":"));
+          const title = draft.values.title ?? draft.values.name ?? draft.values.path;
+          return (
+            <li key={key} className="flex flex-col gap-1.5 rounded-xl border bg-background/50 p-2.5">
+              <span className="text-[0.72rem] font-medium">{draftKinds[kind] ?? kind}{title ? <span className="ml-1.5 font-normal text-muted-foreground">{title}</span> : null}</span>
+              {Object.entries(draft.values).map(([field, text]) => (
+                <div key={field} className="group/row flex flex-col gap-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={labelClass}>{fieldLabels[field] ?? field}</span>
+                    <CopyButton value={text} label={`${fieldLabels[field] ?? field} text`} className="opacity-100" />
+                  </div>
+                  <pre className="max-h-48 overflow-auto rounded-lg border bg-background/60 px-2.5 py-2 font-mono text-[0.72rem] leading-relaxed break-words whitespace-pre-wrap">{text}</pre>
+                </div>
+              ))}
+            </li>
+          );
+        })}
+      </ul>
+      <Button variant="outline" size="sm" className="self-start" onClick={() => actions.discardDrafts(id)}>Discard drafts</Button>
     </EditorFrame>
   );
 }

@@ -41,6 +41,8 @@ import {
   formatBytes,
   formatCount,
   fromMcpForm,
+  internalCollision,
+  internalNames,
   keepDraft,
   mcpLiterals,
   mcpText,
@@ -420,10 +422,13 @@ export function NewSkillEditor({ enabled }: { enabled: boolean }) {
 
 /* ─── MCP servers ────────────────────────────────────────────────────── */
 
-/** What blocks saving a server: its name, including a clash with an internal Package API, then its connection. */
+/**
+ * What blocks saving a server: its name, including a clash with a Stack server (an internal Package API), then its
+ * connection. `internal` is every internal name, switched off or not: turning a built-in off frees nothing.
+ */
 function mcpProblems(value: (field: string) => string, others: string[], internal: string[]) {
   const name = value("name");
-  const nameProblem = nameIssue(name, others) ?? (internal.some((item) => item.toLowerCase() === name.toLowerCase()) ? "An internal Package API already uses this name" : null);
+  const nameProblem = nameIssue(name, others) ?? (internalCollision(name, internal) ? "A Stack server already uses this name, even while it is switched off" : null);
   const { issues } = fromMcpForm(draftMcpForm(value("definition")));
   return { nameProblem, issues, invalid: nameProblem ?? issues[0] ?? null };
 }
@@ -561,7 +566,7 @@ function McpFields({ id, value, set, nameProblem }: { id: string; value(field: s
 }
 
 export function McpServerEditor({ id }: { id: string }) {
-  const { role, roleLaunch } = useStack();
+  const { role, roleLaunch, roleInternal } = useStack();
   const actions = useRoleActions();
   const { select } = useWorkbench();
   const formId = useId();
@@ -569,7 +574,7 @@ export function McpServerEditor({ id }: { id: string }) {
   const duplicate = useDuplicate(mcpSpec, id, saved.draft.draft.values);
   if (!saved.found) return <Gone noun="MCP server" draft={saved.draft.draft} onRestore={saved.restore} />;
   const server = saved.found.item;
-  const internal = roleLaunch.data?.internalMcpServers ?? [];
+  const internal = internalNames(roleInternal.data, roleLaunch.data);
   const others = (role.data?.mcpServers ?? []).filter((item) => item.id !== id).map((item) => item.name);
   const { nameProblem, issues, invalid } = mcpProblems(saved.draft.value, others, internal);
   const blocking = roleLaunch.data?.revision === role.data?.revision ? roleLaunch.data?.issues.find((issue) => issue.id === id) : undefined;
@@ -599,11 +604,11 @@ export function McpServerEditor({ id }: { id: string }) {
 }
 
 export function NewMcpServerEditor({ enabled }: { enabled: boolean }) {
-  const { role, roleLaunch } = useStack();
+  const { role, roleLaunch, roleInternal } = useStack();
   const formId = useId();
   const created = useCreate(mcpSpec, enabled);
   useFocusField(formId, "name");
-  const { nameProblem, issues, invalid } = mcpProblems(created.draft.value, (role.data?.mcpServers ?? []).map((item) => item.name), roleLaunch.data?.internalMcpServers ?? []);
+  const { nameProblem, issues, invalid } = mcpProblems(created.draft.value, (role.data?.mcpServers ?? []).map((item) => item.name), internalNames(roleInternal.data, roleLaunch.data));
   const create = () => created.create(invalid);
   return (
     <EditorFrame subtitle="new MCP server"

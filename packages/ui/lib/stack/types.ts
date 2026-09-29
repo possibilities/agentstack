@@ -72,6 +72,8 @@ export type Bot = {
   runningAccount: string | null;
   mainThreadId: string | null;
   recoveryIssue: string | null;
+  /** The Role and revision of its last launch; a record of what was applied, not an assignment. Null ID: legacy launch. */
+  roleId: string | null;
   roleRevision: number | null;
   settings: BotSettings | null;
 };
@@ -153,7 +155,7 @@ export type UsageSnapshot = { atMs: number; inventoryAtMs: number | null; invent
     onDemandEnabled: boolean | null; trial: boolean | null; teamSeat: boolean | null } | null } };
 export type WorkerSession = { id: string; botId: string; threadId: string; accountId: string; provider: WorkerAccount["provider"];
   model: string; effort: string | null; repo: string; cwd: string | null; branch: string | null; baseCommit: string | null;
-  sourceDirty: boolean; roleRevision: number | null; sessionId: string | null; runtimeInstance: string | null;
+  sourceDirty: boolean; roleId: string | null; roleRevision: number | null; sessionId: string | null; runtimeInstance: string | null;
   phase: "preparing" | "idle" | "running" | "awaiting_input" | "cancelling" | "closed" | "failed" | "needs_recovery";
   currentTurnId: string | null; issue: string | null; createdAt: number; updatedAt: number };
 
@@ -492,12 +494,24 @@ export type RoleMcpDefinition =
 export type RoleMcpServer = { id: string; name: string; description: string; definition: RoleMcpDefinition; enabled: boolean };
 /** A canonical project root whose project config Bots launched inside it may load. */
 export type RoleTrustedProject = { id: string; path: string; description: string; enabled: boolean };
+/** A named Role in `roles_snapshot`. `revision` is the Role's own; names are unique ignoring ASCII case. */
+export type Role = { id: string; name: string; description: string; revision: number; createdAt: number | null; updatedAt: number | null };
+/** `roles_snapshot`: Roles in creation order. `revision` is the catalog-wide edit fence, not any Role's. */
+export type RoleCatalog = { revision: number; defaultRoleId: string | null; roles: Role[] };
 /** `role_editor_snapshot`: operator-only definitions; ordinary snapshots and write replies use MCP summaries. */
-export type RoleSnapshot = { revision: number; categories: RoleCategory[]; skills: RoleSkill[]; mcpServers: RoleMcpServer[]; trustedProjects: RoleTrustedProject[] };
+export type RoleSnapshot = Role & { categories: RoleCategory[]; skills: RoleSkill[]; mcpServers: RoleMcpServer[]; trustedProjects: RoleTrustedProject[];
+  /** Internal Package API names switched off for this Role. Not an inventory: an empty list means every configured server is on. */
+  disabledInternalMcpServers: string[] };
 export type RoleSummary = Omit<RoleSnapshot, "mcpServers"> & { mcpServers: Array<Omit<RoleMcpServer, "definition"> & { transport: "http" | "stdio" }> };
+/** What a Role write returns instead of a snapshot: reread the Role for its content. */
+export type RoleReceipt = { roleId: string; revision: number };
 /** `role_preview`: the exact SYSTEM_APPEND.md text for the next launch, with each fragment's [start, end) span. */
-export type RolePreview = { revision: number; rendered: string; bytes: number; limitBytes: number;
+export type RolePreview = { roleId: string; revision: number; rendered: string; bytes: number; limitBytes: number;
   segments: Array<{ categoryId: string; fragmentId: string; start: number; end: number }> };
+/** A configured internal Stack MCP server and whether the Role's later launches connect to it. */
+export type RoleInternalServer = { name: string; enabled: boolean };
+/** `role_internal_mcp_list`: the servers configured now, each with this Role's switch. */
+export type RoleInternalMcp = { roleId: string; revision: number; servers: RoleInternalServer[] };
 
 /** How a Notification was dismissed: once, with the chosen action label or reply text as `response`. */
 export type NotificationOutcome = "closed" | "opened" | "action" | "replied" | "replaced";
@@ -512,10 +526,12 @@ export type NotificationFilter = { dismissed?: boolean; source?: string };
 export type NotificationPages = { filter: NotificationFilter; entries: Notification[]; nextCursor: number | null };
 /** `role_launch_preview`: what the next launch receives besides instructions, matched against given working directories. */
 export type RoleLaunchPreview = {
+  roleId: string;
   revision: number;
   instructions: { bytes: number; limitBytes: number; fragments: number };
   skills: Array<{ id: string; name: string; description: string; files: number; bytes: number }>;
-  internalMcpServers: string[];
+  /** Every configured internal server with this Role's switch; only enabled ones reach a launch. */
+  internalMcpServers: RoleInternalServer[];
   mcpServers: Array<{ id: string; name: string; type: "http" | "stdio" }>;
   config: string;
   trustedProjects: Array<{ id: string; path: string }>;
@@ -744,8 +760,8 @@ export type Snapshot = {
   bots: Resource<Bot[]>;
   botDefaults: Resource<BotSettings>;
   voice: Resource<VoiceCall | null>;
-  role: Resource<RoleSnapshot>;
-  rolePreview: Resource<RolePreview>;
+  /** The Role catalog only: Role-scoped reads need a selected Role ID, which the page chooses after it loads. */
+  roleCatalog: Resource<RoleCatalog>;
   catalog: Resource<PackageDoc[]>;
   endpoints: Record<string, string>;
   /** Null when this server cannot name them, e.g. a random port; older snapshots omit it. */
@@ -785,6 +801,8 @@ export type NodeRef =
   | { kind: "bot"; id: string }
   /** A chat window on the bench, by window ID; it has no inspectable record. */
   | { kind: "chat"; id: string }
+  /** A named Role from the catalog, by Role ID. */
+  | { kind: "role"; id: string }
   | { kind: "category"; id: string }
   | { kind: "fragment"; id: string }
   | { kind: "notification"; id: string }

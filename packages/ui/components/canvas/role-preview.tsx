@@ -4,15 +4,18 @@ import { useEffect, useRef, useState } from "react";
 import { FileTextIcon, TriangleAlertIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { approxTokens, fallbackLimitBytes, fallbackSnapshotLimit, formatBytes, formatCount, previewBytes, previewPieces, projectBots, roleLaunches } from "@/lib/stack/roles";
+import { approxTokens, fallbackLimitBytes, fallbackSnapshotLimit, formatBytes, formatCount, internalCounts, launchHint, launchLabel, previewBytes, previewPieces, projectBots, roleLaunches, type LaunchState } from "@/lib/stack/roles";
 import type { RoleLaunchPreview } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { BotTile, CopyButton, Empty, Meter, NodeLink } from "./primitives";
 import { useStack } from "./provider";
-import { useRoleActions } from "./role-actions";
+import { useRoleActions, useRoleView } from "./role-actions";
+import { DefaultNote } from "./role-catalog";
 import { Section, Window } from "./window";
 
 type View = "instructions" | "launch";
+const launchWord: Record<LaunchState, string> = { current: "Current", older: "Older revision", other: "Other Role", unknown: "Unknown" };
+const launchTone: Record<LaunchState, string> = { current: "bg-success/15 text-success", older: "bg-warning/15 text-warning", other: "bg-warning/15 text-warning", unknown: "bg-muted text-muted-foreground" };
 const resourceKinds = new Set(["skill", "mcp-server", "trusted-project", "new-skill", "new-mcp-server", "new-trusted-project"]);
 
 /**
@@ -21,20 +24,20 @@ const resourceKinds = new Set(["skill", "mcp-server", "trusted-project", "new-sk
  * trusted projects from `role_launch_preview`.
  */
 export function RolePreviewWindow() {
-  const { role, rolePreview, roleLaunch, bots, workerSessions, status, endpoints } = useStack();
+  const { role, rolePreview, roleLaunch, roleCatalog, bots, workerSessions, status, endpoints } = useStack();
   const actions = useRoleActions();
+  const current = useRoleView();
   const [view, setView] = useState<View>("instructions");
   const editingResource = actions.target ? resourceKinds.has(actions.target.kind) : null;
   // Follow the editor: instruction records show the text, resource records show the launch.
   useEffect(() => { if (editingResource !== null) setView(editingResource ? "launch" : "instructions"); }, [editingResource]);
   const preview = rolePreview.data;
-  const revision = role.data?.revision ?? preview?.revision ?? 0;
   const pieces = preview ? previewPieces(preview, role.data) : [];
   const bytes = preview ? previewBytes(preview) : 0;
   const limit = typeof preview?.limitBytes === "number" ? preview.limitBytes : fallbackLimitBytes;
   const used = Math.min(100, (bytes / limit) * 100);
   const updating = Boolean(preview && role.data && preview.revision !== role.data.revision);
-  const launches = roleLaunches(bots.data, workerSessions.data, revision);
+  const launches = roleLaunches(bots.data, workerSessions.data, roleCatalog.data);
   const focused = actions.target?.kind === "fragment" ? actions.target.id : null;
   const list = useRef<HTMLOListElement>(null);
 
@@ -48,24 +51,23 @@ export function RolePreviewWindow() {
     if (top < 0 || top > scroller.getBoundingClientRect().height - 48) scroller.scrollTop += top / scale - 12;
   }, [focused, preview?.revision]);
 
-  const launched = launches.bots.length || launches.workers.current + launches.workers.behind ? (
-    <Section title="Launched" aside={<span className="text-[0.65rem] text-muted-foreground">Edits reach the next launch</span>}>
+  const hint = (launch: Parameters<typeof launchHint>[0], subject: "bot" | "worker") =>
+    launchHint(launch, current.defaultRole, subject) ?? `${subject === "bot" ? "Launched" : "Started"} with ${launchLabel(launch)}, which is what a launch now would apply`;
+  const stale = [launches.workers.older && `${launches.workers.older} older revision`, launches.workers.other && `${launches.workers.other} other Role`, launches.workers.unknown && `${launches.workers.unknown} unknown Role`].filter(Boolean).join(", ");
+  const launched = launches.bots.length || launches.workers.total ? (
+    <Section title="Launched" aside={<span className="text-[0.65rem] text-muted-foreground">Compared with the default Role</span>}>
       <ul className="flex flex-col gap-1">
-        {launches.bots.map(({ bot, current }) => (
+        {launches.bots.map(({ bot, launch }) => (
           <li key={bot.id} className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-[0.78rem]">
             <BotTile bot={bot} className="size-6 rounded-md text-[0.7rem] [&_svg]:size-3" />
             <NodeLink node={{ kind: "bot", id: bot.id }} label={bot.id} className="font-mono text-[0.75rem]">{bot.id}</NodeLink>
-            <span className="text-[0.68rem] text-muted-foreground tabular-nums">revision {bot.roleRevision}</span>
-            <span className={cn("ml-auto rounded px-1.5 py-px text-[0.64rem] font-medium", current ? "bg-success/15 text-success" : "bg-warning/15 text-warning")}
-              title={current ? "Launched with the current Role" : "Restart this Bot to give it the current Role"}>
-              {current ? "Current" : "Older role"}
-            </span>
+            <span className="min-w-0 truncate text-[0.68rem] text-muted-foreground tabular-nums" title={hint(launch, "bot")}>{launchLabel(launch)}</span>
+            <span className={cn("ml-auto shrink-0 rounded px-1.5 py-px text-[0.64rem] font-medium", launchTone[launch.state])} title={hint(launch, "bot")}>{launchWord[launch.state]}</span>
           </li>
         ))}
-        {launches.workers.current + launches.workers.behind ? (
-          <li className="px-1.5 py-1 text-[0.7rem] text-muted-foreground">
-            {launches.workers.current + launches.workers.behind} open Worker{launches.workers.current + launches.workers.behind === 1 ? "" : "s"}
-            {launches.workers.behind ? ` · ${launches.workers.behind} on an older role` : " · all current"}
+        {launches.workers.total ? (
+          <li className="px-1.5 py-1 text-[0.7rem] text-muted-foreground" title="Open Workers keep the snapshot they started with; new Workers use the default Role">
+            {launches.workers.total} open Worker{launches.workers.total === 1 ? "" : "s"}{stale ? ` · ${stale}` : " · all current"}
           </li>
         ) : null}
       </ul>
@@ -84,19 +86,21 @@ export function RolePreviewWindow() {
   if (view === "launch") {
     const launch = roleLaunch.data;
     return (
-      <Window id="role-preview" title="Preview" subtitle="skills, MCP servers and trust" icon={FileTextIcon} accent="roles"
+      <Window id="role-preview" title="Preview" subtitle={[current.label, "skills, MCP servers and trust"].filter(Boolean).join(" · ")} icon={FileTextIcon} accent="roles"
         status={status.roles} endpoint={endpoints.roles} updatedAt={roleLaunch.at} error={roleLaunch.error} empty={!launch}>
+        <DefaultNote />
         {tabs}
-        {launch ? <LaunchView launch={launch} updating={Boolean(role.data && launch.revision !== role.data.revision)} /> : <Empty icon={FileTextIcon} title="Launch preview unavailable" />}
+        {launch ? <LaunchView launch={launch} updating={Boolean(role.data && launch.revision !== role.data.revision)} /> : <Empty icon={FileTextIcon} title={current.blank ?? (roleLaunch.error ? "Launch preview unavailable" : "Reading launch…")} />}
         {launched}
       </Window>
     );
   }
 
   return (
-    <Window id="role-preview" title="Preview" subtitle="SYSTEM_APPEND.md" icon={FileTextIcon} accent="roles"
+    <Window id="role-preview" title="Preview" subtitle={[current.label, "SYSTEM_APPEND.md"].filter(Boolean).join(" · ")} icon={FileTextIcon} accent="roles"
       status={status.roles} endpoint={endpoints.roles} updatedAt={rolePreview.at} error={rolePreview.error} empty={!preview?.rendered}
       actions={preview?.rendered ? <CopyButton value={preview.rendered} label="rendered instructions" className="opacity-100" /> : undefined}>
+      <DefaultNote />
       {tabs}
       {preview ? (
         <div className="flex flex-col gap-1.5">
@@ -126,7 +130,7 @@ export function RolePreviewWindow() {
           ))}
         </ol>
       ) : (
-        <Empty icon={FileTextIcon} title={preview ? "Nothing renders" : "Preview unavailable"} />
+        <Empty icon={FileTextIcon} title={current.blank ?? (preview ? "Nothing renders" : rolePreview.error ? "Preview unavailable" : "Reading preview…")} />
       )}
     </Window>
   );
@@ -139,6 +143,7 @@ function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating:
   const { bots } = useStack();
   const actions = useRoleActions();
   const used = Math.min(100, (launch.snapshotChars / (launch.snapshotLimitChars || fallbackSnapshotLimit)) * 100);
+  const { on, total } = internalCounts(launch.internalMcpServers);
   const open = (kind: "skill" | "mcp-server" | "trusted-project", id: string) => actions.open({ kind, id });
   return (
     <>
@@ -180,7 +185,7 @@ function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating:
         ) : <p className="px-1.5 text-[0.7rem] text-muted-foreground">No Role skills are enabled.</p>}
         <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">Bots also discover project and bundled skills; the Role adds to them.</p>
       </Section>
-      <Section title="MCP servers" aside={<span className="text-[0.65rem] text-muted-foreground">{launch.internalMcpServers.length} internal · {launch.mcpServers.length} from the Role</span>}>
+      <Section title="MCP servers" aside={<span className="text-[0.65rem] text-muted-foreground tabular-nums">{on} of {total} Stack server{total === 1 ? "" : "s"} on · {launch.mcpServers.length} from the Role</span>}>
         <div className="flex flex-wrap gap-1 px-1.5">
           {launch.mcpServers.map((server) => (
             <button key={server.id} type="button" onClick={() => open("mcp-server", server.id)}
@@ -188,7 +193,9 @@ function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating:
               {server.name}
             </button>
           ))}
-          {launch.internalMcpServers.map((name) => <span key={name} className={cn(chip, "bg-muted text-muted-foreground")} title="Internal Package API, bound to each Bot at launch">{name}</span>)}
+          {launch.internalMcpServers.map((server) => server.enabled
+            ? <span key={server.name} className={cn(chip, "bg-muted text-muted-foreground")} title="Stack server, bound to each launch">{server.name}</span>
+            : <span key={server.name} className={cn(chip, "bg-muted/40 text-muted-foreground/70 line-through")} title="Off for this Role">{server.name}<span className="sr-only"> (off for this Role)</span></span>)}
         </div>
         {launch.config ? (
           <div className="flex flex-col gap-1">

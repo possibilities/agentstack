@@ -2,7 +2,7 @@ import { listPackages, socketCall, socketPath, websocketPort, workspaceRoot } fr
 import { loadCatalog } from "./catalog";
 import { loadResources } from "./resources";
 import type { ContentOrigins } from "./types";
-import type { Account, Bot, BotSettings, Login, ServerStatus, PackageDoc, Resource, RolePreview, RoleSnapshot, Snapshot, UsageSnapshot, VoiceCall, WorkerAccount, WorkerListItem, WorkerLogin, WorkerRuntime } from "./types";
+import type { Account, Bot, BotSettings, Login, ServerStatus, PackageDoc, Resource, RoleCatalog, Snapshot, UsageSnapshot, VoiceCall, WorkerAccount, WorkerListItem, WorkerLogin, WorkerRuntime } from "./types";
 
 function call<T>(pkg: string, name: string, args: Record<string, unknown> = {}): Promise<T> {
   return socketCall(socketPath(pkg), "tools/call", { name, arguments: args }, { timeoutMs: 2_000 }) as Promise<T>;
@@ -67,12 +67,12 @@ export async function loadSnapshot(remoteOrigin?: string, remoteScope?: "view" |
       artifact: `https://${host}:${process.env.STACK_ACCESS_ARTIFACT_PORT ?? 8944}` };
     return { server: empty(), resources: empty(), accounts: empty(), workerAccounts: empty(), workerRuntimes: empty(),
       workerSessions: empty(), usage: empty(), login: empty(), workerLogins: empty(), bots: empty(), botDefaults: empty(),
-      voice: empty(), role: empty(), rolePreview: empty(), catalog: empty(),
+      voice: empty(), roleCatalog: empty(), catalog: empty(),
       endpoints: Object.fromEntries((await listPackages(workspaceRoot(process.cwd()))).filter(({ config }) => config.websocket && !["access", "auth", "browse", "proc"].includes(config.name))
         .map(({ config }) => [config.name, `${remoteOrigin.replace(/^https:/, "wss:")}/websocket`])),
       contentOrigins: origins, remote: { scope: remoteScope, scopes: remoteScopes, contentOrigins: origins } };
   }
-  const [server, resources, accounts, workerAccounts, workerRuntimes, workerSessions, login, workerLogins, bots, botDefaults, voice, role, rolePreview, catalog, usage] = await Promise.all([
+  const [server, resources, accounts, workerAccounts, workerRuntimes, workerSessions, login, workerLogins, bots, botDefaults, voice, roleCatalog, catalog, usage] = await Promise.all([
     resource(() => call<ServerStatus>("serve", "serve_status")),
     resource(() => loadResources((name, args) => call<never>("serve", name, args))),
     resource(async () => (await call<{ accounts: Account[] }>("auth", "account_list")).accounts),
@@ -84,11 +84,11 @@ export async function loadSnapshot(remoteOrigin?: string, remoteScope?: "view" |
     resource(async () => (await call<{ bots: Bot[] }>("bots", "bot_list")).bots),
     resource(() => call<BotSettings>("bots", "bot_defaults_get")),
     resource(async () => (await call<{ call: VoiceCall | null }>("bots", "voice_status")).call),
-    // Credential-bearing editor definitions load over the operator WebSocket, never SSR HTML.
-    Promise.resolve<Resource<RoleSnapshot>>({ data: null, error: null, at: null }),
-    resource(() => call<RolePreview>("roles", "role_preview")),
+    // Only the catalog: it holds no resource bodies or credentials. Every other Role read needs the Role the page
+    // selects, and credential-bearing editor definitions load over the operator WebSocket, never SSR HTML.
+    resource(() => call<RoleCatalog>("roles", "roles_snapshot")),
     resource(() => loadCatalog((name, args) => call("api", name, args))),
     resource(() => call<UsageSnapshot>("usage", "usage_snapshot")),
   ]);
-  return { server, resources, accounts, workerAccounts, workerRuntimes, workerSessions, login, workerLogins, bots, botDefaults, voice, role, rolePreview, catalog, usage, endpoints: await websocketEndpoints(catalog.data), contentOrigins: contentOrigins(process.env) };
+  return { server, resources, accounts, workerAccounts, workerRuntimes, workerSessions, login, workerLogins, bots, botDefaults, voice, roleCatalog, catalog, usage, endpoints: await websocketEndpoints(catalog.data), contentOrigins: contentOrigins(process.env) };
 }

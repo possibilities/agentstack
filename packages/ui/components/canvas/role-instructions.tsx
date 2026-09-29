@@ -57,7 +57,7 @@ import { cn } from "@/lib/utils";
 import { errorMessage } from "./auth-actions";
 import { Empty } from "./primitives";
 import { useStack, useWorkbench } from "./provider";
-import { useRoleActions } from "./role-actions";
+import { useRoleActions, useRoleView } from "./role-actions";
 import { footerButton, Window } from "./window";
 
 type Drag = { kind: "fragment"; id: string } | { kind: "category"; id: string };
@@ -95,6 +95,7 @@ function useCategoryMove() {
 export function RoleInstructionsWindow() {
   const { role, rolePreview, status, endpoints, remote } = useStack();
   const actions = useRoleActions();
+  const view = useRoleView();
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -116,7 +117,7 @@ export function RoleInstructionsWindow() {
   };
 
   return (
-    <Window id="role-instructions" title="Instructions" subtitle={data ? `roles · revision ${data.revision}` : "roles"} icon={ScrollTextIcon} accent="roles"
+    <Window id="role-instructions" title="Instructions" subtitle={[view.label ?? "roles", data ? `revision ${data.revision}` : null].filter(Boolean).join(" · ")} icon={ScrollTextIcon} accent="roles"
       count={counts?.fragments ?? null} status={status.roles} endpoint={endpoints.roles} updatedAt={role.at} error={role.error}
       empty={!data?.categories.length}
       footer={
@@ -158,7 +159,7 @@ export function RoleInstructionsWindow() {
           )}
         </>
       ) : (
-        <Empty icon={ScrollTextIcon} title={data ? "No instructions" : "Role unavailable"} />
+        <Empty icon={ScrollTextIcon} title={view.placeholder(data, role.error, "No instructions")} />
       )}
     </Window>
   );

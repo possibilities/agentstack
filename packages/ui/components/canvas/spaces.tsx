@@ -1,6 +1,6 @@
 "use client";
 
-import { ActivityIcon, BellIcon, CalendarClockIcon, ChartGanttIcon, HammerIcon, BlocksIcon, BotIcon, BoxesIcon, EyeIcon, LibraryIcon, NotebookTextIcon, ChartLineIcon, CpuIcon, FilePenLineIcon, FileTextIcon, FlaskConicalIcon, FolderLockIcon, GaugeIcon, HistoryIcon, InboxIcon, KeyRoundIcon, ListTreeIcon, MegaphoneIcon, MessageSquareWarningIcon, MessagesSquareIcon, PackageIcon, PlugIcon, RadarIcon, RadioIcon, ScanLineIcon, ScrollTextIcon, ServerIcon, SparklesIcon, SquareTerminalIcon, UserCogIcon } from "lucide-react";
+import { ActivityIcon, BellIcon, CalendarClockIcon, ChartGanttIcon, HammerIcon, BlocksIcon, BotIcon, BoxesIcon, EyeIcon, LibraryIcon, NotebookTextIcon, ChartLineIcon, CpuIcon, FilePenLineIcon, FileTextIcon, FlaskConicalIcon, FolderLockIcon, GaugeIcon, HistoryIcon, InboxIcon, KeyRoundIcon, ListTreeIcon, MegaphoneIcon, MessageSquareWarningIcon, MessagesSquareIcon, PackageIcon, PlugIcon, RadarIcon, RadioIcon, ScanLineIcon, ScrollTextIcon, ServerIcon, SparklesIcon, SquareTerminalIcon, UserCogIcon, UsersRoundIcon } from "lucide-react";
 import type { ChatWindows } from "@/lib/stack/chat-windows";
 import type { WorkerWindows } from "@/lib/stack/worker-windows";
 import type { ViewerWindows } from "@/lib/stack/browse-viewers";
@@ -27,6 +27,7 @@ import { InferenceWindow } from "./inference-window";
 import { HostWindow, ProcessesWindow, ResourcesWindow, SamplingWindow } from "./resource-windows";
 import { ActivityWindow, ServerWindow, PackagesWindow } from "./system-windows";
 import { ChatWindow } from "./chat-window";
+import { RoleCatalogWindow } from "./role-catalog";
 import { RoleEditorWindow } from "./role-editor";
 import { RoleInstructionsWindow } from "./role-instructions";
 import { RolePreviewWindow } from "./role-preview";
@@ -112,12 +113,13 @@ export const spaceViews: Record<SpaceId, {
     icon: UserCogIcon,
     accent: "roles",
     windows: () => [
-      { id: "role-instructions", title: "Instructions", icon: ScrollTextIcon, accent: "roles", width: 440, height: 720, column: 0, element: <RoleInstructionsWindow /> },
-      { id: "role-editor", title: "Editor", icon: FilePenLineIcon, accent: "roles", width: 520, height: 760, column: 1, element: <RoleEditorWindow /> },
-      { id: "role-preview", title: "Preview", icon: FileTextIcon, accent: "roles", width: 460, height: 720, column: 2, element: <RolePreviewWindow /> },
-      { id: "role-skills", title: "Skills", icon: BlocksIcon, accent: "roles", width: 400, height: 300, column: 3, element: <RoleSkillsWindow /> },
-      { id: "role-mcp-servers", title: "MCP servers", icon: PlugIcon, accent: "roles", width: 400, height: 280, column: 3, element: <RoleMcpServersWindow /> },
-      { id: "role-projects", title: "Trusted projects", icon: FolderLockIcon, accent: "roles", width: 400, height: 240, column: 3, element: <RoleProjectsWindow /> },
+      { id: "role-catalog", title: "Roles", icon: UsersRoundIcon, accent: "roles", width: 380, height: 560, column: 0, element: <RoleCatalogWindow /> },
+      { id: "role-instructions", title: "Instructions", icon: ScrollTextIcon, accent: "roles", width: 440, height: 720, column: 1, element: <RoleInstructionsWindow /> },
+      { id: "role-editor", title: "Editor", icon: FilePenLineIcon, accent: "roles", width: 520, height: 760, column: 2, element: <RoleEditorWindow /> },
+      { id: "role-preview", title: "Preview", icon: FileTextIcon, accent: "roles", width: 460, height: 720, column: 3, element: <RolePreviewWindow /> },
+      { id: "role-skills", title: "Skills", icon: BlocksIcon, accent: "roles", width: 400, height: 300, column: 4, element: <RoleSkillsWindow /> },
+      { id: "role-mcp-servers", title: "MCP servers", icon: PlugIcon, accent: "roles", width: 400, height: 440, column: 4, element: <RoleMcpServersWindow /> },
+      { id: "role-projects", title: "Trusted projects", icon: FolderLockIcon, accent: "roles", width: 400, height: 240, column: 4, element: <RoleProjectsWindow /> },
     ],
   },
   inbox: {

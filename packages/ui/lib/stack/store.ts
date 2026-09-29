@@ -8,7 +8,8 @@ import type { ContentArtifact, ContentCollection, ContentDocument, ContentItem, 
 import { scrapeCallError } from "./scrape";
 import type { ScrapeCanaryRun, ScrapePreset, ScrapeQueue, ScrapeReplay, ScrapeStatus } from "./types";
 import type { AgentBrowserInstallation, AgentBrowserStatus, BrowserController, BrowserHandoff, BrowserProfile, BrowserStatus, BrowserToolchain, HypemanInstallation } from "./types";
-import type { Account, AttentionItem, AttentionMessage, AttentionPage, AttentionRun, AttentionStatus, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, ServerResources, ServerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RoleLaunchPreview, RolePreview, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerListItem, WorkerLogin, WorkerRuntime, WorkerStatus } from "./types";
+import type { Account, AttentionItem, AttentionMessage, AttentionPage, AttentionRun, AttentionStatus, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, ServerResources, ServerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RoleCatalog, RoleInternalMcp, RoleLaunchPreview, RolePreview, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerListItem, WorkerLogin, WorkerRuntime, WorkerStatus } from "./types";
+import { acceptCatalog, acceptRoleRead, roleReadOf } from "./roles";
 import { brainCallError, jobViews, mergeJobs, submissionLabel, terminalStates, type BrainJobView, type CallError } from "./brain";
 import type { BrainAdmission, BrainJob, BrainJobRecord, BrainJobStats, BrainShareState, BrainSource, BrainStats, BrainStatus, BrainTag } from "./types";
 import type { ProcRun, ProcScheduleListItem, ProcStatus } from "./types";
@@ -40,8 +41,18 @@ export type StackState = Snapshot & {
   notifyCounts: Resource<NotificationCounts>;
   /** Latest known record per notification ID, from any page, read or write. */
   notificationRecords: Record<string, Notification>;
-  /** What the next launch receives besides instructions, matched against every known Bot working directory. */
+  /**
+   * The Role every Role-scoped resource below reads: the page's selection, set with `selectRole`. Each of them is
+   * fenced by this ID as well as by revision, and cleared to a loading state whenever it changes.
+   */
+  roleId: string | null;
+  /** The selected Role, complete with connection definitions, for the operator's editor. */
+  role: Resource<RoleSnapshot>;
+  rolePreview: Resource<RolePreview>;
+  /** What the selected Role's launch receives besides instructions, matched against every known Bot working directory. */
   roleLaunch: Resource<RoleLaunchPreview>;
+  /** The internal Stack MCP servers configured now, each with the selected Role's switch. */
+  roleInternal: Resource<RoleInternalMcp>;
   signalStatus: Resource<AttentionStatus>;
   /** Bumped when attention records may have changed (a new `changeSeq` or a reconnect); Signal views re-read on it. */
   signalGeneration: number;
@@ -140,7 +151,7 @@ const contentWrites = new Set(["collection_create", "collection_update", "collec
 const itemPage = 100;
 export const contentDocumentLimit = 200;
 
-type ResourceKey = ContentKey | "access" | "server" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "role" | "rolePreview" | "roleLaunch" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts" | "signalStatus" | "scrapeStatus" | "scrapePresets" | "scrapeCanaries" | "scrapeQueue"
+type ResourceKey = ContentKey | "access" | "server" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "roleCatalog" | "role" | "rolePreview" | "roleLaunch" | "roleInternal" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts" | "signalStatus" | "scrapeStatus" | "scrapePresets" | "scrapeCanaries" | "scrapeQueue"
   | "browserProfiles" | "browserControllers" | "browserHandoffs" | "browserToolchain"
   | "brainStatus" | "brainStats" | "brainTags" | "brainJobStats" | "brainJobs" | "brainSources"
   | "procSchedules" | "procRuns" | "procStatus";
@@ -169,6 +180,22 @@ function isRoleSnapshot(value: unknown): value is RoleSnapshot {
   return typeof value === "object" && value !== null && "revision" in value && "categories" in value;
 }
 
+function isRoleCatalog(value: unknown): value is RoleCatalog {
+  return typeof value === "object" && value !== null && "revision" in value && "roles" in value && "defaultRoleId" in value;
+}
+
+function isRoleInternal(value: unknown): value is RoleInternalMcp {
+  return typeof value === "object" && value !== null && "revision" in value && "roleId" in value && "servers" in value;
+}
+
+/** The resources that read one Role, in the order a selection rereads them. */
+const roleKeys = ["role", "rolePreview", "roleLaunch", "roleInternal"] as const;
+type RoleKey = typeof roleKeys[number];
+type RoleData = RoleSnapshot | RolePreview | RoleLaunchPreview | RoleInternalMcp;
+const isRoleKey = (key: ResourceKey): key is RoleKey => (roleKeys as readonly string[]).includes(key);
+/** Catalog operations answer with the whole catalog, which replaces the held one when it is not older. */
+const catalogReplies = new Set(["roles_snapshot", "role_create", "role_set_default", "role_delete"]);
+
 const maxEvents = 250;
 
 /** Distinct absolute Bot working directories, newline-joined so a change is one string comparison. */
@@ -183,6 +210,8 @@ export class StackStore {
   private main = new Map<string, Channel>();
   private scopedChannels = new Map<string, Channel>();
   private inflight = new Map<ResourceKey, Promise<void>>();
+  /** The Role each in-flight Role-scoped read was started for. */
+  private inflightRole = new Map<ResourceKey, string | null>();
   private dirty = new Set<ResourceKey>();
   private seq = 0;
   private scopedBots = true;
@@ -216,7 +245,8 @@ export class StackStore {
       inferRequests: { data: null, error: null, at: null }, inferModels: { data: null, error: null, at: null },
       notificationFilter: { dismissed: false }, notifications: { data: null, error: null, at: null },
       notifyCounts: { data: null, error: null, at: null }, notificationRecords: {},
-      roleLaunch: { data: null, error: null, at: null },
+      roleId: null, role: { data: null, error: null, at: null }, rolePreview: { data: null, error: null, at: null },
+      roleLaunch: { data: null, error: null, at: null }, roleInternal: { data: null, error: null, at: null },
       signalStatus: { data: null, error: null, at: null }, signalGeneration: 0, signalRecords: { items: {}, messages: {}, runs: {} },
       contentDocuments: { data: null, error: null, at: null }, contentTags: { data: null, error: null, at: null },
       contentLibrary: { data: null, error: null, at: null }, contentItems: { data: null, error: null, at: null },
@@ -298,7 +328,8 @@ export class StackStore {
     // Signal publishes signal_changed after every source scan while processing is enabled. The
     // status read is cheap; list views re-read only when its changeSeq says records may have changed.
     open("signal", () => this.refresh("signalStatus"), () => this.refresh("signalStatus"), ["signal_changed"], { silent: ["signal_changed"] });
-    const roleReads = () => { this.refresh("role"); this.refresh("rolePreview"); this.refresh("roleLaunch"); };
+    // role_changed is an invalidation notice: the catalog changed, and so may the selected Role.
+    const roleReads = () => { this.refresh("roleCatalog"); this.refreshRole(); };
     open("roles", roleReads, roleReads, ["role_changed"]);
     const notify = () => { this.refresh("notifications"); this.refresh("notifyCounts"); this.refreshWatchedNotifications(); };
     open("notify", notify, notify, ["notify_changed"]);
@@ -395,14 +426,59 @@ export class StackStore {
     }
     if (pkg === "bots" && (name === "voice_dial" || name === "voice_hangup")) this.refresh("voice");
     if (pkg === "notify" && isNotification(result)) this.upsertNotifications([result]);
-    // Only the operator read includes definitions; never replace editor state with a summarized write reply.
-    if (pkg === "roles" && name === "role_editor_snapshot" && isRoleSnapshot(result) && result.revision >= (this.state.role?.data?.revision ?? -1)) {
-      this.set({ role: { data: result, error: null, at: Date.now() } });
-      this.refresh("rolePreview");
-      this.refresh("roleLaunch");
-    }
+    if (pkg === "roles") this.applyRoleReply(name, result);
     return result;
   };
+
+  /**
+   * Take a Roles reply the page did not ask `refresh` for, under the same fences. Only the operator read includes
+   * definitions, so a write's compact receipt is never merged into held data: writes reread instead.
+   */
+  private applyRoleReply(name: string, result: unknown): void {
+    const now = Date.now();
+    if (name === "role_editor_snapshot" && isRoleSnapshot(result)) {
+      if (!acceptRoleRead(this.state.roleId, this.state.role.data && roleReadOf(this.state.role.data), roleReadOf(result))) return;
+      this.set({ role: { data: result, error: null, at: now } });
+      // Whatever a write changed shows in the derived views and in this Role's revision in the catalog.
+      this.refresh("roleCatalog"); this.refresh("rolePreview"); this.refresh("roleLaunch"); this.refresh("roleInternal");
+    } else if (name === "role_internal_mcp_list" && isRoleInternal(result)) {
+      if (acceptRoleRead(this.state.roleId, this.state.roleInternal.data && roleReadOf(this.state.roleInternal.data), roleReadOf(result))) this.set({ roleInternal: { data: result, error: null, at: now } });
+    } else if (catalogReplies.has(name) && isRoleCatalog(result)) {
+      if (acceptCatalog(this.state.roleCatalog.data, result)) this.applyCatalog({ data: result, error: null, at: now });
+    }
+  }
+
+  /** Hold a catalog. A selected Role it no longer lists loses its data at once; one it lists gets any read still missing. */
+  private applyCatalog(next: Resource<RoleCatalog>): void {
+    this.set({ roleCatalog: next });
+    if (!next.data) return;
+    const { roleId } = this.state;
+    if (roleId && !next.data.roles.some((role) => role.id === roleId)) {
+      const empty = { data: null, error: null, at: null };
+      this.set({ role: empty, rolePreview: empty, roleLaunch: empty, roleInternal: empty });
+    } else if (roleId) for (const key of roleKeys) if (!this.state[key].data) this.refresh(key);
+  }
+
+  /**
+   * Point every Role-scoped resource at another Role (or none). What was loaded for the old one is cleared
+   * rather than shown under the new one's name, and a read still in flight for it is dropped when it lands.
+   */
+  selectRole = (roleId: string | null): void => {
+    if (roleId === this.state.roleId) return;
+    const empty = { data: null, error: null, at: null };
+    this.set({ roleId, role: empty, rolePreview: empty, roleLaunch: empty, roleInternal: empty });
+    this.refreshRole();
+  };
+
+  private refreshRole(): void {
+    for (const key of roleKeys) this.refresh(key);
+  }
+
+  /** Whether the selected Role exists as far as the loaded catalog says; reads wait until it does. */
+  private roleReadable(): boolean {
+    const { roleId, roleCatalog } = this.state;
+    return roleId !== null && Boolean(roleCatalog.data?.roles.some((role) => role.id === roleId));
+  }
 
   /** Ask the Extract window to use a preset; it keeps the URL already entered. */
   composeScrape = (preset: string, mode: "page" | "links"): void => {
@@ -588,8 +664,12 @@ export class StackStore {
     this.set({ signalGeneration: this.state.signalGeneration + 1 });
   }
 
-  /** A fresh Role read that starts now, e.g. after a stale-revision refusal; it is applied like a write's result. */
-  reloadRole = (): Promise<RoleSnapshot> => this.call<RoleSnapshot>("roles", "role_editor_snapshot");
+  /** A fresh read of one Role that starts now, e.g. after a write or a stale-revision refusal. It is applied like any read if that Role is still selected, and returned either way. */
+  reloadRole = (roleId: string): Promise<RoleSnapshot> => this.call<RoleSnapshot>("roles", "role_editor_snapshot", { roleId });
+  /** The same for the internal MCP list, whose revision is the Role's. */
+  reloadRoleInternal = (roleId: string): Promise<RoleInternalMcp> => this.call<RoleInternalMcp>("roles", "role_internal_mcp_list", { roleId });
+  /** The same for the catalog, whose revision is its own. */
+  reloadRoleCatalog = (): Promise<RoleCatalog> => this.call<RoleCatalog>("roles", "roles_snapshot");
 
   /** Notify writes. Lists and counts are re-read after each attempt, since a lost acknowledgement may still have dismissed. */
   notify = <T>(name: "notification_dismiss" | "notification_dismiss_all", args: Record<string, unknown>): Promise<T> =>
@@ -990,17 +1070,29 @@ export class StackStore {
   }
 
   private refresh(key: ResourceKey): void {
-    if (this.inflight.has(key)) {
+    // Role reads wait for a selected Role the catalog lists; the catalog's arrival and a selection start them.
+    if (isRoleKey(key) && !this.roleReadable()) return;
+    // A read still in flight for another Role does not hold up this one; it is dropped when it lands.
+    if (this.inflight.has(key) && (!isRoleKey(key) || this.inflightRole.get(key) === this.state.roleId)) {
       this.dirty.add(key);
       return;
     }
+    // The Role a Role-scoped read was started for; its result belongs to no other.
+    const scope = isRoleKey(key) ? this.state.roleId : null;
     const run = this.load(key)
       .then((data) => ({ data, error: null, at: Date.now() }), (error: Error) => ({ data: this.state[key]?.data ?? null, error: error.message, at: Date.now() }))
       .then((next) => {
-        // A read that started before a write it lost the race to must not roll the Role back.
-        const newer = (key === "role" || key === "rolePreview" || key === "roleLaunch") && (this.state[key]?.data as { revision: number } | null)?.revision;
+        if (isRoleKey(key)) {
+          // Selection moved on, or the Role vanished, while this read was in flight: drop it, data or error alike.
+          // The read started for the new selection serves it.
+          if (scope !== this.state.roleId || !this.roleReadable()) return;
+          // A response for any other Role is dropped even at a higher revision; the same Role never rolls back.
+          const held = this.state[key].data as RoleData | null;
+          if (next.data && !acceptRoleRead(this.state.roleId, held && roleReadOf(held), roleReadOf(next.data as RoleData))) return;
+        }
+        // A catalog read that started before a write it lost the race to must not roll the catalog back.
+        if (key === "roleCatalog" && next.data && !acceptCatalog(this.state.roleCatalog.data, next.data as RoleCatalog)) return;
         const cwds = key === "bots" ? botCwds(this.state.bots.data) : "";
-        if (typeof newer === "number" && next.data && (next.data as { revision: number }).revision < newer) return;
         // Pages for a filter the Inbox has since left are dropped; the follow-up read serves the new one.
         if (key === "notifications" && next.data && (next.data as NotificationPages).filter !== this.state.notificationFilter) { this.dirty.add(key); return; }
         if (key === "notifications" && next.data) this.upsertNotifications((next.data as NotificationPages).entries);
@@ -1009,7 +1101,8 @@ export class StackStore {
         // Jobs for a tab the window has since left are dropped; the follow-up read serves the new one.
         if (key === "brainJobs" && next.data && ((next.data as StackState["brainJobs"]["data"])!.view !== this.state.brainJobView.view || (next.data as StackState["brainJobs"]["data"])!.run !== this.state.brainJobView.run)) { this.dirty.add(key); return; }
         if (key === "contentItems" && next.data && scopeKey((next.data as ContentItemPage).scope) !== scopeKey(this.itemScope)) { this.dirty.add(key); return; }
-        this.set({ [key]: next } as Partial<StackState>);
+        if (key === "roleCatalog") this.applyCatalog(next as Resource<RoleCatalog>);
+        else this.set({ [key]: next } as Partial<StackState>);
         if (key === "signalStatus" && next.data && (next.data as AttentionStatus).changeSeq !== changeSeq) this.bumpSignal();
         if (key === "login") this.reconcileAttempt();
         if (key === "workerLogins") this.reconcileWorkerAttempts();
@@ -1017,13 +1110,19 @@ export class StackStore {
         // Trusted project matches depend on where Bots run.
         if (key === "bots" && botCwds(this.state.bots.data) !== cwds) this.refresh("roleLaunch");
         if (key === "workerAccounts") this.reconcileCatalogs(true);
+        // Manifest changes do not advance a Role's revision, so a fresh discovery may mean a different internal list.
+        if (key === "catalog") this.refresh("roleInternal");
         if (key === "brainStats" && next.data) this.rememberBrainDocuments((next.data as BrainStats).recent);
       })
       .finally(() => {
+        // A newer read for another Role owns the entry now.
+        if (this.inflight.get(key) !== run) return;
         this.inflight.delete(key);
+        this.inflightRole.delete(key);
         if (this.dirty.delete(key)) this.refresh(key);
       });
     this.inflight.set(key, run);
+    if (isRoleKey(key)) this.inflightRole.set(key, scope);
   }
 
   private load(key: ResourceKey): Promise<Resource<unknown>["data"]> {
@@ -1044,9 +1143,11 @@ export class StackStore {
       case "bots": return call<{ bots: Bot[] }>("bots", "bot_list").then((result) => result.bots);
       case "botDefaults": return call<BotSettings>("bots", "bot_defaults_get");
       case "voice": return call<{ call: VoiceCall | null }>("bots", "voice_status").then((result) => result.call);
-      case "role": return call<RoleSnapshot>("roles", "role_editor_snapshot");
-      case "rolePreview": return call<RolePreview>("roles", "role_preview");
-      case "roleLaunch": return call<RoleLaunchPreview>("roles", "role_launch_preview", { cwds: botCwds(this.state.bots.data).split("\n").filter(Boolean) });
+      case "roleCatalog": return call<RoleCatalog>("roles", "roles_snapshot");
+      case "role": return call<RoleSnapshot>("roles", "role_editor_snapshot", { roleId: this.state.roleId });
+      case "rolePreview": return call<RolePreview>("roles", "role_preview", { roleId: this.state.roleId });
+      case "roleLaunch": return call<RoleLaunchPreview>("roles", "role_launch_preview", { roleId: this.state.roleId, cwds: botCwds(this.state.bots.data).split("\n").filter(Boolean) });
+      case "roleInternal": return call<RoleInternalMcp>("roles", "role_internal_mcp_list", { roleId: this.state.roleId });
       case "usage": return call<UsageSnapshot>("usage", "usage_snapshot");
       case "catalog": return loadCatalog((name, args) => call<never>("api", name, args)) as Promise<PackageDoc[]>;
       case "inferRequests": return call<{ requests: InferRequestSummary[] }>("infer", "infer_request_list", { limit: inferPage }).then((result) => result.requests);

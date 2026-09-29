@@ -13,7 +13,7 @@ export const spaces: { id: SpaceId; title: string; description: string; key: str
   { id: "accounts", title: "Accounts", description: "Accounts, usage limits, and model catalogs", key: "2" },
   { id: "lab", title: "Lab", description: "Experimental windows for tinkering", key: "3" },
   { id: "system", title: "System", description: "Server, processes, packages, host resources and activity", key: "4" },
-  { id: "roles", title: "Roles", description: "Instructions, skills, MCP servers and trusted projects every new Bot launches with", key: "5" },
+  { id: "roles", title: "Roles", description: "Named Roles and the default new launches use, with each Role's instructions, skills, MCP servers and trusted projects", key: "5" },
   { id: "inbox", title: "Inbox", description: "Notifications to read, answer and dismiss", key: "6" },
   { id: "signal", title: "Signal", description: "What conversations ask of you, and how it was interpreted", key: "7" },
   { id: "content", title: "Content", description: "Vault documents, collections, files and Artifacts", key: "8" },
@@ -72,6 +72,8 @@ export function homeOf(ref: NodeRef): NodeHome {
       return { kind: "space", space: "workers", window: "worker-runtimes" };
     case "chat":
       return { kind: "space", space: "fleet", window: ref.id };
+    case "role":
+      return { kind: "space", space: "roles", window: "role-catalog" };
     case "category":
     case "fragment":
       return { kind: "space", space: "roles", window: "role-instructions" };
@@ -227,7 +229,7 @@ export function parseNodeKey(key: string): NodeRef | null {
     if (dot <= 0 || dot === rest.length - 1) return null;
     return { kind: "operation", pkg: rest.slice(0, dot), id: rest.slice(dot + 1) };
   }
-  if (kind === "access-client" || kind === "access-pairing" || kind === "access-grant" || kind === "access-credential" || kind === "account" || kind === "worker-account" || kind === "worker-catalog" || kind === "usage-account" || kind === "child" || kind === "bot" || kind === "chat" || kind === "category" || kind === "fragment" || kind === "skill" || kind === "mcp-server" || kind === "trusted-project" || kind === "notification" || kind === "attention-item" || kind === "attention-message" || kind === "attention-run" || kind === "package" || kind === "resource" || kind === "process") {
+  if (kind === "access-client" || kind === "access-pairing" || kind === "access-grant" || kind === "access-credential" || kind === "account" || kind === "worker-account" || kind === "worker-catalog" || kind === "usage-account" || kind === "child" || kind === "bot" || kind === "chat" || kind === "role" || kind === "category" || kind === "fragment" || kind === "skill" || kind === "mcp-server" || kind === "trusted-project" || kind === "notification" || kind === "attention-item" || kind === "attention-message" || kind === "attention-run" || kind === "package" || kind === "resource" || kind === "process") {
     return { kind, id: rest };
   }
   // A separate branch keeps each union small enough for TypeScript to check assignability.

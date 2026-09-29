@@ -8,6 +8,7 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
+import { classifyLaunch, launchHint, launchLabel } from "@/lib/stack/roles";
 import { primaryWorker } from "@/lib/stack/worker-windows";
 import type { StackStore } from "@/lib/stack/store";
 import type { WorkerDiff, WorkerDiffFile, WorkerDetail, WorkerPermission, WorkerRecord, WorkerRecordChunk, WorkerRecordPage, WorkerSession, WorkerStatus, WorkerTool, WorkerToolPage, WorkerTranscriptEntry, WorkerTranscriptPage, WorkerTurn, WorkerTurnPage } from "@/lib/stack/types";
@@ -257,7 +258,7 @@ function Chip({ icon: Icon, children, title, copy, label, tone }: { icon: React.
 
 /** Identity, requested versus observed settings, worktree and what the Worker is waiting on. */
 function Summary({ worker, status, statusError }: { worker: WorkerSession; status: WorkerStatus | null; statusError: string | null }) {
-  const { workerAccounts, bots, role } = useStack();
+  const { workerAccounts, bots, roleCatalog } = useStack();
   const now = useNow();
   const labels = workerAccountLabels(workerAccounts.data);
   const turn = status?.turn ?? null;
@@ -266,7 +267,8 @@ function Summary({ worker, status, statusError }: { worker: WorkerSession; statu
   const attention = workerAttention(worker);
   const pending = (status?.pending ?? []).filter((request) => request.state === "pending");
   const bot = bots.data?.some((item) => item.id === worker.botId);
-  const revision = role.data?.revision ?? null;
+  const launch = classifyLaunch(worker, roleCatalog.data);
+  const defaultRole = roleCatalog.data?.roles.find((item) => item.id === roleCatalog.data?.defaultRoleId) ?? null;
   const active = turn && ["queued", "running", "awaiting_input", "cancelling"].includes(turn.phase);
   const started = turn ? turn.dispatchedAt ?? turn.createdAt : null;
   return (
@@ -291,10 +293,10 @@ function Summary({ worker, status, statusError }: { worker: WorkerSession; statu
         <Chip icon={FolderGitIcon} title={worker.cwd ?? worker.repo} copy={worker.cwd ?? worker.repo} label="worktree path">{worker.repo.split("/").filter(Boolean).at(-1) ?? worker.repo}</Chip>
         {worker.branch ? <Chip icon={GitBranchIcon} title={worker.branch} copy={worker.branch} label="branch">{worker.baseCommit ? `from ${worker.baseCommit.slice(0, 7)}` : worker.branch}</Chip> : null}
         {worker.sourceDirty ? <Chip icon={TriangleAlertIcon} tone="warning" title="The source checkout had uncommitted changes when this Worker started; its worktree does not include them">source was dirty</Chip> : null}
-        {worker.roleRevision !== null ? (
-          <Chip icon={ScrollTextIcon} tone={revision !== null && revision !== worker.roleRevision ? "warning" : undefined}
-            title={revision !== null && revision !== worker.roleRevision ? `Started with Role revision ${worker.roleRevision}; the Role is now at ${revision}` : "Started with the current Role"}>
-            role r{worker.roleRevision}{revision !== null && revision !== worker.roleRevision ? " · older" : ""}
+        {launch ? (
+          <Chip icon={ScrollTextIcon} tone={launch.state === "current" ? undefined : launch.state === "unknown" ? undefined : "warning"}
+            title={launchHint(launch, defaultRole, "worker") ?? `Started with ${launchLabel(launch)}, the default Role at its current revision`}>
+            {launchLabel(launch)}{launch.state === "older" ? " · older" : launch.state === "other" ? " · not default" : ""}
           </Chip>
         ) : null}
       </div>

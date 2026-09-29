@@ -17,20 +17,24 @@ import { draftChanges, draftConflicts, editDraft, emptyDraft, type Draft } from 
 import { cn } from "@/lib/utils";
 import { Empty } from "./primitives";
 import { useStack } from "./provider";
-import { useRoleActions } from "./role-actions";
+import { useRoleActions, useRoleView } from "./role-actions";
+import { DefaultNote } from "./role-catalog";
 import { Window } from "./window";
 
 export const labelClass = "px-0.5 text-[0.7rem] font-medium text-muted-foreground";
 export const hintClass = "px-0.5 text-[0.68rem] text-pretty text-muted-foreground";
-const fieldLabels: Record<string, string> = { title: "title", description: "description", body: "instructions", name: "name", files: "supporting files", definition: "connection", path: "path" };
+export const fieldLabels: Record<string, string> = { title: "title", description: "description", body: "instructions", name: "name", files: "supporting files", definition: "connection", path: "path" };
 
-export function EditorFrame({ subtitle, footer, actions, empty = false, children }: {
-  subtitle?: string; footer?: React.ReactNode; actions?: React.ReactNode; empty?: boolean; children: React.ReactNode;
+/** The window every editor renders in. It names the Role being edited, and says so when that is not the default; `unscoped` frames what belongs to no Role, such as a Role not yet created. */
+export function EditorFrame({ subtitle, footer, actions, empty = false, unscoped = false, children }: {
+  subtitle?: string; footer?: React.ReactNode; actions?: React.ReactNode; empty?: boolean; unscoped?: boolean; children: React.ReactNode;
 }) {
   const { role, status, endpoints } = useStack();
+  const view = useRoleView();
   return (
-    <Window id="role-editor" title="Editor" subtitle={subtitle} icon={FilePenLineIcon} accent="roles" status={status.roles} endpoint={endpoints.roles}
+    <Window id="role-editor" title="Editor" subtitle={[unscoped ? null : view.label, subtitle].filter(Boolean).join(" · ") || undefined} icon={FilePenLineIcon} accent="roles" status={status.roles} endpoint={endpoints.roles}
       updatedAt={role.at} error={role.error} footer={footer} actions={actions} empty={empty}>
+      {unscoped ? null : <DefaultNote />}
       {children}
     </Window>
   );
@@ -114,7 +118,7 @@ export function Gone({ noun, draft, onRestore }: { noun: string; draft: Draft; o
             <Button size="sm" variant="ghost" onClick={() => actions.open(null)}><XIcon data-icon="inline-start" />Close</Button>
           </div>
         </div>
-      ) : <Empty icon={FilePenLineIcon} title="Role unavailable" />}
+      ) : <Empty icon={FilePenLineIcon} title={role.error ? "Role unavailable" : "Reading Role…"} />}
     </EditorFrame>
   );
 }
@@ -124,7 +128,8 @@ export function useFocusField(formId: string, field = "title") {
   useEffect(() => { document.getElementById(`${formId}-${field}`)?.focus({ preventScroll: true }); }, [formId, field]);
 }
 
-export function RecordMenu({ label, onInspect, onDuplicate, onDelete, deleteLabel = "Delete…" }: { label: string; onInspect(): void; onDuplicate?: () => void; onDelete(): void; deleteLabel?: string }) {
+/** `deleteBlocked` is the reason the record cannot be deleted; it disables the item and says why. */
+export function RecordMenu({ label, onInspect, onDuplicate, onDelete, deleteLabel = "Delete…", deleteBlocked }: { label: string; onInspect(): void; onDuplicate?: () => void; onDelete(): void; deleteLabel?: string; deleteBlocked?: string }) {
   const { status } = useStack();
   const connected = status.roles === "open";
   return (
@@ -138,7 +143,13 @@ export function RecordMenu({ label, onInspect, onDuplicate, onDelete, deleteLabe
           <DropdownMenuItem onClick={onInspect}><ScanSearchIcon />Inspect record</DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuItem variant="destructive" disabled={!connected} onClick={onDelete}><Trash2Icon />{deleteLabel}</DropdownMenuItem>
+        <DropdownMenuItem variant="destructive" disabled={!connected || Boolean(deleteBlocked)} onClick={onDelete}>
+          <Trash2Icon />
+          <span className="flex flex-col">
+            <span>{deleteLabel}</span>
+            {deleteBlocked ? <span className="text-[0.66rem] font-normal text-muted-foreground">{deleteBlocked}</span> : null}
+          </span>
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

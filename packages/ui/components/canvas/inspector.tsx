@@ -241,6 +241,18 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         events: state.events.filter((event) => event.pkg === "worker"),
       };
     }
+    case "role": {
+      const roles = state.roleCatalog.data;
+      const role = roles?.roles.find((item) => item.id === ref.id);
+      if (!role) return null;
+      const isDefault = roles?.defaultRoleId === role.id;
+      return {
+        eyebrow: isDefault ? "Role · default" : "Role", accent: "roles", title: role.name, record: { ...role, default: isDefault }, fields: roleCatalogFields(catalog),
+        operations: { pkg: "roles", list: roleOperations(catalog) },
+        controls: <RoleCatalogControls id={role.id} />,
+        events: state.events.filter((event) => event.pkg === "roles"),
+      };
+    }
     case "category": {
       const found = findCategory(state.role.data, ref.id);
       if (!found) return null;
@@ -675,6 +687,28 @@ function roleResourceFields(catalog: PackageDoc[] | null, list: "skills" | "mcpS
   return new Map(fields.map((field) => [field.name, field]));
 }
 
+/** Field notes for a Role, which `roles_snapshot` lists under `roles`. */
+function roleCatalogFields(catalog: PackageDoc[] | null): Map<string, Field> {
+  const fields = fieldsOf(findOperation(catalog, "roles", "roles_snapshot")?.outputSchema).find((field) => field.name === "roles")?.children ?? [];
+  return new Map(fields.map((field) => [field.name, field]));
+}
+
+/** Role operations take a `roleId`, not the `id` the other record operations use. */
+function roleOperations(catalog: PackageDoc[] | null): OperationDoc[] {
+  return catalog?.find((doc) => doc.name === "roles")?.operations.filter((operation) => operation.name.startsWith("role_") && operation.inputSchema.properties?.roleId) ?? [];
+}
+
+/** A Role is edited in the Roles space, which selects it; the inspector hands off to it. */
+function RoleCatalogControls({ id }: { id: string }) {
+  const actions = useRoleActions();
+  const { goTo } = useWorkbench();
+  return (
+    <Button size="sm" variant="outline" className="w-fit" onClick={() => { actions.openIn(id, { kind: "role", id }); goTo({ kind: "role", id }); }}>
+      <PencilIcon data-icon="inline-start" />Edit in Roles
+    </Button>
+  );
+}
+
 /** Editing lives in the Roles space; the inspector hands off to it. */
 function RoleRecordControls({ target }: { target: { kind: "category" | "fragment" | ResourceKind; id: string } }) {
   const actions = useRoleActions();
@@ -710,7 +744,7 @@ function NotificationRecordControls({ id }: { id: string }) {
 function referencePackage(ref: NodeRef): string {
   if (ref.kind === "bot") return "bots";
   if (ref.kind === "server" || ref.kind === "child" || ref.kind === "resource" || ref.kind === "process") return "server";
-  if (ref.kind === "category" || ref.kind === "fragment" || ref.kind === "skill" || ref.kind === "mcp-server" || ref.kind === "trusted-project") return "roles";
+  if (ref.kind === "role" || ref.kind === "category" || ref.kind === "fragment" || ref.kind === "skill" || ref.kind === "mcp-server" || ref.kind === "trusted-project") return "roles";
   if (ref.kind === "notification") return "notify";
   if (ref.kind === "document" || ref.kind === "collection" || ref.kind === "item" || ref.kind === "artifact") return "content";
   if (ref.kind === "worker-catalog" || ref.kind === "worker" || ref.kind === "worker-runtime" || ref.kind === "worker-window") return "worker";

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ImportIcon, ListChecksIcon, SatelliteDishIcon, SearchIcon } from "lucide-react";
-import { BellIcon, BlocksIcon, CalendarClockIcon, HammerIcon, BookOpenIcon, BotIcon, BoxesIcon, FileTextIcon, NotebookTextIcon, UploadIcon, CircleCheckIcon, CpuIcon, FilePlusIcon, FolderIcon, FolderLockIcon, FolderPlusIcon, MicIcon, MicOffIcon, PhoneIcon, PhoneOffIcon, PlugIcon, RefreshCwIcon, ScrollTextIcon, SquareTerminalIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, XIcon } from "lucide-react";
+import { BellIcon, BlocksIcon, CalendarClockIcon, HammerIcon, BookOpenIcon, BotIcon, BoxesIcon, FileTextIcon, NotebookTextIcon, UploadIcon, CircleCheckIcon, CpuIcon, FilePlusIcon, FolderIcon, FolderLockIcon, FolderPlusIcon, MicIcon, MicOffIcon, PhoneIcon, PhoneOffIcon, PlugIcon, RefreshCwIcon, ScrollTextIcon, SquareTerminalIcon, TerminalIcon, Trash2Icon, UserRoundPlusIcon, UsersRoundIcon, XIcon } from "lucide-react";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
 import { operationTitle } from "@/lib/stack/catalog";
 import { accountLabels, addableWorkerProviders, pairedWorker, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
@@ -26,7 +26,7 @@ import { ownerLabel, ownerOf, runTitle, runView, scheduleTitle } from "@/lib/sta
 export type PaletteAction = { id: string; label: string; shortcut?: string; icon: React.ComponentType; run(): void };
 
 export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpenChange(open: boolean): void; actions: PaletteAction[] }) {
-  const { bots, accounts, workerAccounts, workerSessions, server, catalog, attempt, role, notificationRecords, contentDocuments, contentItems, contentArtifacts, status, brainSources, procSchedules, procRuns } = useStack();
+  const { bots, accounts, workerAccounts, workerSessions, server, catalog, attempt, role, roleCatalog, notificationRecords, contentDocuments, contentItems, contentArtifacts, status, brainSources, procSchedules, procRuns } = useStack();
   const store = useStore();
   const notify = useNotifyActions();
   // Notifications the page has loaded, newest first; the palette never pages the ledger itself.
@@ -167,6 +167,14 @@ export function Palette({ open, onOpenChange, actions }: { open: boolean; onOpen
             </CommandGroup>
           ) : null}
           <CommandGroup heading="Roles">
+            <CommandItem value="role new named role" onSelect={() => edit({ kind: "new-role" })}><UsersRoundIcon />New role</CommandItem>
+            {roleCatalog.data?.roles.map((item) => (
+              <CommandItem key={item.id} value={`role ${item.name} ${item.description}`} onSelect={() => { onOpenChange(false); roleActions.openIn(item.id, { kind: "role", id: item.id }); goTo({ kind: "role", id: item.id }); }}>
+                <UsersRoundIcon />
+                <span className="truncate">{item.name}</span>
+                <CommandShortcut className="tracking-normal">{item.id === roleCatalog.data?.defaultRoleId ? "default" : ""}</CommandShortcut>
+              </CommandItem>
+            ))}
             <CommandItem value="role new instruction category" disabled={!role.data} onSelect={() => edit({ kind: "new-category" })}><FolderPlusIcon />New category</CommandItem>
             {role.data?.categories.length ? (
               <CommandItem value="role new instruction fragment" onSelect={() => edit({ kind: "new-fragment", categoryId: role.data!.categories[0].id, enabled: true })}><FilePlusIcon />New fragment</CommandItem>

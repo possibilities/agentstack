@@ -34,6 +34,7 @@ import {
   draftDirty,
   findResource,
   formatBytes,
+  internalCounts,
   mcpTarget,
   mcpText,
   projectBots,
@@ -50,8 +51,8 @@ import { errorMessage } from "./auth-actions";
 import { Empty } from "./primitives";
 import { useStack, useWorkbench } from "./provider";
 import type { StackState } from "@/lib/stack/store";
-import { resourceOperation, useRoleActions } from "./role-actions";
-import { footerButton, Window } from "./window";
+import { resourceOperation, useRoleActions, useRoleView } from "./role-actions";
+import { footerButton, Section, Window } from "./window";
 
 type Item = { id: string; enabled: boolean; description: string };
 
@@ -72,6 +73,9 @@ type ListSpec<T extends Item> = {
   aside(item: T, state: StackState): React.ReactNode;
   duplicate?(item: T, items: T[]): Record<string, unknown>;
   note?: React.ReactNode;
+  /** Content above the Role's own records, which then sit under `heading`. */
+  lead?: React.ReactNode;
+  heading?: string;
 };
 
 const chip = "rounded px-1.5 py-px text-[0.64rem] font-medium";
@@ -112,8 +116,47 @@ export function RoleMcpServersWindow() {
       );
     },
     duplicate: (server, items) => ({ name: uniqueName(server.name, items.map((item) => item.name)), description: server.description, definition: server.definition, enabled: server.enabled }),
-    note: "Every Bot also receives the internal Package API servers.",
+    note: "Later launches also receive the Stack servers switched on above.",
+    lead: <StackServers />,
+    heading: "Role servers",
   }} />;
+}
+
+/**
+ * The internal Package API servers this Role's later launches connect to, one switch each. They come from the
+ * packages' manifests, so they are neither created nor deleted here; a switch changes only this Role.
+ */
+function StackServers() {
+  const { roleInternal, status, remote } = useStack();
+  const actions = useRoleActions();
+  const view = useRoleView();
+  const list = roleInternal.data;
+  const connected = status.roles === "open" && remote?.scope !== "view";
+  const { on, total } = internalCounts(list?.servers ?? []);
+  // With no Role in view there are no switches to show; the window's own placeholder says why.
+  if (view.blank) return null;
+  return (
+    <Section title="Stack servers" aside={list ? <span className="text-[0.65rem] text-muted-foreground tabular-nums">{on} of {total} on</span> : undefined}>
+      {list?.servers.length ? (
+        <ul aria-label="Stack servers" className="grid grid-cols-2 gap-x-1">
+          {list.servers.map((server) => (
+            <li key={server.name} className="flex min-w-0 items-center gap-2 rounded-lg py-1 pr-1.5 pl-2 transition-colors hover:bg-muted/70">
+              <Switch size="sm" checked={server.enabled} disabled={!connected || actions.pending.has(`internal:${server.name}`)} aria-label={`${server.name} on`}
+                onCheckedChange={(enabled) => { actions.setInternalMcp(server.name, enabled).catch((error) => toast.error(errorMessage(error))); }} />
+              <span className={cn("min-w-0 flex-1 truncate font-mono text-[0.78rem] font-medium", !server.enabled && "text-muted-foreground")} title={server.name}>{server.name}</span>
+              {!server.enabled ? <span className={cn(chip, "bg-muted text-muted-foreground")}>Off</span> : null}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="px-1.5 text-[0.7rem] text-muted-foreground">{list ? "No Stack servers are configured." : roleInternal.error ? `Stack servers unavailable: ${roleInternal.error}` : "Reading Stack servers…"}</p>
+      )}
+      {list && !on && total ? <p className="px-1.5 text-[0.7rem] text-muted-foreground">Every Stack server is off; later launches receive none of them.</p> : null}
+      <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">
+        Switches apply to later Bot launches and new Workers; running sessions keep their connections. New Stack packages start on.
+      </p>
+    </Section>
+  );
 }
 
 export function RoleProjectsWindow() {
@@ -137,6 +180,7 @@ function ResourceList<T extends Item>({ spec }: { spec: ListSpec<T> }) {
   const state = useStack();
   const { role, status, endpoints } = state;
   const actions = useRoleActions();
+  const view = useRoleView();
   const [query, setQuery] = useState("");
   const [drag, setDrag] = useState<string | null>(null);
   const [drop, setDrop] = useState<string | null | undefined>(undefined);
@@ -154,50 +198,56 @@ function ResourceList<T extends Item>({ spec }: { spec: ListSpec<T> }) {
   };
   const finish = () => { setDrag(null); setDrop(undefined); };
 
+  const search = items.length > 4 ? (
+    <InputGroup className="h-8">
+      <InputGroupAddon><SearchIcon /></InputGroupAddon>
+      <InputGroupInput aria-label={`Search ${spec.title.toLowerCase()}`} placeholder="Search" value={query}
+        onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape" && query) { event.stopPropagation(); setQuery(""); } }} />
+      {query ? (
+        <InputGroupAddon align="inline-end">
+          <InputGroupButton size="icon-xs" aria-label="Clear search" onClick={() => setQuery("")}><XIcon /></InputGroupButton>
+        </InputGroupAddon>
+      ) : null}
+    </InputGroup>
+  ) : null;
+  const records = items.length ? (
+    <>
+      {search}
+      {shown.length ? (
+        <ol className="flex flex-col" onDragEnd={finish}
+          onDragOver={(event) => { if (drag) { event.preventDefault(); if (event.target === event.currentTarget) setDrop(null); } }}
+          onDrop={(event) => { event.preventDefault(); if (drag && drop !== undefined) move(drag, drop); finish(); }}>
+          {shown.map((item) => (
+            <ResourceRow key={item.id} spec={spec} item={item} items={items} state={state}
+              dragging={drag === item.id} dropBefore={drag !== null && drop === item.id} draggable={connected && !words.length}
+              onDragStart={() => setDrag(item.id)}
+              onDragOver={(before) => setDrop(before ? item.id : items[items.findIndex((other) => other.id === item.id) + 1]?.id ?? null)}
+              move={move} />
+          ))}
+          {drag !== null && drop === null ? <li aria-hidden className="mx-2 h-0.5 rounded-full bg-pkg-roles" /> : null}
+        </ol>
+      ) : <p className="px-0.5 py-4 text-center text-[0.8rem] text-muted-foreground">Nothing matches “{query.trim()}”.</p>}
+      {spec.note ? <p className="px-0.5 text-[0.66rem] text-pretty text-muted-foreground">{spec.note}</p> : null}
+    </>
+  ) : (
+    <div className="flex flex-col gap-2">
+      <Empty icon={spec.icon} title={view.placeholder(role.data, role.error, `No ${spec.title.toLowerCase()}`)} />
+      {role.data && spec.note ? <p className="px-2 text-center text-[0.68rem] text-pretty text-muted-foreground">{spec.note}</p> : null}
+    </div>
+  );
+
   return (
-    <Window id={spec.windowId} title={spec.title} subtitle={role.data ? `roles · ${enabled} of ${items.length} on` : "roles"} icon={spec.icon} accent="roles"
-      count={items.length} status={status.roles} endpoint={endpoints.roles} updatedAt={role.at} error={role.error} empty={!items.length}
+    <Window id={spec.windowId} title={spec.title} subtitle={[view.label ?? "roles", role.data && !spec.lead ? `${enabled} of ${items.length} on` : null].filter(Boolean).join(" · ")} icon={spec.icon} accent="roles"
+      count={spec.lead ? null : items.length} status={status.roles} endpoint={endpoints.roles} updatedAt={role.at} error={role.error} empty={!items.length && !spec.lead}
       footer={
         <Button size="sm" variant="ghost" className={footerButton} disabled={!role.data || !connected} title={state.remote?.scope === "view" ? "Requires ui:control" : undefined} onClick={() => actions.open({ kind: `new-${spec.kind}`, enabled: true })}>
           <PlusIcon data-icon="inline-start" />{spec.newLabel}
         </Button>
       }>
-      {items.length ? (
-        <>
-          {items.length > 4 ? (
-            <InputGroup className="h-8">
-              <InputGroupAddon><SearchIcon /></InputGroupAddon>
-              <InputGroupInput aria-label={`Search ${spec.title.toLowerCase()}`} placeholder="Search" value={query}
-                onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape" && query) { event.stopPropagation(); setQuery(""); } }} />
-              {query ? (
-                <InputGroupAddon align="inline-end">
-                  <InputGroupButton size="icon-xs" aria-label="Clear search" onClick={() => setQuery("")}><XIcon /></InputGroupButton>
-                </InputGroupAddon>
-              ) : null}
-            </InputGroup>
-          ) : null}
-          {shown.length ? (
-            <ol className="flex flex-col" onDragEnd={finish}
-              onDragOver={(event) => { if (drag) { event.preventDefault(); if (event.target === event.currentTarget) setDrop(null); } }}
-              onDrop={(event) => { event.preventDefault(); if (drag && drop !== undefined) move(drag, drop); finish(); }}>
-              {shown.map((item) => (
-                <ResourceRow key={item.id} spec={spec} item={item} items={items} state={state}
-                  dragging={drag === item.id} dropBefore={drag !== null && drop === item.id} draggable={connected && !words.length}
-                  onDragStart={() => setDrag(item.id)}
-                  onDragOver={(before) => setDrop(before ? item.id : items[items.findIndex((other) => other.id === item.id) + 1]?.id ?? null)}
-                  move={move} />
-              ))}
-              {drag !== null && drop === null ? <li aria-hidden className="mx-2 h-0.5 rounded-full bg-pkg-roles" /> : null}
-            </ol>
-          ) : <p className="px-0.5 py-4 text-center text-[0.8rem] text-muted-foreground">Nothing matches “{query.trim()}”.</p>}
-          {spec.note ? <p className="px-0.5 text-[0.66rem] text-pretty text-muted-foreground">{spec.note}</p> : null}
-        </>
-      ) : (
-        <div className="flex flex-col gap-2">
-          <Empty icon={spec.icon} title={role.data ? `No ${spec.title.toLowerCase()}` : "Role unavailable"} />
-          {role.data && spec.note ? <p className="px-2 text-center text-[0.68rem] text-pretty text-muted-foreground">{spec.note}</p> : null}
-        </div>
-      )}
+      {spec.lead}
+      {spec.heading ? (
+        <Section title={spec.heading} aside={role.data ? <span className="text-[0.65rem] text-muted-foreground tabular-nums">{enabled} of {items.length} on</span> : undefined}>{records}</Section>
+      ) : records}
     </Window>
   );
 }

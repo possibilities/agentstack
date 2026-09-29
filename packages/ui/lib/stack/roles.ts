@@ -1,4 +1,4 @@
-import type { Bot, RoleCategory, RoleFragment, RoleLaunchPreview, RoleMcpDefinition, RoleMcpServer, RolePreview, RoleSkill, RoleSkillFile, RoleSnapshot, RoleTrustedProject, WorkerSession } from "./types";
+import type { Bot, Role, RoleCatalog, RoleCategory, RoleFragment, RoleInternalMcp, RoleInternalServer, RoleLaunchPreview, RoleMcpDefinition, RoleMcpServer, RolePreview, RoleSkill, RoleSkillFile, RoleSnapshot, RoleTrustedProject, WorkerSession } from "./types";
 
 /** Mirrors the Roles API's title limit. */
 export const titleLimit = 200;
@@ -181,19 +181,170 @@ export function previewPieces(preview: RolePreview, role: Pick<RoleSnapshot, "ca
   }));
 }
 
-/** Running Bots and open Workers keep the Role revision they launched with; edits reach only later launches. */
-export function roleLaunches(bots: Bot[] | null, workers: WorkerSession[] | null, revision: number): {
-  bots: Array<{ bot: Bot; current: boolean }>;
-  workers: { current: number; behind: number };
-} {
-  const running = (bots ?? []).filter((bot) => bot.state === "running" && bot.roleRevision !== null)
-    .map((bot) => ({ bot, current: bot.roleRevision === revision }));
-  const open = (workers ?? []).filter((worker) => worker.roleRevision !== null && !["closed", "failed"].includes(worker.phase));
-  return {
-    bots: running,
-    workers: { current: open.filter((worker) => worker.roleRevision === revision).length, behind: open.filter((worker) => worker.roleRevision !== revision).length },
-  };
+/** How a session's applied Role relates to the catalog's default. */
+export type LaunchState =
+  /** The default Role at its current revision: a launch now would apply the same thing. */
+  | "current"
+  /** The default Role, launched at an older revision. */
+  | "older"
+  /** A different Role, possibly one deleted since. Equal revision numbers across Roles are unrelated. */
+  | "other"
+  /** A legacy launch with no Role ID; never assumed to be the default. */
+  | "unknown";
+
+/** `name` is the launched Role's, or null once it is deleted or its identity unknown. */
+export type Launch = { state: LaunchState; roleId: string | null; roleRevision: number; name: string | null };
+
+/**
+ * Classify what a Bot or Worker launched with by comparing `(roleId, roleRevision)` with the catalog's default.
+ * Null before a launch has applied anything, or before the catalog has loaded.
+ */
+export function classifyLaunch(session: { roleId: string | null; roleRevision: number | null }, catalog: RoleCatalog | null): Launch | null {
+  // Older records may omit the ID altogether; like a null one it names no Role, so it is never taken for the default.
+  if (typeof session.roleRevision !== "number" || !catalog) return null;
+  if (!session.roleId) return { state: "unknown", roleId: null, roleRevision: session.roleRevision, name: null };
+  const role = catalog.roles.find((item) => item.id === session.roleId) ?? null;
+  const launch = { roleId: session.roleId, roleRevision: session.roleRevision, name: role?.name ?? null };
+  if (session.roleId !== catalog.defaultRoleId) return { ...launch, state: "other" };
+  // A launch newer than the catalog's read means the catalog is a step behind; that is not "older".
+  return { ...launch, state: role && session.roleRevision < role.revision ? "older" : "current" };
 }
+
+/** The launched Role as people read it: “Researcher r5”, “Deleted role r5”, or “Unknown role r5”. */
+export const launchLabel = (launch: Launch): string => `${launch.state === "unknown" ? "Unknown role" : launch.name ?? "Deleted role"} r${launch.roleRevision}`;
+
+/**
+ * What to do to get the default, worded so it never claims a running process changed. Null when a launch now
+ * would apply what this one did. A Bot restart resolves the default again; a Worker keeps its snapshot for good,
+ * so only new Workers use a changed default.
+ */
+export function launchHint(launch: Launch, defaultRole: Pick<Role, "name" | "revision"> | null, subject: "bot" | "worker"): string | null {
+  if (launch.state === "current") return null;
+  const target = launch.state === "older" ? `r${defaultRole?.revision}` : defaultRole?.name ?? "a Role";
+  return `${subject === "bot" ? "Launched" : "Started"} with ${launchLabel(launch)} · ${subject === "bot" ? "restart to use" : "new Workers use"} ${target}`;
+}
+
+/** Running Bots and open Workers keep the Role they launched with; a changed default reaches only later launches. */
+export function roleLaunches(bots: Bot[] | null, workers: WorkerSession[] | null, catalog: RoleCatalog | null): {
+  bots: Array<{ bot: Bot; launch: Launch }>;
+  workers: Record<LaunchState, number> & { total: number };
+} {
+  const running = (bots ?? []).filter((bot) => bot.state === "running").flatMap((bot) => {
+    const launch = classifyLaunch(bot, catalog);
+    return launch ? [{ bot, launch }] : [];
+  });
+  const counts = { current: 0, older: 0, other: 0, unknown: 0, total: 0 };
+  for (const worker of workers ?? []) {
+    const launch = ["closed", "failed"].includes(worker.phase) ? null : classifyLaunch(worker, catalog);
+    if (!launch) continue;
+    counts[launch.state]++;
+    counts.total++;
+  }
+  return { bots: running, workers: counts };
+}
+
+/* ─── Roles, selection and fencing ───────────────────────────────────── */
+
+/** A Role-scoped response names its Role and that Role's revision. */
+export type RoleRead = { roleId: string; revision: number };
+
+/** The Role and revision a Role-scoped response describes; an editor snapshot names its Role `id`. */
+export const roleReadOf = (value: { id: string; revision: number } | { roleId: string; revision: number }): RoleRead =>
+  ({ roleId: "roleId" in value ? value.roleId : value.id, revision: value.revision });
+
+/**
+ * Whether a Role-scoped response may replace what the page holds. A response for any Role but the selected one is
+ * dropped even when its revision is higher, since revisions of different Roles are unrelated; for the same Role a
+ * read that lost a race to a newer write must not roll it back.
+ */
+export function acceptRoleRead(selected: string | null, held: RoleRead | null, incoming: RoleRead): boolean {
+  if (incoming.roleId !== selected) return false;
+  return !held || held.roleId !== incoming.roleId || incoming.revision >= held.revision;
+}
+
+/** The catalog has its own revision: a catalog read older than the held one is dropped. */
+export const acceptCatalog = (held: Pick<RoleCatalog, "revision"> | null, incoming: Pick<RoleCatalog, "revision">): boolean => !held || incoming.revision >= held.revision;
+
+export type Resolution = {
+  /** The Role the page reads: the selection while it exists, else the default. */
+  roleId: string | null;
+  /** The selected Role is gone but has unsaved edits, so the selection stays on its ID for the person to resolve. */
+  deleted: boolean;
+  /** The ID the selection just left because it no longer exists, so the page can say so once. */
+  fellBack: string | null;
+};
+
+/** Where the selection should be, given the catalog and which Roles hold unsaved drafts. Nothing changes until the catalog has loaded. */
+export function resolveSelection(selected: string | null, catalog: RoleCatalog | null, drafted: ReadonlySet<string>): Resolution {
+  if (!catalog) return { roleId: selected, deleted: false, fellBack: null };
+  if (selected && catalog.roles.some((role) => role.id === selected)) return { roleId: selected, deleted: false, fellBack: null };
+  if (selected && drafted.has(selected)) return { roleId: selected, deleted: true, fellBack: null };
+  return { roleId: catalog.defaultRoleId, deleted: false, fellBack: selected };
+}
+
+/** Drafts about the catalog itself, such as a Role not yet created, belong to no Role. */
+export const catalogScope = "catalog";
+
+/** Draft and pending keys carry the Role they were made for, so selecting another Role or changing the default never retargets them. */
+export const draftKey = (roleId: string, key: string): string => `${key === "new-role" ? catalogScope : roleId}:${key}`;
+
+const scopeOf = (key: string): string => key.slice(0, key.indexOf(":"));
+
+/** The entries one Role's windows see, keyed as their editors do: its own plus the catalog's. */
+export function roleScoped<T>(all: Record<string, T>, roleId: string | null): Record<string, T> {
+  const own: Record<string, T> = {};
+  for (const [key, value] of Object.entries(all)) {
+    const scope = scopeOf(key);
+    if (scope === catalogScope || scope === roleId) own[key.slice(scope.length + 1)] = value;
+  }
+  return own;
+}
+
+/** IDs of the Roles that hold entries; catalog-scoped ones belong to no Role. */
+export const scopedRoles = (all: Record<string, unknown>): Set<string> =>
+  new Set(Object.keys(all).map(scopeOf).filter((scope) => scope !== catalogScope));
+
+/** A Role's own entries as `[key, value]`, keyed as its editors do. */
+export const roleEntries = <T>(all: Record<string, T>, roleId: string): Array<[string, T]> =>
+  Object.entries(all).filter(([key]) => scopeOf(key) === roleId).map(([key, value]) => [key.slice(roleId.length + 1), value]);
+
+/** SQLite's NOCASE folds ASCII letters only, which is exactly the uniqueness the API enforces. */
+export const nocase = (name: string): string => name.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+
+/** The text fields a Role's details draft edits. */
+export const roleText = (role: Pick<Role, "name" | "description">): Fields => ({ name: role.name, description: role.description });
+export const blankRoleText: Fields = { name: "", description: "" };
+
+/** Why the API would refuse this Role name, as a hint before saving; the API stays the authority. `selfId` excludes the Role being renamed. */
+export function roleNameIssue(name: string, catalog: RoleCatalog | null, selfId?: string): string | null {
+  const trimmed = name.trim();
+  if (!trimmed) return "A name is required";
+  if (trimmed.length > titleLimit) return `Use ${titleLimit} characters or fewer`;
+  if (catalog?.roles.some((role) => role.id !== selfId && nocase(role.name) === nocase(trimmed))) return "Another Role already uses this name; letter case is ignored";
+  return null;
+}
+
+/** The API's uniqueness failure in the words a person needs; other refusals pass through. */
+export const roleErrorText = (message: string): string =>
+  /UNIQUE constraint failed: roles\.name/i.test(message) ? "Another Role already uses this name; letter case is ignored" : message;
+
+/** How a Role reads in a window subtitle: “Researcher · default” or “Researcher”. */
+export const roleLabel = (role: Pick<Role, "name"> | null, isDefault: boolean): string | null => role ? `${role.name}${isDefault ? " · default" : ""}` : null;
+
+/* ─── Internal Stack MCP servers ─────────────────────────────────────── */
+
+export const internalCounts = (servers: readonly RoleInternalServer[]): { on: number; total: number } =>
+  ({ on: servers.filter((server) => server.enabled).length, total: servers.length });
+
+/**
+ * Every internal Package API name the page knows, switched on or off: an external MCP server may never take
+ * one, so a disabled built-in still reserves its name.
+ */
+export function internalNames(internal: Pick<RoleInternalMcp, "servers"> | null, launch: Pick<RoleLaunchPreview, "internalMcpServers"> | null): string[] {
+  return [...new Set([...(internal?.servers ?? []), ...(launch?.internalMcpServers ?? [])].map((server) => server.name))];
+}
+
+export const internalCollision = (name: string, names: Iterable<string>): boolean => [...names].some((other) => other.toLowerCase() === name.toLowerCase());
 
 /* ─── Skills, MCP servers and trusted projects ───────────────────────── */
 
