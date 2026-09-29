@@ -83,9 +83,9 @@ test("drafts keep only real edits, follow unrelated saves, and surface conflicti
   assert.deepEqual(roles.categoryText(category("k", [])), { title: "k", description: "" });
 });
 
-test("preview pieces label spans from the Role and launches compare revisions", () => {
+test("preview pieces label spans from the Role and sizes fall back for an older API", () => {
   const role = { categories: [category("c", [fragment("a"), fragment("b")])] };
-  const preview = { revision: 4, rendered: "a body\n\nb body", bytes: 14, limitBytes: 262144,
+  const preview = { roleId: "r1", revision: 4, rendered: "a body\n\nb body", bytes: 14, limitBytes: 262144,
     segments: [{ categoryId: "c", fragmentId: "a", start: 0, end: 6 }, { categoryId: "c", fragmentId: "gone", start: 8, end: 14 }] };
   assert.deepEqual(roles.previewPieces(preview, role), [
     { fragmentId: "a", categoryId: "c", text: "a body", title: "A" },
@@ -95,17 +95,157 @@ test("preview pieces label spans from the Role and launches compare revisions", 
   assert.equal(roles.previewPieces({ revision: 1, rendered: "Whole" }, role), null);
   assert.equal(roles.previewBytes({ revision: 1, rendered: "Sé" }), 3);
   assert.equal(roles.previewBytes(preview), 14);
-  const bot = (id, state, roleRevision) => ({ id, state, roleRevision });
-  const worker = (phase, roleRevision) => ({ phase, roleRevision });
-  const launches = roles.roleLaunches([bot("bot-1", "running", 4), bot("bot-2", "running", 2), bot("bot-3", "stopped", 1), bot("bot-4", "running", null)],
-    [worker("idle", 4), worker("running", 3), worker("closed", 1), worker("idle", null)], 4);
-  assert.deepEqual(launches.bots.map(({ bot, current }) => [bot.id, current]), [["bot-1", true], ["bot-2", false]]);
-  assert.deepEqual(launches.workers, { current: 1, behind: 1 });
   assert.equal(roles.formatBytes(812), "812 B");
   assert.equal(roles.formatBytes(14_540), "14 KB");
   assert.equal(roles.formatBytes(5_000), "4.9 KB");
   assert.equal(roles.formatCount(3_640), "3.6k");
   assert.equal(roles.approxTokens(roles.utf8Bytes("é")), 1);
+});
+
+const role = (id, name, revision = 1) => ({ id, name, description: "", revision, createdAt: null, updatedAt: null });
+const catalog = (defaultRoleId, roleList, revision = 1) => ({ revision, defaultRoleId, roles: roleList });
+
+test("a launch is classified by Role identity and revision against the default, never by revision alone", () => {
+  const two = catalog("A", [role("A", "Default", 5), role("B", "Researcher", 5)]);
+  const at = (roleId, roleRevision) => roles.classifyLaunch({ roleId, roleRevision }, two);
+  assert.equal(at("A", 5).state, "current");
+  assert.equal(at("A", 3).state, "older");
+  // Equal revision numbers across Roles are unrelated: the other Role is not "current" at r5.
+  assert.deepEqual(at("B", 5), { state: "other", roleId: "B", roleRevision: 5, name: "Researcher" });
+  // A launch newer than the catalog's read means the catalog is a step behind, which is not "older".
+  assert.equal(at("A", 6).state, "current");
+  // A deleted Role is still named as one, with the revision it launched at.
+  const gone = at("Z", 2);
+  assert.deepEqual(gone, { state: "other", roleId: "Z", roleRevision: 2, name: null });
+  assert.equal(roles.launchLabel(gone), "Deleted role r2");
+  // Legacy launches have no Role ID: unknown, even at the default's revision. Nothing has launched before a revision exists.
+  assert.equal(at(null, 5).state, "unknown");
+  assert.equal(roles.launchLabel(at(null, 5)), "Unknown role r5");
+  assert.equal(at(null, null), null);
+  // A record from an older API that omits the ID is as anonymous as a null one.
+  assert.equal(roles.classifyLaunch({ roleRevision: 5 }, two).state, "unknown");
+  assert.equal(roles.classifyLaunch({ roleId: "A", roleRevision: 5 }, null), null);
+
+  // Making B the default turns A's running Bot from "current" into "other", and B's into "current": neither changed.
+  const swapped = catalog("B", two.roles, 2);
+  assert.equal(roles.classifyLaunch({ roleId: "A", roleRevision: 5 }, swapped).state, "other");
+  assert.equal(roles.classifyLaunch({ roleId: "B", roleRevision: 5 }, swapped).state, "current");
+  const defaultRole = swapped.roles[1];
+  const hint = roles.launchHint(roles.classifyLaunch({ roleId: "A", roleRevision: 5 }, swapped), defaultRole, "bot");
+  assert.equal(hint, "Launched with Default r5 · restart to use Researcher");
+  assert.doesNotMatch(hint, /changed|updated/);
+  assert.equal(roles.launchHint(at("A", 3), two.roles[0], "bot"), "Launched with Default r3 · restart to use r5");
+  assert.equal(roles.launchHint(at("A", 5), two.roles[0], "bot"), null);
+  // A Worker never restarts into a new default; only new Workers use it.
+  assert.equal(roles.launchHint(at("B", 5), two.roles[0], "worker"), "Started with Researcher r5 · new Workers use Default");
+
+  const bot = (id, state, roleId, roleRevision) => ({ id, state, roleId, roleRevision });
+  const worker = (phase, roleId, roleRevision) => ({ phase, roleId, roleRevision });
+  const launches = roles.roleLaunches(
+    [bot("bot-1", "running", "A", 5), bot("bot-2", "running", "B", 5), bot("bot-3", "stopped", "A", 1), bot("bot-4", "running", null, null), bot("bot-5", "running", null, 2)],
+    [worker("idle", "A", 5), worker("running", "A", 3), worker("closed", "A", 1), worker("idle", null, null), worker("idle", "B", 5), worker("failed", "B", 1), worker("idle", null, 4)], two);
+  assert.deepEqual(launches.bots.map(({ bot, launch }) => [bot.id, launch.state]), [["bot-1", "current"], ["bot-2", "other"], ["bot-5", "unknown"]]);
+  assert.deepEqual(launches.workers, { current: 1, older: 1, other: 1, unknown: 1, total: 4 });
+});
+
+test("a Role response is fenced by Role ID first and revision second", () => {
+  const held = { roleId: "B", revision: 2 };
+  // Role A's response never replaces Role B's, however new it is.
+  assert.equal(roles.acceptRoleRead("B", held, { roleId: "A", revision: 99 }), false);
+  assert.equal(roles.acceptRoleRead("B", null, { roleId: "A", revision: 1 }), false);
+  // A read for a selection the page has left is dropped even with nothing held.
+  assert.equal(roles.acceptRoleRead(null, null, { roleId: "A", revision: 1 }), false);
+  // The same Role never rolls back, but an equal revision refreshes (manifest changes do not advance revisions).
+  assert.equal(roles.acceptRoleRead("B", held, { roleId: "B", revision: 1 }), false);
+  assert.equal(roles.acceptRoleRead("B", held, { roleId: "B", revision: 2 }), true);
+  assert.equal(roles.acceptRoleRead("B", held, { roleId: "B", revision: 3 }), true);
+  assert.equal(roles.acceptRoleRead("B", null, { roleId: "B", revision: 0 }), true);
+  // An editor snapshot names its Role `id`; every other read names it `roleId`.
+  assert.deepEqual(roles.roleReadOf({ id: "A", revision: 3, name: "x" }), { roleId: "A", revision: 3 });
+  assert.deepEqual(roles.roleReadOf({ roleId: "A", revision: 3 }), { roleId: "A", revision: 3 });
+  // The catalog is fenced by its own revision, which Role revisions never touch.
+  assert.equal(roles.acceptCatalog({ revision: 7 }, { revision: 6 }), false);
+  assert.equal(roles.acceptCatalog({ revision: 7 }, { revision: 7 }), true);
+  assert.equal(roles.acceptCatalog(null, { revision: 0 }), true);
+});
+
+test("drafts stay with the Role they were made for", () => {
+  const draft = (text) => ({ base: { body: "" }, values: { body: text } });
+  let all = {
+    [roles.draftKey("A", "fragment:f1")]: draft("for A"),
+    [roles.draftKey("B", "fragment:f1")]: draft("for B"),
+    [roles.draftKey("B", "new-category")]: draft("more B"),
+    [roles.draftKey("B", "new-role")]: draft("catalog"),
+  };
+  // A Role not yet created belongs to the catalog, whichever Role is selected.
+  assert.equal(roles.draftKey("B", "new-role"), "catalog:new-role");
+  assert.deepEqual(Object.keys(all).sort(), ["A:fragment:f1", "B:fragment:f1", "B:new-category", "catalog:new-role"]);
+  // Each Role's windows see only its own drafts (plus the catalog's), under the keys their editors use.
+  assert.deepEqual(roles.roleScoped(all, "A"), { "fragment:f1": draft("for A"), "new-role": draft("catalog") });
+  assert.deepEqual(Object.keys(roles.roleScoped(all, "B")).sort(), ["fragment:f1", "new-category", "new-role"]);
+  assert.equal(roles.roleScoped(all, "B")["fragment:f1"].values.body, "for B");
+  // Selecting the other Role, or switching the default, changes what is shown but retargets nothing; switching back restores it.
+  assert.equal(roles.roleScoped(all, "A")["fragment:f1"].values.body, "for A");
+  assert.deepEqual(roles.roleScoped(all, null), { "new-role": draft("catalog") });
+  assert.deepEqual([...roles.scopedRoles(all)].sort(), ["A", "B"]);
+  assert.deepEqual(roles.roleEntries(all, "B").map(([key]) => key).sort(), ["fragment:f1", "new-category"]);
+  // Discarding one Role's drafts leaves the others.
+  all = Object.fromEntries(Object.entries(all).filter(([key]) => !key.startsWith("B:")));
+  assert.deepEqual([...roles.scopedRoles(all)], ["A"]);
+});
+
+test("the selection follows the default until a Role is chosen, and a deleted Role is kept only while it holds edits", () => {
+  const cat = catalog("A", [role("A", "Default"), role("B", "Researcher")]);
+  const none = new Set();
+  // Nothing changes before the catalog loads.
+  assert.deepEqual(roles.resolveSelection("B", null, none), { roleId: "B", deleted: false, fellBack: null });
+  // With no valid selection, edit the default.
+  assert.deepEqual(roles.resolveSelection(null, cat, none), { roleId: "A", deleted: false, fellBack: null });
+  assert.deepEqual(roles.resolveSelection("B", cat, none), { roleId: "B", deleted: false, fellBack: null });
+  // A selection that is not the default stays put; the default moving does not pull it.
+  assert.deepEqual(roles.resolveSelection("B", catalog("B", cat.roles, 2), none), { roleId: "B", deleted: false, fellBack: null });
+  // The selected Role was deleted elsewhere: without drafts, fall back to the default and say which Role went.
+  assert.deepEqual(roles.resolveSelection("Z", cat, none), { roleId: "A", deleted: false, fellBack: "Z" });
+  // With unsaved drafts, keep the selection on the missing ID so nothing is silently discarded or applied elsewhere.
+  assert.deepEqual(roles.resolveSelection("Z", cat, new Set(["Z"])), { roleId: "Z", deleted: true, fellBack: null });
+  // Another Role's drafts do not keep it.
+  assert.deepEqual(roles.resolveSelection("Z", cat, new Set(["B"])), { roleId: "A", deleted: false, fellBack: "Z" });
+  // An empty catalog has no default to fall back to.
+  assert.deepEqual(roles.resolveSelection("Z", catalog(null, []), none), { roleId: null, deleted: false, fellBack: "Z" });
+  assert.equal(roles.roleLabel(role("A", "Default"), true), "Default · default");
+  assert.equal(roles.roleLabel(role("B", "Researcher"), false), "Researcher");
+  assert.equal(roles.roleLabel(null, false), null);
+});
+
+test("Role names mirror the API's limits and its ASCII-case uniqueness", () => {
+  const cat = catalog("A", [role("A", "Researcher"), role("B", "Écrivain")]);
+  assert.equal(roles.roleNameIssue("  ", cat), "A name is required");
+  assert.equal(roles.roleNameIssue("Planner", cat), null);
+  assert.match(roles.roleNameIssue("researcher", cat), /already uses/);
+  assert.match(roles.roleNameIssue(" RESEARCHER ", cat), /already uses/);
+  // SQLite's NOCASE folds ASCII only, so a non-ASCII case difference is a different name to the API.
+  assert.equal(roles.roleNameIssue("écrivain", cat), null);
+  // Renaming a Role to its own name in another case is fine.
+  assert.equal(roles.roleNameIssue("RESEARCHER", cat, "A"), null);
+  assert.match(roles.roleNameIssue("x".repeat(201), cat), /200/);
+  assert.equal(roles.roleNameIssue("x".repeat(200), cat), null);
+  assert.equal(roles.roleErrorText("UNIQUE constraint failed: roles.name"), "Another Role already uses this name; letter case is ignored");
+  assert.equal(roles.roleErrorText("stale role revision: expected 1, current 2"), "stale role revision: expected 1, current 2");
+});
+
+test("an external MCP server may not take an internal name, on or off", () => {
+  const internal = { roleId: "A", revision: 3, servers: [{ name: "roles", enabled: false }, { name: "bots", enabled: true }] };
+  // The launch preview lists the same servers; a name only one of them knows still counts.
+  const launch = { internalMcpServers: [{ name: "bots", enabled: true }, { name: "notify", enabled: false }] };
+  const names = roles.internalNames(internal, launch);
+  assert.deepEqual([...names].sort(), ["bots", "notify", "roles"]);
+  assert.equal(roles.internalCollision("roles", names), true, "switched off, still reserved");
+  assert.equal(roles.internalCollision("NOTIFY", names), true);
+  assert.equal(roles.internalCollision("scrape", names), false);
+  assert.deepEqual(roles.internalNames(null, null), []);
+  assert.deepEqual(roles.internalNames(null, launch), ["bots", "notify"]);
+  assert.deepEqual(roles.internalCounts(internal.servers), { on: 1, total: 2 });
+  assert.deepEqual(roles.internalCounts([]), { on: 0, total: 0 });
 });
 
 test("MCP forms round-trip a definition, omit blank optional fields and render the launch's TOML", () => {

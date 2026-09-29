@@ -30,6 +30,7 @@ test("homeOf distinguishes spatial records from reference destinations", () => {
   assert.deepEqual(homeOf({ kind: "worker", id: "w-1" }), { kind: "space", space: "workers", window: "workers" });
   assert.deepEqual(homeOf({ kind: "worker-window", id: "worker-2" }), { kind: "space", space: "workers", window: "worker-2" });
   assert.deepEqual(homeOf({ kind: "worker-runtime", id: "acc-1" }), { kind: "space", space: "workers", window: "worker-runtimes" });
+  assert.deepEqual(homeOf({ kind: "role", id: "r1" }), { kind: "space", space: "roles", window: "role-catalog" });
   assert.deepEqual(homeOf({ kind: "category", id: "c1" }), { kind: "space", space: "roles", window: "role-instructions" });
   assert.deepEqual(homeOf({ kind: "fragment", id: "f1" }), { kind: "space", space: "roles", window: "role-instructions" });
   assert.deepEqual(homeOf({ kind: "notification", id: "n1" }), { kind: "space", space: "inbox", window: "notify-inbox" });
@@ -107,6 +108,7 @@ test("parseNodeKey inverts nodeKey for every kind and rejects malformed keys", (
     { kind: "worker-account", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" },
     { kind: "login" },
     { kind: "bot", id: "bot-1" },
+    { kind: "role", id: "00000000-0000-4000-8000-000000000009" },
     { kind: "category", id: "00000000-0000-4000-8000-000000000001" },
     { kind: "fragment", id: "00000000-0000-4000-8000-000000000002" },
     { kind: "notification", id: "00000000-0000-4000-8000-000000000003" },

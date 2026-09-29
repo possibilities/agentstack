@@ -1,5 +1,5 @@
 // Optional rendered check of the Roles space after pnpm test and a ui build. The real Roles API runs
-// against a disposable state directory; Bots are a fixture. No live server or provider calls.
+// against a disposable state directory; Bots and Workers are fixtures. No live server or provider calls.
 // PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs node test/roles-browser-check.mjs
 // CHROME_BIN may override the local headless Chrome executable.
 import assert from "node:assert/strict";
@@ -19,33 +19,71 @@ const require = createRequire(import.meta.url);
 const dir = await mkdtemp(join("/tmp", "as-roles-ui-"));
 const evidence = process.env.ROLES_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
-const env = { ...process.env, STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
+// Nothing of the live Stack environment reaches the fixture: only the disposable state directory is named.
+const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("STACK_"))), STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
 // bot-1 runs inside a real project directory so trusted-project matching has something to find.
 const project = join(dir, "project");
 await mkdir(join(project, "src"), { recursive: true });
-const bot = (id, roleRevision, cwd = "/fixture") => ({ id, state: "running", pid: 321, cwd, url: null, account: null, runningAccount: null, mainThreadId: null,
-  recoveryIssue: null, roleRevision, settings: null });
+const bot = (id, roleId, roleRevision, cwd = "/fixture") => ({ id, state: "running", pid: 321, cwd, url: null, account: null, runningAccount: null, mainThreadId: null,
+  recoveryIssue: null, roleId, roleRevision, settings: null });
+const worker = (phase, roleId, roleRevision) => ({ id: `w-${Math.random().toString(16).slice(2)}`, botId: "bot-1", threadId: "t", accountId: "a", provider: "codex", model: "m", effort: null,
+  repo: "/src/stack", cwd: null, branch: null, baseCommit: null, sourceDirty: false, roleId, roleRevision, sessionId: null, runtimeInstance: null, phase,
+  currentTurnId: null, issue: null, createdAt: 1, updatedAt: 1, turn: null, pendingPermissions: 0 });
+let botList = [bot("bot-1", null, null, join(project, "src")), bot("bot-2", null, null)];
+let workerList = [];
 const handlers = {
   serve_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
-  bot_list: () => ({ bots: [bot("bot-1", 0, join(project, "src")), bot("bot-2", 5)] }),
+  bot_list: () => ({ bots: botList }),
   bot_defaults_get: () => ({ model: "fixture", reasoningEffort: "medium", sandboxMode: "danger-full-access", approvalPolicy: "never" }),
   voice_status: () => ({ call: null }),
+  // The gateway admits serve only with every operation its manifest selects; this check reads none of them.
+  serve_resources: () => { throw new Error("not part of this fixture"); },
+  serve_resource_history: () => { throw new Error("not part of this fixture"); },
+  worker_list: () => ({ workers: workerList }),
+  worker_runtime_list: () => ({ runtimes: [] }),
 };
 const fixture = (names) => fixtureOperations(names, handlers);
+/** Lets the page miss change notices, or lag one write, so stale-revision paths are exercised deterministically. */
+const wrapSockets = () => {
+  const Native = window.WebSocket;
+  window.__wsDrop = false;
+  window.__wsDelay = 0;
+  window.WebSocket = class extends Native {
+    set onmessage(handler) { super.onmessage = handler ? (event) => { if (window.__wsDrop && String(event.data).includes('"events/changed"')) return; handler.call(this, event); } : handler; }
+    get onmessage() { return super.onmessage; }
+    send(data) { if (window.__wsDelay && typeof data === "string" && data.includes('"fragment_update"')) setTimeout(() => super.send(data), window.__wsDelay); else super.send(data); }
+  };
+};
 const sockets = [];
-let websocket, next, browser, roles;
+let websocket, next, browser, rolesServer;
 let log = "";
 const rolesCall = (name, args = {}) => socketCall(socketPath("roles", env), "tools/call", { name, arguments: args });
+let botsSocket, workerSocket;
+let failed = false;
+let A, B;
+const snap = (roleId) => rolesCall("role_snapshot", { roleId });
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Poll a disposable API until `done` holds; the UI's own writes land asynchronously. */
+async function until(read, done, label) {
+  let value = await read();
+  for (let attempt = 0; !done(value) && attempt < 100; attempt++) { await wait(50); value = await read(); }
+  assert.ok(done(value), `timed out waiting for ${label}`);
+  return value;
+}
 
 try {
-  roles = await serveApi({ name: "roles", transport: "socket", env, root });
-  websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["roles", "serve", "bots", "api"]), port: 0 });
+  rolesServer = await serveApi({ name: "roles", transport: "socket", env, root });
+  websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["roles", "serve", "bots", "worker", "api"]), port: 0 });
   const doc = (name, api) => fixtureDoc(name, api, websocket.url, publishedJsonSchema);
-  const catalog = [doc("roles", rolesApi), doc("bots", botsApi), doc("serve"), doc("api")];
+  const catalog = [doc("roles", rolesApi), doc("bots", botsApi), doc("serve"), doc("worker"), doc("api")];
   handlers.docs_snapshot = () => ({ packages: catalog });
-  for (const [name, names, topics] of [["serve", ["serve_status"], { pids_changed: "Fixture" }], ["bots", ["bot_list", "bot_defaults_get", "voice_status"], botsApi.events.topics], ["api", ["docs_snapshot"], {}]]) {
-    sockets.push(await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {}, operations: fixture(names),
-      events: { topics, scope: name === "bots" ? { valid: () => true, description: "Fixture", example: "bot-1" } : undefined } }));
+  for (const [name, names, topics] of [["serve", ["serve_status", "serve_resources", "serve_resource_history"], { pids_changed: "Fixture" }], ["bots", ["bot_list", "bot_defaults_get", "voice_status"], botsApi.events.topics],
+    ["worker", ["worker_list", "worker_runtime_list"], { workers_changed: "Fixture" }], ["api", ["docs_snapshot"], {}]]) {
+    const served = await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {}, operations: fixture(names),
+      events: { topics, scope: name === "bots" ? { valid: () => true, description: "Fixture", example: "bot-1" } : undefined } });
+    sockets.push(served);
+    if (name === "bots") botsSocket = served;
+    if (name === "worker") workerSocket = served;
   }
   const nextPort = await port();
   env.STACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${nextPort}`;
@@ -55,22 +93,60 @@ try {
   for (let attempt = 0; ; attempt++) {
     try { if ((await fetch(`${origin}/connect/local`)).ok) break; } catch { /* bounded readiness check */ }
     if (attempt > 1800 || next.exitCode !== null) throw new Error(log);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await wait(50);
   }
   browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_BIN ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });
-  const page = await browser.newPage({ viewport: { width: 2000, height: 1100 }, reducedMotion: "reduce" });
+  const page = await browser.newPage({ viewport: { width: 2400, height: 1400 }, reducedMotion: "reduce" });
+  await page.addInitScript(wrapSockets);
   await authorizeBrowser(page, origin, env);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
+  const shot = (name) => page.screenshot({ path: join(evidence, `${name}.png`), animations: "disabled" });
+  const drop = (on) => page.evaluate((value) => { window.__wsDrop = value; }, on);
   await page.goto(`${origin}/roles`);
+  const catalogWindow = page.locator('[data-window="role-catalog"]');
   const instructions = page.locator('[data-window="role-instructions"]');
   const editor = page.locator('[data-window="role-editor"]');
   const preview = page.locator('[data-window="role-preview"]');
-  await instructions.getByText("No instructions", { exact: true }).waitFor();
-  await editor.getByText("Nothing to edit yet", { exact: true }).waitFor();
-  await preview.getByText("Nothing renders", { exact: true }).waitFor();
+  const skills = page.locator('[data-window="role-skills"]');
+  const servers = page.locator('[data-window="role-mcp-servers"]');
+  const projects = page.locator('[data-window="role-projects"]');
+  const inspector = page.getByRole("region", { name: "Inspector" });
+  const dialog = page.getByRole("alertdialog");
+  const roleRow = (name) => catalogWindow.locator('li[data-node^="role:"]').filter({ has: page.getByText(name, { exact: true }) });
+  // Editing pans the bench toward the Editor; a click on the Roles window fits the bench first when it has scrolled away.
+  const tap = (locator) => locator.click({ timeout: 2_000 }).catch(async () => { await page.getByRole("button", { name: /Fit bench/ }).click(); await locator.click(); });
+  const selectRole = (name) => tap(roleRow(name).getByRole("button").first());
+  const toast = (text) => page.locator("[data-sonner-toast]").filter({ hasText: text }).first();
+  const stackSwitch = (name) => servers.getByRole("switch", { name: `${name} on`, exact: true });
+
+  // A fresh installation has no Role: every Role window says so and Roles explains how to start.
+  await catalogWindow.getByText("No Roles yet", { exact: true }).waitFor();
+  await catalogWindow.getByText("Bots cannot launch until a Role exists. The first Role you create becomes the default; later ones can be made default at any time.").waitFor();
+  for (const window of [instructions, editor, preview, skills, servers, projects]) await window.getByText("No Role yet", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Spaces · Roles" }).waitFor();
-  await page.screenshot({ path: join(evidence, "roles-empty.png"), animations: "disabled" });
+  await shot("roles-empty");
+
+  // Create role opens a draft in the Editor; the first Role becomes the default and is selected.
+  await catalogWindow.getByRole("button", { name: "Create role", exact: true }).click();
+  const newRole = editor.getByRole("form", { name: "New role" });
+  await newRole.waitFor();
+  assert.equal(await newRole.getByLabel("Name", { exact: true }).evaluate((el) => el === document.activeElement), true);
+  assert.equal(await editor.getByRole("button", { name: "Create role" }).isDisabled(), true, "a name is required");
+  await newRole.getByText("This will be the default Role: every Bot launch and new Worker uses it once it exists.").waitFor();
+  await newRole.getByLabel("Name", { exact: true }).fill("Researcher");
+  await newRole.getByLabel(/^Description/).fill("Reads sources and reports what they say");
+  await newRole.getByLabel("Name", { exact: true }).press("Meta+s");
+  const researcher = roleRow("Researcher");
+  await researcher.getByText("Default", { exact: true }).waitFor();
+  await researcher.getByText("Editing", { exact: true }).waitFor();
+  const first = await rolesCall("roles_snapshot");
+  A = first.defaultRoleId;
+  assert.deepEqual(first.roles.map((role) => [role.name, role.id === A]), [["Researcher", true]]);
+  await instructions.getByText("Researcher · default · revision 0", { exact: true }).waitFor();
+  await editor.getByText("Nothing to edit yet", { exact: true }).waitFor();
+  await instructions.getByText("No instructions", { exact: true }).waitFor();
+  assert.equal(await editor.getByText("Editing this Role does not affect launches").count(), 0, "the default carries no not-default note");
 
   // A new category is a draft in the editor until it is created; its title starts focused.
   await instructions.getByRole("button", { name: "New category", exact: true }).click();
@@ -102,13 +178,10 @@ try {
   const tone = instructions.getByRole("listitem", { name: "Category Tone" });
   await tone.waitFor();
   await addFragment(tone, "Plain words", "Use plain words.");
-  const rendered = async () => (await rolesCall("role_preview")).rendered;
+  const rendered = async () => (await rolesCall("role_preview", { roleId: A })).rendered;
   assert.equal(await rendered(), "Write a short plan before acting.\n\nVerify before reporting.\n\nUse plain words.");
   await preview.getByText("Use plain words.", { exact: true }).waitFor();
   assert.deepEqual(await preview.getByRole("list", { name: "Rendered instructions by fragment" }).getByRole("button").allTextContents(), ["Plan first", "Verify", "Plain words"]);
-  // Five writes in, bot-2 launched with this Role and bot-1 with the empty one.
-  await preview.getByText("Older role", { exact: true }).waitFor();
-  await preview.getByText("Current", { exact: true }).waitFor();
   await page.screenshot({ path: join(evidence, "roles-filled.png"), animations: "disabled" });
 
   // Switches apply at once and the preview follows.
@@ -121,10 +194,10 @@ try {
 
   // Drag a fragment across categories, above "Plan first".
   await row("Plain words").dragTo(row("Plan first"), { targetPosition: { x: 40, y: 4 } });
-  let snapshot = await rolesCall("role_snapshot");
+  let snapshot = await snap(A);
   for (let attempt = 0; snapshot.categories[0].fragments[0]?.title !== "Plain words" && attempt < 40; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 50));
-    snapshot = await rolesCall("role_snapshot");
+    snapshot = await snap(A);
   }
   assert.deepEqual(snapshot.categories.map((category) => category.fragments.map((fragment) => fragment.title)), [["Plain words", "Plan first", "Verify"], []]);
 
@@ -133,7 +206,7 @@ try {
   await page.keyboard.press("Alt+ArrowDown");
   for (let attempt = 0; snapshot.categories[0].fragments[0].title !== "Plan first" && attempt < 40; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 50));
-    snapshot = await rolesCall("role_snapshot");
+    snapshot = await snap(A);
   }
   assert.deepEqual(snapshot.categories[0].fragments.map((fragment) => fragment.title), ["Plan first", "Plain words", "Verify"]);
 
@@ -144,18 +217,18 @@ try {
   await row("Plan first").getByRole("img", { name: "Unsaved changes" }).waitFor();
   await editor.getByText("Unsaved changes · ⌘S to save", { exact: true }).waitFor();
   const planId = snapshot.categories[0].fragments[0].id;
-  await rolesCall("fragment_update", { expectedRevision: snapshot.revision, id: planId, body: "Plan elsewhere." });
+  await rolesCall("fragment_update", { roleId: A, expectedRevision: snapshot.revision, id: planId, body: "Plan elsewhere." });
   await editor.getByText("Changed elsewhere", { exact: true }).waitFor();
   assert.equal(await editor.getByRole("button", { name: "Save", exact: true }).isDisabled(), true);
   await page.screenshot({ path: join(evidence, "roles-conflict.png"), animations: "disabled" });
   await editor.getByRole("button", { name: "Keep mine", exact: true }).click();
   await editor.getByRole("button", { name: "Save", exact: true }).click();
   await editor.getByText("All changes saved", { exact: true }).waitFor();
-  snapshot = await rolesCall("role_snapshot");
+  snapshot = await snap(A);
   assert.equal(snapshot.categories[0].fragments[0].body, "Write a short, numbered plan before acting.");
   // A save made while an unrelated write landed is rebuilt once and still applies.
   await planForm.getByLabel("Title", { exact: true }).fill("Plan before acting");
-  await rolesCall("category_update", { expectedRevision: snapshot.revision, id: snapshot.categories[1].id, description: "Voice" });
+  await rolesCall("category_update", { roleId: A, expectedRevision: snapshot.revision, id: snapshot.categories[1].id, description: "Voice" });
   await planForm.getByLabel("Title", { exact: true }).press("Meta+s");
   await editor.getByRole("form", { name: "Edit Plan before acting" }).waitFor();
   await editor.getByText("All changes saved", { exact: true }).waitFor();
@@ -177,7 +250,6 @@ try {
   // Inspection hands back to the editor; the palette finds fragments.
   await instructions.getByRole("button", { name: "Verify actions" }).click();
   await page.getByRole("menuitem", { name: "Inspect record" }).click();
-  const inspector = page.getByRole("region", { name: "Inspector" });
   await inspector.getByText("Instruction fragment", { exact: true }).waitFor();
   await inspector.getByRole("button", { name: "Edit in Roles" }).click();
   await editor.getByRole("form", { name: "Edit Verify" }).waitFor();
@@ -190,20 +262,16 @@ try {
   // Deleting asks first; a category with fragments cannot be deleted.
   await instructions.getByRole("button", { name: "Working style actions" }).click();
   await page.getByRole("menuitem", { name: "Delete…" }).click();
-  const dialog = page.getByRole("alertdialog");
   await dialog.getByText("Category isn’t empty", { exact: true }).waitFor();
   await dialog.getByRole("button", { name: "Close" }).click();
   await instructions.getByRole("button", { name: "Verify actions" }).click();
   await page.getByRole("menuitem", { name: "Delete…" }).click();
   await dialog.getByRole("button", { name: "Delete", exact: true }).click();
   await dialog.waitFor({ state: "hidden" });
-  snapshot = await rolesCall("role_snapshot");
+  snapshot = await snap(A);
   assert.deepEqual(snapshot.categories.flatMap((category) => category.fragments.map((fragment) => fragment.title)), ["Plan before acting", "Plain words"]);
 
   // Skills, MCP servers and trusted projects: list windows, the shared editor and the launch preview.
-  const skills = page.locator('[data-window="role-skills"]');
-  const servers = page.locator('[data-window="role-mcp-servers"]');
-  const projects = page.locator('[data-window="role-projects"]');
   await skills.getByText("No skills", { exact: true }).waitFor();
   await skills.getByRole("button", { name: "New skill", exact: true }).click();
   const newSkill = editor.getByRole("form", { name: "New skill" });
@@ -221,7 +289,7 @@ try {
   await newSkill.getByText("binary · 6 B").waitFor();
   await editor.getByRole("button", { name: "Create skill" }).click();
   await editor.getByRole("form", { name: "Edit skill review-changes" }).waitFor();
-  snapshot = await rolesCall("role_snapshot");
+  snapshot = await snap(A);
   assert.deepEqual(snapshot.skills.map((skill) => [skill.name, skill.files.map((file) => file.path)]), [["review-changes", ["scripts/check.sh", "logo-image.png"]]]);
   assert.equal(Buffer.from(snapshot.skills[0].files[0].contentBase64, "base64").toString(), "exit 0\n");
   // The preview follows the editor to the launch view.
@@ -233,7 +301,7 @@ try {
   await page.keyboard.press("Alt+ArrowUp");
   for (let attempt = 0; snapshot.skills[0]?.name !== "review-changes-copy" && attempt < 40; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 50));
-    snapshot = await rolesCall("role_snapshot");
+    snapshot = await snap(A);
   }
   assert.deepEqual(snapshot.skills.map((skill) => skill.name), ["review-changes-copy", "review-changes"]);
   await skills.getByRole("switch", { name: "review-changes-copy enabled" }).click();
@@ -243,7 +311,7 @@ try {
   await servers.getByRole("button", { name: "New MCP server", exact: true }).click();
   const newServer = editor.getByRole("form", { name: "New MCP server" });
   await newServer.getByLabel("Name", { exact: true }).fill("roles");
-  await newServer.getByText("An internal Package API already uses this name").first().waitFor();
+  await newServer.getByText("A Stack server already uses this name, even while it is switched off").first().waitFor();
   await newServer.getByLabel("Name", { exact: true }).fill("docs");
   await newServer.getByLabel("URL", { exact: true }).fill("https://mcp.example.test/docs");
   await newServer.getByLabel("Bearer token variable · optional").fill("DOCS_TOKEN");
@@ -257,12 +325,12 @@ try {
   assert.equal(await serverForm.getByLabel("Command", { exact: true }).inputValue(), "node");
   await serverForm.getByLabel("Name", { exact: true }).press("Meta+s");
   await editor.getByText("All changes saved", { exact: true }).waitFor();
-  snapshot = await rolesCall("role_snapshot");
+  snapshot = await snap(A);
   assert.equal(snapshot.mcpServers[0].definition, undefined, "ordinary reads remain credential-safe after an editor write");
-  assert.deepEqual((await rolesCall("role_editor_snapshot")).mcpServers[0].definition, { type: "stdio", command: "node", args: ["docs server.js", "--port", "7"] });
+  assert.deepEqual((await rolesCall("role_editor_snapshot", { roleId: A })).mcpServers[0].definition, { type: "stdio", command: "node", args: ["docs server.js", "--port", "7"] });
   assert.equal((await (await fetch(`${origin}/roles`)).text()).includes("docs server.js"), false, "connection definitions are absent from server-rendered HTML");
   await preview.getByText('command = "node"', { exact: false }).waitFor();
-  const launch = await rolesCall("role_launch_preview", { cwds: [join(project, "src")] });
+  const launch = await rolesCall("role_launch_preview", { roleId: A, cwds: [join(project, "src")] });
   assert.equal(launch.config, '[mcp_servers.docs]\ncommand = "node"\nargs = ["docs server.js", "--port", "7"]\nenabled = true\n');
 
   // Trusting a project shows which running Bots launch inside it.
@@ -271,7 +339,7 @@ try {
   await newProject.getByText("Trust covers the whole project config").waitFor();
   await newProject.getByLabel("Project root", { exact: true }).fill(project);
   await editor.getByRole("button", { name: "Trust project" }).click();
-  const canonical = (await rolesCall("role_snapshot")).trustedProjects[0].path;
+  const canonical = (await snap(A)).trustedProjects[0].path;
   const projectForm = editor.getByRole("form", { name: `Edit trusted project ${canonical}` });
   await projectForm.waitFor();
   await projectForm.getByRole("list", { name: "Bots inside this root" }).getByText("bot-1").waitFor();
@@ -294,22 +362,365 @@ try {
   await dialog.getByText(`Stop trusting “${canonical}”?`, { exact: true }).waitFor();
   await dialog.getByRole("button", { name: "Remove", exact: true }).click();
   await dialog.waitFor({ state: "hidden" });
-  snapshot = await rolesCall("role_snapshot");
+  snapshot = await snap(A);
   assert.deepEqual([snapshot.skills.map((skill) => skill.name), snapshot.trustedProjects.length], [["review-changes"], 0]);
+
+  /* ─── Named Roles ─────────────────────────────────────────────────── */
+
+  const revisionOf = async (id) => (await rolesCall("roles_snapshot")).roles.find((role) => role.id === id).revision;
+  const defaultId = async () => (await rolesCall("roles_snapshot")).defaultRoleId;
+
+  // A second Role: a name that differs only in case is refused as a hint before saving; creating it changes nothing else.
+  await tap(catalogWindow.getByRole("button", { name: "New role", exact: true }));
+  await editor.getByRole("form", { name: "New role" }).waitFor();
+  await editor.getByLabel("Name", { exact: true }).fill("researcher");
+  await editor.getByText("Another Role already uses this name; letter case is ignored").first().waitFor();
+  assert.equal(await editor.getByRole("button", { name: "Create role" }).isDisabled(), true);
+  await editor.getByText("A new Role starts empty and is not the default. Make it default when it is ready; nothing already running changes.").waitFor();
+  await editor.getByLabel("Name", { exact: true }).fill("Reviewer");
+  await editor.getByLabel(/^Description/).fill("Reviews changes before they land");
+  await editor.getByRole("button", { name: "Create role" }).click();
+  await roleRow("Reviewer").getByText("Editing", { exact: true }).waitFor();
+  const afterSecond = await rolesCall("roles_snapshot");
+  B = afterSecond.roles.find((role) => role.name === "Reviewer").id;
+  assert.equal(afterSecond.defaultRoleId, A, "creating a Role never changes the default");
+  assert.equal(await researcher.getByText("Editing", { exact: true }).count(), 0, "only the selected Role reads as being edited");
+  await researcher.getByText("Default", { exact: true }).waitFor();
+  await instructions.getByText("Reviewer · revision 0", { exact: true }).waitFor();
+  await instructions.getByText("No instructions", { exact: true }).waitFor();
+  // Editing a Role that is not the default says that its edits reach no launch, and offers Make default.
+  const note = "Editing this Role does not affect launches until it is made default. New launches use “Researcher”.";
+  await editor.getByText(note).waitFor();
+  await preview.getByText(note).waitFor();
+  await editor.getByRole("button", { name: "Make default" }).waitFor();
+  await shot("roles-second-role");
+
+  // Different content in the second Role: nothing of it leaks into the first.
+  await instructions.getByRole("button", { name: "New category", exact: true }).click();
+  await editor.getByLabel("Title", { exact: true }).fill("Review rules");
+  await editor.getByRole("button", { name: "Create category" }).click();
+  const rules = instructions.getByRole("listitem", { name: "Category Review rules" });
+  await rules.waitFor();
+  await addFragment(rules, "Check tests", "Run the tests before approving.");
+  await addFragment(rules, "Cite lines", "Cite the line of every finding.");
+  assert.equal(await instructions.getByRole("listitem", { name: "Category Working style" }).count(), 0, "the first Role's categories are not shown under the second");
+  await preview.getByText("Run the tests before approving.", { exact: true }).waitFor();
+  assert.equal((await rolesCall("role_preview", { roleId: B })).rendered, "Run the tests before approving.\n\nCite the line of every finding.");
+  assert.doesNotMatch((await rolesCall("role_preview", { roleId: A })).rendered, /Run the tests/, "the first Role's text is its own");
+
+  // Equal revisions across Roles are unrelated: bring the second Role to exactly the first one's revision number.
+  const target = await revisionOf(A);
+  const category = (await snap(B)).categories[0];
+  for (let revision = await revisionOf(B); revision < target; revision++) await rolesCall("category_update", { roleId: B, expectedRevision: revision, id: category.id, title: "Review rules" });
+  assert.equal(await revisionOf(B), target);
+
+  // What running Bots and Workers launched with, judged by Role identity and revision against the default.
+  const stale = "00000000-0000-4000-8000-00000000dead";
+  botList = [bot("bot-1", A, target - 3, join(project, "src")), bot("bot-2", B, target), bot("bot-3", A, target), bot("bot-4", null, 5), bot("bot-5", stale, 2)];
+  workerList = [worker("idle", A, target), worker("running", A, target - 2), worker("idle", B, target), worker("idle", null, 4), worker("closed", A, 1)];
+  botsSocket.publish("bots_changed", "bot-1");
+  workerSocket.publish("workers_changed");
+  const launched = (id) => preview.locator("li").filter({ has: page.getByText(id, { exact: true }) });
+  await launched("bot-1").getByText("Older revision", { exact: true }).waitFor();
+  await launched("bot-1").getByText(`Researcher r${target - 3}`, { exact: true }).waitFor();
+  await launched("bot-2").getByText("Other Role", { exact: true }).waitFor();
+  await launched("bot-2").getByText(`Reviewer r${target}`, { exact: true }).waitFor();
+  await launched("bot-3").getByText("Current", { exact: true }).waitFor();
+  await launched("bot-4").getByText("Unknown", { exact: true }).waitFor();
+  await launched("bot-4").getByText("Unknown role r5", { exact: true }).waitFor();
+  await launched("bot-5").getByText("Deleted role r2", { exact: true }).waitFor();
+  assert.equal(await launched("bot-2").getByText("Current", { exact: true }).count(), 0, "a revision number shared with the default's is not the default's");
+  await preview.getByText("4 open Workers · 1 older revision, 1 other Role, 1 unknown Role", { exact: true }).waitFor();
+  await launched("bot-2").locator("[title]").first().waitFor();
+  assert.equal(await launched("bot-2").locator(`[title="Launched with Reviewer r${target} · restart to use Researcher"]`).count() > 0, true);
+  await shot("roles-launched");
+
+  // Switch the default while both Roles hold unsaved edits: neither draft follows the default, and switching back restores it.
+  const fragmentRow = (title) => instructions.locator('li[data-node^="fragment:"]').filter({ hasText: title });
+  const openFragment = (title) => fragmentRow(title).getByRole("button", { name: new RegExp(`^${title}(?! actions)`) }).click();
+  await openFragment("Check tests");
+  await editor.getByLabel("Instructions", { exact: true }).fill("Run the tests and the linter before approving.");
+  await fragmentRow("Check tests").getByRole("img", { name: "Unsaved changes" }).waitFor();
+  await roleRow("Reviewer").getByRole("img", { name: "Unsaved changes" }).waitFor();
+  await selectRole("Researcher");
+  await instructions.getByText("Researcher · default", { exact: false }).first().waitFor();
+  await openFragment("Plain words");
+  await editor.getByLabel("Instructions", { exact: true }).fill("Use plain words, always.");
+  await roleRow("Researcher").getByRole("img", { name: "Unsaved changes" }).waitFor();
+  await selectRole("Reviewer");
+  await editor.getByLabel("Instructions", { exact: true }).waitFor();
+  assert.equal(await editor.getByLabel("Instructions", { exact: true }).inputValue(), "Run the tests and the linter before approving.", "the draft is restored with its Role");
+  await editor.getByText("Unsaved changes · ⌘S to save", { exact: true }).waitFor();
+  await editor.getByRole("button", { name: "Make default" }).click();
+  await dialog.getByText("Make “Reviewer” the default?", { exact: true }).waitFor();
+  await dialog.getByText("Later Bot launches and new Workers use this Role instead of “Researcher”. Running Bots and Workers keep what they launched with until restarted; nothing restarts automatically.").waitFor();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  assert.equal(await defaultId(), A, "cancelling changes nothing");
+  await editor.getByRole("button", { name: "Make default" }).click();
+  await dialog.getByRole("button", { name: "Make default" }).click();
+  await toast("“Reviewer” is now the default").waitFor();
+  assert.equal(await defaultId(), B);
+  assert.equal(await revisionOf(B), target, "a default switch advances the catalog, not the Role");
+  await roleRow("Reviewer").getByText("Default", { exact: true }).waitFor();
+  assert.equal(await roleRow("Researcher").getByText("Default", { exact: true }).count(), 0);
+  assert.equal(await editor.getByText("Editing this Role does not affect launches").count(), 0, "the new default carries no note");
+  assert.equal(await editor.getByLabel("Instructions", { exact: true }).inputValue(), "Run the tests and the linter before approving.", "the default switch did not retarget the draft");
+  await editor.getByText("Unsaved changes · ⌘S to save", { exact: true }).waitFor();
+  // Nobody launched differently: the Bot that ran Researcher is now merely "other", and Reviewer's is current.
+  await launched("bot-2").getByText("Current", { exact: true }).waitFor();
+  await launched("bot-3").getByText("Other Role", { exact: true }).waitFor();
+  await launched("bot-1").getByText("Other Role", { exact: true }).waitFor();
+  assert.equal(await preview.getByText("Older revision", { exact: true }).count(), 0);
+  await launched("bot-3").locator(`[title="Launched with Researcher r${target} · restart to use Reviewer"]`).first().waitFor();
+  assert.equal(await preview.getByText(/changed|updated/i).count(), 0, "the copy never claims a running process changed");
+  await shot("roles-default-switched");
+  // Saving the draft writes to the Role it was made for.
+  await editor.getByRole("button", { name: "Save", exact: true }).click();
+  await editor.getByText("All changes saved", { exact: true }).waitFor();
+  assert.equal((await snap(B)).categories[0].fragments[0].body, "Run the tests and the linter before approving.");
+  await selectRole("Researcher");
+  assert.equal(await editor.getByLabel("Instructions", { exact: true }).inputValue(), "Use plain words, always.", "the other Role's draft is untouched");
+  assert.notEqual((await snap(A)).categories.flatMap((item) => item.fragments).find((item) => item.title === "Plain words").body, "Use plain words, always.");
+  await editor.getByRole("button", { name: "Revert" }).click();
+  await roleRow("Researcher").getByRole("img", { name: "Unsaved changes" }).waitFor({ state: "detached" });
+  await editor.getByText("Editing this Role does not affect launches until it is made default. New launches use “Reviewer”.").waitFor();
+
+  // A write started for one Role and outrun by a change of selection finishes there and touches nothing else.
+  await editor.getByLabel("Instructions", { exact: true }).fill("Use plain words, in short sentences.");
+  await page.evaluate(() => { window.__wsDelay = 400; });
+  await editor.getByRole("button", { name: "Save", exact: true }).click();
+  await selectRole("Reviewer");
+  await instructions.getByText("Reviewer · default", { exact: false }).first().waitFor();
+  await page.evaluate(() => { window.__wsDelay = 0; });
+  await until(() => snap(A), (value) => value.categories.flatMap((item) => item.fragments).some((item) => item.body === "Use plain words, in short sentences."), "the delayed save to land in the first Role");
+  await wait(300);
+  assert.equal((await snap(B)).categories[0].fragments[0].body, "Run the tests and the linter before approving.", "the second Role is untouched");
+  assert.equal(await editor.getByText(/Unsaved changes/).count(), 0);
+  await editor.getByRole("form", { name: "Edit Check tests" }).waitFor();
+  assert.equal(await editor.getByLabel("Instructions", { exact: true }).inputValue(), "Run the tests and the linter before approving.", "the second Role's Editor shows its own record, not the first Role's");
+  await selectRole("Researcher");
+  await editor.getByRole("form", { name: "Edit Plain words" }).waitFor();
+  await editor.getByText("All changes saved", { exact: true }).waitFor();
+  assert.equal(await editor.getByLabel("Instructions", { exact: true }).inputValue(), "Use plain words, in short sentences.");
+
+  // Renaming goes through the Editor. The API's uniqueness refusal is shown when the page did not know of the clash.
+  await tap(roleRow("Researcher").getByRole("button", { name: "Researcher actions" }));
+  await page.getByRole("menuitem", { name: "Edit details" }).click();
+  const details = editor.getByRole("form", { name: "Edit Role Researcher" });
+  await details.waitFor();
+  await details.getByLabel("Name", { exact: true }).fill("reviewer");
+  await details.getByText("Another Role already uses this name; letter case is ignored").first().waitFor();
+  assert.equal(await editor.getByRole("button", { name: "Save", exact: true }).isDisabled(), true);
+  await drop(true);
+  await rolesCall("role_create", { expectedRevision: (await rolesCall("roles_snapshot")).revision, name: "Foo", description: "made elsewhere" });
+  await details.getByLabel("Name", { exact: true }).fill("foo");
+  assert.equal(await editor.getByRole("button", { name: "Save", exact: true }).isDisabled(), false, "the page has not seen Foo");
+  await editor.getByRole("button", { name: "Save", exact: true }).click();
+  await details.getByText("Another Role already uses this name; letter case is ignored").last().waitFor();
+  assert.equal((await rolesCall("roles_snapshot")).roles.find((role) => role.id === A).name, "Researcher");
+  await details.getByLabel("Name", { exact: true }).fill("Research");
+  await details.getByLabel(/^Description/).fill("Reads sources and reports what they say, with links");
+  await editor.getByRole("button", { name: "Save", exact: true }).click();
+  await until(() => rolesCall("roles_snapshot"), (value) => value.roles.find((role) => role.id === A).name === "Research", "the rename");
+  assert.equal(await defaultId(), B, "renaming never changes the default");
+  await drop(false);
+  await roleRow("Research").getByText("Editing", { exact: true }).waitFor();
+  await roleRow("Foo").waitFor();
+
+  // A stale catalog revision commits nothing: the page rereads the catalog and rebuilds the write once.
+  await drop(true);
+  await rolesCall("role_create", { expectedRevision: (await rolesCall("roles_snapshot")).revision, name: "Third", description: "" });
+  assert.equal(await roleRow("Third").count(), 0, "the page missed the change");
+  await tap(roleRow("Research").getByRole("button", { name: "Research actions" }));
+  await page.getByRole("menuitem", { name: "Make default…" }).click();
+  await dialog.getByRole("button", { name: "Make default" }).click();
+  await toast("“Research” is now the default").waitFor();
+  assert.equal(await defaultId(), A);
+  await roleRow("Third").waitFor();
+  assert.deepEqual((await rolesCall("roles_snapshot")).roles.map((role) => role.name), ["Research", "Reviewer", "Foo", "Third"]);
+  await drop(false);
+  // A stale Role revision likewise: another client edited this Role, then a switch here is rebuilt and applied.
+  await drop(true);
+  const working2 = (await snap(A)).categories.find((item) => item.title === "Working style");
+  await rolesCall("category_update", { roleId: A, expectedRevision: await revisionOf(A), id: working2.id, description: "Edited elsewhere" });
+  await instructions.getByRole("switch", { name: "Working style enabled" }).click();
+  await until(() => snap(A), (value) => value.categories.find((item) => item.id === working2.id).enabled === false, "the stale switch to apply");
+  assert.equal((await snap(A)).categories.find((item) => item.id === working2.id).description, "Edited elsewhere", "the other client's edit survives");
+  await drop(false);
+  await instructions.getByRole("switch", { name: "Working style enabled" }).click();
+  await instructions.getByText("Edited elsewhere", { exact: false }).first().waitFor();
+
+  /* ─── Internal Stack MCP servers ───────────────────────────────── */
+
+  const internalNames = (await rolesCall("role_internal_mcp_list", { roleId: A })).servers.map((server) => server.name);
+  assert.ok(internalNames.length >= 3 && internalNames.includes("roles"), `the repository configures several internal MCP servers: ${internalNames}`);
+  const total = internalNames.length;
+  const count = (on) => servers.getByText(`${on} of ${total} on`, { exact: true }).first();
+  const enabledNow = async (id) => Object.fromEntries((await rolesCall("role_internal_mcp_list", { roleId: id })).servers.map((server) => [server.name, server.enabled]));
+  await servers.getByText("Stack servers", { exact: true }).waitFor();
+  await count(total).waitFor();
+  assert.deepEqual(Object.values(await enabledNow(A)).every(Boolean), true, "every server is on in a newly created Role");
+  assert.deepEqual(Object.values(await enabledNow(B)).every(Boolean), true);
+  await servers.getByText("Switches apply to later Bot launches and new Workers; running sessions keep their connections. New Stack packages start on.").waitFor();
+  await preview.getByRole("button", { name: "Launch", exact: false }).click();
+  await preview.getByText(`${total} of ${total} Stack servers on · 1 from the Role`).waitFor();
+  // Off for this Role only, and the preview tells enabled from configured.
+  await stackSwitch("bots").click();
+  await until(() => enabledNow(A), (value) => value.bots === false, "bots to switch off");
+  assert.equal((await enabledNow(B)).bots, true, "switches belong to their own Role");
+  await count(total - 1).waitFor();
+  await servers.locator("li").filter({ has: page.getByText("bots", { exact: true }) }).getByText("Off", { exact: true }).waitFor();
+  await preview.getByText(`${total - 1} of ${total} Stack servers on · 1 from the Role`).waitFor();
+  assert.equal(await preview.locator('[title="Off for this Role"]').count(), 1);
+  assert.deepEqual((await rolesCall("role_launch_preview", { roleId: A })).internalMcpServers.filter((server) => !server.enabled).map((server) => server.name), ["bots"]);
+  await shot("roles-internal-off");
+  await stackSwitch("bots").click();
+  await until(() => enabledNow(A), (value) => value.bots === true, "bots to switch on");
+  await count(total).waitFor();
+  // All off is allowed, roles included.
+  for (const name of internalNames) {
+    await stackSwitch(name).click();
+    await until(() => enabledNow(A), (value) => value[name] === false, `${name} to switch off`);
+  }
+  await count(0).waitFor();
+  await servers.getByText("Every Stack server is off; later launches receive none of them.").waitFor();
+  assert.equal(Object.values(await enabledNow(A)).some(Boolean), false);
+  assert.equal(Object.values(await enabledNow(B)).every(Boolean), true, "the default Role is unaffected");
+  // A switched-off name is still reserved against an external MCP server.
+  await servers.getByRole("button", { name: "New MCP server", exact: true }).click();
+  const external = editor.getByRole("form", { name: "New MCP server" });
+  await external.getByLabel("Name", { exact: true }).fill("roles");
+  await external.getByText("A Stack server already uses this name, even while it is switched off").first().waitFor();
+  assert.equal(await editor.getByRole("button", { name: "Create server" }).isDisabled(), true);
+  await external.getByRole("button", { name: "Discard", exact: true }).click();
+  await shot("roles-internal-all-off");
+  // A stale revision: another client changed the Role; a switch here is rebuilt, or skipped when the change was the same one.
+  await drop(true);
+  await rolesCall("role_internal_mcp_update", { roleId: A, expectedRevision: await revisionOf(A), name: "roles", enabled: true });
+  const before = await revisionOf(A);
+  await stackSwitch("bots").click();
+  await until(() => enabledNow(A), (value) => value.bots === true, "the stale switch to apply after a reread");
+  assert.equal((await enabledNow(A)).roles, true, "the other client's change survives");
+  assert.equal(await revisionOf(A), before + 1, "one write, after one reread");
+  await drop(false);
+  await drop(true);
+  await rolesCall("role_internal_mcp_update", { roleId: A, expectedRevision: await revisionOf(A), name: "roles", enabled: false });
+  const settled = await revisionOf(A);
+  await stackSwitch("roles").click();
+  await stackSwitch("roles").waitFor();
+  await wait(400);
+  assert.equal(await revisionOf(A), settled, "the reread already showed the requested state, so nothing more was written");
+  assert.equal((await enabledNow(A)).roles, false);
+  await drop(false);
+  // Restore A's switches and confirm the second Role's independence from the first.
+  for (const name of internalNames.filter((item) => item !== "roles" && item !== "bots")) await stackSwitch(name).click();
+  await stackSwitch("roles").click();
+  await until(() => enabledNow(A), (value) => Object.values(value).every(Boolean), "every switch to return on");
+  await selectRole("Reviewer");
+  await servers.getByText("Reviewer", { exact: true }).first().waitFor();
+  await count(total).waitFor();
+
+  /* ─── Deleting Roles ───────────────────────────────────────────── */
+
+  // The default cannot be deleted, and the menu says why.
+  await tap(roleRow("Research").getByRole("button", { name: "Research actions" }));
+  const defaultDelete = page.getByRole("menuitem", { name: /Delete…/ });
+  assert.notEqual(await defaultDelete.getAttribute("data-disabled"), null, "the default's Delete is disabled");
+  await page.getByText("Make another Role default first").waitFor();
+  await page.keyboard.press("Escape");
+  assert.equal(await defaultId(), A);
+  await rolesCall("role_delete", { roleId: A, expectedRevision: (await rolesCall("roles_snapshot")).revision }).then(() => assert.fail("the API accepted deleting the default"), (error) => assert.match(error.message, /cannot delete the default role/));
+
+  // A non-default Role goes with its unsaved edits, after saying what it removes.
+  await tap(roleRow("Third").getByRole("button", { name: "Third actions" }));
+  await page.getByRole("menuitem", { name: "Edit details" }).click();
+  await editor.getByRole("form", { name: "Edit Role Third" }).getByLabel(/^Description/).fill("Draft that will not be kept");
+  await roleRow("Third").getByRole("img", { name: "Unsaved changes" }).waitFor();
+  await tap(roleRow("Third").getByRole("button", { name: "Third actions" }));
+  await page.getByRole("menuitem", { name: "Delete…" }).click();
+  await dialog.getByText("Delete “Third”?", { exact: true }).waitFor();
+  await dialog.getByText("This removes its instructions, skills, MCP servers and trusted projects, and discards its unsaved edits. Bots and Workers that already launched keep their snapshots. This can’t be undone.").waitFor();
+  await shot("roles-delete-role");
+  await dialog.getByRole("button", { name: "Delete Role" }).click();
+  await dialog.waitFor({ state: "hidden" });
+  await toast("Deleted “Third”").waitFor();
+  assert.deepEqual((await rolesCall("roles_snapshot")).roles.map((role) => role.name), ["Research", "Reviewer", "Foo"]);
+  await roleRow("Third").waitFor({ state: "detached" });
+  assert.equal(await roleRow("Research").getByText("Editing", { exact: true }).count(), 1, "deleting your own selected Role selects the default");
+  assert.equal(await page.getByText("was deleted in another window").count(), 0, "a deletion made here is not reported as made elsewhere");
+
+  // The selected Role deleted in another window, holding unsaved edits: they are kept readable, not applied elsewhere.
+  await selectRole("Foo");
+  await tap(roleRow("Foo").getByRole("button", { name: "Foo actions" }));
+  await page.getByRole("menuitem", { name: "Edit details" }).click();
+  await editor.getByRole("form", { name: "Edit Role Foo" }).getByLabel(/^Description/).fill("Text that must survive");
+  await roleRow("Foo").getByRole("img", { name: "Unsaved changes" }).waitFor();
+  const foo = (await rolesCall("roles_snapshot")).roles.find((role) => role.name === "Foo").id;
+  await rolesCall("role_delete", { roleId: foo, expectedRevision: (await rolesCall("roles_snapshot")).revision });
+  await editor.getByText("This Role was deleted in another window", { exact: true }).waitFor();
+  await editor.getByText("Text that must survive", { exact: true }).waitFor();
+  await editor.getByRole("button", { name: "Copy description text" }).waitFor();
+  await catalogWindow.getByText("was deleted in another window. Its unsaved edits are still here.").waitFor();
+  await instructions.getByText("Role deleted", { exact: true }).waitFor();
+  assert.equal(await defaultId(), A);
+  await shot("roles-deleted-elsewhere");
+  await editor.getByRole("button", { name: "Discard drafts" }).click();
+  await roleRow("Research").getByText("Editing", { exact: true }).waitFor();
+  await editor.getByText("This Role was deleted in another window", { exact: true }).waitFor({ state: "detached" });
+
+  // Without edits the page falls back to the default and says so once.
+  await rolesCall("role_create", { expectedRevision: (await rolesCall("roles_snapshot")).revision, name: "Ephemeral", description: "" });
+  await roleRow("Ephemeral").waitFor();
+  await selectRole("Ephemeral");
+  await instructions.getByText("Ephemeral · revision 0", { exact: true }).waitFor();
+  const ephemeral = (await rolesCall("roles_snapshot")).roles.find((role) => role.name === "Ephemeral").id;
+  await rolesCall("role_delete", { roleId: ephemeral, expectedRevision: (await rolesCall("roles_snapshot")).revision });
+  await toast("“Ephemeral” was deleted in another window").waitFor();
+  await roleRow("Research").getByText("Editing", { exact: true }).waitFor();
+
+  // The viewer remembers which Role it last edited; the default is not what it remembers.
+  await selectRole("Reviewer");
+  await instructions.getByText("Reviewer · revision", { exact: false }).first().waitFor();
+  await page.reload();
+  await roleRow("Reviewer").getByText("Editing", { exact: true }).waitFor();
+  await roleRow("Research").getByText("Default", { exact: true }).waitFor();
+  await instructions.getByText("Reviewer · revision", { exact: false }).first().waitFor();
+
+  // Inspecting a Role hands back to the Editor, which selects it; the palette finds Roles and offers New role.
+  await tap(roleRow("Research").getByRole("button", { name: "Research actions" }));
+  await page.getByRole("menuitem", { name: "Inspect record" }).click();
+  await inspector.getByText("Role · default", { exact: true }).waitFor();
+  await inspector.getByRole("button", { name: "Edit in Roles" }).click();
+  await editor.getByRole("form", { name: "Edit Role Research" }).waitFor();
+  await roleRow("Research").getByText("Editing", { exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Meta+k");
+  await page.getByRole("combobox").fill("role reviewer");
+  await page.getByRole("option", { name: /Reviewer/ }).first().click();
+  await editor.getByRole("form", { name: "Edit Role Reviewer" }).waitFor();
+  await page.keyboard.press("Meta+k");
+  await page.getByRole("combobox").fill("new role");
+  await page.getByRole("option", { name: /New role/ }).first().click();
+  await editor.getByRole("form", { name: "New role" }).waitFor();
+  await editor.getByRole("button", { name: "Discard new role" }).click();
+  // The closing checks use the first Role's fragments.
+  await selectRole("Research");
+  await shot("roles-multirole");
 
   // "Edit in Roles" revealed the server's window; the palette brings the fragment back into view.
   await page.keyboard.press("Meta+k");
   await page.getByRole("combobox").fill("role fragment plain");
   await page.getByRole("option", { name: /Plain words/ }).first().click();
   await editor.getByRole("form", { name: "Edit Plain words" }).waitFor();
-  await page.screenshot({ path: join(evidence, "roles-light.png"), animations: "disabled" });
+  await shot("roles-light");
   await page.emulateMedia({ colorScheme: "dark" });
-  await page.screenshot({ path: join(evidence, "roles-dark.png"), animations: "disabled" });
+  await shot("roles-dark");
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: join(evidence, "roles-mobile.png"), animations: "disabled" });
+  await shot("roles-mobile");
   assert.deepEqual(errors, [], "browser has no uncaught application errors");
-  console.log(JSON.stringify({ ok: true, evidence, assertions: "empty states, category and fragment creation, preview order and segments, launch revisions, switches, cross-category drag, keyboard move, drafts, conflict keep-mine, stale-revision rebuild, search, category off, inspector hand-off, palette, delete guard and delete, skill files and duplicate/reorder/switch, MCP name guard, TOML and stdio split, trusted-project Bot matching, resource inspect and delete, light/dark/mobile" }, null, 2));
+  console.log(JSON.stringify({ ok: true, evidence, assertions: "empty catalog, first Role becomes default, second Role and case-insensitive name hint, per-Role content, launch comparison by Role identity and revision, default switch with drafts on both Roles, delayed write outrun by selection, rename and API uniqueness refusal, stale catalog and stale Role and stale internal-switch rebuilds, internal switches per Role and all off, reserved internal names, default delete refused, delete with drafts, Role deleted elsewhere with and without drafts, remembered selection, Role inspector and palette, category and fragment creation, preview order and segments, launch revisions, switches, cross-category drag, keyboard move, drafts, conflict keep-mine, stale-revision rebuild, search, category off, inspector hand-off, palette, delete guard and delete, skill files and duplicate/reorder/switch, MCP name guard, TOML and stdio split, trusted-project Bot matching, resource inspect and delete, light/dark/mobile" }, null, 2));
 } catch (error) {
+  failed = true;
   const page = browser?.contexts()[0]?.pages()[0];
   if (page) await page.screenshot({ path: join(evidence, "failure.png"), animations: "disabled" }).catch(() => undefined);
   throw error;
@@ -318,6 +729,7 @@ try {
   if (next && next.exitCode === null) { next.kill("SIGTERM"); await new Promise((resolve) => next.once("exit", resolve)); }
   await websocket?.close();
   await Promise.all(sockets.map((socket) => socket.close()));
-  await roles?.close();
-  if (!process.env.ROLES_EVIDENCE_DIR) await rm(dir, { recursive: true, force: true });
+  await rolesServer?.close();
+  // The disposable state directory always goes; a failed run keeps it only when its screenshot lives inside.
+  if (!(failed && evidence.startsWith(dir))) await rm(dir, { recursive: true, force: true });
 }

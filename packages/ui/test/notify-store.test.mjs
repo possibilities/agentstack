@@ -50,7 +50,7 @@ test("the Inbox store pages, filters, follows notify_changed and applies dismiss
   globalThis.WebSocket = class extends WebSocket { constructor(url, protocols) { super(url, protocols, { origin }); } };
   const call = (name, args = {}) => socketCall(socketPath("notify", env), "tools/call", { name, arguments: args });
   const store = new StackStore({ server: empty, resources: empty, accounts: empty, workerAccounts: empty, workerRuntimes: empty, workerSessions: empty,
-    usage: empty, login: empty, workerLogins: empty, bots: empty, botDefaults: empty, voice: empty, role: empty, rolePreview: empty, catalog: empty,
+    usage: empty, login: empty, workerLogins: empty, bots: empty, botDefaults: empty, voice: empty, roleCatalog: empty, catalog: empty,
     endpoints: { notify: websocket.url } });
   try {
     const sent = [];

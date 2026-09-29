@@ -330,3 +330,169 @@ test("worker sign-in attempts merge, resolve, and dismiss", async () => {
     globalThis.WebSocket = original;
   }
 });
+
+test("Role reads follow the selected Role: another Role's response never lands, a deleted Role is not read, and discovery rereads the internal list", async () => {
+  const original = globalThis.WebSocket;
+  const sockets = new Set();
+  const role = (id, revision) => ({ id, name: `Role ${id}`, description: "", revision, createdAt: null, updatedAt: null });
+  let catalog = { revision: 4, defaultRoleId: "A", roles: [role("A", 3), role("B", 1)] };
+  const revisions = { A: 3, B: 1 };
+  const calls = [];
+  const gates = new Map();
+  // A read that waits for its gate is computed when released, so it can answer with a revision from after the switch.
+  const gated = (key, make) => gates.has(key) ? gates.get(key).promise.then(make) : make();
+  const hold = (key) => {
+    let release;
+    const promise = new Promise((resolve) => { release = resolve; });
+    gates.set(key, { promise, release });
+    return () => { gates.delete(key); release(); };
+  };
+  const known = (roleId) => { if (!catalog.roles.some((item) => item.id === roleId)) throw new Error(`unknown role: ${roleId}`); };
+  let failing = false;
+  const results = {
+    roles_snapshot: () => catalog,
+    role_editor_snapshot: ({ roleId }) => { calls.push(`snapshot:${roleId}`); known(roleId);
+      return gated(`snapshot:${roleId}`, () => {
+        if (failing && roleId === "A") throw new Error("Role A could not be read");
+        return { ...role(roleId, revisions[roleId]), categories: [], skills: [], mcpServers: [], trustedProjects: [], disabledInternalMcpServers: [] };
+      }); },
+    role_preview: ({ roleId }) => { known(roleId); return { roleId, revision: revisions[roleId], rendered: "", segments: [], bytes: 0, limitBytes: 262144 }; },
+    role_launch_preview: ({ roleId }) => { known(roleId); return { roleId, revision: revisions[roleId], instructions: { bytes: 0, limitBytes: 1, fragments: 0 }, skills: [],
+      internalMcpServers: [{ name: "bots", enabled: true }], mcpServers: [], config: "", trustedProjects: [], cwds: [], issues: [], snapshotChars: 0, snapshotLimitChars: 1 }; },
+    role_internal_mcp_list: ({ roleId }) => { calls.push(`internal:${roleId}`); known(roleId);
+      return gated(`internal:${roleId}`, () => ({ roleId, revision: revisions[roleId], servers: [{ name: "bots", enabled: true }] })); },
+    docs_snapshot: () => { calls.push("docs"); return { packages: [] }; },
+  };
+
+  class FakeWebSocket {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    readyState = FakeWebSocket.CONNECTING;
+    subscriptions = new Map();
+    constructor(url) {
+      this.url = url;
+      sockets.add(this);
+      queueMicrotask(() => { this.readyState = FakeWebSocket.OPEN; this.onopen?.(); });
+    }
+    send(raw) {
+      const { id, method, params } = JSON.parse(raw);
+      if (method === "events/subscribe") this.subscriptions.set(params.subscription, params);
+      if (method === "events/unsubscribe") this.subscriptions.delete(params.subscription);
+      const reply = (body) => queueMicrotask(() => this.onmessage?.({ data: JSON.stringify({ id, ...body }) }));
+      if (method.startsWith("events/")) return reply({ result: params });
+      try {
+        Promise.resolve(results[params.name]?.(params.arguments)).then((result) => reply({ result }), (cause) => reply({ error: { message: cause.message } }));
+      } catch (cause) {
+        reply({ error: { message: cause instanceof Error ? cause.message : String(cause) } });
+      }
+    }
+    close() { this.readyState = 3; sockets.delete(this); this.onclose?.(); }
+  }
+
+  const publish = (pkg, topic) => {
+    for (const socket of sockets) {
+      for (const subscription of socket.subscriptions.values()) {
+        if (subscription.package === pkg && subscription.topics.includes(topic))
+          socket.onmessage?.({ data: JSON.stringify({ method: "events/changed", params: { package: pkg, subscription: subscription.subscription, topic } }) });
+      }
+    }
+  };
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+
+  globalThis.WebSocket = FakeWebSocket;
+  const snapshot = {
+    server: resource(null), resources: resource(null), accounts: resource([]), workerAccounts: resource([]), workerRuntimes: resource([]),
+    login: resource(null), workerLogins: resource([]), bots: resource([]), voice: resource(null), catalog: resource(null), roleCatalog: resource(null),
+    endpoints: { roles: "ws://roles-store.invalid/websocket", api: "ws://api-store.invalid/websocket" },
+  };
+  const store = new StackStore(snapshot);
+  try {
+    store.start();
+    // Nothing Role-scoped is read until a Role is selected: there is no singleton read to fall back on.
+    await until(store, () => store.getState().roleCatalog.data?.revision === 4);
+    await settle();
+    assert.deepEqual(calls.filter((call) => call.startsWith("snapshot:") || call.startsWith("internal:")), []);
+    assert.equal(store.getState().roleId, null);
+
+    store.selectRole("A");
+    await until(store, () => store.getState().role.data?.id === "A" && store.getState().roleInternal.data?.roleId === "A" && store.getState().rolePreview.data?.roleId === "A" && store.getState().roleLaunch.data?.roleId === "A");
+
+    // A's reads are in flight when the selection moves to B. Switching clears A's data at once and B's reads do not wait.
+    const releaseSnapshot = hold("snapshot:A");
+    const releaseInternal = hold("internal:A");
+    publish("roles", "role_changed");
+    await settle();
+    const shown = [];
+    const unsubscribe = store.subscribe(() => shown.push(store.getState().role.data?.id ?? null));
+    store.selectRole("B");
+    assert.equal(store.getState().role.data, null);
+    assert.equal(store.getState().roleInternal.data, null);
+    await until(store, () => store.getState().role.data?.id === "B" && store.getState().roleInternal.data?.roleId === "B");
+    // A answers late, at a far higher revision than B has: it must not replace B.
+    revisions.A = 99;
+    releaseSnapshot();
+    releaseInternal();
+    await settle();
+    unsubscribe();
+    assert.equal(store.getState().role.data.id, "B");
+    assert.equal(store.getState().role.data.revision, 1);
+    assert.equal(store.getState().roleInternal.data.roleId, "B");
+    assert.ok(!shown.includes("A"), "Role A's data is never shown under Role B");
+
+    // A read of A that fails after the switch does not leave its error on B either.
+    store.selectRole("A");
+    await until(store, () => store.getState().role.data?.id === "A");
+    const releaseFailing = hold("snapshot:A");
+    publish("roles", "role_changed");
+    await settle();
+    store.selectRole("B");
+    await until(store, () => store.getState().role.data?.id === "B");
+    failing = true;
+    releaseFailing();
+    await settle();
+    failing = false;
+    assert.equal(store.getState().role.error, null);
+    assert.equal(store.getState().role.data.id, "B");
+
+    // A direct read of another Role is returned to its caller but not held; the same Role never rolls back.
+    revisions.A = 120;
+    assert.equal((await store.reloadRole("A")).revision, 120);
+    assert.equal(store.getState().role.data.id, "B");
+    revisions.B = 5;
+    assert.equal((await store.reloadRole("B")).revision, 5);
+    await until(store, () => store.getState().role.data.revision === 5 && store.getState().roleInternal.data?.revision === 5);
+    revisions.B = 2;
+    assert.equal((await store.reloadRole("B")).revision, 2);
+    assert.equal((await store.reloadRoleInternal("B")).revision, 2);
+    await settle();
+    assert.equal(store.getState().role.data.revision, 5, "an older read of the same Role is dropped");
+    assert.equal(store.getState().roleInternal.data.revision, 5);
+
+    // A discovery refresh rereads the internal list, since manifest changes do not advance Role revisions.
+    revisions.B = 6;
+    const internalReads = calls.filter((call) => call === "internal:B").length;
+    [...sockets].find((socket) => socket.url.startsWith("ws://api-store.invalid")).close();
+    await until(store, () => calls.filter((call) => call === "internal:B").length > internalReads && store.getState().roleInternal.data?.revision === 6);
+
+    // The selected Role is deleted elsewhere: its data is dropped at once and nothing more is read for it.
+    catalog = { revision: 5, defaultRoleId: "A", roles: [role("A", 120)] };
+    publish("roles", "role_changed");
+    await until(store, () => store.getState().roleCatalog.data?.revision === 5 && store.getState().role.data === null);
+    await settle();
+    assert.equal(store.getState().roleId, "B", "the page decides what to select instead; the store never falls back on its own");
+    assert.equal(store.getState().role.error, null);
+    assert.equal(store.getState().roleLaunch.data, null);
+    const reads = calls.length;
+    publish("roles", "role_changed");
+    await settle();
+    assert.deepEqual(calls.slice(reads).filter((call) => call.endsWith(":B")), [], "a Role the catalog no longer lists is not read");
+
+    store.selectRole("A");
+    await until(store, () => store.getState().role.data?.id === "A" && store.getState().role.data.revision === 120);
+    // A stale catalog never replaces a newer one.
+    assert.equal(store.getState().roleCatalog.data.revision, 5);
+  } finally {
+    store.stop();
+    globalThis.WebSocket = original;
+  }
+});
