@@ -130,25 +130,57 @@ try {
   assert.equal(await roleRow("Manager").getByText("Worker default", { exact: true }).count(), 0, "one default never implies the other");
   await roleRow("Manager").getByText("Editing", { exact: true }).waitFor();
   await catalogWindow.getByText("Bots · Manager · Workers · Worker", { exact: true }).waitFor();
-  await catalogWindow.getByText("New Bots use the Bot default “Manager”. A Worker uses the Role it selects, or the Worker default “Worker” when it selects none. Make Bot default changes only Bots.", { exact: false }).waitFor();
+  await catalogWindow.getByText("New Bots use the Bot default “Manager”. A Worker uses the Role it selects, or the Worker default “Worker” when it selects none. Each Make default changes only its own audience.", { exact: false }).waitFor();
   await instructions.getByText("Manager · Bot default · revision 0", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Spaces · Roles" }).waitFor();
   await shot("roles-provisioned");
 
-  // The Worker default explains who receives it and offers only Make Bot default; the Worker default is set through the API.
+  // The Bot default offers Make Worker default, and only that; the Worker default offers only Make Bot default.
+  await editor.getByText("New Bots use this Role. Workers use it only when they select it; the rest use “Worker”. Edits reach later launches only; running sessions keep their snapshot.", { exact: true }).waitFor();
+  assert.equal(await editor.getByRole("button", { name: "Make Bot default" }).count(), 0, "the Bot default is not offered to itself");
   await selectRole("Worker");
   const workerNote = "New Bots use “Manager”, not this Role. It is the Worker default: Workers started without a selected Role use it. Edits reach later launches only; running sessions keep their snapshot.";
   await editor.getByText(workerNote, { exact: true }).waitFor();
   await instructions.getByText("Worker · Worker default · revision 0", { exact: true }).waitFor();
   await instructions.getByText("No instructions", { exact: true }).waitFor();
-  assert.equal(await page.getByRole("button", { name: /^(Make|Set|Change|Reassign)\b.*Worker default/i }).count(), 0, "no Worker-default control");
+  await editor.getByRole("button", { name: "Make Bot default" }).waitFor();
+  assert.equal(await editor.getByRole("button", { name: "Make Worker default" }).count(), 0, "the Worker default is not offered to itself");
   await tap(roleRow("Worker").getByRole("button", { name: "Worker actions" }));
   assert.notEqual(await page.getByRole("menuitem", { name: /Delete…/ }).getAttribute("data-disabled"), null, "the Worker default's Delete is disabled");
-  await page.getByText("Reassign the Worker default with role_set_worker_default first", { exact: true }).waitFor();
-  assert.equal(await page.getByRole("menuitem", { name: /^(Make|Set|Change|Reassign)\b.*Worker default/i }).count(), 0, "the menu offers no Worker-default change");
+  await page.getByText("Make another Role the Worker default first", { exact: true }).waitFor();
+  assert.notEqual(await page.getByRole("menuitem", { name: "Worker default", exact: true }).getAttribute("data-disabled"), null);
   await page.keyboard.press("Escape");
   await rolesCall("role_delete", { roleId: W, expectedRevision: (await rolesCall("roles_snapshot")).revision })
     .then(() => assert.fail("the API accepted deleting the Worker default"), (error) => assert.match(error.message, /cannot delete the Worker default role/));
+
+  // Make Worker default moves only the Worker default: Manager becomes both, and Worker is then an ordinary, deletable Role.
+  await selectRole("Manager");
+  await editor.getByRole("button", { name: "Make Worker default" }).click();
+  await dialog.getByText("Make “Manager” the Worker default?", { exact: true }).waitFor();
+  await dialog.getByText("Later Workers started without a selected Role use this Role instead of “Worker”. Workers that select a Role are unaffected, and Bots still use “Manager”. Running Workers keep the snapshot they started with.").waitFor();
+  await shot("roles-worker-default-dialog");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  assert.equal((await rolesCall("roles_snapshot")).workerDefaultRoleId, W, "cancelling changes nothing");
+  await editor.getByRole("button", { name: "Make Worker default" }).click();
+  await dialog.getByRole("button", { name: "Make default", exact: true }).click();
+  await toast("“Manager” is now the Worker default").waitFor();
+  const moved = await rolesCall("roles_snapshot");
+  assert.deepEqual([moved.defaultRoleId, moved.workerDefaultRoleId], [provisioned.defaultRoleId, provisioned.defaultRoleId], "the Bot default is untouched");
+  assert.deepEqual(moved.roles.map((role) => role.revision), provisioned.roles.map((role) => role.revision), "a default switch advances the catalog, not a Role");
+  await roleRow("Manager").getByText("Worker default", { exact: true }).waitFor();
+  assert.equal(await roleRow("Worker").getByText("Worker default", { exact: true }).count(), 0);
+  await catalogWindow.getByText("Bots · Manager · Workers · Manager", { exact: true }).waitFor();
+  await instructions.getByText("Manager · Bot and Worker default · revision 0", { exact: true }).waitFor();
+  assert.equal(await editor.getByRole("button", { name: /^Make (Bot|Worker) default$/ }).count(), 0, "a Role that is both defaults carries no note");
+  await tap(roleRow("Worker").getByRole("button", { name: "Worker actions" }));
+  assert.equal(await page.getByRole("menuitem", { name: /Delete…/ }).getAttribute("data-disabled"), null, "a former default can be deleted");
+  // Restore it from the row menu.
+  await page.getByRole("menuitem", { name: "Make Worker default…" }).click();
+  await dialog.getByText("Make “Worker” the Worker default?", { exact: true }).waitFor();
+  await dialog.getByRole("button", { name: "Make default", exact: true }).click();
+  await toast("“Worker” is now the Worker default").waitFor();
+  assert.equal((await rolesCall("roles_snapshot")).workerDefaultRoleId, W);
+  await roleRow("Worker").getByText("Worker default", { exact: true }).waitFor();
 
   // New role opens a draft in the Editor; the new Role is selected and is neither default.
   await tap(catalogWindow.getByRole("button", { name: "New role", exact: true }));
@@ -167,10 +199,11 @@ try {
   assert.deepEqual([first.defaultRoleId, first.workerDefaultRoleId], [provisioned.defaultRoleId, W], "creating a Role changes neither default");
   await editor.getByText("New Bots use “Manager”, not this Role. Workers use it only when they select it; the rest use “Worker”. Edits reach later launches only; running sessions keep their snapshot.", { exact: true }).waitFor();
   // Make it the Bot default through the page; the rest of this check edits the Bot default. The Worker default stays.
+  await editor.getByRole("button", { name: "Make Worker default" }).waitFor();
   await editor.getByRole("button", { name: "Make Bot default" }).click();
   await dialog.getByText("Make “Researcher” the Bot default?", { exact: true }).waitFor();
   await dialog.getByText("Later Bot launches use this Role instead of “Manager”. Workers started without a Role still use “Worker”. Running Bots keep what they launched with until restarted; nothing restarts automatically.").waitFor();
-  await dialog.getByRole("button", { name: "Make Bot default" }).click();
+  await dialog.getByRole("button", { name: "Make default", exact: true }).click();
   await toast("“Researcher” is now the Bot default").waitFor();
   assert.deepEqual(await rolesCall("roles_snapshot").then((value) => [value.defaultRoleId, value.workerDefaultRoleId]), [A, W]);
   await researcher.getByText("Bot default", { exact: true }).waitFor();
@@ -491,7 +524,7 @@ try {
   await dialog.getByRole("button", { name: "Cancel" }).click();
   assert.equal(await defaultId(), A, "cancelling changes nothing");
   await editor.getByRole("button", { name: "Make Bot default" }).click();
-  await dialog.getByRole("button", { name: "Make Bot default" }).click();
+  await dialog.getByRole("button", { name: "Make default", exact: true }).click();
   await toast("“Reviewer” is now the Bot default").waitFor();
   assert.equal(await defaultId(), B);
   assert.equal(await revisionOf(B), target, "a default switch advances the catalog, not the Role");
@@ -569,7 +602,7 @@ try {
   assert.equal(await roleRow("Third").count(), 0, "the page missed the change");
   await tap(roleRow("Research").getByRole("button", { name: "Research actions" }));
   await page.getByRole("menuitem", { name: "Make Bot default…" }).click();
-  await dialog.getByRole("button", { name: "Make Bot default" }).click();
+  await dialog.getByRole("button", { name: "Make default", exact: true }).click();
   await toast("“Research” is now the Bot default").waitFor();
   assert.equal(await defaultId(), A);
   await roleRow("Third").waitFor();
@@ -754,7 +787,7 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await shot("roles-mobile");
   assert.deepEqual(errors, [], "browser has no uncaught application errors");
-  console.log(JSON.stringify({ ok: true, evidence, assertions: "provisioned Manager and Worker defaults, Worker default note and delete guard without a Worker-default control, new Role made Bot default, second Role and case-insensitive name hint, per-Role content, Bot launch comparison by Role identity and revision against the Bot default, Worker comparison against each captured Role, default switch with drafts on both Roles, delayed write outrun by selection, rename and API uniqueness refusal, stale catalog and stale Role and stale internal-switch rebuilds, internal switches per Role and all off, reserved internal names, Bot and Worker default delete refused, delete with drafts, Role deleted elsewhere with and without drafts, remembered selection, Role inspector and palette, category and fragment creation, preview order and segments, launch revisions, switches, cross-category drag, keyboard move, drafts, conflict keep-mine, stale-revision rebuild, search, category off, inspector hand-off, palette, delete guard and delete, skill files and duplicate/reorder/switch, MCP name guard, TOML and stdio split, trusted-project Bot matching, resource inspect and delete, light/dark/mobile" }, null, 2));
+  console.log(JSON.stringify({ ok: true, evidence, assertions: "provisioned Manager and Worker defaults, per-audience notes, Make Worker default from the note and the row menu with its dialog, cancel and delete guard, new Role made Bot default, second Role and case-insensitive name hint, per-Role content, Bot launch comparison by Role identity and revision against the Bot default, Worker comparison against each captured Role, default switch with drafts on both Roles, delayed write outrun by selection, rename and API uniqueness refusal, stale catalog and stale Role and stale internal-switch rebuilds, internal switches per Role and all off, reserved internal names, Bot and Worker default delete refused, delete with drafts, Role deleted elsewhere with and without drafts, remembered selection, Role inspector and palette, category and fragment creation, preview order and segments, launch revisions, switches, cross-category drag, keyboard move, drafts, conflict keep-mine, stale-revision rebuild, search, category off, inspector hand-off, palette, delete guard and delete, skill files and duplicate/reorder/switch, MCP name guard, TOML and stdio split, trusted-project Bot matching, resource inspect and delete, light/dark/mobile" }, null, 2));
 } catch (error) {
   failed = true;
   const page = browser?.contexts()[0]?.pages()[0];

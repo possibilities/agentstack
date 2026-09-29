@@ -15,25 +15,35 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { defaultDeleteHint, defaultsLabel } from "@/lib/stack/roles";
 import type { Role } from "@/lib/stack/types";
+import type { Audience } from "./role-actions";
 
-/** Confirms a change of Bot default, which later Bot launches follow and running sessions ignore. The Worker default is untouched. */
-export function DefaultDialog({ role, current, workerDefault, pending, onConfirm, onClose }: {
-  role: Role | null; current: Role | null; workerDefault: Role | null; pending: boolean; onConfirm(): void; onClose(): void;
+/**
+ * Confirms a change of one launch default. The Bot default reaches later Bot launches; the Worker default reaches
+ * later Workers started without a selected Role. The other default, and every running session, is untouched.
+ */
+export function DefaultDialog({ role, audience, botDefault, workerDefault, pending, onConfirm, onClose }: {
+  role: Role | null; audience: Audience; botDefault: Role | null; workerDefault: Role | null; pending: boolean; onConfirm(): void; onClose(): void;
 }) {
+  const quoted = (value: Role | null, fallback: string) => value ? <>“{value.name}”</> : fallback;
+  const worker = audience === "worker";
   return (
     <AlertDialog open={role !== null} onOpenChange={(open) => { if (!open && !pending) onClose(); }}>
       <AlertDialogContent size="sm">
         <AlertDialogHeader>
           <AlertDialogMedia><StarIcon /></AlertDialogMedia>
-          <AlertDialogTitle>Make “{role?.name}” the Bot default?</AlertDialogTitle>
+          <AlertDialogTitle>Make “{role?.name}” the {worker ? "Worker" : "Bot"} default?</AlertDialogTitle>
           <AlertDialogDescription>
-            Later Bot launches use this Role{current ? <> instead of “{current.name}”</> : null}. Workers started without a Role still use {workerDefault ? <>“{workerDefault.name}”</> : "the Worker default"}. Running Bots keep what they launched with until restarted; nothing restarts automatically.
+            {worker ? (
+              <>Later Workers started without a selected Role use this Role{workerDefault ? <> instead of “{workerDefault.name}”</> : null}. Workers that select a Role are unaffected, and Bots still use {quoted(botDefault, "the Bot default")}. Running Workers keep the snapshot they started with.</>
+            ) : (
+              <>Later Bot launches use this Role{botDefault ? <> instead of “{botDefault.name}”</> : null}. Workers started without a Role still use {quoted(workerDefault, "the Worker default")}. Running Bots keep what they launched with until restarted; nothing restarts automatically.</>
+            )}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
           <Button disabled={!role || pending} onClick={onConfirm}>
-            {pending ? <Spinner data-icon="inline-start" /> : <StarIcon data-icon="inline-start" />}Make Bot default
+            {pending ? <Spinner data-icon="inline-start" /> : <StarIcon data-icon="inline-start" />}Make default
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -198,7 +198,8 @@ test("launch default labels name which audience each default serves", () => {
   assert.equal(roles.defaultsLabel(true, true), "Bot and Worker default");
   assert.equal(roles.defaultsLabel(false, false), null);
   assert.equal(roles.defaultDeleteHint(true, false), "Make another Role the Bot default first");
-  assert.match(roles.defaultDeleteHint(false, true), /role_set_worker_default/);
+  assert.equal(roles.defaultDeleteHint(false, true), "Make another Role the Worker default first");
+  assert.equal(roles.defaultDeleteHint(true, true), "Make other Roles the Bot and Worker defaults first");
   assert.equal(roles.defaultDeleteHint(false, false), null);
 });
 

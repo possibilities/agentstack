@@ -390,14 +390,11 @@ export const roleErrorText = (message: string): string =>
 export const defaultsLabel = (bot: boolean, worker: boolean): string | null =>
   bot && worker ? "Bot and Worker default" : bot ? "Bot default" : worker ? "Worker default" : null;
 
-/**
- * Why a launch default cannot be deleted and how to free it. Make default reassigns the Bot default; the Worker
- * default is reassigned only through `role_set_worker_default`. Null for a Role that is neither.
- */
+/** Why a launch default cannot be deleted and how to free it. Null for a Role that is neither default. */
 export function defaultDeleteHint(bot: boolean, worker: boolean): string | null {
-  if (bot && worker) return "Make another Role the Bot default, and reassign the Worker default with role_set_worker_default, first";
+  if (bot && worker) return "Make other Roles the Bot and Worker defaults first";
   if (bot) return "Make another Role the Bot default first";
-  if (worker) return "Reassign the Worker default with role_set_worker_default first";
+  if (worker) return "Make another Role the Worker default first";
   return null;
 }
 
