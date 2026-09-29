@@ -2,6 +2,8 @@
 
 ## Scope and assessment
 
+Follow-up UI work is consolidated in [Review UI handoff](review-ui-handoff.md), written after all four approved proposals landed. It covers missing controls, required API support, existing behavior to preserve, and unresolved review/design candidates.
+
 Reviewed the nine API/general/UI reviews supplied under `~/scratch`, then checked the relevant current source, transport contracts, launch consumers and test fixtures. The starting tree was `2735b8d` plus existing uncommitted Proc/owner work. Verification uses an isolated checkout containing that working tree, disposable state and fixture-only browser checks.
 
 The owner → package socket → transport gateway architecture is worth keeping. Explicit exposure selections, payload-free invalidations, revision fencing, durable admission and honest `unknown` outcomes are sound foundations. The most valuable changes are at their joins: browser admission, credential-bearing reads, forwarding budgets, caller context and discovery consumers. A broad service decomposition or framework rewrite would add complexity without addressing those defects.
