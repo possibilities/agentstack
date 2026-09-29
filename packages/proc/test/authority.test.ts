@@ -10,9 +10,9 @@ import { z } from "zod";
 import { api } from "../api.js";
 import { ProcService } from "../src/service.js";
 import { ProcStore } from "../src/store.js";
-import { brainAuthority, operator, systemBrainId, type Schedule, type ScheduleSpec } from "../src/schema.js";
+import { brainAuthority, operator, systemBrainId, type Authority, type Schedule, type ScheduleSpec } from "../src/schema.js";
 
-const spec = (operation = "effect"): ScheduleSpec => ({ action: { type: "api", package: "fixture", operation, input: {} },
+const spec = (operation = "effect"): ScheduleSpec => ({ label: null, action: { type: "api", package: "fixture", operation, input: {} },
   firstAt: new Date(Date.now() - 60_000).toISOString(), everyMs: null, enabled: true });
 const processSpec = { command: process.execPath, args: ["-e", "console.log('owned-output')"], timeoutMs: 5_000, retainOutput: true };
 function deferred() {
@@ -22,7 +22,7 @@ function deferred() {
 }
 async function settled(service: ProcService, id: string) {
   for (let i = 0; i < 200; i++) {
-    const record = service.store.executions(id, 1)[0];
+    const record = service.store.executions({ scheduleId: id, limit: 1 }).executions[0];
     if (record && record.state !== "running") return record;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
@@ -114,7 +114,7 @@ test("stopped Bots hold admissions, then resume across Proc and Bot restarts usi
   f.bots[0]!.state = "stopped";
   await f.context.service.tick();
   assert.equal(f.context.service.store.getSchedule(id).blockedReason, "bot_not_running");
-  assert.equal(f.context.service.store.executions(id, 10).length, 0);
+  assert.equal(f.context.service.store.executions({ scheduleId: id, limit: 10 }).executions.length, 0);
   assert.ok(f.context.service.store.getSchedule(id).retryAt);
   await f.context.service.close();
   f.context.service = new ProcService(new ProcStore(join(f.root, "proc")), f.env, undefined, f.workspace);
@@ -139,7 +139,7 @@ test("withdrawn exposure, replaced roots and removed Bots block dispatch without
   await f.context.service.tick();
   assert.equal(f.context.service.store.getSchedule(id).blockedReason, "target_not_mcp_exposed");
   assert.equal(f.effects(), 0);
-  assert.equal(f.context.service.store.executions(id, 10).length, 0);
+  assert.equal(f.context.service.store.executions({ scheduleId: id, limit: 10 }).executions.length, 0);
   await f.expose(["effect"]);
   f.retry(id);
   f.bots[0]!.mainThreadId = "replacement-root";
@@ -166,7 +166,7 @@ test("edits and deletion racing authorization cannot dispatch a stale definition
   release.resolve();
   await tick;
   assert.equal(f.effects(), 0);
-  assert.equal(f.context.service.store.executions(id, 10).length, 0);
+  assert.equal(f.context.service.store.executions({ scheduleId: id, limit: 10 }).executions.length, 0);
   f.lineageGate();
   await f.call("proc_schedule_update", { id, expectedRevision: 2, ...input });
   const entered2 = deferred(), release2 = deferred();
@@ -188,7 +188,7 @@ test("scheduled process output and direct idempotent runs remain bound to their 
   const runId = execution.processId!;
   await assert.rejects(f.call("proc_run_read", { id: runId }, f.caller("b")), /not_owned/);
   await assert.rejects(f.call("proc_run_cancel", { id: runId }, f.caller("b")), /not_owned/);
-  assert.deepEqual(await f.call("proc_run_list", {}, f.caller("b")), { runs: [] });
+  assert.deepEqual(await f.call("proc_run_list", {}, f.caller("b")), { runs: [], nextCursor: null });
   const page = await f.call("proc_run_read", { id: runId }, f.caller()) as { lines: Array<{ text: string }> };
   assert.equal(page.lines[0]?.text, "owned-output");
   const requestId = randomUUID();
@@ -227,7 +227,7 @@ test("shutdown drains in-flight authorization before closing the durable store",
   await closing;
   f.context.service = new ProcService(new ProcStore(join(f.root, "proc")), f.env, undefined, f.workspace);
   assert.equal(f.effects(), 0);
-  assert.equal(f.context.service.store.executions(id, 1).length, 0);
+  assert.equal(f.context.service.store.executions({ scheduleId: id, limit: 1 }).executions.length, 0);
 });
 
 test("pre-dispatch shutdown is a definite refusal, not a lost-response outcome", async (t) => {
@@ -263,7 +263,7 @@ test("an admitted execution retains its captured action and authority across ope
   f.targetGate(async () => { entered.resolve(); await release.promise; });
   await f.context.service.tick();
   await entered.promise;
-  const current = f.context.service.store.executions(id, 1)[0]!;
+  const current = f.context.service.store.executions({ scheduleId: id, limit: 1 }).executions[0]!;
   await f.call("proc_schedule_update", { id, expectedRevision: 1, ...spec("operator_only"), enabled: false });
   assert.deepEqual(f.context.service.store.getExecution(current.id).action, input.action);
   assert.deepEqual(f.context.service.store.getExecution(current.id).authority, current.authority);
@@ -312,4 +312,97 @@ test("v1 migration retains history, disables unattributed schedules, and require
   const reopened = new ProcStore(root);
   try { assert.deepEqual(reopened.getSchedule(id).authority, operator); assert.equal(reopened.getSchedule(id).enabled, true); }
   finally { reopened.close(); }
+});
+
+test("cross-schedule execution pages filter Bot ownership in SQL before the limit and hide unattributed history", async (t) => {
+  const f = await fixture(t);
+  const db = f.context.service.store.db;
+  const botA: Authority = { kind: "bot", botId: "a", mainThreadId: "root-a", threadId: "a-child" };
+  const botB: Authority = { kind: "bot", botId: "b", mainThreadId: "root-b", threadId: "b-child" };
+  const base = Date.now() - 60_000;
+  const stamp = (i: number) => new Date(base + i * 10_000).toISOString();
+  // Newest first: unattributed legacy, operator, b, a, b, a.
+  const authorities: Array<Authority | null> = [null, operator, botB, botA, botB, botA];
+  const ids = authorities.map((_, i) => randomUUID());
+  for (const [i, authority] of authorities.entries())
+    db.prepare("INSERT INTO executions (id,schedule_id,due_at,state,started_at,authority) VALUES (?,?,?,'completed',?,?)")
+      .run(ids[i], randomUUID(), base, stamp(authorities.length - 1 - i), authority === null ? null : JSON.stringify(authority));
+  const list = (args: object, invocation?: InvocationContext) =>
+    f.call("proc_execution_list", args, invocation) as Promise<{ executions: Array<{ id: string }>; nextCursor: string | null }>;
+  const operatorPage = await list({ limit: 3 });
+  assert.deepEqual(operatorPage.executions.map((row) => row.id), [ids[0], ids[1], ids[2]]);
+  assert.ok(operatorPage.nextCursor);
+  const botPage = await list({ limit: 3 }, f.caller());
+  assert.deepEqual(botPage.executions.map((row) => row.id), [ids[3], ids[5]],
+    "the Bot's two rows are interleaved with others; filtering after LIMIT would drop one");
+  assert.equal(botPage.nextCursor, null);
+  const first = await list({ limit: 1 }, f.caller());
+  assert.equal(first.executions[0]!.id, ids[3]);
+  const rest = await list({ limit: 1, cursor: first.nextCursor! }, f.caller());
+  assert.deepEqual(rest.executions.map((row) => row.id), [ids[5]]);
+  assert.equal(rest.nextCursor, null);
+  await assert.rejects(list({ cursor: "junk" }, f.caller()), /invalid_cursor/);
+  await assert.rejects(list({}, { transport: "mcp", botId: null, instance: null, threadId: null, sessionId: null,
+    workerId: "worker", workerInstance: "runtime" }), /requires_operator_or_bot/);
+});
+
+test("run pages filter Bot ownership in SQL before the limit and expose state filters, labels and paths", async (t) => {
+  const f = await fixture(t);
+  const store = f.context.service.store;
+  const botA: Authority = { kind: "bot", botId: "a", mainThreadId: "root-a", threadId: "a-child" };
+  const botB: Authority = { kind: "bot", botId: "b", mainThreadId: "root-b", threadId: "b-child" };
+  const proc = { command: "/bin/echo", args: ["hi"], env: { SECRET: "s3cr3t" }, timeoutMs: 1_000, retainOutput: true };
+  const base = Date.now() - 60_000;
+  const stamp = (i: number) => new Date(base + i * 10_000).toISOString();
+  const a1 = store.startRun(proc, null, randomUUID(), botA, "a1").record;
+  const b1 = store.startRun(proc, null, randomUUID(), botB, "b1").record;
+  const a2 = store.startRun(proc, null, randomUUID(), botA, "a2").record;
+  const op = store.startRun(proc, null, randomUUID(), operator, "op").record;
+  // Newest first: a1, b1, a2, op.
+  for (const [id, i] of [[a1.id, 3], [b1.id, 2], [a2.id, 1], [op.id, 0]] as const)
+    store.db.prepare("UPDATE runs SET started_at=? WHERE id=?").run(stamp(i), id);
+  store.db.prepare("UPDATE runs SET state='exited' WHERE id=?").run(a2.id);
+  store.db.prepare("UPDATE runs SET state='exited' WHERE id=?").run(op.id);
+  const list = (args: object, invocation?: InvocationContext) =>
+    f.call("proc_run_list", args, invocation) as Promise<{ runs: Array<{ id: string; label: string | null; command: string | null; state: string }>; nextCursor: string | null }>;
+  const all = await list({ limit: 3 });
+  assert.deepEqual(all.runs.map((row) => row.id), [a1.id, b1.id, a2.id]);
+  assert.ok(all.nextCursor);
+  const tail = await list({ limit: 3, cursor: all.nextCursor! });
+  assert.deepEqual(tail.runs.map((row) => row.id), [op.id]);
+  assert.equal(tail.nextCursor, null);
+  const bot = await list({ limit: 3 }, f.caller());
+  assert.deepEqual(bot.runs.map((row) => row.id), [a1.id, a2.id],
+    "operator and other-Bot rows must not consume the Bot's page limit");
+  assert.equal(bot.nextCursor, null);
+  assert.equal(bot.runs[0]!.label, "a1");
+  assert.equal(bot.runs[0]!.command, "/bin/echo");
+  for (const run of bot.runs) assert.ok(!("process" in run) && !("env" in run) && !("envKeys" in run));
+  const active = await list({ state: "active" });
+  assert.deepEqual(active.runs.map((row) => row.id).sort(), [a1.id, b1.id].sort());
+  const terminal = await list({ state: "terminal" }, f.caller());
+  assert.deepEqual(terminal.runs.map((row) => row.id), [a2.id]);
+});
+
+test("proc_status scopes schedule counts to the caller's root while capacities stay shared", async (t) => {
+  const f = await fixture(t);
+  await f.call("proc_schedule_create", { id: randomUUID(), ...spec() }, f.caller());
+  await f.call("proc_schedule_create", { id: randomUUID(), ...spec() }, f.caller("b"));
+  const status = (invocation?: InvocationContext) => f.call("proc_status", {}, invocation) as Promise<{
+    running: number; capacity: number; inFlightCalls: number; callCapacity: number;
+    schedules: { total: number; enabled: number; held: number; blocked: number; legacy: number; removed: number };
+    lastSweepAt: string | null; lastPruneAt: string | null; closing: boolean }>;
+  const operatorView = await status();
+  assert.equal(operatorView.schedules.total, 2);
+  assert.equal(operatorView.schedules.enabled, 2);
+  assert.equal(operatorView.lastSweepAt, null, "no sweep before the first tick");
+  const aView = await status(f.caller());
+  assert.deepEqual(aView.schedules, { total: 1, enabled: 1, held: 0, blocked: 0, legacy: 0, removed: 0 });
+  assert.equal((await status(f.caller("b"))).schedules.total, 1);
+  assert.equal(aView.capacity, operatorView.capacity);
+  assert.equal(aView.inFlightCalls, operatorView.inFlightCalls);
+  await f.context.service.tick();
+  assert.ok((await status()).lastSweepAt !== null);
+  await assert.rejects(status({ transport: "mcp", botId: null, instance: null, threadId: null, sessionId: null,
+    workerId: "worker", workerInstance: "runtime" }), /requires_operator_or_bot/);
 });

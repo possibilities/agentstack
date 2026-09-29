@@ -40,7 +40,8 @@ test("argv process emits cursor-readable lines and exit, reuses a request ID, an
   const joined = await socketCall(socketPath("proc", env), "tools/call", { name: "proc_run_join", arguments: { id, waitMs: 5_000 } }, { timeoutMs: 6_000 }) as { run: { state: string }; timedOut: boolean };
   assert.equal(joined.run.state, "exited");
   assert.equal(joined.timedOut, false);
-  assert.deepEqual(await call("proc_run_start", { requestId: id, process: spec }), await call("proc_run_get", { id }));
+  const { process: _process, ...detail } = await call("proc_run_get", { id }) as Record<string, unknown>;
+  assert.deepEqual(await call("proc_run_start", { requestId: id, process: spec }), detail);
   await assert.rejects(call("proc_run_start", { requestId: id, process: { ...spec, args: ["different"] } }), /run_id_conflict/);
   const finished = await until(() => call("proc_run_get", { id }) as Promise<{ state: string; exitCode: number }>, (run) => run.state === "exited");
   assert.equal(finished.exitCode, 0);
@@ -96,9 +97,9 @@ test("guardian cancellation is terminal and startup preserves interrupted work a
   assert.equal(stopped.state, "cancelled");
   const dir = join(root, "recovery");
   const store = new ProcStore(dir);
-  const schedule = store.createSchedule(randomUUID(), { action: { type: "api", package: "brain", operation: "sources_sync", input: { due: true } },
+  const schedule = store.createSchedule(randomUUID(), { label: null, action: { type: "api", package: "brain", operation: "sources_sync", input: { due: true } },
     firstAt: new Date(Date.now() - 1000).toISOString(), everyMs: null, enabled: true });
-  const recurring = store.createSchedule(randomUUID(), { action: { type: "api", package: "brain", operation: "sources_sync", input: { due: true } },
+  const recurring = store.createSchedule(randomUUID(), { label: null, action: { type: "api", package: "brain", operation: "sources_sync", input: { due: true } },
     firstAt: new Date(Date.now() - 1000).toISOString(), everyMs: 60_000, enabled: true });
   const admitted = store.due();
   assert.equal(admitted.length, 2);
@@ -214,10 +215,10 @@ test("ambiguous API dispatch is unknown and never replayed as the same one-shot"
     async () => { dispatches++; throw new Error("response_lost"); });
   t.after(async () => { await service.close(); await target.close(); await rm(root, { recursive: true, force: true }); });
   const id = randomUUID();
-  service.store.createSchedule(id, { action: { type: "api", package: "fixture", operation: "effect", input: {} },
+  service.store.createSchedule(id, { label: null, action: { type: "api", package: "fixture", operation: "effect", input: {} },
     firstAt: new Date(Date.now() - 1000).toISOString(), everyMs: null, enabled: true });
   await service.tick();
-  const result = await until(async () => service.store.executions(id, 10)[0], (row) => row?.state === "unknown");
+  const result = await until(async () => service.store.executions({ scheduleId: id, limit: 10 }).executions[0], (row) => row?.state === "unknown");
   assert.equal(result!.error, "call_outcome_unknown");
   await service.tick();
   assert.equal(dispatches, 1);

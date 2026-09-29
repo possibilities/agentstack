@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawn, type ChildProcess } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+import { lineChunkChars, maxOutputBytes } from "./limits.js";
 import type { ProcessSpec } from "./schema.js";
 
 // This small IPC guardian outlives a crashed Proc context just long enough to
@@ -44,7 +45,7 @@ function lines(stream: "stdout" | "stderr", source: NodeJS.ReadableStream) {
   let capped = false;
   const emit = (text: string, partial: boolean) => {
     sentBytes += Buffer.byteLength(text);
-    if (sentBytes > 2_000_000 || capped) {
+    if (sentBytes > maxOutputBytes || capped) {
       if (!capped) process.send?.({ kind: "truncated" });
       capped = true;
       return;
@@ -57,7 +58,7 @@ function lines(stream: "stdout" | "stderr", source: NodeJS.ReadableStream) {
     while (at !== -1) {
       const line = pending.slice(0, at).replace(/\r$/, "");
       for (let i = 0; i < line.length;) {
-        let end = Math.min(i + 4096, line.length);
+        let end = Math.min(i + lineChunkChars, line.length);
         if (end < line.length && line.charCodeAt(end - 1) >= 0xD800 && line.charCodeAt(end - 1) <= 0xDBFF) end--;
         emit(line.slice(i, end), end < line.length);
         i = end;
@@ -66,8 +67,8 @@ function lines(stream: "stdout" | "stderr", source: NodeJS.ReadableStream) {
       pending = pending.slice(at + 1);
       at = pending.indexOf("\n");
     }
-    while (pending.length > 4096) {
-      const end = pending.charCodeAt(4095) >= 0xD800 && pending.charCodeAt(4095) <= 0xDBFF ? 4095 : 4096;
+    while (pending.length > lineChunkChars) {
+      const end = pending.charCodeAt(lineChunkChars - 1) >= 0xD800 && pending.charCodeAt(lineChunkChars - 1) <= 0xDBFF ? lineChunkChars - 1 : lineChunkChars;
       emit(pending.slice(0, end), true);
       pending = pending.slice(end);
     }

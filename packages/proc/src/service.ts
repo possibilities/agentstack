@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { forwardTimeout, socketCall, socketPath, type InvocationContext } from "@agentstack/api";
 import { operator, systemBrainId, type Action, type Authority, type ProcessSpec, type ScheduleSpec } from "./schema.js";
+import { callCapacity, lineChunkChars, maxOutputBytes, maxOutputLines, retentionDays, runCapacity } from "./limits.js";
 import { ProcStore } from "./store.js";
 import { AuthorityBlocked, owns, ProcAuthority } from "./authority.js";
 
@@ -22,6 +23,7 @@ export class ProcService {
   private readonly listeners = new Set<() => void>();
   private timer?: ReturnType<typeof setInterval>;
   private lastPrune = 0;
+  private lastSweep = 0;
   private sweep?: Promise<void>;
   private closing = false;
   readonly policy: ProcAuthority;
@@ -66,9 +68,9 @@ export class ProcService {
     this.onSchedulesChanged?.(id);
     return result;
   }
-  async schedules(limit: number, invocation?: InvocationContext) {
+  async schedules(limit: number, invocation?: InvocationContext, includeRemoved = false) {
     const actor = await this.policy.actor(invocation);
-    return this.store.schedules(limit, actor.kind === "bot" ? actor : undefined);
+    return this.store.schedules(limit, actor.kind === "bot" ? actor : undefined, includeRemoved);
   }
   async execution(id: string, invocation?: InvocationContext) {
     const actor = await this.policy.actor(invocation);
@@ -76,10 +78,10 @@ export class ProcService {
     owns(actor, record.authority);
     return record;
   }
-  async executions(id: string, limit: number, invocation?: InvocationContext) {
+  async executions(id: string | undefined, page: { since?: string; cursor?: string; limit: number }, invocation?: InvocationContext) {
     const actor = await this.policy.actor(invocation);
-    if (actor.kind !== "operator") owns(actor, this.store.getSchedule(id, true).authority);
-    return this.store.executions(id, limit);
+    if (id !== undefined && actor.kind !== "operator") owns(actor, this.store.getSchedule(id, true).authority);
+    return this.store.executions({ scheduleId: id, ...page }, actor.kind === "bot" ? actor : undefined);
   }
   async run(id: string, invocation?: InvocationContext) {
     const actor = await this.policy.actor(invocation);
@@ -87,15 +89,34 @@ export class ProcService {
     owns(actor, record.createdBy);
     return record;
   }
-  async runs(limit: number, invocation?: InvocationContext) {
+  async runDetail(id: string, invocation?: InvocationContext) {
     const actor = await this.policy.actor(invocation);
-    return this.store.runs(limit, actor.kind === "bot" ? actor : undefined);
+    const record = this.store.getRunDetail(id);
+    owns(actor, record.createdBy);
+    return record;
+  }
+  async runs(page: { state?: "active" | "terminal"; cursor?: string; limit: number }, invocation?: InvocationContext) {
+    const actor = await this.policy.actor(invocation);
+    return this.store.runs(page, actor.kind === "bot" ? actor : undefined);
+  }
+  async status(invocation?: InvocationContext) {
+    const actor = await this.policy.actor(invocation);
+    return {
+      running: this.active.size, capacity: runCapacity,
+      inFlightCalls: this.calls.size, callCapacity,
+      schedules: this.store.scheduleCounts(actor.kind === "bot" ? actor : undefined),
+      lastSweepAt: this.lastSweep ? new Date(this.lastSweep).toISOString() : null,
+      lastPruneAt: this.lastPrune ? new Date(this.lastPrune).toISOString() : null,
+      closing: this.closing, retentionDays,
+      output: { maxBytes: maxOutputBytes, maxLines: maxOutputLines, lineChunkChars },
+    };
   }
 
   start() {
     // This schedule is the sole automatic source trigger. It admits no work
     // unless an operator separately registered and enabled Brain Sources.
     this.store.ensureSystemSchedule(systemBrainId, {
+      label: null,
       action: { type: "api", package: "brain", operation: "sources_sync", input: { due: true } },
       firstAt: new Date(Date.now() + 10_000).toISOString(), everyMs: 300_000, enabled: true,
     });
@@ -105,12 +126,12 @@ export class ProcService {
 
   tick(): Promise<void> {
     if (this.closing) return Promise.resolve();
-    return this.sweep ??= this.sweepOnce().finally(() => { this.sweep = undefined; });
+    return this.sweep ??= this.sweepOnce().finally(() => { this.lastSweep = Date.now(); this.sweep = undefined; });
   }
   private async sweepOnce() {
     if (Date.now() - this.lastPrune > 86_400_000) { this.store.prune(); this.lastPrune = Date.now(); }
     // Bounded sweep. The next tick continues if more schedules are due.
-    for (const schedule of this.store.pending(Math.max(0, 16 - this.calls.size))) {
+    for (const schedule of this.store.pending(Math.max(0, callCapacity - this.calls.size))) {
       if (this.closing) break;
       let instance: string | null;
       try {
@@ -137,7 +158,7 @@ export class ProcService {
         }
         if (due.action.type === "process") {
           try {
-            const run = this.startRun(due.action.process, due.executionId, undefined, due.authority);
+            const run = this.startRun(due.action.process, due.executionId, undefined, due.authority, due.label);
             this.store.attachProcess(due.executionId, run.id);
           } catch (error) {
             this.store.finishExecution(due.executionId, "failed", null,
@@ -167,10 +188,10 @@ export class ProcService {
     }
   }
 
-  startRun(spec: ProcessSpec, executionId: string | null = null, requestId?: string, actor: Authority = operator) {
+  startRun(spec: ProcessSpec, executionId: string | null = null, requestId?: string, actor: Authority = operator, label: string | null = null) {
     if (this.closing) throw new Error("proc_closing");
-    if (this.active.size >= 16 && (!requestId || !this.store.hasRun(requestId))) throw new Error("proc_capacity");
-    const admitted = this.store.startRun(spec, executionId, requestId, actor);
+    if (this.active.size >= runCapacity && (!requestId || !this.store.hasRun(requestId))) throw new Error("proc_capacity");
+    const admitted = this.store.startRun(spec, executionId, requestId, actor, label);
     if (!admitted.created) return admitted.record;
     const record = admitted.record;
     let guard: ChildProcess;
