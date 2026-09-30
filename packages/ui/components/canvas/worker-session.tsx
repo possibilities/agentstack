@@ -1,5 +1,6 @@
 "use client";
 
+import { WorkerFilesTab } from "./worker-files";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ChevronsUpDownIcon, CircleCheckIcon, CircleDashedIcon, CircleDotIcon, CopyPlusIcon, FolderGitIcon, GitBranchIcon, HammerIcon, LockIcon, ScrollTextIcon, ShieldQuestionIcon, SparklesIcon, TriangleAlertIcon, WrenchIcon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,8 +24,8 @@ import { Window } from "./window";
 import { WorkerSettingsTab } from "./worker-settings";
 import { WorkContextLink } from "./hud-shared";
 
-type Tab = "conversation" | "changes" | "turns" | "tools" | "records" | "session" | "settings";
-const tabs: Array<[Tab, string]> = [["conversation", "Conversation"], ["changes", "Changes"], ["turns", "Turns"], ["tools", "Tools"], ["records", "Records"], ["session", "Session"], ["settings", "Settings"]];
+type Tab = "conversation" | "changes" | "files" | "turns" | "tools" | "records" | "session" | "settings";
+const tabs: Array<[Tab, string]> = [["conversation", "Conversation"], ["changes", "Changes"], ["files", "Files"], ["turns", "Turns"], ["tools", "Tools"], ["records", "Records"], ["session", "Session"], ["settings", "Settings"]];
 
 /** Keep a Worker's scoped subscription and status while a window shows it; its generation drives re-reads. */
 function useWatchedWorker(id: string | null): { status: WorkerStatus | null; statusError: string | null; generation: number } {
@@ -150,7 +151,7 @@ async function readTools(store: StackStore, id: string, pages: number): Promise<
  */
 export function WorkerWindow({ id }: { id: string }) {
   const { windows, workerWindows } = useWorkerWindows();
-  const { workerSessions, workerAccounts } = useStack();
+  const { workerSessions, workerAccounts, remote } = useStack();
   const { goTo } = useWorkbench();
   const workerId = windows.find((window) => window.id === id)?.workerId ?? null;
   const listed = workerSessions.data?.find((worker) => worker.id === workerId) ?? null;
@@ -189,7 +190,8 @@ export function WorkerWindow({ id }: { id: string }) {
           <>
             <Summary worker={worker} status={status} statusError={statusError} />
             <div role="tablist" aria-label="Worker views" className="flex shrink-0 gap-1 overflow-x-auto border-b border-border/60 px-3 py-1.5">
-              {tabs.map(([value, label]) => (
+              {/* Worktree files are local operator reads; a remote session has no Files view. */}
+              {tabs.filter(([value]) => value !== "files" || !remote).map(([value, label]) => (
                 <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => setTab(value)}
                   className={cn("inline-flex h-7 shrink-0 items-center rounded-lg border px-2 text-[0.75rem] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring",
                     tab === value ? "border-foreground/15 bg-background text-foreground shadow-xs" : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground")}>
@@ -199,6 +201,7 @@ export function WorkerWindow({ id }: { id: string }) {
             </div>
             {tab === "conversation" ? <ConversationTab key={worker.id} worker={worker} generation={generation} />
               : tab === "changes" ? <ChangesTab key={worker.id} worker={worker} generation={generation} />
+              : tab === "files" ? <WorkerFilesTab key={worker.id} worker={worker} generation={generation} />
               : tab === "turns" ? <TurnsTab key={worker.id} worker={worker} generation={generation} />
               : tab === "tools" ? <ToolsTab key={worker.id} worker={worker} generation={generation} />
               : tab === "records" ? <RecordsTab key={worker.id} worker={worker} generation={generation} />

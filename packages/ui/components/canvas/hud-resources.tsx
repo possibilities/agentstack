@@ -1,5 +1,6 @@
 "use client";
 
+import { RetireFocus, RetiredFocusSection } from "./hud-maintenance";
 import { useEffect, useMemo, useState } from "react";
 import { CrosshairIcon, HammerIcon, NetworkIcon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -90,6 +91,7 @@ export function ResourcesWindow() {
             </p>
           </>
         )}
+      <RetiredFocusSection />
     </Window>
   );
 }
@@ -237,6 +239,7 @@ function Focus({ data, item, readOnly }: { data: WorkResources; item: WorkItem |
                 <ReferenceLink reference={{ kind: "chat", botId: entry.botId, mainThreadId: entry.mainThreadId, threadId: entry.threadId }} />
                 <span className="text-[0.66rem] text-muted-foreground">by <ActorName actor={entry.updatedBy} /> · <Time at={entry.updatedAt} /></span>
                 {identity !== "current" && identity !== "unknown" ? <span className="text-[0.66rem] text-muted-foreground">(retained; not a live Chat)</span> : null}
+                {identity === "replaced" || identity === "missing" ? <RetireFocus target={{ botId: entry.botId, mainThreadId: entry.mainThreadId, threadId: entry.threadId }} /> : null}
                 {!readOnly ? (
                   <Button size="xs" variant="ghost" className="ml-auto" disabled={clear.running || clear.held}
                     title="Save “no focus” for this Chat. It then stops inheriting focus from ancestor Chats."

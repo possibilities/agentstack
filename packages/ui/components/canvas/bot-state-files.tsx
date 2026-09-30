@@ -13,10 +13,10 @@ import { StateFlowView } from "./state-flow";
 import { BotAction, hintClass, labelClass, MoreButton, Pill, ReadError, useBotAction, useBotPages, useBotRead, ViewHeader, type BotScope } from "./bot-state-shared";
 import { useNow, useStore } from "./provider";
 
-const chunk = 65_536;
+export const chunk = 65_536;
 
 /** Plain text or binary metadata for one bounded read; content is never rendered as markup. */
-function PreviewBody({ read, preview }: { read: StateFileRead; preview: Preview }) {
+export function PreviewBody({ read, preview }: { read: StateFileRead; preview: Preview }) {
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[0.68rem] text-muted-foreground tabular-nums">
@@ -29,7 +29,7 @@ function PreviewBody({ read, preview }: { read: StateFileRead; preview: Preview 
 }
 
 /** Explicit, revision-fenced reading of one file; a changed file is reported, never silently re-read. */
-function useFilePreview(read: (key: string, revision?: string) => Promise<StateFileRead>) {
+export function useFilePreview(read: (key: string, revision?: string) => Promise<StateFileRead>) {
   const [state, setState] = useState<{ key: string; read: StateFileRead | null; error: string | null; loading: boolean } | null>(null);
   return {
     state,
@@ -42,7 +42,7 @@ function useFilePreview(read: (key: string, revision?: string) => Promise<StateF
   };
 }
 
-function FileRow({ file, selectable, selected, covered, onToggle, onOpen, onPreview, active }: {
+export function FileRow({ file, selectable, selected, covered, onToggle, onOpen, onPreview, active }: {
   file: StateFile; selectable: boolean; selected: boolean; covered: string | null; onToggle?(): void; onOpen?(): void; onPreview?(): void; active: boolean;
 }) {
   const now = useNow(60_000);
