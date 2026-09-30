@@ -1,5 +1,6 @@
 "use client";
 
+import { ProcClear } from "./proc-maintenance";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowDownIcon, CopyPlusIcon, OctagonXIcon, SearchIcon, SquareTerminalIcon, XIcon } from "lucide-react";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
@@ -38,6 +39,8 @@ export function ProcRunWindow({ id }: { id: string }) {
   const detail = useProcSnapshot<ProcRunDetail>(runId, generation, () => store.call<ProcRunDetail>("proc", "proc_run_get", { id: runId! }));
   const run = detail.data ?? null;
   const primary = id === "proc-run";
+  // A completed output clear remounts the log so nothing loaded before it stays on screen.
+  const [outputEpoch, setOutputEpoch] = useState(0);
   const actions = (
     <>
       <Tooltip>
@@ -69,7 +72,8 @@ export function ProcRunWindow({ id }: { id: string }) {
         : (
           <>
             <RunHeader run={run} processes={resources.data?.processes ?? []} />
-            <OutputLog key={`${run.id}:${run.retainOutput}`} run={run} generation={generation} />
+            {isActiveRun(run) ? null : <div className="flex flex-col px-3 pb-1"><ProcClear key={run.id} kind="run_output" id={run.id} onReceipt={() => setOutputEpoch((value) => value + 1)} /></div>}
+            <OutputLog key={`${run.id}:${run.retainOutput}:${outputEpoch}`} run={run} generation={generation} />
           </>
         )}
     </Window>

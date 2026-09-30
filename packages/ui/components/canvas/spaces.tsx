@@ -29,6 +29,8 @@ import { HostWindow, ProcessesWindow, ResourcesWindow, SamplingWindow } from "./
 import { ActivityWindow, ServerWindow, PackagesWindow } from "./system-windows";
 import { CodexToolsWindow } from "./codex-tools";
 import { StateInventoryWindow, SubscriptionsWindow } from "./state-windows";
+import { XcomStateWindow } from "./xcom-state";
+import { ArchiveIcon } from "lucide-react";
 import { ChatWindow } from "./chat-window";
 import { RoleCatalogWindow } from "./role-catalog";
 import { RoleEditorWindow } from "./role-editor";
@@ -40,6 +42,7 @@ import { AccessWindow } from "./access-window";
 import { InboxWindow, NotificationWindow } from "./notify-windows";
 import { AttentionChangesWindow, AttentionMessagesWindow, AttentionRunsWindow, AttentionWindow, SignalWindow } from "./signal-windows";
 import { ContentArtifactsWindow } from "./content-artifacts";
+import { ContentStorageWindow } from "./content-storage";
 import { ContentDocumentsWindow } from "./content-documents";
 import { ContentEditorWindow } from "./content-editor";
 import { ContentLibraryWindow } from "./content-library";
@@ -133,6 +136,7 @@ export const spaceViews: Record<SpaceId, {
       { id: "activity", title: "Activity", icon: RadioIcon, accent: "events", width: 400, height: 460, column: 3, element: <ActivityWindow /> },
       { id: "state", title: "State", icon: DatabaseIcon, accent: "server", width: 500, height: 760, column: 5, element: <StateInventoryWindow /> },
       { id: "subscriptions", title: "Subscriptions", icon: CableIcon, accent: "server", width: 460, height: 560, column: 6, element: <SubscriptionsWindow /> },
+      { id: "xcom-state", title: "Xcom", icon: ArchiveIcon, accent: "server", width: 440, height: 720, column: 6, element: <XcomStateWindow /> },
     ],
   },
   roles: {
@@ -177,6 +181,7 @@ export const spaceViews: Record<SpaceId, {
       { id: "content-editor", title: "Editor", icon: FilePenLineIcon, accent: "content", width: 540, height: 760, column: 1, element: <ContentEditorWindow /> },
       { id: "content-preview", title: "Preview", icon: EyeIcon, accent: "content", width: 480, height: 760, column: 2, element: <ContentPreviewWindow /> },
       { id: "content-artifacts", title: "Artifacts", icon: BoxesIcon, accent: "content", width: 400, height: 640, column: 3, element: <ContentArtifactsWindow /> },
+      { id: "content-storage", title: "Storage", icon: HardDriveIcon, accent: "content", width: 460, height: 640, column: 4, element: <ContentStorageWindow /> },
     ],
   },
   workers: {

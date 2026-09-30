@@ -1,3 +1,4 @@
+import type { SpaceId } from "./spaces";
 import type { NodeRef, PackageDoc, ServeStateList, ServeSubscriptionPage, StateApplyInput, StateEntry, StateLink, StateOwner, StatePlan, StateReceipt, StateReceiptStatus, StateRelationship } from "./types";
 
 /**
@@ -69,6 +70,26 @@ export async function continueSubscriptions(call: Call, held: SubscriptionList):
   }
 }
 
+/** Bounded pages of one owner observation. */
+export type Page<T> = { items: T[]; revision: string; nextOffset: number | null; restarted: boolean };
+export type PageRead<T> = (offset: number, revision?: string) => Promise<{ items: T[]; revision: string; nextOffset: number | null }>;
+
+export async function firstPage<T>(read: PageRead<T>): Promise<Page<T>> {
+  return { ...await read(0), restarted: false };
+}
+
+/** The next page of the same observation, or the first page again when the owner says it changed. */
+export async function nextPage<T>(read: PageRead<T>, held: Page<T>): Promise<Page<T>> {
+  if (held.nextOffset === null) return held;
+  try {
+    const page = await read(held.nextOffset, held.revision);
+    return { ...page, items: [...held.items, ...page.items], restarted: held.restarted };
+  } catch (error) {
+    if (!revisionChanged(error)) throw error;
+    return { ...await read(0), restarted: true };
+  }
+}
+
 export type LocalAccess = { available: true } | { available: false; reason: string };
 
 /**
@@ -84,6 +105,33 @@ export function localOperation(state: { remote?: unknown; catalog: { data: Packa
   if (!websocket?.operations.includes(name)) return { available: false, reason: `${pkg} does not expose ${name} on its WebSocket.` };
   return { available: true };
 }
+
+/** Where each owner's existing controls live. The State window links there rather than acting itself. */
+export const ownerHomes: Record<string, { space: SpaceId; title: string }> = {
+  bots: { space: "fleet", title: "Fleet" }, worker: { space: "workers", title: "Workers" }, signal: { space: "signal", title: "Signal" },
+  infer: { space: "lab", title: "Lab" }, notify: { space: "inbox", title: "Inbox" }, content: { space: "content", title: "Content" },
+  proc: { space: "proc", title: "Proc" }, usage: { space: "accounts", title: "Accounts" }, auth: { space: "accounts", title: "Accounts" },
+  hud: { space: "hud", title: "HUD" }, brain: { space: "brain", title: "Brain" }, browse: { space: "browse", title: "Browse" },
+  roles: { space: "roles", title: "Roles" }, scrape: { space: "scrape", title: "Scrape" }, access: { space: "system", title: "System" },
+  serve: { space: "system", title: "System" }, xcom: { space: "system", title: "System" },
+};
+
+/** Maintained backend gaps (docs/state-control.md): shown as unsupported, never offered as controls. */
+export const ownerGaps: Record<string, string> = {
+  worker: "In-place Git reset, native-session reset or purge, transcript-only purge and retained-branch collection are not supported.",
+  browse: "Default-profile reset, per-site data clearing, resolved handoff redaction and orphan-volume collection are not supported.",
+  brain: "Terminal jobs without documents, source removal or checkpoint reset and stranded-Artifact collection are not supported.",
+  scrape: "Queue cancel/retry/discard and corpus or session-state maintenance are not supported.",
+  roles: "Retained injection-launch cleanup and standalone settings-receipt retirement are not supported.",
+  auth: "Cache-only clearing is not supported; account removal is the control.",
+  access: "History and session-specific retirement are not supported; revocation is the control.",
+  hud: "Work and journal body purge is not supported.",
+  bots: "Queued-body purge is not supported.",
+  signal: "Checkpoint reset is not supported.",
+  infer: "Catalog-only clearing is not supported.",
+  proc: "Payload redaction of removed schedules is not supported.",
+  content: "Vault or Git-history purge and temporary publication collection are not supported; remotes and backups keep copies.",
+};
 
 /** A link with empty arguments names an operation, not a resource: it is never callable from the inventory. */
 export function linkNeedsSelection(link: StateLink): boolean {

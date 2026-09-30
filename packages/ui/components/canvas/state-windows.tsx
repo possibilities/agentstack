@@ -11,7 +11,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { relativeTime } from "@/lib/stack/derive";
 import { formatBytes } from "@/lib/stack/resources";
-import { groupByOwner, linkNeedsSelection, localOperation, measured, operationNode, ownerStateRead, relationshipNode } from "@/lib/stack/state";
+import { groupByOwner, linkNeedsSelection, localOperation, measured, operationNode, ownerGaps, ownerHomes, ownerStateRead, relationshipNode } from "@/lib/stack/state";
 import type { ServeSubscription, ServeSubscriptionDetail, StateEntry, StateOwner } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { errorMessage } from "./auth-actions";
@@ -124,16 +124,22 @@ function EntryRow({ entry }: { entry: StateEntry }) {
 }
 
 function OwnerGroup({ owner, entries }: { owner: StateOwner; entries: StateEntry[] }) {
+  const { setSpace } = useWorkbench();
   return (
     <section aria-label={`${owner.package} state`} className="flex flex-col">
       <div className="flex min-w-0 items-center gap-2 px-1 pt-1.5 pb-0.5 text-xs">
         <StatusDot tone={owner.available ? "success" : "destructive"} label={owner.available ? "Available" : "Unavailable"} />
         <NodeLink node={{ kind: "package", id: owner.package }} label={`${owner.package} Package API`} className="font-semibold">{owner.package}</NodeLink>
         <span className="text-muted-foreground">{owner.available ? `${entries.length} loaded` : "unavailable"}</span>
-        <span className="ml-auto"><OperationChip pkg={owner.package} operation={ownerStateRead(owner.package)} /></span>
+        <span className="ml-auto flex items-center gap-1">
+          {ownerHomes[owner.package] ? <button type="button" onClick={() => setSpace(ownerHomes[owner.package].space)} title={`Open ${owner.package}'s controls in ${ownerHomes[owner.package].title}`}
+            className="inline-flex h-5 items-center rounded-md px-1.5 text-[0.66rem] text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">Open in {ownerHomes[owner.package].title}</button> : null}
+          <OperationChip pkg={owner.package} operation={ownerStateRead(owner.package)} />
+        </span>
       </div>
       {owner.issue ? <p className={cn("px-1 pb-1 text-xs", owner.available ? "text-muted-foreground" : "text-destructive")}>{owner.issue}</p> : null}
       {!owner.available ? <p className="px-1 pb-1 text-xs text-muted-foreground">A gap, not an empty store: this owner&rsquo;s state is unobserved.</p> : null}
+      {ownerGaps[owner.package] ? <p className="px-1 pb-1 text-[0.7rem] text-pretty text-muted-foreground">{ownerGaps[owner.package]}</p> : null}
       <div className="flex flex-col">{entries.map((entry) => <EntryRow key={entry.id} entry={entry} />)}</div>
     </section>
   );

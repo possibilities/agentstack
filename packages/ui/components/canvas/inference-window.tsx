@@ -1,5 +1,7 @@
 "use client";
 
+import { inferClearNote, inferPlanLimit, useInferClear } from "./infer-maintenance";
+import { StateFlowView } from "./state-flow";
 import { useEffect, useId, useState } from "react";
 import { CircleCheckIcon, CircleHelpIcon, CircleXIcon, KeyRoundIcon, PlayIcon, RefreshCwIcon, SparklesIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -58,6 +60,11 @@ export function InferenceWindow() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, InferRequest>>({});
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+  // A completed clear empties the selection; partial or unknown results keep it for inspection.
+  const clear = useInferClear(selected, "lab", () => setSelected([]));
+  const locked = clear.controls.flow.phase !== "idle";
 
   const requests = inferRequests.data ?? [];
   const observation = inferModels.data?.find((item) => item.accountId === accountId);
@@ -245,7 +252,15 @@ export function InferenceWindow() {
         <Empty icon={KeyRoundIcon} title="No Bot accounts" />
       )}
       {requests.length ? (
-        <Section title="Requests" aside={<span className="text-[0.65rem] text-muted-foreground">Newest {requests.length}</span>}>
+        <Section title="Requests" aside={<span className="flex items-center gap-1.5 text-[0.65rem] text-muted-foreground">Newest {requests.length}
+          {remote ? null : <Button type="button" size="xs" variant="ghost" className="-mr-1.5 h-5 px-1.5 text-[0.65rem]" disabled={locked}
+            onClick={() => { setSelecting(!selecting); setSelected([]); }}>{selecting ? "Done" : "Select to clear"}</Button>}</span>}>
+          {selecting ? (
+            <div className="flex flex-col gap-1.5 rounded-lg border border-dashed p-2">
+              <p className="text-[0.68rem] text-pretty text-muted-foreground">{inferClearNote} Running requests cannot be selected.</p>
+              <StateFlowView controls={clear.controls} label={`Prepare clearing ${selected.length} request${selected.length === 1 ? "" : "s"}`} applyLabel="Clear these payloads" unavailable={clear.unavailable} />
+            </div>
+          ) : null}
           <ul className="flex flex-col gap-1.5">
             {requests.map((item) => {
               const view = stateView[item.state];
@@ -253,7 +268,13 @@ export function InferenceWindow() {
               const detail = open ? details[item.requestId] : undefined;
               const elapsed = seconds(item);
               return (
-                <li key={item.requestId} className="group/row flex flex-col rounded-xl border">
+                <li key={item.requestId} className="group/row relative flex flex-col rounded-xl border">
+                  {selecting ? (
+                    <input type="checkbox" aria-label={`Select request ${item.requestId}`} className="absolute top-2.5 right-2.5 z-10 size-3.5 accent-destructive"
+                      checked={selected.includes(item.requestId)} disabled={locked || item.state === "running" || Boolean(item.contentClearedAt) || (!selected.includes(item.requestId) && selected.length >= inferPlanLimit)}
+                      title={item.state === "running" ? "Running requests cannot be cleared" : item.contentClearedAt ? "Already cleared" : undefined}
+                      onChange={() => setSelected(selected.includes(item.requestId) ? selected.filter((id) => id !== item.requestId) : [...selected, item.requestId])} />
+                  ) : null}
                   <button type="button" aria-expanded={open} onClick={() => setExpanded(open ? null : item.requestId)}
                     className="flex flex-col gap-1 rounded-xl px-2.5 py-2 text-left hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-ring">
                     <span className={cn("flex items-center gap-1 text-[0.68rem] font-medium", view.className)}>{view.icon}{view.label}</span>
