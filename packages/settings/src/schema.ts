@@ -4,7 +4,7 @@ export const settingValue = z.union([z.string().max(262_144), z.number().finite(
 export type SettingValue = z.infer<typeof settingValue>;
 export const settingValues = z.record(z.string().min(1).max(200), settingValue);
 export type SettingValues = z.infer<typeof settingValues>;
-export const backend = z.enum(["codex-app-server", "opencode-codex", "opencode-grok", "devin-acp", "claude-sdk"]);
+export const backend = z.enum(["codex-app-server", "opencode-codex", "devin-acp", "claude-sdk"]);
 export type SettingsBackend = z.infer<typeof backend>;
 export const settingsSnapshot = z.strictObject({ revision: z.number().int().nonnegative(), values: settingValues,
   source: z.string().describe("Creation provenance, not the origin of every later override."), sourceRevision: z.number().int().nonnegative().nullable(), updatedAt: z.number().int() });

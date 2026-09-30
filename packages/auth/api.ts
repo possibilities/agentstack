@@ -12,7 +12,7 @@ import { removeClaudeCredentials, type ClaudeCredentialOptions } from "./src/cla
 import { pairCodexWorkers } from "./src/pairing.js";
 
 const accountId = z.uuid().describe("Stable account ID from the corresponding Bot or Worker account list.");
-const providerSchema = z.enum(["codex", "grok", "devin", "claude"]);
+const providerSchema = z.enum(["codex", "devin", "claude"]);
 const linkedAccounts = z.array(z.strictObject({ scope: z.enum(["bot", "worker"]), id: accountId }))
   .describe("A Codex Bot account's paired Codex Worker account, or a paired Worker's Bot account. IDs only; no provider identity or credentials.");
 const accountSchema = z.strictObject({ id: accountId, enabled: z.boolean(), removing: z.boolean(), linkedAccounts });
@@ -118,7 +118,7 @@ function operatorOnly(invocation?: { botId: string | null; workerId?: string | n
 }
 
 export const workerAccountPrepare = operation({
-  name: "worker_account_prepare", description: "Terminal fallback: create a private native Grok, Devin or Claude Worker sign-in, or pass an existing Worker ID (including a paired Codex Worker) to sign it in. Run the returned command, then call worker_account_confirm. Prefer worker_account_login_start, which runs the sign-in itself.",
+  name: "worker_account_prepare", description: "Terminal fallback: create a private native Devin or Claude Worker sign-in, or pass an existing Worker ID (including a paired Codex Worker) to sign it in. Run the returned command, then call worker_account_confirm. Prefer worker_account_login_start, which runs the sign-in itself.",
   input: z.strictObject({ provider: providerSchema, id: accountId.optional() }),
   output: z.strictObject({ account: workerAccountSchema, command: z.string() }),
   annotations: { title: "Prepare worker sign-in" },
@@ -153,14 +153,14 @@ export const workerAccountConfirm = operation({
 });
 
 export const workerAccountList = operation({
-  name: "worker_account_list", description: "List Codex, Grok, Devin and Claude Worker accounts without credentials. Each Codex Worker is paired with the Codex Bot account it came with. Ready means the native Worker sign-in is confirmed.",
+  name: "worker_account_list", description: "List Codex, Devin and Claude Worker accounts without credentials. Each Codex Worker is paired with the Codex Bot account it came with. Ready means the native Worker sign-in is confirmed.",
   input: z.strictObject({}), output: z.strictObject({ accounts: z.array(workerAccountSchema) }),
   annotations: { title: "List worker accounts", readOnlyHint: true },
   async call(ctx: AuthContext) { return { accounts: (await inventories(ctx.store)).workers }; },
 });
 
 export const workerAccountSetEnabled = operation({
-  name: "worker_account_set_enabled", description: "Enable or disable a Codex, Grok, Devin or Claude Worker account. Disabling fences new Worker turns and drains its runtime; Bot accounts are unaffected.",
+  name: "worker_account_set_enabled", description: "Enable or disable a Codex, Devin or Claude Worker account. Disabling fences new Worker turns and drains its runtime; Bot accounts are unaffected.",
   input: z.strictObject({ id: accountId, enabled: z.boolean() }), output: workerAccountSchema,
   annotations: { title: "Set worker account availability", idempotentHint: true },
   async call(ctx: AuthContext, { id, enabled }, invocation) {
@@ -174,7 +174,7 @@ export const workerAccountSetEnabled = operation({
 });
 
 export const workerAccountRemove = operation({
-  name: "worker_account_remove", description: "Fence and remove one Grok, Devin or Claude Worker account, its runtime and private credentials, including Claude's exact profile-bound keychain item. A paired Codex Worker is removed only with its Codex Bot account (account_remove). Retry after interruption.",
+  name: "worker_account_remove", description: "Fence and remove one Devin or Claude Worker account, its runtime and private credentials, including Claude's exact profile-bound keychain item. A paired Codex Worker is removed only with its Codex Bot account (account_remove). Retry after interruption.",
   input: z.strictObject({ id: accountId }), output: z.strictObject({ id: accountId }),
   annotations: { title: "Remove worker account", destructiveHint: true },
   async call(ctx: AuthContext, { id }, invocation) {
@@ -190,7 +190,7 @@ export const workerAccountRemove = operation({
 });
 
 export const workerAccountLoginStart = operation({
-  name: "worker_account_login_start", description: "Create a Grok, Devin or Claude Worker account, or sign in one by ID, including a Codex Bot account's paired Codex Worker (same login as its Bot). Runs the native sign-in and returns a link to copy into your browser, with a one-time code for Codex and Grok; Devin and Claude take a pasted code via worker_account_login_submit when needsCode. Finishing marks it ready; watch worker_login_changed.",
+  name: "worker_account_login_start", description: "Create a Devin or Claude Worker account, or sign in one by ID, including a Codex Bot account's paired Codex Worker (same login as its Bot). Runs the native sign-in and returns a link to copy into your browser, with a one-time code for Codex; Devin and Claude take a pasted code via worker_account_login_submit when needsCode. Finishing marks it ready; watch worker_login_changed.",
   input: z.strictObject({ provider: providerSchema, id: accountId.optional() }), output: workerLoginStateSchema,
   annotations: { title: "Start worker sign-in" },
   async call(ctx: AuthContext, { provider, id }, invocation) {

@@ -1,7 +1,7 @@
 import { record } from "./acp.js";
 
 export type ModelChoice = { id: string; name: string; efforts: string[]; effortConfigId: string | null };
-export type Catalog = { accountId: string; provider: "codex" | "grok" | "devin" | "claude"; observedAt: string; source: string;
+export type Catalog = { accountId: string; provider: "codex" | "devin" | "claude"; observedAt: string; source: string;
   runtimeVersion: string; modelConfigId: string | null; models: ModelChoice[]; nativeModelIds: string[]; stale: boolean; error: string | null };
 
 type Option = { id: string; category?: string; name: string; values: Array<{ value: string; name: string }> };
@@ -46,7 +46,6 @@ export function effortOption(options: Option[]): Option | undefined {
 
 const catalogExclusions: Record<Catalog["provider"], RegExp[]> = {
   codex: [/^o3/, /realtime/i, /image/i],
-  grok: [/imagine/i],
   devin: [],
   claude: [],
 };
@@ -55,8 +54,7 @@ const catalogExclusions: Record<Catalog["provider"], RegExp[]> = {
  * Model entries a provider's catalog reports. The Codex account's ChatGPT
  * sign-in reaches only current reasoning models; OpenAI registry entries that
  * offer no effort choice, and the o3, realtime and image families, cannot be
- * dispatched and are omitted rather than listed as selectable. Grok's Imagine
- * media-generation models are omitted for the same reason. Devin catalogs
+ * dispatched and are omitted rather than listed as selectable. Devin catalogs
  * likewise omit entries that offer no effort choice; its remaining name
  * families lack equally strong evidence and are reported as observed.
  */

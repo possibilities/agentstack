@@ -26,7 +26,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
   const previousSession = withLocalAuth({ STACK_STATE_DIR: stateDir }, auth => auth.redeem(auth.bootstrap(`http://127.0.0.1:${uiPort}`, "ui"), `http://127.0.0.1:${uiPort}`, "ui"));
   const child = spawn(process.execPath, [cli, "serve"], {
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, ...brainEnv, STACK_STATE_DIR: stateDir, STACK_AGENTGROK_BIN: join(stateDir, "missing-agentgrok"),
+    env: { ...process.env, ...brainEnv, STACK_STATE_DIR: stateDir,
       STACK_MCP_PORT: "0", STACK_WEBSOCKET_PORT: "0", STACK_INSPECTOR_PORT: String(inspectorPort), STACK_UI_PORT: String(uiPort), STACK_DOCS_PORT: String(retiredDocsPort), STACK_WIKI_PORT: "0", STACK_WIKI_ARTIFACT_PORT: "0", MCP_INSPECTOR_API_TOKEN: "test-token" },
   });
   let stderr = "";
@@ -95,9 +95,8 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     assert.ok(resourceSnapshot.host?.hostname);
     assert.ok(resourceSnapshot.processes.some((entry) => entry.pid === child.pid));
     for (const entry of status.children) assert.ok(resourceSnapshot.processes.some((process) => process.pid === entry.pid && process.component === entry.name), `${entry.name} absent from resource snapshot`);
-    const usage = await socketCall(join(stateDir, "sockets", "usage.sock"), "tools/call", { name: "usage_snapshot", arguments: {} }) as { accounts: unknown[]; grokBot: { fresh: boolean } };
+    const usage = await socketCall(join(stateDir, "sockets", "usage.sock"), "tools/call", { name: "usage_snapshot", arguments: {} }) as { accounts: unknown[] };
     assert.deepEqual(usage.accounts, []);
-    assert.equal(usage.grokBot, null); // No signed-in Grok Worker account to reference.
 
     for (let i = 0; i < 200 && !/serve MCP: (http:\/\/\S+)/.test(stderr); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));

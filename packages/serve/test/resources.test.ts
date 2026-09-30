@@ -33,7 +33,7 @@ function collection(processes = [proc(10, 1)], monotonicMs = performance.now()):
 function domains(): DomainReading {
   return { labels: [
     { pid: 21, component: "bots", botId: "bot-1", accountId: "bot-account", provider: "codex", runtimeInstance: null },
-    { pid: 31, component: "worker", botId: null, accountId: "worker-account", provider: "grok", runtimeInstance: "launch-1" },
+    { pid: 31, component: "worker", botId: null, accountId: "worker-account", provider: "codex", runtimeInstance: "launch-1" },
   ], statuses: ["bots", "worker"].map((source) => ({ source: source as "bots" | "worker", capturedAt: new Date().toISOString(), state: "current", error: null, unmatched: 0 })) };
 }
 const tree = () => [proc(10, 1), proc(20, 10), proc(21, 20), proc(22, 21), proc(23, 22), proc(30, 10), proc(31, 30), proc(32, 31), proc(99, 1)];

@@ -86,7 +86,7 @@ test("the root UI renders the canvas without losing local links, processes, or B
       auth: [operation("account_list", { accounts: [] }), operation("account_login_current", { login: null }), operation("worker_account_list", { accounts: [] }), operation("worker_account_login_current", { logins: [] })],
       bots: [operation("bot_list", { bots: [bot] }), operation("bot_defaults_get", bot.settings), operation("voice_status", { call: null })],
       workers: [operation("worker_runtime_list", { runtimes: [] }), operation("worker_list", { workers: [] })],
-      usage: [operation("usage_snapshot", { atMs: Date.now(), inventoryAtMs: null, inventoryError: null, accounts: [], grokBot: { observedAtMs: null, lastAttemptAtMs: null, fresh: false, error: "not_observed", usage: null } })],
+      usage: [operation("usage_snapshot", { atMs: Date.now(), inventoryAtMs: null, inventoryError: null, accounts: [] })],
       api: [operation("docs_snapshot", { packages: [packageDoc("bots", "bot_list", "bots"), packageDoc("brain", "brain_catalog_probe", "documents")] })],
     };
     for (const [name, operations] of Object.entries(definitions)) {

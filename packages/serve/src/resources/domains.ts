@@ -15,7 +15,7 @@ const botList = z.object({ bots: z.array(z.object({
 })).max(2048) });
 const runtimeList = z.object({ runtimes: z.array(z.object({
   id: identifier, pid: z.number().int().positive().nullable(), state: z.string(),
-  instance: identifier.nullable(), provider: z.enum(["codex", "grok", "devin", "claude"]),
+  instance: identifier.nullable(), provider: z.enum(["codex", "devin", "claude"]),
   pids: z.array(z.number().int().positive()).max(2048).optional(),
 })).max(2048) });
 

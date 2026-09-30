@@ -229,7 +229,7 @@ entries explicitly or drain them with the prior installation before migration.
 
 No public-cloud listener is started. `cloud_grant_create` records explicit
 `package.operation` selections for a separate network policy and returns
-`credentialIssued:false`. Hosted Grok/Claude connector OAuth, OAuth metadata and
+`credentialIssued:false`. Hosted connector OAuth, OAuth metadata and
 remote MCP request admission remain deferred. Device tokens cannot become cloud
 tokens, and the internal MCP listener must never be externally forwarded.
 `grant_evaluate_operation` provides a trusted-local reusable policy check over

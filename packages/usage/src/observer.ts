@@ -2,18 +2,17 @@ import { constants } from "node:fs";
 import { chmod, mkdir, open, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { StateJournal, stateHash, socketCall, socketPath, socketSubscribe, type SocketSubscription, type StateApplyInput } from "@stack/api";
-import { accountSubscription, collectAccount, collectGrokBot, ObservationFailure } from "./collect.js";
-import { observationError, snapshotSchema, type AccountScope, type Provider, type Snapshot, type StoredMeasurement, type Subscription } from "./schema.js";
+import { accountSubscription, collectAccount, ObservationFailure } from "./collect.js";
+import { observationError, provider, snapshotSchema, type AccountScope, type Provider, type Snapshot, type StoredMeasurement, type Subscription } from "./schema.js";
 
 type Link = { scope: AccountScope; id: string };
 /** An auth inventory record; linkedAccounts is auth's Codex Bot–Worker pairing. */
 export type Registered = { id: string; scope: AccountScope; provider: Provider; enabled: boolean; ready: boolean; removing: boolean; linkedAccounts?: Link[] };
 type FetchAccount = (id: string, provider: Provider, scope: AccountScope) => Promise<StoredMeasurement["usage"]>;
-type FetchBot = () => Promise<NonNullable<Snapshot["grokBot"]>["usage"]>;
 type LoadAccounts = () => Promise<Registered[]>;
 type WatchAccounts = (onChange: () => void) => Promise<SocketSubscription>;
 type Row = { id: string; scope: AccountScope; provider: Provider; enabled: boolean; ready: boolean; measurement: StoredMeasurement; nextAttemptAtMs: number };
-type Persisted = { schemaVersion: number; accounts: Array<Omit<Row, "scope"> & { scope?: AccountScope }>; bot: StoredMeasurement };
+type Persisted = { schemaVersion: number; accounts: Array<Omit<Row, "scope"> & { scope?: AccountScope }> };
 const keyOf = ({ scope, id }: { scope: AccountScope; id: string }) => `${scope}:${id}`;
 
 const empty = (): StoredMeasurement => ({ observedAtMs: null, lastAttemptAtMs: null, error: null, usage: null });
@@ -22,19 +21,17 @@ const fresh = (measurement: StoredMeasurement, now: number) => measurement.error
 const errorCode = (error: unknown) => error instanceof ObservationFailure && observationError.safeParse(error.code).success
   ? observationError.parse(error.code) : "observation_failed";
 const intervalMs = 180_000;
-export type ObservationSelection = { accounts: Array<{ id: string; scope: AccountScope }>; grokBot: boolean };
+export type ObservationSelection = { accounts: Array<{ id: string; scope: AccountScope }> };
 
 export class UsageObserver {
   readonly maintenance: StateJournal;
   private saves: Promise<void> = Promise.resolve();
-  private botGeneration = 0;
+  // Unsupported legacy records stay on disk, never in the live snapshot or collectors.
+  private retainedState: Record<string, unknown> = {};
+  private retainedAccounts: unknown[] = [];
   private rows = new Map<string, Row>();
   private links = new Map<string, Link[]>();
   private subscriptions = new Map<string, NonNullable<Subscription>>();
-  private bot: StoredMeasurement = empty();
-  private botNextAttemptAtMs = 0;
-  /** Grok Bot usage is observed and reported only beside a signed-in Grok Worker account. */
-  private botReferenced = false;
   private inventoryAtMs: number | null = null;
   private inventoryError: Snapshot["inventoryError"] = "not_observed";
   private controller = new AbortController();
@@ -55,7 +52,6 @@ export class UsageObserver {
         ...workers.accounts.map((account): Registered => ({ ...account, scope: "worker" }))];
     },
     private readonly fetchAccount: FetchAccount = (id, provider, scope) => collectAccount(stateDir, id, provider, fetch, this.controller.signal, scope),
-    private readonly fetchBot: FetchBot = () => collectGrokBot(env.STACK_AGENTGROK_BIN, this.controller.signal),
     private readonly readSubscription: (id: string, provider: Provider, scope: AccountScope) => Promise<Subscription> =
       (id, provider, scope) => accountSubscription(stateDir, id, provider, scope),
     private readonly watchAccounts: WatchAccounts = (onChange) =>
@@ -63,11 +59,11 @@ export class UsageObserver {
   ) { this.maintenance = new StateJournal(join(stateDir, "usage", "state-control.sqlite"), "usage"); }
 
   private observationRevision(selection: ObservationSelection) {
-    return stateHash([selection.accounts.map(key => [key, this.rows.get(keyOf(key)) ?? null, this.subscriptions.get(keyOf(key)) ?? null]), selection.grokBot ? this.bot : null]);
+    return stateHash([selection.accounts.map(key => [key, this.rows.get(keyOf(key)) ?? null, this.subscriptions.get(keyOf(key)) ?? null])]);
   }
   clearPlan(selection: ObservationSelection) {
     return this.maintenance.plan({ subject: null, action: "observations", revision: this.observationRevision(selection),
-      resources: [...selection.accounts.map(keyOf), ...(selection.grokBot ? ["grok-bot"] : [])], blockedBy: [],
+      resources: selection.accounts.map(keyOf), blockedBy: [],
       retained: ["Accounts, credentials, runtime settings and provider quota/billing"],
       regeneration: ["In-flight collector results for selected observations are fenced. The next scheduled collection can repopulate them; this does not refresh or reset provider quota."] }, selection);
   }
@@ -81,7 +77,6 @@ export class UsageObserver {
       if (row) this.rows.set(id, { ...row, measurement: empty(), nextAttemptAtMs: Date.now() + intervalMs });
       this.subscriptions.delete(id);
     }
-    if (selection.grokBot) { this.botGeneration++; this.bot = empty(); this.botNextAttemptAtMs = Date.now() + intervalMs; }
     this.changed();
     try {
       await this.save();
@@ -100,13 +95,15 @@ export class UsageObserver {
       const stat = await handle.stat();
       if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.getuid?.() || stat.mode & 0o077 || stat.size > 1024 * 1024) return;
       const value = JSON.parse(await handle.readFile("utf8")) as Persisted;
-      if (![1, 2, 3].includes(value.schemaVersion) || !Array.isArray(value.accounts) || value.accounts.length > 128) return;
+      if (![1, 2, 3, 4].includes(value.schemaVersion) || !Array.isArray(value.accounts) || value.accounts.length > 128) return;
+      const { accounts: _accounts, schemaVersion: _version, ...retained } = value;
+      this.retainedState = retained;
+      this.retainedAccounts = [];
       for (const row of value.accounts) {
+        if (!row || typeof row !== "object") continue;
+        if (!provider.safeParse(row.provider).success) { this.retainedAccounts.push(row); continue; }
         const scope = value.schemaVersion === 1 ? row.provider === "codex" ? "bot" : "worker" : row.scope;
-        const measurement = value.schemaVersion < 3 && row.provider === "grok" && row.measurement?.usage
-          ? { ...row.measurement, usage: { ...row.measurement.usage,
-            included: { ...("included" in row.measurement.usage ? row.measurement.usage.included : {}), allocatedUsd: null } } } : row.measurement;
-        const candidate = snapshotSchema.shape.accounts.element.safeParse({ ...measurement,
+        const candidate = snapshotSchema.shape.accounts.element.safeParse({ ...row.measurement,
           id: row.id, scope, provider: row.provider, enabled: row.enabled, ready: row.ready, linkedAccounts: [], subscription: null, fresh: false });
         if (candidate.success && Number.isSafeInteger(row.nextAttemptAtMs)) this.rows.set(keyOf(candidate.data), {
           id: candidate.data.id, scope: candidate.data.scope, provider: candidate.data.provider,
@@ -115,9 +112,6 @@ export class UsageObserver {
             error: candidate.data.error, usage: candidate.data.usage }, nextAttemptAtMs: row.nextAttemptAtMs,
         });
       }
-      const bot = snapshotSchema.shape.grokBot.unwrap().safeParse({ ...value.bot, fresh: false });
-      if (bot.success) this.bot = { observedAtMs: bot.data.observedAtMs, lastAttemptAtMs: bot.data.lastAttemptAtMs,
-        error: bot.data.error, usage: bot.data.usage };
     } catch { /* malformed persisted state is not evidence */ }
     finally { await handle.close(); }
   }
@@ -131,7 +125,7 @@ export class UsageObserver {
         ready && fresh(measurement, now),
     })) as Snapshot["accounts"];
     return { atMs: now, inventoryAtMs: this.inventoryAtMs, inventoryError: this.inventoryError,
-      accounts, grokBot: this.botReferenced ? { ...this.bot, fresh: fresh(this.bot, now), usage: this.bot.usage as NonNullable<Snapshot["grokBot"]>["usage"] } : null };
+      accounts };
   }
 
   /** A Devin plan period is part of its measurement; a Codex sign-in claim is re-read each cycle and never persisted. */
@@ -153,7 +147,7 @@ export class UsageObserver {
     await chmod(dir, 0o700);
     const temp = join(dir, `observations.${process.pid}.${crypto.randomUUID()}.tmp`);
     try {
-      const value: Persisted = { schemaVersion: 3, accounts: [...this.rows.values()], bot: this.bot };
+      const value = { ...this.retainedState, schemaVersion: 4, accounts: [...this.rows.values(), ...this.retainedAccounts] };
       await writeFile(temp, JSON.stringify(value), { mode: 0o600, flag: "wx" });
       await rename(temp, this.path);
     } finally {
@@ -164,7 +158,7 @@ export class UsageObserver {
   async cycle(now = Date.now()): Promise<void> {
     let inventory: Registered[];
     try {
-      inventory = await this.accounts();
+      inventory = (await this.accounts()).filter((account) => provider.safeParse(account.provider).success);
       this.inventoryAtMs = now;
       this.inventoryError = null;
     } catch {
@@ -206,22 +200,6 @@ export class UsageObserver {
       } catch (error) {
         row.measurement = { ...row.measurement, lastAttemptAtMs: Date.now(), error: errorCode(error) };
         row.nextAttemptAtMs = Date.now() + (row.measurement.error === "rate_limited" ? 900_000 : 300_000);
-      }
-    }
-    this.botReferenced = inventory.some((account) => account.provider === "grok" && account.ready && !account.removing);
-    if (!this.botReferenced) {
-      // Forget the reading so a later Grok Worker never resurrects it; observe as soon as one is ready.
-      this.bot = empty();
-      this.botNextAttemptAtMs = 0;
-    } else if (!this.controller.signal.aborted && now >= this.botNextAttemptAtMs) {
-      const generation = this.botGeneration;
-      try {
-        const usage = await this.fetchBot();
-        if (generation === this.botGeneration) { this.bot = { usage, observedAtMs: Date.now(), lastAttemptAtMs: Date.now(), error: null };
-          this.botNextAttemptAtMs = Date.now() + intervalMs; }
-      } catch (error) {
-        if (generation === this.botGeneration) { this.bot = { ...this.bot, lastAttemptAtMs: Date.now(), error: errorCode(error) };
-          this.botNextAttemptAtMs = Date.now() + 300_000; }
       }
     }
     if (!this.controller.signal.aborted) await this.save();

@@ -7,7 +7,7 @@ import type { BotSettingsOptions, JsonSchema, SettingEvidence, SettingValue, Set
  */
 
 export type WorkerProvider = WorkerAccount["provider"];
-export const workerProviders: WorkerProvider[] = ["codex", "grok", "devin", "claude"];
+export const workerProviders: WorkerProvider[] = ["codex", "devin", "claude"];
 
 /** A settings document. Defaults documents are copied into new instances; they are not live inheritance. */
 export type SettingsTarget =

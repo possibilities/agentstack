@@ -20,12 +20,11 @@ const dir = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "stack-auth-browser
 const evidence = process.env.AUTH_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
 const env = { ...process.env, STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
-const providers = ["codex", "grok", "devin", "claude"];
+const providers = ["codex", "devin", "claude"];
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const accounts = providers.map((provider, index) => ({ id: id(index + 1), provider, enabled: true, ready: false, removing: false, linkedAccounts: [] }));
 const authUrls = {
   codex: "https://auth.openai.com/codex/device",
-  grok: "https://accounts.x.ai/oauth2/device?user_code=GROK-CODE",
   devin: "https://windsurf.com/devin/account/login?state=fixture-long-state-for-copy-verification&code_challenge=fixture",
   claude: "https://claude.ai/oauth/authorize?state=fixture-claude-sign-in",
 };
@@ -75,7 +74,7 @@ const handlers = {
   voice_status: () => ({ call: null }),
   worker_list: () => ({ workers: [] }),
   worker_runtime_list: () => ({ runtimes: [] }),
-  usage_snapshot: () => ({ atMs: Date.now(), inventoryAtMs: Date.now(), inventoryError: null, accounts: [], grokBot: null }),
+  usage_snapshot: () => ({ atMs: Date.now(), inventoryAtMs: Date.now(), inventoryError: null, accounts: [] }),
 };
 async function port() {
   const server = createServer();
@@ -155,6 +154,7 @@ try {
     });
   };
   const devin = card("devin");
+  const devinAccount = accounts.find((account) => account.provider === "devin");
   const input = () => devin.getByRole("textbox", { name: "Code from Devin", exact: true });
   const submit = () => devin.getByRole("button", { name: "Submit code", exact: true });
   await input().waitFor();
@@ -207,7 +207,10 @@ try {
   await page.setViewportSize(desktopViewport);
   await input().fill("  returned-devin-code  ");
   await input().focus();
-  await page.waitForFunction(() => document.querySelector('[data-node="worker-account:00000000-0000-4000-8000-000000000003"] [role="timer"]')?.textContent !== "0:00");
+  await page.waitForFunction((accountId) => {
+    const timer = document.querySelector(`[data-node="worker-account:${accountId}"] [role="timer"]`);
+    return timer && timer.textContent !== "0:00";
+  }, devinAccount.id);
   assert.equal(await input().evaluate((element) => element === document.activeElement), true, "timer updates preserve input focus");
   submitGate = Promise.withResolvers();
   submitEntered = Promise.withResolvers();
@@ -234,7 +237,7 @@ try {
   await devin.getByRole("alert").getByText(current("devin").error, { exact: true }).waitFor();
   await input().fill("stale-attempt-code");
   current("devin").status = "failed";
-  const replacement = newAttempt(accounts[2]);
+  const replacement = newAttempt(devinAccount);
   publish();
   await page.locator(`#worker-signin-code-${replacement.id}`).waitFor();
   assert.equal(await input().inputValue(), "", "new attempt resets draft");
@@ -249,7 +252,7 @@ try {
   await submit().click();
   await input().waitFor({ state: "hidden" });
   Object.assign(current("devin"), { status: "complete", needsCode: false });
-  accounts[2].ready = true;
+  devinAccount.ready = true;
   publish();
   served.get("auth").publish("worker_accounts_changed");
   await devin.getByText("Signed in", { exact: true }).waitFor();

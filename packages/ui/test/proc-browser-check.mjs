@@ -65,7 +65,7 @@ const handlers = {
   chat_list: () => ({ chats: [] }),
   chat_thread_read: () => ({ messages: [] }),
   worker_list: () => ({ workers: [] }), worker_runtime_list: () => ({ runtimes: [] }),
-  usage_snapshot: () => ({ atMs: now, inventoryAtMs: now, inventoryError: null, accounts: [], grokBot: null }),
+  usage_snapshot: () => ({ atMs: now, inventoryAtMs: now, inventoryError: null, accounts: [] }),
 };
 const sockets = new Map();
 let websocket, next, browser, proc;

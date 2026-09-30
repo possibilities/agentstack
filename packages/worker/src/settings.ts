@@ -4,12 +4,12 @@ import { catalog, evidence, settingsCatalog, settingsPatch, settingsPlan, settin
 import type { WorkersContext } from "../api.js";
 import { workerSettingsBackend } from "./manager.js";
 
-const provider = z.enum(["codex", "grok", "devin", "claude"]);
+const provider = z.enum(["codex", "devin", "claude"]);
 const target = z.strictObject({ id: z.uuid().optional(), provider: provider.optional() })
   .refine((value) => (value.id === undefined) !== (value.provider === undefined), "Select exactly one Worker id or defaults provider");
 const edit = z.strictObject({ target, patch: settingsPatch });
 
-export const workerSettingsCatalog = operation({ name: "worker_settings_catalog", description: "Discover managed Worker settings for a provider/backend. Codex and Grok Workers use OpenCode ACP, Devin uses ACP and Claude uses its SDK. Use worker_catalog with an account for native model and dependent effort choices. No session starts.",
+export const workerSettingsCatalog = operation({ name: "worker_settings_catalog", description: "Discover managed Worker settings for a provider/backend. Codex Workers use OpenCode ACP, Devin uses ACP and Claude uses its SDK. Use worker_catalog with an account for native model and dependent effort choices. No session starts.",
   input: z.strictObject({ provider }), output: settingsCatalog, annotations: { title: "Worker settings catalog", readOnlyHint: true },
   async call(ctx: WorkersContext, { provider }) {
     const value = catalog(workerSettingsBackend(provider));

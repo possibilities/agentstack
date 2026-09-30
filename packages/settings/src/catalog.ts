@@ -71,7 +71,7 @@ export function catalog(backend: SettingsBackend, runtime: string | null = null)
       "Loaded means submitted at the named boundary; it does not prove native effective behavior.",
       ...(backend === "codex-app-server" ? ["Voice transport remains WebRTC v3/audio. No automatic reconnect, history replay, synthetic child returns, or AgentVoice prompt policy.",
         "Native config and feature discovery do not prove account eligibility. Resumed threads can retain settings independent of process configuration."]
-        : ["Codex and Grok Workers use OpenCode ACP; they do not accept Codex app-server settings. Permission requests retain their native workflow."])] };
+        : ["Codex Workers use OpenCode ACP; they do not accept Codex app-server settings. Permission requests retain their native workflow."])] };
 }
 
 function nativeDefault(key: string, backend: SettingsBackend): SettingEvidence {

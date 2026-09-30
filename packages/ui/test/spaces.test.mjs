@@ -60,7 +60,6 @@ test("homeOf distinguishes spatial records from reference destinations", () => {
   assert.deepEqual(homeOf({ kind: "operation", id: "bot_start", pkg: "bots" }), { kind: "reference" });
   assert.deepEqual(homeOf({ kind: "usage" }), { kind: "space", space: "accounts", window: "usage" });
   assert.deepEqual(homeOf({ kind: "usage-account", id: "bot:a1" }), { kind: "space", space: "accounts", window: "usage" });
-  assert.deepEqual(homeOf({ kind: "grok-bot-usage" }), { kind: "space", space: "accounts", window: "usage" });
   assert.deepEqual(homeOf({ kind: "worker-catalog", id: "w1" }), { kind: "space", space: "accounts", window: "model-catalogs" });
   assert.deepEqual(homeOf({ kind: "signal" }), { kind: "space", space: "signal", window: "signal" });
   assert.deepEqual(homeOf({ kind: "attention-item", id: "r:0" }), { kind: "space", space: "signal", window: "attention" });
@@ -122,7 +121,6 @@ test("parseNodeKey inverts nodeKey for every kind and rejects malformed keys", (
     { kind: "role-shim", id: "opencode-astra.v2_x" },
     { kind: "usage" },
     { kind: "usage-account", id: "worker:account-with-colons:ok" },
-    { kind: "grok-bot-usage" },
     { kind: "worker-catalog", id: "w1" },
     { kind: "worker", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" },
     { kind: "worker-runtime", id: "w1" },
@@ -197,12 +195,12 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
     workerAccounts: { data: [
       { id: "w1", provider: "codex", enabled: true, ready: true, removing: true, linkedAccounts: [] },
       { id: "w2", provider: "codex", enabled: true, ready: false, removing: false, linkedAccounts: [] },
-      { id: "w3", provider: "grok", enabled: true, ready: false, removing: false, linkedAccounts: [] },
-      { id: "w4", provider: "grok", enabled: true, ready: true, removing: false, linkedAccounts: [] },
+      { id: "w3", provider: "devin", enabled: true, ready: false, removing: false, linkedAccounts: [] },
+      { id: "w4", provider: "devin", enabled: true, ready: true, removing: false, linkedAccounts: [] },
     ], error: null, at: null },
   });
   assert.deepEqual(workers.fleet, []);
-  assert.deepEqual(workers.accounts, ["codex-worker-account-1 removal unfinished", "codex-worker-account-2 needs sign-in", "grok-worker-account-1 needs sign-in"]);
+  assert.deepEqual(workers.accounts, ["codex-worker-account-1 removal unfinished", "codex-worker-account-2 needs sign-in", "devin-worker-account-1 needs sign-in"]);
   assert.deepEqual(workers.workers, []);
 
   // Workers: permission waits, recovery, failures and runtime errors; idle, running and closed Workers are quiet.

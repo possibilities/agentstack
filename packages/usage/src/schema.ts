@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const provider = z.enum(["codex", "grok", "devin", "claude"]);
+export const provider = z.enum(["codex", "devin", "claude"]);
 export type Provider = z.infer<typeof provider>;
 export const accountScope = z.enum(["bot", "worker"]);
 export type AccountScope = z.infer<typeof accountScope>;
@@ -14,12 +14,6 @@ const window = z.strictObject({ role: z.enum(["primary", "secondary", "code_revi
 export const codexUsage = z.strictObject({ planType: nullableString, limitReached: nullableBoolean,
   resetCreditsAvailable: nullableNumber, resetCreditExpirations: z.array(nullableString).nullable(),
   lanes: z.array(z.strictObject({ id: z.string().max(100), title: z.string().max(80), windows: z.array(window).max(2) })).max(36) });
-export const grokUsage = z.strictObject({ subscriptionTier: nullableString,
-  included: z.strictObject({ usedPercent: nullableNumber, remainingPercent: nullableNumber,
-    periodType: nullableString, periodStart: nullableString, resetsAt: nullableString,
-    allocatedUsd: nullableNumber.describe("Included monthly dollar allocation from Grok's monthlyLimit in the legacy billing response; null when the provider omits it. Not a remaining balance.") }),
-  prepaidBalanceUsd: nullableNumber, paygEnabled: nullableBoolean,
-  paygUsedUsd: nullableNumber, paygCapUsd: nullableNumber, paygRemainingUsd: nullableNumber });
 export const devinUsage = z.strictObject({ planLabel: nullableString, billing: nullableString,
   dailyRemainingPercent: nullableNumber, weeklyRemainingPercent: nullableNumber,
   dailyResetsAt: nullableString, weeklyResetsAt: nullableString, periodStart: nullableString,
@@ -33,15 +27,11 @@ export const claudeUsage = z.strictObject({
     usedCredits: nullableNumber.describe("Native extra_usage.used_credits, in provider units; not an inferred balance."),
     utilization: nullableNumber.describe("Native extra_usage.utilization percentage, when reported.") }).nullable(),
 });
-export const grokBotUsage = z.strictObject({ usedPercent: z.number().finite(), periodStart: z.string(),
-  resetsAt: z.string(), hasAvailableUsage: z.boolean(), planLabel: nullableString,
-  fundingPlan: nullableString, onDemandEligible: nullableBoolean, onDemandEnabled: nullableBoolean,
-  trial: nullableBoolean, teamSeat: nullableBoolean });
-export type Measurement = z.infer<typeof codexUsage> | z.infer<typeof grokUsage> | z.infer<typeof devinUsage> | z.infer<typeof claudeUsage>;
+export type Measurement = z.infer<typeof codexUsage> | z.infer<typeof devinUsage> | z.infer<typeof claudeUsage>;
 
 export const observationError = z.enum(["credentials_unavailable", "credentials_unsafe", "account_invalid",
   "response_invalid", "provider_unavailable", "auth_unavailable", "rate_limited", "not_found", "provider_error",
-  "identity_invalid", "grok_bot_unavailable", "grok_bot_invalid", "observation_failed"]);
+  "identity_invalid", "observation_failed"]);
 export type ObservationError = z.infer<typeof observationError>;
 const observation = {
   observedAtMs: z.number().int().nullable().describe("Epoch milliseconds of the last successful measurement, not the latest attempt."),
@@ -53,26 +43,21 @@ export const subscription = z.strictObject({
   endsAt: z.string().max(64).describe("ISO time the account's current paid subscription period ends. The provider does not say whether it renews."),
   source: z.enum(["plan_period", "sign_in_claim"]).describe("plan_period: Devin's reported plan period end. sign_in_claim: the chatgpt_subscription_active_until claim of a Codex Bot sign-in's stored ID token."),
   checkedAtMs: z.number().int().nullable().describe("Epoch milliseconds the provider last confirmed this date: the measurement time for plan_period, the claim's own last check for sign_in_claim."),
-}).nullable().describe("Where the provider exposes it: Devin accounts and Codex Bot accounts. Codex Worker logins store no ID token; Grok and Claude report no end date. Null when unavailable.");
+}).nullable().describe("Where the provider exposes it: Devin accounts and Codex Bot accounts. Codex Worker logins store no ID token; Claude reports no end date. Null when unavailable.");
 export type Subscription = z.infer<typeof subscription>;
 const linkedAccounts = z.array(z.strictObject({ scope: accountScope, id: z.uuid() }))
   .describe("The paired Codex Bot or Codex Worker account from auth's inventories; IDs only, no credential or provider account ID.");
 export const account = z.discriminatedUnion("provider", [
   z.strictObject({ id: z.uuid(), scope: accountScope, provider: z.literal("codex"), enabled: z.boolean(), ready: z.boolean(), linkedAccounts, subscription,
     ...observation, usage: codexUsage.nullable() }),
-  z.strictObject({ id: z.uuid(), scope: z.literal("worker"), provider: z.literal("grok"), enabled: z.boolean(), ready: z.boolean(), linkedAccounts, subscription,
-    ...observation, usage: grokUsage.nullable() }),
   z.strictObject({ id: z.uuid(), scope: z.literal("worker"), provider: z.literal("devin"), enabled: z.boolean(), ready: z.boolean(), linkedAccounts, subscription,
     ...observation, usage: devinUsage.nullable() }),
   z.strictObject({ id: z.uuid(), scope: z.literal("worker"), provider: z.literal("claude"), enabled: z.boolean(), ready: z.boolean(), linkedAccounts, subscription,
     ...observation, usage: claudeUsage.nullable() }),
 ]);
 export const snapshotSchema = z.strictObject({ atMs: z.number().int(), inventoryAtMs: z.number().int().nullable(),
-  inventoryError: z.enum(["not_observed", "auth_unavailable"]).nullable(), accounts: z.array(account).describe("Bot Codex and independent Worker accounts, including disabled accounts. Scope and ID together identify a record."),
-  grokBot: z.strictObject({ ...observation, usage: grokBotUsage.nullable() }).nullable()
-    .describe("Machine-level Grok Bot CLI login, observed only while a signed-in Grok Worker account exists; null otherwise. Not itself a Worker account.") });
+  inventoryError: z.enum(["not_observed", "auth_unavailable"]).nullable(), accounts: z.array(account).describe("Bot Codex and independent Worker accounts, including disabled accounts. Scope and ID together identify a record.") });
 export type Snapshot = z.infer<typeof snapshotSchema>;
 export type Account = z.infer<typeof account>;
-export type GrokBot = NonNullable<Snapshot["grokBot"]>;
 export type StoredMeasurement = { observedAtMs: number | null; lastAttemptAtMs: number | null;
-  error: ObservationError | null; usage: Measurement | z.infer<typeof grokBotUsage> | null };
+  error: ObservationError | null; usage: Measurement | null };

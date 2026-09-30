@@ -18,7 +18,7 @@ export async function resolveWorkContext(env: NodeJS.ProcessEnv, workItemId: str
 
 export const workAdmission = z.strictObject({
   sequence: z.number().int().positive(), workerId: z.uuid(), turnId: z.uuid(), context: workContext,
-  botId: z.string(), threadId: z.string(), accountId: z.uuid(), provider: z.enum(["codex", "grok", "devin", "claude"]),
+  botId: z.string(), threadId: z.string(), accountId: z.uuid(), provider: z.enum(["codex", "devin", "claude"]),
   model: z.string().nullable(), effort: z.string().nullable(),
   workerPhase: z.enum(["preparing", "idle", "running", "awaiting_input", "cancelling", "closed", "failed", "needs_recovery"]),
   turnPhase: z.enum(["queued", "running", "awaiting_input", "cancelling", "completed", "cancelled", "failed", "unknown"]),

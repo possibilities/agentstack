@@ -11,7 +11,6 @@ import { accountRoot, prepareAccountProfile } from "../src/worker-accounts.js";
 
 const fixtures = {
   codex: fileURLToPath(new URL("../../test/fixtures/fake-worker-login-codex.mjs", import.meta.url)),
-  grok: fileURLToPath(new URL("../../test/fixtures/fake-worker-login-grok.mjs", import.meta.url)),
   devin: fileURLToPath(new URL("../../test/fixtures/fake-worker-login-devin.mjs", import.meta.url)),
 };
 
@@ -82,19 +81,6 @@ test("codex sign-in surfaces only the link and code, then confirms the account r
       assert.ok(!entry.includes("fake-codex-secret"));
       assert.ok(!entry.includes("refresh_token"));
     }
-  } finally { await login.close(); store.close(); await rm(root, { recursive: true, force: true }); }
-});
-
-test("grok sign-in surfaces the prefilled link and code, then confirms ready", async () => {
-  const { root, store, login, account } = await harness("grok");
-  try {
-    const started = await login.start(account);
-    const shown = await prompted(login, started.id);
-    assert.equal(shown.authUrl, "https://accounts.x.ai/oauth2/device?user_code=FAKE-XAIC");
-    assert.equal(shown.userCode, "FAKE-XAIC");
-    const result = await settle(login, started.id);
-    assert.equal(result.status, "complete");
-    assert.equal(store.workerAccounts().find((item) => item.id === account.id)?.ready, true);
   } finally { await login.close(); store.close(); await rm(root, { recursive: true, force: true }); }
 });
 
@@ -222,9 +208,9 @@ test("cancel marks the attempt failed and kills the native sign-in", async () =>
 });
 
 test("restarting one account's sign-in supersedes it without touching another account's", async () => {
-  const { root, store, login, account } = await harness("grok", { FAKE_WORKER_LOGIN_HANG: "1" });
+  const { root, store, login, account } = await harness("codex", { FAKE_WORKER_LOGIN_HANG: "1" });
   try {
-    const other = await readyAccount(store, "grok");
+    const other = await readyAccount(store, "codex");
     const first = await login.start(account);
     const third = await login.start(other);
     const second = await login.start(account);
@@ -285,7 +271,7 @@ test("duplicate native credentials fail with the store's rejection", async () =>
 });
 
 test("close marks an unfinished sign-in failed", async () => {
-  const { root, store, login, account } = await harness("grok", { FAKE_WORKER_LOGIN_HANG: "1" });
+  const { root, store, login, account } = await harness("codex", { FAKE_WORKER_LOGIN_HANG: "1" });
   try {
     const started = await login.start(account);
     await prompted(login, started.id);
@@ -310,7 +296,7 @@ test("cancelAccount terminates a pending sign-in so removal never leaves a live 
 });
 
 test("only the devin child receives remote-session hints", async () => {
-  for (const provider of ["devin", "codex", "grok"] as const) {
+  for (const provider of ["devin", "codex"] as const) {
     const { root, store, login, account } = await harness(provider, { FAKE_WORKER_LOGIN_HANG: provider === "devin" ? "" : "1" });
     try {
       const started = await login.start(account);

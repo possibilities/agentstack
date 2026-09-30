@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { accountLabels, providerTitle, relativeTime, shortId, untilTime, usageRows, workerAccountLabels, workerProviders } from "@/lib/stack/derive";
-import { nodeKey, type NodeRef, type UsageAccount, type UsageObservation, type UsageSnapshot, type UsageSubscription } from "@/lib/stack/types";
+import { nodeKey, type NodeRef, type UsageAccount, type UsageObservation, type UsageSubscription } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { Empty, headroomTone, Meter, NodeCard, NodeTitle, Orb, StatusDot, Time } from "./primitives";
 import { useNow, useStack, useStore } from "./provider";
@@ -17,19 +17,14 @@ import { Section, Window } from "./window";
  * A gauge's group is the set of windows that gate the same quota: an exhausted
  * window blocks its siblings unless it is local, gating only its own model.
  */
-type Gauge = { label: string; remaining: number | null; resetsAt: string | null; group: string; local?: boolean;
-  inspect?: { node: NodeRef; label: string } };
+type Gauge = { label: string; remaining: number | null; resetsAt: string | null; group: string; local?: boolean };
 type Summary = { plan: string | null; limited: boolean; gauges: Gauge[]; notes: string[] };
 /** When one observation behind a card was last measured; a merged gauge names its own. */
 type Sample = { label: string | null; at: number | null };
 
-/** Whole dollars drop their cents to keep a card's info line short. */
-const money = (value: number) => value.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: Number.isInteger(value) ? 0 : 2 });
 /** Every gauge is remaining headroom, whichever direction the provider reports. */
 const pct = (value: number) => `${Math.round(value)}%`;
 const freshWindow = 5 * 60_000;
-const grokBotNode: NodeRef = { kind: "grok-bot-usage" };
-const grokAuthRecovery = "Grok Worker usage was rejected. If it persists, use Sign in again in Accounts.";
 /** An exhausted window is a limit, like Codex's own limit flag. */
 const exhausted = (gauges: Gauge[]) => gauges.some((gauge) => gauge.remaining === 0);
 /** The exhausted sibling that makes a gauge's remaining headroom unusable, if any. */
@@ -61,16 +56,6 @@ function summarize(account: UsageAccount): Summary | null {
       notes: usage.resetCreditsAvailable ? [`${usage.resetCreditsAvailable} reset credit${usage.resetCreditsAvailable === 1 ? "" : "s"}`] : [],
     };
   }
-  if (account.provider === "grok") {
-    const usage = account.usage;
-    const notes: string[] = [];
-    if (usage.included.allocatedUsd !== null) notes.push(`${money(usage.included.allocatedUsd)} included`);
-    if (usage.prepaidBalanceUsd) notes.push(`${money(usage.prepaidBalanceUsd)} prepaid`);
-    if (usage.paygEnabled || usage.paygUsedUsd) notes.push(`PAYG ${money(usage.paygUsedUsd ?? 0)}${usage.paygCapUsd ? ` / ${money(usage.paygCapUsd)}` : ""}`);
-    const gauges = [{ label: usage.included.periodType ?? "included", remaining: usage.included.remainingPercent, resetsAt: usage.included.resetsAt, group: "included" }];
-    // Pay-as-you-go continues past the included allocation.
-    return { plan: usage.subscriptionTier, limited: !usage.paygEnabled && exhausted(gauges), gauges, notes };
-  }
   if (account.provider === "claude") {
     const usage = account.usage;
     const extra = usage.extraUsage;
@@ -95,30 +80,6 @@ function summarize(account: UsageAccount): Summary | null {
   const monthly = credits(usage.promptCreditsMonthly);
   if (available !== null) notes.push(`${available}${monthly !== null ? ` / ${monthly}` : ""} credits`);
   return { plan: usage.planLabel, limited: exhausted(gauges), gauges, notes };
-}
-
-type GrokBot = NonNullable<UsageSnapshot["grokBot"]>;
-
-function grokBotSummary(usage: NonNullable<GrokBot["usage"]>, label: string): Summary {
-  return {
-    plan: usage.planLabel,
-    limited: !usage.hasAvailableUsage,
-    gauges: [{ label, remaining: Math.max(0, 100 - usage.usedPercent), resetsAt: usage.resetsAt, group: "grok-bot", inspect: { node: grokBotNode, label: "Grok Bot usage" } }],
-    notes: usage.onDemandEnabled ? [`${label} on-demand on`] : [],
-  };
-}
-
-/** The Grok Worker login's card also carries the machine's Grok Bot usage. */
-function withGrokBot(summary: Summary, usage: NonNullable<GrokBot["usage"]>): Summary {
-  const bot = grokBotSummary(usage, "bot");
-  return { plan: summary.plan ?? bot.plan, limited: summary.limited || bot.limited,
-    gauges: [...summary.gauges, ...bot.gauges], notes: [...summary.notes, ...bot.notes] };
-}
-
-/** One freshness signal for a merged card: a failed read, then a stale one, wins. */
-function worstObservation(a: UsageObservation, b: UsageObservation): UsageObservation {
-  const rank = (observation: UsageObservation) => observation.error ? 2 : observation.fresh && observation.observedAtMs !== null ? 0 : 1;
-  return rank(b) > rank(a) ? b : a;
 }
 
 /** Observation age and last error, shown in the inspector. */
@@ -168,7 +129,7 @@ function SubscriptionEnd({ subscription, now }: { subscription: UsageSubscriptio
   );
 }
 
-function UsageCard({ node, names, observation, summary, orbs, samples, subscription, recovery }: {
+function UsageCard({ node, names, observation, summary, orbs, samples, subscription }: {
   node: NodeRef;
   names: Array<{ node: NodeRef; label: string }>;
   observation: UsageObservation;
@@ -176,7 +137,6 @@ function UsageCard({ node, names, observation, summary, orbs, samples, subscript
   orbs: string[];
   samples: Sample[];
   subscription: UsageSubscription | null;
-  recovery?: string;
 }) {
   const now = useNow(60_000);
   const headline = summary.gauges.reduce<number | null>((low, gauge) => gauge.remaining === null ? low : low === null ? gauge.remaining : Math.min(low, gauge.remaining), null);
@@ -213,9 +173,7 @@ function UsageCard({ node, names, observation, summary, orbs, samples, subscript
             return (
             <div key={gauge.label} title={blocker ? `Unavailable until ${blocker.label} resets` : undefined}
               className="grid grid-cols-[3.75rem_1fr_auto_auto] items-center gap-2 text-[0.68rem] text-muted-foreground">
-              {gauge.inspect ? (
-                <span data-node={nodeKey(gauge.inspect.node)} className="truncate"><NodeTitle node={gauge.inspect.node} label={gauge.inspect.label}>{gauge.label}</NodeTitle></span>
-              ) : <span className="truncate">{gauge.label}</span>}
+              <span className="truncate">{gauge.label}</span>
               <Meter value={gauge.remaining} className={cn("h-3", blocker && "opacity-35")}
                 label={`${names[0].label} ${gauge.label} remaining${blocker ? `, unavailable until ${blocker.label} resets` : ""}`} />
               <span className={cn("min-w-10 text-right whitespace-nowrap tabular-nums", blocker && "opacity-35")}>
@@ -241,7 +199,6 @@ function UsageCard({ node, names, observation, summary, orbs, samples, subscript
           {subscription ? <span className="ml-auto shrink-0"><SubscriptionEnd subscription={subscription} now={now} /></span> : null}
         </p>
       ) : null}
-      {recovery ? <p className="text-[0.68rem] text-warning">{recovery}</p> : null}
     </NodeCard>
   );
 }
@@ -257,20 +214,15 @@ export function UsageWindow() {
   const grouped = usageRows(usage.data?.accounts ?? []);
   const rows = grouped.filter((row) => row[0].usage);
   const waiting = grouped.filter((row) => !row[0].usage).map((row) => row[0]);
-  const grokBot = usage.data?.grokBot;
-  // Grok Bot folds into the card of the only Grok Worker login; otherwise it stands alone.
-  const grokAccounts = usage.data?.accounts.filter((account) => account.provider === "grok") ?? [];
-  const grokHost = grokBot?.usage && grokAccounts.length === 1 ? rows.find((row) => row[0] === grokAccounts[0]) ?? null : null;
   // Mirror Accounts' provider sections, including accounts without a measurement.
   const groups = workerProviders.map((provider) => ({
     provider,
     rows: rows.filter((row) => row[0].provider === provider),
     waiting: waiting.filter((account) => account.provider === provider),
-    separateBot: provider === "grok" && grokBot && !grokHost ? grokBot : null,
-  })).filter((group) => group.rows.length || group.waiting.length || group.separateBot);
+  })).filter((group) => group.rows.length || group.waiting.length);
   return (
-    <Window id="usage" title="Usage" subtitle="usage" icon={GaugeIcon} accent="server" node={{ kind: "usage" }} empty={!usage.data || !rows.length && !waiting.length && !grokBot}
-      count={usage.data ? usage.data.accounts.length + (usage.data.grokBot ? 1 : 0) : undefined} status={status.usage} endpoint={endpoints.usage} updatedAt={usage.at} error={usage.error}
+    <Window id="usage" title="Usage" subtitle="usage" icon={GaugeIcon} accent="server" node={{ kind: "usage" }} empty={!usage.data || !rows.length && !waiting.length}
+      count={usage.data?.accounts.length} status={status.usage} endpoint={endpoints.usage} updatedAt={usage.at} error={usage.error}
       actions={
         <Tooltip>
           <TooltipTrigger render={<Button variant="ghost" size="icon-xs" aria-label="Re-read usage" disabled={status.usage !== "open"} onClick={store.reloadUsage} />}>
@@ -282,49 +234,31 @@ export function UsageWindow() {
       {usage.data?.inventoryError ? <Alert variant="destructive"><AlertDescription>Inventory {usage.data.inventoryError.replace("_", " ")} · <Time at={usage.data.inventoryAtMs} /></AlertDescription></Alert> : null}
       {usage.data ? (
         <div className="flex flex-col gap-3">
-          {groups.map(({ provider, rows: providerRows, waiting: providerWaiting, separateBot }) => (
+          {groups.map(({ provider, rows: providerRows, waiting: providerWaiting }) => (
             <Section key={provider} title={providerTitle(provider)}>
               <div className="flex flex-col gap-2">
-                {providerRows.map((row) => {
-                  const bot = row === grokHost ? grokBot : null;
-                  return (
-                    <UsageCard key={`${row[0].scope}:${row[0].id}`} node={nodeOf(row[0])} observation={bot ? worstObservation(row[0], bot) : row[0]}
-                      summary={bot?.usage ? withGrokBot(summarize(row[0])!, bot.usage) : summarize(row[0])!}
-                      samples={[{ label: null, at: row[0].observedAtMs }, ...bot ? [{ label: "bot", at: bot.observedAtMs }] : []]}
-                      subscription={row[0].subscription}
-                      recovery={row[0].scope === "worker" && row[0].provider === "grok" && row[0].error === "auth_unavailable"
-                        ? grokAuthRecovery : undefined}
-                      orbs={row.map((account) => account.id)} names={row.map((account) => ({ node: nodeOf(account), label: label(account) }))} />
-                  );
-                })}
-                {separateBot?.usage ? (
-                  <UsageCard node={grokBotNode} observation={separateBot} summary={grokBotSummary(separateBot.usage, "period")} orbs={[]}
-                    samples={[{ label: null, at: separateBot.observedAtMs }]} subscription={null}
-                    names={[{ node: grokBotNode, label: "Grok Bot" }]} />
-                ) : null}
-                {providerWaiting.length || (separateBot && !separateBot.usage) ? (
+                {providerRows.map((row) => (
+                  <UsageCard key={`${row[0].scope}:${row[0].id}`} node={nodeOf(row[0])} observation={row[0]}
+                    summary={summarize(row[0])!} samples={[{ label: null, at: row[0].observedAtMs }]}
+                    subscription={row[0].subscription}
+                    orbs={row.map((account) => account.id)} names={row.map((account) => ({ node: nodeOf(account), label: label(account) }))} />
+                ))}
+                {providerWaiting.length ? (
                   <div className="flex flex-wrap items-center gap-1 px-0.5 pt-1">
                     <span className="mr-1 text-[0.68rem] text-muted-foreground">Not observed</span>
                     {providerWaiting.map((account) => (
-                      <span key={`${account.scope}:${account.id}`} data-node={nodeKey(nodeOf(account))} title={account.scope === "worker" && account.provider === "grok" && account.error === "auth_unavailable"
-                        ? grokAuthRecovery
-                        : account.error ?? (!account.ready ? "Needs sign-in" : !account.enabled ? "Disabled" : "Waiting")}
+                      <span key={`${account.scope}:${account.id}`} data-node={nodeKey(nodeOf(account))} title={account.error ?? (!account.ready ? "Needs sign-in" : !account.enabled ? "Disabled" : "Waiting")}
                         className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem]">
                         <Orb id={account.id} size="sm" className="size-2.5" />
                         <NodeTitle node={nodeOf(account)} label={`${label(account)} usage`}>{label(account)}</NodeTitle>
                       </span>
                     ))}
-                    {separateBot && !separateBot.usage ? (
-                      <span data-node={nodeKey(grokBotNode)} title={separateBot.error ?? "Waiting"} className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.68rem]">
-                        <NodeTitle node={grokBotNode} label="Grok Bot usage">Grok Bot</NodeTitle>
-                      </span>
-                    ) : null}
                   </div>
                 ) : null}
               </div>
             </Section>
           ))}
-          {!rows.length && !waiting.length && !grokBot ? <Empty icon={GaugeIcon} title="No accounts" /> : null}
+          {!rows.length && !waiting.length ? <Empty icon={GaugeIcon} title="No accounts" /> : null}
         </div>
       ) : (
         <Empty icon={GaugeIcon} title="Usage unavailable" />

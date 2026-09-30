@@ -20,7 +20,7 @@ export type WorkerLoginState = {
 type WorkerCommand = (account: WorkerAccount) => { bin: string; args: string[] };
 type Pending = { state: WorkerLoginState; child: ChildProcess; output: string; timer: ReturnType<typeof setTimeout> | undefined; done: Promise<void> };
 
-const providerNames: Record<WorkerProvider, string> = { codex: "Codex", grok: "Grok", devin: "Devin", claude: "Claude" };
+const providerNames: Record<WorkerProvider, string> = { codex: "Codex", devin: "Devin", claude: "Claude" };
 
 /** Strip terminal styling so only the literal prompt text can match. */
 const strip = (value: string) => value.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
@@ -29,10 +29,6 @@ const prompts: Record<WorkerProvider, { url: RegExp; code: RegExp | null }> = {
   codex: {
     url: /https:\/\/auth\.openai\.com\/codex\/device(?![\w/-])/,
     code: /Enter code:\s*([A-Z0-9]+(?:-[A-Z0-9]+)+)/,
-  },
-  grok: {
-    url: /https:\/\/accounts\.x\.ai\/oauth2\/device\?user_code=[A-Z0-9-]+/,
-    code: /enter code:\s*([A-Z0-9]+(?:-[A-Z0-9]+)+)/i,
   },
   devin: {
     url: /https:\/\/(?:app\.devin\.ai\/auth\/cli\/continue|windsurf\.com\/devin\/account\/login)\?[^\s\x07\x1b]+/,
@@ -67,7 +63,7 @@ function nativeCommand(env: NodeJS.ProcessEnv): WorkerCommand {
     }
     return {
       bin: opencode,
-      args: ["auth", "login", "--standalone", "--method", account.provider === "grok" ? "device" : "chatgpt-headless", account.provider === "grok" ? "xai" : "openai"],
+      args: ["auth", "login", "--standalone", "--method", "chatgpt-headless", "openai"],
     };
   };
 }

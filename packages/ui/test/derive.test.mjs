@@ -21,16 +21,15 @@ const worker = (id, provider, extra = {}) => ({ id, provider, enabled: true, rea
 
 test("workerAccountLabels numbers densely per provider in list order", () => {
   const labels = workerAccountLabels([
-    worker("a", "codex"), worker("b", "grok"), worker("c", "codex"), worker("d", "devin"), worker("g", "claude"), worker("e", "grok"), worker("f", "codex"), worker("h", "claude", { enabled: false, ready: false }),
+    worker("a", "codex"), worker("b", "devin"), worker("c", "codex"), worker("d", "devin"), worker("g", "claude"), worker("e", "devin"), worker("f", "codex"), worker("h", "claude", { enabled: false, ready: false }),
   ]);
-  assert.deepEqual(Object.fromEntries(labels), { a: "codex-worker-account-1", b: "grok-worker-account-1", c: "codex-worker-account-2", d: "devin-worker-account-1", g: "claude-worker-account-1", e: "grok-worker-account-2", f: "codex-worker-account-3", h: "claude-worker-account-2" });
+  assert.deepEqual(Object.fromEntries(labels), { a: "codex-worker-account-1", b: "devin-worker-account-1", c: "codex-worker-account-2", d: "devin-worker-account-2", g: "claude-worker-account-1", e: "devin-worker-account-3", f: "codex-worker-account-3", h: "claude-worker-account-2" });
   assert.deepEqual(workerAccountLabels(null), new Map());
   assert.deepEqual(workerAccountLabels([]), new Map());
 });
 
 test("providerTitle names each worker provider", () => {
   assert.equal(providerTitle("codex"), "Codex");
-  assert.equal(providerTitle("grok"), "Grok");
   assert.equal(providerTitle("devin"), "Devin");
   assert.equal(providerTitle("claude"), "Claude");
 });
@@ -73,10 +72,10 @@ test("usageRows folds a linked Codex Worker into its observed Bot", () => {
   const worker2 = row("worker", "w2", [{ scope: "bot", id: "b2" }]);
   const bot3 = row("bot", "b3", [{ scope: "worker", id: "w3" }], null);
   const worker3 = row("worker", "w3", [{ scope: "bot", id: "b3" }], null);
-  const grok = row("worker", "g1", []);
+  const independent = row("worker", "g1", []);
   // Different measurements still fold, and the Bot leads even when listed second.
   // An unobserved Bot does not hide its observed Worker.
-  assert.deepEqual(usageRows([worker1, bot1, bot2, worker2, bot3, worker3, grok]).map((items) => items.map((item) => item.id)),
+  assert.deepEqual(usageRows([worker1, bot1, bot2, worker2, bot3, worker3, independent]).map((items) => items.map((item) => item.id)),
     [["b1", "w1"], ["b2"], ["w2"], ["b3", "w3"], ["g1"]]);
 });
 
@@ -92,7 +91,7 @@ test("catalogRows stacks accounts with identical catalogs and keeps unobserved a
     d: catalogIdentity(state(catalog("dddd"), { stale: true })),
     e: null,
     f: null,
-    g: catalogIdentity(state(catalog("ggggggg", { provider: "grok" }))),
+    g: catalogIdentity(state(catalog("ggggggg", { provider: "devin" }))),
   };
   // Account ID and observation time are not part of the identity; status and provider are.
   assert.equal(identities.a, identities.c);

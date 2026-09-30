@@ -93,7 +93,7 @@ test("Claude native sign-ins render independent accessible paste-code, recovery 
 
 test("one Accounts window joins each Codex Bot account to its Worker and keeps placeholders to a title", () => {
   const bot = { id: "bot-a", enabled: true, removing: false, linkedAccounts: [{ scope: "worker", id: "codex-w" }] };
-  const accounts = [account("codex-w", { provider: "codex", ready: false, linkedAccounts: [{ scope: "bot", id: "bot-a" }] }), account("grok-a", { provider: "grok" })];
+  const accounts = [account("codex-w", { provider: "codex", ready: false, linkedAccounts: [{ scope: "bot", id: "bot-a" }] }), account("devin-a", { provider: "devin" })];
   const html = render(AccountsWindow, { accounts, bots: [bot] });
   const pair = html.match(/<div role="group" aria-label="codex-bot-account-1 and its Worker account"[\s\S]*?<\/article><article[\s\S]*?<\/article>/)?.[0];
   assert.ok(pair, "the Codex pair renders as one group");
@@ -101,7 +101,7 @@ test("one Accounts window joins each Codex Bot account to its Worker and keeps p
   assert.match(pair, /data-node="worker-account:codex-w"/);
   assert.match(text(card(html, "account:bot-a")), /Ready/);
   assert.match(text(card(html, "worker-account:codex-w")), /Needs sign-in/);
-  assert.match(text(html), /CodexGrok|Codex.*Grok/);
+  assert.match(text(html), /CodexDevin|Codex.*Devin/);
   assert.match(html, /Add account/);
   assert.doesNotMatch(text(html), /Paired with|Same login as|Enabled/);
   const empty = render(AccountsWindow, { accounts: [] });
@@ -129,7 +129,7 @@ test("Claude usage shows per-account windows, resets, provider-unit extra usage 
   const measured = (extraUsage) => ({ windows: [
     { id: "five_hour", label: "5h", usedPercent: 23, remainingPercent: 77, resetsAt: "2026-09-26T18:00:00Z" },
     { id: "seven_day", label: "Weekly", usedPercent: 100, remainingPercent: 0, resetsAt: null }], extraUsage });
-  const usage = (extraUsage) => ({ atMs: lastAttemptAtMs, inventoryAtMs: lastAttemptAtMs, inventoryError: null, grokBot: null,
+  const usage = (extraUsage) => ({ atMs: lastAttemptAtMs, inventoryAtMs: lastAttemptAtMs, inventoryError: null,
     accounts: accounts.map((item, index) => ({ ...item, scope: "worker", observedAtMs: index ? null : observedAtMs, lastAttemptAtMs, fresh: false,
       error: index ? "credentials_unavailable" : "provider_unavailable", usage: index ? null : measured(extraUsage) })) });
   const html = render(UsageWindow, { accounts, usage: usage({ enabled: true, monthlyLimit: 5000, usedCredits: 120, utilization: 2.4 }) });
@@ -160,75 +160,53 @@ test("Claude usage shows per-account windows, resets, provider-unit extra usage 
   assert.match(text(status), /provider_unavailable · showing last good read/);
 });
 
-test("Exhausted Devin quota reads Limit and Grok Bot folds into the sole Grok Worker card", () => {
-  const accounts = [account("devin-a", { provider: "devin" }), account("grok-a", { provider: "grok" })];
+test("Exhausted Devin quota reads Limit and stale measurements keep their age visible", () => {
+  const accounts = [account("devin-a", { provider: "devin" })];
   const at = Date.now();
   const observation = { observedAtMs: at, lastAttemptAtMs: at, fresh: true, error: null };
   const devin = { planLabel: "Pro", billing: "quota", dailyRemainingPercent: 100, weeklyRemainingPercent: 0, dailyResetsAt: null, weeklyResetsAt: null,
     periodStart: null, periodEnd: null, promptCreditsMonthly: -1, promptCreditsAvailable: -1, weeklyQuotaHidden: null, displayName: null };
-  const grok = { subscriptionTier: null, included: { usedPercent: 49, remainingPercent: 51, periodType: "weekly", periodStart: null, resetsAt: null, allocatedUsd: null },
-    prepaidBalanceUsd: 0, paygEnabled: false, paygUsedUsd: 0, paygCapUsd: 0, paygRemainingUsd: 0 };
-  const bot = { usedPercent: 22.5, periodStart: "2026-09-20T00:00:00Z", resetsAt: "2026-09-27T00:00:00Z", hasAvailableUsage: true,
-    planLabel: "SuperGrok Plus", fundingPlan: null, onDemandEligible: true, onDemandEnabled: false, trial: false, teamSeat: false };
-  const snapshot = (grokAccounts) => ({ atMs: at, inventoryAtMs: at, inventoryError: null, grokBot: { ...observation, usage: bot },
-    accounts: [{ ...accounts[0], scope: "worker", ...observation, usage: devin }, ...grokAccounts.map((item) => ({ ...item, scope: "worker", ...observation, usage: grok }))] });
-  const html = render(UsageWindow, { accounts, usage: snapshot([accounts[1]]) });
+  const snapshot = { atMs: at, inventoryAtMs: at, inventoryError: null,
+    accounts: [{ ...accounts[0], scope: "worker", ...observation, usage: devin }] };
+  const html = render(UsageWindow, { accounts, usage: snapshot });
   const devinCard = card(html, "usage-account:worker:devin-a");
   assert.match(devinCard, />Limit</);
   assert.match(devinCard, /aria-label="devin-worker-account-1 daily remaining, unavailable until weekly resets"[^>]*opacity-35/);
   assert.match(devinCard, /aria-label="devin-worker-account-1 weekly remaining"[^>]*class="(?![^"]*opacity-35)/);
-  const staleSnapshot = snapshot([]);
   const staleDevin = render(UsageWindow, { accounts: [accounts[0]], usage: {
-    ...staleSnapshot, grokBot: null, accounts: [{ ...staleSnapshot.accounts[0], observedAtMs: at - 13 * 60_000, fresh: false }],
+    ...snapshot, accounts: [{ ...snapshot.accounts[0], observedAtMs: at - 13 * 60_000, fresh: false }],
   } });
   const staleCard = card(staleDevin, "usage-account:worker:devin-a");
   assert.match(text(staleCard), /updated 13m ago/);
   assert.match(staleCard, /<p class="flex min-w-0 items-baseline gap-2 text-\[0\.68rem\] text-muted-foreground"><span class="shrink-0 text-foreground\/80">updated /);
-  const grokCard = card(html, "usage-account:worker:grok-a");
-  assert.match(grokCard, /aria-label="grok-worker-account-1 weekly remaining"[^>]*aria-valuenow="51"/);
-  assert.match(text(grokCard), /51%/);
-  assert.doesNotMatch(text(grokCard), /remaining/);
-  assert.match(grokCard, /aria-label="grok-worker-account-1 bot remaining"[^>]*aria-valuenow="77.5"/);
-  assert.match(grokCard, /aria-label="Inspect Grok Bot usage"/);
-  assert.match(text(grokCard), /SuperGrok Plus/);
-  assert.equal(html.match(/<article\b[^>]*data-node="grok-bot-usage"/), null);
-  assert.doesNotMatch(html, /grok-bot-account/);
-  const twoGroks = [accounts[1], account("grok-b", { provider: "grok" })];
-  const separate = render(UsageWindow, { accounts: [accounts[0], ...twoGroks], usage: snapshot(twoGroks) });
-  assert.match(text(card(separate, "grok-bot-usage")), /Grok Bot/);
-  assert.doesNotMatch(card(separate, "usage-account:worker:grok-a"), /bot remaining/);
 });
 
 test("Usage groups interleaved provider observations and unobserved accounts in Accounts order", () => {
   const at = Date.now();
   const observation = { observedAtMs: at, lastAttemptAtMs: at, fresh: true, error: null };
-  const workers = [account("claude-a"), account("grok-a", { provider: "grok" }), account("devin-a", { provider: "devin" }),
+  const workers = [account("claude-a"), account("devin-a", { provider: "devin" }),
     account("codex-w", { provider: "codex", linkedAccounts: [{ scope: "bot", id: "codex-b" }] }),
-    account("grok-b", { provider: "grok", ready: false }), account("claude-b", { ready: false })];
+    account("devin-b", { provider: "devin", ready: false }), account("claude-b", { ready: false })];
   const botAccount = { id: "codex-b", provider: "codex", linkedAccounts: [{ scope: "worker", id: "codex-w" }] };
-  const measured = (item) => ({ ...item, scope: "worker", ...observation, usage: item.id === "grok-b" || item.id === "claude-b" ? null
+  const measured = (item) => ({ ...item, scope: "worker", ...observation, usage: item.id === "devin-b" || item.id === "claude-b" ? null
     : item.provider === "claude" ? { windows: [], extraUsage: null }
-    : item.provider === "grok" ? { subscriptionTier: null, included: { remainingPercent: 60, resetsAt: null, periodType: null, allocatedUsd: null },
-      prepaidBalanceUsd: null, paygEnabled: false, paygUsedUsd: null, paygCapUsd: null }
     : item.provider === "devin" ? { planLabel: null, dailyRemainingPercent: null, weeklyRemainingPercent: null,
       weeklyQuotaHidden: false, promptCreditsAvailable: null, promptCreditsMonthly: null }
     : { planType: null, limitReached: false, resetCreditsAvailable: 0, lanes: [] } });
   const usage = { atMs: at, inventoryAtMs: at, inventoryError: null,
     // Deliberately interleave providers in an order different from Accounts.
-    accounts: [measured(workers[0]), measured(workers[1]), measured(workers[2]), measured(workers[3]),
+    accounts: [measured(workers[0]), measured(workers[1]), measured(workers[2]),
       { ...botAccount, scope: "bot", ...observation, usage: { planType: "Pro", limitReached: false, resetCreditsAvailable: 0, lanes: [] } },
-      measured(workers[4]), measured(workers[5])],
-    grokBot: { ...observation, usage: { planLabel: "Grok Bot", usedPercent: 20, resetsAt: null, hasAvailableUsage: true, onDemandEnabled: false } } };
+      measured(workers[3]), measured(workers[4])] };
   const html = render(UsageWindow, { accounts: workers, bots: [botAccount], usage });
-  const inOrder = ["<h3", "data-node=\"usage-account:bot:codex-b\"", "<h3", "data-node=\"usage-account:worker:grok-a\"",
-    "data-node=\"grok-bot-usage\"", "data-node=\"usage-account:worker:grok-b\"", "<h3", "data-node=\"usage-account:worker:devin-a\"",
+  const inOrder = ["<h3", "data-node=\"usage-account:bot:codex-b\"", "<h3", "data-node=\"usage-account:worker:devin-a\"", "data-node=\"usage-account:worker:devin-b\"",
     "<h3", "data-node=\"usage-account:worker:claude-a\"", "data-node=\"usage-account:worker:claude-b\""];
   let position = -1;
   for (const marker of inOrder) {
     position = html.indexOf(marker, position + 1);
     assert.notEqual(position, -1, `Missing or out of order: ${marker}`);
   }
-  assert.deepEqual([...html.matchAll(/<h3[^>]*>([^<]+)<\/h3>/g)].map((match) => match[1]), ["Codex", "Grok", "Devin", "Claude"]);
+  assert.deepEqual([...html.matchAll(/<h3[^>]*>([^<]+)<\/h3>/g)].map((match) => match[1]), ["Codex", "Devin", "Claude"]);
   assert.equal((html.match(/data-node="usage-account:worker:codex-w"/g) ?? []).length, 1, "paired Worker stays in the Codex Bot card");
 });
 

@@ -10,7 +10,7 @@ import type { WorkAdmission } from "@stack/hud/client";
 export type WorkerPhase = "preparing" | "idle" | "running" | "awaiting_input" | "cancelling" | "closed" | "failed" | "needs_recovery";
 export type TurnPhase = "queued" | "running" | "awaiting_input" | "cancelling" | "completed" | "cancelled" | "failed" | "unknown";
 export type WorkerRecord = {
-  id: string; botId: string; threadId: string; accountId: string; provider: "codex" | "grok" | "devin" | "claude";
+  id: string; botId: string; threadId: string; accountId: string; provider: "codex" | "devin" | "claude";
   model: string; effort: string | null; repo: string; cwd: string | null; branch: string | null; baseCommit: string | null;
   sourceDirty: boolean; roleId: string | null; roleRevision: number | null; sessionId: string | null; phase: WorkerPhase;
   runtimeInstance: string | null;
@@ -85,11 +85,11 @@ export class WorkerLedger {
     this.history = new WorkerHistory(this.db);
     this.db.exec("CREATE INDEX IF NOT EXISTS turns_work_item ON turns(json_extract(work_context_json,'$.workItemId'))");
     this.settings = new SettingsStore(this.db);
-    for (const provider of ["codex", "grok", "devin", "claude"]) this.settings.seed(`worker-defaults:${provider}`, {}, "Native Worker selection");
-    this.db.prepare("UPDATE workers SET phase = 'needs_recovery', issue = 'Owner restarted during a worker operation; inspect before resuming', updated_at = ? WHERE phase IN ('preparing','running','awaiting_input','cancelling')").run(Date.now());
-    this.db.prepare("UPDATE turns SET phase = 'unknown', issue = 'Turn outcome is unknown after owner restart', updated_at = ? WHERE phase IN ('queued','running','awaiting_input','cancelling')").run(Date.now());
-    this.db.prepare("UPDATE pending_requests SET state = 'unknown' WHERE state = 'pending'").run();
-    this.db.prepare("UPDATE workers SET phase = 'needs_recovery', issue = 'Owner restarted; load the saved session before sending', updated_at = ? WHERE phase = 'idle' AND acp_session_id IS NOT NULL").run(Date.now());
+    for (const provider of ["codex", "devin", "claude"]) this.settings.seed(`worker-defaults:${provider}`, {}, "Native Worker selection");
+    this.db.prepare("UPDATE workers SET phase = 'needs_recovery', issue = 'Owner restarted during a worker operation; inspect before resuming', updated_at = ? WHERE provider IN ('codex','devin','claude') AND phase IN ('preparing','running','awaiting_input','cancelling')").run(Date.now());
+    this.db.prepare("UPDATE turns SET phase = 'unknown', issue = 'Turn outcome is unknown after owner restart', updated_at = ? WHERE worker_id IN (SELECT id FROM workers WHERE provider IN ('codex','devin','claude')) AND phase IN ('queued','running','awaiting_input','cancelling')").run(Date.now());
+    this.db.prepare("UPDATE pending_requests SET state = 'unknown' WHERE worker_id IN (SELECT id FROM workers WHERE provider IN ('codex','devin','claude')) AND state = 'pending'").run();
+    this.db.prepare("UPDATE workers SET phase = 'needs_recovery', issue = 'Owner restarted; load the saved session before sending', updated_at = ? WHERE provider IN ('codex','devin','claude') AND phase = 'idle' AND acp_session_id IS NOT NULL").run(Date.now());
   }
 
   close(): void { this.db.close(); }
@@ -108,13 +108,13 @@ export class WorkerLedger {
     };
   }
   worker(id: string): WorkerRecord | null {
-    const row = this.db.prepare("SELECT * FROM workers WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+    const row = this.db.prepare("SELECT * FROM workers WHERE id = ? AND provider IN ('codex','devin','claude')").get(id) as Record<string, unknown> | undefined;
     return row ? this.workerRow(row) : null;
   }
   workers(botId?: string): WorkerRecord[] {
     const rows = (botId
-      ? this.db.prepare("SELECT * FROM workers WHERE bot_id = ? ORDER BY created_at DESC").all(botId)
-      : this.db.prepare("SELECT * FROM workers ORDER BY created_at DESC").all()) as Array<Record<string, unknown>>;
+      ? this.db.prepare("SELECT * FROM workers WHERE bot_id = ? AND provider IN ('codex','devin','claude') ORDER BY created_at DESC").all(botId)
+      : this.db.prepare("SELECT * FROM workers WHERE provider IN ('codex','devin','claude') ORDER BY created_at DESC").all()) as Array<Record<string, unknown>>;
     return rows.map((row) => this.workerRow(row));
   }
 
@@ -271,7 +271,7 @@ export class WorkerLedger {
     return { turn: this.turn(id)!, duplicate: false };
   }
   workAdmissions(workItemId: string, after: number, limit: number, owner?: { botId?: string; workerId?: string }) {
-    const where = ["json_extract(t.work_context_json,'$.workItemId')=?", "t.rowid>?"];
+    const where = ["w.provider IN ('codex','devin','claude')", "json_extract(t.work_context_json,'$.workItemId')=?", "t.rowid>?"];
     const params: Array<string | number> = [workItemId, after];
     if (owner?.botId) { where.push("w.bot_id=?"); params.push(owner.botId); }
     if (owner?.workerId) { where.push("w.id=?"); params.push(owner.workerId); }

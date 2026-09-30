@@ -66,7 +66,7 @@ export type BotSettings = {
 
 /** Managed settings are API records; legacy Bot controls edit only the four-field projection above. */
 export type SettingValue = string | number | boolean | string[] | null;
-export type SettingsBackend = "codex-app-server" | "opencode-codex" | "opencode-grok" | "devin-acp" | "claude-sdk";
+export type SettingsBackend = "codex-app-server" | "opencode-codex" | "devin-acp" | "claude-sdk";
 export type SettingsSnapshot = { revision: number; values: Record<string, SettingValue>; source: string; sourceRevision: number | null; updatedAt: number };
 export type SettingEvidence = { state: "known" | "native" | "unknown"; value: SettingValue; source: string; observedAt: number | null };
 export type SettingsBoundary = "bot-start" | "voice-call" | "worker-turn";
@@ -148,7 +148,7 @@ export type ChatQueueEntry = { id: string; botId: string; threadId: string; inpu
   state: "pending" | "dispatching" | "sent" | "unknown" | "cancelled"; turnId: string | null; issue: string | null };
 
 export type Account = { id: string; enabled: boolean; removing: boolean; linkedAccounts: Array<{ scope: "bot" | "worker"; id: string }> };
-export type WorkerAccount = Account & { provider: "codex" | "grok" | "devin" | "claude"; ready: boolean };
+export type WorkerAccount = Account & { provider: "codex" | "devin" | "claude"; ready: boolean };
 export type WorkerRuntime = { id: string; provider: WorkerAccount["provider"]; backend: "acp" | "claude-sdk"; processModel: "account" | "session"; pids: number[];
   state: "running" | "stopped" | "error"; pid: number | null; instance: string | null; error: string | null };
 export type WorkerCatalog = { accountId: string; provider: WorkerAccount["provider"]; observedAt: string;
@@ -162,9 +162,6 @@ export type CodexUsage = { planType: string | null; limitReached: boolean | null
   lanes: Array<{ id: string; title: string; windows: Array<{ role: "primary" | "secondary" | "code_review" | "other";
     label: string; windowSeconds: number | null; usedPercent: number; remainingPercent: number; resetsAt: string | null;
     limitName: string | null; meteredFeature: string | null }> }> };
-export type GrokUsage = { subscriptionTier: string | null;
-  included: { usedPercent: number | null; remainingPercent: number | null; periodType: string | null; periodStart: string | null; resetsAt: string | null; allocatedUsd: number | null };
-  prepaidBalanceUsd: number | null; paygEnabled: boolean | null; paygUsedUsd: number | null; paygCapUsd: number | null; paygRemainingUsd: number | null };
 export type DevinUsage = { planLabel: string | null; billing: string | null; dailyRemainingPercent: number | null;
   weeklyRemainingPercent: number | null; dailyResetsAt: string | null; weeklyResetsAt: string | null; periodStart: string | null;
   periodEnd: string | null; promptCreditsMonthly: number | null; promptCreditsAvailable: number | null; weeklyQuotaHidden: boolean | null; displayName: string | null };
@@ -174,14 +171,10 @@ export type UsageSubscription = { endsAt: string; source: "plan_period" | "sign_
 export type UsageAccount = UsageObservation & { id: string; enabled: boolean; ready: boolean; linkedAccounts: Account["linkedAccounts"];
   subscription: UsageSubscription | null } & (
   | { provider: "codex"; scope: "bot" | "worker"; usage: CodexUsage | null }
-  | { provider: "grok"; scope: "worker"; usage: GrokUsage | null }
   | { provider: "devin"; scope: "worker"; usage: DevinUsage | null }
   | { provider: "claude"; scope: "worker"; usage: ClaudeUsage | null });
 export type UsageSnapshot = { atMs: number; inventoryAtMs: number | null; inventoryError: "not_observed" | "auth_unavailable" | null;
-  /** Null unless a signed-in Grok Worker account exists. */
-  accounts: UsageAccount[]; grokBot: null | UsageObservation & { usage: { usedPercent: number; periodStart: string; resetsAt: string;
-    hasAvailableUsage: boolean; planLabel: string | null; fundingPlan: string | null; onDemandEligible: boolean | null;
-    onDemandEnabled: boolean | null; trial: boolean | null; teamSeat: boolean | null } | null } };
+  accounts: UsageAccount[] };
 export type WorkerSession = { id: string; botId: string; threadId: string; accountId: string; provider: WorkerAccount["provider"];
   model: string; effort: string | null; repo: string; cwd: string | null; branch: string | null; baseCommit: string | null;
   sourceDirty: boolean; roleId: string | null; roleRevision: number | null; sessionId: string | null; runtimeInstance: string | null;
@@ -940,7 +933,6 @@ export type NodeRef =
   | { kind: "worker-window"; id: string }
   | { kind: "usage" }
   | { kind: "usage-account"; id: string }
-  | { kind: "grok-bot-usage" }
   | { kind: "login" }
   | { kind: "bot"; id: string }
   /** A chat window on the bench, by window ID; it has no inspectable record. */

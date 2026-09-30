@@ -18,7 +18,7 @@ test("OpenCode V2 advertises account-specific ACP options for isolated native cr
   skip: process.env.STACK_NATIVE_V2_PROBE !== "1", timeout: 90_000,
 }, async () => {
   const binary = join(homedir(), ".local", "bin", "opencode");
-  for (const [workerProvider, nativeProvider] of [["grok", "xai"], ["codex", "openai"]] as const) {
+  for (const [workerProvider, nativeProvider] of [["codex", "openai"]] as const) {
     const root = await mkdtemp(join(tmpdir(), "as-v2-acp-"));
     const account: WorkerAccount = { id: randomUUID(), provider: workerProvider, enabled: true, ready: false, removing: false };
     await prepareAccountProfile(root, account);
@@ -31,7 +31,7 @@ test("OpenCode V2 advertises account-specific ACP options for isolated native cr
         db.prepare("INSERT INTO credential (id, integration_id, label, value, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?)")
           .run(`cred_${randomUUID().replaceAll("-", "")}`, nativeProvider, "OAuth", JSON.stringify({ type: "oauth", methodID: "oauth",
             access: "disposable-catalog-test", refresh: "disposable-catalog-test", expires: Date.now() + 86_400_000,
-            ...(nativeProvider === "openai" ? { metadata: { accountID: "disposable-test" } } : {}) }), Date.now(), Date.now());
+             metadata: { accountID: "disposable-test" } }), Date.now(), Date.now());
       } finally { db.close(); }
       const auth = await list(binary, cwd, env);
       assert.ok(Array.isArray(auth) && auth.length === 1 && record(auth[0]) && auth[0].id === nativeProvider);
@@ -41,9 +41,8 @@ test("OpenCode V2 advertises account-specific ACP options for isolated native cr
         const session = await child.request("session/new", { cwd, mcpServers: [] }, 45_000);
         assert.ok(record(session) && typeof session.sessionId === "string");
         const model = modelOption(optionsOf(session));
-        const preferred = nativeProvider === "xai" ? "xai/grok-build-0.1" : "openai/gpt-5.3-codex";
-        const own = model?.values.find((item) => item.value === preferred) ?? (nativeProvider === "openai"
-          ? model?.values.find((item) => item.value.startsWith("openai/gpt-5")) : undefined);
+        const preferred = "openai/gpt-5.3-codex";
+        const own = model?.values.find((item) => item.value === preferred) ?? model?.values.find((item) => item.value.startsWith("openai/gpt-5"));
         assert.ok(own, `no ${nativeProvider} model was offered by isolated V2 ACP`);
         assert.ok(model!.values.every((item) => item.value.startsWith(`${nativeProvider}/`)));
         const changed = await child.request("session/set_config_option", { sessionId: session.sessionId, configId: model!.id, value: own.value });
