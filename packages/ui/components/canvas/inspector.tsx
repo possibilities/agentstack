@@ -25,6 +25,7 @@ import { useNotifyActions } from "./notify-actions";
 import { useOperation, useStack, useStore, useWorkbench } from "./provider";
 import { useRoleActions } from "./role-actions";
 import { ShimRecordControls } from "./role-shims";
+import { StateEntryDetails } from "./state-windows";
 import { useContentActions } from "./content-actions";
 import { useVoice } from "./voice";
 import { accentBg, accentText, type Accent } from "./window";
@@ -337,6 +338,31 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         operations: { pkg: "roles", list: recordOperations(catalog, "roles").filter((operation) => operation.name.startsWith("project_")) },
         controls: <RoleRecordControls target={{ kind: "trusted-project", id: project.id }} />,
         events: state.events.filter((event) => event.pkg === "roles"),
+      };
+    }
+    case "state-entry": {
+      // Local only: a remote session never reads owner inventories.
+      const entry = state.remote ? null : state.stateInventory.data?.entries.find((item) => item.id === ref.id);
+      if (!entry) return null;
+      const fields = fieldsOf(findOperation(catalog, "serve", "serve_state_list")?.outputSchema).find((field) => field.name === "entries");
+      return {
+        eyebrow: `Owner state · ${entry.kind}`, accent: "server", title: entry.id, record: { ...entry }, fields: new Map(fields?.children.map((field) => [field.name, field])),
+        related: [{ ref: { kind: "package", id: entry.ownerPackage }, label: `${entry.ownerPackage} Package API` },
+          { ref: { kind: "operation", pkg: entry.ownerPackage, id: `${entry.ownerPackage}_state_read` }, label: `${entry.ownerPackage}_state_read` }],
+        body: <StateEntryDetails entry={entry} />,
+      };
+    }
+    case "subscription": {
+      // Listed fields only: read arguments and errors need the explicit drill-down in the Subscriptions window.
+      const subscription = state.remote ? null : state.subscriptions.data?.subscriptions.find((item) => item.id === ref.id);
+      if (!subscription) return null;
+      const fields = fieldsOf(findOperation(catalog, "serve", "serve_subscription_list")?.outputSchema).find((field) => field.name === "subscriptions");
+      const related: View["related"] = [{ ref: { kind: "operation", pkg: "serve", id: "serve_subscription_get" }, label: "serve_subscription_get" }];
+      if (state.bots.data?.some((bot) => bot.id === subscription.botId)) related.unshift({ ref: { kind: "bot", id: subscription.botId }, label: `${subscription.botId} · receives it` });
+      return {
+        eyebrow: `Bot event subscription · ${subscription.state}`, accent: "server", title: `${subscription.pkg}.${subscription.topic}`, record: { ...subscription },
+        fields: new Map(fields?.children.map((field) => [field.name, field])), related,
+        events: state.events.filter((event) => event.pkg === "serve" && event.topic === "serve_state_changed"),
       };
     }
     case "role-shim": {
@@ -792,7 +818,7 @@ function NotificationRecordControls({ id }: { id: string }) {
 
 function referencePackage(ref: NodeRef): string {
   if (ref.kind === "bot") return "bots";
-  if (ref.kind === "server" || ref.kind === "child" || ref.kind === "codex-tool" || ref.kind === "resource" || ref.kind === "process") return "server";
+  if (ref.kind === "server" || ref.kind === "child" || ref.kind === "codex-tool" || ref.kind === "resource" || ref.kind === "process" || ref.kind === "state-entry" || ref.kind === "subscription") return "server";
   if (ref.kind === "role" || ref.kind === "category" || ref.kind === "fragment" || ref.kind === "skill" || ref.kind === "mcp-server" || ref.kind === "trusted-project" || ref.kind === "role-shim") return "roles";
   if (ref.kind === "notification") return "notify";
   if (ref.kind === "document" || ref.kind === "collection" || ref.kind === "item" || ref.kind === "artifact") return "content";

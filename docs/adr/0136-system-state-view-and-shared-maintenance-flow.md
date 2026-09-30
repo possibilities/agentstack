@@ -1,0 +1,13 @@
+# 136. Show owner state in System and share one plan/receipt flow
+
+Status: accepted, 2026-09-30. Presents [ADR 0135](0135-owner-state-maintenance.md) in the [System space](0079-system-space.md).
+
+## Decision
+
+System gains two local-only windows. **State** pages `serve_state_list` for all owners or one selected owner, with measurement off until the operator turns it on. Every owner the Server reports stays visible; an unavailable owner reads as a gap, never as an empty store. A null count reads as unmeasured, and no total is shown, because categories can overlap. Each category lists coverage, authority, ownership, location, sensitivity, retention, regeneration, issues and relationships, plus links to operation references. An action link with empty arguments names an operation, not a resource, so State never invokes it. The owner's own view chooses the exact resource. If the observation changed while paging, the next page starts again from the first page and says so. The inspector node is `state-entry`.
+
+**Subscriptions** pages `serve_subscription_list` by exact Bot, package or thread. Read arguments and the last error are shown only after an explicit per-row reveal (`serve_subscription_get`). The reveal hides again when the row's revision changes. Removal confirms the exact ID and revision and calls `serve_subscription_remove`. A changed revision is refused, and an absent ID is reported as already absent. Both windows re-read on `serve_state_changed` and on reconnect. The inspector node is `subscription`.
+
+Owner maintenance elsewhere uses one flow: select, prepare, preview, apply, then receipt or uncertainty (`lib/stack/state.ts`, `components/canvas/state-flow.tsx`). Each owner view passes its own explicitly named plan, apply and receipt operations. The flow never chooses an owner. Blocked or expired plans cannot apply. Each applied plan gets one request UUID. After a lost or refused response, the flow reads that request's receipt. If there is none, the flow stays uncertain and offers only an identical retry under the same UUID. A running receipt is read again on the owner's invalidation. Partial and unknown receipts are kept, and preparing a new plan is always a separate operator decision. To recover after a reload, the flow stores only the request, plan and revision IDs and the owner's routing identity (such as `botId`) in browser storage.
+
+Remote sessions never read these views, matching Access's refusal of state operations. Calls also require the operation in the live local WebSocket selection.

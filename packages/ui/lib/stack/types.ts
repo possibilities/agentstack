@@ -850,6 +850,67 @@ export type Snapshot = {
   remote?: { scope: "view" | "control"; scopes: string[]; contentOrigins: ContentOrigins };
 };
 
+/**
+ * Owner state wire contracts, mirrored from `@stack/api` (`packages/api/src/state.ts` and `state-files.ts`) so no
+ * Node-backed module reaches the browser bundle. See docs/state-control.md and ADR 0135.
+ */
+export type StateSubject = { kind: string; id: string };
+/** An operation link. Empty `arguments` describe a drill-down: choose an exact resource through the owner's read first. */
+export type StateLink = { package: string; operation: string; arguments: Record<string, unknown> };
+export type StateRelationship = { relation: string; package: string; kind: string; id: string };
+export type StateEntry = {
+  id: string;
+  ownerPackage: string;
+  subject: StateSubject | null;
+  kind: "workspace" | "conversation" | "queue" | "history" | "configuration" | "credentials" | "cache" | "runtime" | "storage";
+  authority: "authoritative" | "derived" | "receipt";
+  location: "server" | "client" | "external";
+  ownership: "stack" | "external" | "shared" | "unknown";
+  revision: string | null;
+  observedAt: string;
+  coverage: "complete" | "partial" | "unavailable";
+  /** Null is unmeasured, never zero. */
+  items: number | null;
+  /** Null is unmeasured, never zero. Overlapping or shared stores must not be summed. */
+  bytes: number | null;
+  sensitivity: "ordinary" | "content" | "credential";
+  relationships: StateRelationship[];
+  reads: StateLink[];
+  actions: (StateLink & { blockedBy: string[] })[];
+  retention: string;
+  regeneration: string;
+  issues: string[];
+};
+export type StatePage = { entries: StateEntry[]; revision: string; observedAt: string; nextOffset: number | null };
+/** Availability of one owner in `serve_state_list`: an unavailable owner is a gap, not an empty store. */
+export type StateOwner = { package: string; available: boolean; issue: string | null };
+export type ServeStateList = StatePage & { owners: StateOwner[] };
+export type StateOutcome = { resource: string; outcome: "removed" | "retained" | "blocked" | "unknown" | "pending"; detail: string };
+export type StatePlan = {
+  id: string; ownerPackage: string; subject: StateSubject | null; action: string; revision: string;
+  createdAt: string; expiresAt: string; resources: string[]; blockedBy: string[]; retained: string[]; regeneration: string[];
+};
+export type StateApplyInput = { planId: string; expectedRevision: string; requestId: string };
+export type StateReceiptStatus = "running" | "completed" | "partial" | "blocked" | "unknown";
+export type StateReceipt = {
+  requestId: string; planId: string; ownerPackage: string; subject: StateSubject | null; action: string;
+  status: StateReceiptStatus; startedAt: string; completedAt: string | null;
+  outcomes: StateOutcome[]; retained: string[]; regeneration: string[];
+};
+export type StateFile = { path: string; type: "file" | "directory" | "symlink" | "special"; bytes: number; modifiedAt: string; revision: string };
+export type StateFilePage = { entries: StateFile[]; revision: string; nextOffset: number | null };
+/** One bounded chunk (at most 256 KiB) of base64 bytes. */
+export type StateFileRead = { data: string; encoding: "base64"; bytes: number; totalBytes: number; nextOffset: number | null; revision: string };
+
+/** A durable Bot event subscription as `serve_subscription_list` pages it: read arguments and error text are excluded. */
+export type ServeSubscription = {
+  id: string; botId: string; threadId: string; instance: string; pkg: string; topic: string; scope: string | null;
+  readOperation: string; state: "connecting" | "active" | "delivering" | "error"; lastDeliveredAt: number | null; revision: string;
+};
+/** `serve_subscription_get`'s explicit drill-down, which can reveal sensitive read arguments and the last error. */
+export type ServeSubscriptionDetail = ServeSubscription & { readArguments: Record<string, unknown>; lastError: string | null };
+export type ServeSubscriptionPage = { subscriptions: ServeSubscription[]; revision: string; nextOffset: number | null };
+
 export type ChannelStatus = "idle" | "connecting" | "open" | "closed";
 
 export type StackEvent = {
@@ -908,6 +969,8 @@ export type NodeRef =
   | { kind: "proc-run-window"; id: string }
   /** A shared HUD Work item, by its UUID. */
   | { kind: "work-item"; id: string }
+  /** An owner state inventory entry by its `<owner>:<category>` ID, and a durable Bot event subscription by UUID. Local only. */
+  | { kind: "state-entry" | "subscription"; id: string }
   | { kind: "package"; id: string }
   | { kind: "operation"; id: string; pkg: string }
   /** Content records: a Vault document by slug, a collection by slug, an item by stable ID, an Artifact by name. */

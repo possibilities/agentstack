@@ -16,6 +16,7 @@ import type { ProcRun, ProcScheduleListItem, ProcStatus } from "./types";
 import type { SettingsCatalog, SettingsView } from "./types";
 import { catalogRequest, readRequest, settingsKey, settingsPackage, type SettingsTarget } from "./settings";
 import { loadTree, type HudTree } from "./hud";
+import { continueInventory, continueSubscriptions, loadInventory, loadSubscriptions, type StateInventory, type StateSelection, type SubscriptionFilter, type SubscriptionList } from "./state";
 
 export type StackState = Snapshot & {
   access: Resource<AccessSnapshot>;
@@ -66,6 +67,14 @@ export type StackState = Snapshot & {
   roleInternal: Resource<RoleInternalMcp>;
   /** Cached Codex tool bridge observations; only `checkCodexTools` starts a runtime. */
   codexTools: Resource<CodexToolsStatus>;
+  /** Loaded pages of `serve_state_list` for `stateSelection`. Local operator only; a remote session never reads it. */
+  stateInventory: Resource<StateInventory>;
+  stateSelection: StateSelection;
+  /** Loaded pages of durable Bot event subscriptions for `subscriptionFilter`, without read arguments. Local only. */
+  subscriptions: Resource<SubscriptionList>;
+  subscriptionFilter: SubscriptionFilter;
+  /** Bumped on every `serve_state_changed` and serve (re)connect; open maintenance views re-read what they hold on it. */
+  serveStateGeneration: number;
   /** Local-only PATH inventory; no Roles window consumes it until the shim UI is requested. */
   roleShims: Resource<RoleShims>;
   signalStatus: Resource<AttentionStatus>;
@@ -162,6 +171,8 @@ export type SignalRecords = { items: Record<string, AttentionItem>; messages: Re
 export type StackConnections = { packages?: readonly string[]; scopedBots?: boolean };
 
 const authReads = new Set(["account_list", "account_login_current", "account_login_status", "worker_account_list", "worker_account_login_current", "worker_account_login_status"]);
+
+const callMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
 function isLoginState(value: unknown): value is Login {
   return typeof value === "object" && value !== null && "status" in value && "authUrl" in value;
@@ -292,6 +303,8 @@ export class StackStore {
       roleId: null, role: { data: null, error: null, at: null }, rolePreview: { data: null, error: null, at: null },
       roleLaunch: { data: null, error: null, at: null }, roleInternal: { data: null, error: null, at: null }, roleShims: { data: null, error: null, at: null },
       codexTools: { data: null, error: null, at: null },
+      stateInventory: { data: null, error: null, at: null }, stateSelection: { owners: null, measure: false },
+      subscriptions: { data: null, error: null, at: null }, subscriptionFilter: {}, serveStateGeneration: 0,
       roleContext: {}, roleContextShown: {},
       signalStatus: { data: null, error: null, at: null }, signalGeneration: 0, signalRecords: { items: {}, messages: {}, runs: {} },
       contentDocuments: { data: null, error: null, at: null }, contentTags: { data: null, error: null, at: null },
@@ -348,11 +361,13 @@ export class StackStore {
       this.main.set(pkg, channel.connect());
     };
     // resources_changed is a five-second sampling tick: refreshing state must not flood the activity log.
-    open("serve", () => { this.refresh("server"); this.refresh("codexTools"); this.refresh("resources"); this.refreshWatchedHistories(); }, (topic) => {
+    // State inventories and subscriptions are local operator reads; notices are not replayed, so (re)connect re-reads them.
+    open("serve", () => { this.refresh("server"); this.refresh("codexTools"); this.refresh("resources"); this.refreshWatchedHistories(); this.invalidateServeState(); }, (topic) => {
       if (topic === "pids_changed") this.refresh("server");
       if (topic === "codex_tools_changed") this.refresh("codexTools");
       if (topic === "resources_changed") { this.refresh("resources"); this.refreshWatchedHistories(); }
-    }, ["pids_changed", "codex_tools_changed", "resources_changed"], { silent: ["resources_changed"] });
+      if (topic === "serve_state_changed") this.invalidateServeState();
+    }, this.state.remote ? ["pids_changed", "codex_tools_changed", "resources_changed"] : ["pids_changed", "codex_tools_changed", "resources_changed", "serve_state_changed"], { silent: ["resources_changed"] });
     open("auth", () => { this.refresh("accounts"); this.refresh("workerAccounts"); this.refresh("login"); this.refresh("workerLogins"); }, (topic) => {
       this.refresh("accounts");
       if (topic === "worker_accounts_changed") this.refresh("workerAccounts");
@@ -1302,6 +1317,82 @@ export class StackStore {
     delete workerAttempts[accountId];
     this.set({ workerAttempts });
   };
+
+  private stateSeq = 0;
+  private subscriptionSeq = 0;
+
+  private invalidateServeState(): void {
+    if (this.state.remote) return;
+    this.set({ serveStateGeneration: this.state.serveStateGeneration + 1 });
+    void this.refreshStateInventory();
+    void this.refreshSubscriptions();
+  }
+
+  /** Choose owners and measurement; held pages belong to the previous selection and are dropped at once. */
+  selectStateInventory = (selection: StateSelection): Promise<void> => {
+    this.set({ stateSelection: selection, stateInventory: { data: null, error: null, at: null } });
+    return this.refreshStateInventory();
+  };
+
+  /** Re-read the first page of the current selection. A result from an older read never replaces a newer one. */
+  refreshStateInventory = async (): Promise<void> => {
+    if (this.state.remote) return;
+    const seq = ++this.stateSeq, selection = this.state.stateSelection;
+    try {
+      const data = await loadInventory((name, args) => this.call("serve", name, args), selection);
+      if (seq === this.stateSeq) this.set({ stateInventory: { data, error: null, at: Date.now() } });
+    } catch (error) {
+      if (seq === this.stateSeq) this.set({ stateInventory: { ...this.state.stateInventory, error: callMessage(error) } });
+    }
+  };
+
+  /** The next page of the held observation, restarting from the first page when the observation changed. */
+  moreStateInventory = async (): Promise<void> => {
+    const held = this.state.stateInventory.data;
+    if (!held || held.nextOffset === null || this.state.remote) return;
+    const seq = ++this.stateSeq;
+    try {
+      const data = await continueInventory((name, args) => this.call("serve", name, args), held);
+      if (seq === this.stateSeq) this.set({ stateInventory: { data, error: null, at: Date.now() } });
+    } catch (error) {
+      if (seq === this.stateSeq) this.set({ stateInventory: { ...this.state.stateInventory, error: callMessage(error) } });
+    }
+  };
+
+  filterSubscriptions = (filter: SubscriptionFilter): Promise<void> => {
+    this.set({ subscriptionFilter: filter, subscriptions: { data: null, error: null, at: null } });
+    return this.refreshSubscriptions();
+  };
+
+  refreshSubscriptions = async (): Promise<void> => {
+    if (this.state.remote) return;
+    const seq = ++this.subscriptionSeq, filter = this.state.subscriptionFilter;
+    try {
+      const data = await loadSubscriptions((name, args) => this.call("serve", name, args), filter);
+      if (seq === this.subscriptionSeq) this.set({ subscriptions: { data, error: null, at: Date.now() } });
+    } catch (error) {
+      if (seq === this.subscriptionSeq) this.set({ subscriptions: { ...this.state.subscriptions, error: callMessage(error) } });
+    }
+  };
+
+  moreSubscriptions = async (): Promise<void> => {
+    const held = this.state.subscriptions.data;
+    if (!held || held.nextOffset === null || this.state.remote) return;
+    const seq = ++this.subscriptionSeq;
+    try {
+      const data = await continueSubscriptions((name, args) => this.call("serve", name, args), held);
+      if (seq === this.subscriptionSeq) this.set({ subscriptions: { data, error: null, at: Date.now() } });
+    } catch (error) {
+      if (seq === this.subscriptionSeq) this.set({ subscriptions: { ...this.state.subscriptions, error: callMessage(error) } });
+    }
+  };
+
+  /**
+   * Remove one exact subscription at the revision the operator saw. A lost acknowledgement may still have removed
+   * it, so the list is re-read either way; the same absent ID answers `removed: false`.
+   */
+  removeSubscription = (id: string, expectedRevision: string): Promise<{ id: string; removed: boolean }> =>
+    this.call<{ id: string; removed: boolean }>("serve", "serve_subscription_remove", { id, expectedRevision }).finally(() => { void this.refreshSubscriptions(); });
 
   private set(patch: Partial<StackState>): void {
     this.state = { ...this.state, ...patch };

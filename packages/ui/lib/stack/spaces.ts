@@ -15,7 +15,7 @@ export const spaces: { id: SpaceId; title: string; description: string; key: str
   { id: "fleet", title: "Fleet", description: "Bots and their controls", key: "1" },
   { id: "accounts", title: "Accounts", description: "Accounts, usage limits, and model catalogs", key: "2" },
   { id: "lab", title: "Lab", description: "Experimental windows for tinkering", key: "3" },
-  { id: "system", title: "System", description: "Server, processes, packages, host resources and activity", key: "4" },
+  { id: "system", title: "System", description: "Server, processes, packages, host resources, owner state, Bot event subscriptions and activity", key: "4" },
   { id: "roles", title: "Roles", description: "Named Roles and the default new launches use, with each Role's instructions, skills, MCP servers and trusted projects, and the commands that launch them", key: "5" },
   { id: "inbox", title: "Inbox", description: "Notifications to read, answer and dismiss", key: "6" },
   { id: "signal", title: "Signal", description: "What conversations ask of you, and how it was interpreted", key: "7" },
@@ -57,6 +57,10 @@ export function homeOf(ref: NodeRef): NodeHome {
       return { kind: "space", space: "system", window: "resources" };
     case "process":
       return { kind: "space", space: "system", window: "processes" };
+    case "state-entry":
+      return { kind: "space", space: "system", window: "state" };
+    case "subscription":
+      return { kind: "space", space: "system", window: "subscriptions" };
     case "account":
     case "login":
     case "worker-account":

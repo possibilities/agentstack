@@ -5,7 +5,7 @@ import type { ChatWindows } from "@/lib/stack/chat-windows";
 import type { WorkerWindows } from "@/lib/stack/worker-windows";
 import type { ViewerWindows } from "@/lib/stack/browse-viewers";
 import type { ProcRunWindows } from "@/lib/stack/proc-windows";
-import { CableIcon, HardDriveIcon, LifeBuoyIcon, MonitorIcon, WrenchIcon } from "lucide-react";
+import { CableIcon, DatabaseIcon, HardDriveIcon, LifeBuoyIcon, MonitorIcon, WrenchIcon } from "lucide-react";
 import { HandoffsWindow, ViewerWindow } from "./browse-handoffs";
 import { ControllersWindow, ProfilesWindow, ToolchainWindow } from "./browse-operator";
 import { ArrowRightLeftIcon, FolderInputIcon, GlobeIcon, ListChecksIcon, RssIcon } from "lucide-react";
@@ -27,6 +27,7 @@ import { InferenceWindow } from "./inference-window";
 import { HostWindow, ProcessesWindow, ResourcesWindow, SamplingWindow } from "./resource-windows";
 import { ActivityWindow, ServerWindow, PackagesWindow } from "./system-windows";
 import { CodexToolsWindow } from "./codex-tools";
+import { StateInventoryWindow, SubscriptionsWindow } from "./state-windows";
 import { ChatWindow } from "./chat-window";
 import { RoleCatalogWindow } from "./role-catalog";
 import { RoleEditorWindow } from "./role-editor";
@@ -128,6 +129,8 @@ export const spaceViews: Record<SpaceId, {
       { id: "processes", title: "Processes", icon: ListTreeIcon, accent: "server", width: 560, height: 760, column: 2, element: <ProcessesWindow /> },
       { id: "sampling", title: "Sampling", icon: ScanLineIcon, accent: "server", width: 400, height: 560, column: 3, element: <SamplingWindow /> },
       { id: "activity", title: "Activity", icon: RadioIcon, accent: "events", width: 400, height: 460, column: 3, element: <ActivityWindow /> },
+      { id: "state", title: "State", icon: DatabaseIcon, accent: "server", width: 500, height: 760, column: 5, element: <StateInventoryWindow /> },
+      { id: "subscriptions", title: "Subscriptions", icon: CableIcon, accent: "server", width: 460, height: 560, column: 6, element: <SubscriptionsWindow /> },
     ],
   },
   roles: {
