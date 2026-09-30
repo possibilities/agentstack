@@ -1,4 +1,4 @@
-# 136. Global developer mode gates upstream harness-release observations
+# 138. Global developer mode gates upstream harness-release observations
 
 Status: accepted, 2026-09-30. Extends the server-owned observations of
 [ADR 0131](0131-codex-tools-availability.md) and the state inventory of

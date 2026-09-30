@@ -120,7 +120,7 @@ explicitly stale until verified. Enabled sampling or an explicit enabled check
 can regenerate observations, but the previous different version is retained
 history, not a reconstructible installed-version comparison. No global-settings
 reset or release-cache deletion operation is supplied. See
-[ADR 0136](adr/0136-developer-mode-and-harness-releases.md).
+[ADR 0138](adr/0138-developer-mode-and-harness-releases.md).
 
 ## Coverage boundaries
 

@@ -194,7 +194,7 @@ A durable global Stack setting owned by `serve`, disabled by default and explici
 selected by the local operator. It immediately gates developer features and their
 operation calls. Its first feature is periodic, cached upstream harness-release
 observation. It is independent of Bot and Worker managed runtime settings and of
-the UI development server. See [ADR 0136](docs/adr/0136-developer-mode-and-harness-releases.md).
+the UI development server. See [ADR 0138](docs/adr/0138-developer-mode-and-harness-releases.md).
 _Avoid_: browser-local preference, Role setting, development environment
 
 ## Harness release observation
