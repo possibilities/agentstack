@@ -5,7 +5,7 @@ import type { ChatWindows } from "@/lib/stack/chat-windows";
 import type { WorkerWindows } from "@/lib/stack/worker-windows";
 import type { ViewerWindows } from "@/lib/stack/browse-viewers";
 import type { ProcRunWindows } from "@/lib/stack/proc-windows";
-import { CableIcon, HardDriveIcon, LifeBuoyIcon, MonitorIcon, WrenchIcon } from "lucide-react";
+import { CableIcon, DatabaseIcon, HardDriveIcon, LifeBuoyIcon, MonitorIcon, WrenchIcon } from "lucide-react";
 import { HandoffsWindow, ViewerWindow } from "./browse-handoffs";
 import { ControllersWindow, ProfilesWindow, ToolchainWindow } from "./browse-operator";
 import { ArrowRightLeftIcon, FolderInputIcon, GlobeIcon, ListChecksIcon, RssIcon } from "lucide-react";
@@ -20,6 +20,7 @@ import type { SpaceId } from "@/lib/stack/spaces";
 import type { StackState } from "@/lib/stack/store";
 import { type Accent } from "./window";
 import { AccountsWindow, BotsWindow } from "./windows";
+import { BotStateWindow } from "./bot-state";
 import { UsageWindow } from "./usage-window";
 import { CatalogWindow } from "./catalog-window";
 import { CallSpeechWindow } from "./call-speech-window";
@@ -27,6 +28,7 @@ import { InferenceWindow } from "./inference-window";
 import { HostWindow, ProcessesWindow, ResourcesWindow, SamplingWindow } from "./resource-windows";
 import { ActivityWindow, ServerWindow, PackagesWindow } from "./system-windows";
 import { CodexToolsWindow } from "./codex-tools";
+import { StateInventoryWindow, SubscriptionsWindow } from "./state-windows";
 import { ChatWindow } from "./chat-window";
 import { RoleCatalogWindow } from "./role-catalog";
 import { RoleEditorWindow } from "./role-editor";
@@ -81,6 +83,7 @@ export const spaceViews: Record<SpaceId, {
     accent: "bots",
     windows: (_state, { chats }) => [
       { id: "bots", title: "Bots", icon: BotIcon, accent: "bots", width: 420, height: 620, column: 0, element: <BotsWindow /> },
+      { id: "bot-state", title: "Bot state", icon: HardDriveIcon, accent: "bots", width: 420, height: 760, column: 0, element: <BotStateWindow /> },
       // The primary chat sits beside Bots; each additional chat opens in the next column.
       ...chats.map((chat, index) => ({ id: chat.id, title: "Chat", icon: SquareTerminalIcon, accent: "bots" as const, width: 640, height: 720, column: index + 1, fixed: true,
         element: <ChatWindow id={chat.id} /> })),
@@ -128,6 +131,8 @@ export const spaceViews: Record<SpaceId, {
       { id: "processes", title: "Processes", icon: ListTreeIcon, accent: "server", width: 560, height: 760, column: 2, element: <ProcessesWindow /> },
       { id: "sampling", title: "Sampling", icon: ScanLineIcon, accent: "server", width: 400, height: 560, column: 3, element: <SamplingWindow /> },
       { id: "activity", title: "Activity", icon: RadioIcon, accent: "events", width: 400, height: 460, column: 3, element: <ActivityWindow /> },
+      { id: "state", title: "State", icon: DatabaseIcon, accent: "server", width: 500, height: 760, column: 5, element: <StateInventoryWindow /> },
+      { id: "subscriptions", title: "Subscriptions", icon: CableIcon, accent: "server", width: 460, height: 560, column: 6, element: <SubscriptionsWindow /> },
     ],
   },
   roles: {
