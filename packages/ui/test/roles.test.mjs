@@ -294,7 +294,7 @@ test("a Role response is fenced by Role ID first and revision second", () => {
 
 test("drafts stay with the Role they were made for", () => {
   const draft = (text) => ({ base: { body: "" }, values: { body: text } });
-  let all = {
+  const all = {
     [roles.draftKey("A", "fragment:f1")]: draft("for A"),
     [roles.draftKey("B", "fragment:f1")]: draft("for B"),
     [roles.draftKey("B", "new-category")]: draft("more B"),
@@ -307,14 +307,8 @@ test("drafts stay with the Role they were made for", () => {
   assert.deepEqual(roles.roleScoped(all, "A"), { "fragment:f1": draft("for A"), "new-role": draft("catalog") });
   assert.deepEqual(Object.keys(roles.roleScoped(all, "B")).sort(), ["fragment:f1", "new-category", "new-role"]);
   assert.equal(roles.roleScoped(all, "B")["fragment:f1"].values.body, "for B");
-  // Selecting the other Role, or switching the default, changes what is shown but retargets nothing; switching back restores it.
-  assert.equal(roles.roleScoped(all, "A")["fragment:f1"].values.body, "for A");
   assert.deepEqual(roles.roleScoped(all, null), { "new-role": draft("catalog") });
   assert.deepEqual([...roles.scopedRoles(all)].sort(), ["A", "B"]);
-  assert.deepEqual(roles.roleEntries(all, "B").map(([key]) => key).sort(), ["fragment:f1", "new-category"]);
-  // Discarding one Role's drafts leaves the others.
-  all = Object.fromEntries(Object.entries(all).filter(([key]) => !key.startsWith("B:")));
-  assert.deepEqual([...roles.scopedRoles(all)], ["A"]);
 });
 
 test("the selection follows the default until a Role is chosen, and a deleted Role is kept only while it holds edits", () => {

@@ -464,10 +464,6 @@ export function roleScoped<T>(all: Record<string, T>, roleId: string | null): Re
 export const scopedRoles = (all: Record<string, unknown>): Set<string> =>
   new Set(Object.keys(all).map(scopeOf).filter((scope) => scope !== catalogScope));
 
-/** A Role's own entries as `[key, value]`, keyed as its editors do. */
-export const roleEntries = <T>(all: Record<string, T>, roleId: string): Array<[string, T]> =>
-  Object.entries(all).filter(([key]) => scopeOf(key) === roleId).map(([key, value]) => [key.slice(roleId.length + 1), value]);
-
 /** SQLite's NOCASE folds ASCII letters only, which is exactly the uniqueness the API enforces. */
 export const nocase = (name: string): string => name.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
 
