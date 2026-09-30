@@ -242,7 +242,11 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     const canvasHtml = await canvas.text();
     assert.match(canvasHtml, /<main[^>]*data-canvas="workbench"/);
     assert.match(canvasHtml, /<h1[^>]*>Stack open bench<\/h1>/);
-    assert.match(canvasHtml, /No bots</);
+    // The root lands on HUD; Fleet lives at /fleet.
+    assert.match(canvasHtml, /<main[^>]*data-space="hud"/);
+    const fleet = await uiFetch(new URL("/fleet", uiUrl));
+    assert.equal(fleet.status, 200);
+    assert.match(await fleet.text(), /No bots</);
     const accounts = await uiFetch(new URL("/accounts", uiUrl));
     assert.equal(accounts.status, 200);
     assert.match(await accounts.text(), /No accounts</);
