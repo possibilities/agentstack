@@ -140,7 +140,7 @@ test("remote control sessions receive only Scrape's read-only operations; fetchi
   }
 });
 
-test("remote UI cannot read Brain share jobs or manage local Role shims even with control scope", async () => {
+test("remote UI cannot read Brain share jobs or use local Role, state and developer controls even with control scope", async () => {
   const root = mkdtempSync(join(tmpdir(), "stack-remote-brain-"));
   const store = new AccessStore(root);
   const env = { STACK_STATE_DIR: root };
@@ -170,6 +170,14 @@ test("remote UI cannot read Brain share jobs or manage local Role shims even wit
       name, description: "Local state.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: name.endsWith("read") },
       async call() { stateCalls++; return { ok: true }; },
     })) });
+  const serveDirectory = join(root, "packages", "serve"); mkdirSync(serveDirectory, { recursive: true });
+  writeFileSync(join(serveDirectory, "api.yaml"), "name: serve\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: all\n  events: all\n  description: WebSocket.\n");
+  let developerCalls = 0;
+  const server = await serveSocket({ info: { name: "serve", description: "Demo.", transportDescription: "Socket.", path: socketPath("serve", env) }, context: {},
+    operations: ["serve_status", "serve_settings_read", "serve_settings_update", "serve_harness_releases", "serve_harness_releases_check"].map(name => operation({
+      name, description: "Server control.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: !name.endsWith("update") && !name.endsWith("check") },
+      async call() { developerCalls++; return { ok: true }; },
+    })), events: { topics: { pids_changed: "Changed.", serve_settings_changed: "Settings changed.", harness_releases_changed: "Releases changed." } } });
   const key = join(root, "key.pem"), cert = join(root, "cert.pem");
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "1", "-subj", "/CN=localhost"], { stdio: "ignore" });
   const port = await freePort();
@@ -203,8 +211,16 @@ test("remote UI cannot read Brain share jobs or manage local Role shims even wit
     for (const name of ["bot_state_read", "bot_workspace_read", "bot_session_reset", "bot_recovery_discard", "chat_upload_read"])
       assert.match((await send("tools/call", { package: "bots", name, arguments: {} })).error.message, /not available/);
     assert.equal(stateCalls, 0);
+    const listed = await send("tools/list", { package: "serve" });
+    assert.deepEqual(listed.result.tools.map((tool: { name: string }) => tool.name), ["serve_status"]);
+    assert.equal((await send("tools/call", { package: "serve", name: "serve_status", arguments: {} })).result.ok, true);
+    for (const name of ["serve_settings_read", "serve_settings_update", "serve_harness_releases", "serve_harness_releases_check"])
+      assert.match((await send("tools/call", { package: "serve", name, arguments: {} })).error.message, /not available/);
+    for (const topic of ["serve_settings_changed", "harness_releases_changed"])
+      assert.match((await send("events/subscribe", { package: "serve", subscription: topic, topics: [topic] })).error.message, /not available|selected|topic/i);
+    assert.equal(developerCalls, 1, "only existing server status reaches the private socket");
   } finally {
-    ws?.terminate(); await remote.close(); await bots.close(); await roles.close(); await backend.close(); store.close(); rmSync(root, { recursive: true, force: true });
+    ws?.terminate(); await remote.close(); await server.close(); await bots.close(); await roles.close(); await backend.close(); store.close(); rmSync(root, { recursive: true, force: true });
   }
 });
 

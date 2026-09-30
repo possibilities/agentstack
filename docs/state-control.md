@@ -50,7 +50,10 @@ mutation. Receipts keep minimal identities/digests and disclosed residuals.
 
 File listing is bounded at 10,000 siblings/selection entries; file reads return
 base64 bytes in chunks no larger than 256 KiB. Paths are relative, cannot traverse
-symlinks or parent components, and cannot read special files. Clearing refuses
+symlinks or parent components, and cannot read special files. The owner's root is
+opened in one kernel call: ancestor symlinks (such as macOS `/tmp`) resolve, but the
+root itself must be a directory, not a symlink, and cannot contain dot components.
+Plans bind the root's identity, so a re-pointed ancestor makes the plan stale. Clearing refuses
 mounted-filesystem boundaries. It requires Python 3 with POSIX descriptor-relative
 operations and never falls back to path-based recursive removal. Partial cleanup
 can retain `.stack-clear-<uuid>` quarantine, named in the result for inspection.
@@ -60,7 +63,7 @@ can retain `.stack-clear-<uuid>` quarantine, named in the result for inspection.
 | Owner | Inspection / selection | Maintenance and effect |
 | --- | --- | --- |
 | Bots | `bot_state_read`, `bot_workspace_list/read`, `bot_history_list`, `bot_queue_history`, `bot_launch_read`, `bot_log_read`, `bot_recovery_list`, `chat_upload_list/read` | `bot_state_plan` selects `workspace_clear`, `session_reset` with `history:retain/purge`, `history_clear` of one retired generation, `log_clear`, `launch_args_clear`, `upload_remove` or `recovery_discard`. Apply through corresponding `bot_<kind>`. |
-| Serve | `serve_state_list`, `serve_subscription_list/get` | `serve_subscription_remove` uses exact ID/revision. Pending reads are aborted; already admitted native input cannot be recalled. |
+| Serve | `serve_state_list`, `serve_subscription_list/get`, `serve_settings_read`, enabled-only `serve_harness_releases` | `serve_subscription_remove` uses exact ID/revision. Pending reads are aborted; already admitted native input cannot be recalled. `serve_settings_update` uses the observed revision and applies developer mode immediately; disabling aborts/fences release checks while retaining observations. |
 | Worker | Existing status/detail/transcript/turn/record/tool/diff reads; `worker_workspace_list/read` | Existing `worker_close` and `worker_remove` remain the removal authority. Worktree deletion requires explicit discard; source branch and provider-native history are distinct. |
 | Infer | Existing request list/get and trace export | `infer_history_plan({requestIds})` / `infer_history_clear`: terminal input, instructions, output, errors and events; preserve request digest, account/model/usage/timing and outcome. |
 | Notify | Existing notification list/get/counts | `notification_history_plan({ids})` / `notification_history_clear`: dismissed authored content/actions/prompts/responses/source/group; preserve send/dismissal digests and first outcome. |
@@ -112,6 +115,15 @@ Infer and Notification records expose `contentClearedAt`; Signal exposes
 captured bodies and distinguish cleared content. Signal replay of cleared content
 is refused; correlated Infer requests remain selectable for separate cleanup.
 Native completion never changes HUD Work state.
+
+Serve's `settings` category inventories `serve/settings.json`; `harness-releases`
+inventories `serve/harness-releases.json`. The global developer-mode default is
+disabled. Release observations survive disable and restart; restored evidence is
+explicitly stale until verified. Enabled sampling or an explicit enabled check
+can regenerate observations, but the previous different version is retained
+history, not a reconstructible installed-version comparison. No global-settings
+reset or release-cache deletion operation is supplied. See
+[ADR 0138](adr/0138-developer-mode-and-harness-releases.md).
 
 ## Coverage boundaries
 

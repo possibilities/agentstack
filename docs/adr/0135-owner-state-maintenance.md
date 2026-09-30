@@ -1,6 +1,6 @@
 # 0135 — Owner state inspection and maintenance
 
-Status: Accepted
+Status: Accepted. Amended 2026-09-30: the owner root resolves ancestor symlinks in one kernel open; the root itself and every component below it still refuse symlinks.
 
 ## Context
 
@@ -43,7 +43,7 @@ be inspected but carry no Stack deletion authority.
 
 Bounded file operations use descriptor-relative POSIX opens, renames and removals
 through an isolated Python 3 interpreter because Node does not expose the required
-macOS primitives. Symlink components and special files are refused; selection
+macOS primitives. Symlink components below the owner root and special files are refused; selection
 snapshots fence file identity and revision. Deletion retires selected roots into a
 private quarantine before removal. Missing capabilities fail explicitly.
 

@@ -73,6 +73,8 @@ export function homeOf(ref: NodeRef): NodeHome {
       return { kind: "space", space: "accounts", window: "usage" };
     case "bot":
       return { kind: "space", space: "fleet", window: "bots" };
+    case "bot-state":
+      return { kind: "space", space: "fleet", window: "bot-state" };
     case "worker":
       return { kind: "space", space: "workers", window: "workers" };
     case "worker-window":

@@ -13,6 +13,7 @@ import { attribute, intervalCpu, selectScope, type ResourceRoots } from "../src/
 import { CollectionError, createCollector, parseCpuTime, parseDarwinProcesses, parseLinuxStat, processIdentity, type Collection, type ProcessReading } from "../src/resources/collector.js";
 import { createDomainReader, type DomainReading } from "../src/resources/domains.js";
 import { ResourceMonitor } from "../src/resources/monitor.js";
+import { DeveloperService } from "../src/developer/service.js";
 import { serverResourcesOutput, serverResourceHistoryOutput } from "../src/resources/schema.js";
 
 const roots: ResourceRoots = { pid: 10, attached: true, children: [
@@ -351,7 +352,7 @@ test("Claude session process roots share account attribution without fabricating
 test("resource operations and payload-free invalidations work on the existing socket transport", async () => {
   const state = await mkdtemp(join(tmpdir(), "resource-api-"));
   const resources = new ResourceMonitor({ roots: () => roots, collect: async () => collection(tree()), domains: async () => domains() });
-  const context: ServerContext = { source: new StatusSource(), resources, codexTools: new CodexToolsDiagnostics({}) };
+  const context: ServerContext = { source: new StatusSource(), resources, codexTools: new CodexToolsDiagnostics({}), developer: new DeveloperService({ STACK_STATE_DIR: state }) };
   const socket = await serveSocket({ info: { path: join(state, "serve.sock"), name: "serve", description: "test", transportDescription: "test" },
     context, operations: [serverResources, serverResourceHistory], events: { topics: api.events!.topics! } });
   const stop = await api.events!.start(context, (topic) => socket.publish!(topic));

@@ -14,7 +14,7 @@ export type FileSnapshot = { revision: string; entries: StateFile[]; bytes: numb
 // in an isolated interpreter, rather than a path check followed by recursive rm.
 // Missing Python is a reported capability failure; never fall back to path-based deletion.
 const program = String.raw`
-import os, sys, json, stat, hashlib, datetime, base64, uuid
+import os, sys, json, stat, hashlib, datetime, base64, uuid, errno
 MAX = 10000
 def digest(value): return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 def identity(s): return [s.st_dev,s.st_ino,s.st_mode,s.st_size,s.st_mtime_ns,s.st_ctime_ns]
@@ -25,14 +25,16 @@ def parts(path):
     return p
 def directory(parent, name): return os.open(name, os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW, dir_fd=parent)
 def rootfd(path):
+    # The kernel resolves the owner-supplied root in one call: ancestor symlinks (macOS /tmp, a linked home or
+    # state directory) are followed, the root itself must be a real directory, and everything below it is
+    # descriptor-relative with no symlink traversal. Snapshots bind the root's identity, so a re-pointed
+    # ancestor between plan and apply is refused as a changed selection.
     if not os.path.isabs(path): raise ValueError('root must be absolute')
-    fd = os.open('/', os.O_RDONLY|os.O_DIRECTORY)
-    try:
-        for name in path.split('/')[1:]:
-            if not name: continue
-            nxt = directory(fd,name); os.close(fd); fd = nxt
-        return fd
-    except: os.close(fd); raise
+    if any(x in ('.','..') for x in path.split('/')): raise ValueError('root must not contain dot or parent components')
+    try: return os.open(path, os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+    except OSError as error:
+        if error.errno in (errno.ELOOP, errno.ENOTDIR) and os.path.islink(path): raise ValueError('root must be a directory, not a symlink')
+        raise
 def parentfd(root,path):
     names = parts(path)
     if not names: raise ValueError('select a file or subdirectory, not the root')

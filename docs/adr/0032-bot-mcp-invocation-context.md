@@ -2,7 +2,7 @@
 
 Status: accepted, 2026-09-24. Extends [ADR 0021](0021-managed-servers-inherit-owner-mcp.md)'s internal MCP inheritance and [ADR 0031](0031-role-resources.md)'s private Role launch config.
 
-The internal HTTP transport is superseded by [ADR 0137](0137-internal-mcp-over-stdio.md); its signed identity and per-call thread contract remain.
+The internal HTTP transport is superseded by [ADR 0139](0139-internal-mcp-over-stdio.md); its signed identity and per-call thread contract remain.
 
 On each Bot launch, Stack gives codexnk internal Package API MCP URLs with a bot ID, digest of its exact app-server endpoint, and HMAC proof in the URL query. The HMAC key is a private state file shared by the owner MCP listener and Bots child. The owner keeps human-facing base URLs unchanged. For every bot-bound tool call the MCP listener verifies the proof and compares the instance digest with the currently running, unfenced `bot_list` record; old URLs are fenced after stop or restart. Role-defined MCP servers cannot alias the internal listener, which would bypass this binding. One shared HTTP listener remains sufficient; no per-Bot port is allocated.
 

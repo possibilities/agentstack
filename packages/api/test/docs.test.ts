@@ -418,9 +418,18 @@ test("the api package serves structured documents for every workspace package", 
       assert.ok(server.operations.some(op => op.name === name));
       assert.ok(server.transports.filter(transport => transport.type !== "socket").every(transport => !transport.operations.includes(name)));
     }
-    assert.deepEqual(Object.keys(server.events), ["serve_state_changed", "pids_changed", "codex_tools_changed", "resources_changed"]);
-    assert.deepEqual(server.operations.map((operation) => operation.name).filter(name => !stateOperation(name)), ["serve_status", "serve_codex_tools", "serve_codex_tools_check", "serve_resources", "serve_resource_history", "serve_local_connect", "serve_local_revoke", "serve_mcp_event"]);
+    assert.deepEqual(Object.keys(server.events), ["serve_state_changed", "pids_changed", "codex_tools_changed", "resources_changed", "serve_settings_changed", "harness_releases_changed"]);
+    assert.deepEqual(server.operations.map((operation) => operation.name).filter(name => !stateOperation(name)), ["serve_status", "serve_codex_tools", "serve_codex_tools_check", "serve_resources", "serve_resource_history", "serve_local_connect", "serve_local_revoke", "serve_mcp_event",
+      "serve_settings_read", "serve_settings_update", "serve_harness_releases", "serve_harness_releases_check"]);
     const serveOperation = (name: string) => server.operations.find((operation) => operation.name === name)!;
+    for (const name of ["serve_settings_read", "serve_settings_update", "serve_harness_releases", "serve_harness_releases_check"]) {
+      assert.deepEqual(server.transports.filter(transport => transport.operations.includes(name)).map(transport => transport.type).sort(), ["socket", "websocket"]);
+    }
+    assert.equal(serveOperation("serve_settings_read").annotations.readOnlyHint, true);
+    assert.equal(serveOperation("serve_harness_releases").annotations.readOnlyHint, true);
+    assert.deepEqual(serveOperation("serve_settings_update").inputSchema.required, ["developerMode", "expectedRevision"]);
+    assert.ok(!server.transports.find(transport => transport.type === "mcp")!.events.includes("harness_releases_changed"));
+    assert.equal(existsSync(join(stateDir, "serve")), false, "discovery does not initialize global settings or release observations");
     assert.equal(serveOperation("serve_codex_tools").annotations.readOnlyHint, true);
     assert.notEqual(serveOperation("serve_codex_tools_check").annotations.readOnlyHint, true, "a check starts a runtime, so remote read-only selection excludes it");
     // Agents may read the observations; only the operator's WebSocket can start a check.

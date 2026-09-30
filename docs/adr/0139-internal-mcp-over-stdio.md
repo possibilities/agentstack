@@ -1,4 +1,4 @@
-# 137. Use native stdio for Stack-provided MCP connections
+# 139. Use native stdio for Stack-provided MCP connections
 
 Status: accepted, 2026-09-30. Supersedes the internal HTTP launch choice in
 [ADR 0032](0032-bot-mcp-invocation-context.md),

@@ -2,7 +2,7 @@
 
 ## Decision
 
-[ADR 0137](0137-internal-mcp-over-stdio.md) supersedes HTTP for internal launches. External HTTP remains; both transports share the bridge handlers and per-connection backend.
+[ADR 0139](0139-internal-mcp-over-stdio.md) supersedes HTTP for internal launches. External HTTP remains; both transports share the bridge handlers and per-connection backend.
 
 Stack's authenticated loopback HTTP MCP listener includes five stable connections
 alongside Package APIs:

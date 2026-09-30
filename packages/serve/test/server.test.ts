@@ -299,8 +299,8 @@ test("server api serves status and pids_changed on its socket", async () => {
       events: { topics: Record<string, string> } | null;
       tools: Array<{ name: string }>;
     };
-    assert.deepEqual(listed.tools.map((tool) => tool.name), ["serve_state_list", "serve_subscription_list", "serve_subscription_get", "serve_subscription_remove", "serve_bot_dependencies", "serve_status", "serve_codex_tools", "serve_codex_tools_check", "serve_resources", "serve_resource_history", "serve_local_connect", "serve_local_revoke", "serve_mcp_event", "serve_state_read"]);
-    assert.deepEqual(Object.keys(listed.events?.topics ?? {}), ["serve_state_changed", "pids_changed", "codex_tools_changed", "resources_changed"]);
+    assert.deepEqual(listed.tools.map((tool) => tool.name), ["serve_state_list", "serve_subscription_list", "serve_subscription_get", "serve_subscription_remove", "serve_bot_dependencies", "serve_status", "serve_codex_tools", "serve_codex_tools_check", "serve_resources", "serve_resource_history", "serve_local_connect", "serve_local_revoke", "serve_mcp_event", "serve_settings_read", "serve_settings_update", "serve_harness_releases", "serve_harness_releases_check", "serve_state_read"]);
+    assert.deepEqual(Object.keys(listed.events?.topics ?? {}), ["serve_state_changed", "pids_changed", "codex_tools_changed", "resources_changed", "serve_settings_changed", "harness_releases_changed"]);
     const unavailable = await socketCall(served.socketPath!, "tools/call", { name: "serve_state_list", arguments: { owners: ["bots"] } }) as { entries: unknown[]; owners: Array<{ available: boolean; issue: string | null }> };
     assert.deepEqual(unavailable.entries, []);
     assert.equal(unavailable.owners[0]?.available, false);
