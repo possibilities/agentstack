@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { botMcpUrl } from "@stack/api";
+import { internalMcpLaunches, workspaceRoot } from "@stack/api";
 import { RoleStore, renderInstructions, renderSegments } from "../src/store.js";
 import { materializeRole, removeRole } from "../src/bundle.js";
 
@@ -13,6 +13,11 @@ function openRole(root: string) {
   const catalog = owner.catalog();
   const id = catalog.defaultRoleId!;
   return Object.assign(owner.role(id), { close: () => owner.close() });
+}
+
+async function internal(root: string) {
+  const launches = await internalMcpLaunches(workspaceRoot(import.meta.dirname), { kind: "bot", botId: "bot-1", endpoint: "unix:///fixture/bot.sock" }, { STACK_STATE_DIR: root });
+  return { auth: launches.auth! };
 }
 
 test("categories and fragments are durable, ordered, and rendered without human metadata", async () => {
@@ -110,7 +115,7 @@ test("a role snapshots instructions and MCP configuration without argv content",
   try {
     let state = store.createCategory(0, "Default");
     state = store.createFragment(state.revision, state.categories[0]!.id, "Prompt", "Do useful work.", "not rendered");
-    const first = await materializeRole(root, "bot-1", state, { auth: "http://127.0.0.1:8743/mcp/auth" });
+    const first = await materializeRole(root, "bot-1", state, await internal(root));
     assert.equal(await readFile(join(first, "SYSTEM_APPEND.md"), "utf8"), "Do useful work.");
     assert.match(await readFile(join(first, "config.toml"), "utf8"), /\[mcp_servers.auth\]/);
     state = store.updateFragment(state.revision, state.categories[0]!.fragments[0]!.id, { body: "Changed." });
@@ -151,7 +156,7 @@ test("enabled role resources materialize privately and disabled items stay out o
     store.close();
     store = openRole(root);
     assert.deepEqual(store.snapshot(), state);
-    const first = await materializeRole(root, "bot-1", state, { auth: "http://127.0.0.1:8743/mcp/auth" });
+    const first = await materializeRole(root, "bot-1", state, await internal(root));
     assert.deepEqual(await readdir(join(first, "skills")), ["review"]);
     assert.match(await readFile(join(first, "skills", "review", "SKILL.md"), "utf8"), /name: "review"\ndescription: "Review changes"/);
     assert.equal(await readFile(join(first, "skills", "review", "scripts", "check.sh"), "utf8"), "exit 0\n");
@@ -178,24 +183,27 @@ test("enabled role resources materialize privately and disabled items stay out o
     await removeRole(root, "bot-1", second);
     state = store.createMcpServer(state.revision, "auth", "Collision", { type: "http", url: "https://mcp.example.test/other" }, false);
     // A disabled record never enters config.toml, so it cannot stop a launch.
-    await removeRole(root, "bot-1", await materializeRole(root, "bot-1", state, { auth: "http://127.0.0.1:8743/mcp/auth" }));
+    await removeRole(root, "bot-1", await materializeRole(root, "bot-1", state, await internal(root)));
     state = store.updateMcpServer(state.revision, state.mcpServers.at(-1)!.id, { enabled: true });
-    await assert.rejects(materializeRole(root, "bot-1", state, { auth: "http://127.0.0.1:8743/mcp/auth" }), /collides/);
+    await assert.rejects(materializeRole(root, "bot-1", state, await internal(root)), /collides/);
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 });
 
-test("role launch keeps bot-bound internal URLs and rejects an unbound internal alias", async () => {
+test("role launch keeps signed stdio bindings and rejects an unbound HTTP alias", async () => {
   const root = await mkdtemp(join(tmpdir(), "stack-role-bot-mcp-"));
   const store = openRole(root);
   try {
     const base = "http://127.0.0.1:8743/mcp/auth";
-    const bound = botMcpUrl(base, "bot-1", "unix:///tmp/bot-one.sock", { STACK_STATE_DIR: root });
-    const path = await materializeRole(root, "bot-1", store.snapshot(), { auth: bound });
-    assert.match(await readFile(join(path, "config.toml"), "utf8"), /\?bot=bot-1&instance=/);
+    const bound = await internal(root);
+    const path = await materializeRole(root, "bot-1", store.snapshot(), bound);
+    const config = await readFile(join(path, "config.toml"), "utf8");
+    assert.match(config, /bot=bot-1&instance=/);
+    assert.match(config, /command = /);
+    assert.doesNotMatch(config, /url = /);
     await removeRole(root, "bot-1", path);
-    await assert.rejects(materializeRole(root, "bot-2", store.snapshot(), { auth: bound }), /another bot/);
+    await assert.rejects(materializeRole(root, "bot-2", store.snapshot(), bound), /another bot/);
     const withAlias = store.createMcpServer(0, "other", "Alias", { type: "http", url: base });
-    await assert.rejects(materializeRole(root, "bot-1", withAlias, { auth: bound }), /cannot alias the internal MCP listener/);
+    await assert.rejects(materializeRole(root, "bot-1", withAlias, bound), /cannot alias the internal MCP listener/);
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 });
 

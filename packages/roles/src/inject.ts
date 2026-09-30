@@ -5,7 +5,7 @@ import { access, mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/pr
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { mcpToolTimeoutSeconds, operatorHeaders, socketCall, socketPath, stateDir } from "@stack/api";
+import { internalMcpLaunches, mcpToolTimeoutSeconds, socketCall, socketPath, stateDir, workspaceRoot } from "@stack/api";
 import { roleMcpConflict } from "./bundle.js";
 import { injectArguments, type Harness } from "./inject-args.js";
 import { startOpenCodeHost } from "./inject-opencode.js";
@@ -40,16 +40,12 @@ async function snapshotFor(name: string): Promise<RoleSnapshot> {
 
 async function connections(snapshot: RoleSnapshot): Promise<Record<string, Mcp>> {
   const { mcpUrls } = await call("serve", "serve_status") as { mcpUrls: Record<string, string> };
-  const names = new Set(Object.keys(mcpUrls).map(asciiFold));
+  const launches = await internalMcpLaunches(workspaceRoot(import.meta.dirname), { kind: "operator" });
+  const names = new Set(Object.keys(launches).map(asciiFold));
   const origins = new Set(Object.values(mcpUrls).map((url) => new URL(url).origin));
   const servers: Record<string, Mcp> = {};
-  for (const [name, url] of Object.entries(mcpUrls)) {
-    const parsed = new URL(url);
-    if (!/^[a-z][a-z0-9-]{0,31}$/.test(name) || parsed.protocol !== "http:" || parsed.hostname !== "127.0.0.1" || !parsed.port ||
-      parsed.pathname !== `/mcp/${name}` || parsed.search || parsed.hash || parsed.username || parsed.password)
-      throw new Error("server reported an invalid internal MCP URL");
-    if (!snapshot.disabledInternalMcpServers.includes(name)) servers[name] = { type: "http", url, headers: operatorHeaders() };
-  }
+  for (const [name, launch] of Object.entries(launches))
+    if (!snapshot.disabledInternalMcpServers.includes(name)) servers[name] = launch;
   const requiredEnv = (key: string) => {
     const value = process.env[key];
     if (value === undefined) throw new Error(`Role MCP environment variable ${key} is unavailable`);

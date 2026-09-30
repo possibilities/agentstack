@@ -414,12 +414,12 @@ test("the api package serves structured documents for every workspace package", 
 
     const server = found.get("serve") as PackageDoc;
     assert.deepEqual(Object.keys(server.operations.find(op => op.name === "serve_status")?.outputSchema.properties ?? {}).sort(), ["children", "indexUrl", "inspectorUrl", "mcpUrls", "nodeVersion", "pid", "startedAt", "uiUrl"]);
-    for (const name of ["serve_local_connect", "serve_local_revoke"]) {
+    for (const name of ["serve_local_connect", "serve_local_revoke", "serve_mcp_event"]) {
       assert.ok(server.operations.some(op => op.name === name));
       assert.ok(server.transports.filter(transport => transport.type !== "socket").every(transport => !transport.operations.includes(name)));
     }
     assert.deepEqual(Object.keys(server.events), ["serve_state_changed", "pids_changed", "codex_tools_changed", "resources_changed"]);
-    assert.deepEqual(server.operations.map((operation) => operation.name).filter(name => !stateOperation(name)), ["serve_status", "serve_codex_tools", "serve_codex_tools_check", "serve_resources", "serve_resource_history", "serve_local_connect", "serve_local_revoke"]);
+    assert.deepEqual(server.operations.map((operation) => operation.name).filter(name => !stateOperation(name)), ["serve_status", "serve_codex_tools", "serve_codex_tools_check", "serve_resources", "serve_resource_history", "serve_local_connect", "serve_local_revoke", "serve_mcp_event"]);
     const serveOperation = (name: string) => server.operations.find((operation) => operation.name === name)!;
     assert.equal(serveOperation("serve_codex_tools").annotations.readOnlyHint, true);
     assert.notEqual(serveOperation("serve_codex_tools_check").annotations.readOnlyHint, true, "a check starts a runtime, so remote read-only selection excludes it");

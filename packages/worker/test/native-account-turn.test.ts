@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { z } from "zod";
-import { operation, serveApi, serveMcp, serveSocket, socketCall, socketPath } from "@stack/api";
+import { configuredMcpServers, operation, serveApi, serveSocket, socketCall, socketPath, workspaceRoot } from "@stack/api";
 import { accountEnvironment, type WorkerAccount } from "@stack/auth";
 import type { RoleSnapshot } from "@stack/roles";
 import { WorkerManager } from "../src/manager.js";
@@ -33,7 +33,8 @@ test("isolated native Grok and Devin accounts finish Worker turns in owned workt
   await git(repo, ["add", "README.md"]);
   await git(repo, ["commit", "-m", "initial"]);
   const env = { ...process.env, STACK_STATE_DIR: root };
-  const role: RoleSnapshot = { id: randomUUID(), name: "Fixture", description: "", createdAt: null, updatedAt: null, disabledInternalMcpServers: [], revision: 1, categories: [{ id: randomUUID(), title: "Test", description: "", enabled: true, createdAt: null, updatedAt: null,
+  const disabledInternalMcpServers = (await configuredMcpServers(workspaceRoot(import.meta.dirname))).map(item => item.name).filter(name => name !== "worker");
+  const role: RoleSnapshot = { id: randomUUID(), name: "Fixture", description: "", createdAt: null, updatedAt: null, disabledInternalMcpServers, revision: 1, categories: [{ id: randomUUID(), title: "Test", description: "", enabled: true, createdAt: null, updatedAt: null,
     fragments: [{ id: randomUUID(), categoryId: randomUUID(), title: "Prime", description: "", enabled: true, body: "Follow the disposable test task.", createdAt: null, updatedAt: null }] }],
     skills: [{ id: randomUUID(), name: "stack-smoke", description: "Describe test verification", body: "Describe the test result.", files: [], enabled: true }],
     mcpServers: [], trustedProjects: [] };
@@ -41,19 +42,13 @@ test("isolated native Grok and Devin accounts finish Worker turns in owned workt
   const roles = await serveSocket({ info: { name: "roles", description: "Roles", transportDescription: "Socket", path: socketPath("roles", env) },
     context: {}, operations: [operation({ name: "role_launch_snapshot", description: "Role", input: z.object({}), output: z.any(),
       async call() { return role; } })] });
-  let mcpUrls: Record<string, string> = {};
   const server = await serveSocket({ info: { name: "serve", description: "Server", transportDescription: "Socket", path: socketPath("serve", env) },
     context: {}, operations: [operation({ name: "serve_status", description: "Status", input: z.object({}), output: z.any(),
-      async call() { return { mcpUrls }; } })] });
+      async call() { return { mcpUrls: {} }; } })] });
   const supervisor = new WorkerSupervisor(root, env);
   const manager = new WorkerManager(root, supervisor, env);
   const workers = await serveSocket({ info: { name: "worker", description: "Workers", transportDescription: "Socket", path: socketPath("worker", env) },
     context: { supervisor, manager }, operations: workersApi.operations });
-  const catalogRoot = join(root, "catalog");
-  await mkdir(join(catalogRoot, "packages", "worker"), { recursive: true });
-  await writeFile(join(catalogRoot, "packages", "worker", "api.yaml"), "name: worker\ndescription: Workers.\nmcp:\n  description: Worker MCP.\n  operations: all\n  events: all\n");
-  const mcp = await serveMcp({ root: catalogRoot, env, port: 0 });
-  mcpUrls = { worker: mcp.urls.worker! };
   try {
     const source = new DatabaseSync(join(homedir(), ".local", "share", "opencode", "opencode.db"), { readOnly: true });
     let value: string | undefined;
@@ -139,7 +134,7 @@ test("isolated native Grok and Devin accounts finish Worker turns in owned workt
     }
   } finally {
     await manager.close();
-    await mcp.close(); await workers.close();
+    await workers.close();
     await server.close(); await roles.close(); await auth.close();
     await rm(root, { recursive: true, force: true });
   }

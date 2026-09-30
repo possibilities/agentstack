@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { CallToolRequestSchema, ElicitResultSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { CodexMcpDefinition } from "./catalog.js";
 import { CodexMcpSession } from "./session.js";
-import { record } from "./rpc.js";
+import { codexMcpServer } from "./server.js";
+import type { McpIdentity } from "../mcp-authority.js";
 
 type Session = { owner: string; name: string; mcp: Server; transport: StreamableHTTPServerTransport; backend: CodexMcpSession; touched: number; active: number; closing?: Promise<void> };
 
@@ -31,7 +31,7 @@ export class CodexMcpHttp {
     return closing;
   }
 
-  async handle(request: IncomingMessage, response: ServerResponse, definition: CodexMcpDefinition, owner: string, hosts: string[], checkAuthority: () => Promise<void>) {
+  async handle(request: IncomingMessage, response: ServerResponse, definition: CodexMcpDefinition, owner: string, hosts: string[], checkAuthority: () => Promise<void>, identity: McpIdentity) {
     if (this.closed) { response.writeHead(503).end(); return; }
     const id = request.headers["mcp-session-id"];
     let entry = typeof id === "string" ? this.sessions.get(id) : undefined;
@@ -39,8 +39,7 @@ export class CodexMcpHttp {
     if (!entry) {
       if (request.method !== "POST") { response.writeHead(400).end("MCP initialization required"); return; }
       if (this.all.size >= 128) { response.writeHead(503).end("Codex MCP session limit reached"); return; }
-      const backend = new CodexMcpSession(definition, this.env);
-      const mcp = new Server({ name: definition.name, version: "0.0.0" }, { capabilities: { tools: {} }, instructions: definition.description });
+      const { backend, mcp } = codexMcpServer(definition, this.env, checkAuthority, identity);
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: randomUUID, enableDnsRebindingProtection: true,
         allowedHosts: hosts, allowedOrigins: hosts.map(host => `http://${host}`),
@@ -50,31 +49,6 @@ export class CodexMcpHttp {
       entry = created;
       this.all.add(entry);
       mcp.onclose = () => { void this.remove(created); };
-      mcp.setRequestHandler(ListToolsRequestSchema, async (_request, extra) => {
-        await checkAuthority();
-        const tools = await backend.listTools(extra.signal);
-        await checkAuthority();
-        return { tools };
-      });
-      mcp.setRequestHandler(CallToolRequestSchema, async ({ params }, extra) => {
-        try {
-          await checkAuthority();
-          return await backend.callTool(params.name, params.arguments ?? {}, extra.signal, async upstream => {
-            const capabilities = mcp.getClientCapabilities();
-            const mode = upstream.mode ?? "form";
-            const openai = mode === "openai/form" || mode === "openaiForm";
-            if (mode !== "url" && mode !== "form" && !openai) return { action: "cancel" };
-            if (mode === "url" ? capabilities?.elicitation?.url === undefined : capabilities?.elicitation?.form === undefined) return { action: "cancel" };
-            if (typeof upstream.message !== "string") return { action: "cancel" };
-            const payload = mode === "url"
-              ? { mode, message: upstream.message, url: upstream.url, elicitationId: upstream.elicitationId }
-              : { mode: "form", message: upstream.message, requestedSchema: upstream.requestedSchema };
-            if (mode === "url" ? typeof upstream.url !== "string" || typeof upstream.elicitationId !== "string" : !record(upstream.requestedSchema)) return { action: "cancel" };
-            const result = await extra.sendRequest({ method: "elicitation/create", params: { ...payload, ...(record(upstream._meta) ? { _meta: upstream._meta } : {}) } } as Parameters<typeof extra.sendRequest>[0], ElicitResultSchema, { signal: extra.signal });
-            return result;
-          }, checkAuthority, params._meta);
-        } catch (error) { return { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }] }; }
-      });
       await mcp.connect(transport);
     }
     const active = request.method === "POST" ? 1 : 0;

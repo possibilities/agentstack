@@ -6,7 +6,7 @@ import { chatMessagePage, messageCursor } from "./src/chat-messages.js";
 import { operation, workspaceRoot, botInstance, socketCall, socketPath, type PackageApi } from "@stack/api";
 import { prepareBotBrowserConfig, browserNamespace } from "@stack/browse";
 import { BotLedger } from "./src/ledger.js";
-import { serverMcpUrls } from "./src/server-mcp.js";
+import { serverMcpLaunches } from "./src/server-mcp.js";
 import { stateDir } from "./src/paths.js";
 import { StateStore } from "./src/store.js";
 import { Supervisor, type ServerView } from "./src/supervisor.js";
@@ -574,7 +574,7 @@ const packageApi: PackageApi<BotsContext, BotsTopic> = {
       browserReleased: serverMcpPort === undefined ? undefined : async (botId) => {
         await socketCall(socketPath("browse", env), "tools/call", { name: "browser_bot_release", arguments: { botId } }, { timeoutMs: 65_000 });
       },
-      mcpServers: serverMcpPort === undefined ? undefined : (id, endpoint) => serverMcpUrls(workspaceRoot(import.meta.dirname), Number(serverMcpPort), id, endpoint, env) });
+      mcpServers: serverMcpPort === undefined ? undefined : (id, endpoint) => serverMcpLaunches(workspaceRoot(import.meta.dirname), Number(serverMcpPort), id, endpoint, env) });
     await supervisor.load();
     await supervisor.reap();
     await supervisor.resumeAll();

@@ -119,7 +119,9 @@ export class ClaudeBackend implements WorkerBackend {
       mcpServers[mcp.name] = "type" in mcp ? { type: "http", url: mcp.url, headers: Object.fromEntries(mcp.headers.map((v) => [v.name, v.value])) }
         : { command: mcp.command, args: mcp.args, env: Object.fromEntries(mcp.env.map((v) => [v.name, v.value])) };
       const values = "type" in mcp ? [mcp.url, ...mcp.headers.flatMap(({ value }) => [value, value.replace(/^Bearer\s+/i, "")])]
-        : [...mcp.env.map(({ value }) => value), ...mcp.args.filter((arg) => /[?=&]|token|secret|password/i.test(arg))];
+        : mcp.env.some(({ name }) => name === "STACK_MCP_AUTHORITY")
+          ? mcp.env.filter(({ name }) => name === "STACK_MCP_BINDING" || name === "STACK_MCP_OPERATOR").map(({ value }) => value)
+          : [...mcp.env.map(({ value }) => value), ...mcp.args.filter((arg) => /[?=&]|token|secret|password/i.test(arg))];
       session.secrets.push(...values.filter(Boolean));
     }
     session.secrets.sort((a, b) => b.length - a.length);

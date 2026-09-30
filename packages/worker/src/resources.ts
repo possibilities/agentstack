@@ -1,8 +1,8 @@
 import { access, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
-import { socketCall, socketPath, workerMcpUrl } from "@stack/api";
-import { mcpRecord, type RoleSnapshot } from "@stack/roles";
+import { internalMcpLaunches, socketCall, socketPath, workspaceRoot } from "@stack/api";
+import { mcpRecord, roleMcpConflict, type RoleSnapshot } from "@stack/roles";
 
 export type AcpMcp = { name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> } |
   { type: "http"; name: string; url: string; headers: Array<{ name: string; value: string }> };
@@ -23,21 +23,20 @@ export async function roleSnapshot(env: NodeJS.ProcessEnv, roleId?: string): Pro
 export async function sessionMcpServers(snapshot: RoleSnapshot, env: NodeJS.ProcessEnv, supportsHttp: boolean, cwd: string,
   worker: { id: string; instance: string }): Promise<AcpMcp[]> {
   const server = await socketCall(socketPath("serve", env), "tools/call", { name: "serve_status", arguments: {} }, { timeoutMs: 5_000 }) as { mcpUrls: Record<string, string> };
+  const launches = await internalMcpLaunches(workspaceRoot(import.meta.dirname), { kind: "worker", workerId: worker.id, instance: worker.instance }, env);
+  const origins = new Set(Object.values(server.mcpUrls).map(url => new URL(url).origin));
   const names = new Set<string>();
   const output: AcpMcp[] = [];
-  for (const [name, url] of Object.entries(server.mcpUrls)) {
+  for (const [name, launch] of Object.entries(launches)) {
     names.add(name.toLowerCase());
     if (snapshot.disabledInternalMcpServers.includes(name)) continue;
-    if (!supportsHttp) throw new Error("ACP agent cannot connect to the server's HTTP Package APIs");
-    const parsed = new URL(url);
-    if (parsed.protocol !== "http:" || parsed.hostname !== "127.0.0.1" || parsed.pathname !== `/mcp/${name}` || parsed.search)
-      throw new Error("server reported an invalid internal MCP URL");
-    output.push({ type: "http", name, url: workerMcpUrl(url, worker.id, worker.instance, env), headers: [] });
+    output.push({ name, command: launch.command, args: launch.args, env: Object.entries(launch.env).map(([name, value]) => ({ name, value })) });
   }
   for (const value of snapshot.mcpServers) {
     const item = mcpRecord.parse(value);
     if (!item.enabled) continue;
-    if (names.has(item.name.toLowerCase())) throw new Error(`Role MCP server ${item.name} collides with an internal MCP server`);
+    const conflict = roleMcpConflict(item, names, origins);
+    if (conflict) throw new Error(conflict);
     names.add(item.name.toLowerCase());
     if (item.definition.type === "stdio") {
       const values = { ...item.definition.env };

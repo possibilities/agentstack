@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { join, dirname, basename, isAbsolute, relative, sep } from "node:path";
 import { renderInstructions, type RoleSnapshot } from "./store.js";
 import { mcpRecord, skillRecord, trustedProjectRecord, type RoleMcpServer, type TrustedProject } from "./resources.js";
-import { mcpToolTimeoutSeconds, parseBotMcpIdentity } from "@stack/api";
+import { mcpToolTimeoutSeconds, parseMcpBinding, mcpPort, type McpStdioLaunch } from "@stack/api";
 
 const namePattern = /^[a-z][a-z0-9-]{0,31}$/;
 const toml = (value: string) => JSON.stringify(value);
@@ -55,7 +55,7 @@ export function roleMcpConfig(snapshot: Pick<RoleSnapshot, "mcpServers">): strin
 }
 
 /** Codexnk reads SYSTEM_APPEND.md, config.toml and skills/ from --capabilities. */
-export async function materializeRole(stateDir: string, botId: string, snapshot: RoleSnapshot, mcpServers: Readonly<Record<string, string>>, cwd?: string): Promise<string> {
+export async function materializeRole(stateDir: string, botId: string, snapshot: RoleSnapshot, mcpServers: Readonly<Record<string, McpStdioLaunch>>, cwd?: string): Promise<string> {
   const rendered = renderInstructions(snapshot);
   const parent = join(stateDir, "roles", botId);
   await mkdir(parent, { recursive: true, mode: 0o700 });
@@ -64,18 +64,16 @@ export async function materializeRole(stateDir: string, botId: string, snapshot:
     if (rendered) await writeFile(join(root, "SYSTEM_APPEND.md"), rendered, { mode: 0o600 });
     const lines: string[] = [];
     if (cwd) for (const project of matchingProjects(snapshot, await realpath(cwd))) lines.push(`[projects.${toml(project.path)}]`, 'trust_level = "trusted"', "");
-    for (const [name, url] of Object.entries(mcpServers).sort(([a], [b]) => a.localeCompare(b))) {
+    for (const [name, launch] of Object.entries(mcpServers).sort(([a], [b]) => a.localeCompare(b))) {
       if (snapshot.disabledInternalMcpServers.includes(name)) continue;
-      let parsed: URL;
-      try { parsed = new URL(url); }
-      catch { throw new Error(`invalid owner MCP entry: ${name}`); }
-      if (!namePattern.test(name) || parsed.protocol !== "http:" || parsed.hostname !== "127.0.0.1" || !parsed.port || parsed.pathname !== `/mcp/${name}` || parsed.hash)
-        throw new Error(`invalid owner MCP entry: ${name}`);
-      if (parsed.search && parseBotMcpIdentity(parsed, { STACK_STATE_DIR: stateDir })?.botId !== botId) throw new Error(`owner MCP entry ${name} belongs to another bot`);
-      lines.push(`[mcp_servers.${name}]`, `url = ${JSON.stringify(url)}`, "enabled = true", `tool_timeout_sec = ${mcpToolTimeoutSeconds(name)}`, "");
+      if (!namePattern.test(name) || launch.type !== "stdio" || !isAbsolute(launch.command) || launch.env.STACK_MCP_AUTHORITY !== "bot") throw new Error(`invalid owner MCP entry: ${name}`);
+      const identity = parseMcpBinding(launch.env.STACK_MCP_BINDING ?? "", { STACK_STATE_DIR: stateDir });
+      if (!("botId" in identity) || identity.botId !== botId) throw new Error(`owner MCP entry ${name} belongs to another bot`);
+      lines.push(`[mcp_servers.${name}]`, `command = ${toml(launch.command)}`, `args = [${launch.args.map(toml).join(", ")}]`,
+        `env = ${inline(launch.env)}`, "enabled = true", `tool_timeout_sec = ${mcpToolTimeoutSeconds(name)}`, "");
     }
     const ownerNames = new Set(Object.keys(mcpServers).map((name) => name.toLowerCase()));
-    const ownerOrigins = new Set(Object.values(mcpServers).map((url) => new URL(url).origin));
+    const ownerOrigins = new Set(Object.values(mcpServers).flatMap(launch => serverMcpOrigins(mcpPort(launch.env))));
     for (const value of snapshot.mcpServers) {
       const server = mcpRecord.parse(value);
       const conflict = roleMcpConflict(server, ownerNames, ownerOrigins);

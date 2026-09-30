@@ -37,7 +37,7 @@ mcp:
     - project_delete
     - project_reorder
   events: all
-  description: HTTP MCP operations for role editing, forwarded to the roles socket.
+  description: MCP operations for role editing, forwarded to the roles socket over internal stdio or external HTTP.
 websocket:
   operations:
     - roles_state_read

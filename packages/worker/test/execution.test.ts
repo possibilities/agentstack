@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { operation, parseWorkerMcpIdentity, serveApi, serveSocket, socketCall, socketPath } from "@stack/api";
+import { configuredMcpServers, workspaceRoot, operation, parseMcpBinding, serveApi, serveSocket, socketCall, socketPath } from "@stack/api";
 import { RoleStore, type RoleSnapshot } from "@stack/roles";
 import { WorkerSupervisor } from "../src/supervisor.js";
 import { WorkerManager } from "../src/manager.js";
@@ -101,11 +101,11 @@ process.stdin.on('data', (chunk) => {
     const raw = buffer.slice(0, end); buffer = buffer.slice(end + 1);
     const frame = JSON.parse(raw);
     if (frame.method === 'initialize') send({ id: frame.id, result: { protocolVersion: 1,
-      agentCapabilities: { loadSession: true, mcpCapabilities: { http: true }, sessionCapabilities: { close: {} } },
+      agentCapabilities: { loadSession: true, mcpCapabilities: { http: false }, sessionCapabilities: { close: {} } },
       agentInfo: { version: 'fixture' } } });
     else if (frame.method === 'session/new') { cwd = frame.params.cwd;
       void writeFile(join(cwd, 'mcp-names.json'), JSON.stringify(frame.params.mcpServers.map((entry) => entry.name)));
-      void writeFile(join(cwd, 'mcp-urls.json'), JSON.stringify(frame.params.mcpServers.filter((entry) => entry.type === 'http').map((entry) => ({ name: entry.name, url: entry.url }))));
+      void writeFile(join(cwd, 'mcp-launches.json'), JSON.stringify(frame.params.mcpServers));
       const sessionId = 'session-' + Date.now();
       send({ method: 'session/update', params: { sessionId, update: { sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'review', description: 'Review the work' }] } } });
       send({ id: frame.id, result: { sessionId, configOptions: options() } }); }
@@ -278,10 +278,12 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     assert.match(chunk.data, /Write an output file/);
     assert.equal(chunk.data.includes("Check your work"), true);
     assert.ok(scopedChanges.includes(id));
-    assert.deepEqual(JSON.parse(await readFile(join(started.worker.cwd!, "mcp-names.json"), "utf8")), ["roles", "fixture-mcp"]);
-    const wiring = JSON.parse(await readFile(join(started.worker.cwd!, "mcp-urls.json"), "utf8")) as Array<{ name: string; url: string }>;
-    assert.equal(wiring[0]?.name, "roles");
-    assert.deepEqual(parseWorkerMcpIdentity(new URL(wiring[0]!.url), env), { workerId: id, instance: started.worker.runtimeInstance });
+    const fleet = (await configuredMcpServers(workspaceRoot(import.meta.dirname))).map(item => item.name);
+    assert.deepEqual(JSON.parse(await readFile(join(started.worker.cwd!, "mcp-names.json"), "utf8")), [...fleet.filter(name => name !== "notify"), "fixture-mcp"]);
+    const wiring = JSON.parse(await readFile(join(started.worker.cwd!, "mcp-launches.json"), "utf8")) as Array<{ name: string; command: string; env: Array<{ name: string; value: string }> }>;
+    const internal = wiring.find(item => item.name === "roles")!;
+    assert.equal(internal.command, process.execPath);
+    assert.deepEqual(parseMcpBinding(internal.env.find(item => item.name === "STACK_MCP_BINDING")!.value, env), { workerId: id, instance: started.worker.runtimeInstance });
     assert.equal(JSON.stringify(await manager.status(id)).includes("fixture-secret"), false);
     const output = await readFile(join(started.worker.cwd!, "output.txt"), "utf8");
     assert.equal(output, `Check your work.\n\n${start.task}`);
@@ -347,7 +349,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     await reopenedSupervisor.reconcile();
     assert.equal((await manager.resume(id, false)).phase, "idle");
     assert.equal((await manager.status(id)).worker.roleId, roleId);
-    assert.deepEqual(JSON.parse(await readFile(join(started.worker.cwd!, "loaded-mcp-names.json"), "utf8")), ["roles", "fixture-mcp"]);
+    assert.deepEqual(JSON.parse(await readFile(join(started.worker.cwd!, "loaded-mcp-names.json"), "utf8")), [...fleet.filter(name => name !== "notify"), "fixture-mcp"]);
     assert.equal((await manager.closeWorker(id)).phase, "closed");
     const removed = await manager.remove(id, true);
     assert.equal(removed.retainedBranch, started.worker.branch);
@@ -361,18 +363,22 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     for (let i = 0; i < 100 && (await manager.status(next.worker.id)).worker.phase !== "idle"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(next.worker.roleId, nextRoleId);
     assert.equal(next.worker.roleRevision, 0);
-    assert.deepEqual(JSON.parse(await readFile(join(next.worker.cwd!, "mcp-names.json"), "utf8")), ["roles", "notify"]);
+    assert.deepEqual(JSON.parse(await readFile(join(next.worker.cwd!, "mcp-names.json"), "utf8")), fleet);
     await manager.closeWorker(next.worker.id);
     await manager.remove(next.worker.id, true);
     const chosen = await manager.start({ ...start, roleId, requestId: randomUUID() });
     for (let i = 0; i < 100 && (await manager.status(chosen.worker.id)).worker.phase !== "idle"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(chosen.worker.roleId, roleId);
     assert.equal(chosen.worker.roleRevision, roleStore.role(roleId).snapshot().revision);
-    assert.deepEqual(JSON.parse(await readFile(join(chosen.worker.cwd!, "mcp-names.json"), "utf8")), ["fixture-mcp"]);
+    assert.deepEqual(JSON.parse(await readFile(join(chosen.worker.cwd!, "mcp-names.json"), "utf8")), [...fleet.filter(name => !["roles", "notify"].includes(name)), "fixture-mcp"]);
     assert.match(await readFile(join(chosen.worker.cwd!, ".opencode", "skills", "review", "SKILL.md"), "utf8"), /Review the diff/);
     assert.equal(await readFile(join(chosen.worker.cwd!, "output.txt"), "utf8"), `Check your work.\n\n${start.task}`);
     await manager.closeWorker(chosen.worker.id);
     await manager.remove(chosen.worker.id, true);
+    roleStore.role(nextRoleId).createMcpServer(0, "external-http", "Requires native HTTP support", { type: "http", url: "https://fixture.invalid/mcp" });
+    const unsupported = await manager.start({ ...start, requestId: randomUUID() });
+    assert.equal(unsupported.worker.phase, "failed", "additional HTTP Role servers still need the runtime's HTTP capability");
+    await assert.rejects(stat(join(unsupported.worker.cwd!, "output.txt")), { code: "ENOENT" });
     await hudCall("work_update", { requestId: randomUUID(), id: workItemId, expectedRevision: 2, patch: { state: "completed" } });
     const beforeClosedAdmission = manager.ledger.workers().length;
     await assert.rejects(manager.start({ ...start, requestId: randomUUID() }), /work_closed/);

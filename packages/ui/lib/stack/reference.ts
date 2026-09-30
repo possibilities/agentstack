@@ -21,6 +21,6 @@ export function subscriptionExample(doc: PackageDoc, transport: TransportDoc): s
 export function transportInstructions(type: string): string {
   if (type === "socket") return "Send compact JSON followed by a newline on this package's Unix socket. Keep the connection open for subscriptions.";
   if (type === "websocket") return "Send JSON as a text frame on the shared WebSocket connection. Address each Package API with params.package; use distinct subscription IDs for independent event watches.";
-  if (type === "mcp") return "Use an initialized MCP client and call this tool. This JSON-RPC body is illustrative; the client manages HTTP session, initialization and headers. It is not a standalone HTTP request.";
+  if (type === "mcp") return "Use an initialized MCP client and call this tool. Internal Stack launches use stdio; external consumers use HTTP. This JSON-RPC body is illustrative; the client manages transport and initialization.";
   return "Consult this transport's description for its request format.";
 }

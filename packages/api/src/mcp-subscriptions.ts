@@ -8,6 +8,7 @@ import type { InvocationContext } from "./operation.js";
 import { currentMcpCatalog, type SocketCatalog } from "./exposure.js";
 import { forwardTimeout } from "./forward-timeout.js";
 import { stateHash } from "./state.js";
+import { mcpEventCatalog } from "./mcp-events.js";
 
 export type EventTarget = { botId: string; instance: string; threadId: string };
 export type EventSubscription = EventTarget & {
@@ -100,12 +101,14 @@ export class McpEventSubscriptions {
     for (const record of this.records.values()) if (!record.socket && !record.retry) void this.reconnect(record);
   }
 
+  /** All generated thread-owned operations, including status/removal, verify lineage. */
+  async validateInvocation(invocation: InvocationContext): Promise<void> {
+    await this.validate(targetOf(invocation));
+  }
+
   async catalog(pkg: string, admitted?: SocketCatalog): Promise<{ topics: Record<string, string>; scope: { description: string; example: string; required: boolean } | null; reads: Array<{ name: string; description: string; inputSchema: unknown }> }> {
     const doc = admitted ?? await this.definition(pkg);
-    return {
-      topics: doc.events?.topics ?? {}, scope: doc.events?.scope ?? null,
-      reads: doc.tools.filter((tool) => tool.annotations?.readOnlyHint).map(({ name, description, inputSchema }) => ({ name, description: description ?? "", inputSchema })),
-    };
+    return mcpEventCatalog(doc);
   }
 
   async subscribe(pkg: string, input: { topic: string; scope?: string; readOperation: string; readArguments?: Record<string, unknown> }, invocation?: InvocationContext): Promise<{ subscription: EventSubscription; value: unknown }> {

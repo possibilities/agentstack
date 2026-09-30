@@ -59,7 +59,7 @@ A durable request from a verified Bot Chat for human help with an entire Browser
 
 ## Transport
 
-A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are the local control transports. Socket is the full internal superset. Each MCP and WebSocket declaration independently requires `operations` and `events`: `all`, a positive name list, or `[]` for none; an absent transport is disabled. MCP forwards over loopback HTTP using a request-time selection and, under the server, offers generated Bot event tools for selected topics and exposed read-only operations. WebSocket forwards over one shared loopback listener and package-addressed connection, retaining its operation/topic selection from handshake; each subscription has its own identifier and optional scope. An optional `http` Transport declares explicit JSON or static routes on separate server-lifecycle listeners; it does not expose other Package API operations.
+A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are the local control transports. Socket is the full internal superset. Each MCP and WebSocket declaration independently requires `operations` and `events`: `all`, a positive name list, or `[]` for none; an absent transport is disabled. MCP uses native stdio for Stack's Bot, Worker and injected Role launches, and authenticated loopback HTTP for external consumers. Both use shared handlers that revalidate current exposure and forward to the running private socket backend; stdio creates no Package API context. Generated Bot event tools route to the server's sole durable subscription owner. WebSocket forwards over one shared loopback listener and package-addressed connection, retaining its operation/topic selection from handshake; each subscription has its own identifier and optional scope. An optional `http` Transport declares explicit JSON or static routes on separate server-lifecycle listeners; it does not expose other Package API operations.
 
 _Avoid_: protocol, binding
 
@@ -71,9 +71,9 @@ _Avoid_: stream, feed, pubsub
 
 ## Default MCP fleet
 
-The Role-selectable HTTP MCP connections supplied by Stack: Package APIs and the
+The Role-selectable MCP connections supplied by Stack: Package APIs and the
 five Codex tool bridges described in [ADR 0129](docs/adr/0129-codex-tools-in-default-mcp-fleet.md).
-All are enabled unless a Role excludes them. The bridges are not Package APIs;
+Internal launches use stdio; external consumers retain HTTP. All are enabled unless a Role excludes them. The bridges are not Package APIs;
 they have no socket operations or generated event subscriptions.
 
 ## MCP event subscription
@@ -152,7 +152,7 @@ _Avoid_: native activity, UI selection, global Bot current task
 
 ## Worker MCP invocation context
 
-Transport-supplied Worker ID and exact native runtime instance from a private signed MCP URL. The server checks both against the durable Worker and live account backend. A manifest's positive `mcp.workerOperations` list, intersected with MCP exposure, selects disclosed reads; omission denies all. Read-only hints alone grant no access. Worker record reads are self-only, and Worker calls cannot subscribe Bot threads. It is not an OS sandbox. _Avoid_: Bot identity, operator authority
+Transport-supplied Worker ID and exact native runtime instance from a private signed MCP launch binding, carried in stdio environment or a legacy HTTP URL. The gateway checks both against the durable Worker and live account backend on each request. Missing or invalid bindings never fall back to operator authority. A manifest's positive `mcp.workerOperations` list, intersected with MCP exposure, selects disclosed reads; omission denies all. Read-only hints alone grant no access. Worker record reads are self-only, and Worker calls cannot subscribe Bot threads. It is not an OS sandbox. _Avoid_: Bot identity, operator authority
 
 ## Inference request
 
@@ -238,7 +238,7 @@ An additional named, enabled or disabled HTTP or stdio MCP definition in the Rol
 
 ## MCP invocation context
 
-Transport-supplied information about one Package API operation invoked through MCP. A private per-launch URL proves a live Bot ID and instance; Codex supplies a thread ID in the tool call's `_meta`. Package API handlers can read that context as an optional third argument without changing their public input schema. The thread ID is a claim until checked against the Bot's sanctioned main-thread lineage.
+Transport-supplied information about one Package API operation invoked through MCP. A private signed launch binding proves a live Bot ID and instance, carried in stdio environment or a legacy HTTP URL; Codex supplies a thread ID in each tool call's `_meta`, independently of the connection. Package API handlers can read that context as an optional third argument without changing their public input schema. The thread ID is a claim until checked against the Bot's sanctioned main-thread lineage. Role injection uses explicit operator authority and cannot acquire Bot wakeups.
 
 ## Voice call
 

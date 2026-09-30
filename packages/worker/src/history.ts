@@ -24,12 +24,13 @@ const updateKinds = new Set(["agent_message_chunk", "user_message_chunk", "tool_
 /** Retain vendor JSON, but never reasoning blocks or known credential fields. Launch metadata is separately allowlisted. */
 export function safeValue(value: unknown, depth = 0): unknown {
   if (depth > 64) return "[depth limit]";
-  if (typeof value === "string") return value.replace(/https?:\/\/[^\s"<>]*\/mcp\/[^\s"<>]*[?][^\s"<>]*/g, "[private MCP URL]");
+  if (typeof value === "string") return value.replace(/https?:\/\/[^\s"<>]*\/mcp\/[^\s"<>]*[?][^\s"<>]*/g, "[private MCP URL]")
+    .replace(/(?:bot|worker)=[^\s"<>]*&proof=[0-9a-f]{64}/g, "[private MCP binding]");
   if (Array.isArray(value)) return value.map((item) => safeValue(item, depth + 1));
   if (!record(value)) return value;
   if (["reasoning", "thinking", "agent_thought_chunk"].includes(String(value.type ?? value.sessionUpdate))) return { omitted: "raw reasoning" };
   return Object.fromEntries(Object.entries(value).filter(([key]) => !["__proto__", "constructor", "prototype"].includes(key)).map(([key, item]) =>
-    [key, /^(authorization|credentials?|password|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|reasoning|thinking|chain_of_thought)$/i.test(key)
+    [key, /^(authorization|credentials?|password|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|STACK_MCP_BINDING|STACK_MCP_OPERATOR|reasoning|thinking|chain_of_thought)$/i.test(key)
       ? "[omitted]" : safeValue(item, depth + 1)]));
 }
 

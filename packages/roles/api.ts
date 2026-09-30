@@ -37,7 +37,7 @@ const preview = z.strictObject({ roleId, revision, rendered: z.string(), segment
 const write = selection.extend({ expectedRevision: revision });
 const count = z.number().int().nonnegative();
 const internalServer = z.strictObject({ name: z.string().describe("Stable connection key."), title: z.string().describe("Display name; the key for Package APIs."),
-  description: z.string(), kind: z.enum(["package", "codex"]).describe("A Package API, or a Codex tool bridge whose availability serve_codex_tools reports."), enabled: z.boolean() });
+  description: z.string(), kind: z.enum(["package", "codex"]).describe("A Package API, or a Codex tool bridge whose availability serve_codex_tools reports."), transport: z.literal("stdio").describe("Native transport for internal Bot, Worker and injected Role connections."), enabled: z.boolean() });
 const launchPreview = z.strictObject({
   roleId, revision,
   instructions: z.strictObject({ bytes: count.describe("UTF-8 size of SYSTEM_APPEND.md."), limitBytes: count, fragments: count.describe("Fragments that render.") }),
@@ -65,7 +65,7 @@ function changed(ctx: RolesContext, result: z.infer<typeof launchSnapshot>) { ct
 const internalMcpServers = () => configuredMcpServers(workspaceRoot(import.meta.dirname));
 const internalMcpNames = async () => (await internalMcpServers()).map((pkg) => pkg.name);
 const internalRows = (servers: Awaited<ReturnType<typeof internalMcpServers>>, disabled: string[]) =>
-  servers.map(({ name, title, description, kind }) => ({ name, title, description, kind, enabled: !disabled.includes(name) }));
+  servers.map(({ name, title, description, kind }) => ({ name, title, description, kind, transport: "stdio" as const, enabled: !disabled.includes(name) }));
 /** Refuse a role MCP server a launch would refuse, whether or not it is enabled now. */
 async function ensureRoleMcp(ctx: RolesContext, name?: string, definition?: z.infer<typeof mcpDefinition>): Promise<void> {
   const origins = new Set(ctx.mcpOrigins ?? []);

@@ -4,14 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Supervisor, type LaunchSpec, type RunningChild } from "../src/supervisor.js";
+import { internalMcpLaunches, workspaceRoot } from "@stack/api";
 
 test("Bot launches resolve the current default and apply its internal MCP switches without changing existing snapshots", async () => {
   const root = await mkdtemp(join(tmpdir(), "stack-bot-roles-"));
   const launches: LaunchSpec[] = [];
-  const internal: Record<string, string> = { roles: "http://127.0.0.1:8743/mcp/roles", notify: "http://127.0.0.1:8743/mcp/notify" };
+  const internal = ["roles", "notify"];
   const supervisor = new Supervisor({ stateDir: root, graceMs: 20,
     endpoint: async () => `ws://127.0.0.1:${48000 + launches.length}`,
-    mcpServers: async () => internal,
+    mcpServers: async (botId, endpoint) => Object.fromEntries(Object.entries(await internalMcpLaunches(workspaceRoot(import.meta.dirname), { kind: "bot", botId, endpoint }, { STACK_STATE_DIR: root })).filter(([name]) => internal.includes(name))),
     waitReady: async () => undefined,
     launch(spec): RunningChild {
       launches.push(spec);
@@ -63,7 +64,7 @@ test("Bot launches resolve the current default and apply its internal MCP switch
     const allOff = await config(launches[4]!);
     assert.doesNotMatch(allOff, /mcp_servers\.(roles|notify)/);
     assert.match(allOff, /mcp_servers.external/);
-    internal.brain = "http://127.0.0.1:8743/mcp/brain";
+    internal.push("brain");
     await supervisor.stop("one");
     await supervisor.start({ id: "one", cwd: root });
     const addedPackage = await config(launches[5]!);

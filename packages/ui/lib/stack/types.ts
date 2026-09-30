@@ -590,7 +590,7 @@ export type RoleReceipt = { roleId: string; revision: number };
 export type RolePreview = { roleId: string; revision: number; rendered: string; bytes: number; limitBytes: number;
   segments: Array<{ categoryId: string; fragmentId: string; start: number; end: number }> };
 /** A configured internal Stack MCP server and whether the Role's later launches connect to it. `title` is the key for Package APIs. */
-export type RoleInternalServer = { name: string; title: string; description: string; kind: "package" | "codex"; enabled: boolean };
+export type RoleInternalServer = { name: string; title: string; description: string; kind: "package" | "codex"; transport: "stdio"; enabled: boolean };
 /** `role_internal_mcp_list`: the servers configured now, each with this Role's switch. */
 export type RoleInternalMcp = { roleId: string; revision: number; servers: RoleInternalServer[] };
 

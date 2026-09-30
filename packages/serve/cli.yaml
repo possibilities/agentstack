@@ -4,5 +4,5 @@ usage: |
          stack serve open [ui|inspector] [configured-development-origin]
          stack serve revoke-local
          stack serve api <package> <transport>
-         stack serve mcp
+         stack serve mcp [<name> --stdio]
          stack serve websocket

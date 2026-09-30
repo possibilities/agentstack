@@ -314,11 +314,12 @@ test("owner MCP connections are materialized in each launch bundle without persi
   const stateDir = await mkdtemp(join(tmpdir(), "stack-mcp-launch-"));
   const cwd = await mkdtemp(join(tmpdir(), "stack-mcp-cwd-"));
   const launches: string[][] = [];
-  let exposed: Record<string, string> = { auth: "http://127.0.0.1:43123/mcp/auth" };
+  const { internalMcpLaunches, workspaceRoot } = await import("@stack/api");
+  const exposed = ["auth"];
   const supervisor = new Supervisor({
     stateDir,
     endpoint: async () => `ws://127.0.0.1:${43400 + launches.length}`,
-    mcpServers: async () => exposed,
+    mcpServers: async (botId, endpoint) => Object.fromEntries(Object.entries(await internalMcpLaunches(workspaceRoot(import.meta.dirname), { kind: "bot", botId, endpoint }, { STACK_STATE_DIR: stateDir })).filter(([name]) => exposed.includes(name))),
     launch(spec) {
       launches.push(spec.args);
       let finish: (code: number | null) => void = () => undefined;
@@ -341,7 +342,7 @@ test("owner MCP connections are materialized in each launch bundle without persi
     assert.match(await readFile(join(firstRoot, "config.toml"), "utf8"), /\[mcp_servers.auth\]/);
     assert.deepEqual(supervisor.store.servers()[0]?.args, ["-c", 'model="gpt-5.4"']);
     await supervisor.stop("with-mcp");
-    exposed = { ...exposed, bots: "http://127.0.0.1:43123/mcp/bots" };
+    exposed.push("bots");
     await supervisor.start({ id: "with-mcp", cwd });
     const secondRoot = launches[1]?.[launches[1].indexOf("--capabilities") + 1];
     assert.ok(secondRoot);

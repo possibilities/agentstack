@@ -7,6 +7,7 @@ import test from "node:test";
 import { z } from "zod";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { CallToolResultSchema, ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { serveMcp } from "../src/mcp.js";
 import { CodexToolsDiagnostics } from "../src/codex-mcp/diagnostics.js";
@@ -15,6 +16,7 @@ import { botMcpUrl, workerMcpUrl } from "../src/bot-mcp-identity.js";
 import { serveSocket } from "../src/socket.js";
 import { socketPath } from "../src/workspace.js";
 import { operation } from "../src/operation.js";
+import { internalMcpLaunches } from "../src/mcp-launch.js";
 
 // A real subprocess protocol peer, selected through the operator runtime setting.
 // No desktop installation, credentials, or user data is read by this test.
@@ -35,6 +37,52 @@ createInterface({input:process.stdin}).on('line',line=>{
  } else if(m.id===900 && waiting) {send({id:waiting.id,result:{content:[{type:'text',text:JSON.stringify(m.result)}],isError:false,structuredContent:null}});waiting=null;}
 });
 `;
+
+test("Codex stdio MCP retains a private session, forwards media/elicitation, and reaps its backend on cancellation and pipe/signal closure", { timeout: 30_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "stack-codex-stdio-"));
+  const binary = join(root, "codex");
+  await mkdir(join(root, "packages"));
+  await writeFile(binary, `#!${process.execPath}\n${runtime}`); await chmod(binary, 0o700);
+  const env = { ...process.env, STACK_STATE_DIR: join(root, "state"), STACK_CODEX_TOOLS_HOME: root, STACK_CODEX_TOOLS_BIN: binary, STACK_MCP_PORT: "not-an-http-port" };
+  const launch = (await internalMcpLaunches(root, { kind: "operator" }, env)).messages!;
+  const clients: Client[] = [];
+  try {
+    for (const ending of ["EOF", "SIGTERM", "cancel"] as const) {
+      const transport = new StdioClientTransport({ ...launch, cwd: root, stderr: "pipe" });
+      const client = new Client({ name: "stdio-fixture", version: "1" }, { capabilities: { elicitation: { form: {} } } }); clients.push(client);
+      let hold = false, asked!: () => void, release!: () => void;
+      const asking = new Promise<void>(resolve => { asked = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
+      client.setRequestHandler(ElicitRequestSchema, async request => {
+        assert.equal(request.params._meta?.scope, "fixture");
+        if (hold) { asked(); await held; }
+        return { action: "accept", content: {}, _meta: { grant: "stdio" } };
+      });
+      await client.connect(transport);
+      assert.equal((await client.listTools()).tools[0]?.name, "inspect");
+      const first = CallToolResultSchema.parse(await client.callTool({ name: "inspect", _meta: { trace: "stdio" } }));
+      const again = CallToolResultSchema.parse(await client.callTool({ name: "inspect" }));
+      assert.equal(first.structuredContent?.pid, again.structuredContent?.pid, "one pipe preserves the native session");
+      assert.deepEqual(first.content, [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }]);
+      assert.equal((first.structuredContent?.meta as { trace: string }).trace, "stdio");
+      assert.deepEqual(first._meta, { source: "fixture" });
+      const approved = await client.callTool({ name: "inspect", arguments: { approve: true, mode: "openaiForm" } });
+      assert.deepEqual(JSON.parse((approved.content as Array<{ text: string }>)[0]!.text), { action: "accept", content: {}, _meta: { grant: "stdio" } });
+      if (ending === "cancel") {
+        hold = true;
+        const abort = new AbortController();
+        const pending = client.callTool({ name: "inspect", arguments: { approve: true } }, undefined, { signal: abort.signal });
+        await asking; abort.abort(); await assert.rejects(pending); release();
+        await assert.rejects(client.listTools(), /closed|reconnect/i);
+        await client.close();
+      } else if (ending === "SIGTERM") {
+        const closed = new Promise<void>(resolve => { client.onclose = resolve; });
+        process.kill(transport.pid!, "SIGTERM"); await closed;
+      } else await client.close();
+      assert.throws(() => process.kill(Number(first.structuredContent?.pid), 0), { code: "ESRCH" });
+    }
+    assert.equal((await readFile(join(root, "starts"), "utf8")).trim().split("\n").length, 3, "interrupted calls never restart or replay a backend");
+  } finally { await Promise.all(clients.map(client => client.close())); await rm(root, { recursive: true, force: true }); }
+});
 
 test("Codex HTTP MCP isolates sessions, preserves upstream tools/media/approvals, and reaps children", { timeout: 30_000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), "stack-codex-mcp-"));

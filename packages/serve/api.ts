@@ -6,6 +6,7 @@ import { serverResourcesInput, serverResourcesOutput, serverResourceHistoryInput
 import { serverStateOperations } from "./src/state.js";
 import { withStateInventory } from "@stack/api";
 import { serverStateCategories } from "./src/state-categories.js";
+import { mcpEventRelayInput, relayMcpEvent, workspaceRoot } from "@stack/api";
 
 const childStatusSchema = z.object({
   name: z.string().describe("Required child name."),
@@ -89,12 +90,22 @@ export const serverStatus = operation({
     indexUrl: z.string().nullable().describe("Loopback UI entry URL for the Fleet bench while the server runs it."),
     uiUrl: z.string().nullable().describe("Loopback UI canvas URL at / while the server runs it."),
     inspectorUrl: z.string().nullable().describe("Loopback Inspector URL while the server runs it."),
-    mcpUrls: z.record(z.string(), z.string()).describe("Loopback MCP URLs by Package API name."),
+    mcpUrls: z.record(z.string(), z.string()).describe("External-consumer loopback HTTP MCP URLs by fleet connection name. Internal launches use stdio."),
     children: z.array(childStatusSchema),
   }),
   annotations: { title: "Server status", readOnlyHint: true },
   async call(ctx: ServerContext) {
     return ctx.source.snapshot();
+  },
+});
+
+export const serverMcpEvent = operation({
+  name: "serve_mcp_event", description: "Private-socket-only generated MCP event relay to the sole subscription owner. Independently verifies the signed Bot launch and sanctioned per-call thread. Never exposed through MCP or WebSocket.",
+  input: mcpEventRelayInput, output: z.record(z.string(), z.unknown()),
+  async call(ctx: ServerContext, input, invocation) {
+    if (invocation) throw new Error("MCP event relay requires the private socket");
+    if (!ctx.source.subscriptions) throw new Error("subscription owner is unavailable");
+    return await relayMcpEvent(ctx.source.subscriptions, input, workspaceRoot(import.meta.dirname), ctx.env ?? process.env) as Record<string, unknown>;
   },
 });
 
@@ -141,7 +152,7 @@ export const topics = {
 export type ServerTopic = keyof typeof topics;
 
 const packageApi: PackageApi<ServerContext, ServerTopic> = {
-  operations: [...serverStateOperations, serverStatus, serverCodexTools, serverCodexToolsCheck, serverResources, serverResourceHistory, serverLocalConnect, serverLocalRevoke],
+  operations: [...serverStateOperations, serverStatus, serverCodexTools, serverCodexToolsCheck, serverResources, serverResourceHistory, serverLocalConnect, serverLocalRevoke, serverMcpEvent],
   events: {
     topics,
     start(ctx: ServerContext, publish: (topic: ServerTopic) => void) {

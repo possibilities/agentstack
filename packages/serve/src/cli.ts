@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mcpPort, runApi, runMcp, runWebSocket, serveApi, serveMcp, socketCall, socketPath, websocketPort, withLocalAuth } from "@stack/api";
+import { mcpPort, runApi, runMcp, runMcpStdio, runWebSocket, serveApi, serveMcp, socketCall, socketPath, websocketPort, withLocalAuth } from "@stack/api";
 import { spawn } from "node:child_process";
 import { contentNetworkConfig } from "@stack/content";
 import { lookup } from "node:dns/promises";
@@ -34,11 +34,13 @@ if (command === "revoke-local") {
 if (command === "api") {
   await runApi(args);
 } else if (command === "mcp") {
-  await runMcp();
+  if (args.length === 2 && args[1] === "--stdio") return runMcpStdio(args[0]!);
+  if (args.length) throw new Error("usage: stack serve mcp [<name> --stdio]");
+  return runMcp();
 } else if (command === "websocket") {
   await runWebSocket();
 } else if (command !== "serve") {
-  console.error("usage: stack serve\nusage: stack serve open [ui|inspector] [configured-development-origin]\nusage: stack serve revoke-local\nusage: stack serve api <package> <transport>\nusage: stack serve mcp\nusage: stack serve websocket");
+  console.error("usage: stack serve\nusage: stack serve open [ui|inspector] [configured-development-origin]\nusage: stack serve revoke-local\nusage: stack serve api <package> <transport>\nusage: stack serve mcp [<name> --stdio]\nusage: stack serve websocket");
   process.exit(1);
 }
 

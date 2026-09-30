@@ -7,6 +7,8 @@ The Bot and Worker delivery contracts, including
 
 ## Decision
 
+Internal MCP transport is now native stdio under [ADR 0137](0137-internal-mcp-over-stdio.md), preserving explicit operator authority and native isolation.
+
 The Roles package owns `stack roles inject [default|role-name] --
 <claude|codex|opencode> [native args...]`; the Stack CLI dispatches to it.
 Omission or literal `default` selects the catalog's designated default. Another

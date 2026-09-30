@@ -36,7 +36,7 @@ mcp:
     - recovery_execute
     - doctor
   events: []
-  description: HTTP MCP operations forwarded to the Brain socket. Change notices are not offered to agents.
+  description: MCP operations forwarded to the Brain socket over internal stdio or external HTTP. Change notices are not offered to agents.
 websocket:
   operations:
     - brain_state_read

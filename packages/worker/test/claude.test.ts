@@ -7,7 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { z } from "zod";
 import type { Options, PermissionResult, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { operation, parseWorkerMcpIdentity, serveSocket, socketPath } from "@stack/api";
+import { operation, parseMcpBinding, serveSocket, socketPath } from "@stack/api";
 import { type RoleSnapshot } from "@stack/roles";
 import { ClaudeBackend, type ClaudeQuery, type ClaudeQueryFactory } from "../src/claude.js";
 import { WorkerManager } from "../src/manager.js";
@@ -86,8 +86,8 @@ function sdkFixture() {
         output.emit({ type: "stream_event", uuid: randomUUID(), session_id: id, parent_tool_use_id: null,
           event: { type: "message_start", message: { id: messageId } } });
         const internal = options.mcpServers?.roles;
-        const textOutput = text === "SECRETS" && internal && "url" in internal
-          ? `Do not retain ${internal.url} or fixture-bearer-token` : "Done.\n";
+        const textOutput = text === "SECRETS" && internal && "env" in internal
+          ? `This worker must not retain ${internal.env?.STACK_MCP_BINDING} or fixture-bearer-token` : "Done.\n";
         for (let i = 0; i < textOutput.length; i += 7) output.emit({ type: "stream_event", uuid: randomUUID(), session_id: id, parent_tool_use_id: null,
           event: { type: "content_block_delta", delta: { type: "text_delta", text: textOutput.slice(i, i + 7) } } });
         output.emit({ type: "assistant", uuid: randomUUID(), session_id: id, parent_tool_use_id: null,
@@ -167,8 +167,11 @@ test("Claude SDK workers preserve account/session continuity, exact permission a
     const plugin = native.options.plugins![0]!;
     assert.match(await readFile(join(plugin.path, "skills", "fixture", "SKILL.md"), "utf8"), /Review carefully/);
     const internal = native.options.mcpServers!.roles!;
-    assert.ok("url" in internal);
-    assert.deepEqual(parseWorkerMcpIdentity(new URL(internal.url), env), { workerId: id, instance: first.worker.runtimeInstance });
+    assert.ok("command" in internal);
+    assert.equal(internal.command, process.execPath);
+    assert.equal(internal.env?.STACK_STATE_DIR, root);
+    assert.deepEqual(parseMcpBinding(internal.env!.STACK_MCP_BINDING!, env), { workerId: id, instance: first.worker.runtimeInstance });
+    assert.deepEqual(native.options.mcpServers!.external, { type: "http", url: "https://fixture.invalid/mcp", headers: { Authorization: "Bearer fixture-bearer-token" } });
     assert.equal(native.inputs[0]!.message.content, "First");
     assert.equal((await manager.start(request)).duplicate, true); assert.equal(native.inputs.length, 1);
     const runtime = supervisor.runtimeList()[0]!;
@@ -222,6 +225,7 @@ test("Claude SDK workers preserve account/session continuity, exact permission a
     const lastTurn = (await manager.status(id)).turn!;
     const secretRecords = JSON.stringify(await manager.records(id, 0, 50, lastTurn.id));
     const transcript = JSON.stringify(await manager.read(id, 0, 50));
+    assert.ok(transcript.includes("This worker must not retain"), "non-secret launch labels must not redact ordinary prose");
     for (const value of [secretRecords, transcript]) {
       assert.equal(value.includes("fixture-bearer-token"), false); assert.equal(value.includes("proof="), false);
     }

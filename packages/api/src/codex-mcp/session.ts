@@ -6,7 +6,7 @@ import { projectedProgram, projectedTools } from "./projections.js";
 import { CodexRpc, record, type Elicitation } from "./rpc.js";
 import { selectUpstream, startToolThread, upstreamServers } from "./upstream.js";
 
-/** Per HTTP MCP session; serialized calls keep REPL state and approval routing coherent. */
+/** Per MCP connection; serialized calls keep REPL state and approval routing coherent. */
 export class CodexMcpSession {
   private rpc?: CodexRpc;
   private starting?: Promise<void>;

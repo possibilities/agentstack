@@ -8,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { z } from "zod";
-import { operation, operatorHeaders, serveApi, serveSocket, socketCall, socketPath, socketSubscribe } from "@stack/api";
+import { configuredMcpServers, workspaceRoot, operation, operatorHeaders, serveApi, serveSocket, socketCall, socketPath, socketSubscribe } from "@stack/api";
 import { startOpenCodeHost } from "../src/inject-opencode.js";
 
 const cli = fileURLToPath(new URL("../../../cli/dist/src/main.js", import.meta.url));
@@ -91,6 +91,7 @@ async function setup() {
     CLAUDE_CONFIG_DIR: join(home, ".claude"), XDG_DATA_HOME: join(home, "data"), XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state"), XDG_CACHE_HOME: join(home, "cache"),
     OPENCODE_TEST_HOME: home, OPENCODE_DB: join(home, "ordinary.db"), OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
     OPENCODE_CONFIG: join(home, "ambient.json"), OPENCODE_CONFIG_CONTENT: '{"plugins":["ambient"]}', OPENCODE_CLI_CONFIG_CONTENT: '{"plugins":["ambient"]}',
+    STACK_CODEX_TOOLS_BIN: join(root, "no-desktop-runtime"),
     ROLE_TEST_TOKEN: "private-fixture-token", ROLE_TEST_HEADER: "private-fixture-header", ROLE_TEST_ENV: "private-fixture-env" };
   await mkdir(env.CODEX_HOME); await writeFile(join(env.CODEX_HOME, "auth.json"), '{"fixture":"never-real-auth"}');
   const roles = await serveApi({ name: "roles", transport: "socket", env });
@@ -134,6 +135,7 @@ test("inject launches each native boundary with the selected bytes, private cred
   const f = await setup();
   try {
     const roleId = await populate(f);
+    const names = [...(await configuredMcpServers(workspaceRoot(import.meta.dirname))).map(item => item.name).filter(name => name !== "notify"), "external", "stdio"].sort();
     const snapshot = await f.call("role_snapshot", { roleId });
     await f.call("fragment_update", { roleId, expectedRevision: snapshot.revision, id: snapshot.categories[0].fragments[0].id,
       conditions: { model: "render-only-model", harness: "render-only-harness" } });
@@ -157,10 +159,14 @@ test("inject launches each native boundary with the selected bytes, private cred
         assert.equal(report.instructions, instructions);
         assert.equal(report.memory, "1");
         assert.equal(report.argv[report.argv.indexOf("--setting-sources") + 1], "");
-        assert.equal(report.config.mcpServers.roles.headers.authorization, operatorHeaders(f.env).authorization);
+        assert.equal(report.config.mcpServers.roles.type, "stdio");
+        assert.equal(report.config.mcpServers.roles.command, process.execPath);
+        assert.equal(report.config.mcpServers.roles.env.STACK_MCP_OPERATOR, operatorHeaders(f.env).authorization);
+        assert.equal(report.config.mcpServers.roles.env.STACK_STATE_DIR, f.state);
+        assert.equal(report.config.mcpServers.roles.env.HOME, f.home);
         assert.equal(report.config.mcpServers.external.headers.Authorization, "Bearer private-fixture-token");
         assert.equal(report.config.mcpServers.stdio.env.ROLE_TEST_ENV, "private-fixture-env");
-        assert.deepEqual(Object.keys(report.config.mcpServers).sort(), ["external", "roles", "stdio"]);
+        assert.deepEqual(Object.keys(report.config.mcpServers).sort(), names);
         await assert.rejects(stat(report.root), { code: "ENOENT" });
       } else {
         if (harness === "codex") {
@@ -180,9 +186,12 @@ test("inject launches each native boundary with the selected bytes, private cred
           assert.equal(report.env.db, f.env.OPENCODE_DB);
           assert.equal(report.env.file, undefined); assert.equal(report.env.inline, undefined); assert.equal(report.env.cli, undefined);
           assert.equal(report.config.mcp.servers.external.headers["X-Test"], "private-fixture-header");
-          assert.equal(report.config.mcp.servers.roles.headers.authorization, operatorHeaders(f.env).authorization);
+          assert.equal(report.config.mcp.servers.roles.type, "local");
+          assert.equal(report.config.mcp.servers.roles.command[0], process.execPath);
+          assert.equal(report.config.mcp.servers.roles.environment.STACK_MCP_OPERATOR, operatorHeaders(f.env).authorization);
+          assert.equal(report.config.mcp.servers.roles.environment.STACK_STATE_DIR, f.state);
           assert.deepEqual(report.config.mcp.servers.stdio.command, [process.execPath, "--version", "one argument"]);
-          assert.deepEqual(Object.keys(report.config.mcp.servers).sort(), ["external", "roles", "stdio"]);
+          assert.deepEqual(Object.keys(report.config.mcp.servers).sort(), names);
           assert.ok(report.config.plugins.includes("-opencode.config.compatibility"));
           assert.ok(report.config.plugins.includes("-opencode.config.instruction"));
           assert.equal(report.instructions, instructions);
