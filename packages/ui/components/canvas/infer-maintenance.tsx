@@ -12,12 +12,13 @@ export const inferPlanLimit = 100;
  * requests) has its own recovery slot, and nothing else is cleared or re-run: request identity, usage, model and
  * outcome stay, and unknown results stay unknown.
  */
-export function useInferClear(requestIds: string[], surface: "lab" | "signal"): { controls: StateFlowControls; unavailable: string | null } {
+export function useInferClear(requestIds: string[], surface: "lab" | "signal", onCompleted?: () => void): { controls: StateFlowControls; unavailable: string | null } {
   const state = useStack();
   const store = useStore();
   const controls = useStateFlow({
     operations: stateOperations(store.call, "infer", { plan: "infer_history_plan", apply: "infer_history_clear", receipt: "infer_state_receipt_get" }, { requestIds }),
     recoveryKey: `infer:${surface}`,
+    onReceipt: (receipt) => { if (receipt.status === "completed") onCompleted?.(); },
   });
   const access = localOperation(state, "infer", "infer_history_plan");
   const unavailable = !access.available ? access.reason : state.status.infer !== "open" ? "The infer connection is not open."

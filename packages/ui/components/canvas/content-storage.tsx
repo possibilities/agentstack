@@ -133,7 +133,7 @@ function Blobs() {
       return { ...entry, digest, reference: page.references.find((row) => row.digest === digest) ?? null };
     }) })) : Promise.resolve({ items: [], revision: "none", nextOffset: null }), `blobs:${prefix}`, state.contentGeneration);
   const flow = useStateFlow({ operations: stateOperations(store.call, "content", { plan: "content_storage_plan", apply: "content_storage_collect", receipt: "content_state_receipt_get" }, { digests: selected }),
-    recoveryKey: "content:storage" });
+    recoveryKey: "content:storage", onReceipt: (receipt) => { if (receipt.status === "completed") setSelected([]); } });
   const locked = flow.flow.phase !== "idle";
   const referenced = (blob: Blob) => Boolean(blob.reference && (blob.reference.items.length || blob.reference.stages.length));
   return (

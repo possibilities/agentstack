@@ -54,7 +54,7 @@ function CorrelatedInfer() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
-  const clear = useInferClear(selected, "signal");
+  const clear = useInferClear(selected, "signal", () => setSelected([]));
   const locked = clear.controls.flow.phase !== "idle";
   const access = localOperation(state, "signal", "attention_infer_requests");
   const load = (offset: number) => {

@@ -158,3 +158,19 @@ test("a remote store never reads owner inventories or subscriptions", async () =
   assert.deepEqual(calls, []);
   assert.equal(store.getState().stateInventory.data, null);
 });
+
+test("a remote session never opens the local-only Xcom channel", async () => {
+  const local = new StackStore(snapshot({ xcom: "ws://127.0.0.1:9/ws" }));
+  const remote = new StackStore(snapshot({ xcom: "ws://127.0.0.1:9/ws" }, { remote: { scope: "control", scopes: ["ui:view", "ui:control"], contentOrigins: {} } }));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () => new Promise(() => {});
+  try {
+    local.start({ packages: ["xcom"], scopedBots: false });
+    remote.start({ packages: ["xcom"], scopedBots: false });
+    assert.ok(local.getState().status.xcom, "the local page opens Xcom's channel");
+    assert.equal(remote.getState().status.xcom, undefined, "a remote page never opens it");
+  } finally {
+    local.stop(); remote.stop();
+    globalThis.fetch = originalFetch;
+  }
+});

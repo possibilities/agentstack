@@ -62,7 +62,8 @@ export function InferenceWindow() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
-  const clear = useInferClear(selected, "lab");
+  // A completed clear empties the selection; partial or unknown results keep it for inspection.
+  const clear = useInferClear(selected, "lab", () => setSelected([]));
   const locked = clear.controls.flow.phase !== "idle";
 
   const requests = inferRequests.data ?? [];

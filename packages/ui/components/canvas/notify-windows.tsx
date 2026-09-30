@@ -53,7 +53,7 @@ export function InboxWindow() {
   const [clearing, setClearing] = useState(false);
   const [chosen, setChosen] = useState<string[]>([]);
   const clear = useStateFlow({ operations: stateOperations(store.call, "notify", { plan: "notification_history_plan", apply: "notification_history_clear", receipt: "notify_state_receipt_get" }, { ids: chosen }),
-    recoveryKey: "notify:history" });
+    recoveryKey: "notify:history", onReceipt: (receipt) => { if (receipt.status === "completed") setChosen([]); } });
   const clearLocked = clear.flow.phase !== "idle";
   const clearAccess = localOperation(stack, "notify", "notification_history_plan");
   // Only dismissed records whose content is still held can be selected; open ones are dismissed first.

@@ -71,7 +71,6 @@ export function XcomStateWindow() {
       </Window>
     );
   }
-  const quiet = data?.paused && !data.sync.running;
   const unavailable = !connected ? "The xcom connection is not open." : !data ? "Reading Xcom status…" : !data.paused ? "Pause Xcom first."
     : data.sync.running ? "Wait for the running sync to finish." : null;
   return (
@@ -92,7 +91,6 @@ export function XcomStateWindow() {
             <Row label="Authors">{data.users.toLocaleString()}</Row>
           </dl>
           <Section title="Clear archive data" aside={<Button size="xs" variant="ghost" className="-mr-1.5 h-5 text-[0.65rem]" onClick={() => void read()}>Refresh</Button>}>
-            {!quiet ? <p className={hint}>{unavailable}</p> : null}
             <ToggleGroup value={[kind]} onValueChange={(next: string[]) => { if (next.length) setKind(next[0] as Kind); }} spacing={0} size="sm" variant="outline" aria-label="What to clear" className="flex-wrap">
               <ToggleGroupItem value="posts">Posts</ToggleGroupItem>
               <ToggleGroupItem value="article_attempts">Article attempts</ToggleGroupItem>
@@ -108,10 +106,10 @@ export function XcomStateWindow() {
   );
 }
 
-function useXcomFlow(selection: Record<string, unknown>, slot: string, onDone: () => void) {
+function useXcomFlow(selection: Record<string, unknown>, slot: string, onDone: (completed: boolean) => void) {
   const store = useStore();
   return useStateFlow({ operations: stateOperations(store.call, "xcom", { plan: "xcom_history_plan", apply: "xcom_history_clear", receipt: "xcom_state_receipt_get" }, selection),
-    recoveryKey: `xcom:${slot}`, onReceipt: onDone });
+    recoveryKey: `xcom:${slot}`, onReceipt: (receipt) => onDone(receipt.status === "completed") });
 }
 
 function useRows<T>(operation: string, generation: number) {
@@ -140,7 +138,7 @@ function PostsClear({ unavailable, generation, onDone }: { unavailable: string |
   const [ids, setIds] = useState<string[]>([]);
   const [reimport, setReimport] = useState<"allow" | "suppress" | null>(null);
   const [authors, setAuthors] = useState<"retain" | "remove" | null>(null);
-  const flow = useXcomFlow({ kind: "posts", ids, reimport: reimport ?? "allow", orphanAuthors: authors ?? "retain" }, "posts", () => { onDone(); void load(0); });
+  const flow = useXcomFlow({ kind: "posts", ids, reimport: reimport ?? "allow", orphanAuthors: authors ?? "retain" }, "posts", (completed) => { onDone(); if (completed) setIds([]); void load(0); });
   const locked = flow.flow.phase !== "idle";
   return (
     <div className="flex flex-col gap-1.5">
@@ -172,7 +170,7 @@ function PostsClear({ unavailable, generation, onDone }: { unavailable: string |
 function ArticlesClear({ unavailable, generation, onDone }: { unavailable: string | null; generation: number; onDone(): void }) {
   const { rows, error, load } = useRows<Article>("xcom_articles_pending", generation);
   const [ids, setIds] = useState<string[]>([]);
-  const flow = useXcomFlow({ kind: "article_attempts", ids }, "article_attempts", () => { onDone(); void load(0); });
+  const flow = useXcomFlow({ kind: "article_attempts", ids }, "article_attempts", (completed) => { onDone(); if (completed) setIds([]); void load(0); });
   const locked = flow.flow.phase !== "idle";
   return (
     <div className="flex flex-col gap-1.5">
@@ -200,7 +198,7 @@ function ArticlesClear({ unavailable, generation, onDone }: { unavailable: strin
 
 function CheckpointClear({ unavailable, onDone }: { unavailable: string | null; onDone(): void }) {
   const [scan, setScan] = useState<"head" | "backfill" | null>(null);
-  const flow = useXcomFlow({ kind: "checkpoint", scan: scan ?? "head" }, "checkpoint", onDone);
+  const flow = useXcomFlow({ kind: "checkpoint", scan: scan ?? "head" }, "checkpoint", () => onDone());
   return (
     <div className="flex flex-col gap-1.5">
       <p className={hint}>Resets where one scan resumes. After you resume Xcom, that scan starts over and may fetch and spend again. Archived posts are unchanged.</p>
