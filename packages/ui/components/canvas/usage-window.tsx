@@ -1,5 +1,6 @@
 "use client";
 
+import { UsageClearSection } from "./usage-maintenance";
 import { GaugeIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -328,6 +329,7 @@ export function UsageWindow() {
       ) : (
         <Empty icon={GaugeIcon} title="Usage unavailable" />
       )}
+      <UsageClearSection />
     </Window>
   );
 }
