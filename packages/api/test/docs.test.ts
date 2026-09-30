@@ -103,8 +103,8 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok(Object.hasOwn(xcom.operations.find(op => op.name === "xcom_users")?.outputSchema.properties ?? {}, "results"));
     assert.ok(xcom.transports.find(t => t.type === "mcp")!.operations.includes("xcom_articles_pending"));
     const responseLength = Buffer.byteLength(JSON.stringify({ id: 1, result: snapshot })) + 1;
-    // Include HUD's typed collaboration contract while keeping over two-thirds of the four-MB frame free.
-    assert.ok(responseLength < 1_250_000, `discovery snapshot exceeds the socket response budget: ${responseLength} bytes`);
+    // Include owner maintenance contracts while keeping over 60% of the unchanged four-MB frame free.
+    assert.ok(responseLength < 1_500_000, `discovery snapshot exceeds the socket response budget: ${responseLength} bytes`);
 
     const brainHttp = found.get("brain")!.transports.find((transport) => transport.type === "http")!;
     const proc = found.get("proc")!;

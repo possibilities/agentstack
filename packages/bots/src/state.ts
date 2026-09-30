@@ -142,6 +142,9 @@ export class BotState {
       const current = await this.prepare(ctx, id, payload.action);
       if (current.preview.revision !== input.expectedRevision || saved.plan.revision !== input.expectedRevision) throw new Error("Bot state or dependencies changed; prepare a new plan");
       if (current.preview.blockedBy.length) throw new Error(current.preview.blockedBy.join("; "));
+      // Dependency observations await other owners. A different Bot may have
+      // admitted this UUID in the other journal while those reads were pending.
+      if (other.existing(input)) throw new Error("state request ID already used by another Bot maintenance journal");
       if (kind === "queue_bodies_clear") {
         const ids = payload.queue!.map(row => row.id);
         const receipt = journal.atomic(input, (plan) => {
