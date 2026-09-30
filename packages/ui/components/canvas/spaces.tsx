@@ -40,6 +40,7 @@ import { AccessWindow } from "./access-window";
 import { InboxWindow, NotificationWindow } from "./notify-windows";
 import { AttentionChangesWindow, AttentionMessagesWindow, AttentionRunsWindow, AttentionWindow, SignalWindow } from "./signal-windows";
 import { ContentArtifactsWindow } from "./content-artifacts";
+import { ContentStorageWindow } from "./content-storage";
 import { ContentDocumentsWindow } from "./content-documents";
 import { ContentEditorWindow } from "./content-editor";
 import { ContentLibraryWindow } from "./content-library";
@@ -177,6 +178,7 @@ export const spaceViews: Record<SpaceId, {
       { id: "content-editor", title: "Editor", icon: FilePenLineIcon, accent: "content", width: 540, height: 760, column: 1, element: <ContentEditorWindow /> },
       { id: "content-preview", title: "Preview", icon: EyeIcon, accent: "content", width: 480, height: 760, column: 2, element: <ContentPreviewWindow /> },
       { id: "content-artifacts", title: "Artifacts", icon: BoxesIcon, accent: "content", width: 400, height: 640, column: 3, element: <ContentArtifactsWindow /> },
+      { id: "content-storage", title: "Storage", icon: HardDriveIcon, accent: "content", width: 460, height: 640, column: 4, element: <ContentStorageWindow /> },
     ],
   },
   workers: {

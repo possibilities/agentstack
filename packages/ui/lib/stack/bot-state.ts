@@ -1,4 +1,4 @@
-import { revisionChanged, stateOperations, type StateOperations } from "./state";
+import { stateOperations, type StateOperations } from "./state";
 import type { StateEntry, StateFile, StateFileRead } from "./types";
 
 /**
@@ -32,24 +32,7 @@ export function botStateKey(incarnation: string, action: BotStateAction): string
   return `bots:${incarnation}:${action.kind}${detail}`;
 }
 
-export type Page<T> = { items: T[]; revision: string; nextOffset: number | null; restarted: boolean };
-export type PageRead<T> = (offset: number, revision?: string) => Promise<{ items: T[]; revision: string; nextOffset: number | null }>;
-
-export async function firstPage<T>(read: PageRead<T>): Promise<Page<T>> {
-  return { ...await read(0), restarted: false };
-}
-
-/** The next page of the same observation, or the first page again when the owner says it changed. */
-export async function nextPage<T>(read: PageRead<T>, held: Page<T>): Promise<Page<T>> {
-  if (held.nextOffset === null) return held;
-  try {
-    const page = await read(held.nextOffset, held.revision);
-    return { ...page, items: [...held.items, ...page.items], restarted: held.restarted };
-  } catch (error) {
-    if (!revisionChanged(error)) throw error;
-    return { ...await read(0), restarted: true };
-  }
-}
+export { firstPage, nextPage, type Page, type PageRead } from "./state";
 
 /** Optional stores answer `revision: "absent"` when never created: empty, not unavailable. */
 export const absentStore = (page: { revision: string }) => page.revision === "absent";
