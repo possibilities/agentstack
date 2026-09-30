@@ -1,4 +1,4 @@
-# 138. Owner maintenance in existing spaces
+# 139. Owner maintenance in existing spaces
 
 Status: accepted, 2026-09-30. Uses the shared flow of [ADR 0136](0136-system-state-view-and-shared-maintenance-flow.md) for the owners of [ADR 0135](0135-owner-state-maintenance.md).
 
