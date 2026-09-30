@@ -13,7 +13,7 @@ const same = (a: Choice, b: Choice) => a.id === b.id && a.scope === b.scope;
 
 /**
  * Clearing this machine's usage measurements for exact account/scope pairs (a Bot and a Worker login can share an
- * account ID) and, separately, the Grok Bot observation. Provider quota, billing and credentials are untouched, and
+ * account ID). Provider quota, billing and credentials are untouched, and
  * the next collection can measure again. Local operator only.
  */
 export function UsageClearSection() {
@@ -22,9 +22,8 @@ export function UsageClearSection() {
   const { usage, accounts, workerAccounts, remote, status } = state;
   const [open, setOpen] = useState(false);
   const [chosen, setChosen] = useState<Choice[]>([]);
-  const [grok, setGrok] = useState(false);
   const controls = useStateFlow({
-    operations: stateOperations(store.call, "usage", { plan: "usage_observations_plan", apply: "usage_observations_clear", receipt: "usage_state_receipt_get" }, { accounts: chosen, grokBot: grok }),
+    operations: stateOperations(store.call, "usage", { plan: "usage_observations_plan", apply: "usage_observations_clear", receipt: "usage_state_receipt_get" }, { accounts: chosen }),
     recoveryKey: "usage:observations",
   });
   const access = localOperation(state, "usage", "usage_observations_plan");
@@ -52,14 +51,10 @@ export function UsageClearSection() {
             </li>
           );
         })}
-        {usage.data.grokBot ? (
-          <li><label className="flex items-center gap-1.5 text-xs"><input type="checkbox" className="size-3.5 accent-destructive" disabled={locked} checked={grok} onChange={() => setGrok(!grok)} />
-            Grok Bot observation <span className="text-muted-foreground">(separate from Grok Worker logins)</span></label></li>
-        ) : null}
       </ul>
       <StateFlowView controls={controls} label="Prepare measurement clear" applyLabel="Clear these measurements"
-        unavailable={status.usage !== "open" ? "The usage connection is not open." : !chosen.length && !grok ? "Select at least one observation." : null} />
-      {!locked ? <Button size="xs" variant="ghost" className="self-start" onClick={() => { setOpen(false); setChosen([]); setGrok(false); }}>Cancel</Button> : null}
+        unavailable={status.usage !== "open" ? "The usage connection is not open." : !chosen.length ? "Select at least one observation." : null} />
+      {!locked ? <Button size="xs" variant="ghost" className="self-start" onClick={() => { setOpen(false); setChosen([]); }}>Cancel</Button> : null}
     </Section>
   );
 }

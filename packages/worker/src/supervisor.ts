@@ -31,13 +31,13 @@ export class WorkerSupervisor {
   private watch: SocketSubscription | undefined;
   private timer: ReturnType<typeof setInterval> | undefined;
   private closing = false;
-  private readonly bin: Record<"codex" | "grok" | "devin", string>;
+  private readonly bin: Record<"codex" | "devin", string>;
 
   constructor(private readonly stateDir: string, private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly dependencies: { claudeQuery?: ClaudeQueryFactory } = {}) {
     const home = env.HOME ?? homedir();
     const opencodeV2 = env.STACK_OPENCODE_BIN ?? join(home, ".local", "bin", "opencode");
-    this.bin = { codex: opencodeV2, grok: opencodeV2,
+    this.bin = { codex: opencodeV2,
       devin: env.STACK_DEVIN_BIN ?? join(home, ".local", "share", "devin", "cli", "_versions", "current", "bin", "devin") };
   }
 

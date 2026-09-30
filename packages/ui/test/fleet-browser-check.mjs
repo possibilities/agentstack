@@ -30,7 +30,7 @@ const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 // Each Codex Bot account is paired with a Codex Worker account; one awaits its own sign-in.
 const botAccounts = [{ id: id(1), enabled: true, removing: false, linkedAccounts: [{ scope: "worker", id: id(3) }] }, { id: id(2), enabled: false, removing: false, linkedAccounts: [] },
   { id: id(6), enabled: true, removing: false, linkedAccounts: [{ scope: "worker", id: id(7) }] }];
-const workerAccounts = ["codex", "grok", "devin"].map((provider, index) => ({ id: id(index + 3), provider, enabled: true, ready: true, removing: false,
+const workerAccounts = ["codex", "claude", "devin"].map((provider, index) => ({ id: id(index + 3), provider, enabled: true, ready: true, removing: false,
   linkedAccounts: provider === "codex" ? [{ scope: "bot", id: id(1) }] : [] }));
 workerAccounts.push({ id: id(7), provider: "codex", enabled: true, ready: false, removing: false, linkedAccounts: [{ scope: "bot", id: id(6) }] });
 const defaults = { model: "gpt-6-sol", reasoningEffort: "medium", sandboxMode: "danger-full-access", approvalPolicy: "never" };
@@ -41,9 +41,11 @@ let stamp = Date.now();
 const observation = { observedAtMs: stamp, lastAttemptAtMs: stamp, fresh: true, error: null };
 const usage = { atMs: stamp, inventoryAtMs: stamp, inventoryError: null, accounts: [
   { ...botAccounts[0], scope: "bot", provider: "codex", ready: true, ...observation, usage: { planType: "Pro", limitReached: false, resetCreditsAvailable: 2, resetCreditExpirations: ["2026-10-01"], lanes: [{ id: "primary", title: "Standard", windows: [{ role: "primary", label: "5 hours", windowSeconds: 18000, usedPercent: 24, remainingPercent: 76, resetsAt: "2026-09-26T00:00:00Z", limitName: null, meteredFeature: null }] }] } },
-  { ...workerAccounts[1], scope: "worker", ...observation, fresh: false, error: "provider_unavailable", usage: { subscriptionTier: "SuperGrok", included: { usedPercent: 50, remainingPercent: 50, periodType: "monthly", periodStart: "2026-09-01", resetsAt: "2026-10-01", allocatedUsd: 300 }, prepaidBalanceUsd: 12.5, paygEnabled: false, paygUsedUsd: 10, paygCapUsd: 50, paygRemainingUsd: 40 } },
+  { ...workerAccounts[1], scope: "worker", ...observation, fresh: false, error: "provider_unavailable", usage: { windows: [
+    { id: "five_hour", label: "5h", usedPercent: 50, remainingPercent: 50, resetsAt: "2026-10-01" },
+    { id: "seven_day", label: "Weekly", usedPercent: 33, remainingPercent: 67, resetsAt: "2026-10-01" }], extraUsage: null } },
   { ...workerAccounts[2], scope: "worker", ...observation, usage: { planLabel: "Pro", billing: "monthly", dailyRemainingPercent: null, weeklyRemainingPercent: 55, dailyResetsAt: null, weeklyResetsAt: "2026-09-28", periodStart: "2026-09-01", periodEnd: "2026-10-01", promptCreditsMonthly: 100, promptCreditsAvailable: 72, weeklyQuotaHidden: false, displayName: "Fixture" } },
-], grokBot: { ...observation, usage: { usedPercent: 33, periodStart: "2026-09-01", resetsAt: "2026-10-01", hasAvailableUsage: true, planLabel: "Grok Bot", fundingPlan: null, onDemandEligible: true, onDemandEnabled: false, trial: false, teamSeat: false } } };
+] };
 const calls = [];
 const uploads = new ChatUploads(dir);
 let interruptChunk = true;
@@ -363,14 +365,13 @@ try {
   const usageWindow = page.locator('[data-window="usage"]');
   await jump("usage", "Usage");
   await usageWindow.getByRole("meter", { name: "codex-bot-account-1 5 hours remaining", exact: true }).waitFor();
-  assert.match(await usageWindow.innerText(), /\$300 included/);
-  await usageWindow.getByRole("button", { name: "Inspect Grok Bot usage", exact: true }).waitFor();
-  await usageWindow.getByRole("button", { name: "Inspect grok-worker-account-1 usage", exact: true }).click();
-  await page.getByRole("complementary", { name: "Inspector" }).getByText("allocatedUsd", { exact: true }).waitFor();
+  await usageWindow.getByRole("meter", { name: "claude-worker-account-1 5h remaining", exact: true }).waitFor();
+  await usageWindow.getByRole("button", { name: "Inspect claude-worker-account-1 usage", exact: true }).click();
+  await page.getByRole("complementary", { name: "Inspector" }).getByText("windows", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Package API reference", exact: true }).click();
   assert.equal(new URL(page.url()).searchParams.get("reference"), "package:usage");
   await page.getByRole("button", { name: "Inspector", exact: true }).click();
-  await page.getByRole("complementary", { name: "Inspector" }).getByText("allocatedUsd", { exact: true }).waitFor();
+  await page.getByRole("complementary", { name: "Inspector" }).getByText("windows", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Close inspector" }).click();
   const models = page.locator('[data-window="model-catalogs"]');
   await jump("model catalog codex-worker-account-1", "codex-worker-account-1 models");

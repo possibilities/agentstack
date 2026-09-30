@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { claudeConfigRoot, claudeKeychainAccount, claudeLoginInvocation, claudeRuntimePath, prepareClaudeProfile, readClaudeCredentials, type ClaudeCredentialOptions } from "./claude-credentials.js";
 
-export type WorkerProvider = "codex" | "grok" | "devin" | "claude";
+export type WorkerProvider = "codex" | "devin" | "claude";
 export type WorkerAccount = {
   id: string; provider: WorkerProvider; enabled: boolean; ready: boolean; removing: boolean;
 };
@@ -63,12 +63,11 @@ export async function prepareAccountProfile(stateDir: string, account: WorkerAcc
   } else {
     const dir = join(root, ".config", "opencode");
     await mkdir(dir, { recursive: true, mode: 0o700 });
-    const provider = account.provider === "grok" ? "xai" : "openai";
     await writeFile(join(dir, "opencode.json"), JSON.stringify({
       $schema: "https://opencode.ai/config.json", update: "disable",
       experimental: { policies: [
         { action: "provider.use", resource: "*", effect: "deny" },
-        { action: "provider.use", resource: provider, effect: "allow" },
+        { action: "provider.use", resource: "openai", effect: "allow" },
       ] },
     }), { mode: 0o600 });
   }
@@ -83,7 +82,7 @@ export function loginCommand(stateDir: string, account: WorkerAccount): string {
   const claude = claudeLoginInvocation(process.env);
   const command = account.provider === "claude" ? [claude.bin, ...claude.args].map(quote).join(" ")
     : account.provider === "devin" ? "devin auth login"
-    : `${quote(join(process.env.HOME ?? homedir(), ".local", "bin", "opencode"))} auth login --standalone ${account.provider === "grok" ? "xai" : "openai"}`;
+    : `${quote(join(process.env.HOME ?? homedir(), ".local", "bin", "opencode"))} auth login --standalone openai`;
   const remove = [...new Set([...scrubbed, ...Object.keys(process.env).filter((key) => claudeAmbient.test(key)),
     "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR",
     "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"])];
@@ -107,8 +106,7 @@ export async function credentialEvidence(stateDir: string, account: WorkerAccoun
     let rows: Array<{ integration_id: string | null; value: string }>;
     try { rows = db.prepare("SELECT integration_id, value FROM credential").all() as typeof rows; }
     finally { db.close(); }
-    const selected = account.provider === "grok" ? "xai" : "openai";
-    if (rows.length !== 1 || rows[0]?.integration_id !== selected) throw new Error("native worker profile contains credentials for another provider");
+    if (rows.length !== 1 || rows[0]?.integration_id !== "openai") throw new Error("native worker profile contains credentials for another provider");
     const value = JSON.parse(rows[0].value) as Record<string, unknown>;
     if (value.type !== "oauth" || typeof value.access !== "string" || !value.access ||
         typeof value.refresh !== "string" || !value.refresh) throw new Error("native worker OAuth credentials are unavailable");

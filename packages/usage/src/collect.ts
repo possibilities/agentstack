@@ -1,12 +1,10 @@
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { AccountScope, Provider, Measurement, Subscription } from "./schema.js";
-import { codexUsage, grokUsage, devinUsage, claudeUsage, grokBotUsage } from "./schema.js";
+import { codexUsage, devinUsage, claudeUsage } from "./schema.js";
 import { ClaudeCredentialError, readClaudeCredentials, type ClaudeCredentialOptions } from "@stack/auth";
 import type { z } from "zod";
 
@@ -100,17 +98,17 @@ async function credential(stateDir: string, id: string, provider: Provider, scop
     } finally { db.close(); }
   }
   const root = join(stateDir, "worker-accounts", id, "data");
-  if (provider === "codex" || provider === "grok") {
+  if (provider === "codex") {
     const path = join(root, "opencode", "opencode.db");
     await privateDatabase(path);
     const db = new DatabaseSync(path, { readOnly: true });
     try {
       const rows = db.prepare("SELECT integration_id, value FROM credential").all() as Array<{ integration_id: string; value: string }>;
-      if (rows.length !== 1 || rows[0]?.integration_id !== (provider === "codex" ? "openai" : "xai")) throw new ObservationFailure("credentials_unavailable");
+      if (rows.length !== 1 || rows[0]?.integration_id !== "openai") throw new ObservationFailure("credentials_unavailable");
       const entry = record(JSON.parse(rows[0].value));
       const access = string(entry?.access);
       if (entry?.type !== "oauth" || !access) throw new ObservationFailure("credentials_unavailable");
-      const userId = provider === "codex" ? string(record(entry.metadata)?.accountID) ?? codexIdentity(access) : null;
+      const userId = string(record(entry.metadata)?.accountID) ?? codexIdentity(access);
       if (userId && /[\r\n]/.test(userId)) throw new ObservationFailure("credentials_unavailable");
       return { access, userId: userId ?? undefined };
     } finally { db.close(); }
@@ -216,36 +214,6 @@ function codex(value: RecordValue, measuredAtMs: number): Measurement {
     resetCreditExpirations: expirations, lanes: [...lanes.values()] });
 }
 
-function cents(value: unknown): number | null {
-  const row = record(value);
-  if (!row) return null;
-  if (!Object.hasOwn(row, "val")) return Object.keys(row).length === 0 ? 0 : null;
-  return integer(row.val);
-}
-function usd(value: number | null): number | null { return value === null ? null : Math.round(value) / 100; }
-function grok(value: RecordValue): Measurement {
-  const config = record(value.config);
-  if (!config) throw new ObservationFailure("response_invalid");
-  const period = record(config.currentPeriod);
-  const periodType = string(period?.type);
-  const periodStart = iso(period?.start) ?? iso(config.billingPeriodStart);
-  const resetsAt = iso(period?.end) ?? iso(config.billingPeriodEnd);
-  const monthlyLimit = cents(config.monthlyLimit), legacyUsed = cents(config.used);
-  let used = number(config.creditUsagePercent);
-  if (used === null && monthlyLimit && legacyUsed !== null) used = 100 * legacyUsed / monthlyLimit;
-  if (used === null && !Object.hasOwn(config, "creditUsagePercent") && config.isUnifiedBillingUser === true &&
-      ["USAGE_PERIOD_TYPE_WEEKLY", "USAGE_PERIOD_TYPE_MONTHLY"].includes(periodType ?? "") && periodStart && resetsAt) used = 0;
-  used = clamp(used);
-  const onDemandUsed = cents(config.onDemandUsed), onDemandCap = cents(config.onDemandCap);
-  return grokUsage.parse({ subscriptionTier: label(value.subscriptionTier),
-    included: { usedPercent: used, remainingPercent: used === null ? null : 100 - used,
-      periodType: periodType?.toLowerCase().replace(/^usage_period_type_/, "") ?? null, periodStart, resetsAt,
-      allocatedUsd: monthlyLimit !== null && monthlyLimit >= 0 ? usd(monthlyLimit) : null },
-    prepaidBalanceUsd: usd(cents(config.prepaidBalance)), paygEnabled: flag(value.onDemandEnabled) ?? (onDemandCap === null ? null : onDemandCap > 0),
-    paygUsedUsd: usd(onDemandUsed), paygCapUsd: usd(onDemandCap),
-    paygRemainingUsd: onDemandUsed === null || onDemandCap === null ? null : usd(Math.max(0, onDemandCap - onDemandUsed)) });
-}
-
 function devin(value: RecordValue): Measurement {
   const status = record(record(value.userStatus)?.planStatus);
   const plan = record(status?.planInfo);
@@ -318,57 +286,10 @@ export async function collectAccount(stateDir: string, id: string, provider: Pro
     }
     return codex(data, Date.now());
   }
-  if (provider === "grok") {
-    const identity = await request("https://auth.x.ai/oauth2/userinfo", { headers: { authorization: `Bearer ${credentials.access}`, "x-grok-client-version": "1.0.16" } }, fetcher, signal);
-    const userId = string(identity.sub);
-    if (!userId || userId.length > 1024 || /[\r\n]/.test(userId)) throw new ObservationFailure("identity_invalid");
-    const data = await request("https://cli-chat-proxy.grok.com/v1/billing?format=credits", { headers: {
-      authorization: `Bearer ${credentials.access}`, "X-XAI-Token-Auth": "xai-grok-cli", "x-userid": userId,
-      "x-grok-client-version": "1.0.16", "x-grok-client-mode": "headless",
-    } }, fetcher, signal);
-    return grok(data);
-  }
   const data = await request(new URL("/exa.seat_management_pb.SeatManagementService/GetUserStatus", credentials.server).toString(), {
     method: "POST", headers: { "content-type": "application/json", "connect-protocol-version": "1" },
     body: JSON.stringify({ metadata: { apiKey: credentials.access, ideName: "devin-cli", ideVersion: "3000.11.1",
       extensionName: "devin-cli", extensionVersion: "3000.11.1" } }),
   }, fetcher, signal);
   return devin(data);
-}
-
-export async function collectGrokBot(binary = join(homedir(), ".local/bin/agentgrok"),
-  signal: AbortSignal = new AbortController().signal): Promise<z.infer<typeof grokBotUsage>> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(binary, ["usage", "--json"], { stdio: ["ignore", "pipe", "ignore"], detached: process.platform !== "win32" });
-    let output = "", failed = false, done = false;
-    const stop = () => { if (child.pid) try { process.kill(process.platform === "win32" ? child.pid : -child.pid, "SIGKILL"); } catch { /* exited */ } };
-    signal.addEventListener("abort", stop, { once: true });
-    if (signal.aborted) stop();
-    const timer = setTimeout(() => { failed = true; stop(); }, 30_000);
-    child.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString("utf8"); if (output.length > 262_144) { failed = true; stop(); } });
-    child.once("error", () => finish());
-    child.once("close", (code) => {
-      if (code !== 0) failed = true;
-      finish();
-    });
-    function finish() {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      signal.removeEventListener("abort", stop);
-      if (failed || !output) { reject(new ObservationFailure("grok_bot_unavailable")); return; }
-      try {
-        const envelope = record(JSON.parse(output));
-        const data = record(envelope?.data), usage = record(data?.usage);
-        if (envelope?.ok !== true || envelope.schema_version !== 1 || !usage) throw new Error("invalid");
-        const start = number(usage.currentPeriodStartMs), reset = number(usage.nextResetAtMs);
-        if (!start || !reset) throw new Error("invalid");
-        resolve(grokBotUsage.parse({ usedPercent: clamp(number(usage.usagePercent)), periodStart: new Date(start).toISOString(),
-          resetsAt: new Date(reset).toISOString(), hasAvailableUsage: usage.hasAvailableUsage !== false,
-          planLabel: label(usage.planLabel), fundingPlan: label(usage.fundingPlan),
-          onDemandEligible: flag(usage.onDemandEligible), onDemandEnabled: flag(usage.onDemandEnabled),
-          trial: flag(usage.trial), teamSeat: flag(usage.isTeamSeat) }));
-      } catch { reject(new ObservationFailure("grok_bot_invalid")); }
-    }
-  });
 }

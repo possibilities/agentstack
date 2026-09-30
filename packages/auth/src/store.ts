@@ -45,7 +45,7 @@ export class AuthStore {
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS secrets.credentials (name TEXT PRIMARY KEY, auth_json TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1);
       CREATE TABLE IF NOT EXISTS worker_accounts (
-        id TEXT PRIMARY KEY, provider TEXT NOT NULL CHECK(provider IN ('codex','grok','devin','claude')),
+        id TEXT PRIMARY KEY, provider TEXT NOT NULL CHECK(provider IN ('codex','devin','claude')),
         enabled INTEGER NOT NULL DEFAULT 1, ready INTEGER NOT NULL DEFAULT 0, removing INTEGER NOT NULL DEFAULT 0,
         credential_digest TEXT, identity_digest TEXT, bot_account TEXT
       );
@@ -62,11 +62,14 @@ export class AuthStore {
     const definition = this.db.prepare("SELECT sql FROM sqlite_master WHERE name = 'worker_accounts'").get() as { sql: string };
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      if (!definition.sql.includes("'claude'")) {
+      // Constraint-free legacy tables have already migrated. Rebuilding them
+      // again would discard the identity and pairing columns added afterward.
+      if (/\bCHECK\s*\(\s*provider\s+IN\s*\(/i.test(definition.sql) && !definition.sql.includes("'claude'")) {
         this.db.exec(`
           ALTER TABLE worker_accounts RENAME TO worker_accounts_legacy;
           CREATE TABLE worker_accounts (
-            id TEXT PRIMARY KEY, provider TEXT NOT NULL CHECK(provider IN ('codex','grok','devin','claude')),
+            -- Legacy profiles remain on disk, including unsupported providers.
+            id TEXT PRIMARY KEY, provider TEXT NOT NULL,
             enabled INTEGER NOT NULL DEFAULT 1, ready INTEGER NOT NULL DEFAULT 0, removing INTEGER NOT NULL DEFAULT 0,
             credential_digest TEXT, identity_digest TEXT
           );
@@ -123,7 +126,7 @@ export class AuthStore {
   close(): void { this.db.close(); }
 
   workerAccounts(): WorkerAccount[] {
-    return (this.db.prepare("SELECT id, provider, enabled, ready, removing FROM worker_accounts ORDER BY rowid").all() as Array<{
+    return (this.db.prepare("SELECT id, provider, enabled, ready, removing FROM worker_accounts WHERE provider IN ('codex','devin','claude') ORDER BY rowid").all() as Array<{
       id: string; provider: WorkerProvider; enabled: number; ready: number; removing: number;
     }>).map(({ id, provider, enabled, ready, removing }) => ({ id, provider, enabled: Boolean(enabled), ready: Boolean(ready), removing: Boolean(removing) }));
   }
@@ -152,6 +155,7 @@ export class AuthStore {
   }
 
   prepareWorker(provider: WorkerProvider, existingId?: string): WorkerAccount {
+    if (!["codex", "devin", "claude"].includes(provider)) throw new Error("unsupported Worker provider");
     if (provider === "codex" && !existingId) throw new Error("Codex Worker accounts come with Codex Bot accounts; sign in the paired Worker account instead");
     const id = existingId ?? randomUUID();
     const existing = this.workerAccounts().find((item) => item.id === id);
@@ -183,12 +187,14 @@ export class AuthStore {
   }
 
   enableWorker(id: string, enabled: boolean): WorkerAccount {
+    if (!this.workerAccounts().some((account) => account.id === id)) throw new Error("unknown worker account");
     if (!this.db.prepare("UPDATE worker_accounts SET enabled = ? WHERE id = ? AND removing = 0").run(Number(enabled), id).changes)
       throw new Error("unknown worker account");
     return this.workerAccounts().find((item) => item.id === id)!;
   }
 
   beginWorkerRemoval(id: string): WorkerAccount {
+    if (!this.workerAccounts().some((account) => account.id === id)) throw new Error("unknown worker account");
     if (!this.db.prepare("UPDATE worker_accounts SET enabled = 0, removing = 1 WHERE id = ?").run(id).changes)
       throw new Error("unknown worker account");
     return this.workerAccounts().find((item) => item.id === id)!;

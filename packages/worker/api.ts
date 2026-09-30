@@ -11,13 +11,13 @@ import { workerStateCategories } from "./src/state-categories.js";
 
 const id = z.uuid();
 const model = z.strictObject({ id: z.string(), name: z.string(), efforts: z.array(z.string()), effortConfigId: z.string().nullable() });
-const catalogSchema = z.strictObject({ accountId: id, provider: z.enum(["codex", "grok", "devin", "claude"]), observedAt: z.string(),
+const catalogSchema = z.strictObject({ accountId: id, provider: z.enum(["codex", "devin", "claude"]), observedAt: z.string(),
   source: z.string(), runtimeVersion: z.string(), modelConfigId: z.string().nullable(), models: z.array(model), nativeModelIds: z.array(z.string()), stale: z.boolean(), error: z.string().nullable() });
 const phase = z.enum(["preparing", "idle", "running", "awaiting_input", "cancelling", "closed", "failed", "needs_recovery"]);
 const turnPhase = z.enum(["queued", "running", "awaiting_input", "cancelling", "completed", "cancelled", "failed", "unknown"]);
 const observedSettingsSchema = z.strictObject({ model: z.string().nullable(), effort: z.string().nullable(), mode: z.string().nullable(),
   at: z.number().int(), recordSeq: z.number().int() });
-const workerSchema = z.strictObject({ id, botId: z.string(), threadId: z.string(), accountId: id, provider: z.enum(["codex", "grok", "devin", "claude"]),
+const workerSchema = z.strictObject({ id, botId: z.string(), threadId: z.string(), accountId: id, provider: z.enum(["codex", "devin", "claude"]),
   model: z.string(), effort: z.string().nullable(), repo: z.string(), cwd: z.string().nullable(), branch: z.string().nullable(),
   baseCommit: z.string().nullable(), sourceDirty: z.boolean(), roleId: z.uuid().nullable().describe("Role ID captured at creation; null for legacy or not-yet-prepared Workers. Recovery retains the saved snapshot."), roleRevision: z.number().int().nullable(), sessionId: z.string().nullable(),
   runtimeInstance: id.nullable(),
@@ -74,14 +74,14 @@ export const workerBotDependencies = operation({ name: "worker_bot_dependencies"
       relationships: rows.map(row => ({ relation: "worker", package: "worker", kind: "worker", id: row.id })) };
   } });
 export const workerCatalog = operation({
-  name: "worker_catalog", description: "Read model and effort choices observed through this account's ACP session or Claude SDK supportedModels, first when its runtime starts. Codex omits no-effort, o3, realtime and image OpenAI entries; Grok omits Imagine media models; Devin omits no-effort entries; Claude omits models needing purchased usage credits. Refresh on demand; stale results are labelled and never authorize dispatch.",
+  name: "worker_catalog", description: "Read model and effort choices observed through this account's ACP session or Claude SDK supportedModels, first when its runtime starts. Codex omits no-effort, o3, realtime and image OpenAI entries; Devin omits no-effort entries; Claude omits models needing purchased usage credits. Refresh on demand; stale results are labelled and never authorize dispatch.",
   input: z.strictObject({ accountId: id, refresh: z.boolean().optional() }), output: catalogSchema,
   annotations: { title: "Account-bound worker catalog", readOnlyHint: true },
   async call(ctx: WorkersContext, { accountId, refresh }) { return ctx.supervisor.catalog(accountId, refresh ?? false); },
 });
 export const workerRuntimeList = operation({
   name: "worker_runtime_list", description: "Read account runtime health. ACP owns one account process; Claude SDK owns separate session children (pid is null, pids lists current children). A running SDK group may have no children until catalog or session setup.",
-  input: z.strictObject({}), output: z.strictObject({ runtimes: z.array(z.strictObject({ id, provider: z.enum(["codex", "grok", "devin", "claude"]),
+  input: z.strictObject({}), output: z.strictObject({ runtimes: z.array(z.strictObject({ id, provider: z.enum(["codex", "devin", "claude"]),
     backend: z.enum(["acp", "claude-sdk"]), processModel: z.enum(["account", "session"]), pids: z.array(z.number().int()),
     state: z.enum(["running", "stopped", "error"]), pid: z.number().int().nullable(), instance: id.nullable(), error: z.string().nullable() })) }),
   annotations: { title: "List Worker runtimes", readOnlyHint: true },

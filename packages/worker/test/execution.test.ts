@@ -87,9 +87,9 @@ let cwd = '';
 let promptId = null;
 let currentEffort = 'low';
 const send = (value) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...value }) + '\\n');
-const options = (model = 'xai/grok-build') => [
+const options = (model = 'openai/gpt-fixture') => [
   { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: model,
-    options: [{ value: 'xai/grok-build', name: 'Grok Build' }] },
+    options: [{ value: 'openai/gpt-fixture', name: 'GPT fixture' }] },
   { id: 'effort', name: 'Effort', category: 'thought_level', type: 'select', currentValue: currentEffort,
     options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }] },
 ];
@@ -183,13 +183,18 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
   let workerSocket: Awaited<ReturnType<typeof serveSocket>> | undefined;
   const scopedChanges: string[] = [];
   try {
+    const { AuthStore } = await import("@stack/auth");
+    const store = new AuthStore(root);
+    const botAccount = store.addAccount(JSON.stringify({ tokens: { refresh_token: "refresh", access_token: "access", id_token: "fixture.jwt.signature" } }));
+    const pairedId = store.pairedWorker(botAccount.id)!;
+    store.close();
     const prepared = await socketCall(socketPath("auth", env), "tools/call", {
-      name: "worker_account_prepare", arguments: { provider: "grok" },
+      name: "worker_account_prepare", arguments: { provider: "codex", id: pairedId },
     }) as { account: { id: string } };
     const accountId = prepared.account.id;
     const accountPath = join(root, "worker-accounts", accountId, "data", "opencode");
     await mkdir(accountPath, { recursive: true });
-    await writeV2Credential(join(accountPath, "opencode.db"), "xai", JSON.stringify({ type: "oauth", access: "fixture", refresh: "fixture" }));
+    await writeV2Credential(join(accountPath, "opencode.db"), "openai", JSON.stringify({ type: "oauth", access: "fixture", refresh: "fixture" }));
     await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_confirm", arguments: { id: accountId } });
     const supervisor = new WorkerSupervisor(root, env);
     manager = new WorkerManager(root, supervisor, env);
@@ -199,7 +204,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     await supervisor.reconcile();
     const catalog = await supervisor.catalog(accountId, true);
     assert.deepEqual(catalog.models[0]?.efforts, ["low", "high"]);
-    const start = { accountId, model: "xai/grok-build", effort: "low", repo, task: "Write an output file", requestId: randomUUID(), workItemId };
+    const start = { accountId, model: "openai/gpt-fixture", effort: "low", repo, task: "Write an output file", requestId: randomUUID(), workItemId };
     await assert.rejects(manager.start(start, { transport: "mcp", botId: null, instance: null, threadId: null, sessionId: null }), /Bot-bound MCP/);
     await assert.rejects(manager.start(start, { transport: "mcp", botId: "foreign-bot", instance: "old", threadId: "other", sessionId: null }), /verified Bot thread|Bot launch/);
     assert.deepEqual(manager.ledger.workers(), []);
@@ -239,7 +244,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     const written = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_diff", arguments: { id, path: "output.txt" } }) as { patch: string };
     assert.match(written.patch, /^\+.*Write an output file/m);
     const detail = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_detail", arguments: { id } }) as Awaited<ReturnType<WorkerManager["detail"]>>;
-    assert.equal(detail.observedSettings?.model, "xai/grok-build");
+    assert.equal(detail.observedSettings?.model, "openai/gpt-fixture");
     assert.equal(detail.observedSettings?.effort, "low");
     const settingsCall = <T>(name: string, args: Record<string, unknown>) => socketCall(socketPath("worker", env), "tools/call", { name, arguments: args }) as Promise<T>;
     const settingsBefore = await settingsCall<SettingsView>("worker_settings_read", { id });
@@ -354,11 +359,11 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     const removed = await manager.remove(id, true);
     assert.equal(removed.retainedBranch, started.worker.branch);
     await assert.rejects(stat(started.worker.cwd!), /ENOENT/);
-    manager.ledger.settings.patch("worker-defaults:grok", "opencode-grok", { expectedRevision: 0, requestId: randomUUID(), set: { model: start.model, effort: "high" } });
+    manager.ledger.settings.patch("worker-defaults:codex", "opencode-codex", { expectedRevision: 0, requestId: randomUUID(), set: { model: start.model, effort: "high" } });
     const withDefaults = { ...start, model: undefined, effort: undefined, requestId: randomUUID() };
     const next = await manager.start(withDefaults);
     assert.equal(next.worker.effort, "high");
-    manager.ledger.settings.patch("worker-defaults:grok", "opencode-grok", { expectedRevision: 1, requestId: randomUUID(), set: { effort: "low" } });
+    manager.ledger.settings.patch("worker-defaults:codex", "opencode-codex", { expectedRevision: 1, requestId: randomUUID(), set: { effort: "low" } });
     assert.equal((await manager.start(withDefaults)).worker.id, next.worker.id, "retry uses the original admitted defaults");
     for (let i = 0; i < 100 && (await manager.status(next.worker.id)).worker.phase !== "idle"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(next.worker.roleId, nextRoleId);

@@ -20,9 +20,9 @@ async function until(store, condition) {
 test("Fleet snapshots reconnect, retain failed reads, deduplicate catalogs and prune disabled accounts", async () => {
   const original = globalThis.WebSocket;
   const sockets = new Set();
-  const account = { id: "worker-1", provider: "grok", ready: true, enabled: true, removing: false, linkedAccounts: [] };
+  const account = { id: "worker-1", provider: "devin", ready: true, enabled: true, removing: false, linkedAccounts: [] };
   let accounts = [account];
-  let usage = { atMs: 1, accounts: [], grokBot: { usage: null } };
+  let usage = { atMs: 1, accounts: [] };
   let usageError = false;
   let catalogCalls = 0;
   let catalogRead = () => ({ accountId: account.id, models: [{ id: "native-model", efforts: ["low"] }], stale: false });
@@ -147,7 +147,7 @@ function harness({ accounts = [], bots = [] } = {}) {
 }
 
 test("catalog disable/re-enable fences the old observation and coalesces dirty notices into one follow-up", async () => {
-  const account = { id: "worker-1", provider: "grok", ready: true, enabled: true, removing: false };
+  const account = { id: "worker-1", provider: "devin", ready: true, enabled: true, removing: false };
   const h = harness({ accounts: [account] });
   const { store, handlers, publish, calls } = h;
   try {
@@ -179,7 +179,7 @@ test("catalog disable/re-enable fences the old observation and coalesces dirty n
 });
 
 test("catalog discovery's own notice produces a cache-only follow-up and then settles", async () => {
-  const account = { id: "worker-1", provider: "grok", ready: true, enabled: true, removing: false };
+  const account = { id: "worker-1", provider: "devin", ready: true, enabled: true, removing: false };
   const h = harness({ accounts: [account] });
   const { store, handlers, publish, calls } = h;
   let cached;

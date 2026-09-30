@@ -193,11 +193,6 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         related: [{ ref: { kind: account.scope === "bot" ? "account" : "worker-account", id: account.id }, label: "Account" }],
         events: state.events.filter((event) => event.pkg === "usage") };
     }
-    case "grok-bot-usage": {
-      const observation = state.usage.data?.grokBot;
-      if (!observation) return null;
-      return { eyebrow: "Grok Bot usage", accent: "server", title: "Grok Bot", record: observation, body: <ObservationStatus observation={observation} /> };
-    }
     case "worker-catalog": {
       const account = state.workerAccounts.data?.find((item) => item.id === ref.id);
       if (!account) return null;
@@ -835,7 +830,7 @@ function referencePackage(ref: NodeRef): string {
   if (ref.kind === "worker-catalog" || ref.kind === "worker" || ref.kind === "worker-runtime" || ref.kind === "worker-window") return "worker";
   if (ref.kind === "proc-schedule" || ref.kind === "proc-execution" || ref.kind === "proc-run" || ref.kind === "proc-run-window") return "proc";
   if (ref.kind === "work-item") return "hud";
-  if (ref.kind === "usage" || ref.kind === "usage-account" || ref.kind === "grok-bot-usage") return "usage";
+  if (ref.kind === "usage" || ref.kind === "usage-account") return "usage";
   if (ref.kind === "preset" || ref.kind === "scrape-job") return "scrape";
   if (ref.kind === "browser-profile" || ref.kind === "browser-handoff" || ref.kind === "browser-controller" || ref.kind === "browser-viewer") return "browse";
   if (ref.kind === "research-document" || ref.kind === "ingestion-job" || ref.kind === "research-source") return "brain";

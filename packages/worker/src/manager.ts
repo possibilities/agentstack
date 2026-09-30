@@ -597,5 +597,5 @@ export class WorkerManager {
 }
 
 export function workerSettingsBackend(provider: WorkerRecord["provider"]): SettingsBackend {
-  return provider === "claude" ? "claude-sdk" : provider === "devin" ? "devin-acp" : provider === "codex" ? "opencode-codex" : "opencode-grok";
+  return provider === "claude" ? "claude-sdk" : provider === "devin" ? "devin-acp" : "opencode-codex";
 }

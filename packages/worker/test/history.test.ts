@@ -14,14 +14,14 @@ import { api, workerCancel, workerRead, workerSend, workerStart, workerStatus, w
 import type { InvocationContext } from "@stack/api";
 
 const intent = (accountId: string = randomUUID()) => ({ requestId: randomUUID(), botId: "fixture-bot", threadId: "root",
-  accountId, provider: "grok" as const, model: "xai/grok-build", effort: "high", repo: "/fixture/repo", baseRef: "main", task: "Review the actual task" });
-const config = (model = "xai/grok-observed", effort = "low") => ({ configOptions: [
+  accountId, provider: "codex" as const, model: "openai/gpt-fixture", effort: "high", repo: "/fixture/repo", baseRef: "main", task: "Review the actual task" });
+const config = (model = "openai/gpt-observed", effort = "low") => ({ configOptions: [
   { id: "model", name: "Model", type: "select", category: "model", currentValue: model, options: [{ value: model, name: model }] },
   { id: "effort", name: "Effort", type: "select", category: "thought_level", currentValue: effort, options: [{ value: effort, name: effort }] },
 ] });
 
 function managerFixture(root: string, request = intent()) {
-  const runtime: Runtime = { account: { id: request.accountId, provider: "grok", enabled: true, ready: true, removing: false },
+  const runtime: Runtime = { account: { id: request.accountId, provider: "codex", enabled: true, ready: true, removing: false },
     backend: "acp", process: { notify() {}, cancelPermissions() {} } as unknown as AcpProcess,
     instance: randomUUID(), version: "fixture", probeSession: null, canLoad: true, canClose: true, supportsHttp: true,
     capabilities: { loadSession: true }, agentInfo: { name: "fixture" } };
@@ -79,6 +79,45 @@ test("Worker callers read only their own records and never gain lifecycle author
     await assert.rejects(manager.workAdmissions(workItemId, 0, 50, invocation), /exact live runtime/);
     assert.equal((await manager.status(worker.id)).worker.id, worker.id, "operator can inspect historical records");
   } finally { await manager.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("retired Workers stay unchanged across restart and are unavailable through Worker reads, actions and HUD admissions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stack-worker-retired-"));
+  const env = { STACK_STATE_DIR: root };
+  const workItemId = randomUUID();
+  const workContext = { workItemId, scopeRevision: 1, source: "explicit" as const };
+  const seed = new WorkerLedger(root);
+  const active = seed.reserve(intent(), workContext);
+  const retired = [seed.reserve(intent(), workContext), seed.reserve(intent(), workContext)];
+  for (const { worker } of retired) seed.setSession(worker.id, `retired-session-${worker.id}`);
+  const permission = seed.addPermission(retired[0]!.worker.id, retired[0]!.turn.id, 7, "Retained permission", []);
+  seed.close();
+  const db = new DatabaseSync(join(root, "workers.sqlite"));
+  const retiredIds = retired.map(({ worker }) => worker.id);
+  for (const id of retiredIds) db.prepare("UPDATE workers SET provider='grok' WHERE id=?").run(id);
+  const retained = () => Object.fromEntries(["workers", "turns", "transcript", "pending_requests", "worker_records"].map(table => [table,
+    db.prepare(`SELECT * FROM ${table} WHERE ${table === "workers" ? "id" : "worker_id"} IN (?,?) ORDER BY rowid`).all(...retiredIds)]));
+  const before = retained();
+  const supervisor = new WorkerSupervisor(root, env);
+  const manager = new WorkerManager(root, supervisor, env);
+  try {
+    assert.deepEqual(retained(), before, "startup recovery must not rewrite retired records");
+    assert.deepEqual((await manager.list()).map(worker => worker.id), [active.worker.id]);
+    const admissions = await manager.workAdmissions(workItemId, 0, 1);
+    assert.deepEqual(admissions.entries.map(entry => entry.workerId), [active.worker.id]);
+    assert.equal(admissions.nextCursor, null, "hidden admissions do not create a phantom next page");
+    for (const { worker, turn } of retired) {
+      for (const read of [() => manager.status(worker.id), () => manager.read(worker.id, 0, 10), () => manager.detail(worker.id),
+        () => manager.turns(worker.id, undefined, 10), () => manager.records(worker.id, 0, 10, undefined),
+        () => manager.tools(worker.id, 0, 10), () => manager.turnContext(worker.id, turn.id), () => manager.readSettings(worker.id)])
+        await assert.rejects(read, /unknown worker/);
+      for (const action of [() => manager.send({ id: worker.id, requestId: randomUUID(), message: "Do not dispatch" }),
+        () => manager.cancel(worker.id), () => manager.respond(worker.id, permission.id, null),
+        () => manager.resume(worker.id, true), () => manager.closeWorker(worker.id), () => manager.remove(worker.id, true)])
+        await assert.rejects(action, /unknown worker/);
+    }
+    assert.deepEqual(retained(), before, "denied actions preserve all retained records");
+  } finally { await manager.close(); db.close(); await rm(root, { recursive: true, force: true }); }
 });
 
 test("exhausted structured retention still captures a new turn's text and attributes known late tools", async () => {
@@ -165,7 +204,7 @@ test("admitted prompts and requested choices survive failed preparation, restart
     assert.equal(turn.observedSettings, null);
     ledger.setTurnPhase(turn.id, "failed", null, "worktree preparation failed");
     ledger.setWorkerPhase(worker.id, "idle");
-    const followup = ledger.reserveTurn(worker.id, randomUUID(), "Fix the failed preparation", "xai/grok-build", "high").turn;
+    const followup = ledger.reserveTurn(worker.id, randomUUID(), "Fix the failed preparation", "openai/gpt-fixture", "high").turn;
     ledger.history.append(worker.id, followup.id, "config_option_update", "response", config());
     ledger.history.update(worker.id, null, "live", { sessionUpdate: "session_info_update", title: "Durable title" });
     ledger.dispatchTurn(followup.id, "Role instructions\nFix the failed preparation");
@@ -207,14 +246,14 @@ test("actual ACP partial tool updates preserve structured content, metadata and 
     // OpenCode completedToolUpdate omits title unless the underlying completed state has one.
     const completed = history.update(worker.id, turn.id, "live", { sessionUpdate: "tool_call_update", toolCallId: "call-task", status: "completed",
       content: [{ type: "content", content: { type: "text", text: "Review complete" } }, { type: "diff", path: "/fixture/a", oldText: "a", newText: "b" }],
-      rawOutput: { output: "Review complete", metadata: { parentSessionId: "ses-root", sessionId: "ses-child", model: { providerID: "xai", modelID: "grok-build" } } } });
+      rawOutput: { output: "Review complete", metadata: { parentSessionId: "ses-root", sessionId: "ses-child", model: { providerID: "openai", modelID: "gpt-fixture" } } } });
     const page = history.tools(worker.id, 0, 1);
     assert.equal(page.tools[0]?.title, "task"); assert.equal(page.tools[0]?.status, "completed");
     assert.equal(page.tools[0]?.firstSeq, start); assert.equal(page.tools[0]?.lastSeq, completed);
     assert.deepEqual((page.tools[0]?.record.data?.toolCall as Record<string, unknown>).locations, [{ path: "/fixture" }]);
     assert.equal(page.tasks[0]?.sessionId, "ses-child");
     assert.equal(page.tasks[0]?.childStatus, "unknown"); assert.equal(page.tasks[0]?.hierarchyVerified, false);
-    assert.equal(page.tasks[0]?.model?.modelID, "grok-build");
+    assert.equal(page.tasks[0]?.model?.modelID, "gpt-fixture");
     history.update(worker.id, turn.id, "live", { sessionUpdate: "tool_call", toolCallId: "call-read", title: "read", kind: "read",
       rawInput: { filePath: "/fixture" }, rawOutput: { metadata: { parentSessionId: "ses-root", sessionId: "not-a-child" } } });
     assert.equal(history.tools(worker.id, 0, 50).tasks.length, 1);
@@ -286,7 +325,7 @@ test("session metadata outside turns, runtime fencing, permission ownership and 
   const manager = new WorkerManager(root, supervisor, { STACK_STATE_DIR: root });
   const process = {} as AcpProcess;
   const accountId = randomUUID();
-  const runtime: Runtime = { account: { id: accountId, provider: "grok", enabled: true, ready: true, removing: false },
+  const runtime: Runtime = { account: { id: accountId, provider: "codex", enabled: true, ready: true, removing: false },
     backend: "acp", process, instance: randomUUID(), version: "fixture", probeSession: null, canLoad: true, canClose: true, supportsHttp: true,
     capabilities: { loadSession: true }, agentInfo: { name: "fixture" } };
   supervisor.runtime = () => runtime;

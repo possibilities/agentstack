@@ -69,7 +69,6 @@ export function homeOf(ref: NodeRef): NodeHome {
       return { kind: "space", space: "accounts", window: "model-catalogs" };
     case "usage":
     case "usage-account":
-    case "grok-bot-usage":
       return { kind: "space", space: "accounts", window: "usage" };
     case "bot":
       return { kind: "space", space: "fleet", window: "bots" };
@@ -236,7 +235,6 @@ export function parseNodeKey(key: string): NodeRef | null {
   if (key === "signal") return { kind: "signal" };
   if (key === "login") return { kind: "login" };
   if (key === "usage") return { kind: "usage" };
-  if (key === "grok-bot-usage") return { kind: "grok-bot-usage" };
   const colon = key.indexOf(":");
   if (colon <= 0) return null;
   const kind = key.slice(0, colon);

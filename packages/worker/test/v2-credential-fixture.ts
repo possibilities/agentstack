@@ -2,7 +2,7 @@ import { chmod, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export async function writeV2Credential(path: string, provider: "xai" | "openai", value: string): Promise<void> {
+export async function writeV2Credential(path: string, provider: "openai", value: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(path);
   try {

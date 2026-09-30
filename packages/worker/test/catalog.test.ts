@@ -57,20 +57,20 @@ test("ACP catalog reflects the exact account process and dependent effort choice
   const auth = await serveApi({ name: "auth", transport: "socket", env });
   const supervisor = new WorkerSupervisor(dir, env);
   try {
-    const prepare = async (provider: "grok" | "codex" = "grok") => {
+    const prepare = async () => {
+      const provider = "codex";
       const response = await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_prepare",
-        arguments: { provider, ...(provider === "codex" ? { id: codexBotAccount(dir).worker } : {}) } }) as { account: { id: string } };
+        arguments: { provider, id: codexBotAccount(dir).worker } }) as { account: { id: string } };
       const id = response.account.id;
       const accountDir = join(dir, "worker-accounts", id, "data", "opencode");
       await (await import("node:fs/promises")).mkdir(accountDir, { recursive: true });
-      await writeV2Credential(join(accountDir, "opencode.db"), provider === "grok" ? "xai" : "openai",
+      await writeV2Credential(join(accountDir, "opencode.db"), "openai",
         JSON.stringify({ type: "oauth", access: id, refresh: id, metadata: { accountID: "acct-" + id } }));
       await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_confirm", arguments: { id } });
       return id;
     };
     const first = await prepare();
     const second = await prepare();
-    const codex = await prepare("codex");
     const { account: devinAccount } = await socketCall(socketPath("auth", env), "tools/call", {
       name: "worker_account_prepare", arguments: { provider: "devin" } }) as { account: { id: string } };
     const devin = devinAccount.id;
@@ -81,26 +81,25 @@ test("ACP catalog reflects the exact account process and dependent effort choice
     await supervisor.reconcile();
     const a = await supervisor.catalog(first, true);
     const b = await supervisor.catalog(second, true);
-    const c = await supervisor.catalog(codex, true);
     const d = await supervisor.catalog(devin, true);
     assert.equal(a.models.length, 3);
-    assert.deepEqual(a.models.map((model) => model.efforts), [["low"], ["high", "max"], []]);
-    assert.ok(a.models.every((model) => model.id.startsWith(first) && !model.id.endsWith("imagine")), "Grok omits Imagine media models");
+    assert.deepEqual(a.models.map((model) => model.efforts), [["low"], ["high", "max"], ["low"]]);
+    assert.ok(a.models.every((model) => model.id.startsWith(first)), "catalog models belong to the exact account process");
     assert.ok(b.models.every((model) => model.id.startsWith(second)));
     assert.notEqual(a.models[0]!.id, b.models[0]!.id);
-    assert.deepEqual(c.models.map((model) => model.id), [codex + "-small", codex + "-large", codex + "-imagine"], "Codex catalogs omit entries without effort choices");
+    assert.deepEqual(a.models.map((model) => model.id), [first + "-small", first + "-large", first + "-imagine"], "Codex catalogs omit entries without effort choices");
     assert.deepEqual(d.models.map((model) => model.id), [devin + "-small", devin + "-large", devin + "-imagine"], "Devin catalogs omit entries without effort choices");
     assert.deepEqual(d.nativeModelIds, ["native-1"]);
     assert.equal((await supervisor.catalog(first, false)).observedAt, a.observedAt);
-    assert.equal(supervisor.runtimeList().length, 4);
+    assert.equal(supervisor.runtimeList().length, 3);
     await supervisor.drain(second);
     const relaunched = await supervisor.catalog(second, true);
     assert.equal(relaunched.stale, false, "catalog reads reconcile an enabled account's missing runtime");
-    assert.equal(supervisor.runtimeList().length, 4);
+    assert.equal(supervisor.runtimeList().length, 3);
     assert.equal((await supervisor.catalog(second, false)).stale, false);
     await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_set_enabled", arguments: { id: first, enabled: false } }).catch(() => undefined);
     await supervisor.reconcile();
-    assert.equal(supervisor.runtimeList().length, 3);
+    assert.equal(supervisor.runtimeList().length, 2);
   } finally {
     await supervisor.close();
     await auth.close();
@@ -120,10 +119,10 @@ process.exit(1);`);
   const supervisor = new WorkerSupervisor(dir, env);
   try {
     const { account } = await socketCall(socketPath("auth", env), "tools/call", {
-      name: "worker_account_prepare", arguments: { provider: "grok" } }) as { account: { id: string } };
+      name: "worker_account_prepare", arguments: { provider: "codex", id: codexBotAccount(dir).worker } }) as { account: { id: string } };
     const accountDir = join(dir, "worker-accounts", account.id, "data", "opencode");
     await (await import("node:fs/promises")).mkdir(accountDir, { recursive: true });
-    await writeV2Credential(join(accountDir, "opencode.db"), "xai",
+    await writeV2Credential(join(accountDir, "opencode.db"), "openai",
       JSON.stringify({ type: "oauth", access: account.id, refresh: account.id }));
     await socketCall(socketPath("auth", env), "tools/call", { name: "worker_account_confirm", arguments: { id: account.id } });
     const catalog = await supervisor.catalog(account.id, true);
@@ -147,9 +146,6 @@ test("catalog parsing preserves native IDs and grouped ACP options", () => {
     choice("openai/gpt-4o", []), choice("openai/o3"), choice("openai/o3-pro"), choice("openai/gpt-realtime-2.1"),
     choice("openai/gpt-image-2"), choice("openai/chatgpt-image-latest"), choice("openai/gpt-5.6-sol"), choice("openai/o4-mini"),
   ]).map((model) => model.id), ["openai/gpt-5.6-sol", "openai/o4-mini"], "Codex reports only current reasoning models");
-  assert.deepEqual(catalogModels("grok", [
-    choice("xai/grok-4.20-0309-non-reasoning", []), choice("xai/grok-imagine-video"), choice("xai/grok-4.7"),
-  ]).map((model) => model.id), ["xai/grok-4.20-0309-non-reasoning", "xai/grok-4.7"], "Grok keeps no-effort chat models");
   assert.deepEqual(catalogModels("devin", [choice("adaptive", []), choice("MODEL_PRIVATE_11", []), choice("swe-2-high")]).map((model) => model.id),
     ["swe-2-high"], "Devin omits entries without effort choices");
   assert.deepEqual(catalogModels("claude", [choice("claude-haiku-fixture", []), choice("claude-opus-fixture")]).map((model) => model.id),
@@ -161,18 +157,18 @@ test("operator disable and removal drain the exact account process before deleti
   const binary = join(dir, "fake-acp");
   await writeFile(binary, fake);
   await chmod(binary, 0o700);
-  const env = { ...process.env, STACK_STATE_DIR: dir, STACK_OPENCODE_BIN: binary };
+  const env = { ...process.env, STACK_STATE_DIR: dir, STACK_OPENCODE_BIN: binary, STACK_DEVIN_BIN: binary };
   const auth = await serveApi({ name: "auth", transport: "socket", env });
   const workers = await serveApi({ name: "worker", transport: "socket", env });
   const call = (name: string, args: object) => socketCall(socketPath("auth", env), "tools/call", { name, arguments: args });
   try {
-    const { account } = await call("worker_account_prepare", { provider: "grok" }) as { account: { id: string } };
+    const { account } = await call("worker_account_prepare", { provider: "devin" }) as { account: { id: string } };
     assert.deepEqual((await call("worker_account_list", {}) as { accounts: unknown[] }).accounts, [
-      { id: account.id, provider: "grok", enabled: true, ready: false, removing: false, linkedAccounts: [] },
+      { id: account.id, provider: "devin", enabled: true, ready: false, removing: false, linkedAccounts: [] },
     ]);
     const root = join(dir, "worker-accounts", account.id);
-    await (await import("node:fs/promises")).mkdir(join(root, "data", "opencode"), { recursive: true });
-     await writeV2Credential(join(root, "data", "opencode", "opencode.db"), "xai", JSON.stringify({ type: "oauth", access: "first", refresh: "first" }));
+    await (await import("node:fs/promises")).mkdir(join(root, "data", "devin"), { recursive: true });
+    await writeFile(join(root, "data", "devin", "credentials.toml"), 'api_key = "test-key"\napi_server_url = "https://api.devin.ai/"\n', { mode: 0o600 });
     await call("worker_account_confirm", { id: account.id });
     const runtimes = async () => (await socketCall(socketPath("worker", env), "tools/call", {
       name: "worker_runtime_list", arguments: {},

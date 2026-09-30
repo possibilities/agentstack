@@ -58,7 +58,7 @@ const handlers = {
       : workItemId === ids.design ? [admission(turns.design, ids.design, 1, "running", true)] : [];
     return { entries, nextCursor: null };
   },
-  usage_snapshot: () => ({ atMs: now, inventoryAtMs: now, inventoryError: null, accounts: [], grokBot: null }),
+  usage_snapshot: () => ({ atMs: now, inventoryAtMs: now, inventoryError: null, accounts: [] }),
 };
 const sockets = new Map();
 let websocket, next, browser, hud;

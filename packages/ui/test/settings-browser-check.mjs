@@ -35,7 +35,7 @@ settings.seed("bot:bot-1", { model: "gpt-6-sol", model_reasoning_effort: "medium
   "voice.includeStartupContext": false, "sandbox_workspace_write.writable_roots": [], "agents.default_subagent_model": "gpt-5-retired" }, "Copied from defaults", 0);
 settings.markLoaded("bot:bot-1", "inst-bot-1", settings.get("bot:bot-1"));
 settings.seed("bot:bot-2", { model: "gpt-6-sol" }, "Copied from defaults", 0);
-for (const provider of ["codex", "grok", "devin", "claude"]) settings.seed(`worker-defaults:${provider}`, {}, "Empty provider defaults");
+for (const provider of ["codex", "devin", "claude"]) settings.seed(`worker-defaults:${provider}`, {}, "Empty provider defaults");
 for (const id of [idleWorker, busyWorker]) {
   settings.seed(`worker:${id}`, { model: "claude-opus-5-5", effort: "high" }, "Saved Worker selection");
   settings.markLoaded(`worker:${id}`, runtime, settings.get(`worker:${id}`));

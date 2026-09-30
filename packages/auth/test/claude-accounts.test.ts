@@ -120,16 +120,33 @@ test("Claude rejects unsafe native evidence without exposing the bytes or follow
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 });
 
-test("auth migrates the prior Worker provider constraint without losing account state or ordering", async () => {
+test("auth migrates the prior provider constraint, retaining retired accounts without exposing or modifying them", async () => {
   const root = await mkdtemp(join(tmpdir(), "stack-claude-migrate-"));
   const db = new DatabaseSync(join(root, "configuration.sqlite"));
   db.exec("CREATE TABLE worker_accounts (id TEXT PRIMARY KEY, provider TEXT NOT NULL CHECK(provider IN ('codex','grok','devin')), enabled INTEGER NOT NULL DEFAULT 1, ready INTEGER NOT NULL DEFAULT 0, removing INTEGER NOT NULL DEFAULT 0, credential_digest TEXT)");
   db.prepare("INSERT INTO worker_accounts VALUES (?, 'grok', 0, 1, 1, 'prior-digest')").run(identityA);
+  db.prepare("INSERT INTO worker_accounts VALUES (?, 'devin', 1, 1, 0, 'devin-digest')").run(identityB);
   db.close();
-  const store = new AuthStore(root);
+  let store = new AuthStore(root);
   try {
-    assert.deepEqual(store.workerAccounts(), [{ id: identityA, provider: "grok", enabled: false, ready: true, removing: true }]);
+    assert.deepEqual(store.workerAccounts(), [{ id: identityB, provider: "devin", enabled: true, ready: true, removing: false }]);
+    assert.throws(() => store.prepareWorker("devin", identityA), /unknown worker account/);
+    assert.throws(() => store.confirmWorker(identityA, "replacement"), /unknown worker account/);
+    assert.throws(() => store.enableWorker(identityA, true), /unknown worker account/);
+    assert.throws(() => store.beginWorkerRemoval(identityA), /unknown worker account/);
     const claude = store.prepareWorker("claude");
     assert.equal(store.workerAccounts()[1]?.id, claude.id);
+    store.confirmWorker(claude.id, "claude-digest", identityA);
+    const bot = store.addAccount(JSON.stringify({ tokens: { access_token: "access", refresh_token: "refresh", id_token: "fixture.jwt.signature" } }));
+    const pairedId = store.pairedWorker(bot.id)!;
+    store.close(); store = new AuthStore(root);
+    assert.equal(store.pairedWorker(bot.id), pairedId, "reopening the migrated store retains its Codex pairing");
+    assert.deepEqual(store.workerAccounts().map(account => account.id), [identityB, claude.id, pairedId]);
+    assert.throws(() => store.confirmWorker(claude.id, "rotated", identityB), /does not match/, "reopening retains Claude's identity fence");
+    const retained = new DatabaseSync(join(root, "configuration.sqlite"), { readOnly: true });
+    try {
+      assert.deepEqual({ ...retained.prepare("SELECT id, provider, enabled, ready, removing, credential_digest FROM worker_accounts WHERE id=?").get(identityA) },
+        { id: identityA, provider: "grok", enabled: 0, ready: 1, removing: 1, credential_digest: "prior-digest" });
+    } finally { retained.close(); }
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 });

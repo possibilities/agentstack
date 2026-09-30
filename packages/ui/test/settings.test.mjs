@@ -33,7 +33,7 @@ test("Bot edits are flat and Worker edits nest target and patch; defaults omit t
   const patch = { expectedRevision: 7, requestId: id, set: { model_context_window: 120000 } };
   assert.deepEqual(editRequest({ kind: "bot", id: "bot-1" }, patch, "preview"), { pkg: "bots", name: "bot_settings_preview", args: { id: "bot-1", ...patch } });
   assert.deepEqual(editRequest({ kind: "bot-defaults" }, patch, "patch").args, patch);
-  assert.deepEqual(editRequest({ kind: "worker-defaults", provider: "grok" }, patch, "patch"), { pkg: "worker", name: "worker_settings_patch", args: { target: { provider: "grok" }, patch } });
+  assert.deepEqual(editRequest({ kind: "worker-defaults", provider: "devin" }, patch, "patch"), { pkg: "worker", name: "worker_settings_patch", args: { target: { provider: "devin" }, patch } });
 });
 
 test("controls come from the catalog schema, and buffers never coerce emptiness into a value", () => {

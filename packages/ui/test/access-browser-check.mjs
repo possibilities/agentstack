@@ -61,7 +61,7 @@ const handlers = {
   worker_account_list: () => ({ accounts: [] }), worker_account_login_current: () => ({ logins: [] }),
   bot_list: () => ({ bots: [] }), bot_defaults_get: () => ({ model: "fixture", reasoningEffort: "medium", sandboxMode: "danger-full-access", approvalPolicy: "never" }),
   voice_status: () => ({ call: null }), worker_list: () => ({ workers: [] }), worker_runtime_list: () => ({ runtimes: [] }),
-  usage_snapshot: () => ({ atMs: now, inventoryAtMs: now, inventoryError: null, accounts: [], grokBot: null }),
+  usage_snapshot: () => ({ atMs: now, inventoryAtMs: now, inventoryError: null, accounts: [] }),
 };
 try {
   const definitions = { access: ["access_snapshot", "pairing_decide", "grant_update", "access_revoke"], serve: ["serve_status"],

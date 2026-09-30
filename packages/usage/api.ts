@@ -8,7 +8,7 @@ import { snapshotSchema } from "./src/schema.js";
 export type UsageContext = { observer: UsageObserver };
 export const usageSnapshot = operation({
   name: "usage_snapshot",
-  description: "Read usage for Codex Bot and Codex, Grok, Devin and Claude Worker accounts by scope and ID, plus the machine's Grok Bot login beside a signed-in Grok Worker. Claude reports native quota windows and optional extra usage without refreshing credentials. Dollar allocations, subscription ends where exposed, Bot–Worker links, last-good values and freshness are explicit. No eligibility or balancing.",
+  description: "Read usage for Codex Bot and Codex, Devin and Claude Worker accounts by scope and ID. Claude reports native quota windows and optional extra usage without refreshing credentials. Subscription ends where exposed, Bot–Worker links, last-good values and freshness are explicit. No eligibility or balancing.",
   input: z.strictObject({}), output: snapshotSchema,
   annotations: { title: "Read usage observations", readOnlyHint: true },
   async call(ctx: UsageContext) { return ctx.observer.snapshot(); },
@@ -16,8 +16,8 @@ export const usageSnapshot = operation({
 export const topics = { usage_changed: "An account's usage, availability, or observation state changed. Re-read usage_snapshot." } as const;
 const packageApi: PackageApi<UsageContext, keyof typeof topics> = {
   operations: [usageSnapshot,
-    operation({ name: "usage_observations_plan", description: "Preview clearing local usage measurements for exact account/scope pairs and optionally the separate Grok Bot observation. Clears no credentials and never resets provider quota or billing. Collectors can repopulate measurements on their next cycle.",
-      input: z.strictObject({ accounts: z.array(z.strictObject({ id: z.uuid(), scope: z.enum(["bot", "worker"]) })).max(128), grokBot: z.boolean() }).refine(value => value.accounts.length > 0 || value.grokBot, "Select at least one observation"), output: statePlan,
+    operation({ name: "usage_observations_plan", description: "Preview clearing local usage measurements for exact account/scope pairs. Clears no credentials and never resets provider quota or billing. Collectors can repopulate measurements on their next cycle.",
+      input: z.strictObject({ accounts: z.array(z.strictObject({ id: z.uuid(), scope: z.enum(["bot", "worker"]) })).min(1).max(128) }), output: statePlan,
       async call(ctx, input, invocation) { requireStateOperator(invocation); return ctx.observer.clearPlan(input); } }),
     operation({ name: "usage_observations_clear", description: "Apply one exact usage-observation plan, fence selected in-flight collector results and persist the cleared snapshot. Read the receipt after a lost response; normal later collection is independent regeneration.",
       input: stateApplyInput, output: stateReceipt, annotations: { destructiveHint: true, idempotentHint: true },

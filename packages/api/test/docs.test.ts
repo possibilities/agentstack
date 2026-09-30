@@ -362,10 +362,12 @@ test("the api package serves structured documents for every workspace package", 
     assert.deepEqual(Object.keys(usage.events), ["usage_changed"]);
     assert.deepEqual(usage.operations.map((operation) => operation.name).filter(name => !stateOperation(name)), ["usage_snapshot"]);
     assert.equal(usage.operations[0]?.annotations.readOnlyHint, true);
-    assert.deepEqual(Object.keys(usage.operations[0]?.outputSchema.properties ?? {}).sort(), ["accounts", "atMs", "grokBot", "inventoryAtMs", "inventoryError"]);
-    assert.ok(JSON.stringify(usage.operations[0]?.outputSchema).includes("allocatedUsd"));
+    assert.deepEqual(Object.keys(usage.operations[0]?.outputSchema.properties ?? {}).sort(), ["accounts", "atMs", "inventoryAtMs", "inventoryError"]);
     assert.ok(JSON.stringify(usage.operations[0]?.outputSchema).includes('"claude"'));
     assert.ok(JSON.stringify(usage.operations[0]?.outputSchema).includes('"extraUsage"'));
+    const observationPlan = usage.operations.find(operation => operation.name === "usage_observations_plan")!;
+    assert.deepEqual(Object.keys(observationPlan.inputSchema.properties ?? {}), ["accounts"]);
+    assert.equal((observationPlan.inputSchema.properties as { accounts: { minItems: number } }).accounts.minItems, 1);
     assert.equal(usage.transports.find((transport) => transport.type === "socket")?.endpoint, join(stateDir, "sockets", "usage.sock"));
     assert.equal(usage.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
 

@@ -59,7 +59,7 @@ const definitions = {
   auth: [op("account_list", { accounts: [{ id: "account-1", enabled: true, removing: false, linkedAccounts: [] }] }), op("account_login_current", { login: null }), op("worker_account_list", { accounts: [] }), op("worker_account_login_current", { logins: [] })],
   bots: [op("bot_list", { bots }), op("bot_defaults_get", bots[0].settings), op("voice_status", { call: null })],
   worker: [op("worker_runtime_list", { runtimes: [] }), op("worker_list", { workers: [] })],
-  usage: [op("usage_snapshot", { atMs: Date.parse(fixtureAt), inventoryAtMs: null, inventoryError: null, accounts: [], grokBot: { observedAtMs: null, lastAttemptAtMs: null, fresh: false, error: "not_observed", usage: null } })],
+  usage: [op("usage_snapshot", { atMs: Date.parse(fixtureAt), inventoryAtMs: null, inventoryError: null, accounts: [] })],
   api: [op("docs_snapshot", { packages: catalog })],
 };
 let next, browser;
