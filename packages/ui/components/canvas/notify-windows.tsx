@@ -1,5 +1,7 @@
 "use client";
 
+import { localOperation, stateOperations } from "@/lib/stack/state";
+import { StateFlowView, useStateFlow } from "./state-flow";
 import { memo, useEffect, useId, useRef, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -38,7 +40,8 @@ const at = (iso: string | null) => iso ? Date.parse(iso) : null;
 /** Newest-first notifications with an Open, Dismissed or All filter and an optional source. Choosing one shows it; it stays open until dismissed. */
 export function InboxWindow() {
   const store = useStore();
-  const { status, endpoints, notifications, notificationFilter, notifyCounts, remote } = useStack();
+  const stack = useStack();
+  const { status, endpoints, notifications, notificationFilter, notifyCounts, remote } = stack;
   const actions = useNotifyActions();
   const list = useRef<HTMLUListElement>(null);
   const loaded = notifications.data?.filter === notificationFilter ? notifications.data : null;
@@ -47,6 +50,14 @@ export function InboxWindow() {
   const sources = (notifyCounts.data?.sources ?? []).filter((item): item is { source: string; open: number; total: number } => item.source !== null);
   const arrived = useArrivals(loaded);
   const [older, setOlder] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [chosen, setChosen] = useState<string[]>([]);
+  const clear = useStateFlow({ operations: stateOperations(store.call, "notify", { plan: "notification_history_plan", apply: "notification_history_clear", receipt: "notify_state_receipt_get" }, { ids: chosen }),
+    recoveryKey: "notify:history" });
+  const clearLocked = clear.flow.phase !== "idle";
+  const clearAccess = localOperation(stack, "notify", "notification_history_plan");
+  // Only dismissed records whose content is still held can be selected; open ones are dismissed first.
+  const clearable = (record: Notification) => Boolean(record.dismissedAt) && !record.contentClearedAt;
 
   const filter = (next: { view?: View; source?: string | null }) => {
     const chosen = next.view ?? view;
@@ -93,13 +104,25 @@ export function InboxWindow() {
               </NativeSelect>
             ) : null}
           </div>
+          {view === "dismissed" && !remote ? (
+            clearing ? (
+              <div className="flex flex-col gap-1.5 rounded-lg border border-dashed p-2">
+                <p className="text-[0.68rem] text-pretty text-muted-foreground">Clears titles, messages, source and group labels, links, actions, prompts and responses for up to 100 selected dismissed notifications. The original outcome and the digests that stop a send or dismissal from repeating stay. Nothing is answered.</p>
+                <StateFlowView controls={clear} label={`Prepare clearing ${chosen.length} notification${chosen.length === 1 ? "" : "s"}`} applyLabel="Clear this content"
+                  unavailable={!clearAccess.available ? clearAccess.reason : status.notify !== "open" ? "The notify connection is not open." : !chosen.length ? "Select dismissed notifications first." : null} />
+                <Button size="xs" variant="ghost" className="self-start" disabled={clearLocked} onClick={() => { setClearing(false); setChosen([]); }}>Done</Button>
+              </div>
+            ) : <Button size="xs" variant="ghost" className="self-start text-muted-foreground" onClick={() => setClearing(true)}>Select to clear content…</Button>
+          ) : null}
           {!loaded ? (
             <p className="flex items-center gap-1.5 px-0.5 text-[0.72rem] text-muted-foreground">{notifications.error && !notifications.data ? notifications.error : <><Spinner className="size-3" />Loading…</>}</p>
           ) : entries.length ? (
             <ul ref={list} onKeyDown={onKeyDown} aria-label="Notifications" className="flex flex-col gap-1.5">
               {entries.map((record) => (
                 <InboxRow key={record.id} record={record} selected={actions.selected === record.id} arrived={arrived.get(record.id)}
-                  filtering={notificationFilter.source !== undefined} onSelect={() => actions.open(record.id)} />
+                  filtering={notificationFilter.source !== undefined} onSelect={() => actions.open(record.id)}
+                  choose={clearing && view === "dismissed" ? { checked: chosen.includes(record.id), disabled: clearLocked || !clearable(record) || (!chosen.includes(record.id) && chosen.length >= 100),
+                    toggle: () => setChosen(chosen.includes(record.id) ? chosen.filter((id) => id !== record.id) : [...chosen, record.id]) } : undefined} />
               ))}
             </ul>
           ) : <Empty icon={view === "dismissed" ? BellOffIcon : InboxIcon} title={emptyTitle[view]} />}
@@ -114,12 +137,15 @@ export function InboxWindow() {
   );
 }
 
-function InboxRow({ record, selected, arrived, filtering, onSelect }: { record: Notification; selected: boolean; arrived?: number; filtering: boolean; onSelect(): void }) {
+function InboxRow({ record, selected, arrived, filtering, onSelect, choose }: { record: Notification; selected: boolean; arrived?: number; filtering: boolean; onSelect(): void;
+  choose?: { checked: boolean; disabled: boolean; toggle(): void } }) {
   const outcome = record.outcome ? outcomeView[record.outcome] : null;
   const OutcomeIcon = outcome?.icon;
   return (
     <li className="relative">
       {arrived ? <span key={arrived} aria-hidden className="pointer-events-none absolute -inset-0.5 rounded-[inherit] animate-ui-flash" /> : null}
+      {choose ? <input type="checkbox" aria-label={`Select ${record.contentClearedAt ? "cleared notification" : record.title}`} className="absolute top-2.5 right-2.5 z-10 size-3.5 accent-destructive"
+        checked={choose.checked} disabled={choose.disabled} title={record.contentClearedAt ? "Already cleared" : undefined} onChange={choose.toggle} /> : null}
       <button type="button" data-notification={record.id} aria-current={selected ? "true" : undefined} onClick={onSelect}
         className={cn("flex w-full gap-2 rounded-xl border px-2.5 py-2 text-left hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-ring",
           selected && "border-foreground/25 bg-muted/60", record.dismissedAt && "opacity-70")}>
