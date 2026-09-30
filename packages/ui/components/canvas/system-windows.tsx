@@ -11,9 +11,9 @@ import { useNow, useStack, useWorkbench } from "./provider";
 import { Section, Window } from "./window";
 
 /** A labeled copy chip: the URL stays out of the layout but in the title and clipboard. */
-export function CopyChip({ label, value, name }: { label: string; value: string; name: string }) {
+export function CopyChip({ label, value, name, hint }: { label: string; value: string; name: string; hint?: string }) {
   const [copied, setCopied] = useState(false);
-  return <button type="button" title={value} aria-label={`Copy ${name} ${label} URL`}
+  return <button type="button" title={hint ? `${hint}\n${value}` : value} aria-label={`Copy ${name} ${label} URL`}
     onClick={() => void navigator.clipboard.writeText(value).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1_200); })}
     className="inline-flex h-5 items-center gap-1 rounded-md bg-muted px-1.5 font-mono text-[0.65rem] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
     {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}{label}
@@ -125,7 +125,7 @@ export function PackagesWindow() {
   const { server, catalog, status, endpoints, scoped } = useStack();
   const { goTo } = useWorkbench();
   const mcpUrls = server.data?.mcpUrls ?? {};
-  // One row per package: its WebSocket channel from this page and its server MCP endpoint.
+  // One row per package: its WebSocket channel from this page and its external HTTP MCP endpoint.
   const packages = [...new Set([...Object.keys(endpoints), ...Object.keys(status), ...Object.keys(mcpUrls), ...(catalog.data ?? []).map((doc) => doc.name)])].sort();
   const subscriptions = Object.values(scoped);
   return (
@@ -143,7 +143,7 @@ export function PackagesWindow() {
                 {doc ? <span className="text-muted-foreground/80 tabular-nums" title={`${doc.operations.length} operations · ${Object.keys(doc.events).length} event topics`}>{doc.operations.length} ops · {Object.keys(doc.events).length} events</span> : null}
                 <span className="ml-auto flex items-center gap-1">
                   {endpoints[name] ? <CopyChip label="WS" name={name} value={endpoints[name]} /> : null}
-                  {mcpUrls[name] ? <CopyChip label="MCP" name={name} value={mcpUrls[name]} /> : null}
+                  {mcpUrls[name] ? <CopyChip label="MCP HTTP" name={name} value={mcpUrls[name]} hint="HTTP MCP endpoint for external consumers. Stack launches use stdio." /> : null}
                 </span>
               </div>
             );
