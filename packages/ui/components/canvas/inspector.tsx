@@ -352,6 +352,16 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         body: <StateEntryDetails entry={entry} />,
       };
     }
+    case "bot-state": {
+      // The state view holds its reads per Bot incarnation; the inspector points at the Bot and its owner read.
+      const bot = state.remote ? null : state.bots.data?.find((item) => item.id === ref.id);
+      if (!bot) return null;
+      return {
+        eyebrow: "Bot state", accent: "bots", title: bot.id, record: { id: bot.id, state: bot.state, cwd: bot.cwd, mainThreadId: bot.mainThreadId },
+        related: [{ ref: { kind: "bot", id: bot.id }, label: `${bot.id} · Bot` }, { ref: { kind: "operation", pkg: "bots", id: "bot_state_read" }, label: "bot_state_read" }],
+        events: state.events.filter((event) => event.pkg === "bots" && event.scope === bot.id && event.topic === "bot_state_changed"),
+      };
+    }
     case "subscription": {
       // Listed fields only: read arguments and errors need the explicit drill-down in the Subscriptions window.
       const subscription = state.remote ? null : state.subscriptions.data?.subscriptions.find((item) => item.id === ref.id);
@@ -817,7 +827,7 @@ function NotificationRecordControls({ id }: { id: string }) {
 }
 
 function referencePackage(ref: NodeRef): string {
-  if (ref.kind === "bot") return "bots";
+  if (ref.kind === "bot" || ref.kind === "bot-state") return "bots";
   if (ref.kind === "server" || ref.kind === "child" || ref.kind === "codex-tool" || ref.kind === "resource" || ref.kind === "process" || ref.kind === "state-entry" || ref.kind === "subscription") return "server";
   if (ref.kind === "role" || ref.kind === "category" || ref.kind === "fragment" || ref.kind === "skill" || ref.kind === "mcp-server" || ref.kind === "trusted-project" || ref.kind === "role-shim") return "roles";
   if (ref.kind === "notification") return "notify";

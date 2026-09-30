@@ -73,6 +73,10 @@ export type StackState = Snapshot & {
   /** Loaded pages of durable Bot event subscriptions for `subscriptionFilter`, without read arguments. Local only. */
   subscriptions: Resource<SubscriptionList>;
   subscriptionFilter: SubscriptionFilter;
+  /** The Bot Fleet's state window shows. Local only. */
+  botStateId: string | null;
+  /** Per Bot: bumped on bot_state_changed, lifecycle and queue notices and scoped (re)connects. Bot state views re-read on it. */
+  botStateGenerations: Record<string, number>;
   /** Bumped on every `serve_state_changed` and serve (re)connect; open maintenance views re-read what they hold on it. */
   serveStateGeneration: number;
   /** Local-only PATH inventory; no Roles window consumes it until the shim UI is requested. */
@@ -305,6 +309,7 @@ export class StackStore {
       codexTools: { data: null, error: null, at: null },
       stateInventory: { data: null, error: null, at: null }, stateSelection: { owners: null, measure: false },
       subscriptions: { data: null, error: null, at: null }, subscriptionFilter: {}, serveStateGeneration: 0,
+      botStateId: null, botStateGenerations: {},
       roleContext: {}, roleContextShown: {},
       signalStatus: { data: null, error: null, at: null }, signalGeneration: 0, signalRecords: { items: {}, messages: {}, runs: {} },
       contentDocuments: { data: null, error: null, at: null }, contentTags: { data: null, error: null, at: null },
@@ -1328,6 +1333,13 @@ export class StackStore {
     void this.refreshSubscriptions();
   }
 
+  /** Show one Bot in Fleet's state window. */
+  selectBotState = (id: string | null): void => { this.set({ botStateId: id }); };
+
+  private bumpBotState(id: string): void {
+    this.set({ botStateGenerations: { ...this.state.botStateGenerations, [id]: (this.state.botStateGenerations[id] ?? 0) + 1 } });
+  }
+
   /** Choose owners and measurement; held pages belong to the previous selection and are dropped at once. */
   selectStateInventory = (selection: StateSelection): Promise<void> => {
     this.set({ stateSelection: selection, stateInventory: { data: null, error: null, at: null } });
@@ -1622,7 +1634,9 @@ export class StackStore {
     const { bots, endpoints } = this.state;
     if (!bots.data) return;
     const wanted = new Map<string, { pkg: string; topics: string[] }>();
-    for (const bot of bots.data) if (endpoints.bots) wanted.set(bot.id, { pkg: "bots", topics: ["bots_changed", "threads_changed", "chats_changed", "chat_queue_changed"] });
+    // bot_state_changed is local operator state; a remote session never reads it.
+    const topics = ["bots_changed", "threads_changed", "chats_changed", "chat_queue_changed", ...this.state.remote ? [] : ["bot_state_changed"]];
+    for (const bot of bots.data) if (endpoints.bots) wanted.set(bot.id, { pkg: "bots", topics });
     const scoped = { ...this.state.scoped };
     for (const [id, channel] of this.scopedChannels) {
       if (wanted.get(id)?.pkg === scoped[id]?.pkg) continue;
@@ -1638,16 +1652,17 @@ export class StackStore {
         onStatus: (status) => {
           if (this.scopedChannels.get(id) !== channel) return;
           this.set({ scoped: { ...this.state.scoped, [id]: { pkg, status } } });
-          if (status === "closed") this.invalidateBot(id);
+          if (status === "closed") { this.invalidateBot(id); this.bumpBotState(id); }
         },
         // onOpen also runs when the underlying socket subscription reconnects
         // without closing the browser WebSocket. Missed notices are not replayed.
-        onOpen: () => { if (this.scopedChannels.get(id) !== channel) return; this.invalidateBot(id); this.readSettings(`bot:${id}`); },
+        onOpen: () => { if (this.scopedChannels.get(id) !== channel) return; this.invalidateBot(id); this.bumpBotState(id); this.readSettings(`bot:${id}`); },
         onNotice: (topic) => {
           this.log(pkg, topic, id);
           if (topic === "bots_changed") {
             this.refresh("bots");
           }
+          if (topic === "bot_state_changed" || topic === "bots_changed" || topic === "chat_queue_changed") this.bumpBotState(id);
           // threads_changed is an invalidation, not proof the main thread changed; the read decides.
           if (topic === "bots_changed" || topic === "threads_changed") this.readSettings(`bot:${id}`);
         },

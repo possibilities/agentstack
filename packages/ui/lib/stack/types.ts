@@ -971,6 +971,8 @@ export type NodeRef =
   | { kind: "work-item"; id: string }
   /** An owner state inventory entry by its `<owner>:<category>` ID, and a durable Bot event subscription by UUID. Local only. */
   | { kind: "state-entry" | "subscription"; id: string }
+  /** Fleet's state view of one Bot, by Bot ID. Local only. */
+  | { kind: "bot-state"; id: string }
   | { kind: "package"; id: string }
   | { kind: "operation"; id: string; pkg: string }
   /** Content records: a Vault document by slug, a collection by slug, an item by stable ID, an Artifact by name. */

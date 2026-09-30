@@ -20,6 +20,7 @@ import type { SpaceId } from "@/lib/stack/spaces";
 import type { StackState } from "@/lib/stack/store";
 import { type Accent } from "./window";
 import { AccountsWindow, BotsWindow } from "./windows";
+import { BotStateWindow } from "./bot-state";
 import { UsageWindow } from "./usage-window";
 import { CatalogWindow } from "./catalog-window";
 import { CallSpeechWindow } from "./call-speech-window";
@@ -82,6 +83,7 @@ export const spaceViews: Record<SpaceId, {
     accent: "bots",
     windows: (_state, { chats }) => [
       { id: "bots", title: "Bots", icon: BotIcon, accent: "bots", width: 420, height: 620, column: 0, element: <BotsWindow /> },
+      { id: "bot-state", title: "Bot state", icon: HardDriveIcon, accent: "bots", width: 420, height: 760, column: 0, element: <BotStateWindow /> },
       // The primary chat sits beside Bots; each additional chat opens in the next column.
       ...chats.map((chat, index) => ({ id: chat.id, title: "Chat", icon: SquareTerminalIcon, accent: "bots" as const, width: 640, height: 720, column: index + 1, fixed: true,
         element: <ChatWindow id={chat.id} /> })),
