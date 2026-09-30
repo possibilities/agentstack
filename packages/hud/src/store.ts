@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { StateJournal, stateHash, type StateApplyInput } from "@stack/api";
 import { workItem, type Actor, type Activity, type Change, type ChatTarget, type Focus, type ListInput, type Metadata, type Receipt, type WorkItem } from "./schema.js";
 
 /** Stable JSON for request identity and exact correlation; object property order is immaterial. */
@@ -17,6 +18,7 @@ const hash = (value: unknown) => createHash("sha256").update(canonical(value)).d
 
 export class HudStore {
   private readonly db: DatabaseSync;
+  readonly maintenance: StateJournal;
   onChange?: (ids: string[]) => void;
 
   constructor(root: string) {
@@ -38,6 +40,7 @@ export class HudStore {
         CREATE TABLE IF NOT EXISTS focus (key TEXT PRIMARY KEY, body TEXT NOT NULL);
         PRAGMA user_version=1;
       `));
+      this.maintenance = new StateJournal(this.db, "hud");
     } catch (error) { this.db.close(); throw error; }
   }
   close(): void { this.db.close(); }
@@ -234,6 +237,26 @@ export class HudStore {
   focus(target: ChatTarget): Focus {
     const row = this.db.prepare("SELECT body FROM focus WHERE key=?").get(canonical(target));
     return row ? decode<Focus>(row) : { ...target, revision: 0, workItemId: null, updatedAt: null, updatedBy: null };
+  }
+  focusList(after: string | undefined, limit: number, botId?: string) {
+    const rows = this.db.prepare("SELECT key,body FROM focus WHERE key>? AND (? IS NULL OR json_extract(body,'$.botId')=?) ORDER BY key LIMIT ?")
+      .all(after ?? "", botId ?? null, botId ?? null, limit + 1) as Array<{ key: string; body: string }>;
+    return { entries: rows.slice(0, limit).map(row => decode<Focus>(row)), nextCursor: rows.length > limit ? rows[limit - 1]!.key : null };
+  }
+  focusRetirePlan(target: ChatTarget) {
+    const current = this.focus(target);
+    return this.maintenance.plan({ subject: { kind: "chat", id: target.threadId }, action: "retired_focus", revision: stateHash(current),
+      resources: [canonical(target)], blockedBy: [], retained: ["Shared Work items, metadata, collaboration history and captured Worker associations", "Focus action admission receipts"],
+      regeneration: ["Only retired sanctioned roots may be selected. Removing a focus row is distinct from a saved-null inheritance barrier; active-root focus must use work_focus_set."] }, target);
+  }
+  focusRetire(input: StateApplyInput) {
+    const receipt = this.maintenance.atomic(input, (plan, payload) => {
+      if (plan.action !== "retired_focus" || plan.revision !== stateHash(this.focus(payload as ChatTarget))) throw new Error("Focus changed; prepare a new plan");
+    }, payload => {
+      this.db.prepare("DELETE FROM focus WHERE key=?").run(canonical(payload));
+      return [{ resource: canonical(payload), outcome: "removed", detail: "Retired-root focus removed; shared Work and collaboration history retained" }];
+    });
+    this.onChange?.([]); return receipt;
   }
   focuses(id: string): { entries: Focus[]; total: number; truncated: boolean } {
     const count = this.db.prepare("SELECT COUNT(*) AS n FROM focus WHERE json_extract(body,'$.workItemId')=?").get(id) as { n: number };

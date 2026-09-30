@@ -143,6 +143,7 @@ export class Supervisor {
     }
     for (const record of this.records.values()) this.store.managed.seed(`bot:${record.id}`,
       nativeSettings(record.settings ?? { sandboxMode: "danger-full-access", approvalPolicy: "never" }), "Preserved Bot settings");
+    for (const record of this.records.values()) this.store.stateIdentity(record.id);
   }
 
   async reap(): Promise<void> {
@@ -306,6 +307,45 @@ export class Supervisor {
     return this.enqueue(id, () => this.stopQueued(id));
   }
 
+  /** State maintenance shares the start/stop/adoption fence and never stops a process implicitly. */
+  mutateResource<T>(id: string, action: () => Promise<T>): Promise<T> {
+    return this.enqueue(id, async () => {
+      if (!this.records.has(id)) throw new Error(`unknown bot: ${id}`);
+      if (this.store.maintenanceFence(id)) throw new Error("Bot state maintenance is unresolved");
+      return action();
+    });
+  }
+
+  /** State maintenance shares the start/stop/adoption fence and never stops a process implicitly. */
+  maintain<T>(id: string, action: () => Promise<T>): Promise<T> {
+    return this.enqueue(id, async () => {
+      const record = this.records.get(id);
+      if (!record) throw new Error(`unknown bot: ${id}`);
+      if (record.state !== "stopped" || record.pid || record.url || this.children.has(id) || this.recoveryIssues.has(id))
+        throw new Error("Stop and verify the Bot before state maintenance");
+      try { return await action(); }
+      finally { this.notify(id); }
+    });
+  }
+
+  resetConversation(id: string, expectedGeneration: string) {
+    const record = this.records.get(id);
+    if (!record || record.state !== "stopped" || record.pid || this.recoveryIssues.has(id)) throw new Error("Bot is not verified stopped");
+    const result = this.store.resetConversation(id, expectedGeneration);
+    record.mainThreadId = null;
+    record.threadStarting = false;
+    this.settingsObservations.delete(id);
+    return result;
+  }
+
+  replaceLaunchArgs(id: string, args: string[]): void {
+    const record = this.records.get(id);
+    if (!record || record.state !== "stopped") throw new Error("Bot is not stopped");
+    validateAppServerArgs(args);
+    this.store.saveServer({ ...record, args });
+    record.args = [...args];
+  }
+
   remove(id: string): Promise<{ id: string }> {
     if (!ID_PATTERN.test(id)) throw new Error(`invalid id: ${id}`);
     return this.enqueue(id, async () => {
@@ -318,6 +358,7 @@ export class Supervisor {
       await rm(join(this.options.stateDir, "logs", `${id}.log`), { force: true });
       // Legacy shared history cannot be attributed safely to one account.
       await rm(join(this.options.stateDir, "history", id), { recursive: true, force: true });
+      await rm(join(this.options.stateDir, "history-generations", this.store.stateIdentity(id).incarnation), { recursive: true, force: true });
       await this.releaseRole(record, true);
       this.store.deleteServer(id);
       this.records.delete(id);
@@ -338,6 +379,7 @@ export class Supervisor {
     const cwd = await existingDirectory(input.cwd);
     const codexBin = codexRuntimePath();
     const current = this.records.get(id);
+    if (current && this.store.maintenanceFence(id)) throw new Error("Bot state maintenance is unresolved; inspect its receipt and release the exact maintenance fence before starting");
     if (!current) await this.options.browserReleased?.(id);
     const userArgs = input.args ?? current?.args ?? [];
     validateAppServerArgs(userArgs);
@@ -400,7 +442,7 @@ export class Supervisor {
     const account = selected ? this.store.accountCredentials(selected) : null;
     const snapshot = this.role.defaultSnapshot();
     const privateHistory = join(this.options.stateDir, "history", id);
-    const history = current?.mainThreadId && !existsSync(privateHistory) ? join(this.options.stateDir, "history") : privateHistory;
+    const history = current ? this.store.historyPath(id) : privateHistory;
     await mkdir(history, { recursive: true, mode: 0o700 });
 
     let lastError: Error | undefined;
@@ -585,7 +627,9 @@ export class Supervisor {
 
   private view(record: RecordFile): ServerView {
     const saved = this.store.managed.get(`bot:${record.id}`);
-    return viewOf(saved ? { ...record, settings: legacySettings(saved.values) } : record, this.recoveryIssues.get(record.id) ?? null);
+    const maintenance = this.store.hasServer(record.id) ? this.store.maintenanceFence(record.id) : null;
+    return viewOf(saved ? { ...record, settings: legacySettings(saved.values) } : record,
+      this.recoveryIssues.get(record.id) ?? (maintenance ? `State maintenance ${maintenance} requires receipt inspection before start.` : null));
   }
 
   private noteRecoveryIssue(id: string, error: unknown): void {

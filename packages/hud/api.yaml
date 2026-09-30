@@ -8,6 +8,6 @@ mcp:
   events: [hud_changed, work_changed]
   description: Bot-managed shared work with verified Chat provenance, durable edits, focus and change subscriptions.
 websocket:
-  operations: [work_create, work_update, work_batch, work_get, work_list, work_tree, work_metadata_get, work_metadata_set, work_note_add, work_activity_list, work_focus_get, work_focus_set, work_resources]
+  operations: [work_create, work_update, work_batch, work_get, work_list, work_tree, work_metadata_get, work_metadata_set, work_note_add, work_activity_list, work_focus_get, work_focus_set, work_resources, hud_state_read, work_focus_list, work_focus_retire_plan, work_focus_retire, hud_state_receipt_get]
   events: [hud_changed, work_changed]
   description: Human collaboration and bounded projections for the Stack UI, with explicit metadata reads.

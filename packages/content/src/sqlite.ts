@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 // Preserve the original store's small Bun SQLite surface while using the
 // owner's Node runtime. The on-disk SQLite schema and SQL stay unchanged.
 export class Database {
-  private readonly db: DatabaseSync;
+  readonly db: DatabaseSync;
 
   constructor(path: string, _options: { create: true }) {
     this.db = new DatabaseSync(path);

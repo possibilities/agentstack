@@ -2,6 +2,8 @@ import { z } from "zod";
 import { operation, stateDir, type PackageApi } from "@stack/api";
 import { content, notification, page } from "./src/schema.js";
 import { NotificationStore } from "./src/store.js";
+import { withStateInventory, requireStateOperator, statePlan, stateApplyInput, stateReceipt } from "@stack/api";
+import { notifyStateCategories } from "./src/state-categories.js";
 
 type Context = { store: NotificationStore; changed?: () => void };
 const id = z.strictObject({ id: z.uuid() });
@@ -9,8 +11,17 @@ const read = { readOnlyHint: true } as const;
 const group = z.string().min(1).max(200);
 const count = z.number().int().nonnegative();
 
-export const api: PackageApi<Context, "notify_changed"> = {
+const packageApi: PackageApi<Context, "notify_changed"> = {
   operations: [
+    operation({ name: "notification_history_plan", description: "Preview clearing bodies, prompts, actions and responses for up to 100 exact dismissed Notifications. Open records must be dismissed first. ID/digest/outcome receipts remain so sends and dismissals cannot be replayed as new actions.",
+      input: z.strictObject({ ids: z.array(z.uuid()).min(1).max(100) }), output: statePlan,
+      async call(ctx, { ids }, invocation) { requireStateOperator(invocation); return ctx.store.historyPlan(ids); } }),
+    operation({ name: "notification_history_clear", description: "Apply one exact dismissed-Notification payload plan atomically with its cleanup receipt. Removes authored bodies, source/group labels, URLs, actions, prompts and responses; retains original outcome and retry digests. An identical retry returns its prior receipt.",
+      input: stateApplyInput, output: stateReceipt, annotations: { destructiveHint: true, idempotentHint: true },
+      async call(ctx, input, invocation) { requireStateOperator(invocation); const result = ctx.store.historyClear(input); ctx.changed?.(); return result; } }),
+    operation({ name: "notify_state_receipt_get", description: "Read one durable Notification payload-cleanup receipt, including the minimal metadata retained for retries.",
+      input: z.strictObject({ requestId: z.uuid() }), output: z.strictObject({ receipt: stateReceipt.nullable() }), annotations: read,
+      async call(ctx, { requestId }, invocation) { requireStateOperator(invocation); return { receipt: ctx.store.maintenance.receipt(requestId) }; } }),
     operation({ name: "notification_send", description: "Persist a notification with title, message, optional subtitle, source, click-through open URL, answer actions and reply placeholder. Returns its stable ID and record. A group replaces the open notification with the same group, dismissing it as replaced. Optional caller ID deduplicates identical submissions; no system banner is shown and nothing is executed.",
       input: content.extend({ id: z.uuid().optional() }), output: notification, annotations: { idempotentHint: false },
       async call(ctx, input) { const result = ctx.store.create(input); if (result.created) ctx.changed?.(); return result.record; } }),
@@ -37,3 +48,4 @@ export const api: PackageApi<Context, "notify_changed"> = {
   async createContext(env) { return { store: new NotificationStore(stateDir(env)) }; },
   async closeContext(ctx) { ctx.store.close(); },
 };
+export const api = withStateInventory("notify", notifyStateCategories, packageApi);

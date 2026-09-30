@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { StateJournal, type StateApplyInput } from "@stack/api";
 import { DEFAULTS, settings, type SourceMessage, type Settings, type Annotation } from "./schema.js";
 
 export const digest = (value: unknown) => createHash("sha256").update(typeof value === "string" ? value : JSON.stringify(value)).digest("hex");
@@ -15,6 +16,7 @@ export type Item = Annotation["items"][number] & { id:string; messageId:string; 
 
 export class AttentionStore {
   readonly db:DatabaseSync;
+  readonly maintenance: StateJournal;
   constructor(stateDir:string) {
     const dir=join(stateDir,"attention"); mkdirSync(dir,{recursive:true,mode:0o700});
     const path=join(dir,"attention.sqlite"); this.db=new DatabaseSync(path); chmodSync(path,0o600);
@@ -36,6 +38,8 @@ export class AttentionStore {
     if(!(this.db.prepare("PRAGMA table_info(items)").all() as {name:string}[]).some(row=>row.name==="initial_state")){
       this.db.exec("ALTER TABLE items ADD COLUMN initial_state TEXT; UPDATE items SET initial_state=state;");
     }
+    this.db.exec("CREATE TABLE IF NOT EXISTS cleared_messages(id TEXT PRIMARY KEY); CREATE TABLE IF NOT EXISTS cleared_feedback(id TEXT PRIMARY KEY,digest TEXT NOT NULL)");
+    this.maintenance = new StateJournal(this.db, "signal");
   }
   close(){this.db.close();}
   atomic<T>(fn:()=>T):T { this.db.exec("SAVEPOINT attention_write"); try {const out=fn();this.db.exec("RELEASE attention_write");return out;}
@@ -57,6 +61,7 @@ export class AttentionStore {
     const revision=digest([source.text,source.complete]),id=digest([logicalId,revision]);
     const prior=this.db.prepare("SELECT id FROM messages WHERE id=?").get(id);
     if(prior){
+      if (this.db.prepare("SELECT 1 FROM cleared_messages WHERE id=?").get(id)) return this.message(id);
       if(!this.message(id).current)this.atomic(()=>{
         this.retire(this.db.prepare("SELECT id FROM messages WHERE logical_id=? AND current=1").all(logicalId).map(row=>String(row.id)));
         this.db.prepare("UPDATE messages SET current=1 WHERE id=?").run(id);
@@ -117,6 +122,7 @@ export class AttentionStore {
   retry(id:string,delay:number){this.db.prepare("UPDATE jobs SET state='pending',available_at=?,request_id=? WHERE id=?").run(Date.now()+delay,randomUUID(),id);}
   replay(runId:string,requestId:string){
     const run=this.run(runId),original=this.db.prepare("SELECT * FROM jobs WHERE id=?").get(String(run.job_id))!;
+    if (run.body.contentClearedAt) throw new Error("attention_content_cleared");
     if(run.state==="running")throw new Error("cannot replay an unfinished run");
     const id=digest([requestId,runId]);
     const previous=this.meta<string>(`replayRequest:${requestId}`);
@@ -175,7 +181,7 @@ export class AttentionStore {
     const candidates=rows.slice(0,limit).map(row=>{
       if(kind==="messages"){const m=this.message(String(row.id));const {evidence:_evidence,...preview}=m;return {...preview,text:m.text.slice(0,2000),textChars:m.text.length,cursor:row.cursor};}
       if(kind==="runs"){const body=JSON.parse(String(row.body));const job=this.db.prepare("SELECT message_id,replay FROM jobs WHERE id=?").get(String(row.job_id));
-        return {id:row.id,jobId:row.job_id,messageId:job?String(job.message_id):null,replay:Boolean(job?.replay),replayOf:body.replayOf??null,promptVersion:body.promptVersion??null,
+        return {contentClearedAt:body.contentClearedAt??null,id:row.id,jobId:row.job_id,messageId:job?String(job.message_id):null,replay:Boolean(job?.replay),replayOf:body.replayOf??null,promptVersion:body.promptVersion??null,
           at:row.at,finished:row.finished,state:row.state,requestId:body.requestId,settings:body.settings,error:body.error??null,cursor:row.cursor};}
       if(kind==="items")return {cursor:row.cursor,item:{...JSON.parse(String(row.body)),current:Boolean(row.current),state:row.state}};
       if(kind==="feedback"){const body=JSON.parse(String(row.body));return {cursor:row.cursor,id:row.id,at:row.at,messageId:body.messageId,runId:body.runId??null,kind:body.kind,author:body.author,body:body.body};}
@@ -194,11 +200,62 @@ export class AttentionStore {
     const events=this.db.prepare("SELECT seq,at,kind,body FROM events WHERE json_extract(body,'$.runId')=? OR json_extract(body,'$.id')=? ORDER BY seq").all(id,id).map(row=>({...row,body:JSON.parse(String(row.body))}));
     return {schemaVersion:1,run,job,message:this.message(String(job.message_id)),blobs,events,feedback};
   }
-  feedback(id:string,body:unknown){const prior=this.db.prepare("SELECT body FROM feedback WHERE id=?").get(id);if(prior&&prior.body!==JSON.stringify(body))throw new Error("feedback_id_conflict");
+  feedback(id:string,body:unknown){const cleared=this.db.prepare("SELECT digest FROM cleared_feedback WHERE id=?").get(id);if(cleared){if(cleared.digest!==digest(body))throw new Error("feedback_id_conflict");return {id};} const prior=this.db.prepare("SELECT body FROM feedback WHERE id=?").get(id);if(prior&&prior.body!==JSON.stringify(body))throw new Error("feedback_id_conflict");
     if(!prior)this.atomic(()=>{this.db.prepare("INSERT INTO feedback VALUES(?,?,?)").run(id,Date.now(),JSON.stringify(body));this.event("feedback_recorded",{id,body});});return {id};}
   status(){return {enabled:this.meta<boolean>("enabled")??false,activatedAt:this.meta<number>("activatedAt"),baselined:this.meta<boolean>("baselined")??false,
+    contentGeneration: this.meta<number>("contentGeneration") ?? 0,
     settings:this.defaults(),lastScan:this.meta("lastScan"),lastInference:this.meta("lastInference"),sourceErrors:this.meta("sourceErrors")??[],
     jobs:this.db.prepare("SELECT state,COUNT(*) AS count FROM jobs GROUP BY state").all(),messages:Number(this.db.prepare("SELECT COUNT(*) AS n FROM messages").get()!.n),
     runs:Number(this.db.prepare("SELECT COUNT(*) AS n FROM runs").get()!.n),
     changeSeq:this.meta<number>("changeSeq")??0};}
+
+  private historyRevision() {
+    const hash = createHash("sha256");
+    for (const table of ["messages", "jobs", "runs", "items", "events", "feedback", "meta"])
+      for (const row of this.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).iterate()) hash.update(JSON.stringify(row));
+    return hash.digest("hex");
+  }
+  historyPlan() {
+    const counts = ["messages", "runs", "items", "events", "feedback", "blobs"].map(table => `${table}:${this.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()!.n}`);
+    return this.maintenance.plan({ subject: null, action: "all_captured_content", revision: this.historyRevision(), resources: counts,
+      blockedBy: this.meta("enabled") || this.db.prepare("SELECT 1 FROM jobs WHERE state='running' LIMIT 1").get() ? ["Pause Signal and wait for source reads and inference to drain"] : [],
+      retained: ["Message IDs/revisions suppress recreation of the same captured revision", "Job/request IDs, terminal outcomes and inference correlation remain; unknown stays unknown", "Inference payloads are a separate owner: page attention_infer_requests before purging through Infer", "Upstream Bot/Worker transcripts and shared HUD Work remain"],
+      regeneration: ["Clears all Signal evidence, including cross-conversation context copies, feedback, source-read blobs and partial buffers", "Source cursors remain; new or changed upstream revisions can be captured after explicit resume"] }, {});
+  }
+  historyClear(input: StateApplyInput) {
+    return this.maintenance.atomic(input, plan => {
+      if (this.meta("enabled") || this.db.prepare("SELECT 1 FROM jobs WHERE state='running' LIMIT 1").get() || plan.action !== "all_captured_content" || plan.revision !== this.historyRevision()) throw new Error("Signal state changed or enabled; pause, drain and prepare again");
+    }, () => {
+      const at = new Date().toISOString();
+      for (const row of this.db.prepare("SELECT id,body FROM messages").all()) {
+        const body = JSON.parse(String(row.body));
+        this.db.prepare("UPDATE messages SET body=?,current=0 WHERE id=?").run(JSON.stringify({ ...body, text: "", evidence: {}, contentClearedAt: at }), row.id!);
+      }
+      this.db.exec("INSERT OR IGNORE INTO cleared_messages SELECT id FROM messages; DELETE FROM items; UPDATE jobs SET state='cancelled' WHERE state='pending'");
+      for (const row of this.db.prepare("SELECT id,body FROM runs").all()) {
+        const body = JSON.parse(String(row.body));
+        const retained = { requestId: body.requestId, messageId: body.messageId, settings: body.settings, promptVersion: body.promptVersion, replayOf: body.replayOf, contentClearedAt: at };
+        this.db.prepare("UPDATE runs SET body=? WHERE id=?").run(JSON.stringify(retained), row.id!);
+      }
+      for (const row of this.db.prepare("SELECT id,body FROM feedback").all()) this.db.prepare("INSERT OR IGNORE INTO cleared_feedback VALUES(?,?)").run(row.id!, digest(JSON.parse(String(row.body))));
+      // Keep correlation only; source-read blobs can contain many conversations.
+      for (const row of this.db.prepare("SELECT seq,body FROM events").all()) {
+        const body = JSON.parse(String(row.body));
+        this.db.prepare("UPDATE events SET body=? WHERE seq=?").run(JSON.stringify({ requestId: body.requestId, runId: body.runId, contentClearedAt: at }), row.seq!);
+      }
+      this.db.exec("DELETE FROM feedback; DELETE FROM blobs; DELETE FROM meta WHERE key LIKE 'frozen:%'");
+      for (const row of this.db.prepare("SELECT key,value FROM meta WHERE key LIKE 'cursor:worker:%'").all()) {
+        const cursor = JSON.parse(String(row.value)); this.setMeta(String(row.key), { ...cursor, buffer: null });
+      }
+      this.setMeta("sourceErrors", []); this.setMeta("lastInference", null);
+      this.setMeta("contentGeneration", (this.meta<number>("contentGeneration") ?? 0) + 1);
+      this.event("content_cleared", { generation: this.meta("contentGeneration") });
+      return [{ resource: "signal:captured-content", outcome: "removed", detail: "Captured text, annotations, feedback, source-read/provider blobs and Worker partial buffers removed; minimal identity/outcome receipts retained" }];
+    });
+  }
+  inferRequests(offset: number, limit: number) {
+    const rows = this.db.prepare(`SELECT request_id AS requestId FROM jobs UNION SELECT json_extract(body,'$.requestId') FROM events
+      WHERE json_extract(body,'$.requestId') IS NOT NULL ORDER BY requestId LIMIT ? OFFSET ?`).all(limit + 1, offset);
+    return { requestIds: rows.slice(0, limit).map(row => String(row.requestId)), nextOffset: rows.length > limit ? offset + limit : null };
+  }
 }

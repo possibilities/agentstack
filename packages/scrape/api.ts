@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { withStateInventory } from "@stack/api";
+import { scrapeStateCategories } from "./src/state-categories.js";
 import { operation, type PackageApi } from "@stack/api";
 import { convertHtml, fetchLinks, fetchMarkdown, submitScrapeJob, closeBrowserSession, structuredJson } from "./src/api.js";
 import { runAgentBrowser, requireAgentBrowserSuccess, findAgentBrowserExecutable } from "./src/browser.js";
@@ -72,7 +74,7 @@ async function drain(ctx: Context): Promise<QueueResult> {
   try { const result = await work; if (result.processed || result.failed || result.retry_scheduled) ctx.changed?.(); return result; }
   finally { ctx.work = null; }
 }
-export const api: PackageApi<Context, "scrape_queue_changed"> = {
+const packageApi: PackageApi<Context, "scrape_queue_changed"> = {
   operations: [
     operation({ name: "scrape_fetch", description: "Fetch a URL as a bounded extraction envelope. A claimed preset never silently falls back: malformed_provider_output means the content shape or preset output contract changed and the named preset needs review. Browser navigation requires explicit unrestricted egress consent.",
       input: z.strictObject({ url, preset: preset.optional(), generic: z.boolean().optional(), selector: z.string().optional(), media: z.enum(["light", "dark"]).optional(), session: z.string().min(1).max(128).optional(), allowPrivateNetwork: z.boolean().default(false), maxContentBytes: z.number().int().positive().max(5_000_000).optional(), maxRelations: z.number().int().nonnegative().max(2048).optional() }),
@@ -164,3 +166,4 @@ export const api: PackageApi<Context, "scrape_queue_changed"> = {
   async prepareCloseContext(ctx) { ctx.controller.abort(); clearInterval(ctx.maintenance); },
   async closeContext(ctx) { ctx.controller.abort(); clearInterval(ctx.maintenance); await ctx.work?.catch(() => undefined); },
 };
+export const api = withStateInventory("scrape", scrapeStateCategories, packageApi);

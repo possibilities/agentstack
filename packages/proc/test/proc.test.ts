@@ -4,7 +4,7 @@ import { lstat, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { operation, serveApi, serveSocket, socketCall, socketPath, socketSubscribe } from "@stack/api";
+import { operation, serveApi, serveSocket, socketCall, socketPath, socketSubscribe, type StatePlan, type StateReceipt } from "@stack/api";
 import { z } from "zod";
 import { ProcStore } from "../src/store.js";
 import { ProcService } from "../src/service.js";
@@ -57,6 +57,15 @@ test("argv process emits cursor-readable lines and exit, reuses a request ID, an
   const lost = await call("proc_run_read", { id: second }) as { lines: unknown[]; gap: boolean };
   assert.deepEqual(lost.lines, []);
   assert.equal(lost.gap, true);
+  const plan = await call("proc_history_plan", { kind: "run_output", ids: [id] }) as StatePlan;
+  const clear = { planId: plan.id, expectedRevision: plan.revision, requestId: randomUUID() };
+  const receipt = await call("proc_history_clear", clear) as StateReceipt;
+  assert.equal(receipt.status, "completed");
+  assert.deepEqual(await call("proc_history_clear", clear), receipt);
+  const cleared = await call("proc_run_read", { id, after: 0 }) as { lines: unknown[]; gap: boolean };
+  assert.deepEqual(cleared.lines, []); assert.equal(cleared.gap, true);
+  const repeated = await call("proc_run_start", { requestId: id, process: spec }) as { state: string; outputTruncated: boolean };
+  assert.equal(repeated.state, "exited"); assert.equal(repeated.outputTruncated, true);
 });
 
 test("schedule calls an existing Package API, coalesces due intervals and preserves revisions and history", { timeout: 15_000 }, async (t) => {
@@ -73,7 +82,7 @@ test("schedule calls an existing Package API, coalesces due intervals and preser
   assert.equal(created.revision, 1);
   assert.deepEqual(await call("proc_schedule_create", spec), created);
   await assert.rejects(call("proc_schedule_create", { ...spec, everyMs: 1000 }), /schedule_id_conflict/);
-  const complete = await until(() => call("proc_execution_list", { id }) as Promise<{ executions: Array<{ state: string; result: unknown }> }>,
+  const complete = await until(() => call("proc_execution_list", { id }) as Promise<{ executions: Array<{ id: string; state: string; result: unknown }> }>,
     (page) => page.executions[0]?.state === "completed");
   assert.equal(effects, 2);
   assert.deepEqual(complete.executions[0]?.result, { observed: 2 });
@@ -85,6 +94,13 @@ test("schedule calls an existing Package API, coalesces due intervals and preser
   assert.deepEqual(await call("proc_schedule_remove", { id, expectedRevision: 2 }), { removed: true });
   assert.equal((await call("proc_execution_list", { id }) as { executions: unknown[] }).executions.length, 1);
   await assert.rejects(call("proc_schedule_remove", { id: "00000000-0000-4000-8000-000000000001", expectedRevision: 1 }), /protected/);
+  const execution = complete.executions[0]!;
+  const before = await call("proc_execution_get", { id: execution.id }) as { authority: unknown };
+  const plan = await call("proc_history_plan", { kind: "execution_content", ids: [execution.id] }) as StatePlan;
+  await call("proc_history_clear", { planId: plan.id, expectedRevision: plan.revision, requestId: randomUUID() });
+  const after = await call("proc_execution_get", { id: execution.id }) as { state: string; authority: unknown; action: unknown; result: unknown };
+  assert.equal(after.state, "completed"); assert.deepEqual(after.authority, before.authority);
+  assert.equal(after.action, null); assert.equal(after.result, null); assert.equal(effects, 2);
 });
 
 test("guardian cancellation is terminal and startup preserves interrupted work as unknown", { timeout: 15_000 }, async (t) => {

@@ -40,6 +40,7 @@ mcp:
   description: HTTP MCP operations for role editing, forwarded to the roles socket.
 websocket:
   operations:
+    - roles_state_read
     - roles_snapshot
     - role_shim_list
     - role_shim_create

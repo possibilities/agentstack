@@ -53,10 +53,20 @@ function gatedFetch() {
 }
 const outcome = ({ state, error }: { state: string; error: string | null }) => ({ state, error });
 
-test("the Package API loads with its operations and change event", () => {
-  assert.deepEqual(api.operations.map((operation) => operation.name),
-    ["infer_models", "infer_model_list", "infer_discover", "infer_complete", "infer_start", "infer_request_list", "infer_request_get", "infer_trace_read"]);
-  assert.deepEqual(Object.keys(api.events!.topics), ["infer_changed"]);
+test("terminal payload clearing preserves admission identity and never spends again", async () => {
+  let requests = 0;
+  await withService({ fetcher: (async () => { requests++; return completed("private result"); }) as typeof fetch }, async (service) => {
+    const request = input({ input: "private input" });
+    await service.start(request); await settled(service, request.requestId);
+    const plan = service.traces!.historyPlan([request.requestId]);
+    const apply = { planId: plan.id, expectedRevision: plan.revision, requestId: nextId() };
+    assert.equal(service.traces!.historyClear(apply).status, "completed");
+    assert.deepEqual(service.traces!.historyClear(apply), service.traces!.maintenance.receipt(apply.requestId));
+    const replay = await service.start(request);
+    assert.ok(replay.contentClearedAt); assert.equal(replay.input, ""); assert.equal(replay.text, "");
+    assert.equal(requests, 1);
+    assert.doesNotMatch(service.traces!.read(request.requestId, 0, 32000).text, /private input|private result/);
+  });
 });
 
 test("start admits a running ledger record at once, then one checked request completes in the background", async () => {

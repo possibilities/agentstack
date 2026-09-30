@@ -89,7 +89,7 @@ export function InferenceWindow() {
 
   const expandedSummary = requests.find((item) => item.requestId === expanded);
   // Re-read the full record whenever the followed request changes state.
-  const detailKey = expanded && connected ? `${expanded}:${expandedSummary?.state ?? "unlisted"}` : null;
+  const detailKey = expanded && connected ? `${expanded}:${expandedSummary?.state ?? "unlisted"}:${expandedSummary?.contentClearedAt ?? "present"}` : null;
   useEffect(() => {
     if (!detailKey) return;
     const requestId = detailKey.slice(0, detailKey.indexOf(":"));
@@ -259,7 +259,7 @@ export function InferenceWindow() {
                     <span className={cn("flex items-center gap-1 text-[0.68rem] font-medium", view.className)}>{view.icon}{view.label}</span>
                     {open ? null : (
                       <span className={cn("line-clamp-2 text-[0.8rem] text-pretty", item.textPreview === null && "text-muted-foreground")}>
-                        {item.textPreview ?? item.inputPreview}
+                        {item.contentClearedAt ? "Content cleared · admission receipt retained" : item.textPreview ?? item.inputPreview}
                       </span>
                     )}
                     <span className="font-mono text-[0.65rem] text-pretty text-muted-foreground">
@@ -272,7 +272,7 @@ export function InferenceWindow() {
                   {open ? (
                     <div className="flex flex-col gap-2 border-t px-2.5 py-2">
                       {item.error ? <p className={cn("text-[0.72rem] text-pretty", view.className)}>{inferErrorText(item.error)}</p> : null}
-                      {detail ? (
+                      {item.contentClearedAt ? <p className="text-[0.75rem] text-muted-foreground">Content cleared. Request identity, usage and outcome are retained.</p> : detail ? (
                         <>
                           {detail.text !== null ? (
                             <div className="flex items-start gap-1">

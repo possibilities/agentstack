@@ -39,16 +39,17 @@ type Feed<T> = { key: string; entries: T[]; nextCursor: number; hasMore: boolean
  */
 function useSignalFeed<T extends { cursor: number }>(name: string, filters: Record<string, unknown>, enabled = true) {
   const store = useStore();
-  const { signalGeneration, status } = useStack();
+  const { signalGeneration, signalStatus, status } = useStack();
   const open = status.signal === "open";
-  const key = JSON.stringify(filters);
+  const request = JSON.stringify(filters);
+  const key = JSON.stringify([request, signalStatus.data?.contentGeneration]);
   const [feed, setFeed] = useState<Feed<T> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   useEffect(() => {
     if (!open || !enabled) return;
     let live = true;
-    store.readSignal<AttentionPage<T>>(name, { ...JSON.parse(key), order: "desc", limit: pageSize }).then((page) => {
+    store.readSignal<AttentionPage<T>>(name, { ...JSON.parse(request), order: "desc", limit: pageSize }).then((page) => {
       if (!live) return;
       setError(null);
       setFeed((current) => {
@@ -61,25 +62,26 @@ function useSignalFeed<T extends { cursor: number }>(name: string, filters: Reco
       });
     }, (cause) => { if (live) setError(signalErrorText(errorMessage(cause))); });
     return () => { live = false; };
-  }, [store, name, key, signalGeneration, open, enabled]);
+  }, [store, name, key, request, signalGeneration, open, enabled]);
   const current = feed?.key === key ? feed : null;
   const more = useCallback(() => {
     if (!current?.hasMore) return;
     setLoadingMore(true);
-    store.readSignal<AttentionPage<T>>(name, { ...JSON.parse(key), order: "desc", limit: pageSize, before: current.nextCursor }).then(
+    store.readSignal<AttentionPage<T>>(name, { ...JSON.parse(request), order: "desc", limit: pageSize, before: current.nextCursor }).then(
       (page) => setFeed((latest) => latest?.key === key ? { key, entries: [...latest.entries, ...page.entries.filter((entry) => entry.cursor < (latest.entries.at(-1)?.cursor ?? Infinity))], nextCursor: page.nextCursor, hasMore: page.hasMore } : latest),
       (cause) => setError(signalErrorText(errorMessage(cause))),
     ).finally(() => setLoadingMore(false));
-  }, [store, name, key, current]);
+  }, [store, name, key, request, current]);
   return { entries: current?.entries ?? null, hasMore: current?.hasMore ?? false, more, loadingMore, error };
 }
 
 /** Every matching record, oldest first, re-read on each record generation. Open requests stay few; the cap keeps a runaway bounded. */
 function useSignalAll<T>(name: string, filters: Record<string, unknown>, maxPages = 8) {
   const store = useStore();
-  const { signalGeneration, status } = useStack();
+  const { signalGeneration, signalStatus, status } = useStack();
   const open = status.signal === "open";
-  const key = JSON.stringify(filters);
+  const request = JSON.stringify(filters);
+  const key = JSON.stringify([request, signalStatus.data?.contentGeneration]);
   const [result, setResult] = useState<{ key: string; entries: T[]; truncated: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -89,7 +91,7 @@ function useSignalAll<T>(name: string, filters: Record<string, unknown>, maxPage
       const entries: T[] = [];
       let after = 0;
       for (let page = 0; page < maxPages; page++) {
-        const read = await store.readSignal<AttentionPage<T>>(name, { ...JSON.parse(key), after, limit: pageSize });
+        const read = await store.readSignal<AttentionPage<T>>(name, { ...JSON.parse(request), after, limit: pageSize });
         entries.push(...read.entries);
         after = read.nextCursor;
         if (!read.hasMore) return { entries, truncated: false };
@@ -97,14 +99,15 @@ function useSignalAll<T>(name: string, filters: Record<string, unknown>, maxPage
       return { entries, truncated: true };
     })().then((read) => { if (live) { setError(null); setResult({ key, ...read }); } }, (cause) => { if (live) setError(signalErrorText(errorMessage(cause))); });
     return () => { live = false; };
-  }, [store, name, key, signalGeneration, open, maxPages]);
+  }, [store, name, key, request, signalGeneration, open, maxPages]);
   const current = result?.key === key ? result : null;
   return { entries: current?.entries ?? null, truncated: current?.truncated ?? false, error };
 }
 
 /** One read keyed by `key`, repeated on each record generation. */
-function useSignalRead<T>(key: string | null, read: () => Promise<T>) {
-  const { signalGeneration, status } = useStack();
+function useSignalRead<T>(requestKey: string | null, read: () => Promise<T>) {
+  const { signalGeneration, signalStatus, status } = useStack();
+  const key = requestKey && JSON.stringify([requestKey, signalStatus.data?.contentGeneration]);
   const open = status.signal === "open";
   const [value, setValue] = useState<{ key: string; data: T } | null>(null);
   const [error, setError] = useState<{ key: string; message: string } | null>(null);
@@ -663,7 +666,7 @@ function MessageRow({ message }: { message: AttentionMessage }) {
         <span className="min-w-0 truncate text-muted-foreground"><ConversationLink conversation={message.conversation} /></span>
         <Time at={message.observedAt} className="ml-auto shrink-0 text-[0.65rem] text-muted-foreground" />
       </div>
-      <p className="line-clamp-3 text-[0.78rem] text-pretty whitespace-pre-wrap">{message.text}</p>
+      <p className="line-clamp-3 text-[0.78rem] text-pretty whitespace-pre-wrap">{message.contentClearedAt ? "Captured content cleared · source identity retained" : message.text}</p>
       <p className={metaClass}>
         {message.textChars.toLocaleString()} chars{!message.complete ? " · provisional" : ""}{!message.current ? " · superseded" : ""}
         {message.audienceHint && message.audienceHint !== "unknown" ? ` · routed to ${message.audienceHint}` : ""}
@@ -790,7 +793,7 @@ export function AttentionRunsWindow() {
                         {run.replay ? (
                           <span className="inline-flex items-center gap-1 text-muted-foreground"><RotateCcwIcon className="size-3" />replay{run.replayOf ? <> of <NodeLink node={{ kind: "attention-run", id: run.replayOf }} label="original run">{shortId(run.replayOf)}</NodeLink></> : null}</span>
                         ) : null}
-                        {run.state === "unknown" && !replayed.has(run.id) ? <Chip className="ml-auto bg-warning/15 text-warning" title="The request may have run and been charged. Nothing retries it automatically.">Needs decision: replay?</Chip> : null}
+                        {run.contentClearedAt ? <span className="ml-auto text-[0.65rem] text-muted-foreground">content cleared</span> : run.state === "unknown" && !replayed.has(run.id) ? <Chip className="ml-auto bg-warning/15 text-warning" title="The request may have run and been charged. Nothing retries it automatically.">Needs decision: replay?</Chip> : null}
                         {run.state === "unknown" && replayed.has(run.id) ? <span className="ml-auto text-[0.65rem] text-muted-foreground">replayed</span> : null}
                       </div>
                       {run.error ? <p className="text-[0.72rem] text-pretty text-destructive">{signalErrorText(run.error)}</p> : null}
@@ -819,7 +822,7 @@ type RunExport = {
   run: { id: string; state: string; at: number; finished: number | null; body: Record<string, unknown> & {
     inputBlob?: string; instructionsBlob?: string; responseBlob?: string; promptVersion?: string; requestId?: string; replayOf?: string | null;
     annotation?: { summary: string; items: Array<ItemPair["original"] & object>; stateChanges: Array<{ targetId: string; state: string; quote: string; rationale: string }>; uncertainties: string[] };
-    usage?: unknown; reportedModel?: string | null; error?: string; accountCandidates?: string[]; queueMs?: number; itemIds?: string[]; applied?: boolean } };
+    contentClearedAt?: string; usage?: unknown; reportedModel?: string | null; error?: string; accountCandidates?: string[]; queueMs?: number; itemIds?: string[]; applied?: boolean } };
   message: FullMessage;
   blobs: Record<string, string>;
   events: Array<{ seq: number; at: number; kind: string; body: unknown }>;
@@ -871,6 +874,7 @@ export function TraceViewer({ id, state }: { id: string; state?: string }) {
   };
   return (
     <div className="flex flex-col gap-2">
+      {body?.contentClearedAt ? <p className="text-[0.72rem] text-muted-foreground">Captured content cleared. Admission identity and outcome are retained; replay is unavailable.</p> : null}
       <ToggleGroup value={[tab]} onValueChange={(value: string[]) => { if (value.length) setTab(value[0] as TraceTab); }} spacing={0} size="sm" variant="outline" aria-label="Trace section" className="flex-wrap">
         {tabs.map(([value, label]) => <ToggleGroupItem key={value} value={value} className="text-[0.68rem]">{label}</ToggleGroupItem>)}
       </ToggleGroup>
@@ -958,7 +962,7 @@ export function TraceViewer({ id, state }: { id: string; state?: string }) {
         <span className="min-w-0 flex-1 truncate font-mono text-[0.62rem] text-muted-foreground" title={body?.requestId}>request {body?.requestId ?? "—"}</span>
         {body?.requestId ? <CopyButton value={body.requestId} label="request ID" className="opacity-100" /> : null}
         <Button type="button" size="xs" variant="ghost" disabled={remote?.scope === "view"} title={remote?.scope === "view" ? "Requires ui:control" : undefined} onClick={() => setFeedback(true)}><MessageSquarePlusIcon data-icon="inline-start" />Feedback</Button>
-        <Button type="button" size="xs" variant="outline" disabled={data.run.state === "running" || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires ui:control" : undefined} onClick={() => setReplay({ requestId: crypto.randomUUID(), pending: false, error: null })}>
+        <Button type="button" size="xs" variant="outline" disabled={Boolean(body?.contentClearedAt) || data.run.state === "running" || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires ui:control" : undefined} onClick={() => setReplay({ requestId: crypto.randomUUID(), pending: false, error: null })}>
           <RotateCcwIcon data-icon="inline-start" />Replay…
         </Button>
       </div>

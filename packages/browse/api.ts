@@ -1,12 +1,27 @@
 import { z } from "zod";
-import { operation, type PackageApi } from "@stack/api";
+import { operation, stateDependencies, stateDependencyInput, stateHash, requireStateOperator, type PackageApi } from "@stack/api";
 import { Backend, cleanupSchema } from "./src/backend.js";
 import { BrowserSystem } from "./src/system.js";
 import { Profiles, profileSchema, bindingSchema } from "./src/profiles.js";
 import { handoffSchema, handoffRequestSchema, handoffActionSchema, completionInput } from "./src/handoff.js";
 import { egressPolicy } from "@stack/scrape/network";
+import { withStateInventory } from "@stack/api";
+import { browseStateCategories } from "./src/state-categories.js";
 
 export type BrowserContext = { backend: Backend; system: BrowserSystem; profiles: Profiles };
+export const browseBotDependencies = operation({ name: "browse_bot_dependencies", description: "Inspect Bot-bound profiles, controllers and unresolved human handoffs for a maintenance plan. Close selected controllers and resolve handoffs explicitly first. Profile data and resolved handoff history survive a Bot conversation reset.",
+  input: stateDependencyInput, output: stateDependencies, annotations: { readOnlyHint: true },
+  async call(ctx: BrowserContext, { botId }, invocation) {
+    requireStateOperator(invocation);
+    const profiles = ctx.profiles.list().filter(row => row.botId === botId);
+    const bindings = ctx.profiles.bindings().filter(row => row.botId === botId);
+    const handoffs = ctx.profiles.handoffs(null).filter(row => row.botId === botId && row.state !== "resolved");
+    return { revision: stateHash([profiles.map(row => [row.id, row.default]), bindings.map(row => [row.session, row.instance, row.revision, row.state]), handoffs.map(row => [row.id, row.revision])]),
+      blockedBy: [...bindings.filter(row => row.state !== "disconnected").map(row => `Close Browser controller ${row.session} before Bot maintenance`),
+        ...handoffs.map(row => `Resolve Browser handoff ${row.id} before Bot maintenance`)],
+      retained: profiles.map(row => `Browser profile ${row.id}: cookies, site data, tabs and history remain`),
+      relationships: profiles.map(row => ({ relation: "profile", package: "browse", kind: "browser-profile", id: row.id })) };
+  } });
 export const browserResearchAcquire = operation({
   name: "browser_research_acquire", description: "Internal Scrape-only socket admission of a disposable research browser. Installs guest-wide public-only egress plus exact TCP IP/port exceptions before Chrome starts. Never reuses unrestricted or signed-in profiles. Missing firewall support fails closed; guest egress expires after five minutes.",
   input: z.strictObject({ session: z.uuid(), policy: egressPolicy }),
@@ -257,8 +272,8 @@ export const topics = {
   browser_system_changed: "Installation, update observation, update policy or selected local Hypeman root changed. Re-read agent_browser_status and hypeman_detect.",
   browser_sessions_changed: "A disposable browser reservation changed. Re-read browser_session_list; this does not prove a daemon is still driving it.",
 } as const;
-export const api: PackageApi<BrowserContext, keyof typeof topics> = {
-  operations: [browserStatus, browserProfileList, browserProfileCreate, browserProfileDelete, browserControllerList, browserControllerSelect, browserControllerLaunch, browserControllerClose, browserBotRelease,
+const packageApi: PackageApi<BrowserContext, keyof typeof topics> = {
+  operations: [browseBotDependencies, browserStatus, browserProfileList, browserProfileCreate, browserProfileDelete, browserControllerList, browserControllerSelect, browserControllerLaunch, browserControllerClose, browserBotRelease,
     browserHandoffRequest, browserHandoffGet, browserHandoffList, browserHandoffCompletion, browserHandoffTake, browserHandoffFinish, browserHandoffCancel,
     browserSessionGet, browserSessionList, browserSessionClose, browserSessionReconcile, browserResearchAcquire,
     browserToolStatus, browserToolDetect, browserToolCheck, browserToolPolicy, browserToolInstall, browserToolAccept, browserToolUninstall,
@@ -274,3 +289,4 @@ export const api: PackageApi<BrowserContext, keyof typeof topics> = {
   prepareCloseContext(ctx) { ctx.profiles.prepareClose(); },
   async closeContext(ctx) { await ctx.profiles.close(); await ctx.backend.closeContext(); await ctx.system.close(); },
 };
+export const api = withStateInventory("browse", browseStateCategories, packageApi);

@@ -30,6 +30,7 @@ export class AttentionService {
   }
   control(enabled:boolean){this.store.atomic(()=>{this.store.setMeta("enabled",enabled);if(enabled&&!this.store.meta("activatedAt"))this.store.setMeta("activatedAt",Date.now());this.store.event("processing_control",{enabled});});this.onChange?.();return this.store.status();}
   configure(update:Partial<Settings>,revision?:number){const result=this.store.configure(update,revision);this.onChange?.();return result;}
+  requireQuiescent() { if (this.store.meta("enabled") || this.collecting || this.processing) throw new Error("Pause Signal and wait for active source reads and inference to finish before cleanup"); }
   async accounts(assigned:string|null=this.store.defaults().accountId){const {accounts}=await this.call<{accounts:{id:string;enabled:boolean;removing:boolean}[]}>("auth","account_list",{});
     return accounts.filter(row=>row.enabled&&!row.removing&&(!assigned||row.id===assigned));}
   async models(){

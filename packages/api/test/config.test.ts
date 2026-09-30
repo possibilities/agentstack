@@ -17,7 +17,7 @@ test("bots declares socket, MCP, and WebSocket transports", async () => {
   assert.match(bots.config.description, /Codex Bots.*sanctioned chats/);
   assert.ok(bots.config.socket && bots.config.mcp && bots.config.websocket);
   const botsApi = await loadPackageApi(bots.dir);
-  assert.deepEqual(Object.keys(botsApi.events?.topics ?? {}).sort(), ["bots_changed", "chat_live_changed", "chat_queue_changed", "chats_changed", "defaults_changed", "threads_changed", "voice_changed"]);
+  assert.deepEqual(Object.keys(botsApi.events?.topics ?? {}).sort(), ["bot_state_changed", "bots_changed", "chat_live_changed", "chat_queue_changed", "chats_changed", "defaults_changed", "threads_changed", "voice_changed"]);
 });
 
 test("a package API loads from the built sibling api.ts without an index", async () => {

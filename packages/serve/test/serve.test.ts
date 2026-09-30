@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { socketCall, socketSubscribe, operatorHeaders, withLocalAuth, type SocketSubscription } from "@stack/api";
+import { socketCall, socketSubscribe, operatorHeaders, withLocalAuth, type SocketSubscription, type StatePage } from "@stack/api";
 import WebSocket from "ws";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -70,6 +70,16 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       status = (await socketCall(serverSock, "tools/call", { name: "serve_status", arguments: {} })) as typeof status;
     }
     assert.ok(status.children.every((entry) => entry.running));
+    const inventory = await socketCall(serverSock, "tools/call", { name: "serve_state_list", arguments: { limit: 100 } }) as StatePage & { owners: Array<{ package: string; available: boolean }> };
+    assert.deepEqual(inventory.owners.filter(owner => owner.available).map(owner => owner.package).sort(), [...socketNames].sort());
+    assert.equal(inventory.nextOffset, null);
+    for (const owner of inventory.owners) {
+      const catalog = await socketCall(join(stateDir, "sockets", `${owner.package}.sock`), "tools/list", {}) as { tools: Array<{ name: string }> };
+      const names = new Set(catalog.tools.map(tool => tool.name));
+      const entries = inventory.entries.filter(entry => entry.ownerPackage === owner.package);
+      assert.ok(entries.length, `${owner.package} inventory is empty`);
+      for (const entry of entries) for (const link of [...entry.reads, ...entry.actions]) assert.ok(names.has(link.operation), `${owner.package}: broken state link ${link.operation}`);
+    }
     let resourceSubscription: Awaited<ReturnType<typeof socketSubscribe>> | undefined;
     const nextResourceSample = new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error("resource sampler did not publish")), 10_000);

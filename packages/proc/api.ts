@@ -1,9 +1,11 @@
 import { join } from "node:path";
-import { operation, stateDir, type PackageApi } from "@stack/api";
+import { operation, stateDir, stateDependencies, stateDependencyInput, requireStateOperator, type PackageApi } from "@stack/api";
 import { z } from "zod";
 import * as s from "./src/schema.js";
 import { ProcService, newId, scheduleFromInput } from "./src/service.js";
 import { ProcStore } from "./src/store.js";
+import { withStateInventory, statePlan, stateApplyInput, stateReceipt } from "@stack/api";
+import { procStateCategories } from "./src/state-categories.js";
 
 type Context = { service: ProcService };
 const read = { readOnlyHint: true, idempotentHint: true } as const;
@@ -14,8 +16,21 @@ export const topics = {
   proc_output_changed: "One process output line arrived (or output reached its bound). Read proc_run_read after the last cursor; notices contain no line text and may be coalesced.",
 } as const;
 
-export const api: PackageApi<Context, keyof typeof topics> = {
+const packageApi: PackageApi<Context, keyof typeof topics> = {
   operations: [
+    operation({ name: "proc_history_plan", description: "Preview exact terminal run-output or execution-payload cleanup. IDs, authority, timing and outcomes remain under Proc's 30-day retention policy. Running records block cleanup; process argv/labels and schedule definitions are separate from output.",
+      input: z.strictObject({ kind: z.enum(["run_output", "execution_content"]), ids: z.array(z.uuid()).min(1).max(100) }), output: statePlan,
+      async call(ctx, { kind, ids }, invocation) { requireStateOperator(invocation); return ctx.service.store.historyPlan(kind, ids); } }),
+    operation({ name: "proc_history_clear", description: "Apply exact planned terminal stdout/stderr or captured execution-content cleanup atomically with its receipt. Output cursors disclose a gap. Preserve authority and terminal state, including unknown. Cancellation, schedule disablement and cleanup remain separate decisions.",
+      input: stateApplyInput, output: stateReceipt, annotations: { destructiveHint: true, idempotentHint: true },
+      async call(ctx, input, invocation) { requireStateOperator(invocation); const result = ctx.service.store.historyClear(input);
+        for (const item of result.outcomes) { ctx.service.onRunsChanged?.(item.resource); ctx.service.onOutputChanged?.(item.resource); ctx.service.onSchedulesChanged?.(item.resource); } return result; } }),
+    operation({ name: "proc_state_receipt_get", description: "Read a durable Proc cleanup receipt and its exact removed/retained resources. Receipts do not imply a process was cancelled or a schedule disabled.",
+      input: z.strictObject({ requestId: z.uuid() }), output: z.strictObject({ receipt: stateReceipt.nullable() }), annotations: read,
+      async call(ctx, { requestId }, invocation) { requireStateOperator(invocation); return { receipt: ctx.service.store.maintenance.receipt(requestId) }; } }),
+    operation({ name: "proc_bot_dependencies", description: "Inspect Bot-root schedules, in-flight executions and known cwd process writers for maintenance. Disabled schedules retain captured admissions. Unknown process exits remain blockers, never proof that the workspace is idle.",
+      input: stateDependencyInput, output: stateDependencies, annotations: read,
+      async call(ctx, { botId, cwd }, invocation) { requireStateOperator(invocation); return ctx.service.store.botDependencies(botId, cwd); } }),
     operation({ name: "proc_schedule_create", description: "Register an attributed one-shot or interval schedule; callers should set a short label naming its purpose. Bot authority persists across restarts and requires current MCP exposure for API targets; stopped Bots hold admissions. Caller ID deduplicates identical definitions with the same authority. Missed intervals coalesce. Process execution uses the owner's OS user and is not a sandbox.",
       input: s.scheduleCreate, output: s.scheduleRecord, annotations: { idempotentHint: false, openWorldHint: true },
       async call(ctx, { id, ...input }, invocation) { return ctx.service.createSchedule(id ?? newId(), scheduleFromInput(input), invocation); } }),
@@ -78,3 +93,4 @@ export const api: PackageApi<Context, keyof typeof topics> = {
   prepareCloseContext(ctx) { ctx.service.prepareClose(); },
   async closeContext(ctx) { await ctx.service.close(); },
 };
+export const api = withStateInventory("proc", procStateCategories, packageApi);

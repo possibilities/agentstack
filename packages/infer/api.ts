@@ -3,6 +3,8 @@ import { InferService } from "./src/service.js";
 import { completeInput, completeOutput, discoverInput, getInput, listInput, listOutput, modelListInput, modelListOutput, modelObservation, modelsInput, modelsOutput, requestRecord, startInput } from "./src/schema.js";
 import { InferTraces } from "./src/traces.js";
 import { z } from "zod";
+import { withStateInventory, requireStateOperator, statePlan, stateApplyInput, stateReceipt } from "@stack/api";
+import { inferStateCategories } from "./src/state-categories.js";
 
 export type InferContext = { service: InferService };
 export const inferModels = operation({
@@ -62,8 +64,18 @@ export const inferRequestGet = operation({
   async call(ctx: InferContext, input) { return ctx.service.get(input.requestId); },
 });
 export const topics = { infer_changed: "An inference request or cached model discovery changed. Re-read infer_request_list, infer_model_list, or the request you follow." } as const;
-export const api: PackageApi<InferContext, keyof typeof topics> = {
-  operations: [inferModels, inferModelList, inferDiscover, inferComplete, inferStart, inferRequestList, inferRequestGet, inferTraceRead],
+const packageApi: PackageApi<InferContext, keyof typeof topics> = {
+  operations: [inferModels, inferModelList, inferDiscover, inferComplete, inferStart, inferRequestList, inferRequestGet, inferTraceRead,
+    operation({ name: "infer_history_plan", description: "Preview payload clearing for up to 100 exact terminal inference IDs. Running requests block cleanup; unknown remains unknown. IDs/digests, model/account, usage and outcomes remain so retries cannot charge again. Signal and source copies are separate.",
+      input: z.strictObject({ requestIds: z.array(z.uuid()).min(1).max(100) }), output: statePlan,
+      async call(ctx: InferContext, { requestIds }, invocation) { requireStateOperator(invocation); if (!ctx.service.traces) throw new Error("tracing unavailable"); return ctx.service.traces.historyPlan(requestIds); } }),
+    operation({ name: "infer_history_clear", description: "Atomically clear the exact planned terminal request bodies and trace events together with a durable cleanup receipt. Identities/digests and outcomes remain. An identical request-ID retry returns the receipt; inference admission with the original ID cannot dispatch again.",
+      input: stateApplyInput, output: stateReceipt, annotations: { destructiveHint: true, idempotentHint: true },
+      async call(ctx: InferContext, input, invocation) { requireStateOperator(invocation); if (!ctx.service.traces) throw new Error("tracing unavailable"); const result = ctx.service.traces.historyClear(input); ctx.service.onChange?.(); return result; } }),
+    operation({ name: "infer_state_receipt_get", description: "Read one durable inference payload-cleanup receipt. Minimal receipts remain even when content is cleared.",
+      input: z.strictObject({ requestId: z.uuid() }), output: z.strictObject({ receipt: stateReceipt.nullable() }), annotations: { readOnlyHint: true },
+      async call(ctx: InferContext, { requestId }, invocation) { requireStateOperator(invocation); if (!ctx.service.traces) throw new Error("tracing unavailable"); return { receipt: ctx.service.traces.maintenance.receipt(requestId) }; } }),
+  ],
   events: { topics, start(ctx, publish) {
     ctx.service.onChange = () => publish("infer_changed");
     return () => { ctx.service.onChange = undefined; };
@@ -72,3 +84,4 @@ export const api: PackageApi<InferContext, keyof typeof topics> = {
   prepareCloseContext(ctx) { ctx.service.prepareClose(); },
   async closeContext(ctx) { await ctx.service.close(); },
 };
+export const api = withStateInventory("infer", inferStateCategories, packageApi);

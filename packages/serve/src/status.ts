@@ -1,4 +1,5 @@
 import type { ChildStatus, RunningServer } from "./server.js";
+import type { McpEventSubscriptions } from "@stack/api";
 
 export type ServerStatus = {
   pid: number;
@@ -14,6 +15,8 @@ export type ServerStatus = {
 };
 
 export class StatusSource {
+  subscriptions: McpEventSubscriptions | null = null;
+  onStateChange?: () => void;
   private server: RunningServer | null = null;
   private readonly startedAt = new Date(Date.now() - process.uptime() * 1000).toISOString();
   private indexUrl: string | null = null;

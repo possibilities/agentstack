@@ -97,6 +97,14 @@ test("the Inbox store pages, filters, follows notify_changed and applies dismiss
     const { dismissed } = await store.notify("notification_dismiss_all", {});
     assert.equal(dismissed, 26);
     await until(store, (next) => next.notifyCounts.data?.open === 0 && next.notifications.data?.entries.length === 0);
+    const stopWatching = store.watchNotification(newest.id);
+    try {
+      const plan = await call("notification_history_plan", { ids: [newest.id] });
+      await call("notification_history_clear", { planId: plan.id, expectedRevision: plan.revision, requestId: crypto.randomUUID() });
+      await until(store, next => Boolean(next.notificationRecords[newest.id]?.contentClearedAt));
+      const cleared = store.getState().notificationRecords[newest.id];
+      assert.equal(cleared.message, ""); assert.equal(cleared.response, null); assert.equal(cleared.outcome, "action");
+    } finally { stopWatching(); }
   } finally {
     store.stop();
     globalThis.fetch = originalFetch; globalThis.WebSocket = originalWebSocket;

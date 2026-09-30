@@ -5,9 +5,9 @@ socket:
 mcp:
   workerOperations: []
   operations: [serve_status, serve_codex_tools, serve_resources, serve_resource_history]
-  events: all
+  events: [pids_changed, codex_tools_changed, resources_changed]
   description: HTTP MCP tools for owned-process status, cached Codex tool diagnostics and read-only resource observations, forwarded to the server socket.
 websocket:
-  operations: [serve_status, serve_codex_tools, serve_codex_tools_check, serve_resources, serve_resource_history]
+  operations: [serve_status, serve_codex_tools, serve_codex_tools_check, serve_resources, serve_resource_history, serve_state_read, serve_state_list, serve_subscription_list, serve_subscription_get, serve_subscription_remove]
   events: all
   description: Loopback WebSocket for owned-process status, Codex tool diagnostics and checks, resource snapshots/history and change events, forwarded to the server socket.

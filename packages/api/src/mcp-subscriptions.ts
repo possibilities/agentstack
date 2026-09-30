@@ -7,6 +7,7 @@ import { socketPath, stateDir, workspaceRoot } from "./workspace.js";
 import type { InvocationContext } from "./operation.js";
 import { currentMcpCatalog, type SocketCatalog } from "./exposure.js";
 import { forwardTimeout } from "./forward-timeout.js";
+import { stateHash } from "./state.js";
 
 export type EventTarget = { botId: string; instance: string; threadId: string };
 export type EventSubscription = EventTarget & {
@@ -48,6 +49,7 @@ export class McpEventSubscriptions {
   private readonly records = new Map<string, RecordState>();
   private readonly db: DatabaseSync;
   private closed = false;
+  onChange?: () => void;
 
   constructor(private readonly env: NodeJS.ProcessEnv, private readonly validate: (target: EventTarget) => Promise<void>,
     private readonly deliver: (event: EventValue, signal: AbortSignal, authorize: () => Promise<void>) => Promise<void>,
@@ -151,6 +153,7 @@ export class McpEventSubscriptions {
         .run(state.id, state.botId, state.instance, state.threadId, state.pkg, state.topic, state.scope, state.readOperation, JSON.stringify(state.readArguments), state.lastValueHash);
       state.state = "active";
       this.records.set(state.id, state);
+      this.onChange?.();
       this.watchClosed(state);
       if (state.pending) void this.flush(state);
       return { subscription: publicView(state), value };
@@ -166,16 +169,33 @@ export class McpEventSubscriptions {
     return { subscriptions: [...this.records.values()].filter((record) => record.botId === target.botId && record.threadId === target.threadId).map(publicView), lifetime: "durable" };
   }
 
+  operatorList() {
+    return [...this.records.values()].map(state => ({ ...publicView(state), revision: stateHash([state.id, state.botId, state.threadId, state.pkg, state.topic, state.scope, state.readOperation, state.readArguments]) }));
+  }
+  async operatorRemove(id: string, expectedRevision: string) {
+    const current = this.operatorList().find(row => row.id === id);
+    if (!current) return { id, removed: false };
+    if (current.revision !== expectedRevision) throw new Error("subscription revision changed");
+    return this.removeRecord(id);
+  }
+
   async unsubscribe(id: string, invocation?: InvocationContext): Promise<{ id: string; removed: boolean }> {
     const target = targetOf(invocation);
     const state = this.records.get(id);
     if (!state) return { id, removed: false };
     if (state.botId !== target.botId || state.threadId !== target.threadId) throw new Error("subscription belongs to another bot thread");
+    return this.removeRecord(id);
+  }
+
+  private async removeRecord(id: string): Promise<{ id: string; removed: boolean }> {
+    const state = this.records.get(id);
+    if (!state) return { id, removed: false };
     this.db.prepare("DELETE FROM subscriptions WHERE id = ?").run(id);
     this.records.delete(id);
     state.abort.abort();
     if (state.retry) clearTimeout(state.retry);
     await state.socket?.close();
+    this.onChange?.();
     return { id, removed: true };
   }
 

@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { serveApi, socketCall, socketSubscribe, type ServedApi, type SocketSubscription } from "@stack/api";
+import { operation, serveSocket, stateDependencyInput, stateDependencies, serveApi, socketCall, socketSubscribe, type ServedApi, type SocketSubscription, type StatePlan, type StateReceipt } from "@stack/api";
 import { StateStore } from "../src/store.js";
 import { chatRpc } from "../src/chats.js";
 import { RoleStore } from "@stack/roles";
@@ -17,7 +17,7 @@ function call(socket: string, name: string, args: Record<string, unknown> = {}):
 }
 
 test("bots own the complete app-server lifecycle on one socket", { timeout: 120_000 }, async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "stack-bots-state-"));
+  const stateDir = await realpath(await mkdtemp(join(tmpdir(), "stack-bots-state-")));
   const home = await mkdtemp(join(tmpdir(), "stack-bots-home-"));
   const external = await mkdtemp(join(tmpdir(), "stack-bots-external-"));
   const savedHome = process.env.HOME;
@@ -225,6 +225,38 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
     await bots.close();
     bots = await serveApi({ name: "bots", transport: "socket", env });
     assert.deepEqual((await readSettings()).saved.values, appliedSettings.saved.values);
+    // State maintenance runs through the same public owner as lifecycle and
+    // refuses unavailable dependency evidence before any filesystem effect.
+    const planInput = { botId: "named", action: { kind: "workspace_clear", selection: { all: true } } };
+    const unavailable = await call(socket, "bot_state_plan", planInput) as StatePlan;
+    assert.ok(unavailable.blockedBy.some(reason => reason.includes("dependencies unavailable")));
+    const dependencies = await Promise.all(["worker", "browse", "proc", "serve"].map(name => serveSocket({
+      info: { name, description: "Dependency fixture", transportDescription: "Socket", path: join(stateDir, "sockets", `${name}.sock`) }, context: {},
+      operations: [operation({ name: `${name}_bot_dependencies`, description: "Fixture has no dependent resources", input: stateDependencyInput, output: stateDependencies,
+        async call() { return { revision: "empty", blockedBy: [], retained: [], relationships: [] }; } })],
+    })));
+    try {
+      await call(socket, "bot_stop", { id: "named" }); await call(socket, "bot_stop", { id: "custom" });
+      const externalPlan = await call(socket, "bot_state_plan", { ...planInput, botId: "custom" }) as StatePlan;
+      assert.ok(externalPlan.blockedBy.some(reason => reason.includes("external")));
+      await writeFile(join(named.cwd, "proof.txt"), "selected bytes");
+      const stale = await call(socket, "bot_state_plan", planInput) as StatePlan;
+      await writeFile(join(named.cwd, "proof.txt"), "new bytes");
+      await assert.rejects(call(socket, "bot_workspace_clear", { botId: "named", planId: stale.id, expectedRevision: stale.revision, requestId: crypto.randomUUID() }), /changed/);
+      const plan = await call(socket, "bot_state_plan", planInput) as StatePlan;
+      const input = { botId: "named", planId: plan.id, expectedRevision: plan.revision, requestId: crypto.randomUUID() };
+      const receipt = await call(socket, "bot_workspace_clear", input) as StateReceipt;
+      assert.equal(receipt.status, "completed");
+      await writeFile(join(named.cwd, "new.txt"), "after clear");
+      assert.deepEqual(await call(socket, "bot_workspace_clear", input), receipt);
+      assert.ok((await lstat(join(named.cwd, "new.txt"))).isFile());
+      const resetPlan = await call(socket, "bot_state_plan", { botId: "named", action: { kind: "session_reset", history: "retain" } }) as StatePlan;
+      const reset = await call(socket, "bot_session_reset", { botId: "named", planId: resetPlan.id, expectedRevision: resetPlan.revision, requestId: crypto.randomUUID() }) as StateReceipt;
+      assert.equal(reset.status, "completed");
+      await call(socket, "bot_remove", { id: "named" });
+      await call(socket, "bot_start", { id: "named", account });
+      await assert.rejects(call(socket, "bot_workspace_clear", input), /another Bot incarnation/);
+    } finally { await Promise.all(dependencies.map(owner => owner.close())); }
     await call(socket, "bot_remove", { id: "custom" });
     assert.equal((await lstat(external)).isDirectory(), true);
     await call(socket, "bot_remove", { id: "named" });

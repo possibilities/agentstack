@@ -2,6 +2,7 @@ import { z } from "zod";
 import { loadCatalog, type CatalogServer } from "./src/catalog.js";
 import { operation, type PackageApi } from "./src/operation.js";
 import { workspaceRoot } from "./src/workspace.js";
+import { withStateInventory, stateCategories } from "./src/state-inventory.js";
 
 export type DocsContext = {
   env: NodeJS.ProcessEnv;
@@ -103,10 +104,12 @@ function documentFor(server: CatalogServer) {
   return { ...server, operations: server.operations.map((item) => ({ ...item, title: item.title ?? null })) };
 }
 
-export const api: PackageApi<DocsContext> = {
+const packageApi: PackageApi<DocsContext> = {
   operations: [docsList, docsGet, docsSnapshot],
   async createContext(env) {
     return { env, root: workspaceRoot(import.meta.dirname) };
   },
   async closeContext() {},
 };
+export const api = withStateInventory("api", stateCategories("api", [{ id: "discovery", kind: "cache", paths: [], authority: "derived", sensitivity: "ordinary",
+  reads: ["docs_snapshot"], retention: "API discovery reads built declarations and manifests without creating contexts. Transport sessions are owned by Serve.", regeneration: "Each discovery read loads current declarations; no authoritative user content is stored here." }]), packageApi);

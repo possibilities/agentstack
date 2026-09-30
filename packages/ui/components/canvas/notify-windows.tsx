@@ -128,7 +128,7 @@ function InboxRow({ record, selected, arrived, filtering, onSelect }: { record: 
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="flex items-baseline gap-2">
-            <span className={cn("min-w-0 flex-1 truncate text-[0.82rem]", !record.dismissedAt && "font-medium")}>{record.title}</span>
+            <span className={cn("min-w-0 flex-1 truncate text-[0.82rem]", !record.dismissedAt && "font-medium")}>{record.contentClearedAt ? "Content cleared" : record.title}</span>
             <Time at={at(record.createdAt)} className="shrink-0 text-[0.65rem] text-muted-foreground" />
           </span>
           <span className="line-clamp-2 text-[0.75rem] text-pretty text-muted-foreground">{record.subtitle ?? plain(record.message)}</span>
@@ -181,10 +181,10 @@ export function NotificationWindow() {
         : (
           <>
             <div className="flex flex-col gap-1">
-              <h3 className="text-[0.95rem] leading-snug font-semibold text-pretty">{record.title}</h3>
+              <h3 className="text-[0.95rem] leading-snug font-semibold text-pretty">{record.contentClearedAt ? "Content cleared" : record.title}</h3>
               {record.subtitle ? <p className="text-[0.8rem] text-pretty text-muted-foreground">{record.subtitle}</p> : null}
             </div>
-            <NotificationMarkdown text={record.message} />
+            {record.contentClearedAt ? <p className="text-[0.8rem] text-muted-foreground">Notification and response content cleared. Original dismissal outcome retained.</p> : <NotificationMarkdown text={record.message} />}
             {record.dismissedAt ? <Outcome record={record} /> : <Respond key={record.id} record={record} connected={status.notify === "open"} />}
             <Section title="Details">
               <div className="flex flex-col">

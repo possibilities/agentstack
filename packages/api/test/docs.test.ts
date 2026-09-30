@@ -14,6 +14,7 @@ type TransportDoc = { type: string; description: string; supported: boolean; sub
     outputSchema: Record<string, unknown> | null; errorSchema: Record<string, unknown> | null }> };
 type OperationDoc = { name: string; title: string | null; description: string; annotations: Record<string, unknown>; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown> };
 type PackageDoc = { name: string; description: string; packageName: string; operations: OperationDoc[]; events: Record<string, string>; eventScope: { description: string; example: string; required: boolean } | null; transports: TransportDoc[] };
+const stateOperation = (name: string) => /_state_|_bot_dependencies$|_history_(plan|clear)$|^serve_subscription_|^bot_(workspace_|history_|log_|launch_|recovery_|session_reset$|upload_remove$|queue_history$)|^chat_upload_(list|read)$|^content_(blob_list|storage_)|^blob_stage_(list|abort)$|^attention_infer_requests$|^usage_observations_|^xcom_control$|^worker_workspace_|^work_focus_(list|retire)/.test(name);
 
 test("the api package serves structured documents for every workspace package", { timeout: 60_000 }, async () => {
   assert.equal(docsSnapshot.name, "docs_snapshot");
@@ -29,7 +30,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.equal(listed.server.name, "api");
     assert.equal(listed.events, null);
-    assert.deepEqual(listed.tools.map((tool) => tool.name).sort(), ["docs_get", "docs_list", "docs_snapshot"]);
+    assert.deepEqual(listed.tools.map((tool) => tool.name).sort(), ["api_state_read", "docs_get", "docs_list", "docs_snapshot"]);
 
     const docs = (await socketCall(served.socketPath, "tools/call", { name: "docs_list", arguments: {} })) as {
       packages: Array<{ name: string; description: string; packageName: string }>;
@@ -57,12 +58,24 @@ test("the api package serves structured documents for every workspace package", 
     for (const [pkg, internal] of [["roles", ["role_launch_snapshot"]], ["brain", ["share_receive", "share_read_states", "egress_grant_create", "egress_grant_list", "egress_grant_revoke"]]] as const) {
       const doc = found.get(pkg)!;
       for (const transport of doc.transports.filter((entry) => entry.type === "mcp" || entry.type === "websocket")) {
-        const omitted = [...internal.filter((name) => !(pkg === "brain" && transport.type === "websocket" && name === "share_read_states")),
+        const omitted = [...(transport.type === "mcp" ? [`${pkg}_state_read`] : []), ...internal.filter((name) => !(pkg === "brain" && transport.type === "websocket" && name === "share_read_states")),
           ...(pkg === "roles" && transport.type === "mcp" ? ["role_editor_snapshot", "role_launch_preview", "role_shim_list", "role_shim_create", "role_shim_update", "role_shim_delete"] : [])];
         assert.deepEqual([...transport.operations].sort(), doc.operations.map((op) => op.name).filter((name) => !omitted.includes(name)).sort());
       }
     }
     assert.deepEqual(snapshot.packages, [...found.values()]);
+    for (const doc of found.values()) {
+      const inventory = doc.operations.find(op => op.name === `${doc.name}_state_read`)!;
+      assert.ok(inventory, `${doc.name} owns a state inventory`);
+      for (const field of ["entries", "revision", "observedAt", "nextOffset"]) assert.ok(Object.hasOwn(inventory.outputSchema.properties ?? {}, field));
+      assert.ok(!doc.transports.find(t => t.type === "mcp")?.operations.some(stateOperation), `${doc.name} state operations require local operator transport`);
+    }
+    for (const [pkg, name] of [["bots", "bot_session_reset"], ["infer", "infer_history_clear"], ["notify", "notification_history_clear"], ["proc", "proc_history_clear"], ["signal", "attention_history_clear"], ["content", "content_storage_collect"]]) {
+      const op = found.get(pkg!)!.operations.find(op => op.name === name)!;
+      for (const field of ["planId", "requestId", "expectedRevision"]) assert.ok((op.inputSchema.required as string[]).includes(field), `${name} requires ${field}`);
+      assert.ok((op.outputSchema.required as string[]).includes("outcomes"));
+      assert.equal(op.annotations.idempotentHint, true);
+    }
     for (const name of ["fragment_create", "fragment_update"])
       assert.ok(Object.hasOwn(found.get("roles")!.operations.find(op => op.name === name)!.inputSchema.properties ?? {}, "conditions"));
     for (const name of ["role_preview", "role_launch_preview"])
@@ -83,9 +96,9 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok(!found.get("content")!.transports.find(t => t.type === "mcp")!.workerOperations.includes("blob_stage_status"));
     assert.ok(!found.get("worker")!.transports.find(t => t.type === "mcp")!.workerOperations.includes("worker_runtime_list"));
     const xcom = found.get("xcom")!;
-    assert.deepEqual(xcom.transports.map(t => t.type), ["socket", "mcp"]);
+    assert.deepEqual(xcom.transports.map(t => t.type), ["socket", "mcp", "websocket"]);
     assert.deepEqual(xcom.transports.find(t => t.type === "mcp")!.operations,
-      xcom.operations.map(op => op.name).filter(name => name !== "xcom_reindex"));
+      xcom.operations.map(op => op.name).filter(name => name !== "xcom_reindex" && !stateOperation(name)));
     assert.ok(Object.hasOwn(xcom.operations.find(op => op.name === "xcom_search")?.inputSchema.properties ?? {}, "scope"));
     assert.ok(Object.hasOwn(xcom.operations.find(op => op.name === "xcom_users")?.outputSchema.properties ?? {}, "results"));
     assert.ok(xcom.transports.find(t => t.type === "mcp")!.operations.includes("xcom_articles_pending"));
@@ -106,7 +119,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok(proc.operations.some((op) => op.name === "proc_run_wait"));
     assert.deepEqual(Object.keys(proc.events), ["proc_schedules_changed", "proc_runs_changed", "proc_output_changed"]);
     for (const transport of proc.transports.filter((entry) => entry.type !== "socket")) {
-      assert.deepEqual(transport.operations, proc.operations.map((operation) => operation.name));
+      assert.deepEqual([...transport.operations].sort(), proc.operations.filter(operation => transport.type === "websocket" || !["proc_history_plan", "proc_history_clear", "proc_state_receipt_get", "proc_bot_dependencies", "proc_state_read"].includes(operation.name)).map(operation => operation.name).sort());
       assert.deepEqual(transport.events, Object.keys(proc.events));
     }
     const access = found.get("access")!;
@@ -163,7 +176,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.deepEqual(browser.transports.map((transport) => transport.type), ["socket", "mcp", "websocket"]);
     assert.deepEqual(browser.transports.find((transport) => transport.type === "mcp")!.operations.sort(),
       ["browser_profile_list", "browser_profile_create", "browser_profile_delete", "browser_controller_list", "browser_controller_select", "browser_handoff_request", "browser_handoff_get", "browser_handoff_list", "browser_handoff_completion", "browser_handoff_cancel"].sort());
-    assert.deepEqual(browser.operations.map((operation) => operation.name).sort(),
+    assert.deepEqual(browser.operations.map((operation) => operation.name).filter(name => !stateOperation(name)).sort(),
       ["browser_status", "browser_session_get", "browser_session_list", "browser_session_close", "browser_session_reconcile", "browser_research_acquire",
         "browser_profile_list", "browser_profile_create", "browser_profile_delete", "browser_controller_list", "browser_controller_select", "browser_controller_launch", "browser_controller_close", "browser_bot_release",
         "browser_handoff_request", "browser_handoff_get", "browser_handoff_list", "browser_handoff_completion", "browser_handoff_cancel", "browser_handoff_take", "browser_handoff_finish",
@@ -182,14 +195,14 @@ test("the api package serves structured documents for every workspace package", 
     const agentFacing = ["scrape_canary_inventory", "scrape_convert_html", "scrape_feed_discover", "scrape_feed_parse", "scrape_fetch", "scrape_links", "scrape_preset_show", "scrape_presets_list", "scrape_status"];
     assert.deepEqual([...exposed].sort(), agentFacing);
     assert.deepEqual([...scrape.transports.find((transport) => transport.type === "websocket")!.operations].sort(),
-      [...agentFacing, "scrape_corpus_replay", "scrape_presets_check", "scrape_queue_list", "scrape_queue_process", "scrape_queue_submit"].sort());
+      [...agentFacing, "scrape_corpus_replay", "scrape_presets_check", "scrape_queue_list", "scrape_queue_process", "scrape_queue_submit", "scrape_state_read"].sort());
     assert.equal(scrape.operations.find((operation) => operation.name === "scrape_queue_list")?.annotations.readOnlyHint, true);
 
     const bots = found.get("bots") as PackageDoc;
-    assert.deepEqual(Object.keys(bots.events).sort(), ["bots_changed", "chat_live_changed", "chat_queue_changed", "chats_changed", "defaults_changed", "threads_changed", "voice_changed"]);
+    assert.deepEqual(Object.keys(bots.events).sort(), ["bot_state_changed", "bots_changed", "chat_live_changed", "chat_queue_changed", "chats_changed", "defaults_changed", "threads_changed", "voice_changed"]);
     assert.equal(bots.eventScope?.required, false);
     assert.deepEqual(
-      bots.operations.map((operation) => operation.name).sort(),
+      bots.operations.map((operation) => operation.name).filter(name => !stateOperation(name)).sort(),
       ["bot_assign", "bot_defaults_get", "bot_defaults_set", "bot_list", "bot_remove", "bot_start", "bot_stop", "voice_dial", "voice_hangup", "voice_speak", "voice_status",
         "bot_settings_catalog", "bot_settings_read", "bot_settings_preview", "bot_settings_patch", "bot_settings_apply", "bot_settings_options", "bot_settings_native_schema",
         "chat_list", "chat_tree", "chat_tree_detail", "chat_search", "chat_records", "chat_record_chunk", "chat_message_changes", "chat_thread_read", "chat_turns", "chat_items", "chat_main_live", "chat_main_items", "chat_occurrences", "chat_open", "chat_send", "chat_steer", "chat_interrupt", "chat_enqueue", "chat_queue_list", "chat_queue_resolve",
@@ -228,7 +241,7 @@ test("the api package serves structured documents for every workspace package", 
     const botsMcp = bots.transports.find((transport) => transport.type === "mcp") as TransportDoc;
     assert.equal(botsMcp.supported, true);
     assert.equal(botsMcp.subscriptions, true);
-    assert.deepEqual(botsMcp.events, Object.keys(bots.events));
+    assert.deepEqual(botsMcp.events, Object.keys(bots.events).filter(name => name !== "bot_state_changed"));
     assert.deepEqual(scrape.transports.find((t) => t.type === "mcp")!.events, []);
     assert.deepEqual(scrape.transports.find((t) => t.type === "websocket")!.events, ["scrape_queue_changed"]);
     assert.ok(scrape.operations.every((op) => !/socket.only/i.test(op.description)));
@@ -243,7 +256,7 @@ test("the api package serves structured documents for every workspace package", 
     const auth = found.get("auth") as PackageDoc;
     const roles = found.get("roles") as PackageDoc;
     assert.deepEqual(Object.keys(roles.events).sort(), ["role_changed", "role_shims_changed"]);
-    assert.deepEqual(roles.operations.map((operation) => operation.name).sort(), [
+    assert.deepEqual(roles.operations.map((operation) => operation.name).filter(name => !stateOperation(name)).sort(), [
       "roles_snapshot", "role_create", "role_update", "role_set_default", "role_set_worker_default", "role_delete", "role_internal_mcp_list", "role_internal_mcp_update",
       "role_preview", "role_launch_preview", "role_snapshot", "role_editor_snapshot", "role_launch_snapshot", "role_shim_list", "role_shim_create", "role_shim_update", "role_shim_delete", "category_create", "category_delete", "category_reorder", "category_update",
       "fragment_create", "fragment_delete", "fragment_move", "fragment_reorder", "fragment_update",
@@ -257,7 +270,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(roles.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
     assert.deepEqual(Object.keys(auth.events).sort(), ["accounts_changed", "login_changed", "worker_accounts_changed", "worker_login_changed"]);
     assert.deepEqual(
-      auth.operations.map((operation) => operation.name).sort(),
+      auth.operations.map((operation) => operation.name).filter(name => !stateOperation(name)).sort(),
       ["account_set_enabled", "account_list", "account_login_cancel", "account_login_current", "account_login_replace", "account_login_start", "account_login_status", "account_remove",
         "worker_account_list", "worker_account_prepare", "worker_account_confirm", "worker_account_set_enabled", "worker_account_remove",
         "worker_account_login_start", "worker_account_login_status", "worker_account_login_current", "worker_account_login_submit", "worker_account_login_cancel"].sort(),
@@ -322,7 +335,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(existsSync(join(stateDir, "brain")), false, "read-only discovery must not initialize Brain storage");
     assert.deepEqual(Object.keys(workers.events).sort(), ["worker_changed", "worker_progress", "workers_changed"]);
     assert.equal(workers.eventScope?.required, false);
-    assert.deepEqual(workers.operations.map((operation) => operation.name), ["worker_settings_catalog", "worker_settings_read", "worker_settings_preview", "worker_settings_patch", "worker_settings_apply", "worker_catalog", "worker_runtime_list", "worker_account_drain",
+    assert.deepEqual(workers.operations.map((operation) => operation.name).filter(name => !stateOperation(name)), ["worker_settings_catalog", "worker_settings_read", "worker_settings_preview", "worker_settings_patch", "worker_settings_apply", "worker_catalog", "worker_runtime_list", "worker_account_drain",
       "worker_start", "worker_list", "worker_status", "worker_read", "worker_detail", "worker_turn_list", "worker_record_list", "worker_record_read", "worker_tool_list",
       "worker_diff", "worker_send", "worker_respond", "worker_cancel", "worker_resume", "worker_close", "worker_remove", "worker_work_list", "worker_turn_context"]);
     for (const name of ["worker_list", "worker_detail", "worker_turn_list", "worker_record_list", "worker_record_read", "worker_tool_list", "worker_diff"]) {
@@ -347,7 +360,7 @@ test("the api package serves structured documents for every workspace package", 
 
     const usage = found.get("usage") as PackageDoc;
     assert.deepEqual(Object.keys(usage.events), ["usage_changed"]);
-    assert.deepEqual(usage.operations.map((operation) => operation.name), ["usage_snapshot"]);
+    assert.deepEqual(usage.operations.map((operation) => operation.name).filter(name => !stateOperation(name)), ["usage_snapshot"]);
     assert.equal(usage.operations[0]?.annotations.readOnlyHint, true);
     assert.deepEqual(Object.keys(usage.operations[0]?.outputSchema.properties ?? {}).sort(), ["accounts", "atMs", "grokBot", "inventoryAtMs", "inventoryError"]);
     assert.ok(JSON.stringify(usage.operations[0]?.outputSchema).includes("allocatedUsd"));
@@ -358,7 +371,7 @@ test("the api package serves structured documents for every workspace package", 
 
     const infer = found.get("infer") as PackageDoc;
     const inferOperation = (name: string) => infer.operations.find((operation) => operation.name === name)!;
-    assert.deepEqual(infer.operations.map((operation) => operation.name),
+    assert.deepEqual(infer.operations.map((operation) => operation.name).filter(name => !stateOperation(name)),
       ["infer_models", "infer_model_list", "infer_discover", "infer_complete", "infer_start", "infer_request_list", "infer_request_get", "infer_trace_read"]);
     assert.deepEqual(Object.keys(infer.events), ["infer_changed"]);
     assert.deepEqual(Object.keys(inferOperation("infer_models").outputSchema.properties ?? {}).sort(), ["models", "observedAt"]);
@@ -380,7 +393,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.deepEqual(Object.keys(attention.operations.find((operation) => operation.name === "attention_defaults_get")!.outputSchema.properties ?? {}).sort(), ["accountId", "model", "reasoningEffort", "revision"]);
 
     const notify = found.get("notify") as PackageDoc;
-    assert.deepEqual(notify.operations.map((operation) => operation.name),
+    assert.deepEqual(notify.operations.map((operation) => operation.name).filter(name => !stateOperation(name)),
       ["notification_send", "notification_get", "notification_list", "notification_counts", "notification_dismiss", "notification_dismiss_all"]);
     assert.deepEqual(Object.keys(notify.events), ["notify_changed"]);
     assert.deepEqual(notify.transports.map((transport) => transport.type), ["socket", "mcp", "websocket"]);
@@ -400,13 +413,13 @@ test("the api package serves structured documents for every workspace package", 
     });
 
     const server = found.get("serve") as PackageDoc;
-    assert.deepEqual(Object.keys(server.operations[0]?.outputSchema.properties ?? {}).sort(), ["children", "indexUrl", "inspectorUrl", "mcpUrls", "nodeVersion", "pid", "startedAt", "uiUrl"]);
+    assert.deepEqual(Object.keys(server.operations.find(op => op.name === "serve_status")?.outputSchema.properties ?? {}).sort(), ["children", "indexUrl", "inspectorUrl", "mcpUrls", "nodeVersion", "pid", "startedAt", "uiUrl"]);
     for (const name of ["serve_local_connect", "serve_local_revoke"]) {
       assert.ok(server.operations.some(op => op.name === name));
       assert.ok(server.transports.filter(transport => transport.type !== "socket").every(transport => !transport.operations.includes(name)));
     }
-    assert.deepEqual(Object.keys(server.events), ["pids_changed", "codex_tools_changed", "resources_changed"]);
-    assert.deepEqual(server.operations.map((operation) => operation.name), ["serve_status", "serve_codex_tools", "serve_codex_tools_check", "serve_resources", "serve_resource_history", "serve_local_connect", "serve_local_revoke"]);
+    assert.deepEqual(Object.keys(server.events), ["serve_state_changed", "pids_changed", "codex_tools_changed", "resources_changed"]);
+    assert.deepEqual(server.operations.map((operation) => operation.name).filter(name => !stateOperation(name)), ["serve_status", "serve_codex_tools", "serve_codex_tools_check", "serve_resources", "serve_resource_history", "serve_local_connect", "serve_local_revoke"]);
     const serveOperation = (name: string) => server.operations.find((operation) => operation.name === name)!;
     assert.equal(serveOperation("serve_codex_tools").annotations.readOnlyHint, true);
     assert.notEqual(serveOperation("serve_codex_tools_check").annotations.readOnlyHint, true, "a check starts a runtime, so remote read-only selection excludes it");
@@ -422,7 +435,7 @@ test("the api package serves structured documents for every workspace package", 
 
     const api = found.get("api") as PackageDoc;
     assert.deepEqual(api.events, {});
-    assert.deepEqual(api.operations.map((operation) => operation.name).sort(), ["docs_get", "docs_list", "docs_snapshot"]);
+    assert.deepEqual(api.operations.map((operation) => operation.name).sort(), ["api_state_read", "docs_get", "docs_list", "docs_snapshot"]);
     assert.equal(api.transports.find((transport) => transport.type === "socket")?.endpoint, join(stateDir, "sockets", "api.sock"));
     assert.equal(api.transports.find((transport) => transport.type === "websocket")?.subscriptions, false);
 

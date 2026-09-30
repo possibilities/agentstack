@@ -2,6 +2,8 @@ import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
+import { withStateInventory } from "@stack/api";
+import { roleStateCategories } from "./src/state-categories.js";
 import { fragmentConditions, renderContext } from "./src/conditions.js";
 import { configuredMcpServers, mcpPort, operation, workspaceRoot, type PackageApi } from "@stack/api";
 import { matchingProjects, serverMcpOrigins, roleMcpConfig, roleMcpConflict } from "./src/bundle.js";
@@ -338,7 +340,7 @@ export const projectReorder = operation({
 export const topics = { role_changed: "The role catalog, default, or any Role changed. Read roles_snapshot and refresh the selected Role after (re)subscribing.",
   role_shims_changed: "A Stack-owned Role shim was installed, updated or removed. Read role_shim_list after (re)subscribing; manual PATH edits do not publish notices." } as const;
 
-export const api: PackageApi<RolesContext, keyof typeof topics> = {
+const packageApi: PackageApi<RolesContext, keyof typeof topics> = {
   operations: [rolesSnapshot, roleCreate, roleUpdate, roleSetDefault, roleSetWorkerDefault, roleDelete, roleInternalMcpList, roleInternalMcpUpdate, roleSnapshot, roleLaunchSnapshot, roleEditorSnapshot, rolePreview, roleLaunchPreview,
     roleShimList, roleShimCreate, roleShimUpdate, roleShimDelete, categoryCreate, categoryUpdate, categoryDelete, categoryReorder,
     fragmentCreate, fragmentUpdate, fragmentDelete, fragmentReorder, fragmentMove, skillCreate, skillUpdate, skillDelete, skillReorder,
@@ -355,3 +357,4 @@ export const api: PackageApi<RolesContext, keyof typeof topics> = {
   },
   async closeContext(ctx) { ctx.store.close(); },
 };
+export const api = withStateInventory("roles", roleStateCategories, packageApi);

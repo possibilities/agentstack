@@ -40,7 +40,7 @@ async function fileText(path: string): Promise<string> {
 /** An entirely derived, owner-private index. Only rollouts below a Bot's history directory are admitted. */
 export class ChatIndex {
   private db: DatabaseSync;
-  constructor(private readonly stateDir: string) {
+  constructor(private readonly stateDir: string, private readonly historyPath?: (botId: string) => string) {
     const path = join(stateDir, "chats.sqlite");
     try { closeSync(openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600)); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
@@ -70,6 +70,18 @@ export class ChatIndex {
   }
 
   close(): void { this.db.close(); }
+  clearProjection(botId: string): void {
+    this.projections.set(botId, (this.projections.get(botId) ?? 0) + 1);
+    this.db.prepare("DELETE FROM messages WHERE bot_id=?").run(botId);
+    this.db.prepare("DELETE FROM chats WHERE bot_id=?").run(botId);
+  }
+  queueState(botId: string): { id: string; threadId: string; state: QueuedChat["state"]; bytes: number }[] {
+    return this.db.prepare("SELECT id,thread_id AS threadId,state,length(CAST(input AS BLOB)) AS bytes FROM chat_queue WHERE bot_id=? ORDER BY id").all(botId) as ReturnType<ChatIndex["queueState"]>;
+  }
+  retireQueue(botId: string): void {
+    if (this.queueState(botId).some(row => row.state === "dispatching")) throw new Error("queue dispatch is still in flight");
+    this.db.prepare("UPDATE chat_queue SET state='cancelled',issue='Conversation generation retired' WHERE bot_id=? AND state='pending'").run(botId);
+  }
   removeBot(botId: string): void {
     this.db.exec("BEGIN");
     try {
@@ -81,9 +93,11 @@ export class ChatIndex {
   }
 
   /** Scan without following symlinks. Failure retains existing rows and is surfaced, not confused with empty history. */
+  private readonly projections = new Map<string, number>();
   async refresh(botId: string, mainThreadId: string | null): Promise<void> {
+    const generation = this.projections.get(botId) ?? 0;
     const history = join(this.stateDir, "history");
-    const root = join(history, botId);
+    const root = this.historyPath?.(botId) ?? join(history, botId);
     const found = new Set<string>();
     const candidates: { path: string; id: string; parent: string | null; size: number; mtime: number }[] = [];
     const visit = async (dir: string, sharedTop = false): Promise<void> => {
@@ -132,8 +146,8 @@ export class ChatIndex {
     try { historyStat = await lstat(history); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     if (historyStat && !historyStat.isDirectory()) throw new Error(`chat history root is not a real directory: ${history}`);
-    await scanRoot(root);
-    if (mainThreadId) {
+    await scanRoot(root, root === history);
+    if (mainThreadId && !this.historyPath) {
       await scanRoot(history, true);
     }
     // Several physical rollouts may retain the same stable thread identity. While
@@ -201,6 +215,7 @@ export class ChatIndex {
         updated = text(record.timestamp) || updated;
         messages.push({ line: i + 1, role, body: body.slice(0, 16384) });
       }
+      if (generation !== (this.projections.get(botId) ?? 0)) return;
       this.db.exec("BEGIN");
       try {
         this.db.prepare("DELETE FROM messages WHERE bot_id=? AND thread_id=?").run(botId, id);
@@ -214,6 +229,7 @@ export class ChatIndex {
         this.db.exec("COMMIT");
       } catch (error) { this.db.exec("ROLLBACK"); throw error; }
     }
+    if (generation !== (this.projections.get(botId) ?? 0)) return;
     for (const row of this.db.prepare("SELECT thread_id,path FROM chats WHERE bot_id=?").all(botId) as { thread_id: string; path: string }[]) {
       if (!found.has(row.path)) {
         this.db.prepare("DELETE FROM messages WHERE bot_id=? AND thread_id=?").run(botId, row.thread_id);

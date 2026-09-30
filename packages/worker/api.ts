@@ -1,11 +1,13 @@
 import { chmod, mkdir } from "node:fs/promises";
 import { z } from "zod";
-import { operation, stateDir, type PackageApi } from "@stack/api";
+import { operation, stateDir, stateDependencies, stateDependencyInput, stateHash, requireStateOperator, type PackageApi } from "@stack/api";
 import { WorkerSupervisor } from "./src/supervisor.js";
 import { WorkerManager } from "./src/manager.js";
 import { workerSettingsOperations } from "./src/settings.js";
 import { workContext } from "@stack/hud/schema";
 import { workAdmissionPage } from "@stack/hud/client";
+import { withStateInventory, statePageInput, stateFilePage, stateFileRead, listStateFiles, readStateFile } from "@stack/api";
+import { workerStateCategories } from "./src/state-categories.js";
 
 const id = z.uuid();
 const model = z.strictObject({ id: z.string(), name: z.string(), efforts: z.array(z.string()), effortConfigId: z.string().nullable() });
@@ -52,6 +54,25 @@ const resultSchema = z.strictObject({ worker: workerSchema, turn: turnSummarySch
 const requestId = z.uuid().describe("Client-generated idempotency key. Retry with identical input after an uncertain response.");
 
 export type WorkersContext = { supervisor: WorkerSupervisor; manager: WorkerManager };
+export const workerWorkspaceList = operation({ name: "worker_workspace_list", description: "List one bounded, revision-fenced directory in the retained Worker Git worktree, including closed Workers. Symlinks are listed but never traversed. The worktree's files, native conversation and retained source branch have separate lifecycles; worker_diff inspects Git changes.",
+  input: statePageInput.extend({ id, path: z.string().min(1).max(4096).default(".") }), output: stateFilePage, annotations: { readOnlyHint: true },
+  async call(ctx: WorkersContext, { id, ...input }, invocation) { requireStateOperator(invocation); const { worker } = await ctx.manager.status(id);
+    if (!worker.cwd) throw new Error("Worker has no prepared worktree"); return listStateFiles(worker.cwd, input); } });
+export const workerWorkspaceRead = operation({ name: "worker_workspace_read", description: "Read up to 256 KiB of an exact Worker worktree regular file as base64 bytes. No absolute paths, parent traversal, symlink components or special files. Pass the observed file revision on continuation. This never reads shared native account homes.",
+  input: z.strictObject({ id, path: z.string().min(1).max(4096), offset: z.number().int().nonnegative().default(0), length: z.number().int().min(1).max(262144).default(65536), revision: z.string().optional() }), output: stateFileRead, annotations: { readOnlyHint: true },
+  async call(ctx: WorkersContext, { id, ...input }, invocation) { requireStateOperator(invocation); const { worker } = await ctx.manager.status(id);
+    if (!worker.cwd) throw new Error("Worker has no prepared worktree"); return readStateFile(worker.cwd, input); } });
+export const workerBotDependencies = operation({ name: "worker_bot_dependencies", description: "Inspect Bot-owned Workers and known worktree writers for a maintenance plan. Close every nonclosed dependent Worker first. Closed transcripts, native sessions, captured Work context, worktrees and branches remain independently owned.",
+  input: stateDependencyInput, output: stateDependencies, annotations: { readOnlyHint: true },
+  async call(ctx: WorkersContext, { botId, cwd }, invocation) {
+    requireStateOperator(invocation);
+    const rows = (await ctx.manager.list()).filter(row => row.botId === botId || row.cwd === cwd || row.repo === cwd);
+    if (rows.length > 1000) throw new Error("Worker dependency inventory exceeds 1000 records");
+    return { revision: stateHash(rows.map(row => [row.id, row.phase, row.currentTurnId, row.updatedAt])),
+      blockedBy: rows.filter(row => row.phase !== "closed").map(row => `Close Worker ${row.id} before Bot maintenance`),
+      retained: rows.map(row => `Worker ${row.id}: transcript, native session, Work context, worktree and branch remain`),
+      relationships: rows.map(row => ({ relation: "worker", package: "worker", kind: "worker", id: row.id })) };
+  } });
 export const workerCatalog = operation({
   name: "worker_catalog", description: "Read model and effort choices observed through this account's ACP session or Claude SDK supportedModels, first when its runtime starts. Codex omits no-effort, o3, realtime and image OpenAI entries; Grok omits Imagine media models; Devin omits no-effort entries; Claude omits models needing purchased usage credits. Refresh on demand; stale results are labelled and never authorize dispatch.",
   input: z.strictObject({ accountId: id, refresh: z.boolean().optional() }), output: catalogSchema,
@@ -207,8 +228,8 @@ export const workerTurnContext = operation({ name: "worker_turn_context", descri
   input: z.strictObject({ id, turnId: id }), output: z.strictObject({ workerId: id, turnId: id, workContext: workContext.nullable() }), annotations: { readOnlyHint: true },
   async call(ctx: WorkersContext, input, invocation) { return ctx.manager.turnContext(input.id, input.turnId, invocation); },
 });
-export const api: PackageApi<WorkersContext, keyof typeof topics> = {
-  operations: [...workerSettingsOperations, workerCatalog, workerRuntimeList, workerAccountDrain, workerStart, workerList, workerStatus, workerRead,
+const packageApi: PackageApi<WorkersContext, keyof typeof topics> = {
+  operations: [workerBotDependencies, workerWorkspaceList, workerWorkspaceRead, ...workerSettingsOperations, workerCatalog, workerRuntimeList, workerAccountDrain, workerStart, workerList, workerStatus, workerRead,
     workerDetail, workerTurnList, workerRecordList, workerRecordRead, workerToolList, workerDiff,
      workerSend, workerRespond, workerCancel, workerResume, workerClose, workerRemove, workerWorkList, workerTurnContext],
   events: {
@@ -235,3 +256,4 @@ export const api: PackageApi<WorkersContext, keyof typeof topics> = {
   },
   async closeContext(ctx) { await ctx.manager.close(); },
 };
+export const api = withStateInventory("worker", workerStateCategories, packageApi);

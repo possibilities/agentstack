@@ -4,7 +4,7 @@ socket:
   description: Local notification creation, dismissal, and history.
 mcp:
   workerOperations: []
-  operations: all
+  operations: [notification_send, notification_get, notification_list, notification_counts, notification_dismiss, notification_dismiss_all]
   events: all
   description: Agent-facing notification creation and history over the owner's loopback MCP listener.
 websocket:

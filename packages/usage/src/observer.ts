@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { chmod, mkdir, open, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { socketCall, socketPath, socketSubscribe, type SocketSubscription } from "@stack/api";
+import { StateJournal, stateHash, socketCall, socketPath, socketSubscribe, type SocketSubscription, type StateApplyInput } from "@stack/api";
 import { accountSubscription, collectAccount, collectGrokBot, ObservationFailure } from "./collect.js";
 import { observationError, snapshotSchema, type AccountScope, type Provider, type Snapshot, type StoredMeasurement, type Subscription } from "./schema.js";
 
@@ -22,8 +22,12 @@ const fresh = (measurement: StoredMeasurement, now: number) => measurement.error
 const errorCode = (error: unknown) => error instanceof ObservationFailure && observationError.safeParse(error.code).success
   ? observationError.parse(error.code) : "observation_failed";
 const intervalMs = 180_000;
+export type ObservationSelection = { accounts: Array<{ id: string; scope: AccountScope }>; grokBot: boolean };
 
 export class UsageObserver {
+  readonly maintenance: StateJournal;
+  private saves: Promise<void> = Promise.resolve();
+  private botGeneration = 0;
   private rows = new Map<string, Row>();
   private links = new Map<string, Link[]>();
   private subscriptions = new Map<string, NonNullable<Subscription>>();
@@ -56,7 +60,34 @@ export class UsageObserver {
       (id, provider, scope) => accountSubscription(stateDir, id, provider, scope),
     private readonly watchAccounts: WatchAccounts = (onChange) =>
       socketSubscribe(socketPath("auth", env), ["accounts_changed", "worker_accounts_changed"], onChange),
-  ) {}
+  ) { this.maintenance = new StateJournal(join(stateDir, "usage", "state-control.sqlite"), "usage"); }
+
+  private observationRevision(selection: ObservationSelection) {
+    return stateHash([selection.accounts.map(key => [key, this.rows.get(keyOf(key)) ?? null, this.subscriptions.get(keyOf(key)) ?? null]), selection.grokBot ? this.bot : null]);
+  }
+  clearPlan(selection: ObservationSelection) {
+    return this.maintenance.plan({ subject: null, action: "observations", revision: this.observationRevision(selection),
+      resources: [...selection.accounts.map(keyOf), ...(selection.grokBot ? ["grok-bot"] : [])], blockedBy: [],
+      retained: ["Accounts, credentials, runtime settings and provider quota/billing"],
+      regeneration: ["In-flight collector results for selected observations are fenced. The next scheduled collection can repopulate them; this does not refresh or reset provider quota."] }, selection);
+  }
+  async clear(input: StateApplyInput) {
+    const previous = this.maintenance.existing(input); if (previous) return previous;
+    const { plan, payload } = this.maintenance.getPlan(input.planId), selection = payload as ObservationSelection;
+    if (plan.action !== "observations" || plan.revision !== this.observationRevision(selection)) throw new Error("Usage observations changed; prepare a new plan");
+    this.maintenance.begin(input, plan);
+    for (const key of selection.accounts) {
+      const id = keyOf(key), row = this.rows.get(id);
+      if (row) this.rows.set(id, { ...row, measurement: empty(), nextAttemptAtMs: Date.now() + intervalMs });
+      this.subscriptions.delete(id);
+    }
+    if (selection.grokBot) { this.botGeneration++; this.bot = empty(); this.botNextAttemptAtMs = Date.now() + intervalMs; }
+    this.changed();
+    try {
+      await this.save();
+      return this.maintenance.finish(input.requestId, "completed", plan.resources.map(resource => ({ resource, outcome: "removed", detail: "Local measurement cleared; credentials and provider quota unchanged" })));
+    } catch (error) { return this.maintenance.finish(input.requestId, "unknown", [{ resource: plan.id, outcome: "unknown", detail: String(error) }]); }
+  }
 
   private get path() { return join(this.stateDir, "usage", "observations.json"); }
 
@@ -112,7 +143,11 @@ export class UsageObserver {
     return this.subscriptions.get(keyOf({ id, scope })) ?? null;
   }
 
-  private async save(): Promise<void> {
+  private save(): Promise<void> {
+    const saved = this.saves.catch(() => undefined).then(() => this.writeSnapshot());
+    this.saves = saved; return saved;
+  }
+  private async writeSnapshot(): Promise<void> {
     const dir = join(this.stateDir, "usage");
     await mkdir(dir, { recursive: true, mode: 0o700 });
     await chmod(dir, 0o700);
@@ -159,6 +194,7 @@ export class UsageObserver {
       this.rows.set(key, row);
       if (account.provider === "codex" && account.ready) {
         const subscription = await this.readSubscription(row.id, row.provider, row.scope).catch(() => null);
+        if (this.rows.get(key) !== row) continue;
         if (subscription) this.subscriptions.set(key, subscription);
       }
       // Disabled accounts still have usage. Readiness only fences an unfinished native sign-in.
@@ -178,13 +214,14 @@ export class UsageObserver {
       this.bot = empty();
       this.botNextAttemptAtMs = 0;
     } else if (!this.controller.signal.aborted && now >= this.botNextAttemptAtMs) {
+      const generation = this.botGeneration;
       try {
         const usage = await this.fetchBot();
-        this.bot = { usage, observedAtMs: Date.now(), lastAttemptAtMs: Date.now(), error: null };
-        this.botNextAttemptAtMs = Date.now() + intervalMs;
+        if (generation === this.botGeneration) { this.bot = { usage, observedAtMs: Date.now(), lastAttemptAtMs: Date.now(), error: null };
+          this.botNextAttemptAtMs = Date.now() + intervalMs; }
       } catch (error) {
-        this.bot = { ...this.bot, lastAttemptAtMs: Date.now(), error: errorCode(error) };
-        this.botNextAttemptAtMs = Date.now() + 300_000;
+        if (generation === this.botGeneration) { this.bot = { ...this.bot, lastAttemptAtMs: Date.now(), error: errorCode(error) };
+          this.botNextAttemptAtMs = Date.now() + 300_000; }
       }
     }
     if (!this.controller.signal.aborted) await this.save();
@@ -245,5 +282,7 @@ export class UsageObserver {
     this.controller.abort();
     await this.watch?.close();
     await this.loop;
+    await this.saves;
+    this.maintenance.close();
   }
 }

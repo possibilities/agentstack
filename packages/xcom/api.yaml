@@ -7,3 +7,7 @@ mcp:
   operations: [xcom_status, xcom_sync, xcom_articles_sync, xcom_search, xcom_context, xcom_list, xcom_articles_pending, xcom_get, xcom_users, xcom_user_get]
   events: []
   description: Agent research retrieval and asynchronous archive maintenance. Index repair is local socket-only.
+websocket:
+  description: Local operator archive inspection, persistent pause and exact revision-fenced maintenance; no remote UI control.
+  operations: [xcom_state_read, xcom_status, xcom_list, xcom_get, xcom_users, xcom_articles_pending, xcom_control, xcom_history_plan, xcom_history_clear, xcom_state_receipt_get]
+  events: []

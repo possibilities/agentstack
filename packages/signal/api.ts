@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { withStateInventory, requireStateOperator, statePlan, stateApplyInput, stateReceipt } from "@stack/api";
+import { signalStateCategories } from "./src/state-categories.js";
 import { operation, stateDir, type PackageApi } from "@stack/api";
 import { AttentionService } from "./src/service.js";
 import { settings, itemState, attentionReason, statusSchema, itemPage, modelsSchema, messagePageSchema, runPageSchema, eventPageSchema, feedbackPageSchema } from "./src/schema.js";
@@ -13,8 +15,21 @@ const chunkOutput=z.strictObject({text:z.string(),nextOffset:z.number().int(),to
 const slice=(text:string,offset:number,limit:number,expected?:string)=>{const revision=digest(text);if(expected&&expected!==revision)throw new Error("attention_export_changed");return {text:text.slice(offset,offset+limit),nextOffset:Math.min(text.length,offset+limit),totalChars:text.length,revision};};
 const read={readOnlyHint:true} as const;
 const paged=<F extends object>(input:{after:number;limit:number;order:"asc"|"desc";before?:number}&F)=>{const {after,limit,order,before,...filters}=input;return {after,limit,order,before,filters};};
-export const api:PackageApi<Context,"signal_changed">={
+const packageApi:PackageApi<Context,"signal_changed">={
   operations:[
+    operation({ name: "attention_history_plan", description: "Preview clearing all Signal-captured content, including cross-conversation context copies, annotations, feedback, source-read blobs and partial buffers. Requires processing paused and active reads/inference drained. Keeps message revision suppression, cursors and minimal unknown/admission receipts. Infer payloads require separate owner cleanup.",
+      input: z.strictObject({ scope: z.literal("all-captured-content") }), output: statePlan,
+      async call(ctx: Context, _input, invocation) { requireStateOperator(invocation); ctx.service.requireQuiescent(); return ctx.service.store.historyPlan(); } }),
+    operation({ name: "attention_history_clear", description: "Atomically clear the exact Signal history plan and advance contentGeneration. Readers must replace cached pages/exports when generation changes. Re-reading upstream sources after explicit resume can create new raw source evidence; same message revisions remain suppressed from inference.",
+      input: stateApplyInput, output: stateReceipt, annotations: { destructiveHint: true, idempotentHint: true },
+      async call(ctx: Context, input, invocation) { requireStateOperator(invocation); const previous = ctx.service.store.maintenance.existing(input); if (previous) return previous;
+        ctx.service.requireQuiescent(); const result = ctx.service.store.historyClear(input); ctx.service.onChange?.(); return result; } }),
+    operation({ name: "attention_infer_requests", description: "Page retained correlated Infer request IDs, including fallthrough attempts. Infer owns their payloads and receipts independently; use infer_history_plan/clear for terminal requests. This read dispatches no inference.",
+      input: z.strictObject({ offset: z.number().int().nonnegative().default(0), limit: z.number().int().min(1).max(100).default(50) }), output: z.strictObject({ requestIds: z.array(z.string()), nextOffset: z.number().int().nullable() }), annotations: read,
+      async call(ctx: Context, { offset, limit }, invocation) { requireStateOperator(invocation); return ctx.service.store.inferRequests(offset, limit); } }),
+    operation({ name: "signal_state_receipt_get", description: "Read one durable Signal content-cleanup receipt; semantic Work and provider-native conversations are independent resources.",
+      input: z.strictObject({ requestId: z.uuid() }), output: z.strictObject({ receipt: stateReceipt.nullable() }), annotations: read,
+      async call(ctx: Context, { requestId }, invocation) { requireStateOperator(invocation); return { receipt: ctx.service.store.maintenance.receipt(requestId) }; } }),
     operation({name:"attention_defaults_get",description:"Read revisioned system inference defaults: model, reasoningEffort and nullable Codex Bot account assignment. Defaults to gpt-5.6-luna/low; null uses the first available enabled account.",input:z.strictObject({}),output:settings.extend({revision:z.number().int()}),annotations:read,
       async call(ctx:Context){return ctx.service.store.defaults();}}),
     operation({name:"attention_defaults_set",description:"Update system inference model, effort or account assignment for subsequent runs. Null account enables first-available selection. Existing runs retain their exact settings. expectedRevision prevents lost updates.",input:settings.partial().extend({expectedRevision:z.number().int().optional()}),output:settings.extend({revision:z.number().int()}),annotations:{idempotentHint:false},
@@ -52,3 +67,4 @@ export const api:PackageApi<Context,"signal_changed">={
   async createContext(env){const service=new AttentionService(stateDir(env),env);service.start();return {service};},
   async closeContext(ctx){await ctx.service.close();},
 };
+export const api = withStateInventory("signal", signalStateCategories, packageApi);

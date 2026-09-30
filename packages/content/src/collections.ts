@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { closeSync, createReadStream, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { Database } from "./sqlite.js";
+import { StateJournal, clearStateFilesSync, listStateFiles, snapshotStateFiles, snapshotStateFilesSync, stateHash, type FileSnapshot, type StateApplyInput } from "@stack/api";
 
 export const MAX_COLLECTION_ITEM_BYTES = 50 * 1024 * 1024;
 export const MAX_INLINE_BYTES = 256 * 1024;
@@ -28,6 +29,7 @@ function validCollectionDetails(title: string, description: string): void {
 }
 
 export class Collections {
+  readonly maintenance: StateJournal;
   private readonly db: Database;
   private readonly objects: string;
 
@@ -74,9 +76,74 @@ export class Collections {
       received INTEGER NOT NULL, digest TEXT NOT NULL, blob TEXT,
       createdAt TEXT NOT NULL
     )`);
+    this.db.run("CREATE TABLE IF NOT EXISTS aborted_stages(id TEXT PRIMARY KEY,revision TEXT NOT NULL,abortedAt TEXT NOT NULL)");
+    this.maintenance = new StateJournal(this.db.db, "content");
   }
 
   close(): void { this.db.close(); }
+
+  stageList(offset: number, limit: number) {
+    const rows = this.db.query("SELECT id,bytes,received,digest,blob,createdAt FROM stages WHERE id NOT IN (SELECT id FROM aborted_stages) ORDER BY createdAt,id LIMIT ? OFFSET ?").all(limit + 1, offset) as (Stage & { createdAt: string })[];
+    return { stages: rows.slice(0, limit).map(row => ({ ...row, revision: stateHash(row) })), nextOffset: rows.length > limit ? offset + limit : null };
+  }
+  stageAbort(id: string, expectedRevision: string) {
+    const prior = this.db.query("SELECT revision FROM aborted_stages WHERE id=?").get(id);
+    if (prior) { if (prior.revision !== expectedRevision) throw new Error("stage abort revision conflict"); this.clearStageBytes(id); return { id, aborted: true as const }; }
+    const row = this.db.query("SELECT id,bytes,received,digest,blob,createdAt FROM stages WHERE id=?").get(id);
+    if (!row || stateHash(row) !== expectedRevision) throw new Error("upload stage changed; refresh before aborting");
+    // All upload and item admissions are synchronous in this owner. Keep clientKey
+    // and intent identity so retries cannot silently recreate an aborted stage.
+    this.db.query("INSERT INTO aborted_stages VALUES(?,?,?)").run(id, expectedRevision, new Date().toISOString());
+    this.clearStageBytes(id);
+    return { id, aborted: true as const };
+  }
+  private clearStageBytes(id: string) {
+    if (!existsSync(this.stagePath(id))) return;
+    const root = join(this.root, "staging"), selection = { paths: [id] };
+    const result = clearStateFilesSync(root, selection, snapshotStateFilesSync(root, selection));
+    if (result.error) throw new Error(result.error);
+  }
+  private references(digests: string[]) {
+    return digests.map(digest => ({ digest, items: this.db.query("SELECT id,revision FROM items WHERE digest=? ORDER BY id").all(digest),
+      stages: this.db.query("SELECT id FROM stages WHERE blob=? AND id NOT IN (SELECT id FROM aborted_stages) ORDER BY id").all(digest) }));
+  }
+  async storagePlan(digests: string[]) {
+    const ids = [...new Set(digests)].sort(), refs = this.references(ids);
+    const snapshot = await snapshotStateFiles(this.objects, { paths: ids.map(id => `${id.slice(0, 2)}/${id}`) });
+    return this.maintenance.plan({ subject: null, action: "collection_blobs", revision: stateHash([refs, snapshot]), resources: ids,
+      blockedBy: refs.filter(row => row.items.length || row.stages.length).map(row => `Blob ${row.digest} still has live item or upload-stage references`),
+      retained: ["Vault files and Git history", "Named Artifact bytes use the separate Artifact gc", "Stage client keys and admission identities remain after abort"],
+      regeneration: ["New uploads can supply the same digest again; collection never removes an external destination"] }, { ids, snapshot });
+  }
+  storageCollect(input: StateApplyInput) {
+    const existing = this.maintenance.existing(input); if (existing) return existing;
+    const { plan, payload } = this.maintenance.getPlan(input.planId), { ids, snapshot } = payload as { ids: string[]; snapshot: FileSnapshot };
+    const verify = () => {
+      const refs = this.references(ids);
+      if (plan.blockedBy.length || plan.action !== "collection_blobs" || stateHash([refs, snapshot]) !== input.expectedRevision || refs.some(row => row.items.length || row.stages.length)) throw new Error("blob references changed; prepare a new plan");
+    };
+    verify();
+    // Commit admission BEFORE touching bytes. A crash rolls back the reference
+    // lock, but leaves a running receipt that recovery turns into unknown.
+    this.maintenance.begin(input, plan);
+    try {
+      this.db.run("BEGIN IMMEDIATE");
+      try {
+        verify();
+        const result = clearStateFilesSync(this.objects, { paths: ids.map(id => `${id.slice(0, 2)}/${id}`) }, snapshot);
+        const receipt = this.maintenance.finish(input.requestId, result.error ? "partial" : "completed", [
+          ...result.removed.map(resource => ({ resource, outcome: "removed" as const, detail: "Unreferenced collection CAS blob removed" })),
+          ...(result.error ? [{ resource: plan.id, outcome: "unknown" as const, detail: result.error }] : [])]);
+        this.db.run("COMMIT");
+        return receipt;
+      } catch (error) { this.db.run("ROLLBACK"); throw error; }
+    } catch (error) { return this.maintenance.finish(input.requestId, "unknown", [{ resource: plan.id, outcome: "unknown", detail: String(error) }]); }
+  }
+
+  async storageList(prefix: string, input: { offset: number; limit: number; revision?: string }) {
+    const page = await listStateFiles(this.objects, { path: prefix, ...input });
+    return { ...page, references: this.references(page.entries.map(row => row.path.split("/").at(-1)!).filter(id => /^[a-f0-9]{64}$/.test(id))) };
+  }
 
   listCollections(limit = 100, offset = 0): Collection[] {
     return this.db.query("SELECT * FROM collections ORDER BY slug LIMIT ? OFFSET ?").all(limit, offset) as Collection[];
@@ -165,6 +232,7 @@ export class Collections {
     return this.stage(id);
   }
   stage(id: string): Stage {
+    if (this.db.query("SELECT 1 FROM aborted_stages WHERE id=?").get(id)) throw new Error(`stage aborted: ${id}; use a new client key for a new upload`);
     const row = this.db.query("SELECT id, bytes, received, digest, blob FROM stages WHERE id = ?").get(id) as Stage | null;
     if (!row) throw new Error(`stage not found: ${id}`);
     return row;

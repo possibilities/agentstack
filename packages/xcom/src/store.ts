@@ -2,6 +2,10 @@ import { chmodSync, lstatSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { StateJournal, stateHash, type StateApplyInput } from "@stack/api";
+
+export type ArchiveSelection = { kind: "posts"; ids: string[]; reimport: "allow" | "suppress"; orphanAuthors: "retain" | "remove" }
+  | { kind: "article_attempts"; ids: string[] } | { kind: "checkpoint"; scan: "head" | "backfill" };
 
 export type Post = Record<string, unknown> & { id: string };
 export type Scan = { id: number; started_at: string; cutoff: string; mode: string; cursor: string | null;
@@ -28,6 +32,7 @@ export function archivePath(env: NodeJS.ProcessEnv): string {
 
 export class ArchiveStore {
   readonly db: DatabaseSync;
+  readonly maintenance: StateJournal;
   constructor(readonly path: string) {
     const root = dirname(path);
     checkPath(root, true);
@@ -39,6 +44,8 @@ export class ArchiveStore {
       chmodSync(path, 0o600);
       this.db.exec("PRAGMA busy_timeout=15000; PRAGMA foreign_keys=ON");
       this.install();
+      this.db.exec("CREATE TABLE IF NOT EXISTS cleared_tweets(id TEXT PRIMARY KEY)");
+      this.maintenance = new StateJournal(this.db, "xcom");
     } catch (error) { this.db.close(); throw error; }
   }
 
@@ -46,6 +53,45 @@ export class ArchiveStore {
     this.db.exec("BEGIN IMMEDIATE");
     try { const result = fn(); this.db.exec("COMMIT"); return result; }
     catch (error) { this.db.exec("ROLLBACK"); throw error; }
+  }
+
+  private stateRevision(selection: ArchiveSelection) {
+    if (selection.kind === "checkpoint") return stateHash([selection, this.scan(selection.scan === "head" ? 2 : 1),
+      this.meta(selection.scan === "head" ? "last_head_start" : "last_complete_start"), this.meta("paused")]);
+    return stateHash([selection, this.meta("paused"), selection.ids.map(id => [this.get(id),
+      this.db.prepare("SELECT * FROM article_attempts WHERE tweet_id=?").get(id),
+      this.db.prepare("SELECT * FROM users WHERE id=(SELECT author_id FROM tweets WHERE id=?)").get(id),
+      this.db.prepare("SELECT count(*) AS n FROM tweets WHERE author_id=(SELECT author_id FROM tweets WHERE id=?)").get(id)])]);
+  }
+  statePlan(selection: ArchiveSelection) {
+    return this.maintenance.plan({ subject: null, action: selection.kind, revision: this.stateRevision(selection),
+      resources: selection.kind === "checkpoint" ? [selection.scan] : selection.ids,
+      blockedBy: this.meta("paused") !== "true" ? ["Pause Xcom and let its current sync drain before maintenance"] : [],
+      retained: ["Other archived posts, independent Brain/Content copies and backups", "Minimal maintenance receipts", ...(selection.kind === "posts" && selection.orphanAuthors === "retain" ? ["Observed author profiles"] : [])],
+      regeneration: [selection.kind === "checkpoint" ? "Next explicit resume/sync starts a fresh scan; this can re-fetch upstream content" : selection.kind === "posts" && selection.reimport === "suppress" ? "Exact post IDs remain suppressed during subsequent feed scans" : "Explicit resume can re-fetch removed content or retry article requests"] }, selection);
+  }
+  stateClear(input: StateApplyInput) {
+    return this.maintenance.atomic(input, (plan, payload) => {
+      if (this.meta("paused") !== "true" || plan.revision !== this.stateRevision(payload as ArchiveSelection)) throw new Error("Xcom state changed; pause and prepare a new plan");
+    }, payload => {
+      const selection = payload as ArchiveSelection;
+      if (selection.kind === "checkpoint") {
+        this.db.exec(`DELETE FROM ${selection.scan === "head" ? "head_scan_state" : "scan_state"}`);
+        this.db.prepare("DELETE FROM metadata WHERE key=?").run(selection.scan === "head" ? "last_head_start" : "last_complete_start");
+        return [{ resource: selection.scan, outcome: "removed", detail: "Scan checkpoint reset; no network request admitted" }];
+      }
+      for (const id of selection.ids) {
+        this.db.prepare("DELETE FROM article_attempts WHERE tweet_id=?").run(id);
+        if (selection.kind !== "posts") continue;
+        const author = this.db.prepare("SELECT author_id FROM tweets WHERE id=?").get(id)?.author_id;
+        this.db.prepare("DELETE FROM articles WHERE tweet_id=?").run(id);
+        this.db.prepare("DELETE FROM tweets WHERE id=?").run(id);
+        if (selection.reimport === "suppress") this.db.prepare("INSERT OR IGNORE INTO cleared_tweets VALUES(?)").run(id);
+        else this.db.prepare("DELETE FROM cleared_tweets WHERE id=?").run(id);
+        if (author && selection.orphanAuthors === "remove") this.db.prepare("DELETE FROM users WHERE id=? AND NOT EXISTS(SELECT 1 FROM tweets WHERE author_id=?)").run(author, author);
+      }
+      return selection.ids.map(resource => ({ resource, outcome: "removed" as const, detail: selection.kind === "posts" ? "Post, article, raw payloads and FTS entries cleared" : "Article retry evidence cleared" }));
+    });
   }
 
   private install(): void {
@@ -185,6 +231,7 @@ export class ArchiveStore {
       const insert = this.db.prepare("INSERT OR IGNORE INTO tweets VALUES (?, ?, ?, ?, ?, ?, ?)");
       for (let i = 0; i < posts.length; i++) {
         const post = posts[i]!;
+        if (this.db.prepare("SELECT 1 FROM cleared_tweets WHERE id=?").get(post.id)) continue;
         const date = dates[i];
         if (date && date.getTime() < cutoff) continue;
         const author = post.author && typeof post.author === "object" ? post.author as Record<string, unknown> : {};

@@ -20,6 +20,11 @@ export class ArchiveSync {
   private timer: ReturnType<typeof setInterval> | null = null;
   private task: Promise<void> | null = null;
   private lastCall = 0;
+  private runController = new AbortController();
+  private get signal() { return AbortSignal.any([this.controller.signal, this.runController.signal]); }
+  get paused() { return this.store.meta("paused") === "true"; }
+  control(paused: boolean) { this.store.setMeta("paused", String(paused)); if (paused) this.runController.abort(); return { paused, running: this.state.running }; }
+  requireQuiescent() { if (!this.paused || this.task) throw new Error("Pause Xcom and wait for running=false before state maintenance"); }
 
   constructor(readonly store: ArchiveStore, readonly provider: Provider,
     readonly options: { now?: () => Date; sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
@@ -32,13 +37,15 @@ export class ArchiveSync {
   }
   private now(): Date { return this.options.now?.() ?? new Date(); }
   private async sleep(ms: number): Promise<void> {
-    if (this.options.sleep) await this.options.sleep(ms, this.controller.signal);
-    else await delay(ms, undefined, { signal: this.controller.signal });
+    if (this.options.sleep) await this.options.sleep(ms, this.signal);
+    else await delay(ms, undefined, { signal: this.signal });
+    this.signal.throwIfAborted();
   }
   private async paced<T>(call: () => Promise<T>): Promise<T> {
     const min = this.options.delayMin ?? 20_000, max = this.options.delayMax ?? 40_000;
     if (this.lastCall) await this.sleep(Math.max(0, this.lastCall + min + Math.random() * (max - min) - Date.now()));
     this.lastCall = Date.now();
+    this.signal.throwIfAborted();
     return call();
   }
   private async retry<T>(call: () => Promise<T>): Promise<T> {
@@ -60,7 +67,9 @@ export class ArchiveSync {
   }
   start(mode: SyncMode): { started: boolean; mode: Exclude<SyncMode, "auto"> | null } {
     if (this.controller.signal.aborted) throw new Error("xcom is stopping");
+    if (this.paused) return { started: false, mode: null };
     if (this.task) return { started: false, mode: this.state.mode };
+    this.runController = new AbortController();
     const chosen = this.choose(mode);
     if (!chosen) return { started: false, mode: null };
     Object.assign(this.state, { running: true, mode: chosen, started_at: this.now().toISOString(),
@@ -85,7 +94,8 @@ export class ArchiveSync {
       for (let i = 0; i < budget && !this.controller.signal.aborted; i++) {
         if (scan.pages >= 1500) { this.store.transaction(() => this.store.finish(scan!, "page_cap")); break; }
         // A failed page never advances its cursor. No page is silently skipped.
-        const page = await this.retry(() => this.provider.page(scan!.cursor, this.controller.signal));
+        const page = await this.retry(() => this.provider.page(scan!.cursor, this.signal));
+        this.signal.throwIfAborted();
         const result = this.store.savePage(scan, page.posts, page.nextCursor, this.now());
         this.state.pages++;
         this.state.new_posts += result.saved;
@@ -101,10 +111,12 @@ export class ArchiveSync {
     for (const id of this.store.pendingArticles(limit, this.now())) {
       if (this.controller.signal.aborted) break;
       try {
-        const article = await this.retry(() => this.provider.article(id, this.controller.signal));
+        const article = await this.retry(() => this.provider.article(id, this.signal));
+        this.signal.throwIfAborted();
         this.store.saveArticle(id, article, this.now());
         this.state.new_articles++;
       } catch (error) {
+        this.signal.throwIfAborted();
         if (error instanceof FeedError && error.code === "not_found") {
           this.store.articleMissing(id, error.message, this.now());
           continue;

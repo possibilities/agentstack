@@ -1,6 +1,8 @@
 import { chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { withStateInventory } from "@stack/api";
+import { brainStateCategories } from "./src/state-categories.js";
 import { operation, operatorInvocation, type PackageApi } from "@stack/api";
 import { egressPolicy } from "@stack/scrape/network";
 import { ResearchEgress, grantScope, grantRecord, jobNetworkPolicy } from "./src/egress.js";
@@ -198,7 +200,7 @@ export async function closeBrainContext(ctx: BrainContext): Promise<void> {
   return ctx.closing;
 }
 
-export const api: PackageApi<BrainContext, BrainTopic> = {
+const packageApi: PackageApi<BrainContext, BrainTopic> = {
   http: [{ name: "share", kind: "json", authentication: "bearer",
     description: "Loopback-only internal share listener with ephemeral liveness credential. Devices pair through Access; legacy shared tokens are not accepted.", routes: shareRoutes }],
   operations: [
@@ -258,3 +260,4 @@ export const api: PackageApi<BrainContext, BrainTopic> = {
   prepareCloseContext(ctx) { ctx.controller.abort(); },
   closeContext: closeBrainContext,
 };
+export const api = withStateInventory("brain", brainStateCategories, packageApi);

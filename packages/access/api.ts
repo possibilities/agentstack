@@ -1,5 +1,7 @@
 import { operation, stateDir, type PackageApi } from "@stack/api";
 import { z } from "zod";
+import { withStateInventory } from "@stack/api";
+import { accessStateCategories } from "./src/state-categories.js";
 import { AccessStore, scopes } from "./src/store.js";
 import { startIngress, pairInput, redeemInput, refreshInput, handoffInput } from "./src/ingress.js";
 import { snapshotSchema, envelope, errorEnvelope, pairResponse, redeemResponse, refreshResponse, shareRequest, shareResponse, statesResponse } from "./src/schema.js";
@@ -9,7 +11,7 @@ import { enrollmentOrigin, enrollmentResponse, invitationResponse } from "./src/
 import { renderQr } from "./src/qr.js";
 
 type Context = { store: AccessStore; ingress: Awaited<ReturnType<typeof startIngress>>; env: NodeJS.ProcessEnv };
-export const api: PackageApi<Context, "access_changed"> = {
+const packageApi: PackageApi<Context, "access_changed"> = {
   operations: [
     operation({ name: "enrollment_invite_create", description: "Create a one-use QR invitation on trusted local control with explicit kind and scopes. Persist a random 32-byte base64url secret, UUID and absolute expiry before calling; exact retries recover until expiry (at most ten minutes). The QR contains invitation authority: show only to the intended device, never log it. Only local control may seed access:enroll. Requires configured Access HTTPS origin.",
       input: inviteCreateInput, output: invitationResponseSchema,
@@ -79,3 +81,4 @@ export const api: PackageApi<Context, "access_changed"> = {
   async createContext(env) { const store = new AccessStore(stateDir(env)); try { return { store, ingress: await startIngress(store, env), env }; } catch (error) { store.close(); throw error; } },
   async closeContext(ctx) { await ctx.ingress?.close(); ctx.store.close(); },
 };
+export const api = withStateInventory("access", accessStateCategories, packageApi);

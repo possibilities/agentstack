@@ -7,7 +7,7 @@ import { once } from "node:events";
 import test from "node:test";
 import { WebSocketServer } from "ws";
 import { z } from "zod";
-import { botInstance, operation, serveApi, serveSocket, socketCall, socketPath, type InvocationContext } from "@stack/api";
+import { botInstance, operation, serveApi, serveSocket, socketCall, socketPath, type InvocationContext, type StatePlan, type StateReceipt } from "@stack/api";
 import { resolveWorkContext } from "../src/client.js";
 import type { Focus, WorkContext, WorkItem } from "../src/schema.js";
 
@@ -63,11 +63,21 @@ test("verified Chat focus inherits only sanctioned ancestry and captures explici
     await call("work_focus_set", { requestId: randomUUID(), expectedRevision: 1, workItemId: other });
     assert.equal((await call<{ duplicate: boolean }>("work_focus_set", selected)).duplicate, true, "retry does not restore an old focus");
     assert.equal((await call<Focus>("work_focus_get", {})).workItemId, other);
+    const local = <T>(name: string, args: object) => socketCall(hud.socketPath!, "tools/call", { name, arguments: args }) as Promise<T>;
+    const target = { botId: "bot-1", mainThreadId: main, threadId: main };
+    await assert.rejects(local("work_focus_retire_plan", { target }), /active Bot root/);
     mainThreadId = outsider;
     await assert.rejects(resolveWorkContext(env, undefined, invocation), /outside the sanctioned lineage/);
     const replacement = { ...invocation, threadId: outsider };
     assert.equal((await call<Focus>("work_focus_get", {}, replacement)).revision, 0, "Bot ID reuse cannot inherit a retired root's focus");
     assert.equal((await call<{ context: WorkContext | null }>("work_context_resolve", {}, replacement)).context, null);
+    const plan = await local<StatePlan>("work_focus_retire_plan", { target });
+    const input = { planId: plan.id, expectedRevision: plan.revision, requestId: randomUUID() };
+    assert.equal((await local<StateReceipt>("work_focus_retire", input)).status, "completed");
+    assert.equal((await local<StateReceipt>("work_focus_retire", input)).status, "completed");
+    const focuses = await local<{ entries: Focus[] }>("work_focus_list", { botId: "bot-1" });
+    assert.deepEqual(focuses.entries.map(row => row.threadId), [child]);
+    assert.equal((await call<WorkItem>("work_get", { id: other }, replacement)).title, "Other work");
     await assert.rejects(call("work_get", { id }, { ...replacement, instance: "retired-launch" }), /launch changed/);
   } finally {
     await hud.close(); await bots.close();

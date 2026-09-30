@@ -736,7 +736,9 @@ export class StackStore {
   };
   /** Read a Signal list and remember its records for links and inspection. */
   readSignal = async <T>(name: string, args: Record<string, unknown> = {}): Promise<T> => {
+    const generation = this.state.signalStatus.data?.contentGeneration;
     const result = await this.call<T>("signal", name, args);
+    if (generation !== this.state.signalStatus.data?.contentGeneration) throw new Error("Signal content changed; refresh this view");
     const entries = (result as AttentionPage<unknown>).entries;
     const records = this.state.signalRecords;
     if (name === "attention_list") {
@@ -785,7 +787,7 @@ export class StackStore {
         if (!current || current.filter !== filter || current.nextCursor !== nextCursor) return;
         const known = new Set(current.entries.map((item) => item.id));
         this.upsertNotifications(page.entries);
-        this.set({ notifications: { data: { filter, entries: [...current.entries, ...page.entries.filter((item) => !known.has(item.id))], nextCursor: page.nextCursor }, error: null, at: Date.now() } });
+        this.set({ notifications: { data: { filter, entries: [...current.entries, ...page.entries.filter((item) => !known.has(item.id))].map(item => this.state.notificationRecords[item.id] ?? item), nextCursor: page.nextCursor }, error: null, at: Date.now() } });
       }, (error: Error) => this.set({ notifications: { ...this.state.notifications, error: error.message, at: Date.now() } }))
       .finally(() => { this.olderInflight = null; });
     return this.olderInflight;
@@ -818,7 +820,10 @@ export class StackStore {
   }
 
   private upsertNotifications(entries: Notification[]): void {
-    if (entries.length) this.set({ notificationRecords: { ...this.state.notificationRecords, ...Object.fromEntries(entries.map((item) => [item.id, item])) } });
+    if (entries.length) this.set({ notificationRecords: { ...this.state.notificationRecords, ...Object.fromEntries(entries.map((item) => {
+      const held = this.state.notificationRecords[item.id];
+      return [item.id, held?.contentClearedAt ? held : item];
+    })) } });
   }
 
   /** Re-read as many pages as are loaded, so an invalidation neither drops older rows nor keeps stale ones. */
@@ -1340,8 +1345,14 @@ export class StackStore {
         const cwds = key === "bots" ? botCwds(this.state.bots.data) : "";
         // Pages for a filter the Inbox has since left are dropped; the follow-up read serves the new one.
         if (key === "notifications" && next.data && (next.data as NotificationPages).filter !== this.state.notificationFilter) { this.dirty.add(key); return; }
-        if (key === "notifications" && next.data) this.upsertNotifications((next.data as NotificationPages).entries);
+        if (key === "notifications" && next.data) {
+          const page = next.data as NotificationPages;
+          this.upsertNotifications(page.entries);
+          page.entries = page.entries.map(item => this.state.notificationRecords[item.id] ?? item);
+        }
         const changeSeq = key === "signalStatus" ? this.state.signalStatus.data?.changeSeq : undefined;
+        if (key === "signalStatus" && next.data && (next.data as AttentionStatus).contentGeneration !== this.state.signalStatus.data?.contentGeneration)
+          this.set({ signalRecords: { items: {}, messages: {}, runs: {} } });
         // A Library scope change while a page read was in flight: read again for the new scope.
         // Jobs for a tab the window has since left are dropped; the follow-up read serves the new one.
         if (key === "brainJobs" && next.data && ((next.data as StackState["brainJobs"]["data"])!.view !== this.state.brainJobView.view || (next.data as StackState["brainJobs"]["data"])!.run !== this.state.brainJobView.run)) { this.dirty.add(key); return; }

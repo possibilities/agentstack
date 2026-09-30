@@ -1,13 +1,13 @@
 name: usage
 description: Observe scoped Codex Bot and Codex, Grok, Devin and Claude Worker account usage, available dollar allocations and the local Grok Bot allowance without routing or balancing.
 socket:
-  description: Private read-only usage snapshots maintained by the owner-owned observer.
+  description: Private usage snapshots and exact local-observation maintenance maintained by the owner observer.
 mcp:
   workerOperations: []
-  operations: all
+  operations: [usage_snapshot]
   events: all
   description: Agent-facing read-only usage snapshots forwarded to the usage socket.
 websocket:
   operations: all
   events: all
-  description: Loopback read-only usage snapshots and change notices.
+  description: Loopback usage snapshots, local observation clearing and change notices. Clearing never resets provider quota.

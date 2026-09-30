@@ -1,0 +1,9 @@
+import { stateCategories } from "@stack/api";
+export const roleStateCategories = stateCategories("roles", [
+  { id: "catalog", kind: "configuration", paths: ["roles.sqlite", "roles.sqlite-wal"], reads: ["roles_snapshot", "role_snapshot", "role_launch_preview"], actions: ["role_delete"],
+    retention: "Named Roles and launch defaults are authored configuration. Default Roles retain their deletion constraints. A current Role is not a historical launch snapshot.", regeneration: "Explicit edits affect later launches, never already captured Bot/Worker resources." },
+  { id: "launches", kind: "conversation", paths: ["roles"], reads: ["role_launch_preview"],
+    retention: "Role injection can retain native history and launch manifests after exit; Bot/Worker launch materializations remain owned by those lifecycles.", regeneration: "Explicit Role injection and native launches.", issues: ["Preview reads current Role resources; it is not evidence of retained launch contents or external provider history."] },
+  { id: "shims", kind: "configuration", paths: [], location: "external", ownership: "stack", reads: ["role_shim_list"], actions: ["role_shim_delete"],
+    retention: "Exact hash-fenced Stack scripts live in the command directory. Unrelated/manual scripts are not adopted.", regeneration: "Explicit shim installation." },
+]);

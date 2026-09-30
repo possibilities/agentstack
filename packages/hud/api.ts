@@ -1,16 +1,36 @@
 import { z } from "zod";
+import { withStateInventory, requireStateOperator, statePlan, stateApplyInput, stateReceipt, socketCall, socketPath } from "@stack/api";
+import { hudStateCategories } from "./src/state-categories.js";
 import { operation, stateDir, type PackageApi } from "@stack/api";
 import * as s from "./src/schema.js";
 import { workAdmissionPage } from "./src/client.js";
 import { HudStore } from "./src/store.js";
 import { HudService } from "./src/service.js";
 
-export type HudContext = { store: HudStore; service: HudService };
+export type HudContext = { store: HudStore; service: HudService; env?: NodeJS.ProcessEnv };
 const read = { readOnlyHint: true } as const;
 const write = { idempotentHint: true } as const;
 const requestId = z.uuid().describe("Retry the same UUID and identical input after a lost response. Changed intent needs a new UUID.");
 const id = z.strictObject({ id: z.uuid() });
 const page = { after: z.number().int().nonnegative().default(0), limit: z.number().int().min(1).max(100).default(40) };
+async function retired(ctx: HudContext, target: s.ChatTarget) {
+  const { bots } = await socketCall(socketPath("bots", ctx.env ?? process.env), "tools/call", { name: "bot_list", arguments: {} }, { timeoutMs: 5000 }) as { bots: Array<{ id: string; mainThreadId: string | null }> };
+  if (bots.some(bot => bot.id === target.botId && bot.mainThreadId === target.mainThreadId)) throw new Error("This is the active Bot root; use work_focus_set to select or clear focus");
+}
+export const hudStateOperations = [
+  operation({ name: "work_focus_list", description: "Page durable Chat-focus records, including retired roots no longer addressable through work_focus_get. Saved null blocks inheritance; absent focus permits it. Cursor pages follow exact target keys and must be refreshed on hud_changed.",
+    input: z.strictObject({ after: z.string().max(2048).optional(), limit: z.number().int().min(1).max(100).default(50), botId: z.string().optional() }), output: z.strictObject({ entries: z.array(s.focus), nextCursor: z.string().nullable() }), annotations: read,
+    async call(ctx: HudContext, { after, limit, botId }, invocation) { requireStateOperator(invocation); return ctx.store.focusList(after, limit, botId); } }),
+  operation({ name: "work_focus_retire_plan", description: "Preview removing an exact retired-root Chat focus. Requires live Bot inventory to prove its sanctioned root has retired or its Bot is absent. Shared Work and its journal remain; this is not Work deletion.",
+    input: z.strictObject({ target: s.chatTarget }), output: statePlan,
+    async call(ctx: HudContext, { target }, invocation) { requireStateOperator(invocation); await retired(ctx, target); return ctx.store.focusRetirePlan(target); } }),
+  operation({ name: "work_focus_retire", description: "Apply one exact retired-focus plan after rechecking live Bot roots. Preserve action receipts and shared semantic Work. A repeated request returns its original receipt.",
+    input: stateApplyInput, output: stateReceipt, annotations: { destructiveHint: true, idempotentHint: true },
+    async call(ctx: HudContext, input, invocation) { requireStateOperator(invocation); const prior = ctx.store.maintenance.existing(input); if (prior) return prior;
+      const { payload } = ctx.store.maintenance.getPlan(input.planId); await retired(ctx, s.chatTarget.parse(payload)); return ctx.store.focusRetire(input); } }),
+  operation({ name: "hud_state_receipt_get", description: "Read one exact durable HUD maintenance receipt.", input: z.strictObject({ requestId }), output: z.strictObject({ receipt: stateReceipt.nullable() }), annotations: read,
+    async call(ctx: HudContext, { requestId }, invocation) { requireStateOperator(invocation); return { receipt: ctx.store.maintenance.receipt(requestId) }; } }),
+];
 
 export const workCreate = operation({ name: "work_create",
   description: "Create durable shared work with a caller-generated ID, objective, nested parent, state, dependencies and typed resource links. Records the verified originating Chat automatically. Does not dispatch resources or select Chat focus. Human attention and nextAction are explicit; native activity never determines work state.",
@@ -79,10 +99,11 @@ export const topics = {
   hud_changed: "Durable work, metadata, collaboration history or Chat focus changed. Refresh work_list/work_tree or continue work_activity_list. No payload. Worker runtime changes remain worker/workers_changed.",
   work_changed: "A work item or its derived tree/readiness context changed. Subscribe with the item ID, then re-read it and its tree/resources. Ancestor and dependent invalidations do not imply their stored revision changed.",
 } as const;
-export const api: PackageApi<HudContext, keyof typeof topics> = {
-  operations: [workCreate, workUpdate, workBatch, workGet, workList, workTree, workMetadataGet, workMetadataSet, workNoteAdd, workActivityList, workFocusGet, workFocusSet, workContextResolve, workResources],
+const packageApi: PackageApi<HudContext, keyof typeof topics> = {
+  operations: [...hudStateOperations, workCreate, workUpdate, workBatch, workGet, workList, workTree, workMetadataGet, workMetadataSet, workNoteAdd, workActivityList, workFocusGet, workFocusSet, workContextResolve, workResources],
   events: { topics, scope: { description: "Optional work item ID for work_changed. Global hud_changed is unscoped.", example: "00000000-0000-4000-8000-000000000001", valid: (ctx, id) => ctx.store.has(id) },
     start(ctx, publish) { ctx.store.onChange = ids => { publish("hud_changed"); for (const id of ids) publish("work_changed", id); }; return () => { ctx.store.onChange = undefined; }; } },
-  async createContext(env) { const store = new HudStore(stateDir(env)); return { store, service: new HudService(store, env) }; },
+  async createContext(env) { const store = new HudStore(stateDir(env)); return { store, service: new HudService(store, env), env }; },
   async closeContext(ctx) { ctx.store.close(); },
 };
+export const api = withStateInventory("hud", hudStateCategories, packageApi);

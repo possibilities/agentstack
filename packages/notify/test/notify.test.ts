@@ -7,8 +7,26 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { serveApi, socketCall, socketSubscribe } from "@stack/api";
 import type { Notification } from "../src/schema.js";
+import { NotificationStore } from "../src/store.js";
+import { content } from "../src/schema.js";
+import { randomUUID } from "node:crypto";
 
 type Page = { entries: Notification[]; nextCursor: number | null };
+
+test("cleared Notification bodies cannot be recreated by send or dismissal retries", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stack-notify-clear-")); let store = new NotificationStore(root);
+  try {
+    const id = randomUUID(), input = content.parse({ title: "private title", message: "private body", reply: "private prompt" });
+    store.create({ id, ...input }); store.dismiss(id, { outcome: "replied", response: "private answer" });
+    const plan = store.historyPlan([id]), apply = { planId: plan.id, expectedRevision: plan.revision, requestId: randomUUID() };
+    const receipt = store.historyClear(apply); store.close(); store = new NotificationStore(root);
+    assert.deepEqual(store.historyClear(apply), receipt);
+    const repeated = store.create({ id, ...input }).record;
+    assert.ok(repeated.contentClearedAt); assert.equal(repeated.message, ""); assert.equal(repeated.response, null); assert.equal(repeated.outcome, "replied");
+    assert.deepEqual(store.dismiss(id, { outcome: "replied", response: "private answer" }).record, repeated);
+    assert.throws(() => store.dismiss(id, { outcome: "replied", response: "different answer" }), /already_dismissed/);
+  } finally { store.close(); await rm(root, { recursive: true, force: true }); }
+});
 
 test("notifications persist, page, replace by group, and dismiss once with an outcome", async () => {
   const root = await mkdtemp(join(tmpdir(), "n-"));

@@ -3,6 +3,9 @@ import { CodexToolsDiagnostics, operation, withLocalAuth, localOrigin, type Pack
 import { statusSource, type StatusSource } from "./src/status.js";
 import { ResourceMonitor } from "./src/resources/monitor.js";
 import { serverResourcesInput, serverResourcesOutput, serverResourceHistoryInput, serverResourceHistoryOutput } from "./src/resources/schema.js";
+import { serverStateOperations } from "./src/state.js";
+import { withStateInventory } from "@stack/api";
+import { serverStateCategories } from "./src/state-categories.js";
 
 const childStatusSchema = z.object({
   name: z.string().describe("Required child name."),
@@ -129,6 +132,7 @@ export const serverResourceHistory = operation({
 });
 
 export const topics = {
+  serve_state_changed: "Durable operator-managed subscription state changed. Refresh serve_subscription_list and affected state inventories; no payloads are included.",
   pids_changed: "Published when the set of owned child process ids changes.",
   codex_tools_changed: "Published when a Codex tools check starts or finishes. Refresh serve_codex_tools.",
   resources_changed: "Published after a resource sampling attempt, including failures. Refresh serve_resources or serve_resource_history; notices carry no metrics.",
@@ -136,16 +140,18 @@ export const topics = {
 
 export type ServerTopic = keyof typeof topics;
 
-export const api: PackageApi<ServerContext, ServerTopic> = {
-  operations: [serverStatus, serverCodexTools, serverCodexToolsCheck, serverResources, serverResourceHistory, serverLocalConnect, serverLocalRevoke],
+const packageApi: PackageApi<ServerContext, ServerTopic> = {
+  operations: [...serverStateOperations, serverStatus, serverCodexTools, serverCodexToolsCheck, serverResources, serverResourceHistory, serverLocalConnect, serverLocalRevoke],
   events: {
     topics,
     start(ctx: ServerContext, publish: (topic: ServerTopic) => void) {
       ctx.source.onChange = () => publish("pids_changed");
+      ctx.source.onStateChange = () => publish("serve_state_changed");
       ctx.resources.onChange = () => publish("resources_changed");
       ctx.codexTools.onChange = () => publish("codex_tools_changed");
       return () => {
         ctx.source.onChange = undefined;
+        ctx.source.onStateChange = undefined;
         ctx.resources.onChange = undefined;
         ctx.codexTools.onChange = undefined;
       };
@@ -161,3 +167,4 @@ export const api: PackageApi<ServerContext, ServerTopic> = {
     ctx.source.detach();
   },
 };
+export const api = withStateInventory("serve", serverStateCategories, packageApi);

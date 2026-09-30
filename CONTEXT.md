@@ -10,6 +10,17 @@ Typed operations a workspace package exports so stack can serve them. Descriptio
 
 _Avoid_: MCP server, endpoint, route
 
+## State maintenance
+
+Owner-specific inspection and exact cleanup of retained Stack state. An inventory
+reports coverage, ownership, retention and regeneration; a plan binds observed
+revisions and consequences; a request receipt records effects and uncertainty.
+Conversation reset, workspace clearing, payload clearing, work cancellation,
+settings reset and identity removal are distinct. A receipt never turns an unknown
+native outcome into a known one. See [ADR 0135](docs/adr/0135-owner-state-maintenance.md)
+and the [operation matrix](docs/state-control.md). _Avoid_: reset everything,
+clear means cancel, tombstone means erased, unmeasured means zero
+
 ## Access client
 
 A durable phone, extension, browser, desktop or future cloud consumer identity owned by the `access` Package API. A tailnet client pairs through manual local approval, a one-use local QR invitation, or an offline QR request explicitly approved by a permitted enrollment sponsor. Its human approval code or request QR is distinct from its private high-entropy redemption secret. One client may receive multiple Stack resource scopes. _Avoid_: Brain token, Bot, Worker, Tailscale node identity

@@ -69,7 +69,7 @@ export function ProcRunWindow({ id }: { id: string }) {
         : (
           <>
             <RunHeader run={run} processes={resources.data?.processes ?? []} />
-            <OutputLog key={run.id} run={run} generation={generation} />
+            <OutputLog key={`${run.id}:${run.retainOutput}`} run={run} generation={generation} />
           </>
         )}
     </Window>
@@ -175,6 +175,7 @@ function OutputLog({ run, generation }: { run: ProcRunDetail; generation: number
   const atEnd = useRef(true);
 
   const key = run.id;
+  useEffect(() => () => { state.current.key = null; }, []);
   if (state.current.key !== key) {
     state.current = { key, lines: [], gaps: new Map(), tail: false, running: false, again: false };
     atEnd.current = true;

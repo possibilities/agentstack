@@ -1,5 +1,7 @@
 import { chmod, mkdir, rm } from "node:fs/promises";
 import { z } from "zod";
+import { withStateInventory } from "@stack/api";
+import { authStateCategories } from "./src/state-categories.js";
 import { operation, socketCall, socketPath, type PackageApi } from "@stack/api";
 import { stateDir } from "./src/paths.js";
 import { AuthStore, type Account } from "./src/store.js";
@@ -284,7 +286,7 @@ export const topics = {
 
 export type AuthTopic = keyof typeof topics;
 
-export const api: PackageApi<AuthContext, AuthTopic> = {
+const packageApi: PackageApi<AuthContext, AuthTopic> = {
   operations: [accountList, accountSetEnabled, accountRemove, accountLoginStart, accountLoginReplace, accountLoginStatus, accountLoginCurrent, accountLoginCancel,
     workerAccountList, workerAccountPrepare, workerAccountConfirm, workerAccountSetEnabled, workerAccountRemove,
     workerAccountLoginStart, workerAccountLoginStatus, workerAccountLoginCurrent, workerAccountLoginSubmit, workerAccountLoginCancel],
@@ -324,3 +326,4 @@ export const api: PackageApi<AuthContext, AuthTopic> = {
 
 export type { Account, LoginState };
 export type { WorkerAccount, WorkerLoginState };
+export const api = withStateInventory("auth", authStateCategories, packageApi);

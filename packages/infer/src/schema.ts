@@ -47,6 +47,7 @@ const requestFields = {
   usage: usage.nullable(),
   createdAt: timestamp,
   finishedAt: timestamp.nullable(),
+  contentClearedAt: timestamp.nullable().describe("Terminal request payloads were explicitly cleared; identity/digest/outcome/usage remain to prevent redispatch."),
 };
 export const requestSummary = z.strictObject({
   ...requestFields,

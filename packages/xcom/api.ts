@@ -2,6 +2,8 @@ import { z } from "zod";
 import { operation, type PackageApi } from "@stack/api";
 import { ArchiveStore, archivePath, type Filters } from "./src/store.js";
 import { ArchiveSync, cliProvider } from "./src/sync.js";
+import { withStateInventory, requireStateOperator, statePlan, stateApplyInput, stateReceipt } from "@stack/api";
+import { xcomStateCategories } from "./src/state-categories.js";
 
 export type XcomContext = { store: ArchiveStore; sync: ArchiveSync; autoSync: boolean };
 
@@ -36,10 +38,22 @@ function checkFilters(input: Filters): void {
   if (input.articleState && input.hasArticle !== undefined) throw new Error("select articleState or hasArticle, not both");
 }
 
-export const api: PackageApi<XcomContext> = {
+const packageApi: PackageApi<XcomContext> = {
   operations: [
+    operation({ name: "xcom_control", description: "Persistently pause/resume Xcom admissions. Pause aborts an in-flight request and fences late provider results; observe running=false before cleanup. Resume permits configured automatic or explicitly requested scans; it does not itself fetch. Does not affect external twitter credentials.",
+      input: z.strictObject({ paused: z.boolean() }), output: z.strictObject({ paused: z.boolean(), running: z.boolean() }), annotations: { idempotentHint: true },
+      async call(ctx, { paused }, invocation) { requireStateOperator(invocation); return ctx.sync.control(paused); } }),
+    operation({ name: "xcom_history_plan", description: "Preview exact post/article/raw/FTS cleanup, article retry-evidence clearing, or a head/backfill checkpoint reset. Requires persistent pause and a drained sync. Post cleanup explicitly selects future reimport and orphan-author retention; shared authors survive.",
+      input: z.discriminatedUnion("kind", [z.strictObject({ kind: z.literal("posts"), ids: z.array(z.string().min(1).max(100)).min(1).max(100), reimport: z.enum(["allow", "suppress"]), orphanAuthors: z.enum(["retain", "remove"]) }),
+        z.strictObject({ kind: z.literal("article_attempts"), ids: z.array(z.string().min(1).max(100)).min(1).max(100) }), z.strictObject({ kind: z.literal("checkpoint"), scan: z.enum(["head", "backfill"]) })]), output: statePlan,
+      async call(ctx, input, invocation) { requireStateOperator(invocation); ctx.sync.requireQuiescent(); return ctx.store.statePlan(input); } }),
+    operation({ name: "xcom_history_clear", description: "Atomically apply one paused Xcom cleanup plan. Raw source rows and derived FTS are removed together; exact suppression identities and receipts remain. Unknown retries return the original receipt and do not rerun a changed selection.",
+      input: stateApplyInput, output: stateReceipt, annotations: { destructiveHint: true, idempotentHint: true },
+      async call(ctx, input, invocation) { requireStateOperator(invocation); const previous = ctx.store.maintenance.existing(input); if (previous) return previous; ctx.sync.requireQuiescent(); return ctx.store.stateClear(input); } }),
+    operation({ name: "xcom_state_receipt_get", description: "Read an exact durable Xcom maintenance receipt.", input: z.strictObject({ requestId: z.uuid() }), output: z.strictObject({ receipt: stateReceipt.nullable() }), annotations: read,
+      async call(ctx, { requestId }, invocation) { requireStateOperator(invocation); return { receipt: ctx.store.maintenance.receipt(requestId) }; } }),
     operation({ name: "xcom_status", description: "Inspect archive counts, active sync, last head/backfill stop reasons and saved cursors. Coverage is best-effort, not a complete following graph or proof of every post in the two-month window.",
-      input: z.strictObject({}), output: z.object({ database: z.string(), auto_sync: z.boolean(), tweets: z.number(), articles: z.number(),
+      input: z.strictObject({}), output: z.object({ database: z.string(), auto_sync: z.boolean(), paused: z.boolean(), tweets: z.number(), articles: z.number(),
         unfetched_articles: z.number(), unavailable_articles: z.number(), users: z.number(),
         sync: z.object({ running: z.boolean(), mode: z.enum(["head", "backfill", "articles"]).nullable(), started_at: z.string().nullable(),
           last_finished_at: z.string().nullable(), last_error: z.string().nullable(), pages: z.number(), new_posts: z.number(), new_articles: z.number() }),
@@ -48,7 +62,7 @@ export const api: PackageApi<XcomContext> = {
       async call(ctx) {
         const scan = ctx.store.scan(1), head = ctx.store.scan(2);
         const articleCounts = ctx.store.articleCounts();
-        return { database: ctx.store.path, auto_sync: ctx.autoSync, tweets: ctx.store.count("tweets"), articles: ctx.store.count("articles"), users: ctx.store.count("users"),
+        return { database: ctx.store.path, auto_sync: ctx.autoSync, paused: ctx.sync.paused, tweets: ctx.store.count("tweets"), articles: ctx.store.count("articles"), users: ctx.store.count("users"),
           unfetched_articles: articleCounts.unfetched, unavailable_articles: articleCounts.unavailable,
           sync: { ...ctx.sync.state },
           head: { started_at: head?.started_at ?? null, cursor: head?.cursor ?? null, pages: head?.pages ?? 0,
@@ -140,3 +154,4 @@ export const api: PackageApi<XcomContext> = {
   prepareCloseContext(ctx) { ctx.sync.controller.abort(); },
   async closeContext(ctx) { try { await ctx.sync.close(); } finally { ctx.store.close(); } },
 };
+export const api = withStateInventory("xcom", xcomStateCategories, packageApi);

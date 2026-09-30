@@ -2,11 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { StateJournal, stateHash, type StateApplyInput } from "@stack/api";
 import type { Content, Notification, Outcome } from "./schema.js";
 
 type Row = { id: string; sequence: number; title: string; message: string; subtitle: string | null; source: string | null;
   group_key: string | null; open_url: string | null; actions: string; reply: string | null; initial_digest: string;
-  created_at: string; dismissed_at: string | null; outcome: Outcome | null; response: string | null };
+  created_at: string; dismissed_at: string | null; outcome: Outcome | null; response: string | null; content_cleared_at: string | null; dismissal_digest: string | null };
 
 const schemaVersion = 2;
 const table = (name: string) => `CREATE TABLE ${name} (
@@ -22,7 +23,7 @@ const indexes = `CREATE INDEX notifications_dismissed_sequence ON notifications(
 function fromRow(row: Row): Notification {
   return { id: row.id, sequence: row.sequence, title: row.title, message: row.message, subtitle: row.subtitle,
     source: row.source, group: row.group_key, open: row.open_url, actions: JSON.parse(row.actions) as string[], reply: row.reply,
-    createdAt: row.created_at, dismissedAt: row.dismissed_at, outcome: row.outcome, response: row.response };
+    createdAt: row.created_at, dismissedAt: row.dismissed_at, outcome: row.outcome, response: row.response, contentClearedAt: row.content_cleared_at };
 }
 
 /** Plain sends hash exactly as the first schema did, so retries of a pre-migration send stay idempotent. */
@@ -36,6 +37,7 @@ export type Dismissal = { outcome: Exclude<Outcome, "replaced">; response?: stri
 
 export class NotificationStore {
   readonly db: DatabaseSync;
+  readonly maintenance: StateJournal;
 
   constructor(stateRoot: string) {
     const dir = join(stateRoot, "notify");
@@ -51,6 +53,9 @@ export class NotificationStore {
     chmodSync(path, 0o600);
     this.db.exec("PRAGMA journal_mode=WAL");
     this.migrate();
+    if (!(this.db.prepare("PRAGMA table_info(notifications)").all() as { name: string }[]).some(row => row.name === "content_cleared_at"))
+      this.db.exec("ALTER TABLE notifications ADD COLUMN content_cleared_at TEXT; ALTER TABLE notifications ADD COLUMN dismissal_digest TEXT");
+    this.maintenance = new StateJournal(this.db, "notify");
   }
 
   private migrate(): void {
@@ -116,6 +121,10 @@ export class NotificationStore {
   dismiss(id: string, { outcome, response }: Dismissal): { record: Notification; changed: boolean } {
     const current = this.get(id);
     const value = response ?? null;
+    if (current.contentClearedAt) {
+      if (this.find(id)!.dismissal_digest === stateHash([outcome, value])) return { record: current, changed: false };
+      throw new Error("notification_already_dismissed");
+    }
     if (outcome === "action" ? value === null || !current.actions.includes(value)
       : outcome === "replied" ? current.reply === null || value === null
       : value !== null) throw new Error(`notification_response_invalid: ${outcome === "action" ? "response must be one of the notification's actions"
@@ -157,4 +166,27 @@ export class NotificationStore {
   }
 
   close(): void { this.db.close(); }
+
+  private selected(ids: string[]): Row[] {
+    return [...new Set(ids)].sort().map(id => { const row = this.find(id); if (!row) throw new Error(`notification_not_found:${id}`); return row; });
+  }
+  historyPlan(ids: string[]) {
+    const rows = this.selected(ids);
+    return this.maintenance.plan({ subject: null, action: "history_clear", revision: stateHash(rows), resources: rows.map(row => row.id),
+      blockedBy: rows.filter(row => !row.dismissed_at).map(row => `Dismiss notification ${row.id} before clearing it`),
+      retained: ["ID, sequence, creation/dismissal timestamps, outcome and content-free send/dismissal digests", "Source/group labels, prompt actions and responses are cleared together with authored bodies"],
+      regeneration: ["Retrying the original send or dismissal returns the cleared record; it does not recreate content or answer a prompt"] }, { ids: rows.map(row => row.id) });
+  }
+  historyClear(input: StateApplyInput) {
+    return this.maintenance.atomic(input, (plan, payload) => {
+      const rows = this.selected((payload as { ids: string[] }).ids);
+      if (plan.action !== "history_clear" || plan.revision !== stateHash(rows)) throw new Error("notification state changed; prepare a new plan");
+      if (rows.some(row => !row.dismissed_at)) throw new Error("open notification cannot be cleared");
+    }, payload => (payload as { ids: string[] }).ids.map(id => {
+      const row = this.find(id)!;
+      this.db.prepare(`UPDATE notifications SET title='',message='',subtitle=NULL,source=NULL,group_key=NULL,open_url=NULL,actions='[]',reply=NULL,response=NULL,
+        content_cleared_at=COALESCE(content_cleared_at,?),dismissal_digest=COALESCE(dismissal_digest,?) WHERE id=?`).run(new Date().toISOString(), stateHash([row.outcome, row.response]), id);
+      return { resource: id, outcome: "removed" as const, detail: "Authored notification, action, prompt, source/group and response payloads cleared; send and dismissal receipts retained" };
+    }));
+  }
 }

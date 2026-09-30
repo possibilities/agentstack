@@ -162,6 +162,8 @@ try {
 let mcp: Awaited<ReturnType<typeof serveMcp>> | undefined;
 let catalog: Awaited<ReturnType<typeof serveInspectorCatalog>> | undefined;
 const subscriptions = createMcpEventSubscriptions(process.env);
+statusSource.subscriptions = subscriptions;
+subscriptions.onChange = () => statusSource.onStateChange?.();
 try {
   mcp = await serveMcp({ env: process.env, subscriptions });
   statusSource.setMcpUrls(mcp.urls);

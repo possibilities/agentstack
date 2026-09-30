@@ -15,6 +15,9 @@ import { VoiceCalls } from "./src/voice.js";
 import { ChatIndex, ChatQueue, ChatUploads, chatRpc, live, observeThreadState } from "./src/chats.js";
 import { LiveChats, boundedMainItems } from "./src/chat-live.js";
 import { botSettingsOperations } from "./src/settings.js";
+import { BotState, botStateOperations } from "./src/state.js";
+import { withStateInventory } from "@stack/api";
+import { botStateCategories } from "./src/state-categories.js";
 import { chatTreePage, readChatTree, pageChatTree, chatTreeDetail as treeDetail, detailChunk } from "./src/chat-tree.js";
 
 const botId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/).describe("Bot id. Omit for the next bot-N; supply a name to override it.");
@@ -39,7 +42,7 @@ const botView = z.object({
   settings: botSettings.nullable().describe("Legacy four-field projection of saved settings. Omitted fields use native resolution; inspect bot_settings_read for complete saved, loaded and resolved state. Caller args may override values."),
 });
 
-export type BotsContext = { root: string; ledger: BotLedger; store: StateStore; supervisor: Supervisor; voice: VoiceCalls; chats: ChatIndex; liveChats: LiveChats; queue: ChatQueue; uploads: ChatUploads };
+export type BotsContext = { root: string; ledger: BotLedger; store: StateStore; supervisor: Supervisor; voice: VoiceCalls; chats: ChatIndex; liveChats: LiveChats; queue: ChatQueue; uploads: ChatUploads; state: BotState };
 export const topics = {
   bots_changed: "Published when a bot starts, stops, exits, changes assignment or saved settings, or is fenced for recovery. Refresh bot_list and bot_settings_read.",
   threads_changed: "Published when thread lifecycle, configuration, metadata or status for this Bot may have changed, or its Codex connection resumes. Refresh chat_tree. An invalidation is not proof that a sanctioned thread changed.",
@@ -48,6 +51,7 @@ export const topics = {
   chats_changed: "A Bot's Codex thread state changed or its chat history may have grown. Re-read chat_tree, chat_list, chat_thread_read or chat_turns. Notices carry no transcript content.",
   chat_live_changed: "The Bot's in-progress main-thread projection changed: streamed text, reasoning, item or turn state, or a reset after reconnection. Coalesced to at most one notice per 32 ms. Read chat_main_live with the previous instance and revision as after to receive only changed items.",
   chat_queue_changed: "A queued message changed admission or dispatch state. Refresh chat_queue_list for the Bot; notices carry no message content.",
+  bot_state_changed: "A state-maintenance operation finished or its outcome became unknown. Refresh bot_state_read, history generations and affected file pages. Native file writes require explicit refresh.",
 } as const;
 export type BotsTopic = keyof typeof topics;
 
@@ -460,22 +464,22 @@ const upload = z.strictObject({ botId, id: z.uuid(), name: z.string(), bytes: z.
 export const chatUploadStart = operation({
   name: "chat_upload_start", description: "Start or inspect a Bot-private file upload by UUID, filename, exact byte length and SHA-256. Use chunk/status/finish to stage files for localImage, localAudio, or mention inputs. Maximum 20 MB.",
   input: z.strictObject({ botId, id: z.uuid(), name: z.string().min(1).max(200), bytes: z.number().int().min(1).max(20_000_000), sha256: z.string().regex(/^[a-f0-9]{64}$/) }), output: upload, annotations: { title: "Start chat file upload", idempotentHint: true },
-  async call(ctx: BotsContext, { botId: id, ...args }) { botFor(ctx, id); return ctx.uploads.start(id, args.id, args.name, args.bytes, args.sha256); },
+  async call(ctx: BotsContext, { botId: id, ...args }) { return ctx.supervisor.mutateResource(id, async () => { ctx.store.requireActiveUpload(id, args.id); return ctx.uploads.start(id, args.id, args.name, args.bytes, args.sha256); }); },
 });
 export const chatUploadStatus = operation({
   name: "chat_upload_status", description: "Read the actual byte offset after any interrupted chunk request. A finalized upload returns its stable local path.",
   input: z.strictObject({ botId, id: z.uuid() }), output: upload, annotations: { title: "Read chat file upload", readOnlyHint: true },
-  async call(ctx: BotsContext, { botId: id, id: key }) { botFor(ctx, id); return ctx.uploads.status(id, key); },
+  async call(ctx: BotsContext, { botId: id, id: key }) { return ctx.supervisor.mutateResource(id, () => ctx.uploads.status(id, key)); },
 });
 export const chatUploadChunk = operation({
   name: "chat_upload_chunk", description: "Append up to 256 KiB of canonical base64 at an exact expected offset. Read status before retrying an uncertain acknowledgement.",
   input: z.strictObject({ botId, id: z.uuid(), offset: z.number().int().nonnegative(), data: z.string().min(1).max(350_000) }), output: upload, annotations: { title: "Upload chat file chunk" },
-  async call(ctx: BotsContext, { botId: id, id: key, offset, data }) { botFor(ctx, id); return ctx.uploads.append(id, key, offset, data); },
+  async call(ctx: BotsContext, { botId: id, id: key, offset, data }) { return ctx.supervisor.mutateResource(id, async () => { ctx.store.requireActiveUpload(id, key); return ctx.uploads.append(id, key, offset, data); }); },
 });
 export const chatUploadFinish = operation({
   name: "chat_upload_finish", description: "Verify byte length and SHA-256, publish the Bot-private local path and return it for chat input. Uploads are removed with their Bot.",
   input: z.strictObject({ botId, id: z.uuid() }), output: upload, annotations: { title: "Finish chat file upload", idempotentHint: true },
-  async call(ctx: BotsContext, { botId: id, id: key }) { botFor(ctx, id); return ctx.uploads.finish(id, key); },
+  async call(ctx: BotsContext, { botId: id, id: key }) { return ctx.supervisor.mutateResource(id, async () => { ctx.store.requireActiveUpload(id, key); return ctx.uploads.finish(id, key); }); },
 });
 const attachment = z.strictObject({ id: z.string(), attachmentType: z.string(), identityKey: z.string(), payload: z.unknown(), createdAt: z.number().int() });
 export const chatAttachmentAdd = operation({
@@ -506,8 +510,8 @@ export const chatMessageChanges = operation({
     return ctx.chats.messagePage(bot.id,input.threadId,bot.mainThreadId,input.cursor,input.headOnly,input.limit);
   },
 });
-export const api: PackageApi<BotsContext, BotsTopic> = {
-  operations: [...botSettingsOperations, botStart, botStop, botAssign, botRemove, botList, botDefaultsGet, botDefaultsSet, voiceStatus, voiceDial, voiceSpeak, voiceHangup, chatList, chatTree, chatTreeDetail, chatSearch, chatRecords, chatRecordChunk, chatMessageChanges, chatThreadRead, chatTurns, chatItems, chatMainLive, chatMainItems, chatOccurrences, chatOpen, chatSend, chatSteer, chatInterrupt, chatEnqueue, chatQueueList, chatQueueResolve, chatCodexQueueAdd, chatCodexQueueList, chatCodexQueueUpdate, chatCodexQueueDelete, chatCodexQueueReorder, chatCodexQueueStart, chatUploadStart, chatUploadStatus, chatUploadChunk, chatUploadFinish, chatAttachmentAdd, chatAttachmentList, chatAttachmentRemove],
+const packageApi: PackageApi<BotsContext, BotsTopic> = {
+  operations: [...botStateOperations, ...botSettingsOperations, botStart, botStop, botAssign, botRemove, botList, botDefaultsGet, botDefaultsSet, voiceStatus, voiceDial, voiceSpeak, voiceHangup, chatList, chatTree, chatTreeDetail, chatSearch, chatRecords, chatRecordChunk, chatMessageChanges, chatThreadRead, chatTurns, chatItems, chatMainLive, chatMainItems, chatOccurrences, chatOpen, chatSend, chatSteer, chatInterrupt, chatEnqueue, chatQueueList, chatQueueResolve, chatCodexQueueAdd, chatCodexQueueList, chatCodexQueueUpdate, chatCodexQueueDelete, chatCodexQueueReorder, chatCodexQueueStart, chatUploadStart, chatUploadStatus, chatUploadChunk, chatUploadFinish, chatAttachmentAdd, chatAttachmentList, chatAttachmentRemove],
   events: {
     topics,
     scope: {
@@ -550,6 +554,7 @@ export const api: PackageApi<BotsContext, BotsTopic> = {
       ctx.store.onDefaultsChange = () => publish("defaults_changed");
       ctx.voice.onChange = () => publish("voice_changed");
       ctx.queue.onChange = (id) => publish("chat_queue_changed", id);
+      ctx.state.onChange = (id) => { publish("bot_state_changed", id); publish("chat_live_changed", id); };
       sync();
       for (const bot of ctx.supervisor.list()) ctx.queue.wakeBot(bot.id);
       return () => { ctx.supervisor.onChange = undefined; ctx.store.onDefaultsChange = undefined; ctx.voice.onChange = undefined; ctx.queue.onChange = undefined; for (const [id, watch] of watches) { watch.stop(); ctx.liveChats.remove(id); } watches.clear(); for (const timer of live.values()) clearTimeout(timer); live.clear(); };
@@ -573,8 +578,8 @@ export const api: PackageApi<BotsContext, BotsTopic> = {
     await supervisor.load();
     await supervisor.reap();
     await supervisor.resumeAll();
-    const chats = new ChatIndex(dir);
-    return { root, ledger, store, supervisor, voice: new VoiceCalls(() => supervisor.list(), undefined, (id) => supervisor.settingsSnapshot(id)), chats, liveChats: new LiveChats(), queue: new ChatQueue(chats, (id) => supervisor.list().find((bot) => bot.id === id)), uploads: new ChatUploads(dir) };
+    const chats = new ChatIndex(dir, (id) => store.historyPath(id));
+    return { root, ledger, store, supervisor, voice: new VoiceCalls(() => supervisor.list(), undefined, (id) => supervisor.settingsSnapshot(id)), chats, liveChats: new LiveChats(), queue: new ChatQueue(chats, (id) => supervisor.list().find((bot) => bot.id === id)), uploads: new ChatUploads(dir), state: new BotState(dir, env) };
   },
   async closeContext(ctx) {
     try { await ctx.voice.close(); }
@@ -586,7 +591,9 @@ export const api: PackageApi<BotsContext, BotsTopic> = {
       ctx.ledger.close();
       ctx.store.close();
       ctx.chats.close();
+      ctx.state.close();
     }
   },
 };
 export type { ServerView };
+export const api = withStateInventory("bots", botStateCategories, packageApi);

@@ -1,5 +1,7 @@
 import { AuthStore } from "@stack/auth";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { SettingsStore, type SettingValues } from "@stack/settings";
 
 export type BotSettings = {
@@ -63,6 +65,11 @@ export class StateStore extends AuthStore {
       CREATE TABLE IF NOT EXISTS secrets.server_args (id TEXT PRIMARY KEY, args_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS bot_defaults (id INTEGER PRIMARY KEY CHECK (id = 1), settings_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS bot_settings (id TEXT PRIMARY KEY, settings_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS bot_state_identity (id TEXT PRIMARY KEY, incarnation TEXT NOT NULL, generation TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS bot_state_fences (id TEXT PRIMARY KEY, incarnation TEXT NOT NULL, request_id TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS bot_retired_uploads (incarnation TEXT NOT NULL, upload_id TEXT NOT NULL, PRIMARY KEY(incarnation,upload_id));
+      CREATE TABLE IF NOT EXISTS bot_history_generations (generation TEXT PRIMARY KEY, incarnation TEXT NOT NULL, bot_id TEXT NOT NULL,
+        history_path TEXT NOT NULL, ownership TEXT NOT NULL, main_thread_id TEXT, created_at TEXT NOT NULL, retired_at TEXT, purged_at TEXT);
       CREATE TRIGGER IF NOT EXISTS servers_account_insert BEFORE INSERT ON servers
       WHEN NEW.account IS NOT NULL AND NOT EXISTS (SELECT 1 FROM servers WHERE id = NEW.id)
         AND NOT EXISTS (SELECT 1 FROM accounts WHERE name = NEW.account AND removing = 0)
@@ -157,12 +164,90 @@ export class StateStore extends AuthStore {
 
   hasServer(id: string): boolean { return Boolean(this.db.prepare("SELECT 1 FROM servers WHERE id = ?").get(id)); }
 
+  stateIdentity(id: string): { incarnation: string; generation: string } {
+    let row = this.db.prepare("SELECT incarnation,generation FROM bot_state_identity WHERE id=?").get(id) as { incarnation: string; generation: string } | undefined;
+    if (!row) {
+      if (!this.hasServer(id)) throw new Error(`unknown bot: ${id}`);
+      row = { incarnation: randomUUID(), generation: randomUUID() };
+      const server = this.servers().find(server => server.id === id)!;
+      const privatePath = join(this.stateDir, "history", id);
+      const shared = Boolean(server.mainThreadId && !existsSync(privatePath));
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        this.db.prepare("INSERT INTO bot_state_identity VALUES(?,?,?)").run(id, row.incarnation, row.generation);
+        this.db.prepare("INSERT INTO bot_history_generations VALUES(?,?,?,?,?,?,?,?,?)").run(row.generation, row.incarnation, id,
+          shared ? join(this.stateDir, "history") : privatePath, shared ? "shared" : "stack", server.mainThreadId, new Date().toISOString(), null, null);
+        this.db.exec("COMMIT");
+      } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    }
+    return row;
+  }
+
+  historyGenerations(id: string): BotHistoryGeneration[] {
+    const identity = this.stateIdentity(id);
+    return this.db.prepare(`SELECT generation,incarnation,bot_id AS botId,history_path AS historyPath,ownership,
+      main_thread_id AS mainThreadId,created_at AS createdAt,retired_at AS retiredAt,purged_at AS purgedAt
+      FROM bot_history_generations WHERE incarnation=? ORDER BY created_at,generation`).all(identity.incarnation) as BotHistoryGeneration[];
+  }
+
+  historyPath(id: string): string {
+    const identity = this.stateIdentity(id);
+    return this.historyGenerations(id).find(row => row.generation === identity.generation)!.historyPath;
+  }
+
+  maintenanceFence(id: string): string | null {
+    const identity = this.stateIdentity(id);
+    const row = this.db.prepare("SELECT request_id FROM bot_state_fences WHERE id=? AND incarnation=?").get(id, identity.incarnation) as { request_id: string } | undefined;
+    return row?.request_id ?? null;
+  }
+  fenceMaintenance(id: string, requestId: string): void {
+    const identity = this.stateIdentity(id);
+    this.db.prepare("INSERT INTO bot_state_fences VALUES(?,?,?)").run(id, identity.incarnation, requestId);
+  }
+  releaseMaintenance(id: string, requestId: string): void {
+    const identity = this.stateIdentity(id);
+    this.db.prepare("DELETE FROM bot_state_fences WHERE id=? AND incarnation=? AND request_id=?").run(id, identity.incarnation, requestId);
+  }
+
+  /** Root binding and history namespace change in one durable transaction, before another start. */
+  resetConversation(id: string, expectedGeneration: string): { previous: string; generation: string } {
+    const identity = this.stateIdentity(id);
+    if (identity.generation !== expectedGeneration) throw new Error("Bot conversation generation changed");
+    const generation = randomUUID(), now = new Date().toISOString();
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const server = this.db.prepare("SELECT main_thread_id,state FROM servers WHERE id=?").get(id) as { main_thread_id: string | null; state: string };
+      if (server.state !== "stopped") throw new Error("Stop the Bot before resetting its conversation");
+      this.db.prepare("UPDATE bot_history_generations SET main_thread_id=?,retired_at=? WHERE generation=?").run(server.main_thread_id, now, identity.generation);
+      this.db.prepare("INSERT INTO bot_history_generations VALUES(?,?,?,?,?,?,?,?,?)").run(generation, identity.incarnation, id,
+        join(this.stateDir, "history-generations", identity.incarnation, generation), "stack", null, now, null, null);
+      this.db.prepare("UPDATE bot_state_identity SET generation=? WHERE id=?").run(generation, id);
+      this.db.prepare("UPDATE servers SET main_thread_id=NULL,thread_starting=0 WHERE id=?").run(id);
+      this.db.exec("COMMIT");
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    return { previous: identity.generation, generation };
+  }
+
+  markHistoryPurged(generation: string): void {
+    this.db.prepare("UPDATE bot_history_generations SET purged_at=? WHERE generation=? AND retired_at IS NOT NULL").run(new Date().toISOString(), generation);
+  }
+  retireUpload(id: string, uploadId: string): void {
+    this.db.prepare("INSERT OR IGNORE INTO bot_retired_uploads VALUES(?,?)").run(this.stateIdentity(id).incarnation, uploadId);
+  }
+  requireActiveUpload(id: string, uploadId: string): void {
+    if (this.db.prepare("SELECT 1 FROM bot_retired_uploads WHERE incarnation=? AND upload_id=?").get(this.stateIdentity(id).incarnation, uploadId))
+      throw new Error("upload was retired; use a new upload UUID for new content");
+  }
+
   deleteServer(id: string): void {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       this.db.prepare("DELETE FROM servers WHERE id = ?").run(id);
       this.db.prepare("DELETE FROM secrets.server_args WHERE id = ?").run(id);
       this.db.prepare("DELETE FROM bot_settings WHERE id = ?").run(id);
+      this.db.prepare("DELETE FROM bot_history_generations WHERE incarnation IN (SELECT incarnation FROM bot_state_identity WHERE id=?)").run(id);
+      this.db.prepare("DELETE FROM bot_state_identity WHERE id=?").run(id);
+      this.db.prepare("DELETE FROM bot_state_fences WHERE id=?").run(id);
       this.managed.remove(`bot:${id}`);
       this.db.exec("DELETE FROM account_aliases WHERE id NOT IN (SELECT name FROM accounts) AND id NOT IN (SELECT account FROM servers WHERE account IS NOT NULL)");
       this.db.exec("COMMIT");
@@ -172,6 +257,9 @@ export class StateStore extends AuthStore {
     }
   }
 }
+
+export type BotHistoryGeneration = { generation: string; incarnation: string; botId: string; historyPath: string; ownership: "stack" | "shared";
+  mainThreadId: string | null; createdAt: string; retiredAt: string | null; purgedAt: string | null };
 
 const legacyKeys = { model: "model", reasoningEffort: "model_reasoning_effort", sandboxMode: "sandbox_mode", approvalPolicy: "approval_policy" } as const;
 export function nativeSettings(settings: BotSettings): SettingValues {

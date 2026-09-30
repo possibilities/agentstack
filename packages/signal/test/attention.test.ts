@@ -19,6 +19,26 @@ const request=(text="Please approve shipping."):Annotation=>annotation.parse({su
 async function fixture(){const dir=await mkdtemp(join(tmpdir(),"attention-test-"));return {dir,clean:()=>rm(dir,{recursive:true,force:true})};}
 const completion=(text:string,requestId:string)=>({requestId,model:"gpt-5.6-luna",reportedModel:"gpt-5.6-luna",text,usage:{inputTokens:100,outputTokens:50}});
 
+test("Signal purge clears shared source evidence and buffers while retaining suppression and unknown request identity", async () => {
+  const f = await fixture(); const store = new AttentionStore(f.dir);
+  try {
+    const original = source("private body", "stable"), message = store.admit(original), job = store.next()!;
+    const blob = store.blob("private source response"), run = store.startRun(job, { requestId: job.requestId, messageId: message.id, inputBlob: blob });
+    store.finishRun(run, "unknown", { error: "private error" }); store.jobState(job.id, "unknown");
+    store.setMeta("cursor:worker:one", { seq: 12, buffer: { text: "private buffer" } });
+    store.event("source_read", { outputBlob: blob });
+    const plan = store.historyPlan(), input = { planId: plan.id, expectedRevision: plan.revision, requestId: randomUUID() };
+    assert.equal(store.historyClear(input).status, "completed"); assert.equal(store.historyClear(input).status, "completed");
+    assert.equal(store.admit(original).text, ""); assert.equal(store.next(), null);
+    assert.throws(() => store.text(blob), /unknown attention blob/);
+    assert.equal(store.run(run).state, "unknown"); assert.equal(store.run(run).body.requestId, job.requestId);
+    assert.deepEqual(store.meta("cursor:worker:one"), { seq: 12, buffer: null });
+    assert.doesNotMatch(JSON.stringify(store.exportRun(run)), /private/);
+    assert.throws(() => store.replay(run, randomUUID()), /content_cleared/);
+    messagePageSchema.parse(store.page("messages", 0, 25)); statusSchema.parse(store.status());
+  } finally { store.close(); await f.clean(); }
+});
+
 test("defaults are Luna/low with nullable account assignment and revision fencing",async()=>{
   const f=await fixture();const store=new AttentionStore(f.dir);
   try{assert.deepEqual(store.defaults(),{model:"gpt-5.6-luna",reasoningEffort:"low",accountId:null,revision:1});

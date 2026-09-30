@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { api } from "../api.js";
 import { serveApi, socketCall } from "@stack/api";
@@ -24,6 +25,29 @@ async function withStore(body: (store: ArchiveStore) => Promise<void>): Promise<
   const store = new ArchiveStore(join(root, "xcom", "following.sqlite3"));
   try { await body(store); } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 }
+
+test("paused archive cleanup fences late feed writes, preserves shared authors and removes both FTS projections", async () => {
+  await withStore(async store => {
+    store.savePage(store.begin(2, now, twoMonthsAgo(now)), [post("one", "privatewords"), post("sibling", "retained")], null, now);
+    store.saveArticle("one", { id: "one", articleTitle: "privatearticle", articleText: "privatearticle body" }, now);
+    let release!: (value: { posts: Post[]; nextCursor: null }) => void, entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const sync = new ArchiveSync(store, { page: () => { entered(); return new Promise(resolve => { release = resolve; }); }, article: async () => post("unused") }, { auto: false, now: () => now, delayMin: 0, delayMax: 0 });
+    sync.start("head"); await started; sync.control(true);
+    assert.throws(() => sync.requireQuiescent(), /running=false/);
+    release({ posts: [post("late")], nextCursor: null }); await sync.close();
+    assert.equal(store.get("late"), null);
+    const plan = store.statePlan({ kind: "posts", ids: ["one"], reimport: "suppress", orphanAuthors: "remove" });
+    const input = { planId: plan.id, expectedRevision: plan.revision, requestId: randomUUID() };
+    assert.equal(store.stateClear(input).status, "completed");
+    assert.equal((await call(store, "xcom_search", { query: "privatewords" })).results.length, 0);
+    assert.equal((await call(store, "xcom_search", { query: "privatearticle" })).results.length, 0);
+    assert.equal(store.count("users"), 1); assert.ok(store.get("sibling"));
+    store.savePage(store.scan(2)!, [post("one", "privatewords")], null, now);
+    assert.equal(store.get("one"), null);
+    assert.equal(store.stateClear(input).status, "completed");
+  });
+});
 
 test("full articles have a separate FTS projection, rich filters, user observations and citation budgets", async () => {
   await withStore(async store => {

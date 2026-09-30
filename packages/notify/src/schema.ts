@@ -20,6 +20,8 @@ export const content = z.strictObject({
 export const outcome = z.enum(["closed", "opened", "action", "replied", "replaced"]);
 
 export const notification = content.extend({
+  title: z.string().max(200), message: z.string().max(16_000),
+  contentClearedAt: z.string().datetime().nullable().describe("Dismissed payloads were explicitly purged; identity and original outcome remain."),
   id: z.uuid(),
   sequence: z.number().int().positive(),
   createdAt: z.string().datetime(),

@@ -38,7 +38,10 @@ const inline = (tag: "script" | "style") => new RegExp(`<${tag}>([\\s\\S]*?)</${
 const digest = (value: string) => createHash("sha256").update(value).digest("base64");
 const connectCsp = `default-src 'none'; script-src 'sha256-${digest(inline("script"))}'; style-src 'sha256-${digest(inline("style"))}'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; object-src 'none'`;
 const controls: Record<string, (name: string) => boolean> = {
-  bots: name => !name.startsWith("voice_"), // Fleet's full Bot operation workbench, except voice.
+  bots: name => ["bot_start", "bot_stop", "bot_assign", "bot_remove", "bot_defaults_set", "bot_settings_patch", "bot_settings_apply",
+    "chat_open", "chat_send", "chat_steer", "chat_interrupt", "chat_enqueue", "chat_queue_resolve", "chat_codex_queue_add", "chat_codex_queue_update",
+    "chat_codex_queue_delete", "chat_codex_queue_reorder", "chat_codex_queue_start", "chat_upload_start", "chat_upload_chunk", "chat_upload_finish",
+    "chat_attachment_add", "chat_attachment_remove"].includes(name),
   content: name => ["collection_create", "collection_update", "collection_delete", "item_put", "item_move", "item_delete",
     "document_update", "new", "add", "rm", "restore", "artifacts_rm", "artifacts_restore"].includes(name) || name.startsWith("blob_stage_"),
   roles: name => /^(category|fragment|skill|mcp_server|project)_(create|update|delete|reorder|move)$/.test(name),
@@ -48,6 +51,10 @@ const controls: Record<string, (name: string) => boolean> = {
   // Shared Work collaboration. Metadata stays an explicit write; none of these dispatch native execution.
   hud: name => ["work_create", "work_update", "work_batch", "work_note_add", "work_metadata_set", "work_focus_set"].includes(name),
 };
+
+// State inspection includes local filesystem/credential metadata. Read-only hints
+// do not extend a remote grant to these new operator surfaces.
+const localStateOperation = (name: string) => /_state_|_bot_dependencies$|_history_(plan|clear)$|^serve_subscription_|^bot_(workspace_|history_|log_|launch_|recovery_|session_reset$|upload_remove$|queue_history$)|^chat_upload_(list|read)$|^content_(blob_list|storage_)|^blob_stage_(list|abort)$|^attention_infer_requests$|^usage_observations_|^xcom_control$|^worker_workspace_|^work_focus_(list|retire)/.test(name);
 
 export type RemoteUiOptions = { store: AccessStore; env: NodeJS.ProcessEnv; host: string; port: number;
   verify?: (peer: Peer) => Promise<void>; fetchBackend?: typeof fetch; root?: string };
@@ -173,18 +180,18 @@ export async function startRemoteUi(options: RemoteUiOptions, tls: { key: Buffer
           if (JSON.stringify(current.scopes) !== scopesAtAdmission) throw new AccessError("grant_changed");
         },
         select(pkg, exposure, catalog) {
-          if (["access", "auth", "browse", "proc"].includes(pkg)) return { operations: [], events: [] };
+          if (["access", "auth", "browse", "proc", "xcom"].includes(pkg)) return { operations: [], events: [] };
           const safe = new Set(catalog.tools.filter(tool => tool.annotations?.readOnlyHint === true).map(tool => tool.name));
           for (const name of safe) readOnly.add(`${pkg}/${name}`);
           // share_read_states accepts arbitrary job IDs; only Access's device route
           // filters those IDs through client-bound admission receipts.
-          const denied = (name: string) => pkg === "bots" && name.startsWith("voice_") || pkg === "brain" && name === "share_read_states" || pkg === "roles" && name.startsWith("role_shim_");
+          const denied = (name: string) => localStateOperation(name) || pkg === "bots" && name.startsWith("voice_") || pkg === "brain" && name === "share_read_states" || pkg === "roles" && name.startsWith("role_shim_");
           return { operations: exposure.operations.filter(name => !denied(name) && (safe.has(name) || principal.scopes.includes("ui:control") && controls[pkg]?.(name))),
             events: exposure.events.filter(name => !(pkg === "bots" && name === "voice_changed") && !(pkg === "roles" && name === "role_shims_changed")) };
         },
         mutation(pkg, operation) {
           this.check();
-          if (pkg === "access" || pkg === "auth" || pkg === "browse" || pkg === "proc" || pkg === "bots" && operation.startsWith("voice_") || pkg === "brain" && operation === "share_read_states" || pkg === "roles" && operation.startsWith("role_shim_")) throw new AccessError("operation_refused", 403);
+          if (localStateOperation(operation) || ["access", "auth", "browse", "proc", "xcom"].includes(pkg) || pkg === "bots" && operation.startsWith("voice_") || pkg === "brain" && operation === "share_read_states" || pkg === "roles" && operation.startsWith("role_shim_")) throw new AccessError("operation_refused", 403);
           if (readOnly.has(`${pkg}/${operation}`)) return;
           // The gateway already selected the live operation, but a narrowed
           // grant must be re-evaluated before each mutating invocation.

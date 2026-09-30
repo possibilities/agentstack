@@ -21,6 +21,7 @@ websocket:
   events: all
   description: Loopback management operations and change notices for future operator clients.
   operations:
+    - browse_state_read
     - browser_handoff_get
     - browser_handoff_list
     - browser_handoff_completion

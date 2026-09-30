@@ -4,7 +4,7 @@ socket:
   description: Full local control for process execution, scheduled calls, run history, line cursors and change notices.
 mcp:
   workerOperations: []
-  operations: all
+  operations: [proc_schedule_create, proc_schedule_update, proc_schedule_reauthorize, proc_schedule_remove, proc_schedule_get, proc_schedule_list, proc_execution_get, proc_execution_list, proc_run_start, proc_run_get, proc_run_list, proc_run_read, proc_run_wait, proc_run_join, proc_run_cancel, proc_status]
   events: all
   description: Agent tools for schedules, process runs, output observation and change subscriptions, forwarded to the Proc socket.
 websocket:

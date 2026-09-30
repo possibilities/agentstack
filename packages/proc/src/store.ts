@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { executionRecord, brainAuthority, isBrainSchedule, operator, summarizeProcess, systemBrainId,
   type Actor, type Authority, type Action, type ProcessSpec, type ProcessSummary, type ScheduleSpec, type Schedule } from "./schema.js";
 import { maxOutputBytes, maxOutputLines, retentionDays } from "./limits.js";
+import { stateHash, StateJournal, type StateDependencies, type StateApplyInput } from "@stack/api";
 
 const iso = (ms = Date.now()) => new Date(ms).toISOString();
 const parse = <T>(text: string): T => JSON.parse(text) as T;
@@ -48,6 +49,7 @@ type ExecutionSummaryRow = { id: string; schedule_id: string; due_at: number; st
 
 export class ProcStore {
   readonly db: DatabaseSync;
+  readonly maintenance: StateJournal;
   constructor(dir: string) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const directory = lstatSync(dir);
@@ -160,9 +162,57 @@ export class ProcStore {
     // scheduler lost its socket or process; later due intervals are independent.
     this.db.prepare("UPDATE executions SET state='unknown', error='service_interrupted', finished_at=? WHERE state='running'").run(iso());
     this.db.prepare("UPDATE runs SET state='unknown', error='service_interrupted', finished_at=? WHERE state IN ('starting','running')").run(iso());
+    this.maintenance = new StateJournal(this.db, "proc");
   }
 
   close() { this.db.close(); }
+
+  private maintenanceRows(kind: "run_output" | "execution_content", ids: string[]) {
+    return [...new Set(ids)].sort().map(id => {
+      const value = kind === "run_output" ? this.getRunDetail(id) : this.getExecution(id);
+      const content = kind === "run_output" ? this.db.prepare("SELECT * FROM lines WHERE run_id=? ORDER BY seq").all(id) : [];
+      return { id, state: value.state, revision: stateHash([value, content]) };
+    });
+  }
+  historyPlan(kind: "run_output" | "execution_content", ids: string[]) {
+    const rows = this.maintenanceRows(kind, ids);
+    return this.maintenance.plan({ subject: null, action: kind, revision: stateHash(rows), resources: rows.map(row => row.id),
+      blockedBy: rows.filter(row => ["starting", "running"].includes(row.state)).map(row => `Proc record ${row.id} is still active`),
+      retained: ["Run/execution identity, authority, timing and outcome remain under the existing 30-day retention policy", "Process argv summaries, labels and schedule definitions are separate from output", "Schedule removal never cancels already admitted executions"],
+      regeneration: ["Enabled schedules can admit new executions. Clearing a terminal record never dispatches it again"] }, { kind, ids: rows.map(row => row.id) });
+  }
+  historyClear(input: StateApplyInput) {
+    return this.maintenance.atomic(input, (plan, payload) => {
+      const { kind, ids } = payload as { kind: "run_output" | "execution_content"; ids: string[] };
+      const rows = this.maintenanceRows(kind, ids);
+      if (plan.action !== kind || plan.revision !== stateHash(rows)) throw new Error("Proc state changed; prepare a new plan");
+      if (rows.some(row => ["starting", "running"].includes(row.state))) throw new Error("Proc record is still active");
+    }, payload => {
+      const { kind, ids } = payload as { kind: "run_output" | "execution_content"; ids: string[] };
+      return ids.map(id => {
+        if (kind === "run_output") {
+          this.db.prepare("DELETE FROM lines WHERE run_id=?").run(id);
+          this.db.prepare("UPDATE runs SET retain_output=0,output_truncated=1,output_bytes=0 WHERE id=?").run(id);
+        } else this.db.prepare("UPDATE executions SET action=NULL,result=NULL,error=NULL WHERE id=?").run(id);
+        return { resource: id, outcome: "removed" as const, detail: kind === "run_output" ? "stdout/stderr cleared; existing output cursors disclose a gap" : "Captured action, result and error cleared; authority and outcome retained" };
+      });
+    });
+  }
+
+  botDependencies(botId: string, cwd: string): StateDependencies {
+    const schedules = this.db.prepare(`SELECT id,revision,json_extract(spec,'$.enabled') AS enabled,removed_at AS removedAt FROM schedules
+      WHERE json_extract(authority,'$.botId')=? OR json_extract(spec,'$.action.process.cwd')=? LIMIT 1001`).all(botId, cwd) as { id: string; revision: number; enabled: number; removedAt: string | null }[];
+    const executions = this.db.prepare("SELECT id,state FROM executions WHERE json_extract(authority,'$.botId')=? AND state='running' LIMIT 1001").all(botId) as { id: string; state: string }[];
+    const runs = this.db.prepare(`SELECT id,state FROM runs WHERE state IN ('starting','running','unknown') AND
+      (json_extract(created_by,'$.botId')=? OR json_extract(process,'$.cwd')=?) LIMIT 1001`).all(botId, cwd) as { id: string; state: string }[];
+    if (schedules.length > 1000 || executions.length > 1000 || runs.length > 1000) throw new Error("Proc dependency inventory exceeds 1000 records");
+    return { revision: stateHash([schedules, executions, runs]), blockedBy: [
+      ...schedules.filter(row => row.enabled && !row.removedAt).map(row => `Disable or remove schedule ${row.id} before Bot maintenance`),
+      ...executions.map(row => `Execution ${row.id} remains in flight`), ...runs.map(row => `Process run ${row.id} is ${row.state}; establish its exit before cleanup`)],
+      retained: schedules.map(row => `Schedule ${row.id}: definition and captured execution history remain`),
+      relationships: [...schedules.map(row => ({ relation: "automatic-input", package: "proc", kind: "schedule", id: row.id })),
+        ...runs.map(row => ({ relation: "writer", package: "proc", kind: "run", id: row.id }))] };
+  }
 
   schedule(row: ScheduleRow): Schedule {
     const spec = storedSpec(row.spec);

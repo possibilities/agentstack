@@ -15,6 +15,34 @@ import type { StoredServer } from "../src/store.js";
 
 const fakeBin = fileURLToPath(new URL("../../test/fixtures/fake-app-server.mjs", import.meta.url));
 
+test("conversation reset survives owner restart with a new history namespace and keeps a reused Bot ID separate", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "stack-reset-")), launched: LaunchSpec[] = [];
+  const options: SupervisorOptions = { stateDir, waitReady: async () => undefined,
+    endpoint: async () => "ws://127.0.0.1:43110", bindThread: async (_url, _cwd, id) => id,
+    launch(spec) { launched.push(spec); let exit!: (value: number | null) => void;
+      return { pid: 92, exited: new Promise(resolve => { exit = resolve; }), kill() { exit(0); } }; },
+    findMainThread: async () => launched.at(-1)!.args.includes(join(stateDir, "history", "one")) ? "old-root" : null,
+  };
+  let supervisor = new Supervisor(options);
+  try {
+    await supervisor.load(); const first = await supervisor.start({ id: "one", cwd: stateDir });
+    await supervisor.adoptMainThread("one", first.url!); await supervisor.stop("one");
+    const identity = supervisor.store.stateIdentity("one"), oldPath = supervisor.store.historyPath("one");
+    await supervisor.maintain("one", async () => supervisor.resetConversation("one", identity.generation));
+    const fresh = supervisor.store.stateIdentity("one");
+    assert.notEqual(fresh.generation, identity.generation); assert.equal(fresh.incarnation, identity.incarnation);
+    assert.equal(supervisor.store.historyGenerations("one").find(row => row.generation === identity.generation)?.mainThreadId, "old-root");
+    supervisor.store.close(); supervisor = new Supervisor(options); await supervisor.load();
+    const restarted = await supervisor.start({ id: "one", cwd: stateDir });
+    assert.equal(restarted.mainThreadId, null); assert.equal(await supervisor.adoptMainThread("one", restarted.url!), null);
+    assert.notEqual(supervisor.store.historyPath("one"), oldPath);
+    assert.ok(launched.at(-1)!.args.includes(supervisor.store.historyPath("one")));
+    await supervisor.stop("one"); await supervisor.remove("one");
+    await supervisor.start({ id: "one", cwd: stateDir });
+    assert.notEqual(supervisor.store.stateIdentity("one").incarnation, identity.incarnation);
+  } finally { await supervisor.stopAll(); supervisor.store.close(); await rm(stateDir, { recursive: true, force: true }); }
+});
+
 test("readiness times out when an HTTP listener never answers", async () => {
   const server = createServer(() => undefined);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

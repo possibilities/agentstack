@@ -162,6 +162,14 @@ test("remote UI cannot read Brain share jobs or manage local Role shims even wit
       operation({ name: "role_shim_list", description: "Local PATH inventory.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { shimCalls++; return { ok: true }; } }),
       operation({ name: "role_shim_create", description: "Local PATH write.", input: z.strictObject({}), output: ok, async call() { shimCalls++; return { ok: true }; } }),
     ], events: { topics: { role_shims_changed: "Changed." } } });
+  const botsDirectory = join(root, "packages", "bots"); mkdirSync(botsDirectory, { recursive: true });
+  writeFileSync(join(botsDirectory, "api.yaml"), "name: bots\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: all\n  events: []\n  description: WebSocket.\n");
+  let stateCalls = 0;
+  const bots = await serveSocket({ info: { name: "bots", description: "Demo.", transportDescription: "Socket.", path: socketPath("bots", env) }, context: {},
+    operations: ["bot_state_read", "bot_workspace_read", "bot_session_reset", "bot_recovery_discard", "chat_upload_read"].map(name => operation({
+      name, description: "Local state.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: name.endsWith("read") },
+      async call() { stateCalls++; return { ok: true }; },
+    })) });
   const key = join(root, "key.pem"), cert = join(root, "cert.pem");
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "1", "-subj", "/CN=localhost"], { stdio: "ignore" });
   const port = await freePort();
@@ -192,25 +200,31 @@ test("remote UI cannot read Brain share jobs or manage local Role shims even wit
       assert.match((await rolesCall("tools/call", { name, arguments: {} })).error.message, /not available/);
     assert.match((await rolesCall("events/subscribe", { subscription: "s", topics: ["role_shims_changed"] })).error.message, /not available|selected|topic/i);
     assert.equal(shimCalls, 0);
+    for (const name of ["bot_state_read", "bot_workspace_read", "bot_session_reset", "bot_recovery_discard", "chat_upload_read"])
+      assert.match((await send("tools/call", { package: "bots", name, arguments: {} })).error.message, /not available/);
+    assert.equal(stateCalls, 0);
   } finally {
-    ws?.terminate(); await remote.close(); await roles.close(); await backend.close(); store.close(); rmSync(root, { recursive: true, force: true });
+    ws?.terminate(); await remote.close(); await bots.close(); await roles.close(); await backend.close(); store.close(); rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("remote UI sessions receive no Proc operations or events at all", async () => {
+for (const [owner, names, topic] of [
+  ["proc", ["proc_run_list", "proc_run_read", "proc_run_start"], "proc_runs_changed"],
+  ["xcom", ["xcom_status", "xcom_get", "xcom_history_clear"], "archive_changed"],
+] as const) test(`remote UI sessions receive no ${owner} operations or events at all`, async () => {
   const root = mkdtempSync(join(tmpdir(), "stack-remote-proc-"));
   const store = new AccessStore(root);
   const env = { STACK_STATE_DIR: root };
-  const directory = join(root, "packages", "proc"); mkdirSync(directory, { recursive: true });
-  writeFileSync(join(directory, "api.yaml"), "name: proc\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: [proc_run_list, proc_run_read, proc_run_start]\n  events: [proc_runs_changed]\n  description: WebSocket.\n");
+  const directory = join(root, "packages", owner); mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, "api.yaml"), `name: ${owner}\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: [${names.join(", ")}]\n  events: [${topic}]\n  description: WebSocket.\n`);
   let reads = 0;
   const ok = z.object({ ok: z.boolean() });
-  const backend = await serveSocket({ info: { name: "proc", description: "Demo.", transportDescription: "Socket.", path: socketPath("proc", env) }, context: {},
+  const backend = await serveSocket({ info: { name: owner, description: "Demo.", transportDescription: "Socket.", path: socketPath(owner, env) }, context: {},
     operations: [
-      operation({ name: "proc_run_list", description: "Read.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { reads++; return { ok: true }; } }),
-      operation({ name: "proc_run_read", description: "Read.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { reads++; return { ok: true }; } }),
-      operation({ name: "proc_run_start", description: "Write.", input: z.strictObject({}), output: ok, async call() { return { ok: true }; } }),
-    ], events: { topics: { proc_runs_changed: "Changed." } } });
+      operation({ name: names[0], description: "Read.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { reads++; return { ok: true }; } }),
+      operation({ name: names[1], description: "Read.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { reads++; return { ok: true }; } }),
+      operation({ name: names[2], description: "Write.", input: z.strictObject({}), output: ok, async call() { reads++; return { ok: true }; } }),
+    ], events: { topics: { [topic]: "Changed." } } });
   const key = join(root, "key.pem"), cert = join(root, "cert.pem");
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "1", "-subj", "/CN=localhost"], { stdio: "ignore" });
   const port = await freePort();
@@ -222,19 +236,18 @@ test("remote UI sessions receive no Proc operations or events at all", async () 
   let ws: WebSocket | undefined;
   const send = async (method: string, params: Record<string, unknown>) => {
     const response = frame(ws!);
-    ws!.send(JSON.stringify({ id: 1, method, params: { package: "proc", ...params } }));
+    ws!.send(JSON.stringify({ id: 1, method, params: { package: owner, ...params } }));
     return response;
   };
   try {
     ws = await open(`wss://127.0.0.1:${port}/websocket`, `https://127.0.0.1:${port}`, `__Host-stack_ui=${issued.accessToken}`);
-    // Proc output and schedule input are server-local secrets; nothing crosses
-    // the remote boundary even for a read-only operation or control grant.
+    // Local-only owners stay unavailable even for read-only operations or a control grant.
     assert.deepEqual((await send("tools/list", {})).result.tools, []);
-    for (const name of ["proc_run_list", "proc_run_read", "proc_run_start"])
+    for (const name of names)
       assert.match((await send("tools/call", { name, arguments: {} })).error.message, /not available/);
     assert.equal(reads, 0);
     const subscribed = frame(ws);
-    ws.send(JSON.stringify({ id: 9, method: "events/subscribe", params: { package: "proc", subscription: "s", topics: ["proc_runs_changed"] } }));
+    ws.send(JSON.stringify({ id: 9, method: "events/subscribe", params: { package: owner, subscription: "s", topics: [topic] } }));
     assert.match((await subscribed).error.message, /not available/);
   } finally {
     ws?.terminate(); await remote.close(); await backend.close(); store.close(); rmSync(root, { recursive: true, force: true });

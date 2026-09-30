@@ -493,6 +493,7 @@ export type InferModelObservation = { accountId: string; models: InferModel[] | 
 export type InferRequestState = "running" | "completed" | "failed" | "unknown";
 
 type InferRequestFields = {
+  contentClearedAt: string | null;
   requestId: string;
   accountId: string;
   model: string;
@@ -515,7 +516,7 @@ export type InferRequest = InferRequestFields & { instructions: string; input: s
 /** Signal's revisioned attention inference defaults; a null account uses the first available enabled Bot account. */
 export type AttentionDefaults = { model: string; reasoningEffort: InferEffort; accountId: string | null; revision: number };
 /** `attention_status`. `changeSeq` advances only when attention records may have changed, never for source-read polling. */
-export type AttentionStatus = { enabled: boolean; activatedAt: number | null; baselined: boolean; settings: AttentionDefaults;
+export type AttentionStatus = { contentGeneration: number; enabled: boolean; activatedAt: number | null; baselined: boolean; settings: AttentionDefaults;
   lastScan: number | null; lastInference: { at?: number; runId?: string; requestId?: string; state?: string; model?: string; reportedModel?: string | null; error?: string } | null;
   sourceErrors: Array<{ source: string; error: string }>; jobs: Array<{ state: string; count: number }>; messages: number; runs: number; changeSeq: number };
 /** `attention_models`: account-bound choices for the effective account; no inference. */
@@ -535,11 +536,11 @@ export type AttentionItem = {
   relations: Array<{ type: string; targetId: string | null; referenceText: string }>;
 };
 /** A captured message revision from `attention_message_list`; `text` is a preview of at most 2,000 characters. */
-export type AttentionMessage = { cursor: number; seq: number; id: string; logicalId: string; revision: string; current: boolean;
+export type AttentionMessage = { contentClearedAt: string | null; cursor: number; seq: number; id: string; logicalId: string; revision: string; current: boolean;
   source: "bots" | "workers"; conversation: string; key: string; role: "user" | "assistant"; authorKind: "human" | "agent" | "unknown";
   audienceHint?: "human" | "agent" | "unknown"; botId: string | null; text: string; textChars: number; complete: boolean; occurredAt: string | null; observedAt: number };
 /** `failed` is definite; `unknown` may have dispatched and needs an explicit replay decision. */
-export type AttentionRun = { cursor: number; id: string; jobId: string; messageId: string | null; replay: boolean; replayOf: string | null; promptVersion: string | null;
+export type AttentionRun = { contentClearedAt: string | null; cursor: number; id: string; jobId: string; messageId: string | null; replay: boolean; replayOf: string | null; promptVersion: string | null;
   at: number; finished: number | null; state: string; requestId: string; settings: AttentionDefaults; error: string | null };
 export type AttentionFeedbackKind = "correction" | "label" | "outcome" | "behavior";
 export type AttentionFeedback = { cursor: number; id: string; at: number; messageId: string; runId: string | null; kind: AttentionFeedbackKind; author: string; body: string };
@@ -596,7 +597,7 @@ export type RoleInternalMcp = { roleId: string; revision: number; servers: RoleI
 /** How a Notification was dismissed: once, with the chosen action label or reply text as `response`. */
 export type NotificationOutcome = "closed" | "opened" | "action" | "replied" | "replaced";
 /** A `notify` Notification; open until `dismissedAt`. Actions, reply and open are data; nothing executes. */
-export type Notification = { id: string; sequence: number; title: string; message: string; subtitle: string | null; source: string | null;
+export type Notification = { id: string; sequence: number; title: string; message: string; subtitle: string | null; source: string | null; contentClearedAt: string | null;
   group: string | null; open: string | null; actions: string[]; reply: string | null; createdAt: string;
   dismissedAt: string | null; outcome: NotificationOutcome | null; response: string | null };
 /** `notification_counts`. A null source counts notifications sent without one. */

@@ -107,6 +107,28 @@ test("Grok includes a provider-declared monthly dollar allocation without guessi
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("clearing a scoped observation fences an in-flight result and persists without clearing its sibling", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stack-usage-clear-"));
+  let release!: (value: any) => void, entered!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const measurement = { planType: "pro", limitReached: false, resetCreditsAvailable: null, resetCreditExpirations: null, lanes: [] };
+  const observer = new UsageObserver(root, {}, async () => ["worker", "bot"].map(scope => ({ id: codexId, scope: scope as "bot" | "worker", provider: "codex", enabled: true, ready: true, removing: false })),
+    async (_id, _provider, scope) => { if (scope === "worker") return measurement; entered(); return new Promise(resolve => { release = resolve; }); }, async () => null, async () => null);
+  try {
+    const collecting = observer.cycle(); await started;
+    const plan = observer.clearPlan({ accounts: [{ id: codexId, scope: "bot" }], grokBot: false });
+    const input = { planId: plan.id, expectedRevision: plan.revision, requestId: crypto.randomUUID() };
+    assert.equal((await observer.clear(input)).status, "completed");
+    release(measurement); await collecting;
+    assert.equal(observer.snapshot().accounts.find(row => row.scope === "bot")!.usage, null);
+    assert.deepEqual(observer.snapshot().accounts.find(row => row.scope === "worker")!.usage, measurement);
+    assert.equal((await observer.clear(input)).status, "completed");
+    const restored = new UsageObserver(root); await restored.load();
+    try { assert.equal(restored.snapshot().accounts.find(row => row.scope === "bot")!.usage, null); }
+    finally { await restored.close(); }
+  } finally { await observer.close(); await rm(root, { recursive: true, force: true }); }
+});
+
 test("owner observer keeps last-good records, removes deleted accounts and paces retries", async () => {
   const root = await mkdtemp(join(tmpdir(), "stack-usage-"));
   try {

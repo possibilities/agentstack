@@ -39,6 +39,7 @@ mcp:
   description: HTTP MCP operations forwarded to the Brain socket. Change notices are not offered to agents.
 websocket:
   operations:
+    - brain_state_read
     - brain_status
     - jobs_reveal
     - stats

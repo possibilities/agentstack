@@ -49,3 +49,7 @@ export { serveApi, type ServedApi } from "./serve.js";
 export { runApi } from "./run.js";
 export { api, docsGet, docsList, docsSnapshot, type DocsContext } from "../api.js";
 export { CodexToolsDiagnostics, type CodexToolsStatus, type CodexToolsConnection, type CodexToolsCatalog, type CodexToolsBrowser, type CodexToolsRuntime, type CodexToolsProblem, type CodexToolsProblemCode } from "./codex-mcp/diagnostics.js";
+export { stateRevision, stateSubject, stateLink, stateEntry, statePageInput, statePage, stateOutcome, statePlan, stateApplyInput, stateReceipt,
+  requireStateOperator, stateHash, pageState, StateJournal, stateDependencies, stateDependencyInput, type StateDependencies, type StateEntry, type StatePage, type StateOutcome, type StatePlan, type StateApplyInput, type StateReceipt } from "./state.js";
+export { stateFile, stateFilePage, stateFileRead, listStateFiles, readStateFile, snapshotStateFiles, snapshotStateFilesSync, clearStateFiles, clearStateFilesSync, type StateFile, type FileSelection, type FileSnapshot } from "./state-files.js";
+export { withStateInventory, stateCategories, type StateCategory } from "./state-inventory.js";

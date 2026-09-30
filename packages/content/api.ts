@@ -7,6 +7,9 @@ import { operation, type PackageApi } from "@stack/api";
 import { ARTIFACT_KINDS, ArtifactStore, MAX_ARTIFACT_BYTES } from "./src/artifacts.js";
 import { Collections, MAX_COLLECTION_ITEM_BYTES, MAX_INLINE_BYTES } from "./src/collections.js";
 import type { Context, Handler } from "./src/context.js";
+import { withStateInventory } from "@stack/api";
+import { contentStateCategories } from "./src/state-categories.js";
+import { contentStateOperations } from "./src/state.js";
 import { nowIso, openIndex } from "./src/context.js";
 import { buildContract } from "./src/contract.js";
 import * as documents from "./src/documents.js";
@@ -19,17 +22,17 @@ import { startServer, type RunningServer } from "./src/serve.js";
 import { DEFAULT_ARTIFACT_PORT, DEFAULT_HOST, DEFAULT_PORT } from "./src/urls.js";
 import { ensureVault } from "./src/vault.js";
 
-type ContentContext = { command: Context; server: RunningServer; index: ReturnType<typeof openIndex>; store: ArtifactStore; collections: Collections;
+export type ContentContext = { command: Context; server: RunningServer; index: ReturnType<typeof openIndex>; store: ArtifactStore; collections: Collections;
   /** Set while the events transport is running; every successful content mutation calls it. */
   changed?: () => void };
 
 export const topics = {
-  content_changed: "Content documents, items, collections or artifacts changed; re-read what you show. Direct edits to vault files are noticed on the next content operation.",
+  content_changed: "Content documents, items, collections, artifacts or storage-maintenance state changed; re-read what you show. Direct edits to vault files are noticed on the next content operation.",
 } as const;
 
-/** Operations whose success changes what a reader sees. Blob stages are private upload state and change nothing visible. */
+/** Publish visible content and operator storage-maintenance changes. Upload progress is explicitly refreshed. */
 const mutating = new Set(["collection_create", "collection_update", "collection_delete", "item_put", "item_move", "item_delete",
-  "document_update", "new", "add", "rm", "restore", "artifacts_rm", "artifacts_restore", "artifact_publish", "gc"]);
+  "document_update", "new", "add", "rm", "restore", "artifacts_rm", "artifacts_restore", "artifact_publish", "gc", "blob_stage_abort", "content_storage_collect"]);
 
 /** Publish content_changed after each successful mutation, and after any operation that noticed a direct vault edit. */
 function announced<Op extends { name: string; call(ctx: ContentContext, input: any, invocation?: any): Promise<any> }>(op: Op): Op {
@@ -316,12 +319,12 @@ const artifactRoutes = [
   { method: "GET/HEAD", path: "/", format: "302 redirect", description: "Redirect to the document origin." },
 ] as const;
 
-export const api: PackageApi<ContentContext, keyof typeof topics> = {
+const packageApi: PackageApi<ContentContext, keyof typeof topics> = {
   http: [
     { name: "documents", kind: "static", authentication: "none", description: "Same-user loopback backend only. Remote documents require the separate authenticated Access ingress.", routes: documentRoutes },
     { name: "artifacts", kind: "static", authentication: "none", description: "Same-user loopback artifact backend only. Access authenticates remote requests on a separate isolated origin.", routes: artifactRoutes },
   ],
-  operations: ([
+  operations: ([...contentStateOperations,
     operation({
       name: "content_status", description: "Read portable route templates for documents, sites and items. Item IDs and paths do not depend on a host, port, collection or filesystem location.",
       input: z.strictObject({}),
@@ -382,3 +385,4 @@ export const api: PackageApi<ContentContext, keyof typeof topics> = {
     finally { ctx.collections.close(); ctx.store.close(); ctx.index.close(); }
   },
 };
+export const api = withStateInventory("content", contentStateCategories, packageApi);
