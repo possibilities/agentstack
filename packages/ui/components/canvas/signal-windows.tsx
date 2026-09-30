@@ -1,5 +1,6 @@
 "use client";
 
+import { SignalContentSection } from "./signal-maintenance";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { ActivityIcon, BotIcon, ChevronRightIcon, CircleCheckIcon, CircleHelpIcon, CircleXIcon, FileSearchIcon, HistoryIcon, InboxIcon, MessageSquarePlusIcon,
   MessagesSquareIcon, RadarIcon, RefreshCwIcon, RotateCcwIcon, SquareTerminalIcon, UserIcon } from "lucide-react";
@@ -363,6 +364,7 @@ export function SignalWindow() {
             </Section>
           ) : null}
           <DefaultsSection />
+          <SignalContentSection />
         </>
       ) : <Empty icon={RadarIcon} title={signalStatus.error ? "Signal unavailable" : "Reading Signal…"} />}
       <AlertDialog open={confirm} onOpenChange={setConfirm}>
