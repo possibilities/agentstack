@@ -1,0 +1,65 @@
+# 142. Separate internal MCP availability from the Server lifecycle
+
+Status: proposed, 2026-09-30. Supersedes the live-socket-only internal MCP
+discovery and execution rules in [ADR 0096](0096-explicit-transport-exposure.md)
+and [ADR 0140](0140-internal-mcp-over-stdio.md), and the socket prerequisite for
+Role injection in [ADR 0123](0123-role-injection-for-native-clis.md).
+Preserves explicit exposure, caller authority, external HTTP and WebSocket
+admission, and the sole durable Bot subscription owner.
+
+## Decision
+
+Internal stdio MCP children initialize and list their selected tools without a
+running Server. Installed typed Package API declarations supply tool schemas
+and event descriptions; the shared resolver applies the current manifest's
+explicit operation and event selections and Worker disclosure. Listing a tool
+does not establish that its live owner is available or grant caller authority.
+Invalid declarations and selections fail closed, not as an empty catalog.
+
+Execution prefers the running private socket owner. A Package API can explicitly
+opt an operation into standalone execution using its shared owner implementation
+without creating its full server context. A read-only hint is not this opt-in:
+live reads may still need an owner, and ordinary server context construction may
+start listeners, workers or maintenance tasks. Stdio children never start a
+second Bot or Worker supervisor, scheduler, ingestion worker or subscription
+database. Third-party Role MCP definitions retain their configured transports.
+
+`stack roles inject` captures a consistent snapshot from the existing local Role
+store through a structurally read-only connection. It neither initializes nor
+migrates that store. Missing or incompatible storage fails with explicit recovery
+rather than inventing an empty Role. Default and named selection use the same
+owner semantics and instruction renderer. Installed declarations replace the
+Serve status dependency for internal MCP name and HTTP-alias collision checks.
+Native capability isolation and native authentication remain independent.
+
+## Failure and authority boundaries
+
+Only definite pre-dispatch connection absence permits standalone fallback.
+Timeout, cancellation, owner error and post-dispatch connection loss do not:
+an operation may already have acted. Nothing automatically replays a mutation.
+Dependency failures are MCP tool results with `isError: true`, an actionable code
+and recovery, and truthful dispatch status. An unavailable service does not
+terminate the stdio connection; subsequent calls can succeed when its owner starts.
+
+Managed Bot and Worker identities retain their signed launch proof and live
+instance checks. A missing owner never turns managed authority into operator
+authority or relaxes self-only Worker reads. Operator credentials remain
+revocable. Exposure and authority are rechecked at execution boundaries.
+
+Generated event tools continue to use the Server's sole durable subscription
+owner and sanctioned Bot thread lineage. Offline discovery creates no watches;
+an unavailable owner produces a useful error. Existing subscriptions still
+deliver out of band through native Codex admission, independently of the pipe.
+
+External HTTP and WebSocket gateways retain their live metadata validation and
+existing admission policy. Offline internal discovery does not expand a remote
+surface or make a stopped HTTP listener reachable.
+
+## Verification boundary
+
+Use process-level MCP clients, actual built stdio children and disposable Stack
+state to establish offline discovery, real standalone reads, precise dependency
+errors, and recovery on the same connection. Role injection checks use a seeded
+existing store and disposable harness probes, without model turns or accounts.
+Explicit exposure, managed authority, revocation, ambiguous dispatch and external
+transport regressions remain independently verified at their owning boundaries.

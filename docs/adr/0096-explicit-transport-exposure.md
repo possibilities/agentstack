@@ -2,6 +2,10 @@
 
 Status: accepted, 2026-09-28. Supersedes [ADR 0078](0078-declared-http-surfaces-and-operation-selection.md)'s implicit all-operations default and restricted-MCP event ban, and [ADR 0033](0033-agent-facing-event-subscriptions.md)'s automatic event exposure. Extends [ADR 0086](0086-multiplex-websocket-connections.md)'s handshake snapshot to event selections. Preserves [ADR 0090](0090-scrape-package-api.md)'s Scrape operation boundaries.
 
+[ADR 0142](0142-server-independent-internal-mcp.md) replaces live-socket-only
+discovery for internal stdio with installed declarations and explicit standalone
+execution. External HTTP and WebSocket validation and these selection rules remain.
+
 Each configured `mcp` or `websocket` entry requires both `operations` and `events`: the literal `all`, a positive name list, or `[]` for none. An absent transport is disabled. Selection has no exclusions, groups or inferred defaults. Socket remains the full internal Package API; HTTP remains explicit typed routes. Operation descriptions describe behavior, while manifests declare availability.
 
 One resolver rejects unknown and duplicate selected names and supplies discovery, listing, direct-call and subscription enforcement. Package startup checks built declarations before creating its context. Discovery imports built declarations without creating contexts; gateways use the live socket's authoritative `tools/list` metadata without importing packages. MCP resolves a snapshot for each HTTP request; WebSocket resolves all configured packages at handshake and retains those concrete operation/topic sets until reconnect. Unavailable socket metadata or invalid selections refuse admission rather than admitting an unchecked surface.
