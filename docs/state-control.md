@@ -50,7 +50,10 @@ mutation. Receipts keep minimal identities/digests and disclosed residuals.
 
 File listing is bounded at 10,000 siblings/selection entries; file reads return
 base64 bytes in chunks no larger than 256 KiB. Paths are relative, cannot traverse
-symlinks or parent components, and cannot read special files. Clearing refuses
+symlinks or parent components, and cannot read special files. The owner's root is
+opened in one kernel call: ancestor symlinks (such as macOS `/tmp`) resolve, but the
+root itself must be a directory, not a symlink, and cannot contain dot components.
+Plans bind the root's identity, so a re-pointed ancestor makes the plan stale. Clearing refuses
 mounted-filesystem boundaries. It requires Python 3 with POSIX descriptor-relative
 operations and never falls back to path-based recursive removal. Partial cleanup
 can retain `.stack-clear-<uuid>` quarantine, named in the result for inspection.

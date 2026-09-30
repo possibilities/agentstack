@@ -20,8 +20,8 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const require = createRequire(import.meta.url);
 const dir = await realpath(await mkdtemp(join("/tmp", "as-fleet-state-")));
 const home = await mkdtemp(join("/tmp", "as-fleet-home-"));
-// The workspace walker refuses symlinked path components, and macOS /tmp is one.
-const external = await realpath(await mkdtemp(join("/tmp", "as-fleet-ext-")));
+// Deliberately unresolved: on macOS /tmp is a symlink, so the workspace root is reached through a linked ancestor.
+const external = await mkdtemp(join("/tmp", "as-fleet-ext-"));
 const evidence = process.env.FLEET_STATE_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
 // The fake runtime is found through HOME; nothing of the live installation is used.
