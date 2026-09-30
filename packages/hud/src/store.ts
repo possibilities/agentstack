@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { StateJournal, stateHash, type StateApplyInput } from "@stack/api";
-import { workItem, type Actor, type Activity, type Change, type ChatTarget, type Focus, type ListInput, type Metadata, type Receipt, type WorkItem } from "./schema.js";
+import { workItem, type Actor, type Activity, type Change, type ChatTarget, type Focus, type HistorySelection, type ListInput, type Metadata, type Receipt, type WorkItem } from "./schema.js";
 
 /** Stable JSON for request identity and exact correlation; object property order is immaterial. */
 export function canonical(value: unknown): string {
@@ -106,6 +106,7 @@ export class HudStore {
           kind = "created"; fields = Object.keys(data).filter(key => key !== "id");
         } else {
           item = this.get(input.id);
+          if (item.contentClearedAt) throw new Error("work_content_cleared: tombstoned Work cannot be edited or reopened; create new Work");
           if (item.revision !== input.expectedRevision) throw new Error(`work_revision_conflict: ${item.id} is revision ${item.revision}`);
           item = { ...item, revision: item.revision + 1, updatedBy: actor, updatedAt: now };
           if (input.action === "update") {
@@ -165,6 +166,7 @@ export class HudStore {
       if (new Set(item.dependencies).size !== item.dependencies.length) throw new Error("work_duplicate_dependency");
       for (const id of [item.parentId, ...item.dependencies].filter((id): id is string => id !== null))
         if (!map.has(id)) throw new Error(`work_reference_missing: ${id}`);
+      if (item.parentId && map.get(item.parentId)?.contentClearedAt && !item.contentClearedAt) throw new Error("work_content_cleared: cannot add retained children to tombstoned Work");
       for (const link of item.links) if (link.target.kind === "work" && !map.has(link.target.workItemId)) throw new Error("work_reference_missing");
     }
     // A parent's completion depends on its children. Check combined containment + dependency edges,
@@ -234,6 +236,65 @@ export class HudStore {
     return { entries, nextCursor: entries.at(-1)?.sequence ?? input.after, hasMore: rows.length > entries.length };
   }
 
+  /** The closure includes descendants even for journal-only selection, because their resources can hold a parent scope. */
+  historyClosure(ids: string[]): WorkItem[] {
+    const selected = new Set(ids); for (const id of selected) this.get(id);
+    const all = this.all();
+    let added = true;
+    while (added) { added = false; for (const item of all) if (item.parentId && selected.has(item.parentId) && !selected.has(item.id)) { selected.add(item.id); added = true; } }
+    return all.filter(item => selected.has(item.id));
+  }
+  private historySnapshot(selection: HistorySelection) {
+    const items = [...new Set(selection.items)].sort();
+    const closure = this.historyClosure(items);
+    return { items: items.map(id => ({ id, revision: stateHash([this.get(id), this.metadata(id),
+      this.db.prepare("SELECT body FROM activity WHERE work_id=? ORDER BY sequence").all(id)]) })),
+      closure: closure.map(item => ({ id: item.id, parentId: item.parentId, revision: item.revision })),
+      focuses: closure.map(item => this.focuses(item.id)) };
+  }
+  historyPlan(selection: HistorySelection, dependencies: { revision: string; blockedBy: string[]; resources: string[] }) {
+    const normalized = { ...selection, items: [...new Set(selection.items)].sort() };
+    const snapshot = this.historySnapshot(normalized);
+    const children = selection.scope === "item_and_journal" ? this.historyClosure(selection.items).filter(item => !normalized.items.includes(item.id) && !item.contentClearedAt) : [];
+    return this.maintenance.plan({ subject: null, action: selection.scope, revision: stateHash([snapshot, dependencies.revision]),
+      resources: [...normalized.items.map(id => `work:${id}`), ...snapshot.closure.map(item => `descendant:${item.id}`), ...dependencies.resources,
+        ...normalized.items.flatMap(id => this.get(id).dependencies.map(dependency => `dependency:${id}:${dependency}`))],
+      blockedBy: [...dependencies.blockedBy, ...children.map(item => `Clear child ${item.id} first or explicitly select it in this batch`)],
+      retained: ["Shared Work IDs, hierarchy, semantic states, dependencies and admission digests", "Worker-captured Work context, native transcripts, Signal/Infer and other owner copies", "Retired-root Chat focus identities, maintenance receipts, SQLite WAL/free pages and backups",
+        ...(selection.scope === "journal_bodies" ? ["Current Work bodies and metadata remain; only selected collaboration bodies/references and before/after values clear"] : [])],
+      regeneration: ["Tombstoned Work cannot be edited, reopened, focused or used for new Worker admission. Create new Work; native completion never completes Work.", "Journal-only cleanup permits future collaboration entries"] }, normalized);
+  }
+  historyClear(input: StateApplyInput, dependencies: { revision: string; blockedBy: string[] }) {
+    let changed: string[] = [];
+    const receipt = this.maintenance.atomic(input, (plan, payload) => {
+      const selected = payload as HistorySelection;
+      if (plan.action !== selected.scope || plan.revision !== stateHash([this.historySnapshot(selected), dependencies.revision])) throw new Error("HUD state changed; prepare a new plan");
+      if (dependencies.blockedBy.length) throw new Error(dependencies.blockedBy.join("; "));
+      if (selected.scope === "item_and_journal" && this.historyClosure(selected.items).some(item => !selected.items.includes(item.id) && !item.contentClearedAt)) throw new Error("Clear children first");
+    }, payload => {
+      const selected = payload as HistorySelection, at = Date.now();
+      changed = this.historyClosure(selected.items).map(item => item.id);
+      return selected.items.map(id => {
+        const item = this.get(id);
+        for (const row of this.db.prepare("SELECT sequence,body FROM activity WHERE work_id=?").all(id) as { sequence: number; body: string }[]) {
+          const entry = decode<Activity>(row);
+          this.db.prepare("UPDATE activity SET body=? WHERE sequence=?").run(JSON.stringify({ ...entry, body: null, references: [],
+            changes: entry.changes.map(edit => ({ field: edit.field, before: null, after: null })), contentClearedAt: entry.contentClearedAt ?? at }), row.sequence);
+        }
+        const tombstone = selected.scope === "item_and_journal";
+        const next = { ...item, contentGeneration: (item.contentGeneration ?? 0) + 1, revision: item.revision + 1, updatedAt: at,
+          ...(tombstone ? { title: "[cleared]", objective: "[cleared]", summary: "", nextAction: "", labels: [], links: [], attention: "none" as const,
+            contentDigest: item.contentDigest ?? stateHash([item, this.metadata(id)]), contentClearedAt: item.contentClearedAt ?? at, scopeRevision: item.scopeRevision + 1 } : {}) };
+        if (tombstone) this.db.prepare("DELETE FROM metadata WHERE work_id=?").run(id);
+        this.save(next);
+        this.append({ workItemId: id, revision: next.revision, scopeRevision: next.scopeRevision, requestId: input.requestId,
+          actor: { kind: "operator" }, at, kind: "maintenance", fields: [], changes: [], body: null, references: [], contentClearedAt: at });
+        return { resource: `work:${id}`, outcome: "removed" as const, detail: tombstone ? "Item body and metadata tombstoned; collaboration bodies redacted; semantic identity retained" : "Collaboration bodies, references and before/after values redacted; current Work retained" };
+      });
+    });
+    this.onChange?.(changed); return receipt;
+  }
+
   focus(target: ChatTarget): Focus {
     const row = this.db.prepare("SELECT body FROM focus WHERE key=?").get(canonical(target));
     return row ? decode<Focus>(row) : { ...target, revision: 0, workItemId: null, updatedAt: null, updatedBy: null };
@@ -271,6 +332,7 @@ export class HudStore {
       if (prior) return prior;
       const current = this.focus(input.target);
       if (current.revision !== input.expectedRevision) throw new Error(`work_focus_conflict: current revision ${current.revision}`);
+      if (input.workItemId && this.get(input.workItemId).contentClearedAt) throw new Error("work_content_cleared: tombstoned Work cannot be focused");
       if (input.workItemId && terminal(this.get(input.workItemId))) throw new Error("work_closed: choose open work or reopen it");
       const now = Date.now();
       const next: Focus = { ...input.target, revision: current.revision + 1, workItemId: input.workItemId, updatedAt: now, updatedBy: actor };

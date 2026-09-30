@@ -72,7 +72,7 @@ can retain `.stack-clear-<uuid>` quarantine, named in the result for inspection.
 | Content | `blob_stage_list`, `content_blob_list` alongside existing item/document/Artifact reads | `blob_stage_abort` retires a stage UUID/client key at its revision. `content_storage_plan({digests})` / `content_storage_collect` collects exact unreferenced collection CAS blobs. Items and finalized stages independently hold references. Existing Artifact `gc` is a separate store. |
 | Usage | `usage_snapshot` | `usage_observations_plan({accounts:[{id,scope}]})` / `usage_observations_clear`: exact local observations; fence selected in-flight collectors and persist. Future collection regenerates; provider quota/credentials are independent. |
 | Xcom | Existing archive/status/user/article reads; status includes `paused` | `xcom_control({paused})` persistently pauses/resumes admission. `xcom_history_plan` / `xcom_history_clear` selects posts with reimport/orphan-author policy, article attempts, or one scan checkpoint. Pause and wait for `sync.running:false`. Source rows/raw/FTS clear together. |
-| HUD | `work_focus_list` includes retired roots | `work_focus_retire_plan({target})` / `work_focus_retire` removes one proven retired-root focus. Active-root focus uses existing `work_focus_set`; saved null is an inheritance barrier. Work/journal/Worker associations remain. |
+| HUD | `work_focus_list` includes retired roots; Work/tree/timeline and metadata reads expose redaction markers | `work_focus_retire_plan({target})` / `work_focus_retire` removes one retired-root focus. `hud_history_plan({items,scope})` / `hud_history_clear` redacts exact `journal_bodies`, or tombstones `item_and_journal` including metadata. Retain hierarchy/state/dependency IDs; require retained children first or explicit subtree selection. Open descendant Worker admissions and active-root focus block. Worker-captured context stays independent. |
 | Brain | Owner inventory links existing research, jobs, source, reveal and maintenance reads | Existing document `delete`, job cancel/exclude and source pause remain the domain authorities. Document deletion redacts associated intents and collects unreferenced Artifacts. |
 | Browse | Owner inventory links profiles, controllers and handoffs; provider volume coverage is explicit | Existing profile deletion, controller closure, handoff completion/cancellation and installation lifecycle operations. Profile deletion enforces default/controller/handoff restrictions and calls the native provider. |
 | Auth / Access | Credential-metadata inventories link existing account/client snapshots | Existing account removal/reconciliation and Access revocation. Account removal can cascade; revocation retains identity/admission history. State inventory reveals no bearer values. |
@@ -139,7 +139,7 @@ The following remain explicit backend gaps rather than implied erase controls:
   generation claims and publication recovery must remain authoritative.
 - Roles retained injection-launch cleanup, standalone settings-receipt retirement,
   Auth cache-only clearing and Access history/session-specific retirement.
-- HUD Work/journal body purge, Bot queued-body purge, Signal checkpoint reset
+- Bot queued-body purge, Signal checkpoint reset
   and Proc removed-schedule payload redaction.
 - Content vault/Git-history purge and temporary publication collection. Document
   and Artifact tombstones, local Git, remotes and backups retain independent copies.
@@ -155,3 +155,13 @@ Infer catalog eviction deliberately has no StatePlan or durable receipt: it drop
 only regenerable in-memory model observations. Epoch fences prevent late discovery
 from recreating the selected cache; request identities and trace history remain in
 their own durable ledger. It is local-operator-only even though it consumes no spend.
+
+HUD history maintenance advances the item revision/content generation and appends
+a content-free maintenance journal entry, invalidating tree pagination and timeline
+reads. Journal entries retain sequence, actor, kind, fields, timing and request IDs,
+with null redacted edit values and `contentClearedAt`. Item tombstones use `[cleared]`
+for title/objective and preserve semantic state, hierarchy and dependency IDs, not
+authored links, labels or metadata. They cannot be edited, reopened, focused or used
+for new admission; create new Work instead. Journal-only clearing retains current
+bodies/metadata and permits new collaboration. Dependency reads fail closed and
+describe observed Stack admissions; they do not lock arbitrary external writers.

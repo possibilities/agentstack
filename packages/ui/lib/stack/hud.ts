@@ -311,7 +311,7 @@ export function valueText(value: unknown, limit = 160): string {
 
 const activityWords: Record<WorkActivity["kind"], string> = {
   created: "Created", updated: "Edited", metadata: "Agent metadata", note: "Note", progress: "Progress",
-  result: "Result", decision: "Decision", handoff: "Handoff", focus: "Chat focus",
+  result: "Result", decision: "Decision", handoff: "Handoff", focus: "Chat focus", maintenance: "Content cleared",
 };
 export const activityWord = (kind: WorkActivity["kind"]): string => activityWords[kind];
 /** Scope-versioned notes whose meaning depends on the objective they were recorded against. */
