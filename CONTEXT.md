@@ -188,6 +188,24 @@ A Codex app-server process with, after its first turn, a durable main thread. By
 
 Versioned explicit preferences owned by Bots or Workers, with backend-specific catalogs and separate saved, loaded, resolved-configuration and observed-effective evidence. Creation defaults are copied into new instances; reset removes an override and restores native resolution. Saving does not apply: Bot process changes load at start, voice changes on the next call, and Worker selections on the next follow-up or explicit idle application. Roles own instructions and resources. _Avoid_: effective values inferred from saved configuration, native subagent defaults as Worker controls
 
+## Developer mode
+
+A durable global Stack setting owned by `serve`, disabled by default and explicitly
+selected by the local operator. It immediately gates developer features and their
+operation calls. Its first feature is periodic, cached upstream harness-release
+observation. It is independent of Bot and Worker managed runtime settings and of
+the UI development server. See [ADR 0136](docs/adr/0136-developer-mode-and-harness-releases.md).
+_Avoid_: browser-local preference, Role setting, development environment
+
+## Harness release observation
+
+A timestamped observation of the public upstream release channel for OpenCode V2,
+Codex, Claude Code or Devin CLI. The server retains last-good values, failures and
+changes between successful observations while developer mode controls collection
+and access. A changed upstream version does not establish that an installed or
+forked runtime needs upgrading. _Avoid_: installed version, automatic update,
+update eligibility
+
 ## Role
 
 A named Stack-owned configuration with a stable ID and independent revision: ordered developer-instruction fragments, enabled skills, per-Role internal MCP enablement, additional MCP servers and trusted projects. The first created Role is default; any existing Role can be marked default. Every new Bot launch captures the default; a new Worker captures the default unless `worker_start` selects another Role. Bot launches receive a private snapshot through codexnk's required `--capabilities` directory; Workers receive skills and MCP connections but not instruction fragments. Worker recovery retains its saved snapshot. Edits and default changes affect later launches, not a running process. _Avoid_: singleton Role, capability profile, system-prompt flag, live prompt file
