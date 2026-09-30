@@ -10,7 +10,7 @@ import { createRequire } from "node:module";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath } from "@stack/api";
-import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser } from "./browser-fixture.mjs";
+import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -37,10 +37,14 @@ try {
   websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["brain", "serve", "api"]), port: 0 });
   const catalog = [fixtureDoc("brain", brainApi, websocket.url, publishedJsonSchema), fixtureDoc("serve", undefined, websocket.url, publishedJsonSchema), fixtureDoc("api", undefined, websocket.url, publishedJsonSchema)];
   handlers.docs_snapshot = () => ({ packages: catalog });
-  for (const [name, names, topics] of [["serve", ["serve_status"], { pids_changed: "Fixture" }], ["api", ["docs_snapshot"], {}]]) {
+  const serve = await serveFixture(handlers);
+  Object.assign(handlers, serve.handlers);
+  for (const [name, names, topics] of [["serve", serve.names, serve.topics], ["api", ["docs_snapshot"], {}]]) {
     sockets.push(await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {}, operations: fixtureOperations(names, handlers), events: { topics } }));
   }
   const nextPort = await port();
+  // The gateway admits only the page origin it serves.
+  env.STACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${nextPort}`;
   const mode = process.env.BRAIN_NEXT === "start" ? "start" : "dev";
   next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), mode, "--hostname", "127.0.0.1", "--port", String(nextPort)], { cwd: ui, env, stdio: ["ignore", "pipe", "pipe"] });
   next.stdout.on("data", (chunk) => { log += chunk; }); next.stderr.on("data", (chunk) => { log += chunk; });

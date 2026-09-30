@@ -14,7 +14,7 @@ import { api as inferApi } from "../../infer/dist/api.js";
 import { ChatUploads } from "../../bots/dist/src/chats.js";
 import { api as usageApi } from "../../usage/dist/api.js";
 import { api as workerApi } from "../../worker/dist/api.js";
-import { anyObject, fixtureWorkspace, transport, z, authorizeBrowser } from "./browser-fixture.mjs";
+import { anyObject, fixtureWorkspace, transport, z, authorizeBrowser, serveFixture } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -33,7 +33,7 @@ const botAccounts = [{ id: id(1), enabled: true, removing: false, linkedAccounts
 const workerAccounts = ["codex", "grok", "devin"].map((provider, index) => ({ id: id(index + 3), provider, enabled: true, ready: true, removing: false,
   linkedAccounts: provider === "codex" ? [{ scope: "bot", id: id(1) }] : [] }));
 workerAccounts.push({ id: id(7), provider: "codex", enabled: true, ready: false, removing: false, linkedAccounts: [{ scope: "bot", id: id(6) }] });
-let defaults = { model: "gpt-6-sol", reasoningEffort: "medium", sandboxMode: "danger-full-access", approvalPolicy: "never" };
+const defaults = { model: "gpt-6-sol", reasoningEffort: "medium", sandboxMode: "danger-full-access", approvalPolicy: "never" };
 const bot = (name, state = "stopped") => ({ id: name, state, pid: state === "running" ? 321 : null, cwd: "/fixture/private/workspace", url: null,
   account: id(1), runningAccount: state === "running" ? id(1) : null, mainThreadId: id(10), recoveryIssue: null, roleRevision: 1, settings: defaults });
 let bots = [bot("bot-1", "running"), bot("bot-2")];
@@ -69,7 +69,6 @@ const handlers = {
   account_login_current: () => ({ login: null }), worker_account_login_current: () => ({ logins: [] }),
   bot_list: () => ({ bots }), bot_defaults_get: () => defaults, voice_status: () => ({ call: activeCall }),
   voice_speak: ({ sessionId }) => ({ sessionId, status: "submitted" }),
-  bot_defaults_set: (input) => { defaults = { ...defaults, ...input }; served.get("bots").publish("defaults_changed"); return defaults; },
   bot_start: (input) => { let item = bots.find((bot) => bot.id === input.id); if (!item) { item = bot(input.id ?? "bot-3"); bots.push(item); } Object.assign(item, { state: "running", pid: 456, account: input.account, runningAccount: input.account, cwd: input.cwd ?? item.cwd, settings: { ...item.settings, ...input.settings } }); return item; },
   bot_stop: (input) => { const item = bots.find((bot) => bot.id === input.id); Object.assign(item, { state: "stopped", pid: null, runningAccount: null }); return item; },
   bot_assign: (input) => { const item = bots.find((bot) => bot.id === input.id); item.account = input.account; return item; },
@@ -129,8 +128,10 @@ try {
     operations: api.operations.map((operation) => ({ name: operation.name, title: operation.annotations?.title ?? null, description: operation.description, annotations: operation.annotations ?? {}, inputSchema: publishedJsonSchema(operation.input), outputSchema: publishedJsonSchema(operation.output) })) }));
   for (const name of ["auth", "serve", "api"]) catalog.push({ name, packageName: `@stack/${name}`, description: "Fixture", events: {}, eventScope: null, operations: [], transports: [transport(websocket.url)] });
   handlers.docs_snapshot = () => ({ packages: catalog });
-  const definitions = { serve: ["serve_status"], auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"], bots: Object.keys(handlers).filter((name) => /^(bot_|voice_|chat_)/.test(name)), usage: ["usage_snapshot"], worker: ["worker_list", "worker_runtime_list", "worker_catalog"], infer: ["infer_model_list", "infer_discover", "infer_start", "infer_request_list", "infer_request_get"], api: ["docs_snapshot"] };
-  const topics = { serve: { pids_changed: "Fixture" }, auth: Object.fromEntries(["accounts_changed", "worker_accounts_changed", "login_changed", "worker_login_changed"].map((name) => [name, "Fixture"])), bots: botsApi.events.topics, worker: workerApi.events.topics, usage: usageApi.events.topics, infer: inferApi.events.topics, api: {} };
+  const serve = await serveFixture(handlers);
+  Object.assign(handlers, serve.handlers);
+  const definitions = { serve: serve.names, auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"], bots: Object.keys(handlers).filter((name) => /^(bot_|voice_|chat_)/.test(name)), usage: ["usage_snapshot"], worker: ["worker_list", "worker_runtime_list", "worker_catalog"], infer: ["infer_model_list", "infer_discover", "infer_start", "infer_request_list", "infer_request_get"], api: ["docs_snapshot"] };
+  const topics = { serve: serve.topics, auth: Object.fromEntries(["accounts_changed", "worker_accounts_changed", "login_changed", "worker_login_changed"].map((name) => [name, "Fixture"])), bots: botsApi.events.topics, worker: workerApi.events.topics, usage: usageApi.events.topics, infer: inferApi.events.topics, api: {} };
   for (const [name, names] of Object.entries(definitions)) served.set(name, await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {}, operations: operations(names, { bots: botsApi, infer: inferApi }[name]), events: { topics: topics[name], scope: name === "bots" ? { valid: () => true, description: "Fixture", example: "bot-1" } : undefined } }));
   const nextPort = await port();
   env.STACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${nextPort}`;
@@ -147,7 +148,7 @@ try {
   await authorizeBrowser(page, origin, env);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(`${origin}/`);
+  await page.goto(`${origin}/fleet`);
   const jump = async (query, name) => {
     await page.keyboard.press("Meta+k");
     await page.getByRole("combobox").fill(query);
@@ -162,7 +163,7 @@ try {
   await page.waitForURL((url) => url.pathname === "/accounts" && url.searchParams.get("focus") === `account:${id(1)}`);
   await page.getByRole("button", { name: "Spaces · Accounts" }).waitFor();
   await page.locator(`[data-node="account:${id(1)}"]`).getByRole("link", { name: /bot-1$/ }).click();
-  await page.waitForURL((url) => url.pathname === "/" && url.searchParams.get("focus") === "bot:bot-1");
+  await page.waitForURL((url) => url.pathname === "/fleet" && url.searchParams.get("focus") === "bot:bot-1");
   await page.getByRole("button", { name: "Spaces · Fleet" }).waitFor();
   await jump("bot bot-1", /bot-1/);
   await page.getByRole("button", { name: "Create Bot", exact: true }).click();
@@ -268,12 +269,7 @@ try {
   await page.getByRole("menuitem", { name: "Remove…", exact: true }).click();
   await dialog.getByRole("button", { name: "Remove Bot", exact: true }).click();
   await card.waitFor({ state: "hidden" });
-  await page.getByRole("button", { name: "Edit Bot defaults", exact: true }).click();
-  await dialog.getByLabel("Model", { exact: true }).fill("future-bot-model");
-  await dialog.getByRole("button", { name: "Save defaults", exact: true }).click();
-  await dialog.waitFor({ state: "hidden" });
-  assert.equal(defaults.model, "future-bot-model");
-  assert.equal(bots.find((bot) => bot.id === "bot-1").settings.model, "gpt-6-sol");
+  // Bot defaults are the managed settings editor's; settings-browser-check covers them.
   await page.locator('[data-node="bot:bot-1"]').getByRole("button", { name: "Tools", exact: true }).click();
   await dialog.getByLabel("Operation", { exact: true }).selectOption("voice_speak");
   assert.equal(await dialog.getByLabel("sessionId", { exact: true }).getAttribute("readonly"), "");
@@ -481,7 +477,7 @@ try {
   assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 391, "mobile dialog fits the viewport");
   await page.screenshot({ path: join(evidence, "create-mobile.png"), animations: "disabled" });
   assert.deepEqual(errors, [], "browser has no uncaught application errors");
-  console.log(JSON.stringify({ ok: true, evidence, assertions: "live discovery defaults, catalog tabs/filter/refresh, usage meters/inspection, create validation/payload, stop/assign/restart/remove/defaults, scoped history/speech, Lab call speech, Lab inference discovery/ledger/unknown outcome/idempotent resend, stopped queue admission, interrupted upload reopening/resume, light/dark/mobile", actions: calls.filter((call) => mutations.has(call.name)) }, null, 2));
+  console.log(JSON.stringify({ ok: true, evidence, assertions: "live discovery defaults, catalog tabs/filter/refresh, usage meters/inspection, create validation/payload, stop/assign/restart/remove, scoped history/speech, Lab call speech, Lab inference discovery/ledger/unknown outcome/idempotent resend, stopped queue admission, interrupted upload reopening/resume, light/dark/mobile", actions: calls.filter((call) => mutations.has(call.name)) }, null, 2));
 } catch (error) {
   const page = browser?.contexts()[0]?.pages()[0];
   if (page) await page.screenshot({ path: join(evidence, "failure.png"), animations: "disabled" }).catch(() => undefined);

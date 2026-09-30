@@ -69,20 +69,22 @@ test("homeOf distinguishes spatial records from reference destinations", () => {
 });
 
 test("spaceHref builds space links with an optional encoded focus", () => {
-  assert.equal(spaceHref("fleet"), "/");
-  assert.equal(spaceHref("fleet", { kind: "bot", id: "bot-1" }), "/?focus=bot%3Abot-1");
+  assert.equal(spaceHref("hud"), "/");
+  assert.equal(spaceHref("hud", { kind: "work-item", id: "w1" }), "/?focus=work-item%3Aw1");
+  assert.equal(spaceHref("fleet", { kind: "bot", id: "bot-1" }), "/fleet?focus=bot%3Abot-1");
   assert.equal(spaceHref("accounts", { kind: "account", id: "a1" }), "/accounts?focus=account%3Aa1");
 });
 
 test("parseSpacePath resolves the root and single space segments only", () => {
-  assert.equal(parseSpacePath("/"), "fleet");
-  assert.equal(parseSpacePath("/fleet"), null);
+  assert.equal(parseSpacePath("/"), "hud");
+  assert.equal(parseSpacePath("/hud"), null, "the landing space has only the root address");
+  assert.equal(parseSpacePath("/fleet"), "fleet");
   assert.equal(parseSpacePath("/x"), null);
   assert.equal(parseSpacePath("/api"), null);
   assert.equal(parseSpacePath("/api/"), null);
   assert.equal(parseSpacePath("/system"), "system");
   assert.equal(parseSpacePath("/system/"), "system");
-  assert.equal(parseSpacePath("/fleet/"), null);
+  assert.equal(parseSpacePath("/hud/"), null);
   assert.equal(parseSpacePath("/accounts"), "accounts");
   assert.equal(parseSpacePath("/lab"), "lab");
   assert.equal(parseSpacePath("/roles"), "roles");

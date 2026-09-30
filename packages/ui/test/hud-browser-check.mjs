@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath } from "@stack/api";
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as hudApi } from "../../hud/dist/api.js";
-import { authorizeBrowser, fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui } from "./browser-fixture.mjs";
+import { authorizeBrowser, fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, serveFixture } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -67,9 +67,11 @@ const call = (name, args) => socketCall(socketPath("hud", env), "tools/call", { 
 const get = (id) => call("work_get", { id });
 
 try {
-  const definitions = { serve: ["serve_status", "serve_codex_tools", "serve_codex_tools_check", "serve_resources", "serve_resource_history"], auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"],
+  const serve = await serveFixture(handlers);
+  Object.assign(handlers, serve.handlers);
+  const definitions = { serve: serve.names, auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"],
     worker: ["worker_list", "worker_runtime_list", "worker_work_list"], bots: ["bot_list", "bot_defaults_get", "voice_status", "chat_list", "chat_thread_read", "chat_records"], usage: ["usage_snapshot"], api: ["docs_snapshot"] };
-  const topics = { serve: { pids_changed: "Fixture", codex_tools_changed: "Fixture", resources_changed: "Fixture" },
+  const topics = { serve: serve.topics,
     auth: { accounts_changed: "Fixture", login_changed: "Fixture", worker_accounts_changed: "Fixture", worker_login_changed: "Fixture" },
     worker: { workers_changed: "Fixture" }, bots: botsApi.events.topics, usage: { usage_changed: "Fixture" }, api: {} };
   for (const [name, names] of Object.entries(definitions)) {
@@ -117,7 +119,7 @@ try {
   page.on("dialog", (dialog) => { errors.push(`dialog: ${dialog.message()}`); void dialog.dismiss(); });
   const consoleErrors = [];
   page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
-  await page.goto(`${origin}/hud`);
+  await page.goto(`${origin}/`);
   const tree = page.locator('[data-window="hud-work"]');
   const item = page.locator('[data-window="hud-item"]');
   const timeline = page.locator('[data-window="hud-timeline"]');
@@ -208,7 +210,7 @@ try {
   assert.equal((await get(ids.epic)).state, "active", "cancelling the dialog changes nothing");
 
   // Arriving from a link selects the item and reveals it.
-  await page.goto(`${origin}/hud?focus=${encodeURIComponent(`work-item:${ids.design}`)}`);
+  await page.goto(`${origin}/?focus=${encodeURIComponent(`work-item:${ids.design}`)}`);
   await item.getByText("Information architecture").waitFor();
 
   await page.emulateMedia({ colorScheme: "dark" });

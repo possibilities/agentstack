@@ -93,7 +93,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, reducedMotion: "reduce" });
   await authorizeBrowser(page, origin, env);
   page.on("pageerror", (error) => issues.push(error.message));
-  await page.goto(`${origin}/`);
+  await page.goto(`${origin}/fleet`);
   await page.getByRole("main", { name: "Open bench" }).waitFor();
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
   assert.deepEqual(await page.locator("[data-window]:visible").evaluateAll((nodes) => nodes.map((node) => node.dataset.window).sort()), ["bots", "chat"]);
@@ -142,7 +142,7 @@ try {
   const systemPanned = await page.locator('[data-window="server"]').boundingBox();
   assert.equal(Math.round(systemPanned.x - systemPoint.x), -64);
   await page.goBack();
-  assert.ok(new URL(page.url()).pathname.endsWith("/"));
+  assert.ok(new URL(page.url()).pathname.endsWith("/fleet"));
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
   samePoint(initial, await point());
   await page.goForward();
@@ -262,7 +262,7 @@ try {
   await page.getByRole("button", { name: "Expand reading mode", exact: true }).click();
   for (const width of [900, 1100, 1600]) {
     await page.setViewportSize({ width, height: 1000 });
-    await page.waitForFunction(() => document.querySelector('[data-canvas="workbench"]').clientWidth === 240);
+    await page.waitForFunction(() => document.querySelector('[data-canvas="workbench"][data-space="fleet"]').clientWidth === 240);
     const chromeFits = await page.locator('header[data-chrome]').evaluate((el) => el.scrollWidth <= el.clientWidth);
     assert.ok(chromeFits, `bench controls overflow at ${width}px with both docks`);
     assert.equal(await referenceSeparator.getAttribute("aria-valuenow"), await referenceSeparator.getAttribute("aria-valuemax"));
@@ -271,7 +271,7 @@ try {
 
   // Spatial navigation on mobile hides overlays, not retained inspection or reference state.
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(`${origin}/?inspect=bot%3Abot-1&focus=bot%3Abot-1`);
+  await page.goto(`${origin}/fleet?inspect=bot%3Abot-1&focus=bot%3Abot-1`);
   await page.getByRole("heading", { name: "bot-1", exact: true }).waitFor();
   await page.getByRole("button", { name: "Show on bench", exact: true }).click();
   await page.locator('[data-dock="right"]').waitFor({ state: "hidden" });
@@ -321,7 +321,7 @@ try {
     saved.layout.order = ["chat", "bots"];
     localStorage.setItem("stack.uix.bench.v2.fleet", JSON.stringify(saved));
   });
-  await page.goto(`${origin}/`);
+  await page.goto(`${origin}/fleet`);
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
   const expectFront = async (id) => page.waitForFunction((target) => {
     const windows = [...document.querySelectorAll('[data-space="fleet"] [data-window]')];
@@ -339,10 +339,11 @@ try {
   await expectFront("bots");
   // Every space is a closed visual/focus boundary, even at minimum zoom and after panning.
   const expectedWindows = {
+    HUD: ["hud-attention", "hud-item", "hud-resources", "hud-timeline", "hud-work"],
     Fleet: ["bots", "chat"], Accounts: ["accounts", "model-catalogs", "usage"],
     Lab: ["call-speech", "inference"],
-    System: ["access", "activity", "host", "serve", "packages", "processes", "resources", "sampling"],
-    Roles: ["role-editor", "role-instructions", "role-mcp-servers", "role-preview", "role-projects", "role-skills"],
+    System: ["access", "activity", "codex-tools", "host", "packages", "processes", "resources", "sampling", "server"],
+    Roles: ["role-catalog", "role-editor", "role-instructions", "role-mcp-servers", "role-preview", "role-projects", "role-shims", "role-skills"],
     Inbox: ["notify-detail", "notify-inbox"],
     Signal: ["attention", "attention-changes", "attention-messages", "attention-runs", "signal"],
     Content: ["content-artifacts", "content-documents", "content-editor", "content-library", "content-preview"],
@@ -374,14 +375,14 @@ try {
   assert.equal(await page.getByPlaceholder("Ask something").inputValue(), "Keep this unsent draft across benches");
   await switchSpace("Fleet");
   assert.equal(await page.getByRole("button", { name: "Expand Bots", exact: true }).count(), 1);
-  assert.equal(await page.locator('.bench-enter').evaluate((el) => getComputedStyle(el).animationName), "none");
+  assert.equal(await page.locator(':not([hidden]) > .bench-enter').evaluate((el) => getComputedStyle(el).animationName), "none");
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.getByRole("main", { name: "Open bench" }).evaluate((el) => {
     for (const key of ["2", "3", "4", "5"]) el.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
   });
   await page.locator('[data-space="roles"]').waitFor({ state: "visible" });
   assert.equal(new URL(page.url()).pathname, "/roles");
-  assert.equal(await page.locator('.bench-enter').evaluate((el) => getComputedStyle(el).animationDuration), "0.15s");
+  assert.equal(await page.locator(':not([hidden]) > .bench-enter').evaluate((el) => getComputedStyle(el).animationDuration), "0.15s");
   await page.waitForTimeout(200);
   assert.deepEqual(await page.locator("[data-window]:visible").evaluateAll((nodes) => nodes.map((n) => n.dataset.window).sort()), expectedWindows.Roles);
   await page.screenshot({ path: join(evidence, "isolated-roles-bench.png") });
@@ -394,7 +395,7 @@ try {
         collapsed: { accounts: true }, sizes: { bots: { width: 500 } }, order: ["bots", "accounts"] },
     }));
   });
-  await page.goto(`${origin}/`);
+  await page.goto(`${origin}/fleet`);
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
   samePoint({ x: 900, y: 1000 }, await point());
   await switchSpace("Accounts");

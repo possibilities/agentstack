@@ -81,6 +81,7 @@ Humans and Bots share one live view of the Work graph and edit it together witho
 silently overwriting each other. Other spaces are linked, not duplicated: Fleet chats
 (only while the Bot keeps the same root), Workers conversations, Accounts, System
 resources, and Content, Brain, Proc, Browse, Notify, Roles and Scrape records named by
-supported resource locators; unsupported locators stay copyable text. Worker windows
-still show a turn's `workContext` through the generic inspector only; linking it to
-its Work item from the Workers space is a separate UI decision.
+supported resource locators; unsupported locators stay copyable text. In the other
+direction, the Workers space links each turn's captured `workContext` to its Work item:
+the Worker summary shows the latest turn's item, the Turns tab each turn's item, source
+and whether the item's scope has moved on, and the Worker inspector relates the item.

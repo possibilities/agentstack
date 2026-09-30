@@ -12,7 +12,7 @@ import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall,
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as procApi } from "../../proc/dist/api.js";
 import { ProcStore } from "../../proc/dist/src/store.js";
-import { authorizeBrowser, fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui } from "./browser-fixture.mjs";
+import { authorizeBrowser, fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, serveFixture } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -78,9 +78,11 @@ try {
   const doc = (name, api) => fixtureDoc(name, api, websocket.url, publishedJsonSchema);
   const catalog = [doc("proc", procApi), doc("bots", botsApi), doc("serve"), doc("auth"), doc("worker"), doc("usage"), doc("api")];
   handlers.docs_snapshot = () => ({ packages: catalog });
-  const definitions = { serve: ["serve_status", "serve_resources", "serve_resource_history"], auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"],
+  const serve = await serveFixture(handlers);
+  Object.assign(handlers, serve.handlers);
+  const definitions = { serve: serve.names, auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"],
     worker: ["worker_list", "worker_runtime_list"], bots: ["bot_list", "bot_defaults_get", "voice_status", "chat_list", "chat_thread_read"], usage: ["usage_snapshot"], api: ["docs_snapshot"] };
-  const topics = { serve: { pids_changed: "Fixture", resources_changed: "Fixture" },
+  const topics = { serve: serve.topics,
     auth: { accounts_changed: "Fixture", login_changed: "Fixture", worker_accounts_changed: "Fixture", worker_login_changed: "Fixture" },
     worker: { workers_changed: "Fixture" }, bots: botsApi.events.topics, usage: { usage_changed: "Fixture" }, api: {} };
   for (const [name, names] of Object.entries(definitions)) {
@@ -247,7 +249,7 @@ try {
   await page.keyboard.press("Escape");
 
   // The Fleet Bot card links its schedule count into a filtered Schedules list.
-  await page.goto(`${origin}/`);
+  await page.goto(`${origin}/fleet`);
   await page.getByRole("link", { name: /schedule/ }).first().waitFor();
   await page.getByRole("link", { name: /1 schedule/ }).first().click();
   await schedules.getByText("Bot nightly sync").waitFor();

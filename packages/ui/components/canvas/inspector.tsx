@@ -231,6 +231,8 @@ function resolve(ref: NodeRef, state: StackState): View | null {
       if (state.bots.data?.some((bot) => bot.id === worker.botId)) related.push({ ref: { kind: "bot", id: worker.botId }, label: `${worker.botId} · started it` });
       related.push({ ref: { kind: "worker-account", id: worker.accountId }, label: workerLabels.get(worker.accountId) ?? shortId(worker.accountId) });
       if (state.workerRuntimes.data?.some((runtime) => runtime.id === worker.accountId)) related.push({ ref: { kind: "worker-runtime", id: worker.accountId }, label: "Runtime" });
+      const context = state.workerStatuses[ref.id]?.data?.turn?.workContext ?? state.workerSessions.data?.find((item) => item.id === ref.id)?.turn?.workContext;
+      if (context) related.push({ ref: { kind: "work-item", id: context.workItemId }, label: `${state.hudTree.data?.rows.find((row) => row.item.id === context.workItemId)?.item.title ?? "Work"} · latest turn` });
       return {
         eyebrow: `${providerTitle(worker.provider)} Worker · ${worker.phase.replace("_", " ")}`, accent: "worker", title: workerLabel(worker), record: worker,
         fields: recordFields(catalog, "worker", "worker_list"), related,

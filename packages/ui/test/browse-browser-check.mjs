@@ -9,8 +9,9 @@ import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { api as botsApi } from "../../bots/dist/api.js";
 import { publishedJsonSchema, serveSocket, serveWebSocket, socketPath } from "@stack/api";
-import { anyObject, fixtureDoc, freePort as port, gatewayRoot, ui, z, authorizeBrowser } from "./browser-fixture.mjs";
+import { anyObject, fixtureDoc, freePort as port, gatewayRoot, ui, z, authorizeBrowser, serveFixture } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -112,18 +113,23 @@ try {
       state: "resolved", outcome: "skipped", note: "Not needed", revision: 5, createdAt: iso(-7_200_000), resolvedAt: iso(-7_000_000), issue: null, quiesced: true },
   ];
 
+  const serve = await serveFixture(handlers);
+  Object.assign(handlers, serve.handlers);
   const definitions = { browse: Object.keys(handlers).filter((name) => name.startsWith("browser_") || name.startsWith("agent_browser_") || name.startsWith("hypeman_")),
-    serve: ["serve_status"], bots: ["bot_list", "bot_defaults_get", "voice_status"], api: ["docs_snapshot"] };
-  const topics = { browse: browseApi.events.topics, serve: { pids_changed: "Fixture" }, bots: { bots_changed: "Fixture", defaults_changed: "Fixture", voice_changed: "Fixture" }, api: {} };
+    serve: serve.names, bots: ["bot_list", "bot_defaults_get", "voice_status"], api: ["docs_snapshot"] };
+  const topics = { browse: browseApi.events.topics, serve: serve.topics, bots: botsApi.events.topics, api: {} };
   websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, Object.keys(definitions)), port: 0 });
   const catalog = [fixtureDoc("browse", browseApi, websocket.url, publishedJsonSchema), ...["serve", "bots", "api"].map((name) => ({ ...fixtureDoc(name, null, websocket.url, publishedJsonSchema), events: topics[name],
     transports: [{ type: "websocket", description: "Fixture", supported: true, subscriptions: true, endpoint: websocket.url, operations: definitions[name], events: Object.keys(topics[name]), routes: [] }] }))];
   handlers.docs_snapshot = () => ({ packages: catalog });
   for (const [name, names] of Object.entries(definitions)) served.set(name, await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {},
     operations: names.map((operation) => ({ name: operation, description: operation, input: anyObject, output: z.any(), async call(_ctx, input) { calls.push({ name: operation, input }); return handlers[operation](input); } })),
-    events: { topics: topics[name] } }));
+    // The page subscribes each Bot's scoped chat topics, so bots needs its real topics and a scope.
+    events: { topics: topics[name], scope: name === "bots" ? { valid: () => true, description: "Fixture", example: "bot-1" } : undefined } }));
 
   const nextPort = await port();
+  // The gateway admits only the page origin it serves.
+  env.STACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${nextPort}`;
   next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), process.env.BROWSE_NEXT === "start" ? "start" : "dev", "--hostname", "127.0.0.1", "--port", String(nextPort)], { cwd: ui, env, stdio: ["ignore", "pipe", "pipe"] });
   next.stdout.on("data", (chunk) => { log += chunk; }); next.stderr.on("data", (chunk) => { log += chunk; });
   const origin = `http://127.0.0.1:${nextPort}`;
@@ -142,7 +148,7 @@ try {
   page.on("dialog", (dialog) => { errors.push(`dialog: ${dialog.message()}`); void dialog.dismiss(); });
 
   // Fleet links a Bot waiting on a person to its handoff, in Browse.
-  await page.goto(`${origin}/`);
+  await page.goto(`${origin}/fleet`);
   const help = page.locator('[data-window="bots"]').getByRole("link", { name: /Waiting on you in the browser/ });
   await help.waitFor();
   await help.click();
@@ -246,7 +252,7 @@ try {
   await page.getByText(/Browser handoff · Completed · reported/).waitFor();
 
   // The b key reaches Browse from another space.
-  await page.goto(`${origin}/`);
+  await page.goto(`${origin}/fleet`);
   await page.locator('[data-window="bots"]').waitFor();
   await page.keyboard.press("b");
   await page.waitForURL(/\/browse/);

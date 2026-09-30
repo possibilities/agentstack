@@ -21,6 +21,7 @@ import { useNow, useStack, useStore, useWorkbench, useWorkerWindows } from "./pr
 import { phaseTitle, phaseTone } from "./worker-windows";
 import { Window } from "./window";
 import { WorkerSettingsTab } from "./worker-settings";
+import { WorkContextLink } from "./hud-shared";
 
 type Tab = "conversation" | "changes" | "turns" | "tools" | "records" | "session" | "settings";
 const tabs: Array<[Tab, string]> = [["conversation", "Conversation"], ["changes", "Changes"], ["turns", "Turns"], ["tools", "Tools"], ["records", "Records"], ["session", "Session"], ["settings", "Settings"]];
@@ -296,6 +297,11 @@ function Summary({ worker, status, statusError }: { worker: WorkerSession; statu
         {mismatch ? <Chip icon={TriangleAlertIcon} tone="warning" title="The native session reported different settings">observed {[observed?.model, observed?.effort].filter(Boolean).join(" · ")}</Chip> : null}
         <Chip icon={FolderGitIcon} title={worker.cwd ?? worker.repo} copy={worker.cwd ?? worker.repo} label="worktree path">{worker.repo.split("/").filter(Boolean).at(-1) ?? worker.repo}</Chip>
         {worker.branch ? <Chip icon={GitBranchIcon} title={worker.branch} copy={worker.branch} label="branch">{worker.baseCommit ? `from ${worker.baseCommit.slice(0, 7)}` : worker.branch}</Chip> : null}
+        {turn?.workContext ? (
+          <span className="inline-flex h-6 max-w-full min-w-0 items-center gap-1 rounded-md bg-muted/70 px-1.5 text-[0.7rem]" aria-label="Latest turn's Work">
+            <WorkContextLink context={turn.workContext} />
+          </span>
+        ) : null}
         {worker.sourceDirty ? <Chip icon={TriangleAlertIcon} tone="warning" title="The source checkout had uncommitted changes when this Worker started; its worktree does not include them">source was dirty</Chip> : null}
         {role ? (
           <Chip icon={ScrollTextIcon} tone={role.state === "older" ? "warning" : undefined} title={workerRoleHint(role, workerDefaultOf(roleCatalog.data))}>
@@ -569,6 +575,7 @@ function TurnsTab({ worker, generation }: { worker: WorkerSession; generation: n
               <Row label="Dispatched">{turn.dispatchedAt ? <><Time at={turn.dispatchedAt} />{turn.dispatchedPromptSeq !== null ? ` · record ${turn.dispatchedPromptSeq}` : ""}</> : "not dispatched"}</Row>
               <Row label="Duration">{span(turn.updatedAt - (turn.dispatchedAt ?? turn.createdAt))}</Row>
               <Row label="Request" mono copy={turn.requestId}>{shortId(turn.requestId, 13)}</Row>
+              <Row label="Work" hint="The HUD Work item this turn was admitted for, captured with its scope revision.">{turn.workContext ? <WorkContextLink context={turn.workContext} className="max-w-full justify-end" /> : "not associated"}</Row>
             </dl>
             {turn.issue ? <p className="text-[0.72rem] text-pretty text-warning">{turn.issue}</p> : null}
           </article>

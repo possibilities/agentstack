@@ -42,7 +42,8 @@ export function AttentionWindow() {
   return (
     <Window id="hud-attention" title="Needs attention" subtitle={hudTree.data ? `${total} open item${total === 1 ? "" : "s"}` : "hud"} icon={HandIcon} accent="hud"
       count={total || null} status={status.hud} endpoint={endpoints.hud} updatedAt={hudTree.at} error={hudTree.error} empty={!hudTree.data}>
-      {!hudTree.data ? <HudPlaceholder title={hudTree.error ? "Work unavailable" : "Reading work…"} icon={HandIcon} />
+      {!endpoints.hud ? <HudPlaceholder title="HUD isn't served by this server" icon={HandIcon} />
+        : !hudTree.data ? <HudPlaceholder title={hudTree.error ? "Work unavailable" : "Reading work…"} icon={HandIcon} />
         : (
           <>
             {groups.length ? groups.map((group) => (

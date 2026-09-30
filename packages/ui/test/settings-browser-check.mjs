@@ -14,7 +14,7 @@ import { publishedJsonSchema, serveSocket, serveWebSocket, socketPath } from "@s
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as workerApi } from "../../worker/dist/api.js";
 import { SettingsStore, catalog, codexSchema, evidence, settingsState } from "../../settings/dist/src/index.js";
-import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, ui, authorizeBrowser } from "./browser-fixture.mjs";
+import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, ui, authorizeBrowser, serveFixture } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -168,9 +168,11 @@ try {
   websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["worker", "auth", "serve", "bots", "api"]), port: 0 });
   const doc = (name, api) => fixtureDoc(name, api, websocket.url, publishedJsonSchema);
   handlers.docs_snapshot = () => ({ packages: [doc("worker", workerApi), doc("bots", botsApi), doc("auth"), doc("serve"), doc("api")] });
-  const definitions = { serve: ["serve_status", "serve_resources", "serve_resource_history"], auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"],
+  const serve = await serveFixture(handlers);
+  Object.assign(handlers, serve.handlers);
+  const definitions = { serve: serve.names, auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"],
     bots: botsApi.operations.map((operation) => operation.name), worker: workerApi.operations.map((operation) => operation.name), api: ["docs_snapshot"] };
-  const topics = { serve: { pids_changed: "Fixture" }, auth: { accounts_changed: "Fixture", worker_accounts_changed: "Fixture" }, bots: botsApi.events.topics, worker: workerApi.events.topics, api: {} };
+  const topics = { serve: serve.topics, auth: { accounts_changed: "Fixture", worker_accounts_changed: "Fixture" }, bots: botsApi.events.topics, worker: workerApi.events.topics, api: {} };
   for (const [name, names] of Object.entries(definitions)) {
     const answered = Object.fromEntries(names.map((operation) => [operation, handlers[operation] ?? (() => { throw new Error(`${operation} is not part of this fixture`); })]));
     sockets.set(name, await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {}, operations: fixtureOperations(names, answered),
@@ -197,7 +199,7 @@ try {
   const count = (name) => writes.filter(([op]) => op === name).length;
 
   // --- A running Bot: opening and browsing writes nothing, and evidence stays truthful.
-  await page.goto(`${origin}/`);
+  await page.goto(`${origin}/fleet`);
   const botsWindow = page.locator('[data-window="bots"]');
   await botsWindow.getByRole("button", { name: "bot-1 actions" }).click();
   await page.getByRole("menuitem", { name: "Settings…" }).click();

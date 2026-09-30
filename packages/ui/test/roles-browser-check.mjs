@@ -795,7 +795,8 @@ try {
 
   // A non-default Role goes with its unsaved edits, after saying what it removes.
   await tap(roleRow("Third").getByRole("button", { name: "Third actions" }));
-  await page.getByRole("menuitem", { name: "Edit details" }).click();
+  // Scope to the menu just opened: the previous Role's menu may still be closing.
+  await page.getByRole("menu", { name: "Third actions" }).getByRole("menuitem", { name: "Edit details" }).click();
   await editor.getByRole("form", { name: "Edit Role Third" }).getByLabel(/^Description/).fill("Draft that will not be kept");
   await roleRow("Third").getByRole("img", { name: "Unsaved changes" }).waitFor();
   await tap(roleRow("Third").getByRole("button", { name: "Third actions" }));

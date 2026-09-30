@@ -12,7 +12,7 @@ import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall,
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as rolesApi } from "../../roles/dist/api.js";
 import { api as workerApi } from "../../worker/dist/api.js";
-import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser } from "./browser-fixture.mjs";
+import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -44,8 +44,11 @@ const turn = (n, workerId, extra) => ({ id: tid(n), workerId, phase: "completed"
   prompt: "Fix the flaky scheduler test", requestedModel: "claude-opus-5-5", requestedEffort: "high",
   observedSettings: { model: "claude-opus-5-5", effort: "high", mode: "default", at: now, recordSeq: 1 }, dispatchedAt: now - 500_000, dispatchedPromptSeq: 2,
   createdAt: now - 500_001, updatedAt: now - 400_000, ...extra });
+const workItem = "55555555-0000-4000-8000-000000000001";
 const turns = {
+  // The latest turn was admitted for a HUD Work item; the earlier one was not associated.
   [wid("a")]: [turn(1, wid("a")), turn(2, wid("a"), { phase: "awaiting_input", stopReason: null, prompt: "Also run the full suite",
+    workContext: { workItemId: workItem, scopeRevision: 2, source: "explicit" },
     observedSettings: { model: "claude-sonnet-5", effort: "high", mode: "default", at: now, recordSeq: 9 }, updatedAt: now - 5_000 })],
   [wid("b")]: [turn(3, wid("b"), { requestedModel: "gpt-6-sol", requestedEffort: "medium", observedSettings: null })],
   [wid("c")]: [turn(4, wid("c"), { phase: "unknown", stopReason: null, issue: "Turn outcome is unknown after server restart" })],
@@ -161,9 +164,11 @@ try {
   const doc = (name, api) => fixtureDoc(name, api, websocket.url, publishedJsonSchema);
   const catalog = [doc("worker", workerApi), doc("bots", botsApi), doc("roles", rolesApi), doc("auth"), doc("serve"), doc("api")];
   handlers.docs_snapshot = () => ({ packages: catalog });
-  const definitions = { serve: ["serve_status", "serve_resources", "serve_resource_history"], auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"],
+  const serve = await serveFixture(handlers);
+  Object.assign(handlers, serve.handlers);
+  const definitions = { serve: serve.names, auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"],
     bots: ["bot_list", "bot_defaults_get", "voice_status"], worker: workerApi.operations.map((operation) => operation.name), api: ["docs_snapshot"] };
-  const topics = { serve: { pids_changed: "Fixture" }, auth: { accounts_changed: "Fixture", worker_accounts_changed: "Fixture" }, bots: botsApi.events.topics, worker: workerApi.events.topics, api: {} };
+  const topics = { serve: serve.topics, auth: { accounts_changed: "Fixture", worker_accounts_changed: "Fixture" }, bots: botsApi.events.topics, worker: workerApi.events.topics, api: {} };
   for (const [name, names] of Object.entries(definitions)) {
     sockets.set(name, await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {}, operations: fixtureOperations(names, handlers),
       events: { topics: topics[name], scope: name === "bots" || name === "worker" ? { valid: () => true, description: "Fixture", example: "id" } : undefined } }));
@@ -247,6 +252,12 @@ try {
   await worker.getByRole("tab", { name: "Turns" }).click();
   await worker.getByText("Also run the full suite", { exact: true }).waitFor();
   await worker.getByText("claude-sonnet-5 · high · default", { exact: true }).waitFor();
+  // Each turn's captured Work context links to its HUD item, the landing space; an unassociated turn says so.
+  const workLinks = worker.getByRole("link", { name: /Work 55555555/ });
+  await workLinks.first().waitFor();
+  assert.equal(await workLinks.count(), 2, "the summary's latest turn and that turn's row both link the item");
+  assert.equal(await workLinks.first().getAttribute("href"), `/?focus=${encodeURIComponent(`work-item:${workItem}`)}`);
+  await worker.getByText("not associated", { exact: true }).waitFor();
   await worker.getByRole("tab", { name: "Tools" }).click();
   await worker.getByText("The parent link is unverified and the child’s status is unknown.", { exact: false }).waitFor();
   await worker.getByRole("button", { name: /Run pnpm test/ }).click();
@@ -318,7 +329,7 @@ try {
   await page.keyboard.press("Escape");
 
   // Fleet's Bot card links to its Workers, filtered to that Bot.
-  await page.goto(`${origin}/`);
+  await page.goto(`${origin}/fleet`);
   await page.locator('[data-window="bots"]').getByRole("link", { name: /3 Workers/ }).click();
   await page.getByRole("button", { name: "Spaces · Workers" }).waitFor();
   await list.locator("[data-worker]").first().waitFor();

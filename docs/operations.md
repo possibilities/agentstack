@@ -6,7 +6,7 @@
 
 ## State and processes
 
-The UI entry `/` serves Fleet. The System space (`/system`) contains the running MCP Inspector link, full MCP URLs, server child processes, and host/resource sampling windows. Fleet cards expose Bot workspaces and endpoints; clicking a card's name opens its complete record in the inspector. Accounts contains Usage and Model catalogs; Fleet contains Bot lifecycle controls, tools and chat windows. Space navigation switches isolated benches, restoring each camera and retaining inspection.
+The UI entry `/` serves the HUD space; Fleet is at `/fleet`. The System space (`/system`) contains the running MCP Inspector link, full MCP URLs, server child processes, and host/resource sampling windows. Fleet cards expose Bot workspaces and endpoints; clicking a card's name opens its complete record in the inspector. Accounts contains Usage and Model catalogs; Fleet contains Bot lifecycle controls, tools and chat windows. Space navigation switches isolated benches, restoring each camera and retaining inspection.
 
 State defaults to `~/.local/state/stack`; set `STACK_STATE_DIR` for disposable checks. The server runs `access`, `api`, `auth`, `bots`, `brain`, `browse`, `content`, `infer`, `notify`, `proc`, `roles`, `scrape`, `signal`, `usage`, and `worker` socket children, a shared WebSocket child, Inspector, and UI canvas. It serves the `serve` Package API and MCP HTTP in-process. UI hosts the integrated Package API reference. Each Package API has `<state>/sockets/<name>.sock`. Bots launch codexnk on fresh opaque `<state>/app/<nonce>.sock` URLs. Read the reported `url` rather than deriving a socket path.
 

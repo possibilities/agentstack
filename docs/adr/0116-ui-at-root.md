@@ -1,6 +1,6 @@
 # 116. Serve the UI at the origin root
 
-Status: accepted, 2026-09-28.
+Status: accepted, 2026-09-28. The landing space changed from Fleet to HUD in [ADR 0134](0134-hud-at-root.md); the routing rules below are unchanged.
 
 The UI's Fleet bench lives only at `/`; the other benches live at `/<space>`. Navigation, deep links, local browser bootstrap, server status URLs and the authenticated Access UI origin use these paths. The integrated reference is available at `/?reference=overview`. `/connect/local` remains the separate local bootstrap route and `/connect` remains the remote pairing route.
 

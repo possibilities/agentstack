@@ -10,9 +10,9 @@ import { nodeKey, type NodeRef } from "./types";
 export type SpaceId = "fleet" | "accounts" | "lab" | "system" | "roles" | "inbox" | "signal" | "content" | "workers" | "scrape" | "browse" | "brain" | "proc" | "hud";
 
 export const spaces: { id: SpaceId; title: string; description: string; key: string }[] = [
-  { id: "fleet", title: "Fleet", description: "Bots and their controls", key: "1" },
-  // The digits are taken; h is free on the bench.
+  // The landing space. The digits are taken; h is free on the bench.
   { id: "hud", title: "HUD", description: "Shared work: what we're trying to accomplish, where each piece stands, what needs someone next and what is deployed on it", key: "h" },
+  { id: "fleet", title: "Fleet", description: "Bots and their controls", key: "1" },
   { id: "accounts", title: "Accounts", description: "Accounts, usage limits, and model catalogs", key: "2" },
   { id: "lab", title: "Lab", description: "Experimental windows for tinkering", key: "3" },
   { id: "system", title: "System", description: "Server, processes, packages, host resources and activity", key: "4" },
@@ -28,7 +28,7 @@ export const spaces: { id: SpaceId; title: string; description: string; key: str
   { id: "proc", title: "Proc", description: "What agents scheduled and ran on this machine, and what it printed", key: "p" },
 ];
 
-export const defaultSpace: SpaceId = "fleet";
+export const defaultSpace: SpaceId = "hud";
 
 export function isSpaceId(value: unknown): value is SpaceId {
   return spaces.some((space) => space.id === value);
@@ -146,7 +146,7 @@ export function spaceHref(space: SpaceId, focus?: NodeRef | null): string {
   return focus ? `${base}?focus=${encodeURIComponent(nodeKey(focus))}` : base;
 }
 
-/** The root is Fleet; only single, known space segments resolve. */
+/** The root is HUD; only single, known space segments resolve. */
 export function parseSpacePath(pathname: string): SpaceId | null {
   const segments = pathname.split("/").filter(Boolean);
   if (segments.length === 0) return defaultSpace;

@@ -10,7 +10,7 @@ also has `content:read`; local Content links are unchanged. Use the remote
 browser check against disposable state after building in an isolated checkout:
 `PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs node packages/ui/test/remote-ui-browser-check.mjs`.
 
-The UI entry `/` serves Fleet, the initial space of one continuous bench. API
+The UI entry `/` serves HUD, the landing space ([ADR 0134](adr/0134-hud-at-root.md)); Fleet is at `/fleet`. API
 reference is a global tool attached to the viewport, so opening it does not
 navigate away from the current composition. System is a fourth space; see
 [ADR 0058](adr/0058-open-bench-and-global-tools.md) and
@@ -172,6 +172,11 @@ state, the subtree-completion batch prompt and `?focus=` arrival. It uses `next 
 PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
   node packages/ui/test/hud-browser-check.mjs
 ```
+
+Checks that serve the real package manifests through `gatewayRoot` build their `serve` fixture with
+`serveFixture` from `test/browser-fixture.mjs`. It answers every operation the real serve manifest
+selects, because the gateway admits a package only when all of them answer, so a new serve operation
+does not silently stop other spaces' checks from connecting.
 
 The bench check uses disposable sockets, a fixture snapshot and its own `next start`
 process. `CHROME_EXECUTABLE` overrides the default macOS Chrome path;

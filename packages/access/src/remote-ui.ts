@@ -9,7 +9,7 @@ import { localApi, verifier, type Peer } from "./network.js";
 const cookieName = "__Host-stack_ui";
 const refreshName = "__Host-stack_ui_refresh";
 const token = /^[A-Za-z0-9_-]{43}$/;
-const uiPagePath = /^\/(?:$|(?:accounts|lab|system|roles|inbox|signal|content|workers|scrape|browse|brain|proc|hud)\/?$)/;
+const uiPagePath = /^\/(?:$|(?:accounts|lab|system|roles|inbox|signal|content|workers|scrape|browse|brain|proc|fleet)\/?$)/;
 const json = (data: unknown, status = 200) => new Response(JSON.stringify({ schema_version: 1, ok: true, data }),
   { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
 const cookie = (header: string | null | undefined, name: string) =>

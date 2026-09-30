@@ -132,7 +132,7 @@ test("the root UI renders the canvas without losing local links, processes, or B
       assert.ok(dock, `Missing ${side} dock: ${path}`);
       return dock;
     };
-    const canvas = await readCanvas("/");
+    const canvas = await readCanvas("/fleet");
     assert.match(canvas, /Stack open bench/);
     assert.match(canvas, /Needs inspection|needs inspection/);
     assert.match(canvas, /Recorded process ownership could not be verified/);
@@ -169,11 +169,11 @@ test("the root UI renders the canvas without losing local links, processes, or B
     assert.match(unavailable, /Server status unavailable/);
     assert.match(unavailable, /No resource data/);
     assert.doesNotMatch(unavailable, /MCP Inspector/);
-    assert.match(await readCanvas("/"), /bot-1/);
+    assert.match(await readCanvas("/fleet"), /bot-1/);
     assert.equal((await fetch(`${origin}/nope`)).status, 404);
     assert.equal((await fetch(`${origin}/x`)).status, 404);
     assert.equal((await fetch(`${origin}/x/system`)).status, 404);
-    assert.equal((await fetch(`${origin}/fleet`)).status, 404);
+    assert.equal((await fetch(`${origin}/hud`)).status, 404);
     assert.equal((await fetch(`${origin}/system`)).status, 200);
     assert.equal((await fetch(`${origin}/api`)).status, 404);
     assert.equal((await fetch(`${origin}/x.md`)).status, 404);

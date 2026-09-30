@@ -5,7 +5,8 @@ import { AlertTriangleIcon, BanIcon, CircleCheckIcon, CircleDashedIcon, CircleDo
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { actorLabel, chatIdentity, hudFailure, referenceView, stateView, type HudFailure } from "@/lib/stack/hud";
-import type { WorkActor, WorkItem, WorkReceipt, WorkReference, WorkState } from "@/lib/stack/types";
+import { shortId } from "@/lib/stack/derive";
+import type { WorkActor, WorkContext, WorkItem, WorkReceipt, WorkReference, WorkState } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { CopyButton, NodeLink } from "./primitives";
 import { useChatWindows, useStack, useStore, useWorkbench } from "./provider";
@@ -115,6 +116,28 @@ export function ReferenceLink({ reference, titles, className }: { reference: Wor
       <span className="truncate font-mono text-[0.72rem]" title={exact}>{view.label}</span>
       {view.detail ? <span className="shrink-0 text-muted-foreground">· {view.detail}</span> : null}
       <CopyButton value={exact} label="reference" />
+    </span>
+  );
+}
+
+const contextSource: Record<WorkContext["source"], string> = { explicit: "dispatched for it", focus: "from Chat focus", continuation: "continued" };
+
+/**
+ * A Worker turn's captured Work context, linked to its HUD item. It is association
+ * evidence for that turn at its captured scope, not a claim the work is current or done.
+ */
+export function WorkContextLink({ context, className }: { context: WorkContext; className?: string }) {
+  const { hudTree } = useStack();
+  const item = hudTree.data?.rows.find((row) => row.item.id === context.workItemId)?.item;
+  const label = item?.title ?? `Work ${shortId(context.workItemId)}`;
+  const later = item && item.scopeRevision > context.scopeRevision;
+  return (
+    <span className={cn("inline-flex min-w-0 items-center gap-1", className)}
+      title={`Captured at scope ${context.scopeRevision}, ${contextSource[context.source]}${later ? `; the item is now at scope ${item.scopeRevision}` : ""}`}>
+      {item ? <StateMark state={item.state} /> : null}
+      <NodeLink node={{ kind: "work-item", id: context.workItemId }} label={label} className="min-w-0 truncate">{label}</NodeLink>
+      <span className="shrink-0 text-muted-foreground">· {contextSource[context.source]}</span>
+      {later ? <span className="shrink-0 text-warning">· earlier scope</span> : null}
     </span>
   );
 }

@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { withLocalAuth, localCookieName } from "@stack/api";
+import { findPackage, withLocalAuth, localCookieName } from "@stack/api";
 
 /** Authenticate a disposable rendered fixture; production bootstrap is tested separately. */
 export async function authorizeBrowser(page, origin, env) {
@@ -72,4 +72,33 @@ export async function freePort() {
   const value = server.address().port;
   await new Promise((resolve) => server.close(resolve));
   return value;
+}
+
+const unobserved = (name) => () => { throw new Error(`${name} is not observed in this fixture`); };
+const noResources = () => ({
+  observation: { snapshotId: null, capturedAt: null, ageMs: null, freshness: "unavailable", lastAttemptAt: null, error: "server_missing", source: "unsupported", intervalMs: 5_000, staleAfterMs: 15_000, collectionDurationMs: null, coverage: null },
+  host: null, capabilities: { rssBytes: false, virtualBytes: false, cpuTimeMs: false, cpuPercent: false, threads: false, diskIoBytes: false, openFileDescriptors: false, networkBytes: false, gpu: false, perSessionAllocation: false },
+  retention: { maxSamples: 0, maxProcessRecords: 0, retainedSamples: 0, oldestAttemptAt: null, newestAttemptAt: null, droppedSamples: 0 }, runtime: null,
+  scopes: [], processes: [], page: { offset: 0, limit: 100, total: 0, nextOffset: null },
+});
+
+/**
+ * A `serve` fixture the WebSocket gateway admits: it answers every operation the real serve
+ * manifest selects and declares every real topic, so a new serve operation can't silently stop
+ * a check from connecting. A check's own `serve_*` handlers take precedence; other reads report no
+ * observation (resources unavailable, Codex tools and history unobserved).
+ */
+export async function serveFixture(handlers = {}) {
+  const overrides = Object.fromEntries(Object.entries(handlers).filter(([name]) => name.startsWith("serve_")));
+  const { config } = await findPackage(root, "serve");
+  const names = config.websocket?.operations;
+  if (!Array.isArray(names)) throw new Error("serve must select explicit WebSocket operations");
+  const { topics } = await import(pathToFileURL(join(root, "packages", "serve", "dist", "api.js")).href);
+  const served = {
+    serve_status: () => ({ pid: process.pid, startedAt: new Date().toISOString(), nodeVersion: process.version, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
+    serve_resources: noResources,
+    ...overrides,
+  };
+  for (const name of names) served[name] ??= unobserved(name);
+  return { names, topics: Object.fromEntries(Object.keys(topics).map((topic) => [topic, "Fixture"])), handlers: served };
 }

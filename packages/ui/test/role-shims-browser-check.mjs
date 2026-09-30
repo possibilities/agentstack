@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath } from "@stack/api";
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as rolesApi } from "../../roles/dist/api.js";
-import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser } from "./browser-fixture.mjs";
+import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -64,7 +64,9 @@ try {
   const doc = (name, api) => fixtureDoc(name, api, websocket.url, publishedJsonSchema);
   const catalog = [doc("roles", rolesApi), doc("bots", botsApi), doc("serve"), doc("worker"), doc("api")];
   handlers.docs_snapshot = () => ({ packages: catalog });
-  for (const [name, names, topics] of [["serve", ["serve_status", "serve_resources", "serve_resource_history"], { pids_changed: "Fixture" }], ["bots", ["bot_list", "bot_defaults_get", "voice_status"], botsApi.events.topics],
+  const serve = await serveFixture(handlers);
+  Object.assign(handlers, serve.handlers);
+  for (const [name, names, topics] of [["serve", serve.names, serve.topics], ["bots", ["bot_list", "bot_defaults_get", "voice_status"], botsApi.events.topics],
     ["worker", ["worker_list", "worker_runtime_list"], { workers_changed: "Fixture" }], ["api", ["docs_snapshot"], {}]]) {
     sockets.push(await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {}, operations: fixtureOperations(names, handlers),
       events: { topics, scope: name === "bots" ? { valid: () => true, description: "Fixture", example: "bot-1" } : undefined } }));
