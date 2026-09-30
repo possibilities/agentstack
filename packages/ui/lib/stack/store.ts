@@ -77,6 +77,8 @@ export type StackState = Snapshot & {
   botStateId: string | null;
   /** Per Bot: bumped on bot_state_changed, lifecycle and queue notices and scoped (re)connects. Bot state views re-read on it. */
   botStateGenerations: Record<string, number>;
+  /** Bumped on each xcom (re)connect. Xcom publishes no events, so its view re-reads on this and after its own actions. */
+  xcomGeneration: number;
   /** Bumped on every `serve_state_changed` and serve (re)connect; open maintenance views re-read what they hold on it. */
   serveStateGeneration: number;
   /** Local-only PATH inventory; no Roles window consumes it until the shim UI is requested. */
@@ -309,7 +311,7 @@ export class StackStore {
       codexTools: { data: null, error: null, at: null },
       stateInventory: { data: null, error: null, at: null }, stateSelection: { owners: null, measure: false },
       subscriptions: { data: null, error: null, at: null }, subscriptionFilter: {}, serveStateGeneration: 0,
-      botStateId: null, botStateGenerations: {},
+      botStateId: null, botStateGenerations: {}, xcomGeneration: 0,
       roleContext: {}, roleContextShown: {},
       signalStatus: { data: null, error: null, at: null }, signalGeneration: 0, signalRecords: { items: {}, messages: {}, runs: {} },
       contentDocuments: { data: null, error: null, at: null }, contentTags: { data: null, error: null, at: null },
@@ -440,6 +442,8 @@ export class StackStore {
     // hud_changed invalidates the whole shared view; (re)subscription resnapshots it, since notices are not replayed.
     // Item-scoped work_changed subscriptions belong to the views that watch one item (watchWorkItem).
     open("hud", () => this.invalidateHud(), () => this.invalidateHud(), ["hud_changed"]);
+    // Xcom is local operator state with no change events: the channel carries its reads and controls only.
+    if (!this.state.remote) open("xcom", () => this.set({ xcomGeneration: this.state.xcomGeneration + 1 }));
     this.reconcileScoped();
     for (const id of this.workerWatchers.keys()) this.openWorkerChannel(id);
     for (const id of this.procRunWatchers.keys()) this.openProcChannel(id);

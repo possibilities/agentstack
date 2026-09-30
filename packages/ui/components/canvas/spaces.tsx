@@ -29,6 +29,8 @@ import { HostWindow, ProcessesWindow, ResourcesWindow, SamplingWindow } from "./
 import { ActivityWindow, ServerWindow, PackagesWindow } from "./system-windows";
 import { CodexToolsWindow } from "./codex-tools";
 import { StateInventoryWindow, SubscriptionsWindow } from "./state-windows";
+import { XcomStateWindow } from "./xcom-state";
+import { ArchiveIcon } from "lucide-react";
 import { ChatWindow } from "./chat-window";
 import { RoleCatalogWindow } from "./role-catalog";
 import { RoleEditorWindow } from "./role-editor";
@@ -134,6 +136,7 @@ export const spaceViews: Record<SpaceId, {
       { id: "activity", title: "Activity", icon: RadioIcon, accent: "events", width: 400, height: 460, column: 3, element: <ActivityWindow /> },
       { id: "state", title: "State", icon: DatabaseIcon, accent: "server", width: 500, height: 760, column: 5, element: <StateInventoryWindow /> },
       { id: "subscriptions", title: "Subscriptions", icon: CableIcon, accent: "server", width: 460, height: 560, column: 6, element: <SubscriptionsWindow /> },
+      { id: "xcom-state", title: "Xcom", icon: ArchiveIcon, accent: "server", width: 440, height: 720, column: 6, element: <XcomStateWindow /> },
     ],
   },
   roles: {
