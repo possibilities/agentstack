@@ -1,11 +1,13 @@
 import { z } from "zod";
-import { CodexToolsDiagnostics, operation, withLocalAuth, localOrigin, type PackageApi } from "@stack/api";
+import { CodexToolsDiagnostics, operation, operatorInvocation, withLocalAuth, localOrigin, type PackageApi, type InvocationContext } from "@stack/api";
 import { statusSource, type StatusSource } from "./src/status.js";
 import { ResourceMonitor } from "./src/resources/monitor.js";
 import { serverResourcesInput, serverResourcesOutput, serverResourceHistoryInput, serverResourceHistoryOutput } from "./src/resources/schema.js";
 import { serverStateOperations } from "./src/state.js";
 import { withStateInventory } from "@stack/api";
 import { serverStateCategories } from "./src/state-categories.js";
+import { DeveloperService } from "./src/developer/service.js";
+import { serveSettings, harnessReleases } from "./src/developer/schema.js";
 
 const childStatusSchema = z.object({
   name: z.string().describe("Required child name."),
@@ -22,6 +24,7 @@ export type ServerContext = {
   source: StatusSource;
   resources: ResourceMonitor;
   codexTools: CodexToolsDiagnostics;
+  developer: DeveloperService;
   env?: NodeJS.ProcessEnv;
 };
 
@@ -131,17 +134,56 @@ export const serverResourceHistory = operation({
   async call(ctx: ServerContext, input) { return ctx.resources.history(input); },
 });
 
+function requireDeveloperOperator(invocation?: InvocationContext): void {
+  if (!operatorInvocation(invocation)) throw new Error("developer controls require local operator authority");
+}
+
+export const serverSettingsRead = operation({
+  name: "serve_settings_read",
+  description: "Read durable global Server settings without starting work. developerMode defaults to false. These settings are independent of Bot and Worker managed runtime settings.",
+  input: z.strictObject({}), output: serveSettings,
+  annotations: { title: "Server settings", readOnlyHint: true },
+  async call(ctx: ServerContext, _input, invocation) { requireDeveloperOperator(invocation); return ctx.developer.settings(); },
+});
+
+export const serverSettingsUpdate = operation({
+  name: "serve_settings_update",
+  description: "Save and apply developerMode at its exact observed revision. Enabling schedules a due upstream release check; disabling aborts and fences checks and recurrence while retaining the cache. A stale revision fails; read settings before retrying. An unchanged value at the current revision is a no-op.",
+  input: z.strictObject({ developerMode: z.boolean(), expectedRevision: z.number().int().nonnegative() }), output: serveSettings,
+  annotations: { title: "Update server settings" },
+  async call(ctx: ServerContext, input, invocation) { requireDeveloperOperator(invocation); return ctx.developer.update(input); },
+});
+
+export const serverHarnessReleases = operation({
+  name: "serve_harness_releases",
+  description: "Read cached public upstream releases for OpenCode, Codex, Claude Code and Devin CLI. Refuses while developer mode is disabled. Starts no network or processes. Last good versions survive failure and restart with explicit stale/error state. Changes are observed channel differences, not upgrade verdicts or comparisons to installed, SDK or Stack fork versions.",
+  input: z.strictObject({}), output: harnessReleases,
+  annotations: { title: "Harness releases", readOnlyHint: true },
+  async call(ctx: ServerContext, _input, invocation) { requireDeveloperOperator(invocation); return ctx.developer.snapshot(); },
+});
+
+export const serverHarnessReleasesCheck = operation({
+  name: "serve_harness_releases_check",
+  description: "Admit a public upstream check and return immediately; concurrent calls join with admitted false. Requires developer mode. Automatic checks run every six hours; missed intervals coalesce. Fixed channels have 15-second/256-KiB limits. Per-harness failures retain last good values. No installed-version probes, upgrades, installs, authentication, browsers or model turns.",
+  input: z.strictObject({}), output: z.strictObject({ admitted: z.boolean(), startedAt: z.iso.datetime().describe("Start of the admitted or already-running check. Read serve_harness_releases for outcomes.") }),
+  annotations: { title: "Check harness releases", openWorldHint: true },
+  async call(ctx: ServerContext, _input, invocation) { requireDeveloperOperator(invocation); return ctx.developer.check(); },
+});
+
 export const topics = {
   serve_state_changed: "Durable operator-managed subscription state changed. Refresh serve_subscription_list and affected state inventories; no payloads are included.",
   pids_changed: "Published when the set of owned child process ids changes.",
   codex_tools_changed: "Published when a Codex tools check starts or finishes. Refresh serve_codex_tools.",
   resources_changed: "Published after a resource sampling attempt, including failures. Refresh serve_resources or serve_resource_history; notices carry no metrics.",
+  serve_settings_changed: "Global Server settings changed. Refresh serve_settings_read; disabling developer mode makes release reads and checks unavailable.",
+  harness_releases_changed: "A release check started, advanced, finished or was interrupted. Refresh serve_harness_releases only while developer mode is enabled; notices carry no observations.",
 } as const;
 
 export type ServerTopic = keyof typeof topics;
 
 const packageApi: PackageApi<ServerContext, ServerTopic> = {
-  operations: [...serverStateOperations, serverStatus, serverCodexTools, serverCodexToolsCheck, serverResources, serverResourceHistory, serverLocalConnect, serverLocalRevoke],
+  operations: [...serverStateOperations, serverStatus, serverCodexTools, serverCodexToolsCheck, serverResources, serverResourceHistory, serverLocalConnect, serverLocalRevoke,
+    serverSettingsRead, serverSettingsUpdate, serverHarnessReleases, serverHarnessReleasesCheck],
   events: {
     topics,
     start(ctx: ServerContext, publish: (topic: ServerTopic) => void) {
@@ -149,21 +191,27 @@ const packageApi: PackageApi<ServerContext, ServerTopic> = {
       ctx.source.onStateChange = () => publish("serve_state_changed");
       ctx.resources.onChange = () => publish("resources_changed");
       ctx.codexTools.onChange = () => publish("codex_tools_changed");
+      ctx.developer.onSettingsChange = () => publish("serve_settings_changed");
+      ctx.developer.onReleasesChange = () => publish("harness_releases_changed");
       return () => {
         ctx.source.onChange = undefined;
         ctx.source.onStateChange = undefined;
         ctx.resources.onChange = undefined;
         ctx.codexTools.onChange = undefined;
+        ctx.developer.onSettingsChange = undefined;
+        ctx.developer.onReleasesChange = undefined;
       };
     },
   },
   async createContext(env) {
+    const developer = new DeveloperService(env);
     const resources = new ResourceMonitor({ roots: () => statusSource.resourceRoots(), env });
     resources.start();
-    return { source: statusSource, resources, codexTools: new CodexToolsDiagnostics(env), env };
+    developer.start();
+    return { source: statusSource, resources, codexTools: new CodexToolsDiagnostics(env), developer, env };
   },
   async closeContext(ctx) {
-    await Promise.all([ctx.resources.close(), ctx.codexTools.close()]);
+    await Promise.all([ctx.resources.close(), ctx.codexTools.close(), ctx.developer.close()]);
     ctx.source.detach();
   },
 };
