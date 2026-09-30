@@ -1,5 +1,6 @@
 "use client";
 
+import { ProcClear } from "./proc-maintenance";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarClockIcon, ChevronRightIcon, EyeIcon, PauseIcon, PlayIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
@@ -255,6 +256,7 @@ function ExecutionRow({ execution }: { execution: ProcExecution }) {
           {expanded ? <Raw value={json!} className="mt-1" /> : null}
         </div>
       ) : null}
+      {execution.finishedAt ? <div className="mt-1 flex flex-col"><ProcClear kind="execution_content" id={execution.id} /></div> : null}
       {execution.processId ? (
         <button type="button" onClick={() => showRun(execution.processId!)}
           className="mt-1 inline-flex items-center gap-1 rounded-md bg-muted/70 px-1.5 py-0.5 font-mono text-[0.68rem] text-foreground/80 hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring">
