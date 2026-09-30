@@ -65,7 +65,7 @@ can retain `.stack-clear-<uuid>` quarantine, named in the result for inspection.
 | Bots | `bot_state_read`, `bot_workspace_list/read`, `bot_history_list`, `bot_queue_history`, `bot_launch_read`, `bot_log_read`, `bot_recovery_list`, `chat_upload_list/read` | `bot_state_plan` selects `workspace_clear`, `session_reset` with `history:retain/purge`, `history_clear` of one retired generation, `log_clear`, `launch_args_clear`, `upload_remove` or `recovery_discard`. Apply through corresponding `bot_<kind>`. |
 | Serve | `serve_state_list`, `serve_subscription_list/get`, `serve_settings_read`, enabled-only `serve_harness_releases` | `serve_subscription_remove` uses exact ID/revision. Pending reads are aborted; already admitted native input cannot be recalled. `serve_settings_update` uses the observed revision and applies developer mode immediately; disabling aborts/fences release checks while retaining observations. |
 | Worker | Existing status/detail/transcript/turn/record/tool/diff reads; `worker_workspace_list/read` | Existing `worker_close` and `worker_remove` remain the removal authority. Worktree deletion requires explicit discard; source branch and provider-native history are distinct. |
-| Infer | Existing request list/get and trace export | `infer_history_plan({requestIds})` / `infer_history_clear`: terminal input, instructions, output, errors and events; preserve request digest, account/model/usage/timing and outcome. |
+| Infer | Existing request list/get, trace export and `infer_model_list` | `infer_history_plan({requestIds})` / `infer_history_clear`: terminal input, instructions, output, errors and events; preserve request digest, account/model/usage/timing and outcome. `infer_catalog_clear({accountIds?})` evicts exact account observations (omitted means all), aborts/fences discovery and never refreshes or dispatches inference. Already dispatched inference is untouched. |
 | Notify | Existing notification list/get/counts | `notification_history_plan({ids})` / `notification_history_clear`: dismissed authored content/actions/prompts/responses/source/group; preserve send/dismissal digests and first outcome. |
 | Proc | Existing schedule, execution, run and output reads | `proc_history_plan` / `proc_history_clear`: exact `run_output` or `execution_content` selection. Active work blocks; cursor gap/truncation and authority/outcome survive. Protected Brain source schedules remain Brain-controlled. |
 | Signal | Existing message/run/evidence reads; `attention_infer_requests` pages correlated Infer request IDs | `attention_history_plan({scope:"all-captured-content"})` / `attention_history_clear`: paused and drained captured content, including cross-conversation source blobs and partial buffers. Retain suppression/cursors/identities and Infer correlation. |
@@ -139,8 +139,8 @@ The following remain explicit backend gaps rather than implied erase controls:
   generation claims and publication recovery must remain authoritative.
 - Roles retained injection-launch cleanup, standalone settings-receipt retirement,
   Auth cache-only clearing and Access history/session-specific retirement.
-- HUD Work/journal body purge, Bot queued-body purge, Signal checkpoint reset,
-  Infer catalog-only clearing and Proc removed-schedule payload redaction.
+- HUD Work/journal body purge, Bot queued-body purge, Signal checkpoint reset
+  and Proc removed-schedule payload redaction.
 - Content vault/Git-history purge and temporary publication collection. Document
   and Artifact tombstones, local Git, remotes and backups retain independent copies.
 - Client-local Canvas layouts/drafts and Chrome/Android outboxes/history. Device
@@ -150,3 +150,8 @@ Filesystem sizes do not imply complete provider attribution. Logical database
 clearing does not guarantee byte erasure from SQLite free pages/WAL, snapshots or
 backups. Full-installation identity/data-generation reset is a separate operation
 requiring coordinated Access and device receipt semantics.
+
+Infer catalog eviction deliberately has no StatePlan or durable receipt: it drops
+only regenerable in-memory model observations. Epoch fences prevent late discovery
+from recreating the selected cache; request identities and trace history remain in
+their own durable ledger. It is local-operator-only even though it consumes no spend.
