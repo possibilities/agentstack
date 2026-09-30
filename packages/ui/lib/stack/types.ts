@@ -799,6 +799,7 @@ export type ProcAction =
   | { type: "process"; process: ProcProcessSpec };
 /** `proc_schedule_get`: the durable schedule record, with a tombstone's `removedAt` when removed. */
 export type ProcSchedule = { id: string; label: string | null; action: ProcAction; firstAt: string; everyMs: number | null; enabled: boolean;
+  contentClearedAt?: string | null; specDigest?: string | null;
   revision: number; system: boolean; createdBy: ProcActor; lastEditedBy: ProcActor; authority: ProcAuthority | null;
   blockedReason: string | null; retryAt: string | null; removedAt: string | null; nextAt: string | null; createdAt: string; updatedAt: string };
 export type ProcExecutionState = "running" | "completed" | "failed" | "refused" | "unknown";

@@ -18,10 +18,10 @@ export const topics = {
 
 const packageApi: PackageApi<Context, keyof typeof topics> = {
   operations: [
-    operation({ name: "proc_history_plan", description: "Preview exact terminal run-output or execution-payload cleanup. IDs, authority, timing and outcomes remain under Proc's 30-day retention policy. Running records block cleanup; process argv/labels and schedule definitions are separate from output.",
-      input: z.strictObject({ kind: z.enum(["run_output", "execution_content"]), ids: z.array(z.uuid()).min(1).max(100) }), output: statePlan,
+    operation({ name: "proc_history_plan", description: "Preview exact run_output, execution_content or removed schedule_definition redaction. Active records block; Brain schedules are protected. Schedule input, argv, env and cwd clear, but identity, authority, label, target, timing and spec digest remain. Captured executions/output are separate selections. Run/execution history keeps Proc's 30-day policy.",
+      input: z.strictObject({ kind: z.enum(["run_output", "execution_content", "schedule_definition"]), ids: z.array(z.uuid()).min(1).max(100) }), output: statePlan,
       async call(ctx, { kind, ids }, invocation) { requireStateOperator(invocation); return ctx.service.store.historyPlan(kind, ids); } }),
-    operation({ name: "proc_history_clear", description: "Apply exact planned terminal stdout/stderr or captured execution-content cleanup atomically with its receipt. Output cursors disclose a gap. Preserve authority and terminal state, including unknown. Cancellation, schedule disablement and cleanup remain separate decisions.",
+    operation({ name: "proc_history_clear", description: "Apply exact terminal output, execution-content or removed schedule-definition cleanup atomically with its receipt. Output cursors disclose gaps; removed schedule reads expose contentClearedAt/specDigest. Preserve authority and outcome, including unknown. Active or protected Brain schedules refuse. Cancellation, removal and redaction are separate decisions.",
       input: stateApplyInput, output: stateReceipt, annotations: { destructiveHint: true, idempotentHint: true },
       async call(ctx, input, invocation) { requireStateOperator(invocation); const result = ctx.service.store.historyClear(input);
         for (const item of result.outcomes) { ctx.service.onRunsChanged?.(item.resource); ctx.service.onOutputChanged?.(item.resource); ctx.service.onSchedulesChanged?.(item.resource); } return result; } }),

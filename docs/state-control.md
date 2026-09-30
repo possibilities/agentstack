@@ -67,7 +67,7 @@ can retain `.stack-clear-<uuid>` quarantine, named in the result for inspection.
 | Worker | Existing status/detail/transcript/turn/record/tool/diff reads; `worker_workspace_list/read` | Existing `worker_close` and `worker_remove` remain the removal authority. Worktree deletion requires explicit discard; source branch and provider-native history are distinct. |
 | Infer | Existing request list/get, trace export and `infer_model_list` | `infer_history_plan({requestIds})` / `infer_history_clear`: terminal input, instructions, output, errors and events; preserve request digest, account/model/usage/timing and outcome. `infer_catalog_clear({accountIds?})` evicts exact account observations (omitted means all), aborts/fences discovery and never refreshes or dispatches inference. Already dispatched inference is untouched. |
 | Notify | Existing notification list/get/counts | `notification_history_plan({ids})` / `notification_history_clear`: dismissed authored content/actions/prompts/responses/source/group; preserve send/dismissal digests and first outcome. |
-| Proc | Existing schedule, execution, run and output reads | `proc_history_plan` / `proc_history_clear`: exact `run_output` or `execution_content` selection. Active work blocks; cursor gap/truncation and authority/outcome survive. Protected Brain source schedules remain Brain-controlled. |
+| Proc | Existing schedule, execution, run and output reads | `proc_history_plan` / `proc_history_clear`: exact `run_output`, `execution_content` or removed `schedule_definition` selection. Active work blocks; protected Brain source schedules refuse. Schedule action input, argv, env and cwd redact with `contentClearedAt` and a spec digest; ID/authority/label/target/revision/timing stay. Captured executions and process summaries remain separate copies. |
 | Signal | Existing message/run/evidence reads; `attention_infer_requests` pages correlated Infer request IDs | `attention_history_plan({scope:"all-captured-content"})` / `attention_history_clear`: paused and drained captured content, including cross-conversation source blobs and partial buffers. Retain suppression/cursors/identities and Infer correlation. |
 | Content | `blob_stage_list`, `content_blob_list` alongside existing item/document/Artifact reads | `blob_stage_abort` retires a stage UUID/client key at its revision. `content_storage_plan({digests})` / `content_storage_collect` collects exact unreferenced collection CAS blobs. Items and finalized stages independently hold references. Existing Artifact `gc` is a separate store. |
 | Usage | `usage_snapshot` | `usage_observations_plan({accounts:[{id,scope}]})` / `usage_observations_clear`: exact local observations; fence selected in-flight collectors and persist. Future collection regenerates; provider quota/credentials are independent. |
@@ -139,8 +139,7 @@ The following remain explicit backend gaps rather than implied erase controls:
   generation claims and publication recovery must remain authoritative.
 - Roles retained injection-launch cleanup, standalone settings-receipt retirement,
   Auth cache-only clearing and Access history/session-specific retirement.
-- Bot queued-body purge, Signal checkpoint reset
-  and Proc removed-schedule payload redaction.
+- Bot queued-body purge and Signal checkpoint reset.
 - Content vault/Git-history purge and temporary publication collection. Document
   and Artifact tombstones, local Git, remotes and backups retain independent copies.
 - Client-local Canvas layouts/drafts and Chrome/Android outboxes/history. Device
