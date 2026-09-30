@@ -8,6 +8,7 @@ import type { ServerView } from "./supervisor.js";
 import WebSocket from "ws";
 import { historicalMetadata, parent } from "./chat-metadata.js";
 import { pageMessages } from "./chat-messages.js";
+import { StateJournal, type StateOutcome } from "@stack/api";
 
 type RecordValue = Record<string, unknown>;
 const object = (value: unknown): RecordValue => value && typeof value === "object" && !Array.isArray(value) ? value as RecordValue : {};
@@ -16,7 +17,8 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type ChatRow = { botId: string; threadId: string; parentThreadId: string | null; title: string; cwd: string; createdAt: string; updatedAt: string; messageCount: number };
 export type ChatHit = ChatRow & { line: number; role: string; snippet: string; score: number };
-export type QueuedChat = { id: string; botId: string; threadId: string; input: unknown[]; state: "pending" | "dispatching" | "sent" | "unknown" | "cancelled"; turnId: string | null; issue: string | null };
+export type QueuedChat = { id: string; botId: string; threadId: string; input: unknown[]; state: "pending" | "dispatching" | "sent" | "unknown" | "cancelled"; turnId: string | null; issue: string | null;
+  bytes: number; admissionDigest: string; generation: string | null; contentClearedAt: string | null };
 export type ThreadStateObservation = { status: RecordValue | null; activity: "working" | "waiting" | "idle" | "unknown"; observedAt: string; error: string | null };
 
 /** A receipt-time observation, never a start/steer precondition or an admission outcome. */
@@ -39,6 +41,7 @@ async function fileText(path: string): Promise<string> {
 
 /** An entirely derived, owner-private index. Only rollouts below a Bot's history directory are admitted. */
 export class ChatIndex {
+  readonly maintenance: StateJournal;
   private db: DatabaseSync;
   constructor(private readonly stateDir: string, private readonly historyPath?: (botId: string) => string) {
     const path = join(stateDir, "chats.sqlite");
@@ -66,7 +69,20 @@ export class ChatIndex {
       CREATE INDEX IF NOT EXISTS chat_queue_next ON chat_queue(bot_id,thread_id,state,created_at);`);
     if (!(this.db.prepare("PRAGMA table_info(chats)").all() as { name: string }[]).some((column) => column.name === "metadata"))
       this.db.exec("ALTER TABLE chats ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'");
+    if (!(this.db.prepare("PRAGMA table_info(chat_queue)").all() as { name: string }[]).some(column => column.name === "admission_digest")) {
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        this.db.exec(`ALTER TABLE chat_queue ADD COLUMN admission_digest TEXT;
+          ALTER TABLE chat_queue ADD COLUMN input_bytes INTEGER;
+          ALTER TABLE chat_queue ADD COLUMN generation TEXT;
+          ALTER TABLE chat_queue ADD COLUMN content_cleared_at TEXT;`);
+        for (const row of this.db.prepare("SELECT id,input FROM chat_queue").all() as { id: string; input: string }[])
+          this.db.prepare("UPDATE chat_queue SET admission_digest=?,input_bytes=? WHERE id=?").run(createHash("sha256").update(row.input).digest("hex"), Buffer.byteLength(row.input), row.id);
+        this.db.exec("COMMIT");
+      } catch (error) { this.db.exec("ROLLBACK"); this.db.close(); throw error; }
+    }
     this.db.prepare("UPDATE chat_queue SET state='unknown',issue='Owner restarted during dispatch; inspect the thread before retrying' WHERE state='dispatching'").run();
+    this.maintenance = new StateJournal(this.db, "bots");
   }
 
   close(): void { this.db.close(); }
@@ -75,8 +91,24 @@ export class ChatIndex {
     this.db.prepare("DELETE FROM messages WHERE bot_id=?").run(botId);
     this.db.prepare("DELETE FROM chats WHERE bot_id=?").run(botId);
   }
-  queueState(botId: string): { id: string; threadId: string; state: QueuedChat["state"]; bytes: number }[] {
-    return this.db.prepare("SELECT id,thread_id AS threadId,state,length(CAST(input AS BLOB)) AS bytes FROM chat_queue WHERE bot_id=? ORDER BY id").all(botId) as ReturnType<ChatIndex["queueState"]>;
+  queueState(botId: string): Pick<QueuedChat, "id" | "threadId" | "state" | "bytes" | "admissionDigest" | "contentClearedAt" | "generation">[] {
+    return this.db.prepare("SELECT id,thread_id AS threadId,state,input_bytes AS bytes,admission_digest AS admissionDigest,content_cleared_at AS contentClearedAt,generation FROM chat_queue WHERE bot_id=? ORDER BY id").all(botId) as ReturnType<ChatIndex["queueState"]>;
+  }
+  queueBodySelection(botId: string, selection: { ids: string[] } | { generation: string }) {
+    const rows = this.queueState(botId);
+    if ("generation" in selection) return rows.filter(row => row.generation === selection.generation);
+    return [...new Set(selection.ids)].sort().map(id => {
+      const row = rows.find(row => row.id === id);
+      if (!row) throw new Error("unknown queue entry for this Bot");
+      return row;
+    });
+  }
+  clearQueueBodies(botId: string, ids: string[]): StateOutcome[] {
+    return this.queueBodySelection(botId, { ids }).map(row => {
+      if (["pending", "dispatching"].includes(row.state)) throw new Error("Selected queue admission is still active");
+      this.db.prepare("UPDATE chat_queue SET input='[]',content_cleared_at=COALESCE(content_cleared_at,?) WHERE id=? AND bot_id=?").run(new Date().toISOString(), row.id, botId);
+      return { resource: row.id, outcome: "removed", detail: "Queued body cleared; original byte count, digest, destination, state and admission outcome retained" };
+    });
   }
   retireQueue(botId: string): void {
     if (this.queueState(botId).some(row => row.state === "dispatching")) throw new Error("queue dispatch is still in flight");
@@ -337,15 +369,16 @@ export class ChatIndex {
     const sourceId = createHash("sha256").update(JSON.stringify([botId,threadId,row.path])).digest("hex");
     return pageMessages(await fileText(row.path),sourceId,cursor,headOnly,limit);
   }
-  enqueue(botId: string, threadId: string, id: string, input: unknown[]): QueuedChat {
+  enqueue(botId: string, threadId: string, id: string, input: unknown[], generation: string | null = null): QueuedChat {
     const serialized = JSON.stringify(input);
-    const existing = this.db.prepare("SELECT bot_id AS botId,thread_id AS threadId,input FROM chat_queue WHERE id=?").get(id) as { botId: string; threadId: string; input: string } | undefined;
-    if (existing && (existing.botId !== botId || existing.threadId !== threadId || existing.input !== serialized)) throw new Error("queue id was already used with different content or destination");
-    if (!existing) this.db.prepare("INSERT INTO chat_queue(id,bot_id,thread_id,input,state,created_at) VALUES(?,?,?,?,'pending',?)").run(id, botId, threadId, serialized, Date.now());
+    const digest = createHash("sha256").update(serialized).digest("hex");
+    const existing = this.queued(id);
+    if (existing && (existing.botId !== botId || existing.threadId !== threadId || existing.admissionDigest !== digest)) throw new Error("queue id was already used with different content or destination");
+    if (!existing) this.db.prepare("INSERT INTO chat_queue(id,bot_id,thread_id,input,state,created_at,admission_digest,input_bytes,generation) VALUES(?,?,?,?,'pending',?,?,?,?)").run(id, botId, threadId, serialized, Date.now(), digest, Buffer.byteLength(serialized), generation);
     return this.queued(id)!;
   }
   queued(id: string): QueuedChat | null {
-    const row = this.db.prepare("SELECT id,bot_id AS botId,thread_id AS threadId,input,state,turn_id AS turnId,issue FROM chat_queue WHERE id=?").get(id) as (Omit<QueuedChat, "input"> & { input: string }) | undefined;
+    const row = this.db.prepare("SELECT id,bot_id AS botId,thread_id AS threadId,input,state,turn_id AS turnId,issue,input_bytes AS bytes,admission_digest AS admissionDigest,generation,content_cleared_at AS contentClearedAt FROM chat_queue WHERE id=?").get(id) as (Omit<QueuedChat, "input"> & { input: string }) | undefined;
     return row ? { ...row, input: JSON.parse(row.input) as unknown[] } : null;
   }
   queueList(botId: string, threadId: string): QueuedChat[] {
@@ -354,13 +387,14 @@ export class ChatIndex {
   nextQueued(botId: string, threadId: string): QueuedChat | null {
     const blocked = this.db.prepare("SELECT id FROM chat_queue WHERE bot_id=? AND thread_id=? AND state IN ('unknown','dispatching') LIMIT 1").get(botId, threadId);
     if (blocked) return null;
-    const row = this.db.prepare("SELECT id FROM chat_queue WHERE bot_id=? AND thread_id=? AND state='pending' ORDER BY created_at,id LIMIT 1").get(botId, threadId) as { id: string } | undefined;
+    const row = this.db.prepare("SELECT id FROM chat_queue WHERE bot_id=? AND thread_id=? AND state='pending' AND content_cleared_at IS NULL ORDER BY created_at,id LIMIT 1").get(botId, threadId) as { id: string } | undefined;
     return row ? this.queued(row.id) : null;
   }
   pendingPairs(botId: string): string[] {
     return (this.db.prepare("SELECT DISTINCT thread_id AS threadId FROM chat_queue WHERE bot_id=? AND state='pending'").all(botId) as { threadId: string }[]).map((row) => row.threadId);
   }
   setQueued(id: string, state: QueuedChat["state"], turnId: string | null = null, issue: string | null = null): QueuedChat {
+    if (this.queued(id)?.contentClearedAt && ["pending", "dispatching"].includes(state)) throw new Error("Cleared queue bodies cannot be dispatched again");
     this.db.prepare("UPDATE chat_queue SET state=?,turn_id=?,issue=? WHERE id=?").run(state, turnId, issue, id);
     return this.queued(id)!;
   }

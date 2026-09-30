@@ -388,7 +388,8 @@ export const chatInterrupt = operation({
   input: z.strictObject({ botId, threadId, turnId: z.string().min(1) }), output: z.strictObject({}), annotations: { title: "Interrupt chat turn", destructiveHint: true },
   async call(ctx: BotsContext, { botId: id, threadId: target, turnId }) { const bot = await interactive(ctx, id, target); await chatRpc(live(bot), "turn/interrupt", { threadId: target, turnId }); return {}; },
 });
-const queuedChat = z.strictObject({ id: z.uuid(), botId, threadId, input: z.array(z.unknown()), state: z.enum(["pending", "dispatching", "sent", "unknown", "cancelled"]), turnId: z.string().nullable(), issue: z.string().nullable() });
+const queuedChat = z.strictObject({ id: z.uuid(), botId, threadId, input: z.array(z.unknown()), state: z.enum(["pending", "dispatching", "sent", "unknown", "cancelled"]), turnId: z.string().nullable(), issue: z.string().nullable(),
+  bytes: z.number().int().nonnegative(), admissionDigest: z.string(), generation: z.uuid().nullable(), contentClearedAt: z.iso.datetime().nullable() });
 export const chatEnqueue = operation({
   name: "chat_enqueue", description: "Durably admit a message for automatic Codex start-or-steer submission, without waiting for idle or turn completion. A client-generated UUID is the admission key; reusing it with different content fails. Return queue admission and a receipt-time threadState observation; sent means Codex acknowledged, not completed. An uncertain dispatch blocks later messages until explicitly reconciled.",
   input: z.strictObject({ botId, threadId, id: z.uuid(), input: z.array(inputPart).min(1) }), output: queuedChat.extend({ threadState: threadStateObservation }), annotations: { title: "Queue chat message", idempotentHint: true },
@@ -397,14 +398,14 @@ export const chatEnqueue = operation({
     const threadState = await observeThreadState(live(bot), target);
     const prepared = await inputParts(ctx, bot, input);
     unchanged(ctx, bot);
-    const item = ctx.chats.enqueue(id, target, key, prepared);
+    const item = ctx.chats.enqueue(id, target, key, prepared, ctx.store.stateIdentity(id).generation);
     ctx.queue.onChange?.(id);
     ctx.queue.wake(id, target);
     return { ...item, threadState };
   },
 });
 export const chatQueueList = operation({
-  name: "chat_queue_list", description: "Read durable queued messages and their exact admission/dispatch outcomes; unknown means inspect the thread before resolving, not retry.",
+  name: "chat_queue_list", description: "Read durable queued messages, byte counts, admission digests, generations and exact outcomes. contentClearedAt marks redacted input, not cancellation. Unknown remains an inspection/reconciliation fence, never permission to resend.",
   input: z.strictObject({ botId, threadId }), output: z.strictObject({ entries: z.array(queuedChat) }), annotations: { title: "Read chat queue", readOnlyHint: true },
   async call(ctx: BotsContext, { botId: id, threadId: target }) { await allowed(ctx, id, target); return { entries: ctx.chats.queueList(id, target) }; },
 });

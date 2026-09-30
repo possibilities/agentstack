@@ -1,4 +1,4 @@
-# 141. Retire exact Work bodies without deleting semantic identity
+# 142. Retire exact Work bodies without deleting semantic identity
 
 Status: accepted, 2026-09-30. Human decision 01·D1 approved children-first
 tombstoning; extends [ADR 0135](0135-owner-state-maintenance.md) and

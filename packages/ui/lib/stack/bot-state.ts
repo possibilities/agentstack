@@ -8,7 +8,8 @@ import type { StateEntry, StateFile, StateFileRead } from "./types";
 
 export type BotStateRead = { incarnation: string; generation: string; maintenanceRequestId: string | null; entries: StateEntry[] };
 export type BotHistoryGeneration = { generation: string; mainThreadId: string | null; active: boolean; ownership: "stack" | "shared"; createdAt: string; retiredAt: string | null; purgedAt: string | null };
-export type BotQueueEntry = { id: string; threadId: string; state: "pending" | "dispatching" | "sent" | "unknown" | "cancelled"; bytes: number };
+export type BotQueueEntry = { id: string; threadId: string; state: "pending" | "dispatching" | "sent" | "unknown" | "cancelled"; bytes: number;
+  admissionDigest: string; generation: string | null; contentClearedAt: string | null };
 export type BotLaunch = { count: number; revision: string; arguments: string[] | null; roleId: string | null; roleRevision: number | null; running: boolean };
 export type BotUpload = { botId: string; id: string; name: string; bytes: number; sha256: string; offset: number; path: string | null };
 

@@ -145,7 +145,8 @@ export type ChatOpenResult = ChatSendResult & { threadId: string };
 export type ChatSteerResult = { turnId: string; threadState: ChatThreadState };
 export type ChatEnqueueResult = ChatQueueEntry & { threadState: ChatThreadState };
 export type ChatQueueEntry = { id: string; botId: string; threadId: string; input: unknown[];
-  state: "pending" | "dispatching" | "sent" | "unknown" | "cancelled"; turnId: string | null; issue: string | null };
+  state: "pending" | "dispatching" | "sent" | "unknown" | "cancelled"; turnId: string | null; issue: string | null;
+  bytes: number; admissionDigest: string; generation: string | null; contentClearedAt: string | null };
 
 export type Account = { id: string; enabled: boolean; removing: boolean; linkedAccounts: Array<{ scope: "bot" | "worker"; id: string }> };
 export type WorkerAccount = Account & { provider: "codex" | "devin" | "claude"; ready: boolean };
