@@ -139,6 +139,12 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok(access.operations.some(op => op.name === "enrollment_invite_create" && op.outputSchema));
     assert.ok(accessHttp.routes.some(r => r.path === "/v1/content/handoff" && r.authentication === "bearer"));
     assert.ok(accessHttp.routes.some(r => r.surface === "ui" && r.path === "/connect/session" && r.inputSchema));
+    for (const path of ["/v1/access/connection", "/v1/access/ui-handoff", "/connect/device"]) {
+      const route = accessHttp.routes.find(r => r.path === path && r.format === "application/json")!;
+      assert.ok(route?.outputSchema && route.errorSchema, `missing desktop connection wire contract: ${path}`);
+    }
+    assert.ok(JSON.stringify(accessHttp.routes.find(r => r.path === "/v1/access/connection")!.outputSchema).includes('"uiOrigin"'));
+    assert.ok(JSON.stringify(accessHttp.routes.find(r => r.path === "/v1/access/refresh")!.inputSchema).includes('"ui"'));
     assert.ok(accessHttp.routes.some(r => r.surface === "ui" && r.path === "/" && r.authentication === "bearer"));
     assert.ok(accessHttp.routes.some(r => r.surface === "ui" && r.path === "/{space}" && r.authentication === "bearer"));
     assert.ok(!accessHttp.routes.some(r => r.surface === "ui" && r.path.startsWith("/x")));

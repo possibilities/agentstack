@@ -7,10 +7,11 @@ import { startRemoteUi } from "./remote-ui.js";
 import { clientKinds } from "./policy.js";
 import { approvalInput, claimInput, enrollmentRedeemInput, qrTextSchema } from "./enrollment-protocol.js";
 import { enrollmentOrigin, enrollmentResponse } from "./enrollment.js";
+import { connectionDescriptor, uiHandoffInput } from "./connection.js";
 
 export const pairInput = z.strictObject({ requestId: z.uuid(), label: z.string().trim().min(1).max(100), kind: z.enum(clientKinds), scopes: z.array(z.enum(scopes)).min(1).max(scopes.length), redemptionSecret: z.string().regex(/^[A-Za-z0-9_-]{43}$/) });
 export const redeemInput = z.strictObject({ id: z.uuid(), redemptionSecret: pairInput.shape.redemptionSecret });
-export const refreshInput = z.strictObject({ refreshToken: pairInput.shape.redemptionSecret, requestId: z.uuid(), audience: z.enum(["brain", "content", "access"]) });
+export const refreshInput = z.strictObject({ refreshToken: pairInput.shape.redemptionSecret, requestId: z.uuid(), audience: z.enum(["brain", "content", "access", "ui"]) });
 export const handoffInput = z.strictObject({ path: z.string().max(512), origin: z.enum(["documents", "artifacts"]) });
 const json = (data: unknown, status = 200) => new Response(JSON.stringify({ schema_version: 1, ok: true, data }), { status, headers: { "content-type": "application/json", "cache-control": "no-store", "referrer-policy": "no-referrer" } });
 async function body(request: Request, limit = 1024 * 1024) {
@@ -58,7 +59,7 @@ export function handler(options: IngressOptions) {
        }
       // Navigations cannot set custom headers. Resource cookies and one-use
       // handoffs are bound to this store; API clients additionally pin identity.
-       const bootstrap = path === "/v1/access/pair" || path === "/v1/access/identity";
+       const bootstrap = path === "/v1/access/pair" || path === "/v1/access/identity" || path === "/v1/access/connection";
        if ((path.startsWith("/v1/") && !bootstrap || request.headers.has("authorization")) && request.headers.get("x-stack-server-id") !== store.serverId) {
         throw new AccessError("server_identity_mismatch", 409);
       }
@@ -85,6 +86,16 @@ export function handler(options: IngressOptions) {
            const value = z.strictObject({ id: z.uuid() }).parse(input);
            response = json(store.cancelEnrollment(value.id, bearer(request)));
          } else throw new AccessError("not_found", 404);
+       } else if (origin === "documents" && request.method === "GET" && path === "/v1/access/connection") {
+         const descriptor = connectionDescriptor(store.serverId, env);
+         if (request.headers.get("host") !== new URL(descriptor.deviceOrigin).host) throw new AccessError("connection_host_refused", 403);
+         response = json(descriptor);
+       } else if (origin === "documents" && request.method === "POST" && path === "/v1/access/ui-handoff") {
+         const descriptor = connectionDescriptor(store.serverId, env);
+         if (request.headers.get("host") !== new URL(descriptor.deviceOrigin).host) throw new AccessError("connection_host_refused", 403);
+         if (!descriptor.uiOrigin) throw new AccessError("ui_not_configured", 409);
+         const input = uiHandoffInput.parse(await body(request, 4096));
+         response = json(store.uiConnectHandoff(bearer(request), input.requestId, descriptor.uiOrigin));
        } else if (origin === "documents" && request.method === "GET" && path === "/v1/access/identity") {
          response = json({ serverId: store.serverId });
        } else if (origin === "documents" && request.method === "GET" && path === "/v1/access/me") {
@@ -177,7 +188,7 @@ export async function startIngress(store: AccessStore, env: NodeJS.ProcessEnv) {
   if (env.STACK_ACCESS_UI_ORIGIN) {
     const uiOrigin = new URL(env.STACK_ACCESS_UI_ORIGIN);
     if (!Number.isInteger(uiPort) || uiPort < 1 || uiPort > 65535 || port === uiPort || artifactPort === uiPort
-      || uiOrigin.protocol !== "https:" || uiOrigin.origin !== env.STACK_ACCESS_UI_ORIGIN || Number(uiOrigin.port) !== uiPort || !uiOrigin.hostname || uiOrigin.username || uiOrigin.password)
+      || uiOrigin.protocol !== "https:" || uiOrigin.origin !== env.STACK_ACCESS_UI_ORIGIN || Number(uiOrigin.port || 443) !== uiPort || !uiOrigin.hostname || uiOrigin.username || uiOrigin.password)
       throw new Error("STACK_ACCESS_UI_ORIGIN must be the exact HTTPS origin on a distinct STACK_ACCESS_UI_PORT");
   }
   const documents = await serveHttp({ host, port, tls, handle: handler({ store, env, origin: "documents" }), requestTimeout: 30_000, headersTimeout: 10_000, forceCloseConnections: true });

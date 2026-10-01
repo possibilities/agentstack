@@ -3,6 +3,7 @@
 import { decodeQr, encodeQr, enrollmentLifetime, enrollmentRequestSchema, secretSchema, originSchema, previewSchema, enrollmentCredentialSchema, redemptionMessage,
   type EnrollmentRequest, type EnrollmentReceipt } from "./enrollment-protocol.js";
 export { decodeQr, encodeQr } from "./enrollment-protocol.js";
+import { responseJson } from "./client-http.js";
 
 export type EnrollmentIntent = { request: EnrollmentRequest; redemptionSecret: string; privateKey: string };
 const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
@@ -35,7 +36,7 @@ export async function acceptEnrollmentReceipt(intent: EnrollmentIntent, text: st
 
 async function identity(origin: string, serverId: string, send: typeof fetch) {
   const response = await send(`${origin}/v1/access/identity`, { redirect: "error", cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(15_000) });
-  const body = await responseJson(response);
+  const body = await responseJson(response, "enrollment");
   if (!response.ok || !body.ok || body.data?.serverId !== serverId) throw new Error("server_identity_mismatch");
 }
 async function post(origin: string, serverId: string, path: string, data: unknown, send: typeof fetch, accessToken?: string) {
@@ -44,30 +45,9 @@ async function post(origin: string, serverId: string, path: string, data: unknow
   const response = await send(`${origin}${path}`, { method: "POST", redirect: "error", cache: "no-store", credentials: "omit",
     signal: AbortSignal.timeout(15_000), headers: { "content-type": "application/json", "x-stack-server-id": serverId,
       ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}) }, body: JSON.stringify(data) });
-  const body = await responseJson(response);
+  const body = await responseJson(response, "enrollment");
   if (!response.ok || !body.ok) throw new Error(body.error?.code ?? "enrollment_failed");
   return body.data;
-}
-async function responseJson(response: Response) {
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error("invalid_enrollment_response");
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      size += value.length;
-      if (size > 65536) { await reader.cancel(); throw new Error("enrollment_response_too_large"); }
-      chunks.push(value);
-    }
-  } finally { reader.releaseLock(); }
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-  const body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-  if (!body || typeof body !== "object") throw new Error("invalid_enrollment_response");
-  return body;
 }
 /** The user must explicitly trust the scanned invitation's origin before this call. */
 export async function claimInvitation(intent: EnrollmentIntent, invitationText: string, send: typeof fetch = fetch) {

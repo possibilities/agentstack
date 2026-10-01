@@ -5,9 +5,11 @@ import { z } from "zod";
 import { AccessError, AccessStore } from "./store.js";
 import { pairInput, redeemInput, resourcePath } from "./ingress.js";
 import { localApi, verifier, type Peer } from "./network.js";
+import { uiExchangeInput } from "./connection.js";
 
 const cookieName = "__Host-stack_ui";
 const refreshName = "__Host-stack_ui_refresh";
+const viewRefreshName = "__Host-stack_ui_view_refresh";
 const token = /^[A-Za-z0-9_-]{43}$/;
 const uiPagePath = /^\/(?:$|(?:accounts|lab|system|roles|inbox|signal|content|workers|scrape|browse|brain|proc|fleet)\/?$)/;
 const json = (data: unknown, status = 200) => new Response(JSON.stringify({ schema_version: 1, ok: true, data }),
@@ -37,6 +39,8 @@ if(!saved())post('/connect/refresh',{}).then(()=>location.replace('/')).catch(()
 const inline = (tag: "script" | "style") => new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(connectPage)?.[1] ?? "";
 const digest = (value: string) => createHash("sha256").update(value).digest("base64");
 const connectCsp = `default-src 'none'; script-src 'sha256-${digest(inline("script"))}'; style-src 'sha256-${digest(inline("style"))}'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; object-src 'none'`;
+const deviceScript = `const handoff=location.hash.slice(1);history.replaceState(null,'','/connect/device');fetch('/connect/device',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({handoff}),cache:'no-store'}).then(r=>{if(!r.ok)throw Error();location.replace('/')}).catch(()=>document.getElementById('status').textContent='Connection expired or unavailable. Open this server again from your Stack client.');`;
+const devicePage = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Connect Stack</title><p id="status" role="status">Connecting…</p><script>${deviceScript}</script></html>`;
 const controls: Record<string, (name: string) => boolean> = {
   bots: name => ["bot_start", "bot_stop", "bot_assign", "bot_remove", "bot_defaults_set", "bot_settings_patch", "bot_settings_apply",
     "chat_open", "chat_send", "chat_steer", "chat_interrupt", "chat_enqueue", "chat_queue_resolve", "chat_codex_queue_add", "chat_codex_queue_update",
@@ -74,6 +78,18 @@ export function remoteUiHandler({ store, env, host, port, verify, fetchBackend }
         "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer",
         "content-security-policy": connectCsp } });
       if (path === "/connect/identity" && request.method === "GET") return json({ serverId: store.serverId });
+      if (path === "/connect/device" && request.method === "GET") return new Response(devicePage, { headers: {
+        "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer",
+        "content-security-policy": `default-src 'none'; script-src 'sha256-${digest(deviceScript)}'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'` } });
+      if (path === "/connect/device" && request.method === "POST") {
+        const input = uiExchangeInput.parse(await payload(request));
+        const issued = store.exchangeUiHandoff(input.handoff, expected);
+        const response = json({ scopes: issued.scopes, expiresAt: issued.expiresAt });
+        response.headers.append("set-cookie", sessionCookie(issued.accessToken, 300));
+        response.headers.append("set-cookie", sessionCookie(issued.refreshToken, 900, viewRefreshName));
+        response.headers.append("set-cookie", sessionCookie("", 0, refreshName));
+        return response;
+      }
       if (path === "/connect/pair" && request.method === "POST") return json(store.pair(pairInput.parse(await payload(request))));
       if (path === "/connect/redeem" && request.method === "POST") {
         if (request.headers.get("x-stack-server-id") !== store.serverId) throw new AccessError("server_identity_mismatch", 409);
@@ -86,9 +102,19 @@ export function remoteUiHandler({ store, env, host, port, verify, fetchBackend }
         const response = json({ scopes: store.ui(issued.accessToken).scopes, expiresAt: issued.expiresAt });
         response.headers.append("set-cookie", sessionCookie(issued.accessToken, 300));
         response.headers.append("set-cookie", sessionCookie(issued.refreshToken, 900, refreshName));
+        if (cookie(request.headers.get("cookie"), viewRefreshName)) response.headers.append("set-cookie", sessionCookie("", 0, viewRefreshName));
         return response;
       }
       if (path === "/connect/refresh" && request.method === "POST") {
+        const viewer = cookie(request.headers.get("cookie"), viewRefreshName);
+        if (viewer) {
+          if (!token.test(viewer)) throw new AccessError("unauthorized");
+          const issued = store.refreshUiView(viewer);
+          const response = json({ scopes: issued.scopes, expiresAt: issued.expiresAt });
+          response.headers.append("set-cookie", sessionCookie(issued.accessToken, 300));
+          response.headers.append("set-cookie", sessionCookie(issued.refreshToken, 900, viewRefreshName));
+          return response;
+        }
         const refresh = cookie(request.headers.get("cookie"), refreshName);
         if (!token.test(refresh)) throw new AccessError("unauthorized");
         // One deterministic retry ID per old cookie prevents concurrent tabs from

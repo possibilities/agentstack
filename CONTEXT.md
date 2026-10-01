@@ -35,7 +35,26 @@ An explicit set of scopes or selected operations for one Access client and one n
 
 ## Remote UI session
 
-A five-minute Access session for one locally approved browser-kind client on the dedicated direct-tailnet UI TLS origin. `ui:view` selects read-only WebSocket operations and events; `ui:control` adds UI mutations, never Access, sign-in, voice or headful browser authority. The HttpOnly cookie and rotating refresh are distinct from Content resource handoffs. Revocation and grant changes fence the next HTTP request and close existing WebSockets. _Avoid_: forwarded local UI port, internal MCP identity, public share link
+A five-minute Access session for one approved browser or desktop Access client on the dedicated direct-tailnet UI TLS origin. Desktop clients enter through a one-use UI handoff; the viewer's HttpOnly refresh lineage is independent of the desktop's native credential. `ui:view` selects read-only WebSocket operations and events; `ui:control` adds UI mutations, never Access, sign-in, voice or headful browser authority. Cookies and rotating refresh are distinct from Content resource handoffs. Revocation and grant changes fence the next HTTP request and close existing WebSockets. _Avoid_: forwarded local UI port, internal MCP identity, public share link
+
+## Client host
+
+A same-user local controller owned by `packages/client`, independent of a running
+Stack platform. It owns one optional local installation/background user service,
+explicit saved/applied platform login preference and multiple destination-pinned
+Access connections. Its private socket can exist before installation; it is not
+part of the platform Package API fleet. The separate client-UI authority cannot
+grant local platform or remote Access authority. _Avoid_: remote installer,
+anonymous loopback control, native app means trusted platform, npx cache as durable install
+
+## UI handoff
+
+A one-use, one-minute Access capability for a desktop or browser client to
+establish a scoped Remote UI session on one exact UI origin. It travels in an
+erased navigation fragment, never carries the native refresh credential and
+checks live grant revision before consumption. The resulting viewer refresh
+family is independent of native credential rotation. _Avoid_: Content handoff,
+phone credential forwarding, durable browser token in a URL
 
 ## Local operator session
 
