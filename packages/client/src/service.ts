@@ -60,7 +60,7 @@ export class PlatformService {
     try {
       if (process.platform === "darwin") {
         const text = await run("launchctl", ["print", `${this.domain()}/${this.name}`]);
-        registered = true; running = /\bstate = running\b/.test(text);
+        registered = true; running = /\bstate = running\b/.test(text) || /^\s*pid = [1-9]\d*$/m.test(text);
         const definition = /^\s*path = (.+)$/m.exec(text)?.[1];
         owned = owned && !!definition && await realpath(definition) === await realpath(this.path);
       } else {

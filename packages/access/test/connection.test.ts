@@ -63,6 +63,7 @@ test("manual desktop pairing recovers lost admission and opens an independent, l
     assert.equal((await f.view("/connect/device", { handoff: secret }, undefined, "https://other.example")).status, 403);
     const response = await f.view("/connect/device", { handoff: secret });
     assert.equal(response.status, 200);
+    assert.match(f.store.inventory().uiSessions[0]!.id, /^[a-f0-9-]{36}$/);
     assert.equal((await f.view("/connect/device", { handoff: secret })).status, 401);
     const cookies = response.headers.getSetCookie().filter(value => !value.includes("Max-Age=0"));
     assert.ok(cookies.every(value => /Secure; HttpOnly; SameSite=Strict/.test(value)));

@@ -310,7 +310,7 @@ export class AccessStore {
     const old = this.get("SELECT expires FROM ui_sessions WHERE hash=?", hash(accessToken));
     const expiresAt = old?.expires ?? this.now() + 300_000;
     this.db.prepare("INSERT OR IGNORE INTO tokens VALUES(?,?,?,?)").run(hash(accessToken), credentialId, "ui", expiresAt);
-    this.db.prepare("INSERT OR IGNORE INTO ui_sessions VALUES(?,?,?)").run(hash(accessToken), credentialId, expiresAt);
+    this.db.prepare("INSERT OR IGNORE INTO ui_sessions(hash,credential_id,expires,id) VALUES(?,?,?,?)").run(hash(accessToken), credentialId, expiresAt, randomUUID());
     return { accessToken, expiresAt: expiresAt as number, scopes: JSON.parse(this.active(credentialId).scopes) as Scope[] };
   }
   uiHandoff(token: string, path: string, origin: "documents" | "artifacts") {

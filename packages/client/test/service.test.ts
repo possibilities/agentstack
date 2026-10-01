@@ -40,6 +40,14 @@ test("launchd control fences foreign services, applies on explicit start, and ou
     }
     throw new Error("service did not run");
   }
+  async function stopped(observe: () => Promise<{ registered: boolean; running: boolean }> = async () => (await host!.call("client_snapshot", {})).service) {
+    for (let i = 0; i < 30; i++) {
+      const snapshot = await observe();
+      if (!snapshot.registered && !snapshot.running) return;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    throw new Error("service did not finish stopping");
+  }
   try {
     await mkdir(process.env.HOME, { mode: 0o700 });
     const clientRoot = join(root, "client"), seed = new ClientState(clientRoot);
@@ -61,6 +69,7 @@ test("launchd control fences foreign services, applies on explicit start, and ou
     assert.equal((await job("client_login_set", false)).error, "service_not_owned");
     assert.equal((await host.call("client_snapshot", {})).service.running, true);
     await run("launchctl", ["bootout", target]);
+    await stopped();
     assert.equal((await job("client_platform_start")).state, "completed");
     const initial = await running();
     assert.deepEqual(initial.service.login, { saved: false, applied: false });
@@ -71,13 +80,14 @@ test("launchd control fences foreign services, applies on explicit start, and ou
     assert.deepEqual(pending.service.login, { saved: true, applied: false });
     assert.equal(pending.configuration.pending, true);
     assert.equal((await job("client_platform_stop")).state, "completed");
-    assert.equal((await host.call("client_snapshot", {})).service.registered, false);
+    await stopped();
     // A retained owned file cannot establish ownership of a different registration.
     await run("launchctl", ["bootstrap", domain, foreign]);
     await running();
     assert.equal((await job("client_platform_stop")).error, "service_not_owned");
     assert.equal((await job("client_login_set", true)).error, "service_not_owned");
     await run("launchctl", ["bootout", target]);
+    await stopped();
     assert.equal((await job("client_platform_start")).state, "completed");
     const applied = await running();
     assert.deepEqual(applied.service.login, { saved: true, applied: true });
@@ -92,7 +102,7 @@ test("launchd control fences foreign services, applies on explicit start, and ou
       const owner = new PlatformService(retained);
       assert.equal((await owner.observe()).running, true, "closing host must not stop platform");
       await owner.stop();
-      assert.equal((await owner.observe()).registered, false);
+      await stopped(() => owner.observe());
     } finally { retained.close(); }
     const rows = (await readFile(join(clientRoot, "platform", "service.log"), "utf8")).trim().split("\n").map(line => JSON.parse(line));
     assert.deepEqual(rows.filter(row => row.event === "started").map(row => row.ui), [null, "19031"]);
@@ -103,8 +113,8 @@ test("launchd control fences foreign services, applies on explicit start, and ou
       await host?.close();
       if (target) {
         await run("launchctl", ["bootout", target]).catch(error => { if (error.code !== 3) throw error; });
-        await run("launchctl", ["print", target]).then(() => { throw new Error("test service remains registered"); },
-          error => { if (error.code !== 113) throw error; });
+        await stopped(async () => run("launchctl", ["print", target!]).then(() => ({ registered: true, running: true }),
+          error => { if (error.code !== 113) throw error; return { registered: false, running: false }; }));
       }
       released = true;
     } finally {

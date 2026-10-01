@@ -121,7 +121,7 @@ export async function startClientHost(options: { root?: string; uiOrigin?: strin
     }
     socket = await serveSocket({ info: { name: "client", description: "Local Stack client host", transportDescription: "Private same-user client control; never remotely exposed", path },
       context: {}, operations, events: { topics: { client_changed: "Client installation, job or connection changed. Read client_snapshot; notices contain no credentials." } } });
-    state.interrupted(); withLocalAuth({ STACK_STATE_DIR: state.root }, auth => auth.rotate());
+    state.interrupted(); withLocalAuth({ STACK_STATE_DIR: state.root }, auth => auth.rotateForStartup());
     const served = socket;
     notify = () => served.publish?.("client_changed");
     return { path, call, catalog: () => operations.map(op => ({ name: op.name, description: op.description,
