@@ -104,7 +104,7 @@ test("checkpoint plans refuse stale upstream heads, pending inference, enabled p
     let finish!: () => void; const draining = new Promise<void>(resolve => { finish = resolve; }); f.hold(draining);
     f.service.control(true); await f.service.tick(); f.service.control(false);
     await assert.rejects(f.invoke("attention_checkpoint_plan", { sources: "all", mode: "rebaseline" }), /active source reads/);
-    finish();
+    finish(); await f.restart();
     await assert.rejects(f.invoke("attention_checkpoint_plan", { sources: ["worker:missing"], mode: "rebaseline" }), /not available/);
     await assert.rejects(f.invoke("attention_checkpoint_plan", { sources: "all", mode: "rebaseline" }, { transport: "mcp", botId: null, instance: null, threadId: null, sessionId: null }), /operator authority/);
   } finally { await f.close(); }
