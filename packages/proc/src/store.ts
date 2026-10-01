@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { executionRecord, brainAuthority, isBrainSchedule, operator, summarizeProcess, systemBrainId,
   type Actor, type Authority, type Action, type ProcessSpec, type ProcessSummary, type ScheduleSpec, type Schedule } from "./schema.js";
 import { maxOutputBytes, maxOutputLines, retentionDays } from "./limits.js";
-import { stateHash, StateJournal, type StateDependencies, type StateApplyInput } from "@stack/api";
+import { OperationRejected, stateHash, StateJournal, type StateDependencies, type StateApplyInput } from "@stack/api";
 
 const iso = (ms = Date.now()) => new Date(ms).toISOString();
 const parse = <T>(text: string): T => JSON.parse(text) as T;
@@ -412,7 +412,7 @@ export class ProcStore {
       { request_hash: string; execution_id: string | null; created_by: string; label: string | null } | undefined;
     if (existing) {
       if (existing.request_hash !== hash || existing.execution_id !== executionId || existing.created_by !== JSON.stringify(createdBy)
-        || existing.label !== label) throw new Error("run_id_conflict");
+        || existing.label !== label) throw new OperationRejected("run_id_conflict");
       return { record: this.getRun(requestId), created: false };
     }
     this.db.prepare(`INSERT INTO runs (id,execution_id,state,retain_output,request_hash,started_at,created_by,label,schedule_id,process)

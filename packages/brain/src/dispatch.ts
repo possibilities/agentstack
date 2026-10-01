@@ -1235,7 +1235,7 @@ async function runWorkerCommand(
   }
 }
 
-function parseIngestRequest(
+export function parseIngestRequest(
   argv: string[],
   command: "submit" | "ingest",
 ): IngestRequest {
@@ -1361,7 +1361,16 @@ async function executeAdmission(
       return;
     }
   }
-  let result = admitSubmission(store, {
+  let result = admitIngestRequest(store, request);
+  if (request.wait) {
+    result = await waitForAdmission(store, result, request.waitTimeoutMs);
+  }
+  writeByFormat(command, result, globals, humanAdmission, { readOnly: false });
+}
+
+/** Shared synchronous admission for CLI and correlated Package API calls. */
+export function admitIngestRequest(store: ResearchStore, request: IngestRequest) {
+  return admitSubmission(store, {
     version: request.version as typeof SUBMISSION_VERSION,
     source: request.source,
     kind: request.sourceType,
@@ -1377,10 +1386,6 @@ async function executeAdmission(
     force: request.force,
     skipSecrets: request.skipSecrets,
   });
-  if (request.wait) {
-    result = await waitForAdmission(store, result, request.waitTimeoutMs);
-  }
-  writeByFormat(command, result, globals, humanAdmission, { readOnly: false });
 }
 
 function parseDeleteRequest(argv: string[]): DeleteRequest {

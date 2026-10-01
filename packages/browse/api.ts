@@ -3,7 +3,7 @@ import { operation, stateDependencies, stateDependencyInput, stateHash, requireS
 import { Backend, cleanupSchema } from "./src/backend.js";
 import { BrowserSystem } from "./src/system.js";
 import { Profiles, profileSchema, bindingSchema } from "./src/profiles.js";
-import { handoffSchema, handoffRequestSchema, handoffActionSchema, completionInput } from "./src/handoff.js";
+import { handoffSchema, handoffRequestSchema, handoffRequestResult, handoffCompletionSchema, handoffWatch, handoffActionSchema, completionInput } from "./src/handoff.js";
 import { egressPolicy } from "@stack/scrape/network";
 import { withStateInventory } from "@stack/api";
 import { browseStateCategories } from "./src/state-categories.js";
@@ -33,10 +33,10 @@ export const browserResearchAcquire = operation({
   },
 });
 export const browserHandoffRequest = operation({
-  name: "browser_handoff_request", description: "Hold the entire own browser profile for human help. Origin is the invoking sanctioned Chat. Subscribe first to browser_handoffs_changed using browser_handoff_completion with this requestId, botId and threadId; inspect the subscribe initial value. Admission immediately fences managed automation; awaiting_human means CDP drained. A pending issue never grants human input.",
-  input: handoffRequestSchema, output: handoffSchema,
+  name: "browser_handoff_request", description: "Hold the own browser profile for human help. subscribe defaults on for verified Bot MCP calls; false opts out. The owner reserves an exact request watch before admission. Inspect observation and subscription; an initial result is not a future wakeup. Admission fences automation; awaiting_human means CDP drained. Human completion is a report to verify with a fresh snapshot, never an input grant.",
+  input: handoffRequestSchema, output: handoffRequestResult, completionWatch: handoffWatch,
   annotations: { title: "Request browser handoff", idempotentHint: true },
-  async call(ctx: BrowserContext, input, invocation) { return ctx.profiles.requestHandoff(input, invocation); },
+  async call(ctx: BrowserContext, input, invocation) { return { ...await ctx.profiles.requestHandoff(input, invocation), subscription: null, observation: null }; },
 });
 export const browserHandoffList = operation({
   name: "browser_handoff_list", description: "List durable browser handoffs. Verified Bot callers see only their own Bot; local operators see all. Runtime issues are separate from human outcomes.",
@@ -49,8 +49,8 @@ export const browserHandoffGet = operation({
   async call(ctx: BrowserContext, input, invocation) { return { handoff: ctx.profiles.handoffs(await ctx.profiles.caller(invocation)).find((h) => h.id === input.id) ?? null }; },
 });
 export const browserHandoffCompletion = operation({
-  name: "browser_handoff_completion", description: "Stable completion-only projection for existing MCP event subscriptions. Returns null before request admission and throughout all pending states; resolved returns the durable human result. Subscribe before requesting using the same requestId. Bot/thread arguments must match the invoking Chat; a result in the subscribe initial value is already completed work to inspect, not a future wakeup.",
-  input: completionInput, output: z.strictObject({ result: handoffSchema.nullable() }), annotations: { title: "Read browser handback", readOnlyHint: true },
+  name: "browser_handoff_completion", description: "Exact-request completion projection: null before admission and while pending; resolved yields the human report, not browser verification or Work completion. Coordinated requests use this read automatically. Bot/thread arguments must match the invoking Chat. An initial terminal value is for inspection, not a future wakeup.",
+  input: completionInput, output: handoffCompletionSchema, annotations: { title: "Read browser handback", readOnlyHint: true },
   async call(ctx: BrowserContext, input, invocation) {
     if (invocation) {
       const caller = await ctx.profiles.origin(invocation);

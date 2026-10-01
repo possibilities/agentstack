@@ -45,6 +45,13 @@ export async function authorizeWorkerRead(subscription: EventSubscription, env: 
   }
   if (subscription.pkg !== "worker") return;
   const args = subscription.readArguments;
+  if (subscription.topic === "worker_turn_changed") {
+    if (subscription.readOperation !== "worker_turn_observation" || typeof args.requestId !== "string" || subscription.scope !== `request:${args.requestId}` ||
+      Object.keys(args).length !== 3 || args.botId !== subscription.botId || args.threadId !== subscription.threadId)
+      throw new Error("Worker turn wakeup requires this Chat's exact request-scoped observation");
+    // The projection checks durable per-turn origin, and is null before admission.
+    return;
+  }
   if (subscription.topic !== "worker_changed" || !subscription.scope || subscription.readOperation !== "worker_status" ||
       Object.keys(args).length !== 1 || args.id !== subscription.scope)
     throw new Error("worker wakeup requires an exact worker_changed scope and worker_status read");

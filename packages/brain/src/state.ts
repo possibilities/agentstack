@@ -9,7 +9,7 @@ const ids = z.array(z.number().int().positive()).min(1).max(100);
 type Selection = { kind: "jobs"; ids: number[] } | { kind: "runs"; ids: number[] } | { kind: "source"; id: string; action: "remove" | "checkpoint_reset"; procRevision: string }
   | { kind: "artifacts"; digests: string[] };
 const terminalJob = (job: Job) => ["failed", "excluded", "cancelled", "completed"].includes(job.state);
-const retained = ["Admission IDs/digests, transitions, timing, dispositions, immutable recovery authority and maintenance receipts",
+const retained = ["Admission IDs/digests, content-free request/Chat bindings, transitions, timing, dispositions, immutable recovery authority and maintenance receipts",
   "Indexed documents, other jobs/sources, shared Artifact bytes, external files, backups and device outboxes are separate copies",
   "Payload redaction is logical; SQLite WAL/free pages and backup media may retain bytes"];
 

@@ -205,6 +205,10 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     const catalog = await supervisor.catalog(accountId, true);
     assert.deepEqual(catalog.models[0]?.efforts, ["low", "high"]);
     const start = { accountId, model: "openai/gpt-fixture", effort: "low", repo, task: "Write an output file", requestId: randomUUID(), workItemId };
+    const observationInput = { requestId: start.requestId, botId: "_local_operator", threadId: "_local_operator" };
+    assert.deepEqual(await manager.observeTurn(observationInput), { result: null, update: null });
+    await assert.rejects(manager.start({ ...start, subscribe: true }), /owner-coordinated/);
+    assert.equal(manager.ledger.startByRequestId(start.requestId), null, "unsupported completion delivery must refuse before Worker reservation or worktree preparation");
     await assert.rejects(manager.start(start, { transport: "mcp", botId: null, instance: null, threadId: null, sessionId: null }), /Bot-bound MCP/);
     await assert.rejects(manager.start(start, { transport: "mcp", botId: "foreign-bot", instance: "old", threadId: "other", sessionId: null }), /verified Bot thread|Bot launch/);
     assert.deepEqual(manager.ledger.workers(), []);
@@ -225,6 +229,9 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     const id = started.worker.id;
     for (let i = 0; i < 100 && (await manager.status(id)).worker.phase !== "idle"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal((await manager.status(id)).turn?.stopReason, "end_turn");
+    assert.equal((await manager.observeTurn(observationInput)).result?.turnId, started.turn.id);
+    assert.equal((await manager.observeTurn(observationInput)).result?.phase, "completed");
+    await assert.rejects(manager.observeTurn({ ...observationInput, threadId: "another-chat" }), /originating Chat/);
     assert.equal(await readFile(join(started.worker.cwd!, "output.txt"), "utf8"), `Check your work.\n\n${start.task}`);
     const listed = await socketCall(socketPath("worker", env), "tools/call", { name: "worker_list", arguments: {} }) as { workers: Awaited<ReturnType<WorkerManager["list"]>> };
     const row = listed.workers.find((worker) => worker.id === id)!;
@@ -300,6 +307,8 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     assert.equal((await manager.status(id)).turn?.phase, "cancelled");
     assert.equal(await readFile(join(started.worker.cwd!, "output.txt"), "utf8"), output);
     const followed = { id, message: "ASK to write approval", requestId: randomUUID() };
+    await assert.rejects(manager.send({ ...followed, subscribe: true }), /owner-coordinated/);
+    assert.equal(manager.ledger.turnByRequestId(followed.requestId), null, "unsupported follow-up watch must not reserve a turn");
     const sent = await manager.send(followed);
     assert.deepEqual(sent.turn.workContext, { workItemId, scopeRevision: 2, source: "continuation" });
     assert.equal((await manager.send(followed)).turn.id, sent.turn.id);
@@ -307,11 +316,23 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     for (let i = 0; i < 100 && (await manager.status(id)).worker.phase !== "awaiting_input"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
     const pending = (await manager.status(id)).pending;
     assert.equal(pending.length, 1);
+    const waiting = await manager.observeTurn({ ...observationInput, requestId: followed.requestId });
+    assert.equal(waiting.result, null); assert.equal(waiting.update?.phase, "awaiting_input");
+    assert.deepEqual(waiting.update?.pending, [{ permissionId: pending[0]!.id, optionCount: 2 }]);
+    const permissionLedger = manager.ledger;
+    const morePermissions = Array.from({ length: 8 }, (_, n) => permissionLedger.addPermission(id, sent.turn.id, 100 + n, "PRIVATE permission title", pending[0]!.options, started.worker.runtimeInstance));
+    const bounded = await manager.observeTurn({ ...observationInput, requestId: followed.requestId });
+    assert.equal(bounded.update?.pending.length, 8); assert.equal(bounded.update?.pendingCount, 9); assert.equal(bounded.update?.pendingTruncated, true);
+    assert.equal(JSON.stringify(bounded).includes("PRIVATE"), false, "attention summaries contain only permission identity/count, not authored titles/options");
+    for (const permission of morePermissions) manager.ledger.resolvePermission(permission.id);
+    assert.equal((await manager.observeTurn(observationInput)).result?.turnId, started.turn.id, "a later awaiting-input turn must not change an earlier request's completion");
     assert.ok(scopedChanges.filter((value) => value === id).length >= 2);
     await manager.respond(id, pending[0]!.id, "allow-once");
     for (let i = 0; i < 100 && (await manager.status(id)).worker.phase !== "idle"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.match(await readFile(join(started.worker.cwd!, "approved.txt"), "utf8"), /allow-once/);
     assert.ok((await manager.read(id, 0, 50)).entries.some((item) => item.kind === "agent"));
+    const followCompletion = await manager.observeTurn({ ...observationInput, requestId: followed.requestId });
+    assert.equal(followCompletion.result?.turnId, sent.turn.id); assert.equal(followCompletion.update, null);
     assert.equal((await manager.start(start)).turn.id, started.turn.id);
 
     await manager.send({ id, message: "ASK then cancel", requestId: randomUUID() });

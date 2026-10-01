@@ -3,13 +3,13 @@ import { randomUUID, createHash } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { botInstance, operatorInvocation, parseBotMcpIdentity, socketCall, socketPath, type InvocationContext } from "@stack/api";
+import { botInstance, OperationRejected, operatorInvocation, parseBotMcpIdentity, requireCompletionCoordination, socketCall, socketPath, type InvocationContext } from "@stack/api";
 import { z } from "zod";
 import { Backend, backendSession } from "./backend.js";
 import { BrowserSystem } from "./system.js";
 import { prepareBotBrowserConfig, browserNamespace } from "./config.js";
 import { BrowserGate, type ManagedGate } from "./gate.js";
-import { handoffSchema, actionReceiptSchema, type Handoff, type HandoffRequest, type HandoffAction } from "./handoff.js";
+import { handoffSchema, handoffWatch, actionReceiptSchema, type Handoff, type HandoffRequest, type HandoffAction } from "./handoff.js";
 
 const execFile = promisify(execFileCallback);
 export const profileSchema = z.strictObject({
@@ -129,19 +129,22 @@ export class Profiles {
   private async changed(): Promise<void> { await this.save(); this.onHandoffChange?.(); }
 
   async requestHandoff(input: HandoffRequest, invocation?: InvocationContext): Promise<Handoff> {
-    const origin = await this.origin(invocation);
+    const origin = await this.origin(invocation).catch(error => { throw new OperationRejected(message(error), { cause: error }); });
     return this.serial(`request:${origin.botId}:${origin.threadId}:${input.requestId}`, () => this.serial(`handoff:${input.profileId}`, async () => {
-      await this.verifyCaller(origin);
+      await this.verifyCaller(origin).catch(error => { throw new OperationRejected(message(error), { cause: error }); });
       const previous = this.ledger.handoffs.find((h) => h.botId === origin.botId && h.threadId === origin.threadId && h.requestId === input.requestId);
       if (previous) {
-        if (previous.profileId !== input.profileId || previous.targetId !== (input.targetId ?? null) || previous.message !== input.message) throw new Error("handoff requestId conflicts with existing intent");
+        if (previous.profileId !== input.profileId || previous.targetId !== (input.targetId ?? null) || previous.message !== input.message) throw new OperationRejected("handoff requestId conflicts with existing intent");
+        await requireCompletionCoordination(this.env, "browse", "browser_handoff_request", handoffWatch, input, invocation);
         if (previous.state === "preparing" && !previous.issue?.startsWith("Owner restarted")) await this.prepareHandoff(previous);
         return structuredClone(previous);
       }
-      if (this.closing) throw new Error("browser is shutting down");
+      if (this.closing) throw new OperationRejected("browser is shutting down");
       const profile = this.ledger.profiles.find((p) => p.id === input.profileId);
-      if (profile?.botId !== origin.botId) throw new Error("handoff profile does not belong to invoking Bot");
-      if (this.held(input.profileId)) throw new Error("profile already has an unresolved handoff");
+      if (profile?.botId !== origin.botId) throw new OperationRejected("handoff profile does not belong to invoking Bot");
+      if (this.held(input.profileId)) throw new OperationRejected("profile already has an unresolved handoff");
+      await requireCompletionCoordination(this.env, "browse", "browser_handoff_request", handoffWatch, input, invocation);
+      if (this.closing) throw new OperationRejected("browser is shutting down");
       const handoff: Handoff = { id: randomUUID(), ...origin, profileId: input.profileId, requestId: input.requestId,
         targetId: input.targetId ?? null, targetStatus: input.targetId ? "unknown" : "unspecified", message: input.message,
         state: "preparing", outcome: null, note: null, revision: 1, createdAt: new Date().toISOString(), resolvedAt: null, issue: null, quiesced: false };

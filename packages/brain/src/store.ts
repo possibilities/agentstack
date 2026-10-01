@@ -54,7 +54,7 @@ import type {
   Sensitivity,
 } from "./types.js";
 
-export const RESEARCH_SCHEMA_VERSION = 14;
+export const RESEARCH_SCHEMA_VERSION = 15;
 
 /**
  * Default lease and retry policy. Durations are policy, not identity: callers
@@ -934,6 +934,14 @@ const MIGRATION_V14 = `
           AND NOT EXISTS (SELECT 1 FROM operator_run_execution_leases l WHERE l.run_id=r.id)))
     BEGIN SELECT RAISE(ABORT, 'operator-controlled Run job binding is immutable'); END;
   UPDATE meta SET value='14' WHERE key='schema_version';
+`;
+
+const MIGRATION_V15 = `
+  CREATE TABLE admission_bindings (
+    request_id TEXT PRIMARY KEY, operation TEXT NOT NULL, bot_id TEXT NOT NULL, thread_id TEXT NOT NULL,
+    input_digest TEXT NOT NULL, admission_json TEXT NOT NULL, created_at TEXT NOT NULL
+  );
+  UPDATE meta SET value='15' WHERE key='schema_version';
 `;
 
 function normalizeContentClassification(
@@ -3928,6 +3936,7 @@ export class ResearchStore {
         if (version < 12) this.db.exec(MIGRATION_V12);
         if (version < 13) this.db.exec(MIGRATION_V13);
         if (version < 14) this.db.exec(MIGRATION_V14);
+        if (version < 15) this.db.exec(MIGRATION_V15);
       })
       .immediate();
   }

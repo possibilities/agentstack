@@ -117,7 +117,7 @@ test("source grants bind definition versions and discovered children inherit onl
 test("schema migration keeps existing jobs and sources public-only and records no invented grants", (t) => {
   const { store, root } = fixture(t);
   const job = store.enqueueJob({ idempotencyKey: "legacy", kind: "url", intent: intent("http://10.0.0.1/doc.md") }).job;
-  store.db.exec("DROP TABLE egress_extractions; DROP TABLE egress_attempts; DROP TABLE egress_grants; DROP TRIGGER jobs_egress_scope; DROP TRIGGER operator_run_jobs_frozen_update; ALTER TABLE jobs DROP COLUMN egress_scope; ALTER TABLE jobs DROP COLUMN content_cleared_at; ALTER TABLE runs DROP COLUMN content_cleared_at; ALTER TABLE runs DROP COLUMN payload_digest; ALTER TABLE sources DROP COLUMN removed_at; ALTER TABLE sources DROP COLUMN checkpoint_generation; UPDATE meta SET value='12' WHERE key='schema_version';");
+  store.db.exec("DROP TABLE admission_bindings; DROP TABLE egress_extractions; DROP TABLE egress_attempts; DROP TABLE egress_grants; DROP TRIGGER jobs_egress_scope; DROP TRIGGER operator_run_jobs_frozen_update; ALTER TABLE jobs DROP COLUMN egress_scope; ALTER TABLE jobs DROP COLUMN content_cleared_at; ALTER TABLE runs DROP COLUMN content_cleared_at; ALTER TABLE runs DROP COLUMN payload_digest; ALTER TABLE sources DROP COLUMN removed_at; ALTER TABLE sources DROP COLUMN checkpoint_generation; UPDATE meta SET value='12' WHERE key='schema_version';");
   const migrated = new ResearchStore(join(root, "research.db"));
   try {
     const policy = new ResearchEgress(migrated);

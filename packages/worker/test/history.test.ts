@@ -199,17 +199,20 @@ test("admitted prompts and requested choices survive failed preparation, restart
   try {
     const request = intent();
     const { worker, turn } = ledger.reserve(request);
+    assert.deepEqual(ledger.turnOrigin(turn.requestId), { botId: request.botId, threadId: request.threadId });
     assert.equal(turn.prompt, request.task);
     assert.equal(turn.requestedEffort, "high");
     assert.equal(turn.observedSettings, null);
     ledger.setTurnPhase(turn.id, "failed", null, "worktree preparation failed");
     ledger.setWorkerPhase(worker.id, "idle");
-    const followup = ledger.reserveTurn(worker.id, randomUUID(), "Fix the failed preparation", "openai/gpt-fixture", "high").turn;
+    const followupOrigin = { botId: request.botId, threadId: "another-sanctioned-chat" };
+    const followup = ledger.reserveTurn(worker.id, randomUUID(), "Fix the failed preparation", "openai/gpt-fixture", "high", undefined, null, followupOrigin).turn;
     ledger.history.append(worker.id, followup.id, "config_option_update", "response", config());
     ledger.history.update(worker.id, null, "live", { sessionUpdate: "session_info_update", title: "Durable title" });
     ledger.dispatchTurn(followup.id, "Role instructions\nFix the failed preparation");
     assert.equal(ledger.turn(followup.id)?.observedSettings?.effort, "low");
     ledger.close(); ledger = new WorkerLedger(root);
+    assert.deepEqual(ledger.turnOrigin(followup.requestId), followupOrigin, "follow-up provenance must not drift to the Worker's first Chat on restart");
     assert.equal(ledger.turn(turn.id)?.phase, "failed");
     assert.equal(ledger.turn(turn.id)?.prompt, request.task);
     assert.equal(ledger.turn(followup.id)?.phase, "unknown");
@@ -224,11 +227,13 @@ test("admitted prompts and requested choices survive failed preparation, restart
     assert.throws(() => ledger.turnPage(worker.id, randomUUID(), 1), /cursor/);
     ledger.close();
     const db = new DatabaseSync(join(root, "workers.sqlite"));
-    for (const column of ["prompt", "requested_model", "requested_effort", "observed_settings_json", "dispatched_at", "dispatched_prompt_seq"])
+    for (const column of ["prompt", "requested_model", "requested_effort", "observed_settings_json", "dispatched_at", "dispatched_prompt_seq", "origin_bot_id", "origin_thread_id"])
       db.exec(`ALTER TABLE turns DROP COLUMN ${column}`);
     db.close(); ledger = new WorkerLedger(root);
     assert.equal(ledger.turn(turn.id)?.prompt, null);
     assert.equal(ledger.turn(turn.id)?.observedSettings, null);
+    assert.deepEqual(ledger.turnOrigin(turn.requestId), { botId: request.botId, threadId: request.threadId });
+    assert.equal(ledger.turnOrigin(followup.requestId), null, "migration must not invent an old follow-up's Chat");
   } finally { ledger.close(); await rm(root, { recursive: true, force: true }); }
 });
 

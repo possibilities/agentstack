@@ -463,19 +463,8 @@ export function indexedDocumentForUrl(
   store: ResearchStore,
   source: string,
 ): AlreadyIndexedResult | null {
-  let url: string;
-  try {
-    url = normalizedWebUrl(String(source ?? "").trim());
-  } catch {
-    return null;
-  }
-  const statusId = xStatusId(url);
-  const articleId = xArticleId(url);
-  const key = statusId
-    ? { type: "x:status", value: statusId }
-    : articleId
-      ? { type: "x:article", value: articleId }
-      : { type: "url", value: url };
+  const key = submissionUrlKey(source);
+  if (key === null) return null;
   const row = store.db
     .query(
       "SELECT key_type, key_value, document_id FROM resources WHERE key_type=? AND key_value=? AND document_id IS NOT NULL",
@@ -492,6 +481,23 @@ export function indexedDocumentForUrl(
     document_id: row.document_id,
     resource_key: `${row.key_type}:${row.key_value}`,
   };
+}
+
+/** Reconstruct a caller's response locator without retaining it in watch bindings. */
+export function submissionUrlKey(source: string): { type: string; value: string } | null {
+  let url: string;
+  try {
+    url = normalizedWebUrl(String(source ?? "").trim());
+  } catch {
+    return null;
+  }
+  const statusId = xStatusId(url);
+  const articleId = xArticleId(url);
+  return statusId
+    ? { type: "x:status", value: statusId }
+    : articleId
+      ? { type: "x:article", value: articleId }
+      : { type: "url", value: url };
 }
 
 export function admitSubmission(

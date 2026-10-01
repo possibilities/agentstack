@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { withStateInventory } from "@stack/api";
 import { brainStateCategories } from "./src/state-categories.js";
-import { operation, operatorInvocation, type PackageApi, type StandaloneContext } from "@stack/api";
+import { completionReceipt, operation, operatorInvocation, type PackageApi, type StandaloneContext } from "@stack/api";
 import { egressPolicy } from "@stack/scrape/network";
 import { ResearchEgress, grantScope, grantRecord, jobNetworkPolicy } from "./src/egress.js";
 import { ArtifactStore } from "./src/artifacts.js";
@@ -23,6 +23,7 @@ import { parseShareRequest } from "./src/share.js";
 import { ResearchStore } from "./src/store.js";
 import { runWorker, type WorkerOptions, type WorkerResult } from "./src/worker.js";
 import { BrainState, brainStateOperations } from "./src/state.js";
+import { admitWatched, brainWatches, completionInput, readCompletion, sourcesCompletion, sourcesCompletionInput, submissionCompletion } from "./src/admission-watches.js";
 
 export interface BrainContext {
   env: NodeJS.ProcessEnv;
@@ -113,26 +114,40 @@ const standaloneReads: StandaloneContext<BrainCommandContext> = {
 };
 const resultFields: Record<string, string> = { jobs_list: "jobs", sources_list: "sources", sources_status: "sources", sources_apply: "results", sources_sync: "results" };
 const commandOperations = agentTools(undefined, true).filter((tool) => !internalOnly.has(tool.name)).map((tool) => {
-  const output = outputs[tool.name];
+  let output = outputs[tool.name];
   if (!output) throw new Error(`unmapped Brain operation: ${tool.name}`);
   let input = tool.input;
   if (tool.name === "jobs_show") input = input.omit({ "reveal-content": true, actor: true, "max-bytes": true }).strict();
   if (tool.name.startsWith("recovery_")) input = input.omit({ "artifact-store": true }).strict();
   if (tool.name === "backup_create") input = input.omit({ "artifact-root": true }).strict();
+  const watch = brainWatches[tool.name];
+  if (watch) {
+    input = input.extend({ subscribe: z.boolean().optional().describe(tool.name === "sources_sync" ? "Opt in to one fixed-set Bot Chat completion watch. Watching refuses wait and bounds admission to 1000 sources; summaries page 50 Runs." : "Opt in to an exact-job Bot Chat completion watch. Watching refuses wait and does not follow transitive fanout."), requestId: z.uuid().optional().describe("Completion correlation key, separate from numeric job/run IDs and idempotency-key. MCP ingress allocates one when watching; retry exactly that requestId.") }).strict();
+    const extra = { requestId: z.uuid().nullable(), subscription: completionReceipt.nullable(), observation: (tool.name === "submit" ? submissionCompletion : sourcesCompletion).nullable() };
+    output = tool.name === "submit" ? z.union([schemas.AdmissionResultSchema.extend(extra), schemas.AlreadyIndexedResultSchema.extend(extra)]).meta({ type: "object" })
+      : z.object({ results: z.union([z.array(schemas.SourceSyncAdmissionSchema), z.array(schemas.SourceSyncWaitResultSchema)]), ...extra });
+  }
   return operation({
   name: tool.name,
-  description: tool.name === "jobs_show" ? "Inspect one ingestion job with bounded, sanitized failure diagnostics. Reads no Artifact bodies and appends no audit; use jobs_reveal for explicit sensitive inspection." : `${tool.leaf.summary}. ${tool.leaf.guidance ?? ""}`.slice(0, 400).trim(),
+   description: tool.name === "submit" ? "Durably admit ingestion; queued/duplicate/already_indexed are success, not indexing completion. subscribe:true reserves an exact job watch for the Bot Chat; omission/false creates none. requestId is a separate completion retry key. Watching cannot wait. Inspect observation/subscription: blocked needs attention; completion covers this job, not transitive fanout. Summaries never reveal content."
+     : tool.name === "sources_sync" ? "Admit discovery Runs for one source or all due sources. subscribe:true reserves one aggregate Bot Chat watch and freezes requestId's admitted set; omission/false creates none. Watching cannot wait. Completion means discovery/admission settled, not child indexing. Inspect observation/subscription; no-admission/dry-run is observed immediately. Summaries exclude URLs, content and raw warnings."
+     : tool.name === "jobs_show" ? "Inspect one ingestion job with bounded, sanitized failure diagnostics. Reads no Artifact bodies and appends no audit; use jobs_reveal for explicit sensitive inspection." : `${tool.leaf.summary}. ${tool.leaf.guidance ?? ""}`.slice(0, 400).trim(),
   input,
-  output,
+   output,
+   ...(watch ? { completionWatch: watch } : {}),
   ...(standaloneNames.has(tool.name) ? { standalone: standaloneReads } : {}),
   annotations: { ...tool.annotations, title: tool.title.slice(0, 80),
     ...(tool.name === "jobs_show" ? { readOnlyHint: true, idempotentHint: true } : {}),
     ...(tool.name === "recovery_online" ? { openWorldHint: true } : {}),
   },
-  async call(ctx: BrainCommandContext, input: Record<string, unknown>) {
-    const invocation = invocationFor(tool, input);
-    let result: unknown;
-    try { result = await invoke(ctx, invocation.command, invocation.commandArgv); } finally {
+   async call(ctx: BrainCommandContext, input: Record<string, unknown>, caller) {
+     const { subscribe: _subscribe, requestId: _requestId, ...commandInput } = input;
+     const invocation = invocationFor(tool, watch ? commandInput : input);
+     let result: unknown;
+     try {
+       if (watch && input.subscribe === true) return await admitWatched({ ...ctx, store: ctx.store! }, tool.name as "submit" | "sources_sync", input, invocation.commandArgv, caller);
+       result = await invoke(ctx, invocation.command, invocation.commandArgv);
+     } finally {
       // A mutation (or a failed one that may still have committed) is announced without waiting for the next tick.
       if (!tool.annotations.readOnlyHint) ctx.changes?.check();
     }
@@ -140,7 +155,8 @@ const commandOperations = agentTools(undefined, true).filter((tool) => !internal
     if (tool.name === "retag" && input["dry-run"] !== true) ctx.changes?.touch("index_changed");
     if (tool.name === "jobs_show") result = { ...(result as object), network_policy: new ResearchEgress(ctx.store!).forJob(Number(input["job-id"])) };
     const field = resultFields[tool.name];
-    return field ? { [field]: result } : result;
+     const response = field ? { [field]: result } : result;
+     return watch ? { ...(response as object), requestId: input.requestId ?? null, subscription: null, observation: null } : response;
   },
   });
 });
@@ -220,6 +236,12 @@ const packageApi: PackageApi<BrainContext, BrainTopic> = {
   http: [{ name: "share", kind: "json", authentication: "bearer",
     description: "Loopback-only internal share listener with ephemeral liveness credential. Devices pair through Access; legacy shared tokens are not accepted.", routes: shareRoutes }],
   operations: [
+    operation({ name: "submission_completion", description: "Read one request-bound Brain job completion, null before admission or while queued/running/retry_wait. Blocked/failed require attention, not successful indexing. Already-indexed returns only document identity. Exact-job settlement excludes transitive fanout. Bot/thread must match its origin. Structurally read-only; no URLs, intent, Artifacts or reveal audit.",
+      input: completionInput, output: submissionCompletion, annotations: { readOnlyHint: true },
+      async call(ctx, input, invocation) { return submissionCompletion.parse(readCompletion(ctx.dbPath, "submit", input, invocation)); } }),
+    operation({ name: "sources_sync_completion", description: "Read the fixed discovery Run set bound to requestId. Null until every admitted Run has a terminal outcome; no-admission/dry-run is immediate. Bounded paged summaries contain counts/outcomes, no raw warnings, URLs or content. This is discovery/admission settlement, not child indexing. Bot/thread must match its origin. Structurally read-only, no reveal audit.",
+      input: sourcesCompletionInput, output: sourcesCompletion, annotations: { readOnlyHint: true },
+      async call(ctx, input, invocation) { return sourcesCompletion.parse(readCompletion(ctx.dbPath, "sources_sync", input, invocation)); } }),
     ...brainStateOperations,
     operation({ name: "egress_grant_create", description: "Operator-only socket grant for one URL submission root or exact Research source definition version. Allows only explicit TCP IP/port destinations in addition to public egress. Children inherit the scope; existing sources receive no implicit grants. Revoke an existing grant before changing destinations.",
       input: z.strictObject({ scope: grantScope, policy: egressPolicy }), output: grantRecord,

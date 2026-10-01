@@ -1,8 +1,8 @@
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { forwardTimeout, socketCall, socketPath, type InvocationContext } from "@stack/api";
-import { operator, systemBrainId, type Action, type Authority, type ProcessSpec, type ScheduleSpec } from "./schema.js";
+import { forwardTimeout, OperationRejected, requireCompletionCoordination, socketCall, socketPath, type InvocationContext } from "@stack/api";
+import { operator, runWatch, systemBrainId, type Action, type Authority, type ProcessSpec, type ScheduleSpec } from "./schema.js";
 import { callCapacity, lineChunkChars, maxOutputBytes, maxOutputLines, retentionDays, runCapacity } from "./limits.js";
 import { ProcStore } from "./store.js";
 import { AuthorityBlocked, owns, ProcAuthority } from "./authority.js";
@@ -188,9 +188,26 @@ export class ProcService {
     }
   }
 
+  async admitRun(input: { requestId: string; process: ProcessSpec; label: string | null; subscribe?: boolean }, invocation?: InvocationContext) {
+    const actor = await this.policy.actor(invocation).catch(error => { throw new OperationRejected(error instanceof Error ? error.message : String(error), { cause: error }); });
+    await requireCompletionCoordination(this.env, "proc", "proc_run_start", runWatch, input, invocation);
+    return { ...this.startRun(input.process, null, input.requestId, actor, input.label), subscription: null, observation: null };
+  }
+
+  async runCompletion(id: string, invocation?: InvocationContext) {
+    const actor = await this.policy.actor(invocation);
+    if (!this.store.hasRun(id)) return { result: null };
+    const run = this.store.getRun(id);
+    owns(actor, run.createdBy);
+    if (actor.kind === "bot" && (run.createdBy.kind !== "bot" || run.createdBy.threadId !== actor.threadId)) throw new Error("process completion belongs to another Chat");
+    if (run.state === "starting" || run.state === "running") return { result: null };
+    const { state, exitCode, signal, error, startedAt, finishedAt } = run;
+    return { result: { id, state, exitCode, signal, error, startedAt, finishedAt } };
+  }
+
   startRun(spec: ProcessSpec, executionId: string | null = null, requestId?: string, actor: Authority = operator, label: string | null = null) {
-    if (this.closing) throw new Error("proc_closing");
-    if (this.active.size >= runCapacity && (!requestId || !this.store.hasRun(requestId))) throw new Error("proc_capacity");
+    if (this.closing) throw new OperationRejected("proc_closing");
+    if (this.active.size >= runCapacity && (!requestId || !this.store.hasRun(requestId))) throw new OperationRejected("proc_capacity");
     const admitted = this.store.startRun(spec, executionId, requestId, actor, label);
     if (!admitted.created) return admitted.record;
     const record = admitted.record;

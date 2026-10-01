@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { scheduledAuthority } from "@stack/api";
+import { completionReceipt, scheduledAuthority, type CompletionWatch } from "@stack/api";
 
 export const authority = scheduledAuthority;
 export type Authority = z.infer<typeof authority>;
@@ -78,7 +78,11 @@ export const runDetail = runRecord.extend({ process: processSummary.nullable() }
 export const outputLine = z.strictObject({ seq: z.number().int().positive(), stream: z.enum(["stdout", "stderr"]), text: z.string(), partial: z.boolean() });
 export const outputPage = z.strictObject({ run: runRecord, lines: z.array(outputLine), nextAfter: z.number().int().nonnegative(), done: z.boolean(), gap: z.boolean() });
 export const runId = z.strictObject({ id });
-export const runStart = z.strictObject({ requestId: id, label: label.nullable().default(null), process: processSpec });
+export const runStart = z.strictObject({ requestId: id, label: label.nullable().default(null), process: processSpec, subscribe: z.boolean().optional() });
+export const runCompletion = z.strictObject({ result: runRecord.pick({ id: true, state: true, exitCode: true, signal: true, error: true, startedAt: true, finishedAt: true }).nullable() });
+export const runStartResult = runRecord.extend({ subscription: completionReceipt.nullable(), observation: runCompletion.nullable() });
+export const runWatch: CompletionWatch = { topic: "proc_runs_changed", readOperation: "proc_run_completion", idArgument: "requestId", terminalField: "result", defaultWhen: [],
+  initialValueField: "observation", scope: { input: "requestId" }, readArguments: { id: { input: "requestId" } } };
 export const runRead = runId.extend({ after: z.number().int().nonnegative().default(0), limit: z.number().int().min(1).max(100).default(100) });
 export const runWait = runRead.extend({ waitMs: z.number().int().min(1).max(30_000).default(30_000) });
 export const runJoin = runId.extend({ waitMs: z.number().int().min(1).max(300_000).default(30_000) });

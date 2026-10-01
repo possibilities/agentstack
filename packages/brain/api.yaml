@@ -13,6 +13,8 @@ mcp:
     - get
     - tags
     - submit
+    - submission_completion
+    - sources_sync_completion
     - delete
     - retag
     - jobs_list
@@ -35,8 +37,8 @@ mcp:
     - recovery_online
     - recovery_execute
     - doctor
-  events: []
-  description: Brain operations over internal stdio or external HTTP. Operator stdio supports standalone research retrieval; other calls and external HTTP require the Brain socket. Change notices are not offered to agents.
+  events: [jobs_changed, sources_changed]
+  description: Brain operations over internal stdio or external HTTP, with opt-in content-safe ingestion/discovery completion watches. Operator stdio supports standalone research retrieval; other calls and external HTTP require the Brain socket.
 websocket:
   operations:
     - brain_state_read
@@ -57,6 +59,8 @@ websocket:
     - get
     - tags
     - submit
+    - submission_completion
+    - sources_sync_completion
     - delete
     - retag
     - jobs_list

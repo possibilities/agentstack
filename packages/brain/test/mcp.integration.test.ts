@@ -13,7 +13,7 @@ test("real MCP handshake, discovery and calls preserve Brain object outputs over
   let socket: Awaited<ReturnType<typeof serveSocket>> | undefined;
   let mcp: Awaited<ReturnType<typeof serveMcp>> | undefined;
   try {
-    socket = await serveSocket({ info: { name: "brain", description: "Brain", transportDescription: "Socket", path: socketPath("brain", env) }, context: ctx, operations: api.operations });
+    socket = await serveSocket({ info: { name: "brain", description: "Brain", transportDescription: "Socket", path: socketPath("brain", env) }, context: ctx, operations: api.operations, events: api.events });
     mcp = await serveMcp({ env });
     let id = 0;
     let version: string | undefined;
@@ -39,7 +39,7 @@ test("real MCP handshake, discovery and calls preserve Brain object outputs over
     assert.ok(initialized.capabilities.tools);
     await request("notifications/initialized", {}, true);
     const listed = await request("tools/list");
-    assert.deepEqual(listed.tools.map((tool: { name: string }) => tool.name).sort(), api.operations.map((op) => op.name)
+    assert.deepEqual(listed.tools.map((tool: { name: string }) => tool.name).filter((name: string) => !name.startsWith("events_")).sort(), api.operations.map((op) => op.name)
       .filter((name) => !/^brain_(state_|jobs_(plan|clear)$|runs_(plan|clear)$|source_(plan|clear)$|artifacts_(plan|clear)$)/.test(name)
         && !["share_receive", "share_read_states", "egress_grant_create", "egress_grant_revoke", "egress_grant_list"].includes(name)).sort());
     for (const tool of listed.tools) assert.equal(tool.outputSchema.type, "object", tool.name);

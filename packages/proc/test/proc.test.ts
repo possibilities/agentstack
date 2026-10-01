@@ -35,13 +35,19 @@ test("argv process emits cursor-readable lines and exit, reuses a request ID, an
   const id = randomUUID();
   const spec = { command: process.execPath, args: ["-e", "process.stdout.write('one\\ntwo\\n');process.stderr.write('err\\n')"],
     timeoutMs: 5_000, retainOutput: true };
+  assert.deepEqual(await call("proc_run_completion", { id }), { result: null });
+  await assert.rejects(call("proc_run_start", { requestId: id, process: spec, subscribe: true }), /owner-coordinated/);
+  assert.deepEqual(await call("proc_run_completion", { id }), { result: null }, "unsupported delivery must not admit a process");
   const started = await call("proc_run_start", { requestId: id, process: spec }) as { id: string };
   assert.equal(started.id, id);
   const joined = await socketCall(socketPath("proc", env), "tools/call", { name: "proc_run_join", arguments: { id, waitMs: 5_000 } }, { timeoutMs: 6_000 }) as { run: { state: string }; timedOut: boolean };
   assert.equal(joined.run.state, "exited");
   assert.equal(joined.timedOut, false);
+  const completion = await call("proc_run_completion", { id }) as { result: Record<string, unknown> };
+  assert.equal(completion.result.state, "exited"); assert.equal(completion.result.exitCode, 0);
+  assert.deepEqual(Object.keys(completion.result).sort(), ["error", "exitCode", "finishedAt", "id", "signal", "startedAt", "state"], "exit projection must exclude command, output and environment");
   const { process: _process, ...detail } = await call("proc_run_get", { id }) as Record<string, unknown>;
-  assert.deepEqual(await call("proc_run_start", { requestId: id, process: spec }), detail);
+  assert.deepEqual(await call("proc_run_start", { requestId: id, process: spec }), { ...detail, subscription: null, observation: null });
   await assert.rejects(call("proc_run_start", { requestId: id, process: { ...spec, args: ["different"] } }), /run_id_conflict/);
   const finished = await until(() => call("proc_run_get", { id }) as Promise<{ state: string; exitCode: number }>, (run) => run.state === "exited");
   assert.equal(finished.exitCode, 0);

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { docsSnapshot, serveApi, socketCall } from "../src/index.js";
 import { forwardTimeouts } from "../src/forward-timeout.js";
+import type { CompletionWatch } from "../src/operation.js";
 
 type TransportDoc = { type: string; description: string; supported: boolean; subscriptions: boolean; endpoint: string | null;
   operations: string[]; workerOperations: string[]; events: string[]; routes: Array<{ surface: string; surfaceDescription: string; kind: "json" | "static"; authentication: "bearer" | "none";
@@ -13,7 +14,7 @@ type TransportDoc = { type: string; description: string; supported: boolean; sub
     inputSchema: Record<string, unknown> | null; querySchema: Record<string, unknown> | null;
     outputSchema: Record<string, unknown> | null; errorSchema: Record<string, unknown> | null }> };
 type OperationDoc = { name: string; title: string | null; description: string; standalone: boolean; annotations: Record<string, unknown>; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown>;
-  completionWatch: { topic: string; readOperation: string; idArgument: string; terminalField: string; defaultWhen: string[]; retainFields?: string[] } | null };
+  completionWatch: CompletionWatch | null };
 type PackageDoc = { name: string; description: string; packageName: string; operations: OperationDoc[]; events: Record<string, string>; eventScope: { description: string; example: string; required: boolean } | null; transports: TransportDoc[] };
 const stateOperation = (name: string) => /_state_|_bot_dependencies$|_history_(plan|clear)$|_catalog_clear$|_settings_receipts_(plan|clear)$|^role_launch_(list|plan|clear)$|^worker_account_cache_(plan|clear)$|^attention_checkpoint_(plan|reset)$|^brain_(jobs|runs|source|artifacts)_(plan|clear)$|^scrape_(queue_(plan|apply)$|corpus_(list|plan|clear)$)|^serve_subscription_|^bot_(workspace_|history_|log_|launch_|recovery_|session_reset$|upload_remove$|queue_history$|queue_bodies_clear$)|^chat_upload_(list|read)$|^content_(blob_list|storage_)|^blob_stage_(list|abort)$|^attention_infer_requests$|^usage_observations_|^xcom_control$|^worker_workspace_|^work_focus_(list|retire)/.test(name);
 
@@ -345,11 +346,29 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(brain.transports.find((transport) => transport.type === "mcp")?.endpoint, "http://127.0.0.1:8743/mcp/brain");
     assert.equal(brain.transports.find((transport) => transport.type === "websocket")?.endpoint, "ws://127.0.0.1:8744/websocket");
     assert.equal(existsSync(join(stateDir, "brain")), false, "read-only discovery must not initialize Brain storage");
-    assert.deepEqual(Object.keys(workers.events).sort(), ["worker_changed", "worker_progress", "workers_changed"]);
+    // Discovery is the installed/HTTP/UI contract, independent of live admission
+    // tests: it must retain correlation and independently selected read/topics.
+    for (const [pkg, name, readOperation, defaultOnForBot] of [
+      ["browse", "browser_handoff_request", "browser_handoff_completion", true],
+      ["worker", "worker_start", "worker_turn_observation", true],
+      ["worker", "worker_send", "worker_turn_observation", true],
+      ["proc", "proc_run_start", "proc_run_completion", false],
+      ["brain", "submit", "submission_completion", false],
+      ["brain", "sources_sync", "sources_sync_completion", false],
+    ] as const) {
+      const doc = found.get(pkg) as PackageDoc;
+      const watch = doc.operations.find(op => op.name === name)!.completionWatch!;
+      assert.equal(watch.idArgument, "requestId"); assert.equal(watch.readOperation, readOperation);
+      assert.equal(watch.initialValueField, "observation"); assert.equal(watch.defaultOnForBot ?? false, defaultOnForBot);
+      const transport = doc.transports.find(transport => transport.type === "mcp")!;
+      assert.ok(transport.operations.includes(readOperation)); assert.ok(transport.events.includes(watch.topic));
+      assert.equal(transport.workerOperations.includes(readOperation), false, "new cross-resource completion reads never expand Worker authority");
+    }
+    assert.deepEqual(Object.keys(workers.events).sort(), ["worker_changed", "worker_progress", "worker_turn_changed", "workers_changed"]);
     assert.equal(workers.eventScope?.required, false);
     assert.deepEqual(workers.operations.map((operation) => operation.name).filter(name => !stateOperation(name)), ["worker_settings_catalog", "worker_settings_read", "worker_settings_preview", "worker_settings_patch", "worker_settings_apply", "worker_catalog", "worker_runtime_list", "worker_account_drain",
       "worker_start", "worker_list", "worker_status", "worker_read", "worker_detail", "worker_turn_list", "worker_record_list", "worker_record_read", "worker_tool_list",
-      "worker_diff", "worker_send", "worker_respond", "worker_cancel", "worker_resume", "worker_close", "worker_remove", "worker_work_list", "worker_turn_context"]);
+      "worker_diff", "worker_send", "worker_respond", "worker_cancel", "worker_resume", "worker_close", "worker_remove", "worker_work_list", "worker_turn_context", "worker_turn_observation"]);
     for (const name of ["worker_list", "worker_detail", "worker_turn_list", "worker_record_list", "worker_record_read", "worker_tool_list", "worker_diff"]) {
       assert.equal(workers.operations.find((operation) => operation.name === name)?.annotations.readOnlyHint, true);
     }

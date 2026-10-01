@@ -4,7 +4,7 @@ socket:
   description: Owner-local provider lifecycle, constrained disposable research browsers and system management; not an agent-facing browser transport.
 mcp:
   workerOperations: []
-  events: []
+  events: [browser_handoffs_changed]
   description: Verified live Bots manage only their own profiles and current-launch controllers. Page actions remain in agent-browser.
   operations:
     - browser_profile_list

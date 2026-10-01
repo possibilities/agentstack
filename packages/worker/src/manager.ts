@@ -1,4 +1,4 @@
-import { socketCall, socketPath, type InvocationContext } from "@stack/api";
+import { OperationRejected, requireCompletionCoordination, socketCall, socketPath, wantsCompletion, type InvocationContext } from "@stack/api";
 import { renderInstructions } from "@stack/roles";
 import { record, type AcpRequest } from "./acp.js";
 import { currentOption, effortOption, modelOption, optionsOf } from "./catalog.js";
@@ -13,12 +13,13 @@ import { evidence, settingsState, type SettingsPatch, type SettingsBackend, type
 import { randomUUID } from "node:crypto";
 import { resolveWorkContext } from "@stack/hud/client";
 import { WorkerState } from "./state.js";
+import { turnObservation, turnWatch } from "./observation.js";
 
 /** worker_list's compact most recent turn; worker_status and worker_turn_list carry the rest. */
 export type ListedTurn = Pick<TurnSummary, "id" | "phase" | "stopReason" | "issue" | "dispatchedAt" | "createdAt" | "updatedAt" | "workContext">;
 
-export type StartInput = { accountId: string; model?: string; effort?: string; repo: string; baseRef?: string; roleId?: string; task: string; requestId: string; workItemId?: string | null };
-export type SendInput = { id: string; message: string; requestId: string; model?: string; effort?: string; workItemId?: string | null };
+export type StartInput = { accountId: string; model?: string; effort?: string; repo: string; baseRef?: string; roleId?: string; task: string; requestId: string; workItemId?: string | null; subscribe?: boolean };
+export type SendInput = { id: string; message: string; requestId: string; model?: string; effort?: string; workItemId?: string | null; subscribe?: boolean };
 
 export class WorkerManager {
   readonly ledger: WorkerLedger;
@@ -263,6 +264,23 @@ export class WorkerManager {
     const turn = worker.currentTurnId ? this.ledger.turn(worker.currentTurnId) : null;
     return { worker, turn: turn ? summarizeTurn(turn) : null, pending: this.ledger.pending(id) };
   }
+
+  async observeTurn(input: { requestId: string; botId: string; threadId: string }, invocation?: InvocationContext) {
+    const owner = await this.owner(invocation);
+    if (owner.botId !== LOCAL_OPERATOR_ID && (owner.botId !== input.botId || owner.threadId !== input.threadId)) throw new Error("turn observation belongs to another Chat");
+    const turn = this.ledger.turnByRequestId(input.requestId);
+    if (!turn) return { result: null, update: null };
+    const origin = this.ledger.turnOrigin(input.requestId);
+    if (!origin || origin.botId !== input.botId || origin.threadId !== input.threadId) throw new Error("turn observation has another or unrecorded originating Chat");
+    const worker = this.ledger.worker(turn.workerId);
+    if (!worker || worker.botId !== input.botId) throw new Error("turn observation Worker is not owned by this Bot");
+    const identity = { workerId: worker.id, turnId: turn.id, requestId: turn.requestId };
+    if (["completed", "cancelled", "failed", "unknown"].includes(turn.phase)) return turnObservation.parse({ result: {
+      ...identity, phase: turn.phase, stopReason: turn.stopReason, issue: turn.issue?.slice(0, 4_000) ?? null, workContext: turn.workContext, contentClearedAt: turn.contentClearedAt,
+    }, update: null });
+    const pending = this.ledger.pending(worker.id).filter(request => request.turnId === turn.id).map(request => ({ permissionId: request.id, optionCount: request.options.length })).sort((a, b) => a.permissionId.localeCompare(b.permissionId));
+    return turnObservation.parse({ result: null, update: { ...identity, phase: turn.phase, pending: pending.slice(0, 8), pendingCount: pending.length, pendingTruncated: pending.length > 8 } });
+  }
   async workAdmissions(workItemId: string, after: number, limit: number, invocation?: InvocationContext) {
     if (invocation?.workerId) {
       await this.readable(invocation.workerId, invocation);
@@ -373,7 +391,7 @@ export class WorkerManager {
   }
 
   async start(input: StartInput, invocation?: InvocationContext): Promise<{ worker: WorkerRecord; turn: TurnSummary; duplicate: boolean }> {
-    const owner = await this.owner(invocation);
+    const owner = await this.owner(invocation).catch(error => { throw new OperationRejected(String(error), { cause: error }); });
     const intent = { requestId: input.requestId, botId: owner.botId, threadId: owner.threadId, accountId: input.accountId,
       provider: "" as WorkerRecord["provider"], model: input.model, effort: input.effort ?? null, repo: input.repo,
       baseRef: input.baseRef ?? null, task: input.task, ...(input.roleId ? { roleId: input.roleId } : {}), ...(input.workItemId !== undefined ? { workItemId: input.workItemId } : {}) };
@@ -384,17 +402,20 @@ export class WorkerManager {
       intent.model ??= initial.requestedModel ?? existing.model;
       if (input.effort === undefined) intent.effort = initial.requestedEffort;
       const prior = this.ledger.findStart(input.requestId, { ...intent, model: intent.model!, provider: existing.provider })!;
+      await requireCompletionCoordination(this.env, "worker", "worker_start", turnWatch, input, invocation);
       return { worker: prior.worker, turn: summarizeTurn(prior.turn), duplicate: true };
     }
-    const account = await this.account(input.accountId);
+    const account = await this.account(input.accountId).catch(error => { throw new OperationRejected(String(error), { cause: error }); });
     intent.provider = account.provider;
     const defaults = this.ledger.settings.get(`worker-defaults:${account.provider}`)!;
     const model = input.model ?? (typeof defaults.values.model === "string" ? defaults.values.model : undefined);
     const effort = input.effort ?? (typeof defaults.values.effort === "string" ? defaults.values.effort : null);
-    if (!model) throw new Error("Select a model from worker_catalog or save a provider Worker default");
+    if (!model) throw new OperationRejected("Select a model from worker_catalog or save a provider Worker default");
     intent.model = model; intent.effort = effort;
-    await this.checkChoice(input.accountId, model, effort);
-    const workContext = await resolveWorkContext(this.env, input.workItemId, invocation);
+    await this.checkChoice(input.accountId, model, effort).catch(error => { throw new OperationRejected(String(error), { cause: error }); });
+    const workContext = await resolveWorkContext(this.env, input.workItemId, invocation).catch(error => { throw new OperationRejected(String(error), { cause: error }); });
+    await requireCompletionCoordination(this.env, "worker", "worker_start", turnWatch, input, invocation);
+    if (this.closing) throw new OperationRejected("Worker owner is closing; nothing admitted");
     const reserved = this.ledger.reserve({ ...intent, model }, workContext);
     if (reserved.duplicate) return { ...reserved, turn: summarizeTurn(reserved.turn) };
     const id = reserved.worker.id;
@@ -484,20 +505,28 @@ export class WorkerManager {
   }
 
   async send(input: SendInput, invocation?: InvocationContext): Promise<{ worker: WorkerRecord; turn: TurnSummary; duplicate: boolean }> {
-    const worker = await this.owned(input.id, invocation);
+    const worker = await this.owned(input.id, invocation).catch(error => { throw new OperationRejected(String(error), { cause: error }); });
     const snapshot = this.settingsSnapshot(worker);
     const previous = this.ledger.turnByRequestId(input.requestId);
     const selected = input.model ?? (previous?.workerId === worker.id ? previous.requestedModel ?? worker.model : String(snapshot.values.model ?? worker.model));
     const effort = input.effort ?? (previous?.workerId === worker.id ? previous.requestedEffort : input.model && input.model !== worker.model ? null : typeof snapshot.values.effort === "string" ? snapshot.values.effort : worker.effort);
     // Check an existing request before requiring a currently fresh catalog or an idle worker.
     const prior = this.ledger.findTurnRequest(worker.id, input.requestId, input.message, selected, effort, input.workItemId);
-    if (prior) return { worker: this.ledger.worker(worker.id)!, turn: summarizeTurn(prior), duplicate: true };
-    await this.checkChoice(worker.accountId, selected, effort);
+    if (prior) {
+      const origin = this.ledger.turnOrigin(input.requestId);
+      if (wantsCompletion(turnWatch, input, invocation) && (!origin || origin.botId !== invocation?.botId || origin.threadId !== invocation?.threadId)) throw new OperationRejected("turn completion belongs to another or unrecorded Chat");
+      await requireCompletionCoordination(this.env, "worker", "worker_send", turnWatch, input, invocation);
+      return { worker: this.ledger.worker(worker.id)!, turn: summarizeTurn(prior), duplicate: true };
+    }
+    await this.checkChoice(worker.accountId, selected, effort).catch(error => { throw new OperationRejected(String(error), { cause: error }); });
     const runtime = this.supervisor.runtime(worker.accountId);
-    if (!runtime || runtime.instance !== worker.runtimeInstance || !worker.sessionId) throw new Error("worker session is not loaded; use worker_resume");
+    if (!runtime || runtime.instance !== worker.runtimeInstance || !worker.sessionId) throw new OperationRejected("worker session is not loaded; use worker_resume");
     const previousContext = worker.currentTurnId ? this.ledger.turn(worker.currentTurnId)?.workContext ?? null : null;
-    const workContext = await resolveWorkContext(this.env, input.workItemId, invocation, previousContext);
-    const reserved = this.ledger.reserveTurn(worker.id, input.requestId, input.message, selected, effort, input.workItemId, workContext);
+    const workContext = await resolveWorkContext(this.env, input.workItemId, invocation, previousContext).catch(error => { throw new OperationRejected(String(error), { cause: error }); });
+    await requireCompletionCoordination(this.env, "worker", "worker_send", turnWatch, input, invocation);
+    if (this.closing) throw new OperationRejected("Worker owner is closing; nothing admitted");
+    const origin = invocation?.botId && invocation.threadId ? { botId: invocation.botId, threadId: invocation.threadId } : { botId: LOCAL_OPERATOR_ID, threadId: LOCAL_OPERATOR_ID };
+    const reserved = this.ledger.reserveTurn(worker.id, input.requestId, input.message, selected, effort, input.workItemId, workContext, origin);
     if (reserved.duplicate) return { worker, turn: summarizeTurn(reserved.turn), duplicate: true };
     let applied = snapshot;
     try {

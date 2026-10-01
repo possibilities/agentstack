@@ -17,8 +17,9 @@ const fakeGate = (cdp: string, neko: string): ManagedGate => ({
   cdpUrl: cdp, observationUrl: neko, async start() {}, async close() {}, hold() {}, async drain() {}, resume() {}, unknownDrain() {},
   async grantHuman() { return neko + "/human"; }, async revokeHuman() {},
 });
-import { botMcpUrl, botInstance, serveSocket, socketPath, operation, type InvocationContext } from "@stack/api";
-import { browserProfileList, browserProfileCreate, browserProfileDelete, browserControllerList, browserControllerSelect } from "../api.js";
+import { botMcpUrl, botInstance, invocationContext, McpEventSubscriptions, serveSocket, socketPath, operation, type EventValue, type InvocationContext } from "@stack/api";
+import { browserHandoffRequest, browserHandoffCompletion, browserProfileList, browserProfileCreate, browserProfileDelete, browserControllerList, browserControllerSelect } from "../api.js";
+import type { Handoff } from "../src/handoff.js";
 
 type Item = Record<string, unknown>;
 
@@ -291,14 +292,30 @@ test("handoff admission, human revisions, retry-safe return, cancellation and re
   const makeGate = (cdp: string, neko: string): ManagedGate => ({ ...fakeGate(cdp, neko), hold() { held = true; }, resume() { if (failResume) throw new Error("resume failed"); held = false; },
     async drain() { if (blocked) throw new Error("drain pending"); }, async revokeHuman() { revoked++; }, async grantHuman() { granted++; return "http://human/grant"; } });
   let profiles = new Profiles(backend, s.system, s.env, async () => [bot], makeGate);
+  const workspace = join(s.root, "workspace");
+  await mkdir(join(workspace, "packages", "browse"), { recursive: true });
+  await writeFile(join(workspace, "packages", "browse", "api.yaml"), "name: browse\ndescription: Browse\nmcp:\n  description: Browse\n  operations: [browser_handoff_request, browser_handoff_completion]\n  events: [browser_handoffs_changed]\n");
+  const deliveries: EventValue[] = [];
+  const owner = new McpEventSubscriptions(s.env, async () => undefined, async (event, _signal, authorize, submitting) => { await authorize(); submitting?.(); deliveries.push(event); }, undefined, undefined, workspace);
+  const capability = await serveSocket({ info: { name: "serve", description: "Capability", transportDescription: "Socket", path: socketPath("serve", s.env) }, context: {}, operations: [
+    operation({ name: "serve_completion_check", description: "Verify coordination", input: z.strictObject({ id: z.uuid(), package: z.string(), operation: z.string(), recordId: z.uuid(), caller: invocationContext }), output: z.object({ verified: z.boolean() }),
+      async call(_ctx, input) { await owner.verifyCompletion(input.id, input.package, input.operation, input.recordId, input.caller); return { verified: true }; } }),
+  ] });
+  const browse = await serveSocket({ info: { name: "browse", description: "Browse", transportDescription: "Socket", path: socketPath("browse", s.env) }, context: { get profiles() { return profiles; }, backend, system: s.system }, operations: [browserHandoffRequest, browserHandoffCompletion], events: { topics: { browser_handoffs_changed: "Handoff state changed." } } });
+  profiles.onHandoffChange = () => browse.publish!("browser_handoffs_changed");
   try {
     await s.system.setHypemanLocation(s.root); await s.system.enableHypeman(s.root); await profiles.start(false);
     const own = await profiles.create("a", "own", true); await profiles.ensure(own.id);
     const extra = await profiles.create("a", "other"); await profiles.ensure(extra.id);
-    const input = { profileId: own.id, requestId: randomUUID(), message: "Sign in" };
+    const input = { profileId: own.id, requestId: randomUUID(), message: "Sign in", subscribe: false };
+    await assert.rejects(profiles.requestHandoff({ ...input, subscribe: undefined }, invocation), /owner-coordinated/);
+    assert.equal(profiles.handoffs(null).length, 0, "failed automatic coordination must not persist or hold a profile");
+    assert.equal(held, false);
     await assert.rejects(profiles.requestHandoff(input, { ...invocation, threadId: "foreign" }), /sanctioned/);
     blocked = true;
-    let h = await profiles.requestHandoff(input, invocation);
+    const admission = await owner.callAndWatch("browse", "browser_handoff_request", { ...input, subscribe: undefined }, invocation);
+    assert.deepEqual(admission.observation, { result: null });
+    let h = admission as Handoff;
     assert.equal(h.state, "preparing"); assert.match(h.issue!, /drain pending/); assert.equal(held, true);
     await assert.rejects(profiles.select("a", "later", own.id), /held/);
     await assert.rejects(profiles.requestHandoff({ ...input, requestId: randomUUID() }, invocation), /unresolved/);
@@ -316,7 +333,7 @@ test("handoff admission, human revisions, retry-safe return, cancellation and re
     await assert.rejects(profiles.actHandoff("cancel", { id: h.id, expectedRevision: h.revision, requestId: randomUUID() }, invocation), /before human take/);
     const finish = { id: h.id, expectedRevision: h.revision, requestId: randomUUID(), outcome: "completed" as const, note: "Signed in" };
     const published: string[] = [];
-    profiles.onHandoffChange = () => { published.push(profiles.handoffs(null).find((row) => row.id === h.id)!.state); };
+    profiles.onHandoffChange = () => { published.push(profiles.handoffs(null).find((row) => row.id === h.id)!.state); browse.publish!("browser_handoffs_changed"); };
     failResume = true;
     h = (await profiles.actHandoff("finish", finish)).handoff;
     assert.equal(h.state, "returning"); assert.equal(h.resolvedAt, null); assert.equal(held, true);
@@ -333,6 +350,9 @@ test("handoff admission, human revisions, retry-safe return, cancellation and re
     assert.equal(h.state, "resolved"); assert.equal(h.outcome, "completed"); assert.equal(held, false); assert.ok(revoked >= 2);
     assert.deepEqual((await profiles.actHandoff("finish", finish)).handoff, h);
     assert.equal(published.filter((state) => state === "resolved").length, 1);
+    for (let n = 0; n < 300 && deliveries.length === 0; n++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(deliveries.length, 1); assert.equal((deliveries[0]!.value as { result: Handoff }).result.id, h.id);
+    assert.equal(owner.status(invocation).completions[0]?.state, "delivered");
     profiles.onHandoffChange = undefined;
     await assert.rejects(profiles.actHandoff("finish", { ...finish, note: "changed" }), /conflicts/);
     h = await profiles.requestHandoff({ ...input, requestId: randomUUID() }, invocation);
@@ -356,6 +376,7 @@ test("handoff admission, human revisions, retry-safe return, cancellation and re
     await assert.rejects(profiles.select("a", "later", own.id), /held/);
     await assert.rejects(profiles.remove(own.id), /unresolved/);
   } finally {
+    await owner.close(); await browse.close(); await capability.close();
     // Native resource cleanup is exact and independent of the test handoff.
     for (const r of await backend.list()) if (r.target) await backend.close({ session: r.session, lease: r.lease, browserProfile: r.profile, browserTarget: r.target.name, backend: "local" });
     await backend.closeContext(); await server.close(); await s.close();
@@ -402,7 +423,7 @@ test("handoff replacement revokes grants, preserves unknown drain, and activates
     const deletion = profiles.remove(removed.id); await entered;
     originReads = 0;
     const checked = new Promise<void>((resolve) => { verified = resolve; });
-    const racing = profiles.requestHandoff({ profileId: removed.id, requestId: randomUUID(), message: "Too late" }, invocation);
+    const racing = profiles.requestHandoff({ profileId: removed.id, requestId: randomUUID(), message: "Too late", subscribe: false }, invocation);
     const refused = assert.rejects(racing, /does not belong/);
     // origin() performs two Bot reads; the third occurs inside the lifecycle
     // lock. Let origin finish, then release deletion without waiting for it.
@@ -412,12 +433,12 @@ test("handoff replacement revokes grants, preserves unknown drain, and activates
     assert.ok(!profiles.handoffs(null).some((h) => h.profileId === removed.id));
     const other = await profiles.create(bot.id, "request collision"); await profiles.ensure(other.id);
     const sameRequest = randomUUID();
-    const requests = await Promise.allSettled([profile.id, other.id].map((profileId) => profiles.requestHandoff({ profileId, requestId: sameRequest, message: "Same request" }, invocation)));
+    const requests = await Promise.allSettled([profile.id, other.id].map((profileId) => profiles.requestHandoff({ profileId, requestId: sameRequest, message: "Same request", subscribe: false }, invocation)));
     assert.equal(requests.filter((r) => r.status === "fulfilled").length, 1);
     assert.match(String((requests.find((r) => r.status === "rejected") as PromiseRejectedResult).reason), /conflicts/);
     const admitted = profiles.handoffs(null).find((h) => h.requestId === sameRequest)!;
     await profiles.actHandoff("cancel", { id: admitted.id, expectedRevision: admitted.revision, requestId: randomUUID() }, invocation);
-    let h = await profiles.requestHandoff({ profileId: profile.id, targetId: "requested-tab", message: "Help", requestId: randomUUID() }, invocation);
+    let h = await profiles.requestHandoff({ profileId: profile.id, targetId: "requested-tab", message: "Help", requestId: randomUUID(), subscribe: false }, invocation);
     events.length = 0;
     const take = { id: h.id, expectedRevision: h.revision, requestId: randomUUID() };
     assert.equal((await profiles.actHandoff("take", take)).controlUrl, "http://human/1");
@@ -430,7 +451,7 @@ test("handoff replacement revokes grants, preserves unknown drain, and activates
     h = profiles.handoffs(null).find((row) => row.id === h.id)!;
     await profiles.actHandoff("finish", { id: h.id, expectedRevision: h.revision, requestId: randomUUID(), outcome: "completed" });
     blocked = true;
-    const request = { profileId: profile.id, message: "Unknown work", requestId: randomUUID() };
+    const request = { profileId: profile.id, message: "Unknown work", requestId: randomUUID(), subscribe: false };
     h = await profiles.requestHandoff(request, invocation); assert.equal(h.quiesced, false);
     generation++; blocked = false;
     await profiles.ensure(profile.id);

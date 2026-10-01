@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { WorkerHistory, type ObservedSettings } from "./history.js";
 import { SettingsStore } from "@stack/settings";
-import { stateHash } from "@stack/api";
+import { OperationRejected, stateHash } from "@stack/api";
 import type { WorkContext } from "@stack/hud/schema";
 import type { WorkAdmission } from "@stack/hud/client";
 
@@ -79,12 +79,17 @@ export class WorkerLedger {
     if (!columns.some((column) => column.name === "role_id")) this.db.exec("ALTER TABLE workers ADD COLUMN role_id TEXT");
     if (!columns.some((column) => column.name === "runtime_instance")) this.db.exec("ALTER TABLE workers ADD COLUMN runtime_instance TEXT");
     for (const [table, additions] of Object.entries({ workers: { content_cleared_at: "INTEGER" }, turns: { content_cleared_at: "INTEGER", prompt: "TEXT", requested_model: "TEXT", requested_effort: "TEXT",
-      observed_settings_json: "TEXT", dispatched_at: "INTEGER", dispatched_prompt_seq: "INTEGER", work_context_json: "TEXT" },
+      observed_settings_json: "TEXT", dispatched_at: "INTEGER", dispatched_prompt_seq: "INTEGER", work_context_json: "TEXT", origin_bot_id: "TEXT", origin_thread_id: "TEXT" },
     pending_requests: { runtime_instance: "TEXT", tool_call_id: "TEXT", record_seq: "INTEGER" } })) {
       const existing = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
       for (const [name, type] of Object.entries(additions)) if (!existing.some((column) => column.name === name))
         this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
     }
+    // Only the first turn has provable legacy Chat provenance. Never invent the
+    // originating Chat for an old follow-up admitted by another Chat of the Bot.
+    this.db.exec(`UPDATE turns SET origin_bot_id=(SELECT bot_id FROM workers WHERE workers.request_id=turns.request_id),
+      origin_thread_id=(SELECT thread_id FROM workers WHERE workers.request_id=turns.request_id)
+      WHERE origin_bot_id IS NULL AND request_id IN (SELECT request_id FROM workers)`);
     this.history = new WorkerHistory(this.db);
     this.db.exec("CREATE INDEX IF NOT EXISTS turns_work_item ON turns(json_extract(work_context_json,'$.workItemId'))");
     this.settings = new SettingsStore(this.db, "worker");
@@ -127,7 +132,7 @@ export class WorkerLedger {
   findStart(requestId: string, input: unknown): { worker: WorkerRecord; turn: TurnRecord } | null {
     const row = this.db.prepare("SELECT id, input_digest FROM workers WHERE request_id = ?").get(requestId) as { id: string; input_digest: string } | undefined;
     if (!row) return null;
-    if (row.input_digest !== digest(input)) throw new Error("requestId was reused for another worker request");
+    if (row.input_digest !== digest(input)) throw new OperationRejected("requestId was reused for another worker request");
     const first = this.db.prepare("SELECT id FROM turns WHERE request_id = ?").get(requestId) as { id: string };
     return { worker: this.worker(row.id)!, turn: this.turn(first.id)! };
   }
@@ -141,13 +146,18 @@ export class WorkerLedger {
     return row ? this.turn(row.id) : null;
   }
 
+  turnOrigin(requestId: string): { botId: string; threadId: string } | null {
+    const row = this.db.prepare("SELECT origin_bot_id, origin_thread_id FROM turns WHERE request_id=?").get(requestId) as { origin_bot_id: string | null; origin_thread_id: string | null } | undefined;
+    return row?.origin_bot_id && row.origin_thread_id ? { botId: row.origin_bot_id, threadId: row.origin_thread_id } : null;
+  }
+
   reserve(input: { requestId: string; botId: string; threadId: string; accountId: string; provider: WorkerRecord["provider"];
     model: string; effort: string | null; repo: string; baseRef: string | null; task: string; roleId?: string; workItemId?: string | null },
     workContext: WorkContext | null = null): { worker: WorkerRecord; turn: TurnRecord; duplicate: boolean } {
     const inputDigest = digest(input);
     const prior = this.db.prepare("SELECT id, input_digest FROM workers WHERE request_id = ?").get(input.requestId) as { id: string; input_digest: string } | undefined;
     if (prior) {
-      if (prior.input_digest !== inputDigest) throw new Error("requestId was reused for another worker request");
+      if (prior.input_digest !== inputDigest) throw new OperationRejected("requestId was reused for another worker request");
       const worker = this.worker(prior.id)!;
       const first = this.db.prepare("SELECT id FROM turns WHERE request_id = ?").get(input.requestId) as { id: string };
       return { worker, turn: this.turn(first.id)!, duplicate: true };
@@ -163,7 +173,7 @@ export class WorkerLedger {
           join(this.stateDir, "workers", "worktrees", id), `stack-worker-${id}`, turnId, now, now);
       this.db.prepare("INSERT INTO turns (id, worker_id, request_id, input_digest, phase, created_at, updated_at, prompt, requested_model, requested_effort) VALUES (?,?,?,?, 'queued',?,?,?,?,?)")
         .run(turnId, id, input.requestId, inputDigest, now, now, input.task, input.model, input.effort);
-      this.db.prepare("UPDATE turns SET work_context_json=? WHERE id=?").run(workContext ? JSON.stringify(workContext) : null, turnId);
+      this.db.prepare("UPDATE turns SET work_context_json=?, origin_bot_id=?, origin_thread_id=? WHERE id=?").run(workContext ? JSON.stringify(workContext) : null, input.botId, input.threadId, turnId);
       this.append(id, turnId, "user", input.task);
       this.history.append(id, null, "launch", "submitted", { repo: input.repo, baseRef: input.baseRef, roleId: input.roleId ?? null, model: input.model, effort: input.effort });
       this.db.exec("COMMIT");
@@ -252,26 +262,26 @@ export class WorkerLedger {
     } | undefined;
     if (!row) return null;
     if (row.worker_id !== workerId || row.input_digest !== digest([workerId, message, model, effort, ...(workItemId !== undefined ? [workItemId] : [])]))
-      throw new Error("requestId was reused for another turn");
+      throw new OperationRejected("requestId was reused for another turn");
     return this.turn(row.id);
   }
   reserveTurn(workerId: string, requestId: string, message: string, model: string | null, effort: string | null,
-    workItemId?: string | null, workContext: WorkContext | null = null): { turn: TurnRecord; duplicate: boolean } {
+    workItemId?: string | null, workContext: WorkContext | null = null, origin: { botId: string; threadId: string } | null = null): { turn: TurnRecord; duplicate: boolean } {
     const hash = digest([workerId, message, model, effort, ...(workItemId !== undefined ? [workItemId] : [])]);
     const prior = this.db.prepare("SELECT id, worker_id, input_digest FROM turns WHERE request_id = ?").get(requestId) as { id: string; worker_id: string; input_digest: string } | undefined;
     if (prior) {
-      if (prior.worker_id !== workerId || prior.input_digest !== hash) throw new Error("requestId was reused for another turn");
+      if (prior.worker_id !== workerId || prior.input_digest !== hash) throw new OperationRejected("requestId was reused for another turn");
       return { turn: this.turn(prior.id)!, duplicate: true };
     }
     const worker = this.worker(workerId);
-    if (!worker || worker.phase !== "idle") throw new Error("worker is not idle; inspect its current turn");
+    if (!worker || worker.phase !== "idle") throw new OperationRejected("worker is not idle; inspect its current turn");
     const id = randomUUID();
     const now = Date.now();
     this.db.exec("BEGIN IMMEDIATE");
     try {
       this.db.prepare("INSERT INTO turns (id, worker_id, request_id, input_digest, phase, created_at, updated_at, prompt, requested_model, requested_effort) VALUES (?,?,?,?, 'queued',?,?,?,?,?)")
         .run(id, workerId, requestId, hash, now, now, message, model, effort);
-      this.db.prepare("UPDATE turns SET work_context_json=? WHERE id=?").run(workContext ? JSON.stringify(workContext) : null, id);
+      this.db.prepare("UPDATE turns SET work_context_json=?, origin_bot_id=?, origin_thread_id=? WHERE id=?").run(workContext ? JSON.stringify(workContext) : null, origin?.botId ?? null, origin?.threadId ?? null, id);
       this.db.prepare("UPDATE workers SET current_turn_id = ?, phase = 'running', updated_at = ? WHERE id = ?").run(id, now, workerId);
       this.append(workerId, id, "user", message);
       this.db.exec("COMMIT");

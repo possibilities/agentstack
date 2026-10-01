@@ -28,6 +28,11 @@ test("Worker UI progress and rich reads cannot become originating-Bot wakeups", 
     await assert.rejects(authorizeWorkerRead({ ...subscription, topic }, {}), /exact worker_changed scope/);
   }
   await assert.rejects(authorizeWorkerRead({ ...subscription, readOperation: "worker_read" }, {}), /exact worker_changed scope/);
+  const requestId = "00000000-0000-4000-8000-000000000001";
+  const turn = { ...subscription, topic: "worker_turn_changed", scope: `request:${requestId}`, readOperation: "worker_turn_observation", readArguments: { requestId, botId: "bot-1", threadId: "child" } };
+  await authorizeWorkerRead(turn, {});
+  for (const invalid of [{ ...turn, scope: "worker" }, { ...turn, readOperation: "worker_detail" }, { ...turn, readArguments: { ...turn.readArguments, threadId: "main" } }])
+    await assert.rejects(authorizeWorkerRead(invalid, {}), /exact request-scoped observation/);
 });
 
 test("event values are admitted on idle and working sanctioned threads without waiting for completion", { timeout: 30_000 }, async () => {

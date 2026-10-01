@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { botInstance, operation, serveSocket, socketCall, socketPath, type InvocationContext } from "@stack/api";
+import { botInstance, invocationContext, McpEventSubscriptions, operation, serveSocket, socketCall, socketPath, type EventValue, type InvocationContext } from "@stack/api";
 import { z } from "zod";
 import { api } from "../api.js";
 import { ProcService } from "../src/service.js";
@@ -61,12 +61,13 @@ async function fixture(t: import("node:test").TestContext) {
         return { effects };
       } })) });
   const context = { service: new ProcService(new ProcStore(join(root, "proc")), env, undefined, workspace) };
-  const proc = await serveSocket({ info: { name: "proc", description: "Proc", transportDescription: "Fixture", path: socketPath("proc", env) }, context, operations: api.operations });
+  const proc = await serveSocket({ info: { name: "proc", description: "Proc", transportDescription: "Fixture", path: socketPath("proc", env) }, context, operations: api.operations, events: api.events });
+  const stopEvents = await api.events!.start(context, (topic, scope) => proc.publish!(topic, scope));
   const caller = (id = "a", threadId = `${id}-child`): InvocationContext => ({ transport: "mcp", botId: id,
     instance: botInstance(bots.find((bot) => bot.id === id)!.url), threadId, sessionId: "session" });
   const call = (name: string, args: object = {}, invocation?: InvocationContext) => socketCall(socketPath("proc", env), "tools/call", { name, arguments: args, invocation });
   const retry = (id: string) => context.service.store.db.prepare("UPDATE schedules SET retry_at=0 WHERE id=?").run(id);
-  t.after(async () => { await proc.close(); await context.service.close(); await target.close(); await botServer.close(); await rm(root, { recursive: true, force: true }); });
+  t.after(async () => { stopEvents?.(); await proc.close(); await context.service.close(); await target.close(); await botServer.close(); await rm(root, { recursive: true, force: true }); });
   return { root, env, workspace, context, bots, seen, expose, caller, call, retry, effects: () => effects,
     lineageGate: (gate?: () => Promise<void>) => { lineageGate = gate; }, targetGate: (gate?: () => Promise<void>) => { targetGate = gate; } };
 }
@@ -106,6 +107,32 @@ test("Bot attribution, current MCP exposure, ownership and operator edits never 
   assert.equal((await f.call("proc_execution_list", { id }, f.caller()) as { executions: unknown[] }).executions.length, 1);
   await assert.rejects(f.call("proc_execution_list", { id }, f.caller("b")), /not_owned/);
   await assert.rejects(f.call("proc_schedule_create", { id, ...input }), /schedule_id_conflict/);
+});
+
+test("opt-in Proc watches bind the originating Chat before execution and observe exit without output", { timeout: 15_000 }, async t => {
+  const f = await fixture(t), requestId = randomUUID();
+  await mkdir(join(f.workspace, "packages", "proc"), { recursive: true });
+  await writeFile(join(f.workspace, "packages", "proc", "api.yaml"), "name: proc\ndescription: Proc\nmcp:\n  description: Proc\n  operations: [proc_run_start, proc_run_completion]\n  events: [proc_runs_changed]\n");
+  const deliveries: EventValue[] = [];
+  const owner = new McpEventSubscriptions(f.env, async () => undefined, async (event, _signal, authorize, submitting) => { await authorize(); submitting?.(); deliveries.push(event); }, undefined, undefined, f.workspace);
+  const capability = await serveSocket({ info: { name: "serve", description: "Capability", transportDescription: "Socket", path: socketPath("serve", f.env) }, context: {}, operations: [
+    operation({ name: "serve_completion_check", description: "Verify reserved capability", input: z.strictObject({ id: z.uuid(), package: z.string(), operation: z.string(), recordId: z.uuid(), caller: invocationContext }), output: z.object({ verified: z.boolean() }),
+      async call(_ctx, input) { await owner.verifyCompletion(input.id, input.package, input.operation, input.recordId, input.caller); return { verified: true }; } }),
+  ] });
+  try {
+    const result = await owner.callAndWatch("proc", "proc_run_start", { requestId, process: processSpec, subscribe: true }, f.caller());
+    const receipt = result.subscription as { id: string; state: string };
+    assert.equal(result.id, requestId); assert.equal(owner.operatorList()[0]?.scope, requestId);
+    await f.context.service.join(requestId, 5_000);
+    for (let n = 0; n < 300 && owner.status(f.caller(), receipt.id).completions[0]?.state !== "delivered"; n++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(owner.status(f.caller(), receipt.id).completions[0]?.state, "delivered");
+    assert.equal(deliveries.length, 1);
+    assert.equal((deliveries[0]!.value as { result: { exitCode: number } }).result.exitCode, 0);
+    assert.ok(!JSON.stringify(deliveries[0]!.value).includes("owned-output"), "output/argv must not enter the exit watch");
+    await assert.rejects(f.call("proc_run_completion", { id: requestId }, f.caller("a", "root-a")), /another Chat/);
+    await owner.callAndWatch("proc", "proc_run_start", { requestId, process: processSpec, subscribe: true }, f.caller());
+    assert.equal(deliveries.length, 1);
+  } finally { await owner.close(); await capability.close(); }
 });
 
 test("stopped Bots hold admissions, then resume across Proc and Bot restarts using current instances and coalesced intervals", async (t) => {

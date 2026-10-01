@@ -4,7 +4,7 @@ socket:
   description: Private socket for Worker lifecycle, bounded structured history, account catalog and runtime operations.
 mcp:
   workerOperations: [worker_list, worker_status, worker_read, worker_detail, worker_turn_list, worker_record_list, worker_record_read, worker_tool_list, worker_diff, worker_turn_context]
-  operations: [worker_settings_catalog, worker_settings_read, worker_settings_preview, worker_settings_patch, worker_settings_apply, worker_catalog, worker_runtime_list, worker_account_drain, worker_start, worker_list, worker_status, worker_read, worker_detail, worker_turn_list, worker_record_list, worker_record_read, worker_tool_list, worker_diff, worker_send, worker_respond, worker_cancel, worker_resume, worker_close, worker_remove, worker_work_list, worker_turn_context]
+  operations: [worker_settings_catalog, worker_settings_read, worker_settings_preview, worker_settings_patch, worker_settings_apply, worker_catalog, worker_runtime_list, worker_account_drain, worker_start, worker_list, worker_status, worker_read, worker_detail, worker_turn_list, worker_record_list, worker_record_read, worker_tool_list, worker_diff, worker_send, worker_respond, worker_cancel, worker_resume, worker_close, worker_remove, worker_work_list, worker_turn_context, worker_turn_observation]
   events: all
   description: Bot-facing Worker operations and account-bound catalog, forwarded to the worker socket.
 websocket:

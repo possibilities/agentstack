@@ -29,6 +29,25 @@ function positiveInteger(value: number, name: string): number {
   return value;
 }
 
+/** CLI and correlated admissions share selector and wait validation. */
+export function parseSourceSync(args: string[]) {
+  const opts = parseOptions(args, { due: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false },
+    limit: { type: "number", default: 1000 }, wait: { type: "boolean", default: false }, "wait-timeout-seconds": { type: "number", default: 300 },
+    "wait-timeout-ok": { type: "boolean", default: false }, "wait-poll-ms": { type: "number", default: 250 } });
+  const due = optBoolean(opts, "due"), namedSource = opts._[0];
+  if (opts._.length > 1 || (!due && (opts._.length !== 1 || namedSource === undefined)))
+    throw new CliError("bad_source_sync", "sources sync requires one stable source ID, optionally with --due, or --due by itself", { exitCode: 2 });
+  const dryRun = optBoolean(opts, "dry-run"), wait = optBoolean(opts, "wait"), waitTimeoutOk = optBoolean(opts, "wait-timeout-ok");
+  if (waitTimeoutOk && !wait) throw new CliError("bad_source_sync", "sources sync --wait-timeout-ok requires --wait", { exitCode: 2 });
+  if (dryRun && wait) throw new CliError("bad_source_sync", "sources sync --wait cannot be combined with --dry-run", { exitCode: 2 });
+  const waitTimeoutSeconds = optNumber(opts, "wait-timeout-seconds") ?? 300, waitPollMs = optNumber(opts, "wait-poll-ms") ?? 250;
+  if (!Number.isFinite(waitTimeoutSeconds) || waitTimeoutSeconds <= 0 || waitTimeoutSeconds > 3_600)
+    throw new CliError("bad_source_sync", "--wait-timeout-seconds must be greater than zero and at most 3600", { exitCode: 2 });
+  if (!Number.isInteger(waitPollMs) || waitPollMs < 25 || waitPollMs > 5_000)
+    throw new CliError("bad_source_sync", "--wait-poll-ms must be an integer from 25 through 5000", { exitCode: 2 });
+  return { namedSource, due, dryRun, wait, waitTimeoutOk, waitTimeoutSeconds, waitPollMs, limit: positiveInteger(optNumber(opts, "limit") ?? 1000, "limit") };
+}
+
 export async function runSourceCommands(
   dbPath: string,
   argv: string[],
@@ -122,68 +141,7 @@ export async function runSourceCommands(
     return;
   }
   if (subcommand === "sync") {
-    const opts = parseOptions(args, {
-      due: { type: "boolean", default: false },
-      "dry-run": { type: "boolean", default: false },
-      limit: { type: "number", default: 1000 },
-      wait: { type: "boolean", default: false },
-      "wait-timeout-seconds": { type: "number", default: 300 },
-      "wait-timeout-ok": { type: "boolean", default: false },
-      "wait-poll-ms": { type: "number", default: 250 },
-    });
-    const due = optBoolean(opts, "due");
-    const [namedSource] = opts._;
-    if (
-      opts._.length > 1 ||
-      (!due && (opts._.length !== 1 || namedSource === undefined))
-    ) {
-      throw new CliError(
-        "bad_source_sync",
-        "sources sync requires one stable source ID, optionally with --due, or --due by itself",
-        { exitCode: 2 },
-      );
-    }
-    const dryRun = optBoolean(opts, "dry-run");
-    const wait = optBoolean(opts, "wait");
-    const waitTimeoutOk = optBoolean(opts, "wait-timeout-ok");
-    if (waitTimeoutOk && !wait) {
-      throw new CliError(
-        "bad_source_sync",
-        "sources sync --wait-timeout-ok requires --wait",
-        { exitCode: 2 },
-      );
-    }
-    if (dryRun && wait) {
-      throw new CliError(
-        "bad_source_sync",
-        "sources sync --wait cannot be combined with --dry-run",
-        { exitCode: 2 },
-      );
-    }
-    const waitTimeoutSeconds = optNumber(opts, "wait-timeout-seconds") ?? 300;
-    const waitPollMs = optNumber(opts, "wait-poll-ms") ?? 250;
-    if (
-      !Number.isFinite(waitTimeoutSeconds) ||
-      waitTimeoutSeconds <= 0 ||
-      waitTimeoutSeconds > 3_600
-    ) {
-      throw new CliError(
-        "bad_source_sync",
-        "--wait-timeout-seconds must be greater than zero and at most 3600",
-        { exitCode: 2 },
-      );
-    }
-    if (
-      !Number.isInteger(waitPollMs) ||
-      waitPollMs < 25 ||
-      waitPollMs > 5_000
-    ) {
-      throw new CliError(
-        "bad_source_sync",
-        "--wait-poll-ms must be an integer from 25 through 5000",
-        { exitCode: 2 },
-      );
-    }
+    const { namedSource, due, dryRun, wait, waitTimeoutOk, waitTimeoutSeconds, waitPollMs, limit } = parseSourceSync(args);
     const store = new ResearchStore(dbPath);
     let admissions: SourceSyncAdmission[];
     try {
@@ -192,10 +150,7 @@ export async function runSourceCommands(
         namedSource === undefined
           ? registry.syncDueSources({
               dryRun,
-              limit: positiveInteger(
-                optNumber(opts, "limit") ?? 1_000,
-                "limit",
-              ),
+              limit,
             })
           : [
               registry.syncSource({

@@ -1,6 +1,6 @@
 import { chmod, mkdir } from "node:fs/promises";
 import { z } from "zod";
-import { operation, stateDir, stateDependencies, stateDependencyInput, stateHash, requireStateOperator, type PackageApi } from "@stack/api";
+import { completionReceipt, operation, stateDir, stateDependencies, stateDependencyInput, stateHash, requireStateOperator, type PackageApi } from "@stack/api";
 import { WorkerSupervisor } from "./src/supervisor.js";
 import { WorkerManager } from "./src/manager.js";
 import { workerSettingsOperations } from "./src/settings.js";
@@ -9,6 +9,7 @@ import { workAdmissionPage } from "@stack/hud/client";
 import { withStateInventory, statePageInput, stateFilePage, stateFileRead, listStateFiles, readStateFile } from "@stack/api";
 import { workerStateCategories } from "./src/state-categories.js";
 import { workerStateOperations } from "./src/state.js";
+import { turnObservation, turnObservationInput, turnWatch } from "./src/observation.js";
 
 const id = z.uuid();
 const model = z.strictObject({ id: z.string(), name: z.string(), efforts: z.array(z.string()), effortConfigId: z.string().nullable() });
@@ -52,7 +53,7 @@ const listedWorkerSchema = workerSchema.extend({
 const diffFileSchema = z.strictObject({ path: z.string(), oldPath: z.string().nullable(),
   status: z.enum(["added", "modified", "deleted", "renamed", "copied", "typechange", "unmerged", "untracked", "unknown"]),
   additions: z.number().int().nullable().describe("Added lines; null for binary and untracked files."), deletions: z.number().int().nullable(), binary: z.boolean() });
-const resultSchema = z.strictObject({ worker: workerSchema, turn: turnSummarySchema, duplicate: z.boolean() });
+const resultSchema = z.strictObject({ worker: workerSchema, turn: turnSummarySchema, duplicate: z.boolean(), subscription: completionReceipt.nullable(), observation: turnObservation.nullable() });
 const requestId = z.uuid().describe("Client-generated idempotency key. Retry with identical input after an uncertain response.");
 
 export type WorkersContext = { supervisor: WorkerSupervisor; manager: WorkerManager };
@@ -103,13 +104,16 @@ export const workerAccountDrain = operation({
 });
 
 export const workerStart = operation({
-  name: "worker_start", description: "Start a Worker in an owned Git worktree and dispatch its first turn through ACP or Claude SDK. Choose an account, model and effort from worker_catalog. Optional roleId selects a Role; omission uses the Worker default. Workers capture its enabled instructions, skills and MCP servers. Recovery retains the snapshot. Admission returns promptly; read worker_status for completion.",
+  name: "worker_start", description: "Start a Worker in an owned Git worktree and admit its first turn. Choose account/model/effort from worker_catalog; roleId defaults to the Worker Role, captured for recovery. subscribe defaults on for Bot MCP calls, false opts out. Inspect observation/subscription: the exact turn delivers needs-input updates and terminal outcome, not token progress. Native completion never completes Work.",
   input: z.strictObject({ accountId: id, model: z.string().min(1).max(200).optional().describe("Native model choice; omit to use the saved provider default. If neither exists, admission fails."), effort: z.string().min(1).max(64).optional(),
     repo: z.string().min(1).max(4_096), baseRef: z.string().min(1).max(256).optional(), roleId: id.optional().describe("Role to capture at creation; omit for the current Worker default. Cannot change on an existing Worker."), task: z.string().min(1).max(65_536), requestId,
-    workItemId: id.nullable().optional().describe("Capture this open HUD work item and scope in the first turn. Omit to inherit verified Chat focus; null explicitly opts out. Focus lookup failure refuses admission, never silently drops association.") }),
-  output: resultSchema, annotations: { title: "Start Worker" },
-  async call(ctx: WorkersContext, input, invocation) { return ctx.manager.start(input, invocation); },
+     workItemId: id.nullable().optional().describe("Capture this open HUD work item and scope in the first turn. Omit to inherit verified Chat focus; null explicitly opts out. Focus lookup failure refuses admission, never silently drops association."), subscribe: z.boolean().optional() }),
+  output: resultSchema, completionWatch: turnWatch, annotations: { title: "Start Worker" },
+  async call(ctx: WorkersContext, input, invocation) { return { ...await ctx.manager.start(input, invocation), subscription: null, observation: null }; },
 });
+export const workerTurnObservation = operation({ name: "worker_turn_observation", description: "Read the exact request-bound turn: null before admission; stable phase/permission IDs while active; terminal outcome and captured Work context afterwards. Bot/thread must match the originating Chat. Never follows the latest turn or includes token progress/prompts. Read worker_status for permission options and worker_read/worker_turn_list for retained evidence. Unknown is not proven failure.",
+  input: turnObservationInput, output: turnObservation, annotations: { title: "Observe Worker turn", readOnlyHint: true },
+  async call(ctx: WorkersContext, input, invocation) { return ctx.manager.observeTurn(input, invocation); } });
 export const workerList = operation({
   name: "worker_list", description: "List durable workers owned by this Bot; a Worker caller sees only itself and a local operator sees all. Includes the most recent turn summary and pending permission count. Outcomes can be unknown after interruption.",
   input: z.strictObject({}), output: z.strictObject({ workers: z.array(listedWorkerSchema) }), annotations: { title: "List workers", readOnlyHint: true },
@@ -182,12 +186,12 @@ export const workerDiff = operation({
   async call(ctx: WorkersContext, { id, path, patch, maxChars }, invocation) { return ctx.manager.diff(id, { path, patch, maxChars }, invocation); },
 });
 export const workerSend = operation({
-  name: "worker_send", description: "Give the same idle native session follow-up work, including a request to fix or revise. Optional model/effort changes must match this account's current catalog.",
+  name: "worker_send", description: "Admit follow-up work on the idle native session. Model/effort must match the account catalog. subscribe defaults on for verified Bot MCP calls, false opts out. Watch identity is this request and originating Chat, never the latest turn. Inspect observation/subscription; permission attention stays distinct from terminal outcome. Retries retain captured Work; completion never completes Work.",
   input: z.strictObject({ id, message: z.string().min(1).max(65_536), requestId,
     model: z.string().min(1).max(200).optional(), effort: z.string().min(1).max(64).optional(),
-    workItemId: id.nullable().optional().describe("Capture this open HUD work item. Omit to continue the prior turn's work at its current scope, falling back to Chat focus if unassociated; null opts out for this turn. Historical turns never move.") }),
-  output: resultSchema, annotations: { title: "Send worker follow-up" },
-  async call(ctx: WorkersContext, input, invocation) { return ctx.manager.send(input, invocation); },
+     workItemId: id.nullable().optional().describe("Capture this open HUD work item. Omit to continue the prior turn's work at its current scope, falling back to Chat focus if unassociated; null opts out for this turn. Historical turns never move."), subscribe: z.boolean().optional() }),
+  output: resultSchema, completionWatch: turnWatch, annotations: { title: "Send worker follow-up" },
+  async call(ctx: WorkersContext, input, invocation) { return { ...await ctx.manager.send(input, invocation), subscription: null, observation: null }; },
 });
 export const workerRespond = operation({
   name: "worker_respond", description: "Answer one exact pending native permission request with an offered optionId, or null to cancel. Claude offers allow-once and deny-once for the exact SDK tool callback; no persistent grant is inferred.",
@@ -223,6 +227,7 @@ export const topics = {
   workers_changed: "Worker account, runtime, catalog, settings defaults or session state changed. Refresh the relevant read operation, including worker_settings_catalog/read for defaults.",
   worker_changed: "One Worker's turn, permission, settings, recovery or maintenance state changed. Subscribe with its Worker ID; refresh status/history/diff/files and discard cached bodies when contentClearedAt changes.",
   worker_progress: "Scoped UI invalidation for structured transcript, tool and session metadata progress. Subscribe with a Worker ID and refresh Worker detail/history reads. This is separate from Bot wakeups on worker_changed.",
+  worker_turn_changed: "Exact admitted turn or permission state changed. Scope request:<UUID> is valid before admission; re-read worker_turn_observation. Does not publish transcript/token progress.",
 } as const;
 export const workerWorkList = operation({ name: "worker_work_list", description: "Page immutable work associations captured with Worker turn admission, with separately observed native phases. Bot callers see their own Workers; operators see all. Old scope revisions remain evidence. Restart pagination on workers_changed. Removed Worker records no longer appear; HUD semantic work and notes remain independent.",
   input: z.strictObject({ workItemId: id, after: z.number().int().nonnegative().default(0), limit: z.number().int().min(1).max(50).default(30) }),
@@ -236,15 +241,22 @@ export const workerTurnContext = operation({ name: "worker_turn_context", descri
 const packageApi: PackageApi<WorkersContext, keyof typeof topics> = {
    operations: [workerAccountStateDependencies, workerBotDependencies, workerWorkspaceList, workerWorkspaceRead, ...workerStateOperations, ...workerSettingsOperations, workerCatalog, workerRuntimeList, workerAccountDrain, workerStart, workerList, workerStatus, workerRead,
     workerDetail, workerTurnList, workerRecordList, workerRecordRead, workerToolList, workerDiff,
-     workerSend, workerRespond, workerCancel, workerResume, workerClose, workerRemove, workerWorkList, workerTurnContext],
+      workerSend, workerRespond, workerCancel, workerResume, workerClose, workerRemove, workerWorkList, workerTurnContext, workerTurnObservation],
   events: {
     topics,
-    scope: { description: "Optional Worker ID for scoped worker_changed and worker_progress notices. A Bot subscription to worker_changed requires this exact ID and a matching worker_status read; worker_progress is for UI reads, not Bot wakeups.",
-      example: "00000000-0000-4000-8000-000000000001", valid: (ctx, scope) => Boolean(ctx.manager.ledger.worker(scope)) },
+    scope: { description: "Worker ID for worker_changed/worker_progress; request:<UUID> for exact worker_turn_changed, valid before admission. Bot reads retain exact ownership fences; progress is for UI, not Bot wakeups.",
+      example: "00000000-0000-4000-8000-000000000001", valid: (ctx, scope) => scope.startsWith("request:") ? z.uuid().safeParse(scope.slice(8)).success : Boolean(ctx.manager.ledger.worker(scope)) },
     start(ctx, publish) {
       ctx.manager.onChange = (workerId) => {
         publish("workers_changed");
-        if (workerId && ctx.manager.ledger.worker(workerId)) publish("worker_changed", workerId);
+        if (workerId) {
+          const worker = ctx.manager.ledger.worker(workerId);
+          if (worker) {
+            publish("worker_changed", workerId);
+            const turn = worker.currentTurnId ? ctx.manager.ledger.turn(worker.currentTurnId) : null;
+            if (turn) publish("worker_turn_changed", `request:${turn.requestId}`);
+          }
+        }
       };
       ctx.manager.onProgress = (workerId) => { if (ctx.manager.ledger.worker(workerId)) publish("worker_progress", workerId); };
       return () => { ctx.manager.onChange = undefined; ctx.manager.onProgress = undefined; };

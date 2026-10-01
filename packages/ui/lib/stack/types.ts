@@ -258,6 +258,13 @@ export type WorkerPermission = { id: string; workerId: string; turnId: string; a
   runtimeInstance: string | null; toolCallId: string | null; recordSeq: number | null;
   options: Array<{ optionId: string; name: string; kind: string }>; state: "pending" | "responded" | "unknown" };
 export type WorkerStatus = { worker: WorkerSession; turn: WorkerTurnSummary | null; pending: WorkerPermission[] };
+export type WorkerTurnObservation = {
+  result: { workerId: string; turnId: string; requestId: string; phase: "completed" | "cancelled" | "failed" | "unknown";
+    stopReason: string | null; issue: string | null; workContext: WorkContext | null; contentClearedAt: number | null } | null;
+  update: { workerId: string; turnId: string; requestId: string; phase: "queued" | "running" | "awaiting_input" | "cancelling";
+    pending: Array<{ permissionId: string; optionCount: number }>; pendingCount: number; pendingTruncated: boolean } | null;
+};
+export type WorkerAdmission = { worker: WorkerSession; turn: WorkerTurnSummary; duplicate: boolean; subscription: CompletionReceipt | null; observation: WorkerTurnObservation | null };
 export type WorkerRecordPage = { entries: WorkerRecord[]; nextSeq: number; hasMore: boolean; capture: WorkerCapture };
 export type WorkerRecordChunk = { seq: number; offset: number; data: string; nextOffset: number; totalChars: number; hasMore: boolean; encoding: "json-utf16" };
 export type WorkerTool = { toolCallId: string; turnId: string | null; firstSeq: number; lastSeq: number;
@@ -728,6 +735,8 @@ export type BrowserHandoff = {
 };
 /** `browser_handoff_take` / `browser_handoff_finish`. `controlUrl` is a human input grant: keep it in memory only. */
 export type BrowserHandoffAction = { handoff: BrowserHandoff; controlUrl: string | null };
+export type BrowserHandoffObservation = { result: BrowserHandoff | null };
+export type BrowserHandoffRequest = BrowserHandoff & { subscription: CompletionReceipt | null; observation: BrowserHandoffObservation | null };
 /** `browser_status`: provider policy and counts; it does not probe Hypeman or promise launch capacity. */
 export type BrowserStatus = { provider: "hypeman"; mode: "durable"; sessions: number; profiles: number };
 /** `agent_browser_status`: the managed installation and its update observation. */
@@ -799,11 +808,19 @@ export type BrainSource = {
     created_at: string; finished_at: string | null } | null;
 };
 /** `submit`: admission proves a durable job exists, never that indexing finished. */
-export type BrainAdmission =
+export type BrainSubmissionObservation = { result: { kind: "already_indexed"; document_id: number } |
+  { kind: "job"; job_id: number; state: BrainJobState; failure_class: string | null; document_id: number | null; requires_attention: boolean; scope: "exact_job" } | null };
+export type BrainSourcesObservation = { result: { scope: "discovery_and_admission"; admission_count: number; run_count: number; no_run_count: number;
+  admission_outcomes: Partial<Record<BrainSyncAdmission["status"], number>>; outcomes: Record<string, number>; runs: Array<{ run_id: number; job_id: number | null; outcome: "success" | "partial" | "failed" | "cancelled" | null;
+    discovered: number; admitted: number; suppressed: number; warnings: number; checkpoint_committed: boolean }>;
+  truncated: boolean; nextOffset: number | null; read: { operation: "sources_sync_completion"; requestId: string; offset: number | null } } | null };
+export type BrainAdmission = (
   | { version: 1; status: "queued" | "duplicate"; job_id: number; idempotency_key: string; intent_hash: string; state: BrainJobState; wait_status?: "terminal" | "timeout" }
-  | { version: 1; status: "already_indexed"; document_id: number; resource_key: string };
+  | { version: 1; status: "already_indexed"; document_id: number; resource_key: string }) &
+  { requestId: string | null; subscription: CompletionReceipt | null; observation: BrainSubmissionObservation | null };
 export type BrainSyncAdmission = { source_id: string; source_database_id: number; status: "queued" | "duplicate" | "would_queue" | "not_due" | "disabled" | "paused" | "unsupported";
   run_id: number | null; job_id: number | null; scheduled_for: string | null; dry_run: boolean };
+export type BrainSyncResult = { results: BrainSyncAdmission[]; requestId: string | null; subscription: CompletionReceipt | null; observation: BrainSourcesObservation | null };
 /** `share_read_states`: a job's state and, once indexed, its document. */
 export type BrainShareState = { job_id: number; state: BrainJobState; failure_class: string | null; document_id: number | null };
 
@@ -837,6 +854,8 @@ export type ProcRun = { id: string; label: string | null; command: string | null
 /** The persisted process summary: environment variable names only, never values. */
 export type ProcProcessSummary = { command: string; args: string[]; cwd: string | null; envKeys: string[]; timeoutMs: number | null; retainOutput: boolean };
 export type ProcRunDetail = ProcRun & { process: ProcProcessSummary | null };
+export type ProcRunObservation = { result: Pick<ProcRun, "id" | "state" | "exitCode" | "signal" | "error" | "startedAt" | "finishedAt"> | null };
+export type ProcRunAdmission = ProcRun & { subscription: CompletionReceipt | null; observation: ProcRunObservation | null };
 export type ProcOutputLine = { seq: number; stream: "stdout" | "stderr"; text: string; partial: boolean };
 export type ProcOutputPage = { run: ProcRun; lines: ProcOutputLine[]; nextAfter: number; done: boolean; gap: boolean };
 export type ProcStatus = { running: number; capacity: number; inFlightCalls: number; callCapacity: number;
