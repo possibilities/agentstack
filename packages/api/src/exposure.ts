@@ -2,10 +2,11 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { PackageConfig, TransportConfig } from "./config.js";
 import { socketCall } from "./socket.js";
 import { findPackage, socketPath } from "./workspace.js";
+import type { CompletionWatch } from "./operation.js";
 
 export type Exposure = { operations: string[]; events: string[] };
 export type SocketCatalog = {
-  tools: Tool[];
+  tools: Array<Tool & { completionWatch?: CompletionWatch }>;
   events: { topics: Record<string, string>; scope?: { description: string; example: string; required: boolean } } | null;
 };
 

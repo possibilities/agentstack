@@ -1,7 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { packageEventTopics, type PackageApi } from "./operation.js";
+import { packageEventTopics, type CompletionWatch, type PackageApi } from "./operation.js";
 import { publishedJsonSchema } from "./schema.js";
 import { configuredTransports } from "./config.js";
 import { resolveExposure, resolveWorkerExposure } from "./exposure.js";
@@ -31,6 +31,7 @@ export type CatalogOperation = {
   annotations: Record<string, boolean | string>;
   inputSchema: Record<string, unknown>;
   outputSchema: Record<string, unknown>;
+  completionWatch: CompletionWatch | null;
 };
 
 export type CatalogServer = {
@@ -70,6 +71,7 @@ export async function loadCatalog(env: NodeJS.ProcessEnv = process.env, from = i
         annotations: annotationsOf(operation.annotations),
         inputSchema: publishedJsonSchema(operation.input),
         outputSchema: publishedJsonSchema(operation.output),
+        completionWatch: operation.completionWatch ?? null,
       })),
       events,
       eventScope: api.events?.scope ? {

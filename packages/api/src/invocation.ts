@@ -14,7 +14,9 @@ const caller = {
 };
 /** Private-socket provenance. Proc resolves a live instance, never fabricates an MCP launch proof. */
 export const invocationContext = z.discriminatedUnion("transport", [
-  z.strictObject({ transport: z.literal("mcp"), ...caller }),
+  z.strictObject({ transport: z.literal("mcp"), ...caller,
+    completionWatchId: z.uuid().optional(),
+  }),
   z.strictObject({ transport: z.literal("proc"), ...caller,
     scheduleId: z.uuid(), executionId: z.uuid(), authority: scheduledAuthority,
   }).superRefine((value, ctx) => {

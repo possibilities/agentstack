@@ -3,6 +3,7 @@ import { loadCatalog, type CatalogServer } from "./src/catalog.js";
 import { operation, type PackageApi } from "./src/operation.js";
 import { workspaceRoot } from "./src/workspace.js";
 import { withStateInventory, stateCategories } from "./src/state-inventory.js";
+import { completionWatchSchema } from "./src/completion-watch.js";
 
 export type DocsContext = {
   env: NodeJS.ProcessEnv;
@@ -34,6 +35,7 @@ const operationDocSchema = z.object({
   annotations: z.record(z.string(), z.union([z.boolean(), z.string()])),
   inputSchema: jsonSchemaRecord.describe("JSON Schema for the operation input."),
   outputSchema: jsonSchemaRecord.describe("JSON Schema for the operation output."),
+  completionWatch: completionWatchSchema.nullable().describe("Optional owner-coordinated one-shot Bot completion watch. Requires live MCP operation, read and event exposure."),
 });
 
 const packageDocSchema = z.object({

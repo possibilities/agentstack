@@ -6,7 +6,7 @@ mcp:
   workerOperations: []
   operations: [notification_send, notification_get, notification_list, notification_counts, notification_dismiss, notification_dismiss_all]
   events: all
-  description: Agent-facing notification creation and history over the owner's loopback MCP listener.
+  description: Agent-facing notification creation, history and optional one-shot dismissal delivery through the server subscription owner.
 websocket:
   operations: all
   events: all

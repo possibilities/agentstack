@@ -13,12 +13,25 @@ export type Annotations = {
   openWorldHint?: boolean;
 };
 
+/** A durable record operation whose terminal read can be delivered once to its invoking Bot Chat. */
+export type CompletionWatch = {
+  topic: string;
+  readOperation: string;
+  idArgument: string;
+  terminalField: string;
+  /** Omitted subscribe defaults on for a Bot when one of these inputs is nonempty. */
+  defaultWhen: string[];
+  /** Fields retained with a full-record pointer when the terminal record exceeds the native input budget. */
+  retainFields?: string[];
+};
+
 export type AnyOperation<Ctx> = {
   name: string;
   description: string;
   input: z.ZodType;
   output: z.ZodType;
   annotations?: Annotations;
+  completionWatch?: CompletionWatch;
   call(ctx: Ctx, input: any, invocation?: InvocationContext): Promise<any>;
   /** Optional MCP presentation of the validated output. Ordinary socket calls
    * and WebSocket callers still receive the operation's declared JSON output. */
@@ -92,6 +105,7 @@ export function operation<Ctx, InputSchema extends z.ZodType, OutputSchema exten
   input: InputSchema;
   output: OutputSchema;
   annotations?: Annotations;
+  completionWatch?: CompletionWatch;
   call(ctx: Ctx, input: z.infer<InputSchema>, invocation?: InvocationContext): Promise<z.infer<OutputSchema>>;
   mcpContent?(ctx: Ctx, input: z.infer<InputSchema>, output: z.infer<OutputSchema>): McpContent | Promise<McpContent>;
 }): {
@@ -100,6 +114,7 @@ export function operation<Ctx, InputSchema extends z.ZodType, OutputSchema exten
   input: InputSchema;
   output: OutputSchema;
   annotations?: Annotations;
+  completionWatch?: CompletionWatch;
   call(ctx: Ctx, input: z.infer<InputSchema>, invocation?: InvocationContext): Promise<z.infer<OutputSchema>>;
   mcpContent?(ctx: Ctx, input: z.infer<InputSchema>, output: z.infer<OutputSchema>): McpContent | Promise<McpContent>;
 } {

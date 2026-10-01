@@ -206,6 +206,8 @@ test("saved package selectors migrate without dropping Bot watches or replaying 
     first = undefined;
     const db = new DatabaseSync(join(root, "event-subscriptions.sqlite"));
     try {
+      // Recreate the pre-completion-watch shape, not a fresh current database.
+      db.exec("ALTER TABLE subscriptions DROP COLUMN completion_json; DROP TABLE completion_receipts");
       db.exec(`UPDATE subscriptions SET pkg = CASE pkg WHEN 'signal' THEN 'attention' WHEN 'browse' THEN 'browser' WHEN 'worker' THEN 'workers' END,
         topic = CASE WHEN pkg = 'signal' THEN 'attention_changed' ELSE topic END`);
     } finally { db.close(); }

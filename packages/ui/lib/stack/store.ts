@@ -70,7 +70,7 @@ export type StackState = Snapshot & {
   /** Loaded pages of `serve_state_list` for `stateSelection`. Local operator only; a remote session never reads it. */
   stateInventory: Resource<StateInventory>;
   stateSelection: StateSelection;
-  /** Loaded pages of durable Bot event subscriptions for `subscriptionFilter`, without read arguments. Local only. */
+  /** Loaded durable Bot watches, including operation-declared one-shot completion metadata, for `subscriptionFilter`. Read arguments are excluded. Local only. */
   subscriptions: Resource<SubscriptionList>;
   subscriptionFilter: SubscriptionFilter;
   /** The Bot Fleet's state window shows. Local only. */

@@ -14,6 +14,7 @@ import { McpEventSubscriptions, type EventValue } from "../src/mcp-subscriptions
 import { mcpEventRelayInput, relayMcpEvent } from "../src/mcp-events.js";
 import { serveSocket, socketCall } from "../src/socket.js";
 import { socketPath } from "../src/workspace.js";
+import { completionReceipt } from "../src/completion-watch.js";
 
 // This boundary owns stdio authentication, live policy and the private owner relay.
 // The separate delivery tests own actual Codex lineage and turn/start admission.
@@ -22,10 +23,12 @@ test("stdio children use private sockets, refresh policy, fence identities and l
   const env = { ...process.env, STACK_STATE_DIR: join(root, "state"), STACK_MCP_PORT: "not-an-http-port" };
   const dir = join(root, "packages", "demo");
   await mkdir(dir, { recursive: true });
-  const manifest = (operations = "[read, mutate]", workers = "[read]") => writeFile(join(dir, "api.yaml"),
+  const manifest = (operations = "[read, mutate, send, record]", workers = "[read]") => writeFile(join(dir, "api.yaml"),
     `name: demo\ndescription: Demo.\nmcp:\n  description: Demo MCP.\n  operations: ${operations}\n  workerOperations: ${workers}\n  events: [changed]\n`);
   await manifest();
   let value = 1, botLive = true, workerLive = true, mutations = 0;
+  const records = new Map<string, { id: string; done: string | null; answer: string | null }>();
+  const recordSchema = z.object({ id: z.uuid(), done: z.string().nullable(), answer: z.string().nullable() });
   const workerId = randomUUID(), instance = randomUUID(), endpoint = "unix:///fixture/bot.sock";
   const socket = async (name: string, responses: Record<string, () => unknown>) => serveSocket({
     info: { name, description: "Fixture", transportDescription: "Fixture", path: socketPath(name, env) }, context: {},
@@ -43,6 +46,11 @@ test("stdio children use private sockets, refresh policy, fence identities and l
         mcpContent() { return [{ type: "image", mimeType: "image/png", data: "aGVsbG8=" }]; } }),
       operation({ name: "mutate", description: "Change value", input: z.strictObject({}), output: z.object({ value: z.number() }),
         async call() { mutations++; return { value: ++value }; } }),
+      operation({ name: "send", description: "Send a record with optional completion", input: z.strictObject({ id: z.uuid().optional(), subscribe: z.boolean().optional(), actions: z.array(z.string()).optional() }), output: recordSchema.extend({ subscription: completionReceipt.nullable() }),
+        completionWatch: { topic: "changed", readOperation: "record", idArgument: "id", terminalField: "done", defaultWhen: ["actions"] },
+        async call(_ctx, input) { const id = input.id ?? randomUUID(); const record = records.get(id) ?? { id, done: null, answer: null }; records.set(id, record); return { ...record, subscription: null }; } }),
+      operation({ name: "record", description: "Read a durable record", input: z.strictObject({ id: z.uuid() }), output: recordSchema, annotations: { readOnlyHint: true },
+        async call(_ctx, { id }) { const record = records.get(id); if (!record) throw new Error("record not found"); return record; } }),
     ] });
   const deliveries: EventValue[] = [];
   let delivered!: () => void;
@@ -50,9 +58,10 @@ test("stdio children use private sockets, refresh policy, fence identities and l
   const owner = new McpEventSubscriptions(env, async target => {
     if (!botLive || !["root", "child"].includes(target.threadId)) throw new Error("thread is outside sanctioned lineage");
   }, async event => { deliveries.push(event); delivered(); }, undefined, undefined, root);
+  let loseOwnerAck = false;
   const serve = await serveSocket({ info: { name: "serve", description: "Fixture", transportDescription: "Fixture", path: socketPath("serve", env) }, context: {}, operations: [
     operation({ name: "serve_mcp_event", description: "Owner relay", input: mcpEventRelayInput, output: z.any(),
-      async call(_ctx, input) { return relayMcpEvent(owner, input, root, env); } }),
+      async call(_ctx, input) { const result = await relayMcpEvent(owner, input, root, env); if (loseOwnerAck) throw new Error("owner response lost after admission"); return result; } }),
   ] });
   const clients: Client[] = [];
   const connect = async (authority: McpLaunchAuthority, overrides: Record<string, string> = {}) => {
@@ -93,6 +102,35 @@ test("stdio children use private sockets, refresh policy, fence identities and l
     assert.equal((await worker.client.callTool({ name: "events_subscribe", arguments: { topic: "changed", readOperation: "read" } })).isError, true);
     await assert.rejects(connect({ kind: "worker", workerId, instance }, { STACK_MCP_BINDING: worker.launch.env.STACK_MCP_BINDING!.replace(/proof=./, "proof=z") }), /closed/);
     await assert.rejects(socketCall(serve.path, "tools/call", { name: "serve_mcp_event", arguments: { binding: worker.launch.env.STACK_MCP_BINDING, pkg: "demo", tool: "events_status", arguments: {}, threadId: "child", sessionId: null } }), /Bot launch binding/);
+    const completion = await connect({ kind: "bot", botId: "bot-1", endpoint });
+    const request = { actions: ["Yes"] };
+    assert.equal((await completion.client.callTool({ name: "send", arguments: request, _meta: { threadId: "foreign-root" } })).isError, true);
+    assert.equal((await operator.client.callTool({ name: "send", arguments: { subscribe: true } })).isError, true);
+    assert.equal(records.size, 0, "the stdio relay verifies the destination before an operation side effect");
+    const sent = CallToolResultSchema.parse(await completion.client.callTool({ name: "send", arguments: request, _meta: { threadId: "child" } })).structuredContent as { id: string; subscription: { id: string; state: string } };
+    assert.equal(sent.subscription.state, "pending");
+    assert.equal(owner.operatorList().find(row => row.id === sent.subscription.id)?.completion?.operation, "send");
+    const beforeCompletion = deliveries.length;
+    pkg.publish!("changed"); await new Promise(resolve => setTimeout(resolve, 40));
+    assert.equal(deliveries.length, beforeCompletion, "nonterminal records do not wake the stdio invoking Chat");
+    records.set(sent.id, { id: sent.id, done: "answered", answer: "Yes" }); pkg.publish!("changed");
+    for (let n = 0; n < 100 && owner.operatorList().some(row => row.id === sent.subscription.id); n++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.deepEqual(deliveries.at(-1)?.value, { id: sent.id, done: "answered", answer: "Yes" });
+    assert.equal(deliveries.at(-1)?.subscription.threadId, "child");
+    assert.equal(owner.status({ transport: "mcp", botId: "bot-1", instance: deliveries.at(-1)!.subscription.instance, threadId: "child", sessionId: null }).completions.find(row => row.id === sent.subscription.id)?.state, "delivered");
+    const repeated = CallToolResultSchema.parse(await completion.client.callTool({ name: "send", arguments: { ...request, id: sent.id }, _meta: { threadId: "child" } })).structuredContent as { subscription: { id: string; state: string } };
+    assert.deepEqual(repeated.subscription.id, sent.subscription.id); assert.equal(repeated.subscription.state, "delivered");
+    loseOwnerAck = true;
+    const lostOwnerResponse = await completion.client.callTool({ name: "send", arguments: { subscribe: true }, _meta: { threadId: "child" } });
+    assert.equal(lostOwnerResponse.isError, true);
+    const recoveryId = [...records.keys()].at(-1)!;
+    assert.notEqual(recoveryId, sent.id);
+    assert.match(JSON.stringify(lostOwnerResponse.content), new RegExp(recoveryId), "a lost owner response still supplies the ingress-allocated ID for safe retry");
+    loseOwnerAck = false;
+    const recovered = CallToolResultSchema.parse(await completion.client.callTool({ name: "send", arguments: { id: recoveryId, subscribe: true }, _meta: { threadId: "child" } })).structuredContent as { subscription: { id: string; state: string } };
+    assert.equal(recovered.subscription.state, "pending");
+    assert.equal(owner.operatorList().filter(row => row.completion).length, 1);
+    await owner.operatorRemove(recovered.subscription.id, owner.operatorList().find(row => row.id === recovered.subscription.id)!.revision);
     await manifest("[read]", "[]");
     assert.equal((await operator.client.callTool({ name: "mutate" })).isError, true);
     assert.equal(mutations, 0);

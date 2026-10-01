@@ -504,6 +504,7 @@ function describeServer<Ctx>(options: {
       inputSchema: publishedJsonSchema(operation.input),
       outputSchema: publishedJsonSchema(operation.output),
       annotations: operation.annotations ?? {},
+      ...(operation.completionWatch ? { completionWatch: operation.completionWatch } : {}),
     })),
   };
 }

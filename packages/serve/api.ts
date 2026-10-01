@@ -6,7 +6,7 @@ import { serverResourcesInput, serverResourcesOutput, serverResourceHistoryInput
 import { serverStateOperations } from "./src/state.js";
 import { withStateInventory } from "@stack/api";
 import { serverStateCategories } from "./src/state-categories.js";
-import { mcpEventRelayInput, relayMcpEvent, workspaceRoot } from "@stack/api";
+import { invocationContext, mcpEventRelayInput, relayMcpEvent, workspaceRoot } from "@stack/api";
 import { DeveloperService } from "./src/developer/service.js";
 import { serveSettings, harnessReleases } from "./src/developer/schema.js";
 
@@ -112,6 +112,17 @@ export const serverMcpEvent = operation({
   },
 });
 
+export const serverCompletionCheck = operation({
+  name: "serve_completion_check", description: "Private-socket-only record-owner check of a reserved completion coordination capability, exact record and sanctioned Bot Chat. Does not admit a watch or send input. Never exposed through MCP or WebSocket.",
+  input: z.strictObject({ id: z.uuid(), package: z.string(), operation: z.string(), recordId: z.uuid(), caller: invocationContext }), output: z.strictObject({ verified: z.literal(true) }),
+  async call(ctx: ServerContext, input, invocation) {
+    if (invocation) throw new Error("completion capability check requires the private socket");
+    if (!ctx.source.subscriptions) throw new Error("subscription owner is unavailable; nothing was sent");
+    await ctx.source.subscriptions.verifyCompletion(input.id, input.package, input.operation, input.recordId, input.caller);
+    return { verified: true as const };
+  },
+});
+
 export const serverCodexTools = operation({
   name: "serve_codex_tools",
   description: "Read cached observations of the Codex tool bridges: the selected desktop runtime, each upstream catalog and Chrome's last browser discovery. Reading starts nothing. They describe the installation, not whether a Bot or Worker connected or can answer approvals, and reset when the server restarts.",
@@ -193,7 +204,7 @@ export const topics = {
 export type ServerTopic = keyof typeof topics;
 
 const packageApi: PackageApi<ServerContext, ServerTopic> = {
-  operations: [...serverStateOperations, serverStatus, serverCodexTools, serverCodexToolsCheck, serverResources, serverResourceHistory, serverLocalConnect, serverLocalRevoke, serverMcpEvent,
+  operations: [...serverStateOperations, serverStatus, serverCodexTools, serverCodexToolsCheck, serverResources, serverResourceHistory, serverLocalConnect, serverLocalRevoke, serverMcpEvent, serverCompletionCheck,
     serverSettingsRead, serverSettingsUpdate, serverHarnessReleases, serverHarnessReleasesCheck],
   events: {
     topics,

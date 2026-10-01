@@ -11,7 +11,7 @@ export const subscriptionTools: Tool[] = [
     type: "object", properties: { topic: { type: "string" }, scope: { type: "string" }, readOperation: { type: "string" }, readArguments: { type: "object", additionalProperties: true } },
     required: ["topic", "readOperation"], additionalProperties: false,
   } },
-  { name: "events_status", description: "List this Bot thread's durable event subscriptions and submission failures. lastDeliveredAt is the last Codex admission acknowledgement, not proof of model consumption or completed work.", inputSchema: { type: "object", properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true } },
+  { name: "events_status", description: "List this Chat's watches and latest 128 completion receipts, or one exact completionId. Observed means the initial result was terminal; delivered means native admission acknowledged, not consumption. Unknown is never replayed automatically. completionsTruncated means older receipts need their exact ID.", inputSchema: { type: "object", properties: { completionId: { type: "string", format: "uuid" } }, additionalProperties: false }, annotations: { readOnlyHint: true } },
   { name: "events_unsubscribe", description: "Stop one exact subscription for this Bot thread.", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false } },
 ];
 
@@ -28,6 +28,11 @@ export function subscriptionService(service: McpEventSubscriptions, root: string
   return async (pkg, tool, args, invocation, signal) => {
     signal.throwIfAborted();
     const listed = await currentMcpCatalog(root, pkg, env);
+    if (tool === "operation_watch") {
+      await service.validateInvocation(invocation);
+      const input = z.strictObject({ operation: z.string(), input: z.record(z.string(), z.unknown()) }).parse(args);
+      return service.callAndWatch(pkg, input.operation, input.input, invocation);
+    }
     if (!Object.keys(listed.events?.topics ?? {}).length) throw new Error("event subscriptions are unavailable over mcp");
     if (tool === "events_catalog") return service.catalog(pkg, listed);
     await service.validateInvocation(invocation);
@@ -37,7 +42,7 @@ export function subscriptionService(service: McpEventSubscriptions, root: string
         throw new Error("subscription requires a selected topic and exposed read-only operation");
       return service.subscribe(pkg, input, invocation);
     }
-    if (tool === "events_status") return service.status(invocation);
+    if (tool === "events_status") return service.status(invocation, z.strictObject({ completionId: z.uuid().optional() }).parse(args).completionId);
     if (tool === "events_unsubscribe") return service.unsubscribe(z.strictObject({ id: z.uuid() }).parse(args).id, invocation);
     throw new Error(`unknown event tool: ${tool}`);
   };
@@ -45,7 +50,7 @@ export function subscriptionService(service: McpEventSubscriptions, root: string
 
 export const mcpEventRelayInput = z.strictObject({
   binding: z.string().min(1).max(512), pkg: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/),
-  tool: z.enum(["events_catalog", "events_subscribe", "events_status", "events_unsubscribe"]),
+  tool: z.enum(["events_catalog", "events_subscribe", "events_status", "events_unsubscribe", "operation_watch"]),
   arguments: z.record(z.string(), z.unknown()), threadId: z.string().min(1).max(128), sessionId: z.string().max(128).nullable(),
 });
 

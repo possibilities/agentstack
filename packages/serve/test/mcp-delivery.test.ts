@@ -5,7 +5,9 @@ import { join } from "node:path";
 import test from "node:test";
 import { WebSocketServer } from "ws";
 import { z } from "zod";
-import { botInstance, operation, serveSocket, socketPath, type EventTarget, type InvocationContext } from "@stack/api";
+import { botInstance, operation, serveApi, serveSocket, socketCall, socketPath, type CompletionReceipt, type EventTarget, type InvocationContext } from "@stack/api";
+import { serverCompletionCheck, type ServerContext } from "../api.js";
+import { StatusSource } from "../src/status.js";
 import { authorizeWorkerRead, createMcpEventSubscriptions, verifiedTarget } from "../src/mcp-delivery.js";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -18,7 +20,7 @@ test("Worker UI progress and rich reads cannot become originating-Bot wakeups", 
   const subscription = {
     id: "subscription", botId: "bot-1", threadId: "child", instance: "instance", pkg: "worker",
     topic: "worker_changed", scope: "worker", readOperation: "worker_status", readArguments: { id: "worker" },
-    state: "active" as const, lastDeliveredAt: null, lastError: null,
+    state: "active" as const, lastDeliveredAt: null, lastError: null, completion: null,
   };
   // These are rejected before a socket read, even when paired with the sanctioned
   // scope. Progress must not feed back into a new inference turn on every update.
@@ -30,7 +32,7 @@ test("Worker UI progress and rich reads cannot become originating-Bot wakeups", 
 
 test("event values are admitted on idle and working sanctioned threads without waiting for completion", { timeout: 15_000 }, async () => {
   const root = await mkdtemp("/tmp/as-turn-events-");
-  for (const name of ["sample", "worker", "browse"]) {
+  for (const name of ["sample", "worker", "browse", "notify"]) {
     await mkdir(join(root, "packages", name), { recursive: true });
     await writeFile(join(root, "packages", name, "api.yaml"), `name: ${name}\ndescription: Test.\nmcp:\n  description: Test.\n  operations: all\n  events: all\n`);
   }
@@ -42,6 +44,7 @@ test("event values are admitted on idle and working sanctioned threads without w
   let holdEventConnection = false;
   let releaseConnection: (() => void) | undefined;
   let rejectSubmission = false;
+  let dropSubmission = false;
   let attempts = 0;
   wss.on("connection", (peer) => peer.on("message", (raw) => {
     const frame = JSON.parse(String(raw)) as { id?: number; method?: string; params?: Record<string, unknown> };
@@ -60,6 +63,7 @@ test("event values are admitted on idle and working sanctioned threads without w
       attempts++;
       if (rejectSubmission) { peer.send(JSON.stringify({ id: frame.id, error: { message: "cannot steer a compact turn" } })); return; }
       turns.push(frame.params as typeof turns[number]);
+      if (dropSubmission) { peer.close(); return; }
       result = { turn: { id: "same-active-turn" } };
     }
     peer.send(JSON.stringify({ id: frame.id, result }));
@@ -89,6 +93,10 @@ test("event values are admitted on idle and working sanctioned threads without w
     events: { topics: { worker_changed: "Worker changed." }, scope: { description: "Worker ID.", example: workerId, required: false, valid: (_ctx, id) => id === workerId } },
   });
   const subscriptions = createMcpEventSubscriptions(env, root);
+  const source = new StatusSource(); source.subscriptions = subscriptions;
+  const owner = await serveSocket({ info: { name: "serve", description: "Owner", transportDescription: "Private socket", path: socketPath("serve", env) },
+    context: { source, env } as unknown as ServerContext, operations: [serverCompletionCheck] });
+  const notifications = await serveApi({ name: "notify", transport: "socket", env });
   let handback: unknown = null;
   const browser = await serveSocket({
     info: { name: "browse", description: "Browser.", transportDescription: "Socket.", path: socketPath("browse", env) }, context: {},
@@ -177,8 +185,37 @@ test("event values are admitted on idle and working sanctioned threads without w
     releaseConnection!(); releaseConnection = undefined;
     await pause(100);
     assert.equal(attempts, 5, "unsubscribe during connection setup fences submission");
+
+    // A real Notification answer travels through the same owner and native input path.
+    holdEventConnection = false;
+    const question = await subscriptions.callAndWatch("notify", "notification_send", { title: "Name?", message: "x".repeat(16_000), reply: "Name" }, invocation);
+    const receipt = question.subscription as CompletionReceipt;
+    holdEventConnection = true;
+    await socketCall(notifications.socketPath!, "tools/call", { name: "notification_dismiss", arguments: { id: question.id, outcome: "replied", response: "Atlas" } });
+    await until(() => Boolean(releaseConnection));
+    await writeFile(join(root, "packages", "notify", "api.yaml"), "name: notify\ndescription: Test.\nmcp:\n  description: Test.\n  operations: all\n  events: []\n");
+    releaseConnection!(); releaseConnection = undefined;
+    await until(() => subscriptions.status(invocation).completions.find(row => row.id === receipt.id)?.state === "error");
+    assert.equal(attempts, 5, "completion exposure revocation after connection setup fences native input");
+    await writeFile(join(root, "packages", "notify", "api.yaml"), "name: notify\ndescription: Test.\nmcp:\n  description: Test.\n  operations: all\n  events: all\n");
+    holdEventConnection = false;
+    await socketCall(notifications.socketPath!, "tools/call", { name: "notification_send", arguments: { title: "Unrelated", message: "Recover read" } });
+    await until(() => turns.length === 5 && subscriptions.status(invocation).completions.some(row => row.id === receipt.id && row.state === "delivered"));
+    assert.equal(turns[4]!.threadId, "child"); assert.deepEqual(turns[4]!.input, []);
+    assert.equal(turns[4]!.toolOutput.name, "subscription_update");
+    assert.match(turns[4]!.toolOutput.output, /"outcome":"replied"/); assert.match(turns[4]!.toolOutput.output, /"response":"Atlas"/);
+    assert.ok(!subscriptions.status(invocation).subscriptions.some(row => row.id === receipt.id), "native ACK retires the one-shot watch without waiting for turn completion");
+    const uncertain = await subscriptions.callAndWatch("notify", "notification_send", { title: "Unknown", message: "Choose", actions: ["Yes"] }, invocation);
+    dropSubmission = true;
+    await socketCall(notifications.socketPath!, "tools/call", { name: "notification_dismiss", arguments: { id: uncertain.id, outcome: "action", response: "Yes" } });
+    await until(() => subscriptions.status(invocation).completions.some(row => row.id === (uncertain.subscription as CompletionReceipt).id && row.state === "unknown" && row.lastError?.includes("connection closed")));
+    const afterUnknown = attempts;
+    dropSubmission = false;
+    await socketCall(notifications.socketPath!, "tools/call", { name: "notification_send", arguments: { title: "Unrelated", message: "No retry" } });
+    await pause(100); assert.equal(attempts, afterUnknown, "a connection lost after turn/start must not replay an unacknowledged answer");
   } finally {
     await subscriptions.close();
+    await notifications.close(); await owner.close();
     await browser.close();
     await workers.close();
     await sample.close();

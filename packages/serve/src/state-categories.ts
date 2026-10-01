@@ -1,7 +1,7 @@
 import { stateCategories } from "@stack/api";
 export const serverStateCategories = stateCategories("serve", [
   { id: "subscriptions", kind: "queue", paths: ["event-subscriptions.sqlite"], reads: ["serve_subscription_list", "serve_subscription_get"], actions: ["serve_subscription_remove"],
-    retention: "Durable subscriptions survive restart and rebind only to the sanctioned Bot lineage. Cancellation cannot recall admitted input.", regeneration: "Explicit Bot subscription admission." },
+    retention: "Durable subscriptions survive restart and rebind only to the sanctioned Bot lineage. One-shot completion receipts retain observed, admitted, cancelled and unknown outcomes for ID retries. Cancellation cannot recall admitted input.", regeneration: "Explicit Bot subscription admission or an operation-declared completion watch. Unknown native admissions are never automatically replayed." },
   { id: "local-authority", kind: "credentials", paths: ["local-auth", "mcp-bot-identity.key"], sensitivity: "credential", reads: ["serve_status"], actions: ["serve_local_revoke"],
     retention: "Local sessions and signing material are server-owned. Revoking local authority leaves remote Access and signed Bot/Worker authority independent.", regeneration: "Server restart rotates local authority; native clients reload their operator credential." },
   { id: "observations", kind: "cache", paths: [], authority: "derived", sensitivity: "ordinary", reads: ["serve_resources", "serve_resource_history", "serve_codex_tools"],

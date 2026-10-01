@@ -1,4 +1,4 @@
-import { McpEventSubscriptions, botInstance, socketCall, socketPath, type EventSubscription, type EventTarget, type EventValue } from "@stack/api";
+import { McpDeliveryRejected, McpEventSubscriptions, botInstance, socketCall, socketPath, type EventSubscription, type EventTarget, type EventValue } from "@stack/api";
 import { appServerSocket, listActiveThreads, type ActiveThread } from "@stack/bots";
 
 type RunningBot = { id: string; url: string | null; state: string; recoveryIssue: string | null; mainThreadId: string | null };
@@ -67,7 +67,7 @@ function eventMessage({ subscription, reason, value, truncated }: EventValue): s
 }
 
 /** Codex owns start-or-steer scheduling. Success is admission, not model consumption. */
-async function submitEvent(url: string, threadId: string, text: string, signal: AbortSignal, authorize: () => Promise<void>): Promise<void> {
+async function submitEvent(url: string, threadId: string, text: string, signal: AbortSignal, authorize: () => Promise<void>, submitting?: () => void): Promise<void> {
   if (signal.aborted) throw new Error("subscription delivery cancelled");
   const ws = appServerSocket(url);
   let nextId = 1;
@@ -84,7 +84,7 @@ async function submitEvent(url: string, threadId: string, text: string, signal: 
       let frame: { id?: unknown; result?: unknown; error?: { message?: string } };
       try { frame = JSON.parse(String(raw)) as typeof frame; } catch { return; }
       if (frame.id !== id) return;
-      finish(frame.error ? new Error(`${method}: ${frame.error.message ?? "failed"}`) : null, frame.result);
+      finish(frame.error ? method === "turn/start" ? new McpDeliveryRejected(`${method}: ${frame.error.message ?? "failed"}`) : new Error(`${method}: ${frame.error.message ?? "failed"}`) : null, frame.result);
     };
     const onClose = () => finish(new Error(`${method}: Codex connection closed; delivery outcome is unknown`));
     const finish = (error: Error | null, result?: unknown) => {
@@ -101,6 +101,7 @@ async function submitEvent(url: string, threadId: string, text: string, signal: 
     ws.send(JSON.stringify({ method: "initialized" }));
     await authorize();
     if (signal.aborted) throw new Error("subscription delivery cancelled");
+    submitting?.();
     const result = await call("turn/start", { threadId, input: [],
       toolOutput: { namespace: "stack", name: "subscription_update", output: text },
     }) as { turn?: { id?: unknown } };
@@ -111,13 +112,13 @@ async function submitEvent(url: string, threadId: string, text: string, signal: 
 }
 
 export function createMcpEventSubscriptions(env: NodeJS.ProcessEnv, root?: string): McpEventSubscriptions {
-  return new McpEventSubscriptions(env, async (target) => { await verifiedTarget(target, env); }, async (event, signal, authorize) => {
+  return new McpEventSubscriptions(env, async (target) => { await verifiedTarget(target, env); }, async (event, signal, authorize, submitting) => {
     const target: EventTarget = event.subscription;
     const current = await verifiedTarget(target, env);
     await submitEvent(current.url, target.threadId, eventMessage(event), signal, async () => {
       // Connection setup can outlive a Bot launch or an exposure selection.
       await verifiedTarget(target, env);
       await authorize();
-    });
+    }, submitting);
   }, (botId, threadId) => rebindTarget(botId, threadId, env), (subscription) => authorizeWorkerRead(subscription, env), root);
 }

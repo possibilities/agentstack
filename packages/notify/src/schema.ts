@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { completionReceipt } from "@stack/api";
 
 const label = z.string().trim().min(1).max(60);
 
@@ -29,6 +30,11 @@ export const notification = content.extend({
   outcome: outcome.nullable().describe("How it was dismissed; null while open."),
   response: z.string().nullable().describe("The chosen action label or reply text; otherwise null."),
 });
+
+export const notificationSendInput = content.extend({ id: z.uuid().optional(), subscribe: z.boolean().optional()
+  .describe("Watch dismissal once in the invoking sanctioned Bot Chat. Omitted defaults on for Bot prompts; false creates no new watch and does not cancel an existing one. Use events_unsubscribe to cancel.") });
+export const notificationSend = notification.extend({ subscription: completionReceipt.nullable() });
+export type NotificationSend = z.infer<typeof notificationSend>;
 
 export const page = z.strictObject({
   entries: z.array(notification),

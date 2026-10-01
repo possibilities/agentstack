@@ -4,6 +4,8 @@
 
 A durable Stack-owned message with a stable ID. It is open or dismissed; dismissal happens once and records its outcome (closed, opened, action, replied or replaced), so answering or clicking through is what acknowledges it. A group replaces the open notification with the same key. Its actions, reply prompt and open URL are data; presentation is separate from storage and nothing executes. _Avoid_: operating-system notification, acknowledgment as a separate state, callback
 
+A verified Bot MCP send watches dismissal by default when it offers actions or a reply. `subscribe: true` also watches plain notices; `false` opts out. The send receipt distinguishes storing the Notification from admitting its completion watch. A dismissed initial record is returned to inspect, not a second wakeup. Dismissal and native input admission never imply approval or consumption.
+
 ## Package API
 
 Typed operations a workspace package exports so stack can serve them. Descriptions and schemas are written for selection, in the same spirit as an MCP tool or a skill.
@@ -79,6 +81,10 @@ they have no socket operations or generated event subscriptions.
 ## MCP event subscription
 
 A durable, revisionless request by a verified Bot thread to watch one MCP-selected Package API topic and re-read one exposed read-only operation after each invalidation. The server records the request, reconnects and resnapshots after interruptions, suppresses unchanged values, and submits changed snapshots as standalone tool output through Codex `turn/start` on that same sanctioned thread. Codex wakes an idle loaded thread or queues input in an active regular turn; Stack waits only for admission acknowledgement, never idle or completion. Current exposure is checked around reads and immediately before submission, including after connection setup; removed or invalid configuration fences subsequent work. The initial value is returned to the subscribing tool call; event notices themselves carry no values. See [ADR 0120](docs/adr/0120-codex-native-input-admission.md).
+
+## Completion watch
+
+An operation-declared, one-shot MCP event subscription owned by the same Server service. Its intent and coordination capability are stored before a record mutation. Only that record's terminal read wakes the invoking sanctioned Chat; an already-terminal initial read is returned and retained as observed instead. Acknowledged native admission retires the watch and retains its receipt for ID retries. An uncertain admission stays inspectable and is never automatically replayed, even after restart. _Avoid_: approval, consumption acknowledgement, independent delivery loop
 
 ## Codex account
 

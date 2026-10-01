@@ -3,7 +3,8 @@ import { operation, requireStateOperator, stateDependencies, stateDependencyInpu
 import type { ServerContext } from "../api.js";
 
 const subscription = z.strictObject({ id: z.uuid(), botId: z.string(), threadId: z.string(), instance: z.string(), pkg: z.string(), topic: z.string(), scope: z.string().nullable(),
-  readOperation: z.string(), state: z.enum(["connecting", "active", "delivering", "error"]), lastDeliveredAt: z.number().nullable(), revision: z.string() });
+  readOperation: z.string(), state: z.enum(["connecting", "active", "delivering", "error"]), lastDeliveredAt: z.number().nullable(), revision: z.string(),
+  completion: z.strictObject({ operation: z.string(), terminalField: z.string(), retainFields: z.array(z.string()).optional() }).nullable() });
 function service(ctx: ServerContext) {
   if (!ctx.source.subscriptions) throw new Error("server subscription owner unavailable");
   return ctx.source.subscriptions;

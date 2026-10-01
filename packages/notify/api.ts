@@ -1,15 +1,16 @@
 import { z } from "zod";
-import { operation, stateDir, type PackageApi } from "@stack/api";
-import { content, notification, page } from "./src/schema.js";
+import { operation, socketCall, socketPath, stateDir, wantsCompletion, type CompletionWatch, type PackageApi } from "@stack/api";
+import { notification, notificationSendInput, notificationSend, page } from "./src/schema.js";
 import { NotificationStore } from "./src/store.js";
 import { withStateInventory, requireStateOperator, statePlan, stateApplyInput, stateReceipt } from "@stack/api";
 import { notifyStateCategories } from "./src/state-categories.js";
 
-type Context = { store: NotificationStore; changed?: () => void };
+type Context = { store: NotificationStore; env: NodeJS.ProcessEnv; changed?: () => void };
 const id = z.strictObject({ id: z.uuid() });
 const read = { readOnlyHint: true } as const;
 const group = z.string().min(1).max(200);
 const count = z.number().int().nonnegative();
+const completionWatch: CompletionWatch = { topic: "notify_changed", readOperation: "notification_get", idArgument: "id", terminalField: "dismissedAt", defaultWhen: ["actions", "reply"], retainFields: ["id", "dismissedAt", "outcome", "response", "contentClearedAt"] };
 
 const packageApi: PackageApi<Context, "notify_changed"> = {
   operations: [
@@ -22,9 +23,19 @@ const packageApi: PackageApi<Context, "notify_changed"> = {
     operation({ name: "notify_state_receipt_get", description: "Read one durable Notification payload-cleanup receipt, including the minimal metadata retained for retries.",
       input: z.strictObject({ requestId: z.uuid() }), output: z.strictObject({ receipt: stateReceipt.nullable() }), annotations: read,
       async call(ctx, { requestId }, invocation) { requireStateOperator(invocation); return { receipt: ctx.store.maintenance.receipt(requestId) }; } }),
-    operation({ name: "notification_send", description: "Persist a notification with title, message, optional subtitle, source, click-through open URL, answer actions and reply placeholder. Returns its stable ID and record. A group replaces the open notification with the same group, dismissing it as replaced. Optional caller ID deduplicates identical submissions; no system banner is shown and nothing is executed.",
-      input: content.extend({ id: z.uuid().optional() }), output: notification, annotations: { idempotentHint: false },
-      async call(ctx, input) { const result = ctx.store.create(input); if (result.created) ctx.changed?.(); return result.record; } }),
+    operation({ name: "notification_send", description: "Persist a Notification; group replaces its open predecessor and caller ID deduplicates retries. subscribe defaults on for verified Bot MCP prompts (actions/reply); true also watches plain notices, false opts out. Other callers may send with omission, but true requires a sanctioned Bot Chat. Returns record plus subscription receipt; dismissal is completion, never approval. Nothing executes.",
+      input: notificationSendInput, output: notificationSend,
+      completionWatch, annotations: { idempotentHint: false },
+      async call(ctx, input, invocation) {
+        if (wantsCompletion(completionWatch, input, invocation)) {
+          if (!(invocation?.transport === "mcp" && invocation.botId && invocation.instance && invocation.threadId && invocation.completionWatchId && input.id))
+            throw new Error("subscribe requires owner-coordinated Bot MCP delivery to a verified sanctioned Chat; nothing was sent");
+          await socketCall(socketPath("serve", ctx.env), "tools/call", { name: "serve_completion_check", arguments: {
+            id: invocation.completionWatchId, package: "notify", operation: "notification_send", recordId: input.id, caller: invocation,
+          } }, { timeoutMs: 5_000 });
+        }
+        const result = ctx.store.create(input); if (result.created) ctx.changed?.(); return { ...result.record, subscription: null };
+      } }),
     operation({ name: "notification_get", description: "Read one durable notification by ID, including whether and how it was dismissed and any response.",
       input: id, output: notification, annotations: read, async call(ctx, { id }) { return ctx.store.get(id); } }),
     operation({ name: "notification_list", description: "Page newest-first durable notifications. Filter by dismissed, exact source and exact group; before is the exclusive sequence cursor. Null nextCursor ends the page sequence.",
@@ -45,7 +56,7 @@ const packageApi: PackageApi<Context, "notify_changed"> = {
   ],
   events: { topics: { notify_changed: "Notification records changed. Re-read notification_list or notification_get; notices contain no notification text." },
     start(ctx, publish) { ctx.changed = () => publish("notify_changed"); return () => { ctx.changed = undefined; }; } },
-  async createContext(env) { return { store: new NotificationStore(stateDir(env)) }; },
+  async createContext(env) { return { store: new NotificationStore(stateDir(env)), env }; },
   async closeContext(ctx) { ctx.store.close(); },
 };
 export const api = withStateInventory("notify", notifyStateCategories, packageApi);

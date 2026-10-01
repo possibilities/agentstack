@@ -59,7 +59,7 @@ test("notifications persist, page, replace by group, and dismiss once with an ou
     assert.equal(replaced.outcome, "replaced");
     assert.equal(replaced.dismissedAt, done.createdAt);
     assert.deepEqual((await call<Page>("notification_list", { group: "deploy:web", dismissed: false })).entries.map((row) => row.id), [done.id]);
-    assert.deepEqual(await call("notification_send", { id: progress.id, title: "Deploy", message: "25%", group: "deploy:web", open: "https://example.com/deploy" }), replaced);
+    assert.deepEqual(await call("notification_send", { id: progress.id, title: "Deploy", message: "25%", group: "deploy:web", open: "https://example.com/deploy" }), { ...replaced, subscription: null });
     assert.equal((await call<Notification>("notification_get", { id: done.id })).dismissedAt, null);
 
     const question = await call<Notification>("notification_send", { title: "Merge?", message: "Tests pass", actions: ["Merge", "Hold"], reply: "Why hold?" });
@@ -132,7 +132,7 @@ test("notify folds version 1 acknowledgment into dismissal and keeps retries ide
       ["2026-09-27T03:00:00.000Z", "opened"],
     ]);
     assert.ok(!("acknowledgedAt" in rows[0]!) && !("revision" in rows[0]!));
-    assert.deepEqual(await call("notification_send", { id: ids[0], title: "Legacy", message: "Retained", source: "brain" }), rows[0]);
+    assert.deepEqual(await call("notification_send", { id: ids[0], title: "Legacy", message: "Retained", source: "brain" }), { ...rows[0], subscription: null });
     const next = await call<Notification>("notification_send", { title: "After", message: "Migration" });
     assert.ok(next.sequence > rows[3]!.sequence);
   } finally {
@@ -151,7 +151,8 @@ test("notify adopts the prior notification store without losing history", async 
     await served.close();
     await rename(join(root, "notify"), join(root, "notifications"));
     served = await serveApi({ name: "notify", transport: "socket", env });
-    assert.deepEqual(await socketCall(served.socketPath!, "tools/call", { name: "notification_get", arguments: { id } }), first);
+    const { subscription: _subscription, ...record } = first as Notification & { subscription: null };
+    assert.deepEqual(await socketCall(served.socketPath!, "tools/call", { name: "notification_get", arguments: { id } }), record);
     assert.ok((await stat(join(root, "notify", "notifications.sqlite"))).isFile());
     await assert.rejects(stat(join(root, "notifications")), { code: "ENOENT" });
     await served.close();

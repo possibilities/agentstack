@@ -12,7 +12,8 @@ type TransportDoc = { type: string; description: string; supported: boolean; sub
     method: string; path: string; description: string; format: string; operation: string | null;
     inputSchema: Record<string, unknown> | null; querySchema: Record<string, unknown> | null;
     outputSchema: Record<string, unknown> | null; errorSchema: Record<string, unknown> | null }> };
-type OperationDoc = { name: string; title: string | null; description: string; annotations: Record<string, unknown>; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown> };
+type OperationDoc = { name: string; title: string | null; description: string; annotations: Record<string, unknown>; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown>;
+  completionWatch: { topic: string; readOperation: string; idArgument: string; terminalField: string; defaultWhen: string[]; retainFields?: string[] } | null };
 type PackageDoc = { name: string; description: string; packageName: string; operations: OperationDoc[]; events: Record<string, string>; eventScope: { description: string; example: string; required: boolean } | null; transports: TransportDoc[] };
 const stateOperation = (name: string) => /_state_|_bot_dependencies$|_history_(plan|clear)$|_catalog_clear$|^brain_(jobs|runs|source|artifacts)_(plan|clear)$|^scrape_(queue_(plan|apply)$|corpus_(list|plan|clear)$)|^serve_subscription_|^bot_(workspace_|history_|log_|launch_|recovery_|session_reset$|upload_remove$|queue_history$|queue_bodies_clear$)|^chat_upload_(list|read)$|^content_(blob_list|storage_)|^blob_stage_(list|abort)$|^attention_infer_requests$|^usage_observations_|^xcom_control$|^worker_workspace_|^work_focus_(list|retire)/.test(name);
 
@@ -400,6 +401,10 @@ test("the api package serves structured documents for every workspace package", 
     assert.deepEqual(notify.operations.map((operation) => operation.name).filter(name => !stateOperation(name)),
       ["notification_send", "notification_get", "notification_list", "notification_counts", "notification_dismiss", "notification_dismiss_all"]);
     assert.deepEqual(Object.keys(notify.events), ["notify_changed"]);
+    const send = notify.operations.find(operation => operation.name === "notification_send")!;
+    assert.ok(Object.hasOwn(send.inputSchema.properties ?? {}, "subscribe"));
+    assert.ok(Object.hasOwn(send.outputSchema.properties ?? {}, "subscription"));
+    assert.deepEqual(send.completionWatch, { topic: "notify_changed", readOperation: "notification_get", idArgument: "id", terminalField: "dismissedAt", defaultWhen: ["actions", "reply"], retainFields: ["id", "dismissedAt", "outcome", "response", "contentClearedAt"] });
     assert.deepEqual(notify.transports.map((transport) => transport.type), ["socket", "mcp", "websocket"]);
     assert.equal(notify.transports.find((transport) => transport.type === "socket")?.endpoint, join(stateDir, "sockets", "notify.sock"));
     assert.equal(notify.transports.find((transport) => transport.type === "mcp")?.endpoint, "http://127.0.0.1:8743/mcp/notify");
@@ -418,12 +423,12 @@ test("the api package serves structured documents for every workspace package", 
 
     const server = found.get("serve") as PackageDoc;
     assert.deepEqual(Object.keys(server.operations.find(op => op.name === "serve_status")?.outputSchema.properties ?? {}).sort(), ["children", "indexUrl", "inspectorUrl", "mcpUrls", "nodeVersion", "pid", "startedAt", "uiUrl"]);
-    for (const name of ["serve_local_connect", "serve_local_revoke", "serve_mcp_event"]) {
+    for (const name of ["serve_local_connect", "serve_local_revoke", "serve_mcp_event", "serve_completion_check"]) {
       assert.ok(server.operations.some(op => op.name === name));
       assert.ok(server.transports.filter(transport => transport.type !== "socket").every(transport => !transport.operations.includes(name)));
     }
     assert.deepEqual(Object.keys(server.events), ["serve_state_changed", "pids_changed", "codex_tools_changed", "resources_changed", "serve_settings_changed", "harness_releases_changed"]);
-    assert.deepEqual(server.operations.map((operation) => operation.name).filter(name => !stateOperation(name)), ["serve_status", "serve_codex_tools", "serve_codex_tools_check", "serve_resources", "serve_resource_history", "serve_local_connect", "serve_local_revoke", "serve_mcp_event",
+    assert.deepEqual(server.operations.map((operation) => operation.name).filter(name => !stateOperation(name)), ["serve_status", "serve_codex_tools", "serve_codex_tools_check", "serve_resources", "serve_resource_history", "serve_local_connect", "serve_local_revoke", "serve_mcp_event", "serve_completion_check",
       "serve_settings_read", "serve_settings_update", "serve_harness_releases", "serve_harness_releases_check"]);
     const serveOperation = (name: string) => server.operations.find((operation) => operation.name === name)!;
     for (const name of ["serve_settings_read", "serve_settings_update", "serve_harness_releases", "serve_harness_releases_check"]) {

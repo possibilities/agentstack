@@ -1,0 +1,72 @@
+# 146. Coordinate Notification sends and one-shot dismissal watches in the Server
+
+Status: accepted, 2026-09-30. Extends [ADR 0095](0095-one-dismissal-with-an-outcome.md),
+[ADR 0033](0033-agent-facing-event-subscriptions.md) and
+[ADR 0039](0039-worker-wakeups-and-scoped-mcp.md). Preserves the exposure fences of
+[ADR 0096](0096-explicit-transport-exposure.md) and native admission boundary of
+[ADR 0120](0120-codex-native-input-admission.md).
+
+## Decision
+
+`notification_send` accepts optional boolean `subscribe`. For a verified Bot MCP
+call it defaults on when actions are nonempty or a reply is offered. True also
+watches plain notices; false opts out. Operator and external callers may send
+prompts with omission, but true fails before mutation without a sanctioned Bot
+Chat. Workers gain no Notification operations or Bot wakeup authority.
+
+Package operations may declare a typed `completionWatch`: the invalidation topic,
+record read, UUID input key, terminal field, inputs selecting the omitted
+default and fields retained in oversized terminal values. This declaration is
+live socket/discovery metadata, not implicit transport
+exposure. The send, read and topic must all remain selected over MCP. Notify's
+watch reads `notification_get` and treats non-null `dismissedAt` as completion.
+The once-only outcomes remain action, replied, closed, opened and replaced;
+none is a new semantic state or an inferred permission grant.
+
+Both MCP gateways route the selected operation through Serve's sole
+`McpEventSubscriptions` owner. The stdio relay independently authenticates its
+signed Bot launch and verifies the per-call thread lineage. The owner subscribes,
+then durably reserves the record ID, watch and private coordination capability
+**before** calling the record mutation. Notify verifies that capability with the
+owner before storing the record. Stdio children create neither contexts nor
+databases. A failed coordination check cannot leave a successfully sent but
+unwatched Notification.
+
+The owner returns the initial record plus `subscription` receipt. Null means no
+watch requested; pending/error describes retained intent separately from send
+success. A terminal initial value is returned as observed and retires without a
+second wakeup. Subsequent reads suppress open records and unrelated changes.
+Terminal records use the existing standalone `stack.subscription_update` tool
+output on the exact invoking Chat. Oversized records retain the terminal outcome
+and answer plus a full-record read pointer rather than dropping the answer.
+
+Admission acknowledgement atomically records delivered and retires the watch.
+Receipts retain the destination, record identity and outcome, not Notification
+bodies or answers, so the same ID cannot recreate an acknowledged or observed
+delivery. Repeated sends still visit Notify to enforce its content digest.
+Cross-Chat reuse of a watched ID is refused. `events_status` exposes the latest
+128 retained completion receipts or one exact `completionId`, and reports when
+older history is omitted; the operator's existing subscription inventory exposes
+one-shot metadata while a watch is retained. No new UI controls are introduced.
+
+## Recovery and uncertainty
+
+Reservations survive owner interruption; reconnect reads discover a successful
+send or dismissal even if its response or invalidation was lost. The owner never
+automatically resends a mutation. MCP ingress allocates omitted record IDs before
+relaying so an outer lost acknowledgement still reports a retry key. A failed
+send reports its record ID (and reserved watch ID when known); a caller retries
+only with that record ID. An acknowledged send whose
+initial read fails returns its record with an error receipt and retains recovery
+intent. Existing ordinary subscriptions retain their continuous snapshot policy.
+The old subscription database gains nullable completion metadata and a separate
+receipt table without replacing old rows.
+
+Immediately before native `turn/start`, the owner persists an unknown admission
+fence. A definite native refusal proves no admission and permits fresh-read
+recovery. A lost response, disconnected native socket or interrupted owner after
+submission does not: unknown watches remain inspectable and do not automatically
+replay on notices, ID retries or restart. Explicit removal cancels future work
+without recalling admitted input or erasing prior uncertainty. Native admission
+does not prove consumption, completed work or human approval, and never waits
+for turn completion.
