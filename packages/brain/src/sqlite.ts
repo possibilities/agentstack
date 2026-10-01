@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { StateJournal } from "@stack/api";
 
 /** Small compatibility surface retaining the domain's SQL and schema. */
 export class Database {
@@ -50,6 +51,8 @@ export class Database {
     });
   }
   close(): void { this.connection.close(); }
+  /** Owner maintenance shares the native connection, not a second WAL transaction. */
+  stateJournal(owner: string): StateJournal { return new StateJournal(this.connection, owner); }
 }
 
 export function openReadonlyDatabase(path: string): Database {

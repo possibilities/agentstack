@@ -54,7 +54,7 @@ import type {
   Sensitivity,
 } from "./types.js";
 
-export const RESEARCH_SCHEMA_VERSION = 13;
+export const RESEARCH_SCHEMA_VERSION = 14;
 
 /**
  * Default lease and retry policy. Durations are policy, not identity: callers
@@ -912,6 +912,27 @@ const MIGRATION_V13 = `
   UPDATE meta SET value='13' WHERE key='schema_version';
 `;
 
+const MIGRATION_V14 = `
+  ALTER TABLE jobs ADD COLUMN content_cleared_at TEXT;
+  ALTER TABLE runs ADD COLUMN content_cleared_at TEXT;
+  ALTER TABLE runs ADD COLUMN payload_digest TEXT;
+  ALTER TABLE sources ADD COLUMN removed_at TEXT;
+  ALTER TABLE sources ADD COLUMN checkpoint_generation INTEGER NOT NULL DEFAULT 0;
+  DROP TRIGGER IF EXISTS operator_run_jobs_frozen_update;
+  CREATE TRIGGER operator_run_jobs_frozen_update
+    BEFORE UPDATE OF run_id, kind, intent ON jobs
+    WHEN (NEW.run_id IS NOT OLD.run_id OR NEW.kind IS NOT OLD.kind OR NEW.intent IS NOT OLD.intent)
+      AND (EXISTS (SELECT 1 FROM operator_run_policies p WHERE p.run_id=OLD.run_id)
+        OR EXISTS (SELECT 1 FROM operator_run_policies p WHERE p.run_id=NEW.run_id))
+      AND NOT (NEW.run_id IS OLD.run_id AND NEW.kind IS OLD.kind
+        AND NEW.content_cleared_at IS NOT NULL AND json_valid(NEW.intent)
+        AND json_extract(NEW.intent,'$.redacted')=1
+        AND EXISTS (SELECT 1 FROM runs r WHERE r.id=OLD.run_id
+          AND r.content_cleared_at IS NOT NULL AND r.state NOT IN ('pending','active')))
+    BEGIN SELECT RAISE(ABORT, 'operator-controlled Run job binding is immutable'); END;
+  UPDATE meta SET value='14' WHERE key='schema_version';
+`;
+
 function normalizeContentClassification(
   kind: ContentKind | null | undefined,
   itemCount: number | null | undefined,
@@ -1012,7 +1033,7 @@ function nowIso(): string {
 const JOB_COLUMNS = `id, idempotency_key, kind, intent, resource_id, source_id,
   run_id, state, sensitivity, attempt_count, item_retry_count,
   current_attempt_id, run_at, block_reason, failure_class, failure_summary,
-  created_at, updated_at`;
+  created_at, updated_at, content_cleared_at`;
 
 const ATTEMPT_COLUMNS = `id, job_id, attempt_number, worker, state,
   lease_expires_at, heartbeat_at, failure_class, failure_summary, started_at,
@@ -1914,20 +1935,27 @@ export class ResearchStore {
       parsed = {};
     }
     if (parsed.redacted === true) return;
-    const options = { ...((parsed.options as Record<string, unknown>) ?? {}) };
-    options.title = undefined;
     const redacted = {
       version: parsed.version ?? 1,
       kind: parsed.kind ?? null,
       ingress: parsed.ingress ?? null,
       collections: [],
       payload: {},
-      options: JSON.parse(JSON.stringify(options)),
+      options: {},
+      admission_digest: createHash("sha256").update(job.intent ?? "null").digest("hex"),
       redacted: true,
     };
     this.db
-      .query("UPDATE jobs SET intent=?, updated_at=? WHERE id=?")
-      .run(JSON.stringify(redacted), new Date().toISOString(), jobId);
+      .query("UPDATE jobs SET intent=?, updated_at=?, content_cleared_at=? WHERE id=?")
+      .run(JSON.stringify(redacted), new Date().toISOString(), new Date().toISOString(), jobId);
+  }
+
+  /** Called under the maintenance write transaction; identities and dispositions are never deleted. */
+  retireJobPayload(jobId: number): void {
+    this.redactJobIntent(jobId);
+    this.db.query("UPDATE jobs SET failure_summary=NULL,block_reason=NULL,content_cleared_at=COALESCE(content_cleared_at,?) WHERE id=?").run(nowIso(), jobId);
+    this.db.query("UPDATE attempts SET failure_summary=NULL WHERE job_id=?").run(jobId);
+    this.db.query("UPDATE job_transitions SET reason=NULL,detail=NULL WHERE job_id=?").run(jobId);
   }
 
   private hasResourcesTable(): boolean {
@@ -3644,6 +3672,7 @@ export class ResearchStore {
     const timestamp = now.toISOString();
     const transaction = this.db.transaction((): Job => {
       const job = this.requireJob(jobId);
+      if (toState === "queued" && job.content_cleared_at) throw new Error("job_content_cleared: admit new intent with a new identity; never reopen cleared content");
       if (
         toState === "queued" &&
         job.kind === "source_sync" &&
@@ -3895,6 +3924,7 @@ export class ResearchStore {
         if (version < 11) this.db.exec(MIGRATION_V11);
         if (version < 12) this.db.exec(MIGRATION_V12);
         if (version < 13) this.db.exec(MIGRATION_V13);
+        if (version < 14) this.db.exec(MIGRATION_V14);
       })
       .immediate();
   }
