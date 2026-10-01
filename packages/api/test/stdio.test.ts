@@ -8,6 +8,7 @@ import { createServer } from "node:net";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { internalMcpLaunches, type McpLaunchAuthority } from "../src/mcp-launch.js";
@@ -18,6 +19,8 @@ import { serveSocket, socketCall } from "../src/socket.js";
 import { socketPath, workspaceRoot } from "../src/workspace.js";
 import { loadPackageApi } from "../src/catalog.js";
 import { codexMcpDefinition } from "../src/codex-mcp/catalog.js";
+import { operatorHeaders, withLocalAuth } from "../src/local-auth.js";
+import { serveMcp } from "../src/mcp.js";
 
 // This boundary owns stdio authentication, live policy and the private owner relay.
 // The separate delivery tests own actual Codex lineage and turn/start admission.
@@ -120,6 +123,7 @@ test("stdio children use private sockets, refresh policy, fence identities and l
     assert.equal((await stale.client.callTool({ name: "read", _meta: { threadId: "child" } })).isError, true);
     await assert.rejects(connect({ kind: "operator" }, { STACK_MCP_AUTHORITY: "bot", STACK_MCP_BINDING: "" }), /closed/);
     await assert.rejects(connect({ kind: "operator" }, { STACK_MCP_AUTHORITY: "" }), /closed/);
+    await assert.rejects(connect({ kind: "operator" }, { STACK_MCP_OPERATOR: operatorHeaders(env).authorization }), /closed/);
   } finally {
     await Promise.all(clients.map(client => client.close()));
     await owner.close(); await Promise.all([serve.close(), pkg.close(), bots.close(), workers.close()]);
@@ -127,7 +131,7 @@ test("stdio children use private sockets, refresh policy, fence identities and l
   }
 });
 
-test("offline stdio catalogs remain stable, report definite absence, recover on the same pipe and never replay an interrupted call", { timeout: 20_000 }, async () => {
+test("offline stdio recovers on the same pipe after Server auth startup, never replays and obeys explicit revocation", { timeout: 20_000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), "stack-offline-stdio-"));
   const env = { ...process.env, STACK_STATE_DIR: join(root, "state") };
   const dir = join(root, "packages", "demo");
@@ -147,7 +151,11 @@ test("offline stdio catalogs remain stable, report definite absence, recover on 
   `);
   const launch = (await internalMcpLaunches(root, { kind: "operator" }, env)).demo!;
   const client = new Client({ name: "offline", version: "1" });
+  const external = new Client({ name: "external", version: "1" });
+  const oldHttp = operatorHeaders(env);
   let owner: Awaited<ReturnType<typeof serveSocket>> | undefined;
+  let revoker: Awaited<ReturnType<typeof serveSocket>> | undefined;
+  let http: Awaited<ReturnType<typeof serveMcp>> | undefined;
   let dropped: ReturnType<typeof createServer> | undefined;
   let mutations = 0;
   try {
@@ -161,11 +169,23 @@ test("offline stdio catalogs remain stable, report definite absence, recover on 
     const absent = await client.callTool({ name: "mutate" });
     assert.equal(absent.isError, true);
     assert.match(JSON.stringify(absent.content), /stack_service_unavailable.*demo.*mutate.*not executed.*stack serve/);
+    // Exercise the authentication rotation that production Server startup runs,
+    // not just the package socket becoming available.
+    withLocalAuth(env, auth => auth.rotateForStartup());
     const { api } = await import(pathToFileURL(entry).href);
     owner = await serveSocket({ info: { name: "demo", description: "Owner", transportDescription: "Owner", path: socketPath("demo", env) }, operations: api.operations,
       context: { value: 23, mutate() { mutations++; throw new Error("handler refused"); } } });
+    const recovered = await client.callTool({ name: "read" });
+    assert.notEqual(recovered.isError, true, `same-pipe recovery: ${JSON.stringify(recovered.content)}`);
+    assert.deepEqual(recovered.structuredContent, { value: 23 });
     assert.deepEqual(await client.listTools(), offline);
-    assert.deepEqual((await client.callTool({ name: "read" })).structuredContent, { value: 23 });
+    http = await serveMcp({ root, env, port: 0 });
+    for (const headers of [oldHttp, { authorization: launch.env.STACK_MCP_OPERATOR! }]) {
+      assert.equal((await fetch(http.urls.demo!, { method: "POST", headers, body: "{}" })).status, 401, "neither stale HTTP nor private stdio authority authorizes external HTTP");
+    }
+    await external.connect(new StreamableHTTPClientTransport(new URL(http.urls.demo!), { requestInit: { headers: operatorHeaders(env) } }));
+    assert.deepEqual((await external.listTools()).tools.map(tool => tool.name), ["read", "mutate"]);
+    await external.close();
     assert.match(JSON.stringify((await client.callTool({ name: "mutate" })).content), /handler refused/);
     assert.equal(mutations, 1);
     await owner.close(); owner = undefined;
@@ -194,7 +214,40 @@ test("offline stdio catalogs remain stable, report definite absence, recover on 
     await manifest("[missing]");
     await assert.rejects(client.listTools(), /unknown name: missing/);
     assert.equal((await client.callTool({ name: "read" })).isError, true);
-  } finally { await client.close(); await owner?.close(); await new Promise<void>(resolve => dropped ? dropped.close(() => resolve()) : resolve()); await rm(root, { recursive: true, force: true }); }
+    await manifest();
+    assert.deepEqual((await client.callTool({ name: "read" })).structuredContent, { value: 17 });
+    // The real private-socket operation owns revoke-all semantics. Import only
+    // its declaration; no Server context, children or full Stack are started.
+    const { serverLocalRevoke } = await import(new URL("../../../serve/dist/api.js", import.meta.url).href);
+    revoker = await serveSocket({ info: { name: "serve", description: "Owner", transportDescription: "Owner", path: socketPath("serve", env) },
+      operations: [serverLocalRevoke], context: { env } });
+    assert.deepEqual(await socketCall(revoker.path, "tools/call", { name: "serve_local_revoke", arguments: {} }), { revoked: true });
+    const denied = async () => {
+      for (const name of ["read", "mutate"]) {
+        const result = await client.callTool({ name });
+        assert.equal(result.isError, true);
+        assert.match(JSON.stringify(result.content), /local authentication required/);
+        assert.equal(result.structuredContent, undefined);
+      }
+      await assert.rejects(client.listTools(), /local authentication required/);
+    };
+    await denied(); // Includes an opted stored read with no package socket.
+    let liveReads = 0;
+    owner = await serveSocket({ info: { name: "demo", description: "Owner", transportDescription: "Owner", path: socketPath("demo", env) }, operations: api.operations,
+      context: { get value() { liveReads++; return 29; }, mutate() { mutations++; return { value: 29 }; } } });
+    withLocalAuth(env, auth => auth.rotateForStartup());
+    await denied(); // Starting the backend never renews the captured credential.
+    assert.equal(liveReads, 0);
+    assert.equal(mutations, 1);
+    const freshLaunch = (await internalMcpLaunches(root, { kind: "operator" }, env)).demo!;
+    assert.notEqual(freshLaunch.env.STACK_MCP_OPERATOR, launch.env.STACK_MCP_OPERATOR);
+    const fresh = new Client({ name: "explicit-relaunch", version: "1" });
+    try {
+      await fresh.connect(new StdioClientTransport({ ...freshLaunch, stderr: "pipe" }));
+      assert.deepEqual((await fresh.callTool({ name: "read" })).structuredContent, { value: 29 });
+      await denied();
+    } finally { await fresh.close(); }
+  } finally { await Promise.all([client.close(), external.close()]); await http?.close(); await revoker?.close(); await owner?.close(); await new Promise<void>(resolve => dropped ? dropped.close(() => resolve()) : resolve()); await rm(root, { recursive: true, force: true }); }
 });
 
 test("installed package stdio catalogs connect without Stack and owner-opted reads retrieve isolated stored data without creating services", { timeout: 40_000 }, async () => {

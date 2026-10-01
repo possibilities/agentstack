@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { botMcpUrl, workerMcpUrl } from "./bot-mcp-identity.js";
-import { operatorHeaders } from "./local-auth.js";
+import { withLocalAuth } from "./local-auth.js";
 import { stateDir, workspaceRoot } from "./workspace.js";
 import { configuredMcpServers } from "./mcp.js";
 
@@ -16,7 +16,7 @@ export async function internalMcpLaunches(root: string, authority: McpLaunchAuth
   const home = env.HOME ?? homedir();
   const values: Record<string, string> = {
     STACK_STATE_DIR: resolve(stateDir(env)), STACK_MCP_ROOT: resolve(root), STACK_MCP_AUTHORITY: authority.kind,
-    STACK_MCP_BINDING: binding, STACK_MCP_OPERATOR: authority.kind === "operator" ? operatorHeaders(env).authorization! : "",
+    STACK_MCP_BINDING: binding, STACK_MCP_OPERATOR: authority.kind === "operator" ? withLocalAuth(env, auth => `Bearer ${auth.credential("stdio")}`) : "",
     // Harnesses may replace HOME and PATH. Bridges still use the operator's installation.
     HOME: home, STACK_CODEX_TOOLS_HOME: env.STACK_CODEX_TOOLS_HOME ?? join(home, ".codex"),
     XDG_CONFIG_HOME: env.XDG_CONFIG_HOME ?? join(home, ".config"),

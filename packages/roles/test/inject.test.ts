@@ -7,7 +7,7 @@ import { createServer } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { configuredMcpServers, workspaceRoot, operatorHeaders, serveApi, socketCall, socketPath, socketSubscribe } from "@stack/api";
+import { configuredMcpServers, workspaceRoot, withLocalAuth, serveApi, socketCall, socketPath, socketSubscribe } from "@stack/api";
 import { startOpenCodeHost } from "../src/inject-opencode.js";
 
 const cli = fileURLToPath(new URL("../../../cli/dist/src/main.js", import.meta.url));
@@ -161,7 +161,7 @@ test("inject launches each native boundary with the selected bytes, private cred
         assert.equal(report.argv[report.argv.indexOf("--setting-sources") + 1], "");
         assert.equal(report.config.mcpServers.roles.type, "stdio");
         assert.equal(report.config.mcpServers.roles.command, process.execPath);
-        assert.equal(report.config.mcpServers.roles.env.STACK_MCP_OPERATOR, operatorHeaders(f.env).authorization);
+        withLocalAuth(f.env, auth => auth.operator(report.config.mcpServers.roles.env.STACK_MCP_OPERATOR, "stdio"));
         assert.equal(report.config.mcpServers.roles.env.STACK_STATE_DIR, f.state);
         assert.equal(report.config.mcpServers.roles.env.HOME, f.home);
         assert.equal(report.config.mcpServers.external.headers.Authorization, "Bearer private-fixture-token");
@@ -176,7 +176,7 @@ test("inject launches each native boundary with the selected bytes, private cred
           assert.match(report.config, /developer_instructions = "  Role instructions/);
           assert.match(report.config, /private-fixture-token/);
           assert.match(report.config, /private-fixture-env/);
-          assert.ok(report.config.includes(operatorHeaders(f.env).authorization));
+          assert.ok(report.config.includes(withLocalAuth(f.env, auth => `Bearer ${auth.credential("stdio")}`)));
           assert.doesNotMatch(report.config, /disabled-mcp|notify|ambient/);
           assert.equal(await readFile(join(report.root, "home", ".codex", "session-fixture"), "utf8"), "history");
           await assert.rejects(stat(join(report.root, "home", ".codex", "config.toml")), { code: "ENOENT" });
@@ -188,7 +188,7 @@ test("inject launches each native boundary with the selected bytes, private cred
           assert.equal(report.config.mcp.servers.external.headers["X-Test"], "private-fixture-header");
           assert.equal(report.config.mcp.servers.roles.type, "local");
           assert.equal(report.config.mcp.servers.roles.command[0], process.execPath);
-          assert.equal(report.config.mcp.servers.roles.environment.STACK_MCP_OPERATOR, operatorHeaders(f.env).authorization);
+          withLocalAuth(f.env, auth => auth.operator(report.config.mcp.servers.roles.environment.STACK_MCP_OPERATOR, "stdio"));
           assert.equal(report.config.mcp.servers.roles.environment.STACK_STATE_DIR, f.state);
           assert.deepEqual(report.config.mcp.servers.stdio.command, [process.execPath, "--version", "one argument"]);
           assert.deepEqual(Object.keys(report.config.mcp.servers).sort(), names);

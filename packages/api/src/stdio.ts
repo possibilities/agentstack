@@ -26,7 +26,7 @@ export async function runMcpStdio(name: string, env: NodeJS.ProcessEnv = process
   else throw new Error("stdio MCP requires explicit launch authority");
   const checkAuthority = async () => {
     if (identity) await verifyMcpIdentity(identity, env);
-    else auth!.operator(env.STACK_MCP_OPERATOR);
+    else auth!.operator(env.STACK_MCP_OPERATOR, "stdio");
   };
   // Signature validation happened above. Catalog disclosure conveys no live
   // Bot/Worker authority; every call still verifies its exact live instance.

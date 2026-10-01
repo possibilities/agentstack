@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { stateDir } from "./workspace.js";
 
 export type LocalAudience = "ui" | "inspector";
+export type LocalOperatorAudience = "http" | "stdio";
 const tokenPattern = /^[A-Za-z0-9_-]{43}$/;
 const fresh = () => randomBytes(32).toString("base64url");
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -14,7 +15,8 @@ type Capability = { digest: string; kind: string; origin: string; audience: stri
 
 /** Same-user private storage shared by the owner and its gateway/UI children.
  * Capability consumption is transactional across processes; only digests persist.
- * No public listener mints a bootstrap or exposes the operator credential. */
+ * HTTP and private stdio launches have independent operator credentials in this
+ * one authority store. No public listener mints a bootstrap or exposes either. */
 export class LocalAuth {
   private readonly db: DatabaseSync;
   constructor(env: NodeJS.ProcessEnv = process.env) {
@@ -30,16 +32,30 @@ export class LocalAuth {
     } finally { closeSync(fd); }
     this.db = new DatabaseSync(path);
     try {
-      this.db.exec("PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS authority (id INTEGER PRIMARY KEY CHECK(id=1), secret TEXT NOT NULL); CREATE TABLE IF NOT EXISTS capabilities (digest TEXT PRIMARY KEY, kind TEXT NOT NULL, origin TEXT NOT NULL, audience TEXT NOT NULL, parent TEXT, expires INTEGER NOT NULL);");
-      this.db.prepare("INSERT OR IGNORE INTO authority(id,secret) VALUES(1,?)").run(fresh());
+      this.db.exec("PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS authority (id INTEGER PRIMARY KEY CHECK(id=1), secret TEXT NOT NULL, stdio_secret TEXT); CREATE TABLE IF NOT EXISTS capabilities (digest TEXT PRIMARY KEY, kind TEXT NOT NULL, origin TEXT NOT NULL, audience TEXT NOT NULL, parent TEXT, expires INTEGER NOT NULL);");
+      this.transaction(() => {
+        // Serialize upgrades across gateway/launch processes. Existing HTTP
+        // credentials and browser capabilities are unchanged by opening state.
+        const columns = this.db.prepare("PRAGMA table_info(authority)").all() as { name: string }[];
+        if (!columns.some(column => column.name === "stdio_secret")) this.db.exec("ALTER TABLE authority ADD COLUMN stdio_secret TEXT");
+        this.db.prepare("INSERT OR IGNORE INTO authority(id,secret,stdio_secret) VALUES(1,?,?)").run(fresh(), fresh());
+        this.db.prepare("UPDATE authority SET stdio_secret=? WHERE id=1 AND stdio_secret IS NULL").run(fresh());
+      });
     } catch (error) { this.db.close(); throw error; }
   }
   close() { this.db.close(); }
-  credential(): string { return (this.db.prepare("SELECT secret FROM authority WHERE id=1").get() as { secret: string }).secret; }
-  rotate(): void { this.transaction(() => { this.db.prepare("UPDATE authority SET secret=? WHERE id=1").run(fresh()); this.db.exec("DELETE FROM capabilities"); }); }
-  operator(header: string | undefined | null): string {
+  credential(audience: LocalOperatorAudience = "http"): string {
+    const authority = this.db.prepare("SELECT secret,stdio_secret FROM authority WHERE id=1").get() as { secret: string; stdio_secret: string };
+    return audience === "stdio" ? authority.stdio_secret : authority.secret;
+  }
+  /** Routine Server startup fences external HTTP/browser authority, not private
+   * stdio launch credentials. Call only after claiming the Server socket. */
+  rotateForStartup(): void { this.transaction(() => { this.db.prepare("UPDATE authority SET secret=? WHERE id=1").run(fresh()); this.db.exec("DELETE FROM capabilities"); }); }
+  /** Explicit local revocation fences all operator audiences and capabilities. */
+  rotate(): void { this.transaction(() => { this.db.prepare("UPDATE authority SET secret=?,stdio_secret=? WHERE id=1").run(fresh(), fresh()); this.db.exec("DELETE FROM capabilities"); }); }
+  operator(header: string | undefined | null, audience: LocalOperatorAudience = "http"): string {
     const value = header?.match(/^Bearer ([A-Za-z0-9_-]{43})$/)?.[1];
-    if (!value || !same(value, this.credential())) throw new LocalAuthError();
+    if (!value || !same(value, this.credential(audience))) throw new LocalAuthError();
     return value;
   }
   bootstrap(origin: string, audience: LocalAudience): string {
