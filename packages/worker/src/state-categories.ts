@@ -1,5 +1,6 @@
 import { stateCategories } from "@stack/api";
 export const workerStateCategories = stateCategories("worker", [
+  { id: "settings-receipts", kind: "history", paths: [], ownership: "shared", reads: ["worker_settings_read"], actions: ["worker_settings_receipts_plan"], retention: "Retire exact targets' receipts older than current revision and >=7 days; unknown-age legacy receipts and permanent digest/revision tombstones remain. Saved/loaded settings unchanged.", regeneration: "Explicit settings edits create new receipts; no implicit turn or runtime." },
   { id: "ledger", kind: "history", paths: ["workers.sqlite", "workers.sqlite-wal"], reads: ["worker_list", "worker_detail", "worker_turn_list", "worker_record_list", "worker_work_list"], actions: ["worker_close", "worker_remove"],
     retention: "Closing retains transcripts, turns, settings and captured Work context; removal clears Stack records but does not imply provider-native session deletion.", regeneration: "Explicit Worker admissions; unknown turns must not be dispatched again." },
   { id: "worktrees", kind: "workspace", paths: ["workers/worktrees", "workers/roles"], reads: ["worker_list", "worker_diff", "worker_workspace_list", "worker_workspace_read"], actions: ["worker_remove"],

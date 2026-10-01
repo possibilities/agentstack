@@ -169,7 +169,7 @@ function stampStub(
 export function artifactsCommand(context: Context, flags: ParsedFlags): CommandResult {
   const subcommand = flags.positional[0] ?? "list";
   const rest = flags.positional.slice(1);
-  const store = ArtifactStore.open(context.env, context.home);
+  const store = ArtifactStore.open(context.env, context.home, { readOnly: context.history === false });
   try {
     if (subcommand === "list") {
       if (rest.length > 0) throw new UsageError("artifacts list takes no arguments");

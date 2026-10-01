@@ -6,7 +6,7 @@ mcp:
   operations: [docs_list, docs_get, docs_snapshot]
   workerOperations: [docs_list, docs_get, docs_snapshot]
   events: []
-  description: Credential-free Package API schemas and effective transport and Worker selections, forwarded to the discovery socket.
+  description: Credential-free Package API schemas and effective transport and Worker selections. Operator stdio supports standalone discovery; external HTTP forwards to the discovery socket.
 websocket:
   operations: all
   events: all

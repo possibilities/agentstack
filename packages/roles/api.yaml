@@ -37,10 +37,14 @@ mcp:
     - project_delete
     - project_reorder
   events: all
-  description: MCP operations for role editing, forwarded to the roles socket over internal stdio or external HTTP.
+  description: Role operations over internal stdio or external HTTP. Operator stdio supports standalone stored Role reads; editing and external HTTP require the roles socket.
 websocket:
   operations:
     - roles_state_read
+    - role_launch_list
+    - role_launch_plan
+    - role_launch_clear
+    - roles_state_receipt_get
     - roles_snapshot
     - role_shim_list
     - role_shim_create

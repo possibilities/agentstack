@@ -1,6 +1,6 @@
 import { operation, stateDir, type PackageApi } from "@stack/api";
 import { z } from "zod";
-import { withStateInventory } from "@stack/api";
+import { withStateInventory, requireStateOperator, statePlan, stateApplyInput, stateReceipt } from "@stack/api";
 import { accessStateCategories } from "./src/state-categories.js";
 import { AccessStore, scopes } from "./src/store.js";
 import { startIngress, pairInput, redeemInput, refreshInput, handoffInput } from "./src/ingress.js";
@@ -14,6 +14,13 @@ import { connectionSchema, uiHandoffInput, uiHandoffSchema, uiExchangeInput } fr
 type Context = { store: AccessStore; ingress: Awaited<ReturnType<typeof startIngress>>; env: NodeJS.ProcessEnv };
 const packageApi: PackageApi<Context, "access_changed"> = {
   operations: [
+    operation({ name: "access_history_plan", description: "Preview exact expired UI-session, pairing or invitation metadata retirement. Active/unexpired entries block; revocation stays separate. Keep server/client/grant/credential identities, enrollment/Share receipts and minimal replay digests. Audit has no manual prune. Local operator only.",
+      input: z.strictObject({ kind: z.enum(["ui_sessions", "expired_pairings", "expired_invitations"]), ids: z.array(z.uuid()).min(1).max(100) }), output: statePlan,
+      async call(ctx: Context, { kind, ids }, invocation) { requireStateOperator(invocation); return ctx.store.historyPlan(kind, ids); } }),
+    operation({ name: "access_history_clear", description: "Atomically retire exact expired Access metadata with its request receipt. Changed state refuses the plan; identical retries return the original outcome. Credentials and revocations never change, enrollment replay fences remain, and no audit rows are selected. Local operator only.",
+      input: stateApplyInput, output: stateReceipt, annotations: { destructiveHint: true, idempotentHint: true }, async call(ctx: Context, input, invocation) { requireStateOperator(invocation); return ctx.store.historyClear(input); } }),
+    operation({ name: "access_state_receipt_get", description: "Read a durable Access history-retirement outcome. Unknown restart admission never repeats; local operator only.",
+      input: z.strictObject({ requestId: z.uuid() }), output: z.strictObject({ receipt: stateReceipt.nullable() }), annotations: { readOnlyHint: true }, async call(ctx: Context, { requestId }, invocation) { requireStateOperator(invocation); return { receipt: ctx.store.maintenance.receipt(requestId) }; } }),
     operation({ name: "enrollment_invite_create", description: "Create a one-use QR invitation on trusted local control with explicit kind and scopes. Persist a random 32-byte base64url secret, UUID and absolute expiry before calling; exact retries recover until expiry (at most ten minutes). The QR contains invitation authority: show only to the intended device, never log it. Only local control may seed access:enroll. Requires configured Access HTTPS origin.",
       input: inviteCreateInput, output: invitationResponseSchema,
       async call(ctx, input) { return invitationResponse(ctx.store.createInvitation(input, enrollmentOrigin(ctx.env)), ctx.store.now()); } }),

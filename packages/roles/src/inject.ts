@@ -5,19 +5,18 @@ import { access, mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/pr
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { internalMcpLaunches, mcpToolTimeoutSeconds, socketCall, socketPath, stateDir, workspaceRoot } from "@stack/api";
-import { roleMcpConflict } from "./bundle.js";
+import { internalMcpLaunches, mcpPort, mcpToolTimeoutSeconds, stateDir, workspaceRoot } from "@stack/api";
+import { roleMcpConflict, serverMcpOrigins } from "./bundle.js";
 import { injectArguments, type Harness } from "./inject-args.js";
 import { startOpenCodeHost } from "./inject-opencode.js";
 import { mcpRecord, skillRecord } from "./resources.js";
-import { renderInstructions, type RoleCatalog, type RoleSnapshot } from "./store.js";
+import { RoleStore, renderInstructions, type RoleSnapshot } from "./store.js";
+import { processBirth } from "./launch-state.js";
 
 type Mcp = { type: "http"; url: string; headers: Record<string, string> } |
   { type: "stdio"; command: string; args: string[]; env: Record<string, string> };
 const json = (value: unknown) => JSON.stringify(value, null, 2);
 const asciiFold = (value: string) => value.replace(/[A-Z]/g, (char) => char.toLowerCase());
-const call = (pkg: string, name: string, args: Record<string, unknown> = {}) =>
-  socketCall(socketPath(pkg), "tools/call", { name, arguments: args }, { timeoutMs: 5_000 });
 
 async function executable(command: string): Promise<string> {
   const paths = isAbsolute(command) ? [command] : command.includes("/") ? [resolve(command)]
@@ -29,20 +28,15 @@ async function executable(command: string): Promise<string> {
 }
 
 async function snapshotFor(name: string): Promise<RoleSnapshot> {
-  if (name === "default") return await call("roles", "role_launch_snapshot") as RoleSnapshot;
-  const catalog = await call("roles", "roles_snapshot") as RoleCatalog;
-  const role = catalog.roles.find((role) => asciiFold(role.name) === asciiFold(name));
-  if (!role) throw new Error(`unknown Role name: ${name}`);
-  // The operator-only complete read supports named Roles even on a running
-  // server whose launch-snapshot operation still accepts only the default.
-  return await call("roles", "role_editor_snapshot", { roleId: role.id }) as RoleSnapshot;
+  const store = new RoleStore(stateDir(), { readOnly: true });
+  try { return store.namedLaunchSnapshot(name); } finally { store.close(); }
 }
 
 async function connections(snapshot: RoleSnapshot): Promise<Record<string, Mcp>> {
-  const { mcpUrls } = await call("serve", "serve_status") as { mcpUrls: Record<string, string> };
   const launches = await internalMcpLaunches(workspaceRoot(import.meta.dirname), { kind: "operator" });
   const names = new Set(Object.keys(launches).map(asciiFold));
-  const origins = new Set(Object.values(mcpUrls).map((url) => new URL(url).origin));
+  const ports = [mcpPort(), Number(process.env.STACK_SERVER_MCP_PORT)].filter(port => Number.isInteger(port) && port > 0);
+  const origins = new Set(ports.flatMap(serverMcpOrigins));
   const servers: Record<string, Mcp> = {};
   for (const [name, launch] of Object.entries(launches))
     if (!snapshot.disabledInternalMcpServers.includes(name)) servers[name] = launch;
@@ -146,6 +140,8 @@ async function launch(args: string[], signal: AbortSignal): Promise<Exit> {
   const parent = join(stateDir(), "roles", "inject");
   await mkdir(parent, { recursive: true, mode: 0o700 });
   const root = await mkdtemp(join(parent, `${harness}-`));
+  const lock = { version: 1, pid: process.pid, birth: await processBirth(process.pid), state: "preparing" };
+  await file(join(root, "launch-lock.json"), json(lock));
   const capabilities = join(root, "capabilities");
   const env = { ...process.env };
   let launched = false;
@@ -208,6 +204,7 @@ async function launch(args: string[], signal: AbortSignal): Promise<Exit> {
     }
     if (harness !== "opencode") await compatible(binary, harness, env);
     signal.throwIfAborted();
+    await file(join(root, "launch-lock.json"), json({ ...lock, state: "running" }));
     launched = true;
     result = await foreground(binary, argv, env, signal, host?.closed);
   } finally {
@@ -218,7 +215,10 @@ async function launch(args: string[], signal: AbortSignal): Promise<Exit> {
     else {
       for (const path of cleanup) await rm(path, { recursive: true, force: true });
       if (harness !== "codex") await rm(root, { recursive: true, force: true });
-      else console.error(`roles inject: private native history retained at ${root}`);
+      else {
+        await file(join(root, "launch-lock.json"), json({ ...lock, state: "exited" }));
+        console.error(`roles inject: private native history retained at ${root}`);
+      }
     }
   }
   return result;

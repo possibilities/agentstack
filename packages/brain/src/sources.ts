@@ -73,7 +73,7 @@ const SOURCE_COLUMNS = `id, source_type, identifier, display_name, enabled,
   sensitivity, schedule, checkpoint, definition_version, definition,
   definition_hash, collections, limits, credential_refs, paused, pause_reason,
   health_state, health_detail, last_evaluated_at, last_success_at, next_due_at,
-  created_at, updated_at`;
+  created_at, updated_at, removed_at, checkpoint_generation`;
 const SOURCE_RUN_COLUMNS = `id, run_type, source_id, state, checkpoint,
   attempted_cursor, committed_checkpoint, warnings, discovered_count,
   admitted_count, suppressed_count, terminal_outcome, source_definition_version,
@@ -822,7 +822,7 @@ function sourceRows(db: Database, stableId?: string): SourceRow[] {
     sensitivity, schedule, checkpoint, definition_version, definition,
     definition_hash, collections, limits, credential_refs, paused, pause_reason,
     health_state, health_detail, last_evaluated_at, last_success_at, next_due_at,
-    created_at, updated_at`;
+    created_at, updated_at, removed_at, checkpoint_generation`;
   return (
     stableId === undefined
       ? db.query(`SELECT ${columns} FROM sources ORDER BY identifier ASC`).all()
@@ -838,13 +838,15 @@ function listItem(row: SourceRow): SourceListItem {
   const definition = fallbackDefinition(row);
   return {
     id: row.identifier,
+    removed_at: row.removed_at ?? null,
+    checkpoint_generation: row.checkpoint_generation ?? 0,
     database_id: row.id,
     version: row.definition_version,
     kind: row.source_type,
     display_name: row.display_name ?? row.identifier,
     enabled: Boolean(row.enabled),
     paused: Boolean(row.paused),
-    executable: isExecutableSourceKind(row.source_type),
+    executable: !row.removed_at && isExecutableSourceKind(row.source_type),
     schedule: definition.schedule,
     sensitivity: row.sensitivity,
     collections: definition.collections,
@@ -2052,6 +2054,7 @@ export class SourceRegistry {
     const definitionJson = JSON.stringify(definition);
     const definitionHash = sourceDefinitionHash(definition);
     const existing = this.loadSource(definition.id);
+    if (existing?.removed_at) throw new Error("source_removed: create a new stable source identity instead of reviving a removed source");
     if (existing !== null && existing.source_type !== definition.kind) {
       throw new CliError(
         "source_identity_mismatch",
@@ -2191,6 +2194,7 @@ export class SourceRegistry {
     const timestamp = (input.now ?? new Date()).toISOString();
     const transaction = this.db.transaction((): Source => {
       const source = this.requireSource(input.sourceId);
+      if (source.removed_at) throw new Error("source_removed: a retired source cannot be paused or resumed");
       this.db
         .query(
           `UPDATE sources SET paused=?, pause_reason=?,

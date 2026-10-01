@@ -36,10 +36,19 @@ mcp:
     - recovery_execute
     - doctor
   events: []
-  description: MCP operations forwarded to the Brain socket over internal stdio or external HTTP. Change notices are not offered to agents.
+  description: Brain operations over internal stdio or external HTTP. Operator stdio supports standalone research retrieval; other calls and external HTTP require the Brain socket. Change notices are not offered to agents.
 websocket:
   operations:
     - brain_state_read
+    - brain_state_receipt_get
+    - brain_jobs_plan
+    - brain_jobs_clear
+    - brain_runs_plan
+    - brain_runs_clear
+    - brain_source_plan
+    - brain_source_clear
+    - brain_artifacts_plan
+    - brain_artifacts_clear
     - brain_status
     - jobs_reveal
     - stats

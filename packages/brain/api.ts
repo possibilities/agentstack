@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { withStateInventory } from "@stack/api";
 import { brainStateCategories } from "./src/state-categories.js";
-import { operation, operatorInvocation, type PackageApi } from "@stack/api";
+import { operation, operatorInvocation, type PackageApi, type StandaloneContext } from "@stack/api";
 import { egressPolicy } from "@stack/scrape/network";
 import { ResearchEgress, grantScope, grantRecord, jobNetworkPolicy } from "./src/egress.js";
 import { ArtifactStore } from "./src/artifacts.js";
@@ -22,6 +22,7 @@ import { shareAdmit, shareStates } from "./src/share-server.js";
 import { parseShareRequest } from "./src/share.js";
 import { ResearchStore } from "./src/store.js";
 import { runWorker, type WorkerOptions, type WorkerResult } from "./src/worker.js";
+import { BrainState, brainStateOperations } from "./src/state.js";
 
 export interface BrainContext {
   env: NodeJS.ProcessEnv;
@@ -32,6 +33,7 @@ export interface BrainContext {
   registrationPath: string;
   artifacts: ArtifactStore;
   store: ResearchStore;
+  state: BrainState;
   server: RunningShareServer;
   controller: AbortController;
   worker: Promise<WorkerResult | null>;
@@ -78,14 +80,16 @@ const outputs: Record<string, z.ZodType> = {
   }).optional() }),
 };
 
-async function invoke(ctx: BrainContext, command: string, commandArgv: string[]): Promise<unknown> {
+type BrainCommandContext = Pick<BrainContext, "env" | "dbPath" | "calls"> & { controller: { signal: AbortSignal } } & Partial<Pick<BrainContext, "shareToken" | "store" | "changes">>;
+async function invoke(ctx: BrainCommandContext, command: string, commandArgv: string[]): Promise<unknown> {
   if (ctx.controller.signal.aborted) throw new Error("brain_stopping\nStack Brain is stopping");
   const call = withBrainEnvironment(ctx.env, async () => {
     try {
-      const text = await withShareIngressToken(ctx.shareToken, () => captureOutput(() => runParsed({
+      const run = () => captureOutput(() => runParsed({
         command, commandArgv, globals: { dbPath: ctx.dbPath, format: "json", quiet: false },
         usesDefaultDb: false, showHelp: false, showVersion: false, showAgentHelp: false, showAgentTeaser: false,
-      })));
+      }));
+      const text = await (ctx.shareToken ? withShareIngressToken(ctx.shareToken, run) : run());
       return JSON.parse(text).data;
     } catch (error) {
       if (error instanceof CliError) throw new Error([error.code, error.message, error.recovery].filter(Boolean).join("\n"));
@@ -97,6 +101,16 @@ async function invoke(ctx: BrainContext, command: string, commandArgv: string[])
 }
 
 const internalOnly = new Set(["guide", "prompt", "help", "worker"]);
+const standaloneNames = new Set(["stats", "search", "context", "get", "tags"]);
+const standaloneReads: StandaloneContext<BrainCommandContext> = {
+  open(env, signal) {
+    signal?.throwIfAborted();
+    const dbPath = join(brainStateRoot(env), "research.db");
+    withBrainEnvironment(env, () => assertDefaultDatabaseTargetSafe(dbPath));
+    return { env, dbPath, controller: { signal: signal ?? new AbortController().signal }, calls: new Set() };
+  },
+  close() {},
+};
 const resultFields: Record<string, string> = { jobs_list: "jobs", sources_list: "sources", sources_status: "sources", sources_apply: "results", sources_sync: "results" };
 const commandOperations = agentTools(undefined, true).filter((tool) => !internalOnly.has(tool.name)).map((tool) => {
   const output = outputs[tool.name];
@@ -110,11 +124,12 @@ const commandOperations = agentTools(undefined, true).filter((tool) => !internal
   description: tool.name === "jobs_show" ? "Inspect one ingestion job with bounded, sanitized failure diagnostics. Reads no Artifact bodies and appends no audit; use jobs_reveal for explicit sensitive inspection." : `${tool.leaf.summary}. ${tool.leaf.guidance ?? ""}`.slice(0, 400).trim(),
   input,
   output,
+  ...(standaloneNames.has(tool.name) ? { standalone: standaloneReads } : {}),
   annotations: { ...tool.annotations, title: tool.title.slice(0, 80),
     ...(tool.name === "jobs_show" ? { readOnlyHint: true, idempotentHint: true } : {}),
     ...(tool.name === "recovery_online" ? { openWorldHint: true } : {}),
   },
-  async call(ctx: BrainContext, input: Record<string, unknown>) {
+  async call(ctx: BrainCommandContext, input: Record<string, unknown>) {
     const invocation = invocationFor(tool, input);
     let result: unknown;
     try { result = await invoke(ctx, invocation.command, invocation.commandArgv); } finally {
@@ -123,7 +138,7 @@ const commandOperations = agentTools(undefined, true).filter((tool) => !internal
     }
     // Retagging rewrites FTS rows in place, which no fingerprint sees.
     if (tool.name === "retag" && input["dry-run"] !== true) ctx.changes?.touch("index_changed");
-    if (tool.name === "jobs_show") result = { ...(result as object), network_policy: new ResearchEgress(ctx.store).forJob(Number(input["job-id"])) };
+    if (tool.name === "jobs_show") result = { ...(result as object), network_policy: new ResearchEgress(ctx.store!).forJob(Number(input["job-id"])) };
     const field = resultFields[tool.name];
     return field ? { [field]: result } : result;
   },
@@ -163,7 +178,8 @@ export async function createBrainContext(env: NodeJS.ProcessEnv, workerOptions: 
       writeIngressRegistration(registrationPath, { version: 1, url: server.url, host, port: server.port, pid: process.pid, started_at: new Date().toISOString() });
       const controller = new AbortController();
       const ctx: BrainContext = { env, stateRoot, dbPath, tokenPath, get shareToken() { return currentToken; }, set shareToken(value) { currentToken = value; }, registrationPath, artifacts, store, server, controller,
-        worker: Promise.resolve(null), maintenance: undefined as never, maintenanceTask: null, calls: new Set(), workerState: "running", health: null };
+        state: undefined as never, worker: Promise.resolve(null), maintenance: undefined as never, maintenanceTask: null, calls: new Set(), workerState: "running", health: null };
+      ctx.state = new BrainState(ctx);
       ctx.worker = withBrainEnvironment(env, () => runWorker(store, {
         ...workerOptions, artifactStore: artifacts, signal: controller.signal, installSignalHandlers: false, shutdownGraceMs: 0,
       }), controller.signal).then((result) => { ctx.workerState = "stopped"; return result; }, () => { ctx.workerState = "failed"; ctx.health = "ingestion_worker_failed"; return null; });
@@ -204,6 +220,7 @@ const packageApi: PackageApi<BrainContext, BrainTopic> = {
   http: [{ name: "share", kind: "json", authentication: "bearer",
     description: "Loopback-only internal share listener with ephemeral liveness credential. Devices pair through Access; legacy shared tokens are not accepted.", routes: shareRoutes }],
   operations: [
+    ...brainStateOperations,
     operation({ name: "egress_grant_create", description: "Operator-only socket grant for one URL submission root or exact Research source definition version. Allows only explicit TCP IP/port destinations in addition to public egress. Children inherit the scope; existing sources receive no implicit grants. Revoke an existing grant before changing destinations.",
       input: z.strictObject({ scope: grantScope, policy: egressPolicy }), output: grantRecord,
       async call(ctx, input, invocation) {

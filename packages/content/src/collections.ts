@@ -29,11 +29,26 @@ function validCollectionDetails(title: string, description: string): void {
 }
 
 export class Collections {
-  readonly maintenance: StateJournal;
+  private journal?: StateJournal;
+  get maintenance(): StateJournal {
+    if (!this.journal) throw new Error("Content maintenance requires stack serve");
+    return this.journal;
+  }
   private readonly db: Database;
   private readonly objects: string;
 
-  constructor(readonly root: string) {
+  constructor(readonly root: string, options: { readOnly?: boolean } = {}) {
+    if (options.readOnly) {
+      this.objects = join(root, "objects");
+      this.db = new Database(join(root, "collections.sqlite3"), { readOnly: true });
+      try {
+        // Prepare the public read shapes, without running schema upgrades or
+        // initializing uploads, the maintenance journal or any directories.
+        this.db.query("SELECT slug,title,description,createdAt,updatedAt FROM collections LIMIT 0").all();
+        this.db.query("SELECT id,collection,name,kind,mediaType,bytes,digest,revision,createdAt,updatedAt FROM items LIMIT 0").all();
+      } catch (error) { this.db.close(); throw new Error("content_store_incompatible\nUpgrade Content through stack serve before reading collections.", { cause: error }); }
+      return;
+    }
     mkdirSync(root, { recursive: true, mode: 0o700 });
     this.objects = join(root, "objects");
     mkdirSync(this.objects, { recursive: true, mode: 0o700 });
@@ -77,7 +92,7 @@ export class Collections {
       createdAt TEXT NOT NULL
     )`);
     this.db.run("CREATE TABLE IF NOT EXISTS aborted_stages(id TEXT PRIMARY KEY,revision TEXT NOT NULL,abortedAt TEXT NOT NULL)");
-    this.maintenance = new StateJournal(this.db.db, "content");
+    this.journal = new StateJournal(this.db.db, "content");
   }
 
   close(): void { this.db.close(); }

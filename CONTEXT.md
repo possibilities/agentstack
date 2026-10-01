@@ -21,6 +21,16 @@ native outcome into a known one. See [ADR 0135](docs/adr/0135-owner-state-mainte
 and the [operation matrix](docs/state-control.md). _Avoid_: reset everything,
 clear means cancel, tombstone means erased, unmeasured means zero
 
+## Standalone operation
+
+An operation whose Package API explicitly supplies a scoped context factory for
+operator stdio execution when its private socket is definitely absent before
+dispatch. It reuses the owner's handler, schemas and MCP content projection,
+without the full Server context or background lifecycle. Discovery's `standalone`
+flag describes this capability, not live availability or permission for a managed
+caller. A read-only hint alone does not opt in. _Avoid_: offline server, implicit
+read-only fallback, replay after timeout
+
 ## Access client
 
 A durable phone, extension, browser, desktop or future cloud consumer identity owned by the `access` Package API. A tailnet client pairs through manual local approval, a one-use local QR invitation, or an offline QR request explicitly approved by a permitted enrollment sponsor. Its human approval code or request QR is distinct from its private high-entropy redemption secret. One client may receive multiple Stack resource scopes. _Avoid_: Brain token, Bot, Worker, Tailscale node identity
@@ -58,7 +68,7 @@ phone credential forwarding, durable browser token in a URL
 
 ## Local operator session
 
-An eight-hour local UI or Inspector browser session established by a one-use capability minted through the private server socket and opened by `stack serve open`. It is bound to one exact origin and audience. UI server renders require it; each local WebSocket reconnect exchanges it for a one-use 30-second ticket. Server restart or explicit local revocation invalidates sessions and the native operator bearer credential. Bot/Worker identities and remote Access sessions remain independent. _Avoid_: anonymous loopback authority, OS sandbox, Access grant
+An eight-hour local UI or Inspector browser session established by a one-use capability minted through the private server socket and opened by `stack serve open`. It is bound to one exact origin and audience. UI server renders require it; each local WebSocket reconnect exchanges it for a one-use 30-second ticket. Server restart or explicit local revocation invalidates sessions and the external HTTP operator bearer credential. Private operator stdio launch authority is a separate audience in the same LocalAuth store: routine startup preserves it, explicit local revocation invalidates it, and existing pipes never silently renew it. Bot/Worker identities and remote Access sessions remain independent. _Avoid_: anonymous loopback authority, OS sandbox, Access grant
 
 ## Content handoff
 
@@ -78,7 +88,7 @@ A durable request from a verified Bot Chat for human help with an entire Browser
 
 ## Transport
 
-A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are the local control transports. Socket is the full internal superset. Each MCP and WebSocket declaration independently requires `operations` and `events`: `all`, a positive name list, or `[]` for none; an absent transport is disabled. MCP uses native stdio for Stack's Bot, Worker and injected Role launches, and authenticated loopback HTTP for external consumers. Both use shared handlers that revalidate current exposure and forward to the running private socket backend; stdio creates no Package API context. Generated Bot event tools route to the server's sole durable subscription owner. WebSocket forwards over one shared loopback listener and package-addressed connection, retaining its operation/topic selection from handshake; each subscription has its own identifier and optional scope. An optional `http` Transport declares explicit JSON or static routes on separate server-lifecycle listeners; it does not expose other Package API operations.
+A configured way to expose one Package API. `socket`, `mcp`, and `websocket` are the local control transports. Socket is the full internal superset. Each MCP and WebSocket declaration independently requires `operations` and `events`: `all`, a positive name list, or `[]` for none; an absent transport is disabled. MCP uses native stdio for Stack's Bot, Worker and injected Role launches, and authenticated loopback HTTP for external consumers. Internal stdio discovery uses installed typed declarations and current manifest exposure without a running Server or Package API context. Calls prefer the private socket owner; only definite pre-dispatch absence permits explicitly owner-supported standalone execution. Other calls return actionable dependency errors without closing the pipe or replaying an uncertain request. HTTP retains live socket validation. Generated Bot event tools route to the server's sole durable subscription owner. WebSocket forwards over one shared loopback listener and package-addressed connection, retaining its operation/topic selection from handshake; each subscription has its own identifier and optional scope. An optional `http` Transport declares explicit JSON or static routes on separate server-lifecycle listeners; it does not expose other Package API operations. See [ADR 0146](docs/adr/0146-server-independent-internal-mcp.md).
 
 _Avoid_: protocol, binding
 
@@ -171,7 +181,7 @@ _Avoid_: native activity, UI selection, global Bot current task
 
 ## Worker MCP invocation context
 
-Transport-supplied Worker ID and exact native runtime instance from a private signed MCP launch binding, carried in stdio environment or a legacy HTTP URL. The gateway checks both against the durable Worker and live account backend on each request. Missing or invalid bindings never fall back to operator authority. A manifest's positive `mcp.workerOperations` list, intersected with MCP exposure, selects disclosed reads; omission denies all. Read-only hints alone grant no access. Worker record reads are self-only, and Worker calls cannot subscribe Bot threads. It is not an OS sandbox. _Avoid_: Bot identity, operator authority
+Transport-supplied Worker ID and exact native runtime instance from a private signed MCP launch binding, carried in stdio environment or a legacy HTTP URL. Internal stdio catalog admission verifies the signature without requiring a live owner; every call checks both identities against the durable Worker and live account backend. Missing or invalid bindings never fall back to operator authority. A manifest's positive `mcp.workerOperations` list, intersected with MCP exposure, selects disclosed reads; omission denies all. Read-only hints alone grant no access. Worker record reads are self-only, and Worker calls cannot subscribe Bot threads. It is not an OS sandbox. _Avoid_: Bot identity, operator authority
 
 ## Inference request
 
@@ -239,7 +249,7 @@ A named Stack-owned configuration with a stable ID and independent revision: ord
 
 ## Role injection
 
-A local operator invocation of `stack roles inject [default|role-name] -- <claude|codex|opencode> ...` that captures one Role's enabled skills, MCP connections and rendered instruction fragments for a native CLI. Omission or literal `default` selects the catalog default. Private capability delivery excludes ambient personal configuration while authentication remains native and independent of the Role. This invocation is neither a Bot nor a Worker; internal MCP connections use operator authority. _Avoid_: account selection, global Role installation, Worker launch, OS sandbox
+A local operator invocation of `stack roles inject [default|role-name] -- <claude|codex|opencode> ...` that captures one Role's enabled skills, MCP connections and rendered instruction fragments for a native CLI. Omission or literal `default` selects the catalog default. It reads the existing local Role store without initialization or migration and does not require a running Server. Private capability delivery excludes ambient personal configuration while authentication remains native and independent of the Role. This invocation is neither a Bot nor a Worker; internal MCP connections use operator authority. A connected tool can still require its running owner. _Avoid_: account selection, global Role installation, Worker launch, OS sandbox
 
 ## Role shim
 

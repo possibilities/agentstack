@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { operation, botInstance, operatorInvocation } from "@stack/api";
+import { operation, botInstance, operatorInvocation, requireStateOperator, statePlan, stateApplyInput, stateReceipt } from "@stack/api";
 import { catalog, codexSchema, settingsCatalog, settingsPatch, settingsPlan, settingsReceipt, settingsView, settingsState, settingValue, evidence } from "@stack/settings";
 import type { BotsContext } from "../api.js";
 import { chatRpc } from "./chats.js";
@@ -159,4 +159,12 @@ export const botSettingsNativeSchema = operation({ name: "bot_settings_native_sc
   input: z.strictObject({}), output: z.strictObject({ revision: z.string(), schema: z.record(z.string(), z.unknown()) }),
   annotations: { title: "Native Codex settings schema", readOnlyHint: true }, async call() { return codexSchema; } });
 
-export const botSettingsOperations = [botSettingsCatalog, botSettingsRead, botSettingsPreview, botSettingsPatch, botSettingsApply, botSettingsOptions, botSettingsNativeSchema];
+const settingsReceiptOperations = [
+  operation({ name: "bot_settings_receipts_plan", description: "Preview retirement of exact Bot/defaults targets' settings receipts older than the current saved revision and at least seven days. Legacy unknown-age receipts remain. Permanent request digest/revision tombstones prevent delayed edit replay; saved/loaded/native settings are unchanged. Local operator only.",
+    input: z.strictObject({ targets: z.array(target).min(1).max(100), retainDays: z.number().int().min(7).max(3650).default(7) }), output: statePlan,
+    async call(ctx: BotsContext, { targets, retainDays }, invocation) { requireStateOperator(invocation); targets.forEach(({ id }) => selected(ctx, id)); return ctx.store.managed.receiptsPlan(targets.map(({ id }) => subject(id)), retainDays); } }),
+  operation({ name: "bot_settings_receipts_clear", description: "Retire exact old settings receipts under a bound current-revision plan. Atomically commit receipt retirement/dedupe tombstones with maintenance receipt. Identical retry returns the original result; native application remains separate. Local operator only.",
+    input: stateApplyInput, output: stateReceipt, annotations: { destructiveHint: true, idempotentHint: true },
+    async call(ctx: BotsContext, input, invocation) { requireStateOperator(invocation); if (ctx.state.journal.receipt(input.requestId) || ctx.chats.maintenance.receipt(input.requestId)) throw new Error("state request ID already used by another Bot maintenance journal"); const result = ctx.store.managed.receiptsClear(input); ctx.store.onDefaultsChange?.(); return result; } }),
+];
+export const botSettingsOperations = [...settingsReceiptOperations, botSettingsCatalog, botSettingsRead, botSettingsPreview, botSettingsPatch, botSettingsApply, botSettingsOptions, botSettingsNativeSchema];

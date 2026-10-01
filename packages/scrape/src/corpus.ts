@@ -17,7 +17,7 @@ import {
   renameSync,
   rmSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, parse as parsePath, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, parse as parsePath, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { z } from "zod";
 import {
@@ -32,6 +32,7 @@ import {
   withBrowserNetworkPolicy,
 } from "./browser.js";
 import { CORPUS_META_VERSION, corpusMetaSchema } from "./config-schemas.js";
+import { retiredCaptureSequence } from "./queue-fences.js";
 import { EnvelopeBuildError, validateRequestUrl } from "./envelope.js";
 import {
   AgentscrapeAuthError,
@@ -861,9 +862,10 @@ function guardedAtomicSample(
     revalidateDirectoryGuards(guards);
 
     const sampleNames = readDirectorySecurely(directory, directoryGuards).filter((name) =>
-      name.startsWith("sample-"),
+      /^sample-[0-9]{3,10}$/.test(name),
     );
-    const final = join(directory, `sample-${String(sampleNames.length + 1).padStart(3, "0")}`);
+    const sequence = Math.max(retiredCaptureSequence(basename(directory)), 0, ...sampleNames.map(name => Number(name.slice(7))));
+    const final = join(directory, `sample-${String(sequence + 1).padStart(3, "0")}`);
     if (lstatBigIntOrNull(final))
       throw new CorpusSecurityError("next corpus sample path is already occupied");
     revalidateDirectoryGuards(guards);

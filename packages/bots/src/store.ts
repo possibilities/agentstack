@@ -83,7 +83,7 @@ export class StateStore extends AuthStore {
       BEGIN SELECT RAISE(ABORT, 'Codex account is unavailable'); END;
     `);
     this.db.prepare("INSERT OR IGNORE INTO bot_defaults (id, settings_json) VALUES (1, ?)").run(JSON.stringify(DEFAULT_BOT_SETTINGS));
-    this.managed = new SettingsStore(this.db);
+    this.managed = new SettingsStore(this.db, "bots");
     const legacyDefaults = this.db.prepare("SELECT settings_json FROM bot_defaults WHERE id=1").get() as { settings_json: string };
     this.managed.seed("bot-defaults", nativeSettings(parseSettings(legacyDefaults.settings_json)), "Stack Bot defaults");
     // Existing installations of the first SQLite-backed release have neither column.

@@ -13,7 +13,7 @@ export type AccessSnapshot = {
   credentials: { id: string; client_id: string; grant_id: string; generation: number; created: number; expires: number; revoked: number | null }[];
   audit: { seq: number; time: number; action: string; subject: string }[];
   ingress: { host: string; port: number; artifactPort: number; uiPort: number | null } | null;
-  uiSessions: { credential_id: string; expires: number }[];
+  uiSessions: { id?: string; credential_id: string; expires: number }[];
 };
 
 export type JsonSchema = {
@@ -29,6 +29,7 @@ export type JsonSchema = {
 };
 
 export type OperationDoc = {
+  standalone: boolean;
   name: string;
   title: string | null;
   description: string;
@@ -519,6 +520,7 @@ export type InferRequest = InferRequestFields & { instructions: string; input: s
 export type AttentionDefaults = { model: string; reasoningEffort: InferEffort; accountId: string | null; revision: number };
 /** `attention_status`. `changeSeq` advances only when attention records may have changed, never for source-read polling. */
 export type AttentionStatus = { contentGeneration: number; enabled: boolean; activatedAt: number | null; baselined: boolean; settings: AttentionDefaults;
+  checkpointGeneration?: number; checkpointResets?: { source: string; at: number; generation: number }[];
   lastScan: number | null; lastInference: { at?: number; runId?: string; requestId?: string; state?: string; model?: string; reportedModel?: string | null; error?: string } | null;
   sourceErrors: Array<{ source: string; error: string }>; jobs: Array<{ state: string; count: number }>; messages: number; runs: number; changeSeq: number };
 /** `attention_models`: account-bound choices for the effective account; no inference. */
@@ -688,6 +690,7 @@ export type ScrapeFeed = {
 };
 /** One scrape-to-file job from `scrape_queue_list`; `id` is its generation ID where derivable, so it survives state moves. */
 export type ScrapeQueueJob = { id: string; state: "pending" | "retrying" | "failed"; file: string; submitted_at: string | null; url: string | null; destination: string | null;
+  maintenanceFence?: { requestId: string; action: string; status: string };
   summarize: boolean; allow_private_network: boolean | null; frontmatter_keys: string[]; completed_failures: number; max_attempts: number | null; next_attempt_at: string | null; problem: string | null };
 export type ScrapeQueue = { jobs: ScrapeQueueJob[]; counts: Record<ScrapeQueueJob["state"], number>; truncated: boolean };
 export type ScrapeQueueResult = { processed: number; failed: number; retry_scheduled: number; retry_waiting: number; retry_exhausted: number };
@@ -763,6 +766,7 @@ export type BrainDocument = {
 export type BrainChunk = { chunk_id: number; document_id: number; chunk_index: number; start_char: number; end_char: number; content: string };
 /** A content-safe Ingestion job: no intent, URL, title or body. */
 export type BrainJob = { id: number; kind: string; state: BrainJobState; sensitivity: string; resource_id: number | null; source_id: number | null; run_id: number | null;
+  content_cleared_at?: string | null;
   attempt_count: number; item_retry_count: number; run_at: string; failure_class: string | null; created_at: string; updated_at: string };
 export type BrainAttempt = { id: number; job_id: number; attempt_number: number; state: "failed" | "cancelled" | "leased" | "succeeded" | "stale"; lease_expires_at: string; heartbeat_at: string;
   started_at: string; finished_at: string | null; failure_class: string | null; failure_summary: string | null };
@@ -777,6 +781,7 @@ export type BrainJobStats = { total: number; by_state: Record<BrainJobState, num
 export type BrainRunState = "pending" | "failed" | "completed" | "cancelled" | "active" | "completed_with_review";
 /** One Research source from `sources_status`: its definition, health, latest Run and checkpoint. */
 export type BrainSource = {
+  removed_at?: string | null; checkpoint_generation?: number;
   id: string; database_id: number; version: number; kind: string; display_name: string; enabled: boolean; paused: boolean; executable: boolean;
   schedule: { cadence_seconds: number } | null; sensitivity: BrainSensitivity; collections: string[]; limits: { max_items_per_run: number; max_pages_per_run: number } | null;
   credential_reference_count: number; created_at: string; updated_at: string; due: boolean; payload: Record<string, unknown>; pause_reason: string | null;

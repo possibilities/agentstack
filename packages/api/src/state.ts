@@ -71,7 +71,10 @@ export class StateJournal {
       chmodSync(path, 0o600);
       this.db = new DatabaseSync(path);
     } else this.db = path;
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
+    // Embedded owners choose their own SQLite mode. In particular, attached
+    // Auth/Secrets databases rely on rollback journals for cross-file commits.
+    if (this.ownsDatabase) this.db.exec("PRAGMA journal_mode=WAL");
+    this.db.exec(`PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS state_plans(id TEXT PRIMARY KEY, expires INTEGER NOT NULL, plan TEXT NOT NULL, payload TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS state_receipts(id TEXT PRIMARY KEY, digest TEXT NOT NULL, receipt TEXT NOT NULL);
       CREATE UNIQUE INDEX IF NOT EXISTS state_receipt_plan ON state_receipts(json_extract(receipt,'$.planId'));`);

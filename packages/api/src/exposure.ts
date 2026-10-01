@@ -2,6 +2,9 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { PackageConfig, TransportConfig } from "./config.js";
 import { socketCall } from "./socket.js";
 import { findPackage, socketPath } from "./workspace.js";
+import { loadPackageApi } from "./catalog.js";
+import { packageEventTopics } from "./operation.js";
+import { publishedJsonSchema } from "./schema.js";
 
 export type Exposure = { operations: string[]; events: string[] };
 export type SocketCatalog = {
@@ -51,7 +54,8 @@ export function resolveWorkerExposure(config: PackageConfig,
   return { operations: selected.filter(name => mcp.operations.includes(name)), events: [] };
 }
 
-/** The live socket is authoritative; gateways never import or instantiate a Package API. */
+/** External HTTP and WebSocket admission validates the live socket catalog
+ * without importing declarations or creating a Package API context. */
 export async function socketExposure(config: PackageConfig, transport: "mcp" | "websocket", env: NodeJS.ProcessEnv) {
   const catalog = await readSocketCatalog(config.name, env);
   const exposure = resolveExposure(config, transport, catalog.tools.map((tool) => tool.name), Object.keys(catalog.events?.topics ?? {}));
@@ -76,4 +80,23 @@ export async function currentWorkerCatalog(root: string, pkg: string, env: NodeJ
 
 function readSocketCatalog(pkg: string, env: NodeJS.ProcessEnv): Promise<SocketCatalog> {
   return socketCall(socketPath(pkg, env), "tools/list", {}, { timeoutMs: 5_000 }) as Promise<SocketCatalog>;
+}
+
+/** Internal stdio uses installed declarations, without service admission or a
+ * package context. HTTP, WebSocket and durable event owners retain live reads. */
+export async function installedMcpCatalog(root: string, pkg: string) {
+  const { config, dir } = await findPackage(root, pkg);
+  const api = await loadPackageApi(dir);
+  const topics = api.events ? packageEventTopics(pkg, api.events) : {};
+  const catalog: SocketCatalog = {
+    tools: api.operations.map(op => ({ name: op.name, description: op.description,
+      inputSchema: publishedJsonSchema(op.input) as SocketCatalog["tools"][number]["inputSchema"],
+      outputSchema: publishedJsonSchema(op.output) as SocketCatalog["tools"][number]["outputSchema"], annotations: op.annotations ?? {} })),
+    events: api.events ? { topics, ...(api.events.scope ? { scope: {
+      description: api.events.scope.description, example: api.events.scope.example, required: api.events.scope.required ?? false,
+    } } : {}) } : null,
+  };
+  const exposure = resolveExposure(config, "mcp", catalog.tools.map(tool => tool.name), Object.keys(topics));
+  const workerExposure = resolveWorkerExposure(config, catalog.tools, Object.keys(topics));
+  return { api, catalog: exposeCatalog(catalog, exposure), workerCatalog: exposeCatalog(catalog, workerExposure), exposure };
 }

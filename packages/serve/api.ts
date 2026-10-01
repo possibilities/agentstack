@@ -73,7 +73,7 @@ export const serverLocalConnect = operation({
   },
 });
 export const serverLocalRevoke = operation({
-  name: "serve_local_revoke", description: "Private-socket-only operator reset of local TCP authority. Rotates the operator bearer credential and invalidates all local browser sessions, bootstrap links and WebSocket tickets. Active local connections are fenced. Remote Access grants and signed Bot/Worker identities remain independently authorized. Native operator clients must reload their private credential.",
+  name: "serve_local_revoke", description: "Private-socket-only local revocation. Rotates external HTTP and private stdio operator credentials and deletes browser sessions, bootstraps and WebSocket tickets. Active connections and offline opted reads are fenced. Existing pipes never renew credentials; relaunch native operator clients. Remote Access grants and signed Bot/Worker identities are independent.",
   input: z.strictObject({}), output: z.strictObject({ revoked: z.literal(true) }),
   async call(ctx: ServerContext, _input, invocation) {
     if (invocation) throw new Error("local revocation requires private socket authority");

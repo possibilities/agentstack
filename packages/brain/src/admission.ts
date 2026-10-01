@@ -430,6 +430,12 @@ function assertEquivalent(
   existing: { id: number; intent: string | null },
   canonicalIntent: string,
 ): void {
+  if (existing.intent) {
+    try {
+      const retired = JSON.parse(existing.intent);
+      if (retired.redacted === true && retired.admission_digest === createHash("sha256").update(canonicalIntent).digest("hex")) return;
+    } catch { /* Malformed stored intents still fail the ordinary conflict check. */ }
+  }
   if (existing.intent !== canonicalIntent) {
     throw new CliError(
       "idempotency_conflict",

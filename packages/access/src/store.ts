@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { StateJournal, stateHash, type StateApplyInput } from "@stack/api";
 import { chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createHash, createHmac, createPublicKey, verify, randomBytes, randomUUID } from "node:crypto";
@@ -30,6 +31,7 @@ export type Principal = { clientId: string; kind: string; grantId: string; crede
 export class AccessStore {
   readonly db: DatabaseSync;
   readonly serverId: string;
+  readonly maintenance: StateJournal;
   changed?: () => void;
   private readonly uiListeners = new Set<() => void>();
   constructor(root: string, readonly now = () => Date.now()) {
@@ -66,7 +68,7 @@ export class AccessStore {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='uix_sessions'").get()) {
-        this.db.exec("INSERT OR IGNORE INTO ui_sessions SELECT * FROM uix_sessions; DROP TABLE uix_sessions");
+        this.db.exec("INSERT OR IGNORE INTO ui_sessions(hash,credential_id,expires) SELECT hash,credential_id,expires FROM uix_sessions; DROP TABLE uix_sessions");
       }
       for (const table of ["pairings", "grants"] as const) {
         const rows = this.db.prepare(`SELECT id,scopes FROM ${table}`).all() as Array<{ id: string; scopes: string }>;
@@ -84,6 +86,10 @@ export class AccessStore {
     }
     this.db.prepare("INSERT OR IGNORE INTO instance VALUES(1,?)").run(randomUUID());
     this.serverId = this.get("SELECT uuid FROM instance WHERE id=1")!.uuid;
+    if (!this.db.prepare("PRAGMA table_info(ui_sessions)").all().some(row => row.name === "id")) this.db.exec("ALTER TABLE ui_sessions ADD COLUMN id TEXT");
+    for (const row of this.db.prepare("SELECT hash FROM ui_sessions WHERE id IS NULL").all()) this.db.prepare("UPDATE ui_sessions SET id=? WHERE hash=?").run(randomUUID(), row.hash!);
+    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS ui_sessions_identity ON ui_sessions(id); CREATE TABLE IF NOT EXISTS access_history_retired(kind TEXT NOT NULL,id TEXT NOT NULL,digest TEXT NOT NULL,request_id TEXT,PRIMARY KEY(kind,id))");
+    this.maintenance = new StateJournal(this.db, "access");
   }
   close() { this.db.close(); }
   private get(sql: string, ...args: (string | number)[]): Row | undefined { return this.db.prepare(sql).get(...args) as Row | undefined; }
@@ -120,7 +126,7 @@ export class AccessStore {
       invitations: all("SELECT id,kind,scopes,created,expires,revoked,request_id FROM invitations ORDER BY created DESC LIMIT 100").map(row => ({ ...row, scopes: JSON.parse(row.scopes) as Scope[] })),
       enrollments: all("SELECT id,request_id,label,kind,scopes,created,expires,sponsor,invitation_id,credential_id,cancelled FROM enrollments ORDER BY created DESC LIMIT 100").map(row => ({ ...row, scopes: JSON.parse(row.scopes) as Scope[] })),
       credentials: all("SELECT id,client_id,grant_id,generation,created,expires,revoked FROM credentials ORDER BY created DESC"),
-      uiSessions: all("SELECT credential_id,expires FROM ui_sessions ORDER BY expires DESC LIMIT 100"),
+      uiSessions: all("SELECT id,credential_id,expires FROM ui_sessions ORDER BY expires DESC LIMIT 100"),
       audit: all("SELECT * FROM audit ORDER BY seq DESC LIMIT 100") };
   }
   pair(input: { requestId: string; label: string; kind: string; scopes: Scope[]; redemptionSecret: string }) {
@@ -128,6 +134,7 @@ export class AccessStore {
       // The client generates and persists the secret before sending. This makes
       // a lost initial response recoverable without storing plaintext server-side.
       const digest = hash(JSON.stringify([input.label, input.kind, [...input.scopes].sort(), hash(input.redemptionSecret)]));
+      if (this.get("SELECT 1 FROM access_history_retired WHERE kind='expired_pairings' AND request_id=?", input.requestId)) fail("pairing_retired", 409);
       const old = this.get("SELECT * FROM pairings WHERE request=?", input.requestId);
       if (old) { if (old.digest !== digest) fail("request_conflict", 409); return { id: old.id as string, code: old.code as string, expiresAt: old.expires as number, serverId: this.serverId }; }
       if (Number(this.get("SELECT count(*) n FROM pairings WHERE expires>? AND state='pending'", this.now())!.n) >= 100) fail("pairing_capacity", 429);
@@ -226,7 +233,7 @@ export class AccessStore {
     const principal = this.authorize(issued.accessToken, "ui", "ui:view");
     if (principal.kind !== "browser") fail("browser_required", 403);
     this.transaction(() => {
-      this.db.prepare("INSERT OR REPLACE INTO ui_sessions VALUES(?,?,?)").run(hash(issued.accessToken), principal.credentialId, issued.expiresAt);
+      this.db.prepare("INSERT OR REPLACE INTO ui_sessions(hash,credential_id,expires,id) VALUES(?,?,?,?)").run(hash(issued.accessToken), principal.credentialId, issued.expiresAt, randomUUID());
       this.audit("ui_session_admitted", principal.clientId);
     });
     return issued;
@@ -401,6 +408,7 @@ export class AccessStore {
       if (parsed.kind === "browser" && parsed.scopes.includes("access:enroll")) fail("native_client_required", 400);
       const selected = [...parsed.scopes].sort();
       const digest = hash(JSON.stringify([hash(parsed.secret), origin, parsed.kind, selected, parsed.expiresAt]));
+      if (this.get("SELECT 1 FROM access_history_retired WHERE kind='expired_invitations' AND id=?", parsed.requestId)) fail("invitation_retired", 409);
       const old = this.get("SELECT * FROM invitations WHERE id=?", parsed.requestId);
       if (old) {
         if (old.digest !== digest) fail("request_conflict", 409);
@@ -511,5 +519,35 @@ export class AccessStore {
       return { clientId: credential.client_id as string, credentialId: credential.id as string, refreshToken: refresh,
         expiresAt: credential.expires as number, serverId: this.serverId };
     });
+  }
+  private historySelection(kind: "ui_sessions" | "expired_pairings" | "expired_invitations", ids: string[]) {
+    const table = { ui_sessions: "ui_sessions", expired_pairings: "pairings", expired_invitations: "invitations" }[kind];
+    const rows = [...new Set(ids)].sort().map(id => { const row = this.get(`SELECT * FROM ${table} WHERE id=?`, id); if (!row) throw new Error("Access history identity missing; refresh snapshot"); return row; });
+    const blockedBy = rows.filter(row => row.expires > this.now()).map(row => `${row.id}: active/unexpired authority cannot be retired; revocation is separate`);
+    return { table, rows, blockedBy, revision: stateHash([this.serverId, kind, rows, blockedBy]) };
+  }
+  historyPlan(kind: "ui_sessions" | "expired_pairings" | "expired_invitations", ids: string[]) {
+    const selection = this.historySelection(kind, ids);
+    return this.maintenance.plan({ subject: null, action: `history_${kind}`, revision: selection.revision, resources: selection.rows.map(row => String(row.id)), blockedBy: selection.blockedBy,
+      retained: ["Server, client, grant and credential identities, enrollment and Share admission receipts remain; revocation is never undone", "Minimal retired pairing/invitation digest markers prevent manual-retirement replay", "Audit has no manual prune operation; the existing automatic sequence bound remains", "Device credentials, outboxes, browser cookies and backups are independent copies"],
+      regeneration: ["Explicit future pairing/session admissions create new identities; retiring expired metadata grants no authority"] }, { kind, ids: [...new Set(ids)].sort() });
+  }
+  historyClear(input: StateApplyInput) {
+    const result = this.maintenance.atomic(input, (plan, payload) => {
+      const { kind, ids } = payload as { kind: "ui_sessions" | "expired_pairings" | "expired_invitations"; ids: string[] };
+      const current = this.historySelection(kind, ids);
+      if (plan.action !== `history_${kind}` || current.revision !== plan.revision || current.blockedBy.length) throw new Error("Access history/authority changed; prepare again");
+    }, payload => {
+      const { kind, ids } = payload as { kind: "ui_sessions" | "expired_pairings" | "expired_invitations"; ids: string[] };
+      const current = this.historySelection(kind, ids);
+      for (const row of current.rows) {
+        this.db.prepare("INSERT INTO access_history_retired VALUES(?,?,?,?)").run(kind, row.id, row.digest ?? stateHash([row.id, row.credential_id]), kind === "expired_pairings" ? row.request : null);
+        this.db.prepare(`DELETE FROM ${current.table} WHERE id=?`).run(row.id);
+      }
+      this.audit("history_retired", input.requestId);
+      return ids.map(resource => ({ resource, outcome: "removed", detail: "Exact expired metadata removed; durable identity, revocation and enrollment/Share replay fences retained" }));
+    });
+    this.changed?.(); for (const listener of this.uiListeners) { try { listener(); } catch { /* invalidation cannot undo maintenance */ } }
+    return result;
   }
 }

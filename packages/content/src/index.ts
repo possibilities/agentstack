@@ -131,6 +131,13 @@ export class VaultIndex {
   /** Agents edit vault files directly, so every read path pays this first.
    * Only files whose size or mtime moved are reparsed. */
   reconcile(): ReconcileReport {
+    // Serialize the complete derived reconciliation, including its observation,
+    // across service and standalone readers. No stale pre-lock census can erase
+    // rows another owner reconciled while this reader waited for the writer lock.
+    return this.db.transaction(() => this.reconcileLocked(), true)();
+  }
+
+  private reconcileLocked(): ReconcileReport {
     const files = walkVault(this.root);
     const known = new Map<string, { id: number; size: number; mtime_ms: number }>();
     for (const row of this.db.query("SELECT id, path, size, mtime_ms FROM documents").all() as {
@@ -143,32 +150,28 @@ export class VaultIndex {
     }
     let indexed = 0;
     const present = new Set<string>();
-    const apply = this.db.transaction(() => {
-      for (const file of files) {
-        const existing = known.get(file.path);
-        if (
-          existing !== undefined &&
-          existing.size === file.size &&
-          existing.mtime_ms === file.mtimeMs
-        ) {
-          present.add(file.path);
-          continue;
-        }
-        const parsed = readVaultDocument(file);
-        if (parsed === null) continue;
-        this.upsert(parsed);
+    for (const file of files) {
+      const existing = known.get(file.path);
+      if (
+        existing !== undefined &&
+        existing.size === file.size &&
+        existing.mtime_ms === file.mtimeMs
+      ) {
         present.add(file.path);
-        indexed++;
+        continue;
       }
-      let removed = 0;
-      for (const [path, row] of known) {
-        if (present.has(path)) continue;
-        this.deleteRow(row.id);
-        removed++;
-      }
-      return removed;
-    });
-    const removed = apply();
+      const parsed = readVaultDocument(file);
+      if (parsed === null) continue;
+      this.upsert(parsed);
+      present.add(file.path);
+      indexed++;
+    }
+    let removed = 0;
+    for (const [path, row] of known) {
+      if (present.has(path)) continue;
+      this.deleteRow(row.id);
+      removed++;
+    }
     return { scanned: files.length, indexed, removed };
   }
 

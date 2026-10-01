@@ -1,5 +1,6 @@
 import { stateCategories } from "@stack/api";
 export const botStateCategories = stateCategories("bots", [
+  { id: "settings-receipts", kind: "history", paths: [], ownership: "shared", reads: ["bot_settings_read"], actions: ["bot_settings_receipts_plan"], retention: "Retire exact targets' receipts older than current revision and >=7 days; unknown-age legacy receipts and permanent digest/revision tombstones remain. Saved/loaded settings unchanged.", regeneration: "Explicit settings edits create new receipts, never implicit native application." },
   { id: "instances", kind: "configuration", paths: ["configuration.sqlite", "bots/ledger.sqlite"], ownership: "shared", reads: ["bot_list", "bot_state_read"], actions: ["bot_remove"],
     retention: "Bot identities, assignments, settings, one-time orientation fences and incarnation/generation metadata remain until explicit removal. Configuration SQLite is shared with Auth.", regeneration: "Explicit creation; recorded Bots autostart when the server starts. Uncertain orientation never redispatches automatically." },
   { id: "workspaces", kind: "workspace", paths: ["bots"], reads: ["bot_list", "bot_workspace_list", "bot_workspace_read"], actions: ["bot_state_plan", "bot_workspace_clear"],

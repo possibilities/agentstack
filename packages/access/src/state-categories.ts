@@ -1,5 +1,6 @@
 import { stateCategories } from "@stack/api";
 export const accessStateCategories = stateCategories("access", [
   { id: "authority", kind: "credentials", paths: ["access/access.db", "access/access.db-wal"], sensitivity: "credential", reads: ["access_snapshot"], actions: ["access_revoke"],
-    retention: "Stable server identity, client/grant/credential records, pairings, invitations, sessions, receipts and audit remain after revocation. Expired material is pruned during mutations.", regeneration: "Pairing and enrollment admissions; device outboxes remain bound to the original server identity. Revocation is distinct from deletion." },
+    retention: "Stable server/client/grant/credential identities, enrollment/Share replay receipts remain after revocation. Exact expired UI-session/pairing/invitation metadata retirement is separate; active entries block. Expired material is automatically pruned during mutations; audit uses its existing automatic 1000-row sequence bound with no manual prune.", regeneration: "Pairing and enrollment admissions; device outboxes remain bound to the original server identity. Revocation is distinct from deletion." },
+  { id: "expired-history", kind: "history", paths: [], ownership: "shared", reads: ["access_snapshot"], actions: ["access_history_plan"], retention: "Expired sessions and exact pairing/invitation metadata only. Credentials, identities, enrollment/Share receipts and retired replay digests remain.", regeneration: "Explicit new session/pairing admissions; retirement grants no authority." },
 ]);

@@ -2,15 +2,16 @@ import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
-import { withStateInventory } from "@stack/api";
+import { withStateInventory, requireStateOperator, stateApplyInput, statePlan, stateReceipt, statePageInput } from "@stack/api";
 import { roleStateCategories } from "./src/state-categories.js";
 import { fragmentConditions, renderContext } from "./src/conditions.js";
-import { configuredMcpServers, mcpPort, operation, workspaceRoot, type PackageApi } from "@stack/api";
+import { configuredMcpServers, mcpPort, operation, stateDir, workspaceRoot, type PackageApi, type StandaloneContext } from "@stack/api";
 import { matchingProjects, serverMcpOrigins, roleMcpConfig, roleMcpConflict } from "./src/bundle.js";
 import { RoleStore, instructionLimitBytes, renderSegments, renderBotInstructions, snapshotLimitChars, roleName, roleDescription } from "./src/store.js";
 import { botMarkdown } from "./src/bot-markdown.js";
 import { mcpDefinition, mcpRecord, projectPath, resourceName, resourceDescription, skillBody, skillFiles, skillRecord, trustedProjectRecord } from "./src/resources.js";
 import { RoleShims, shimArgs, shimName } from "./src/shims.js";
+import { RoleLaunchState, launchId } from "./src/launch-state.js";
 
 const id = z.uuid().describe("Stable Role record ID.");
 const revision = z.number().int().nonnegative().describe("Expected role revision; stale writes fail.");
@@ -59,7 +60,14 @@ const launchPreview = z.strictObject({
   snapshotLimitChars: count.describe("Largest complete Role JSON size a write may leave behind."),
 });
 
-export type RolesContext = { store: RoleStore; shims: RoleShims; changed?: () => void; shimsChanged?: () => void; mcpOrigins?: readonly string[] };
+export type RolesContext = { store: RoleStore; shims: RoleShims; launches?: RoleLaunchState; changed?: () => void; shimsChanged?: () => void; mcpOrigins?: readonly string[] };
+const standaloneReads: StandaloneContext<RolesContext> = {
+  open(env) {
+    const shims = new RoleShims(env), mcpOrigins = serverMcpOrigins(mcpPort(env));
+    return { store: new RoleStore(stateDir(env), { readOnly: true }), shims, mcpOrigins };
+  },
+  close(ctx) { ctx.store.close(); },
+};
 function summarize(result: z.infer<typeof launchSnapshot>): z.infer<typeof snapshot> {
   return { ...result, mcpServers: result.mcpServers.map(({ definition, ...record }) => ({ ...record, transport: definition.type })) };
 }
@@ -78,6 +86,7 @@ async function ensureRoleMcp(ctx: RolesContext, name?: string, definition?: z.in
 export const rolesSnapshot = operation({
   name: "roles_snapshot", description: "List Role metadata, per-role revisions, Bot and Worker default Role IDs, and the catalog revision. Every successful write advances the catalog revision.",
   input: z.strictObject({}), output: catalog, annotations: { title: "List roles", readOnlyHint: true },
+  standalone: standaloneReads,
   async call(ctx: RolesContext) { return ctx.store.catalog(); },
 });
 export const roleCreate = operation({
@@ -111,6 +120,7 @@ export const roleInternalMcpList = operation({
   name: "role_internal_mcp_list", description: "List Stack's default MCP fleet (Package APIs and Codex tool bridges) and whether each is enabled in this Role. All are on unless explicitly disabled; new servers are on by default. These switches control launch connections, not tool availability or running sessions.",
   input: selection, output: z.strictObject({ roleId, revision, servers: z.array(internalServer) }),
   annotations: { title: "List internal role MCP servers", readOnlyHint: true },
+  standalone: standaloneReads,
   async call(ctx: RolesContext, { roleId }) {
     const servers = await internalMcpServers();
     const value = ctx.store.role(roleId).snapshot();
@@ -129,22 +139,26 @@ export const roleInternalMcpUpdate = operation({
 export const roleSnapshot = operation({
   name: "role_snapshot", description: "Read the role's instructions, skills, trusted projects, MCP server summaries, and revision. MCP connection definitions are omitted because URLs, arguments, headers and environment values can contain credentials.",
   input: selection, output: snapshot, annotations: { title: "Read role", readOnlyHint: true },
+  standalone: standaloneReads,
   async call(ctx: RolesContext, { roleId }) { return summarize(ctx.store.role(roleId).snapshot()); },
 });
 export const roleLaunchSnapshot = operation({
   name: "role_launch_snapshot", description: "Atomically read a selected Role or resolve the Bot or Worker default for a native launch. Includes credential-bearing MCP definitions; keep this private snapshot out of model transcripts. An unknown Role fails.",
   input: z.strictObject({ roleId: roleId.optional().describe("Explicit Role; omit for the audience's default."), audience: z.enum(["bot", "worker"]).optional().describe("Audience whose default to use; bot when omitted.") }),
   output: launchSnapshot, annotations: { title: "Read launch role", readOnlyHint: true },
+  standalone: standaloneReads,
   async call(ctx: RolesContext, { roleId, audience }) { return ctx.store.launchSnapshot(roleId, audience); },
 });
 export const roleEditorSnapshot = operation({
   name: "role_editor_snapshot", description: "Read the complete Role for the operator's resource editor, including credential-bearing MCP connection definitions. Keep this result out of model transcripts.",
   input: selection, output: launchSnapshot, annotations: { title: "Read role editor", readOnlyHint: true },
+  standalone: standaloneReads,
   async call(ctx: RolesContext, { roleId }) { return ctx.store.role(roleId).snapshot(); },
 });
 export const rolePreview = operation({
   name: "role_preview", description: "Preview exact instruction fragments for explicit rendering context, plus the separate Bot-only bot.md personality and combined Bot byte count. Omitted context includes only unconditional fragments. Descriptions and titles are excluded. Context does not configure a native runtime.",
   input: selection.extend({ context: renderContext.optional() }), output: preview, annotations: { title: "Preview role", readOnlyHint: true },
+  standalone: standaloneReads,
   async call(ctx: RolesContext, { roleId, context }) {
     const value = ctx.store.role(roleId).snapshot();
     const { rendered, segments } = renderSegments(value, context);
@@ -156,6 +170,7 @@ export const roleLaunchPreview = operation({
   input: selection.extend({ context: renderContext.optional(), cwds: z.array(z.string().max(4_096).refine(isAbsolute, "working directory must be an absolute path")).max(64).optional()
     .describe("Working directories to match against trusted project roots, such as each Bot's cwd.") }),
   output: launchPreview, annotations: { title: "Preview role launch", readOnlyHint: true },
+  standalone: standaloneReads,
   async call(ctx: RolesContext, { roleId, cwds = [], context }) {
     const value = ctx.store.role(roleId).snapshot();
     const { rendered, segments } = renderSegments(value, context);
@@ -343,7 +358,17 @@ export const topics = { role_changed: "The role catalog, default, or any Role ch
   role_shims_changed: "A Stack-owned Role shim was installed, updated or removed. Read role_shim_list after (re)subscribing; manual PATH edits do not publish notices." } as const;
 
 const packageApi: PackageApi<RolesContext, keyof typeof topics> = {
-  operations: [rolesSnapshot, roleCreate, roleUpdate, roleSetDefault, roleSetWorkerDefault, roleDelete, roleInternalMcpList, roleInternalMcpUpdate, roleSnapshot, roleLaunchSnapshot, roleEditorSnapshot, rolePreview, roleLaunchPreview,
+  operations: [
+    operation({ name: "role_launch_list", description: "Page metadata for exact retained Role-injection directories. Live launching PID/start identities block cleanup; missing/legacy locks and interrupted native teardown remain unknown. Bot/Worker materializations and external native histories are separate. Local operator only.",
+      input: statePageInput, output: z.strictObject({ launches: z.array(z.strictObject({ id: launchId, state: z.enum(["live", "retained", "unknown"]), issue: z.string().nullable(), modifiedAt: z.string() })), revision: z.string(), nextOffset: z.number().int().nullable() }),
+      annotations: { readOnlyHint: true }, async call(ctx: RolesContext, input, invocation) { requireStateOperator(invocation); return ctx.launches!.list(input); } }),
+    operation({ name: "role_launch_plan", description: "Preview exact exited Role-injection directory cleanup. Binds directory identities and launch locks; live, unknown or symlink-bearing resources refuse cleanup. External native history, credentials, Bot/Worker materializations and Role configuration remain. Local operator only.",
+      input: z.strictObject({ ids: z.array(launchId).min(1).max(100) }), output: statePlan, async call(ctx: RolesContext, { ids }, invocation) { requireStateOperator(invocation); return ctx.launches!.plan(ids); } }),
+    operation({ name: "role_launch_clear", description: "Apply an exact launch plan after rechecking liveness and file identity. Persist admission before descriptor-relative removal; partial/quarantine or interrupted outcomes never rerun under the same request. No harness starts or stops implicitly. Local operator only.",
+      input: stateApplyInput, output: stateReceipt, annotations: { destructiveHint: true, idempotentHint: true }, async call(ctx: RolesContext, input, invocation) { requireStateOperator(invocation); const result = await ctx.launches!.clear(input); ctx.changed?.(); return result; } }),
+    operation({ name: "roles_state_receipt_get", description: "Read the durable receipt of exact retained Role launch cleanup, including partial or unknown outcomes. Local operator only.", input: z.strictObject({ requestId: z.uuid() }), output: z.strictObject({ receipt: stateReceipt.nullable() }), annotations: { readOnlyHint: true },
+      async call(ctx: RolesContext, { requestId }, invocation) { requireStateOperator(invocation); return { receipt: ctx.launches!.journal.receipt(requestId) }; } }),
+    rolesSnapshot, roleCreate, roleUpdate, roleSetDefault, roleSetWorkerDefault, roleDelete, roleInternalMcpList, roleInternalMcpUpdate, roleSnapshot, roleLaunchSnapshot, roleEditorSnapshot, rolePreview, roleLaunchPreview,
     roleShimList, roleShimCreate, roleShimUpdate, roleShimDelete, categoryCreate, categoryUpdate, categoryDelete, categoryReorder,
     fragmentCreate, fragmentUpdate, fragmentDelete, fragmentReorder, fragmentMove, skillCreate, skillUpdate, skillDelete, skillReorder,
     mcpServerCreate, mcpServerUpdate, mcpServerDelete, mcpServerReorder,
@@ -355,8 +380,8 @@ const packageApi: PackageApi<RolesContext, keyof typeof topics> = {
   async createContext(env) {
     // The server serves MCP on its configured port; Bots also report the bound one.
     const ports = [mcpPort(env), Number(env.STACK_SERVER_MCP_PORT)].filter((port) => Number.isInteger(port) && port > 0);
-    return { store: new RoleStore(env.STACK_STATE_DIR ?? join(homedir(), ".local", "state", "stack")), shims: new RoleShims(env), mcpOrigins: ports.flatMap(serverMcpOrigins) };
+    return { store: new RoleStore(env.STACK_STATE_DIR ?? join(homedir(), ".local", "state", "stack")), shims: new RoleShims(env), launches: new RoleLaunchState(stateDir(env)), mcpOrigins: ports.flatMap(serverMcpOrigins) };
   },
-  async closeContext(ctx) { ctx.store.close(); },
+  async closeContext(ctx) { ctx.launches?.close(); ctx.store.close(); },
 };
 export const api = withStateInventory("roles", roleStateCategories, packageApi);

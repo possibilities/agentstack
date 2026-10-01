@@ -127,6 +127,7 @@ export class BotState {
         : ["Future owned launches or explicit admissions may create new state"] } };
   }
   async apply(ctx: BotsContext, id: string, input: StateApplyInput, kind: Action["kind"]) {
+    if (ctx.store.managed.maintenance.receipt(input.requestId)) throw new Error("state request ID already used by Bot settings maintenance");
     const identity = ctx.store.stateIdentity(id);
     const journal = kind === "queue_bodies_clear" ? ctx.chats.maintenance : this.journal;
     const other = kind === "queue_bodies_clear" ? this.journal : ctx.chats.maintenance;
@@ -144,7 +145,7 @@ export class BotState {
       if (current.preview.blockedBy.length) throw new Error(current.preview.blockedBy.join("; "));
       // Dependency observations await other owners. A different Bot may have
       // admitted this UUID in the other journal while those reads were pending.
-      if (other.existing(input)) throw new Error("state request ID already used by another Bot maintenance journal");
+      if (other.existing(input) || ctx.store.managed.maintenance.receipt(input.requestId)) throw new Error("state request ID already used by another Bot maintenance journal");
       if (kind === "queue_bodies_clear") {
         const ids = payload.queue!.map(row => row.id);
         const receipt = journal.atomic(input, (plan) => {
@@ -215,7 +216,7 @@ export const botStateOperations = [
     async call(ctx: BotsContext, { botId: id, ...input }, invocation) { requireStateOperator(invocation); return ctx.state.apply(ctx, id, input, kind); } })),
   operation({ name: "bot_state_receipt_get", description: "Read the durable result of one Bot state-maintenance request, including retained copies and partial or unknown outcomes. A lost response never authorizes repeating cleanup against newer files or a reused Bot ID.",
     input: z.strictObject({ requestId: z.uuid() }), output: z.strictObject({ receipt: stateReceipt.nullable() }), annotations: read,
-    async call(ctx: BotsContext, { requestId }, invocation) { requireStateOperator(invocation); return { receipt: ctx.state.journal.receipt(requestId) ?? ctx.chats.maintenance.receipt(requestId) }; } }),
+    async call(ctx: BotsContext, { requestId }, invocation) { requireStateOperator(invocation); return { receipt: ctx.state.journal.receipt(requestId) ?? ctx.chats.maintenance.receipt(requestId) ?? ctx.store.managed.maintenance.receipt(requestId) }; } }),
   operation({ name: "bot_history_list", description: "Page this Bot incarnation's active and retired conversation generations. Each retains its formerly sanctioned root and owned namespace; legacy shared history is labelled shared and cannot be purged wholesale. Purged generations retain only lifecycle metadata.",
     input: statePageInput.extend({ botId }), output: z.strictObject({ generations: z.array(z.strictObject({ generation: z.uuid(), mainThreadId: z.string().nullable(), active: z.boolean(), ownership: z.enum(["stack", "shared"]), createdAt: z.string(), retiredAt: z.string().nullable(), purgedAt: z.string().nullable() })), revision: z.string(), nextOffset: z.number().int().nullable() }), annotations: read,
     async call(ctx: BotsContext, { botId: id, ...input }, invocation) { requireStateOperator(invocation); const current = ctx.store.stateIdentity(id);

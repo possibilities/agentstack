@@ -31,10 +31,13 @@ const operationDocSchema = z.object({
   name: z.string(),
   title: z.string().nullable(),
   description: z.string(),
+  standalone: z.boolean().describe("Explicit owner opt-in for operator stdio execution when its private service is absent before dispatch. Managed callers still require live identity checks; HTTP and WebSocket require live services."),
   annotations: z.record(z.string(), z.union([z.boolean(), z.string()])),
   inputSchema: jsonSchemaRecord.describe("JSON Schema for the operation input."),
   outputSchema: jsonSchemaRecord.describe("JSON Schema for the operation output."),
 });
+
+const standaloneDocs = { open(env: NodeJS.ProcessEnv): DocsContext { return { env, root: workspaceRoot(import.meta.dirname) }; }, close() {} };
 
 const packageDocSchema = z.object({
   name: z.string().describe("Package API name; also its socket namespace."),
@@ -62,6 +65,7 @@ export const docsList = operation({
   input: z.strictObject({}),
   output: z.object({ packages: z.array(packageSummarySchema) }),
   annotations: { title: "List API docs", readOnlyHint: true },
+  standalone: standaloneDocs,
   async call(ctx: DocsContext) {
     const catalog = await loadCatalog(ctx.env, ctx.root);
     return {
@@ -80,6 +84,7 @@ export const docsGet = operation({
   input: z.strictObject({ package: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/).describe("Package API name from docs_list.") }),
   output: packageDocSchema,
   annotations: { title: "Read API doc", readOnlyHint: true },
+  standalone: standaloneDocs,
   async call(ctx: DocsContext, input) {
     const catalog = await loadCatalog(ctx.env, ctx.root);
     const server = catalog.servers.find((item) => item.name === input.package);
@@ -94,6 +99,7 @@ export const docsSnapshot = operation({
   input: z.strictObject({}),
   output: z.object({ packages: z.array(packageDocSchema) }),
   annotations: { title: "Snapshot API docs", readOnlyHint: true },
+  standalone: standaloneDocs,
   async call(ctx: DocsContext) {
     const catalog = await loadCatalog(ctx.env, ctx.root);
     return { packages: catalog.servers.map(documentFor) };

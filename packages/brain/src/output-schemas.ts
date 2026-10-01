@@ -281,6 +281,7 @@ export const AlreadyIndexedResultSchema = z.looseObject({
 });
 
 export const SafeJobSchema = z.looseObject({
+  "content_cleared_at": z.union([z.null(), z.string()]).optional(),
   "id": z.number(),
   "kind": z.string(),
   "state": z.union([z.literal("queued"), z.literal("running"), z.literal("retry_wait"), z.literal("blocked"), z.literal("failed"), z.literal("completed"), z.literal("excluded"), z.literal("cancelled")]),
@@ -318,6 +319,7 @@ export const SafeJobRecordSchema = z.looseObject({
   "to_state": z.union([z.literal("queued"), z.literal("running"), z.literal("retry_wait"), z.literal("blocked"), z.literal("failed"), z.literal("completed"), z.literal("excluded"), z.literal("cancelled")]),
   "created_at": z.string()
 })),
+  "content_cleared_at": z.union([z.null(), z.string()]).optional(),
   "id": z.number(),
   "kind": z.string(),
   "state": z.union([z.literal("queued"), z.literal("running"), z.literal("retry_wait"), z.literal("blocked"), z.literal("failed"), z.literal("completed"), z.literal("excluded"), z.literal("cancelled")]),
@@ -362,6 +364,7 @@ export const RevealedJobSchema = z.looseObject({
   "to_state": z.union([z.literal("queued"), z.literal("running"), z.literal("retry_wait"), z.literal("blocked"), z.literal("failed"), z.literal("completed"), z.literal("excluded"), z.literal("cancelled")]),
   "created_at": z.string()
 })),
+  "content_cleared_at": z.union([z.null(), z.string()]).optional(),
   "id": z.number(),
   "kind": z.string(),
   "state": z.union([z.literal("queued"), z.literal("running"), z.literal("retry_wait"), z.literal("blocked"), z.literal("failed"), z.literal("completed"), z.literal("excluded"), z.literal("cancelled")]),
@@ -396,6 +399,8 @@ export const JobStatsSchema = z.looseObject({
 });
 
 export const SafeRunRecordSchema = z.looseObject({
+  "content_cleared_at": z.union([z.null(), z.string()]).optional(),
+  "payload_digest": z.union([z.null(), z.string()]).optional(),
   "id": z.number(),
   "run_type": z.string(),
   "source_id": z.union([z.null(), z.number()]),
@@ -441,6 +446,7 @@ export const SafeRunRecordSchema = z.looseObject({
   "quiescent": z.boolean()
 }),
   "jobs": z.array(z.looseObject({
+  "content_cleared_at": z.union([z.null(), z.string()]).optional(),
   "id": z.number(),
   "kind": z.string(),
   "state": z.union([z.literal("queued"), z.literal("running"), z.literal("retry_wait"), z.literal("blocked"), z.literal("failed"), z.literal("completed"), z.literal("excluded"), z.literal("cancelled")]),
@@ -472,6 +478,8 @@ export const DoctorReportSchema = z.looseObject({
 });
 
 export const SourceListItemSchema = z.looseObject({
+  "removed_at": z.union([z.null(), z.string()]).optional(),
+  "checkpoint_generation": z.number().optional(),
   "id": z.string(),
   "database_id": z.number(),
   "version": z.number(),
@@ -509,6 +517,8 @@ export const SourceDetailSchema = z.looseObject({
   "run_id": z.union([z.null(), z.number()]),
   "committed_at": z.union([z.null(), z.string()])
 }),
+  "removed_at": z.union([z.null(), z.string()]).optional(),
+  "checkpoint_generation": z.number().optional(),
   "id": z.string(),
   "database_id": z.number(),
   "version": z.number(),
@@ -560,6 +570,8 @@ export const SourceStatusSchema = z.looseObject({
   "run_id": z.union([z.null(), z.number()]),
   "committed_at": z.union([z.null(), z.string()])
 }),
+  "removed_at": z.union([z.null(), z.string()]).optional(),
+  "checkpoint_generation": z.number().optional(),
   "id": z.string(),
   "database_id": z.number(),
   "version": z.number(),

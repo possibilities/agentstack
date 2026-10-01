@@ -17,6 +17,7 @@ import { serveSocket } from "../src/socket.js";
 import { socketPath } from "../src/workspace.js";
 import { operation } from "../src/operation.js";
 import { internalMcpLaunches } from "../src/mcp-launch.js";
+import { codexMcpDefinition } from "../src/codex-mcp/catalog.js";
 
 // A real subprocess protocol peer, selected through the operator runtime setting.
 // No desktop installation, credentials, or user data is read by this test.
@@ -30,7 +31,7 @@ createInterface({input:process.stdin}).on('line',line=>{
  const m=JSON.parse(line);
  if(m.method==='initialize') { appendFileSync(process.env.CODEX_HOME+'/starts',process.pid+'\\n'); send({id:m.id,result:{}}); }
  else if(m.method==='thread/start') send({id:m.id,result:{thread:{id:'thread-'+process.pid}}});
- else if(m.method==='mcpServerStatus/list') send({id:m.id,result:{data:[{name:'messages',runtimeStatus:'ready',tools:{inspect:tool}}],nextCursor:null}});
+  else if(m.method==='mcpServerStatus/list') send({id:m.id,result:{data:process.env.FIXTURE_ALL_BRIDGES ? ['messages','computer-history','openaiDeveloperDocs','node_repl'].map(name=>({name,runtimeStatus:'ready',tools:name==='node_repl'?{js:{...tool,name:'js'}}:{inspect:tool}})) : [{name:'messages',runtimeStatus:'ready',tools:{inspect:tool}}],nextCursor:null}});
  else if(m.method==='mcpServer/tool/call') {
   if(m.params.arguments.approve) {waiting=m;send({id:900,method:'mcpServer/elicitation/request',params:{mode:m.params.arguments.mode??'form',threadId:m.params.threadId,turnId:m.params._meta['x-codex-turn-metadata'].turn_id,serverName:'messages',message:'Allow fixture read?',requestedSchema:{type:'object',properties:{},required:[]},_meta:{scope:'fixture'}}});}
   else send({id:m.id,result:{content:[{type:'image',data:'aGVsbG8=',mimeType:'image/png'}],structuredContent:{pid:process.pid,meta:m.params._meta},isError:false,_meta:{source:'fixture'}}});
@@ -81,6 +82,14 @@ test("Codex stdio MCP retains a private session, forwards media/elicitation, and
       assert.throws(() => process.kill(Number(first.structuredContent?.pid), 0), { code: "ESRCH" });
     }
     assert.equal((await readFile(join(root, "starts"), "utf8")).trim().split("\n").length, 3, "interrupted calls never restart or replay a backend");
+    const module = join(root, "plugins", "cache", "openai-bundled", "chrome", "latest", "scripts");
+    await mkdir(module, { recursive: true }); await writeFile(join(module, "browser-client.mjs"), "export const fixture = true;");
+    for (const [name, launch] of Object.entries(await internalMcpLaunches(root, { kind: "operator" }, env)).filter(([name]) => codexMcpDefinition(name))) {
+      const client = new Client({ name: "offline-all-bridges", version: "1" }); clients.push(client);
+      await client.connect(new StdioClientTransport({ ...launch, env: { ...launch.env, FIXTURE_ALL_BRIDGES: "1" }, stderr: "pipe" }));
+      assert.ok((await client.listTools()).tools.length, `${name} lists native tools without a Stack server`);
+      await client.close();
+    }
   } finally { await Promise.all(clients.map(client => client.close())); await rm(root, { recursive: true, force: true }); }
 });
 

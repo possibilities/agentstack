@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { StateJournal, type StateApplyInput } from "@stack/api";
 import { DEFAULTS, settings, type SourceMessage, type Settings, type Annotation } from "./schema.js";
+import type { SourceHead } from "./sources.js";
 
 export const digest = (value: unknown) => createHash("sha256").update(typeof value === "string" ? value : JSON.stringify(value)).digest("hex");
 export type Message = SourceMessage & { id:string; logicalId:string; revision:string; observedAt:number; seq:number; current:boolean };
@@ -203,6 +204,8 @@ export class AttentionStore {
   feedback(id:string,body:unknown){const cleared=this.db.prepare("SELECT digest FROM cleared_feedback WHERE id=?").get(id);if(cleared){if(cleared.digest!==digest(body))throw new Error("feedback_id_conflict");return {id};} const prior=this.db.prepare("SELECT body FROM feedback WHERE id=?").get(id);if(prior&&prior.body!==JSON.stringify(body))throw new Error("feedback_id_conflict");
     if(!prior)this.atomic(()=>{this.db.prepare("INSERT INTO feedback VALUES(?,?,?)").run(id,Date.now(),JSON.stringify(body));this.event("feedback_recorded",{id,body});});return {id};}
   status(){return {enabled:this.meta<boolean>("enabled")??false,activatedAt:this.meta<number>("activatedAt"),baselined:this.meta<boolean>("baselined")??false,
+    checkpointGeneration: this.meta<number>("checkpointGeneration") ?? 0,
+    checkpointResets: (this.db.prepare("SELECT key,value FROM meta WHERE key LIKE 'checkpointReset:%' ORDER BY key").all()).map(row => ({ source: String(row.key).slice(16), ...JSON.parse(String(row.value)) })),
     contentGeneration: this.meta<number>("contentGeneration") ?? 0,
     settings:this.defaults(),lastScan:this.meta("lastScan"),lastInference:this.meta("lastInference"),sourceErrors:this.meta("sourceErrors")??[],
     jobs:this.db.prepare("SELECT state,COUNT(*) AS count FROM jobs GROUP BY state").all(),messages:Number(this.db.prepare("SELECT COUNT(*) AS n FROM messages").get()!.n),
@@ -257,5 +260,37 @@ export class AttentionStore {
     const rows = this.db.prepare(`SELECT request_id AS requestId FROM jobs UNION SELECT json_extract(body,'$.requestId') FROM events
       WHERE json_extract(body,'$.requestId') IS NOT NULL ORDER BY requestId LIMIT ? OFFSET ?`).all(limit + 1, offset);
     return { requestIds: rows.slice(0, limit).map(row => String(row.requestId)), nextOffset: rows.length > limit ? offset + limit : null };
+  }
+  checkpointPreview(heads: SourceHead[]) {
+    const local = heads.map(head => ({ ...head, previous: this.meta(`cursor:${head.source}`), reconcile: this.meta(`reconcile:${head.source}`) }));
+    const running = this.db.prepare("SELECT id,state FROM jobs WHERE state IN ('pending','running') ORDER BY id").all();
+    return { subject: null, action: "checkpoint_rebaseline", revision: digest([local, running, this.meta("enabled"), this.meta("baselined"), this.meta("checkpointGeneration"), this.meta("activatedAt")]),
+      resources: heads.map(head => head.source),
+      blockedBy: [ ...(this.meta("enabled") ? ["Pause Signal before checkpoint reset"] : []),
+        ...(!this.meta("baselined") ? ["Establish Signal's first-enable baseline before resetting exact sources"] : []),
+        ...(running.length ? ["Resolve pending/running interpretations or clear captured history separately before rebaseline"] : []) ],
+      retained: ["Captured messages, annotations, feedback, suppressed message revisions and Infer correlation/outcomes remain", "Sibling source checkpoints, activation time and inference defaults remain", "Upstream transcripts, HUD Work and independent Infer payloads are untouched"],
+      regeneration: ["Resuming reads from the new position; current upstream messages are skipped, not interpreted", "Reset admits no inference. New messages/revisions observed later can admit inference under the existing defaults"] };
+  }
+  checkpointPlan(selection: string[] | "all", heads: SourceHead[]) {
+    return this.maintenance.plan(this.checkpointPreview(heads), { selection });
+  }
+  checkpointReset(input: StateApplyInput, heads: SourceHead[]) {
+    return this.maintenance.atomic(input, plan => {
+      const current = this.checkpointPreview(heads);
+      if (plan.action !== "checkpoint_rebaseline" || plan.revision !== current.revision || current.blockedBy.length) throw new Error("Signal source positions or state changed; pause, drain and prepare again");
+    }, () => {
+      const at = Date.now(), generation = (this.meta<number>("checkpointGeneration") ?? 0) + 1;
+      for (const head of heads) {
+        this.setMeta(`cursor:${head.source}`, head.cursor);
+        this.setMeta(`reconcile:${head.source}`, null);
+        this.setMeta(`checkpointReset:${head.source}`, { at, generation });
+      }
+      this.setMeta("checkpointGeneration", generation);
+      const selected = new Set(heads.map(head => head.source));
+      this.setMeta("sourceErrors", (this.meta<{source:string;error:string}[]>("sourceErrors") ?? []).filter(error => !selected.has(error.source) && !selected.has(error.source.replace(/^chat:/, "bot:"))));
+      this.event("checkpoints_rebaselined", { sources: [...selected], generation, at });
+      return heads.map(head => ({ resource: head.source, outcome: "removed", detail: "Previous cursor/partial buffer replaced by observed current position; retained content and suppression unchanged; no inference admitted" }));
+    });
   }
 }

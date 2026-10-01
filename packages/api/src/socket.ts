@@ -2,7 +2,7 @@ import { chmod, lstat, mkdir, rm } from "node:fs/promises";
 import { createServer, connect, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import { z } from "zod";
-import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import { executeOperation } from "./execute.js";
 import type { AnyOperation } from "./operation.js";
 import { invocationContext } from "./invocation.js";
 import { publishedJsonSchema } from "./schema.js";
@@ -144,6 +144,12 @@ export async function serveSocket<Ctx>(options: {
   };
 }
 
+/** Absence is proven only by connect refusal before any request was sent. Other
+ * transport failures carry dispatch uncertainty and must never trigger replay. */
+export class SocketCallError extends Error {
+  constructor(message: string, readonly dispatched: boolean, readonly absent = false, options?: ErrorOptions) { super(message, options); }
+}
+
 export function socketCall(
   socketPath: string,
   method: string,
@@ -160,6 +166,7 @@ export function socketCall(
     const client = connect(socketPath);
     let buffer = "";
     let settled = false;
+    let dispatched = false;
     const timeoutMs = options.timeoutMs ?? 10_000;
     const timer = setTimeout(() => fail(new Error(`socket call timed out: ${method}`)), timeoutMs);
     const onAbort = () => fail(options.signal?.reason ?? new Error("socket call aborted"));
@@ -173,7 +180,9 @@ export function socketCall(
       settled = true;
       cleanup();
       client.destroy();
-      reject(error instanceof Error ? error : new Error(String(error)));
+      const code = (error as NodeJS.ErrnoException)?.code;
+      reject(new SocketCallError(error instanceof Error ? error.message : String(error), dispatched,
+        !dispatched && !options.signal?.aborted && (code === "ENOENT" || code === "ECONNREFUSED"), { cause: error }));
     };
     if (options.signal?.aborted) {
       fail(options.signal.reason);
@@ -184,6 +193,7 @@ export function socketCall(
     client.once("end", () => fail(new Error("socket closed before a complete response")));
     client.once("close", () => fail(new Error("socket closed before a complete response")));
     client.once("connect", () => {
+      dispatched = true;
       client.write(request);
     });
     client.on("data", (chunk: string) => {
@@ -517,17 +527,8 @@ async function callTool<Ctx>(
   if (typeof record.name !== "string") throw new Error("missing operation name");
   const operation = options.operations.find((item) => item.name === record.name);
   if (!operation) throw new Error(`unknown operation: ${record.name}`);
-  const input = operation.input.parse(record.arguments ?? {});
   const invocation = record.invocation === undefined ? undefined : invocationContext.parse(record.invocation);
-  const output = await operation.call(options.context, input, invocation);
-  const result = operation.output.parse(output);
-  if (record.resultFormat === undefined) return result;
-  // Project once, at the context owner, after validating the public output.
-  // The MCP listener has no access to the package's operation definitions.
-  const content = operation.mcpContent
-    ? await operation.mcpContent(options.context, input, result)
-    : [{ type: "text" as const, text: JSON.stringify(result) }];
-  return CallToolResultSchema.parse({ structuredContent: result, content });
+  return executeOperation(operation, options.context, record.arguments ?? {}, invocation, record.resultFormat);
 }
 
 function write(socket: Socket, message: unknown): void {

@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
-import { operation, type PackageApi } from "@stack/api";
+import { operation, stateDir, type PackageApi, type StandaloneContext } from "@stack/api";
 import { ARTIFACT_KINDS, ArtifactStore, MAX_ARTIFACT_BYTES } from "./src/artifacts.js";
 import { Collections, MAX_COLLECTION_ITEM_BYTES, MAX_INLINE_BYTES } from "./src/collections.js";
 import type { Context, Handler } from "./src/context.js";
@@ -33,6 +33,31 @@ export const topics = {
 /** Publish visible content and operator storage-maintenance changes. Upload progress is explicitly refreshed. */
 const mutating = new Set(["collection_create", "collection_update", "collection_delete", "item_put", "item_move", "item_delete",
   "document_update", "new", "add", "rm", "restore", "artifacts_rm", "artifacts_restore", "artifact_publish", "gc", "blob_stage_abort", "content_storage_collect"]);
+
+type StoredContext = Pick<ContentContext, "collections">;
+type ItemReadContext = StoredContext & { server: Pick<RunningServer, "artifactUrl"> };
+const standaloneCollections: StandaloneContext<StoredContext> = {
+  open(env) {
+    try { return { collections: new Collections(join(stateDir(env), "wiki", "collections"), { readOnly: true }) }; }
+    catch (error) { throw new Error("content_store_unavailable\nExisting Content collections required; run stack serve and provision or upgrade Content. No initialization was attempted.", { cause: error }); }
+  },
+  close(ctx) { ctx.collections.close(); },
+};
+const standaloneItem: StandaloneContext<ItemReadContext> = {
+  async open(env, signal) {
+    const artifactPort = port(env, env.STACK_CONTENT_ARTIFACT_PORT === undefined ? "STACK_WIKI_ARTIFACT_PORT" : "STACK_CONTENT_ARTIFACT_PORT", DEFAULT_ARTIFACT_PORT);
+    const network = contentNetworkConfig(env);
+    return { ...await standaloneCollections.open(env, signal), server: { artifactUrl: network.artifactOrigin ?? `http://127.0.0.1:${artifactPort}` } };
+  },
+  close(ctx) { ctx.collections.close(); },
+};
+const standaloneCommands: StandaloneContext<Pick<ContentContext, "command" | "changed">> = {
+  open(env) {
+    return { command: { env, home: env.HOME ?? homedir(), cwd: process.cwd(), vaultRoot: join(stateDir(env), "wiki", "vault"), now: nowIso,
+      readStdin: async () => { throw new UsageError("Standalone retrieval has no stdin"); }, stdinIsTerminal: true, history: false } };
+  },
+  close() {},
+};
 
 /** Publish content_changed after each successful mutation, and after any operation that noticed a direct vault edit. */
 function announced<Op extends { name: string; call(ctx: ContentContext, input: any, invocation?: any): Promise<any> }>(op: Op): Op {
@@ -139,14 +164,16 @@ const collectionOperations = [
     input: z.strictObject({ limit: z.number().int().min(1).max(200).default(100), offset: z.number().int().min(0).default(0) }),
     output: z.object({ collections: z.array(collectionSchema), total: z.number(), nextOffset: z.number().nullable() }),
     annotations: { title: "List collections", readOnlyHint: true },
-    async call(ctx: ContentContext, input) {
+    standalone: standaloneCollections,
+    async call(ctx: StoredContext, input) {
       const collections = ctx.collections.listCollections(input.limit, input.offset);
       const total = ctx.collections.countCollections();
       return { collections, total, nextOffset: input.offset + collections.length < total ? input.offset + collections.length : null };
     } }),
   operation({ name: "collection_get", description: "Read a collection's metadata.", input: collectionKey,
     output: collectionSchema, annotations: { title: "Get collection", readOnlyHint: true },
-    async call(ctx: ContentContext, input) { return ctx.collections.collection(input.collection); } }),
+    standalone: standaloneCollections,
+    async call(ctx: StoredContext, input) { return ctx.collections.collection(input.collection); } }),
   operation({ name: "collection_update", description: "Change a collection's title and description without moving its items.",
     input: collectionKey.extend({ title: z.string(), description: z.string() }), output: collectionSchema,
     annotations: { title: "Update collection" }, async call(ctx: ContentContext, input) { return ctx.collections.update(input.collection, input.title, input.description); } }),
@@ -163,14 +190,15 @@ const collectionOperations = [
     input: z.strictObject({ collection: z.string().nullable().optional(), limit: z.number().int().min(1).max(200).default(100), offset: z.number().int().min(0).default(0) }),
     output: z.object({ items: z.array(itemSchema), total: z.number(), nextOffset: z.number().nullable() }),
     annotations: { title: "List collection items", readOnlyHint: true },
-    async call(ctx: ContentContext, input) {
+    standalone: standaloneCollections,
+    async call(ctx: StoredContext, input) {
       const items = ctx.collections.listItems(input.collection, input.limit, input.offset);
       const total = ctx.collections.countItems(input.collection);
       return { items, total, nextOffset: input.offset + items.length < total ? input.offset + items.length : null };
     } }),
   operation({ name: "item_get", description: "Read an item by stable ID, independent of collection, and optionally its body. Binary content up to 256 KiB is returned as base64; larger items use the static URL path. MCP also presents included content as native text, image or resource blocks.",
     input: itemKey.extend({ includeData: z.boolean().default(false) }), output: itemSchema.extend({ content: z.string().nullable(), base64: z.string().nullable() }),
-    annotations: { title: "Read collection item", readOnlyHint: true }, async call(ctx: ContentContext, input) {
+    annotations: { title: "Read collection item", readOnlyHint: true }, standalone: standaloneItem, async call(ctx: ItemReadContext, input) {
       const item = ctx.collections.item(input.id);
       const bytes = input.includeData && item.bytes <= MAX_INLINE_BYTES ? ctx.collections.bytes(item) : null;
       return { ...item, content: bytes && item.kind === "document" ? bytes.toString("utf8") : null,
@@ -240,6 +268,7 @@ const outputSchemas: Record<string, z.ZodType> = {
 
 const contract = buildContract({ vaultRoot: "<Stack state>/wiki/vault", artifactHome: "<Stack state>/wiki/artifacts" });
 const localOnlyCommands = new Set(["path", "publish", "doctor", "reindex", "commit"]);
+const standaloneCommandNames = new Set(["get", "list", "search", "tags", "resolve", "links", "backlinks", "graph", "artifacts_list", "artifacts_versions", "artifacts_show"]);
 function portableData(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(portableData);
   if (value !== null && typeof value === "object") return Object.fromEntries(Object.entries(value)
@@ -256,14 +285,15 @@ const commandOperations = agentTools(contract)
       name: tool.name, description: `${tool.leaf.summary}. ${tool.leaf.guidance ?? ""}`.slice(0, 400).trim(),
       input: tool.name === "add" ? z.strictObject({ content: z.string(), title: z.string().optional(), tags: z.string().optional() }) : tool.input, output,
       annotations: { title: tool.title, ...tool.annotations },
-      async call(ctx: ContentContext, input: Record<string, unknown>) {
+      ...(standaloneCommandNames.has(tool.name) ? { standalone: standaloneCommands } : {}),
+      async call(ctx: Pick<ContentContext, "command" | "changed">, input: Record<string, unknown>) {
         const invocation = invocationFor(tool, input);
         try {
           const result = await handlers[invocation.name]!(ctx.command, invocation.flags);
           // As with the original vault, the next API call records edits made directly
           // to vault files. The fresh Stack vault has no remote by default. A read
           // that commits a direct edit announces it; mutations announce themselves.
-          if (syncVault(ctx.command.vaultRoot) && !mutating.has(tool.name)) ctx.changed?.();
+          if (ctx.command.history !== false && syncVault(ctx.command.vaultRoot) && !mutating.has(tool.name)) ctx.changed?.();
           const data = portableData(result.data) as Record<string, unknown>;
           if (tool.name === "get") data.digest = createHash("sha256").update(readFileSync((result.data as { path: string }).path)).digest("hex");
           return data;
@@ -330,6 +360,7 @@ const packageApi: PackageApi<ContentContext, keyof typeof topics> = {
       input: z.strictObject({}),
       output: z.object({ documentPath: z.string(), artifactPath: z.string(), itemPath: z.string() }),
       annotations: { title: "Read content status", readOnlyHint: true },
+      standalone: { open() { return {}; }, close() {} },
       async call() { return { documentPath: "/d/{slug}", artifactPath: "/a/{name}/v/{version}/", itemPath: "/c/{id}" }; },
     }),
     ...stageOperations,
@@ -344,7 +375,8 @@ const packageApi: PackageApi<ContentContext, keyof typeof topics> = {
       input: itemKey.extend({ offset: z.number().int().min(0).default(0), length: z.number().int().min(1).max(MAX_INLINE_BYTES).default(MAX_INLINE_BYTES), expectedRevision: expectedRevision.optional() }),
       output: z.object({ id: z.string(), digest: z.string(), revision: z.number(), base64: z.string(), total: z.number(), nextOffset: z.number().nullable() }),
       annotations: { title: "Read item bytes", readOnlyHint: true },
-      async call(ctx, input) {
+      standalone: standaloneCollections,
+      async call(ctx: StoredContext, input) {
         const item = ctx.collections.item(input.id);
         if (input.expectedRevision !== undefined && input.expectedRevision !== item.revision) throw new Error(`revision conflict: expected ${item.revision}`);
         const bytes = ctx.collections.readBytes(item, input.offset, input.length);
