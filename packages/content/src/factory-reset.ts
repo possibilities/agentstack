@@ -1,4 +1,4 @@
-import { lstatSync, existsSync, mkdirSync, realpathSync } from "node:fs";
+import { closeSync, constants, fsyncSync, lstatSync, existsSync, mkdirSync, openSync, realpathSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
 import { retainStateDirectory, snapshotStateFiles, type StateOutcome } from "@stack/api";
 import { z } from "zod";
@@ -18,6 +18,8 @@ export async function retainFactoryVault(root: string, generation: string, progr
   mkdirSync(retained, { recursive: true, mode: 0o700 });
   const destination = lstatSync(retained);
   if (!destination.isDirectory() || destination.isSymbolicLink() || destination.uid !== process.getuid?.() || destination.mode & 0o077) throw new Error("Vault retention destination is unsafe");
+  const parent = openSync(dirname(retained), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  try { fsyncSync(parent); } finally { closeSync(parent); } // Never retire the source before the sibling is durable.
   const snapshot = await snapshotStateFiles(wiki, { paths: ["vault"] });
   await retainStateDirectory(wiki, "vault", retained, generation, snapshot);
   progress({ resource: "content:vault-git", outcome: "retained", detail: `Old Vault files/Git retained at sibling ${basename(root)}.retained-git/${generation}/vault; new active Vault starts empty. Remotes/backups remain.` });

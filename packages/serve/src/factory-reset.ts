@@ -84,6 +84,7 @@ export class FactoryReset {
     const observed = rootObservation(env); this.root = observed.root;
     const control = installationControlRoot(env);
     mkdirSync(control, { recursive: true, mode: 0o700 }); readInstallationFence(env);
+    syncDirectory(dirname(control)); // Persist the sibling directory entry before any admission.
     const path = controlDatabase(env);
     try { closeSync(openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
