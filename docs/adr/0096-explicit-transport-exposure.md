@@ -2,7 +2,7 @@
 
 Status: accepted, 2026-09-28. Supersedes [ADR 0078](0078-declared-http-surfaces-and-operation-selection.md)'s implicit all-operations default and restricted-MCP event ban, and [ADR 0033](0033-agent-facing-event-subscriptions.md)'s automatic event exposure. Extends [ADR 0086](0086-multiplex-websocket-connections.md)'s handshake snapshot to event selections. Preserves [ADR 0090](0090-scrape-package-api.md)'s Scrape operation boundaries.
 
-[ADR 0142](0142-server-independent-internal-mcp.md) replaces live-socket-only
+[ADR 0144](0144-server-independent-internal-mcp.md) replaces live-socket-only
 discovery for internal stdio with installed declarations and explicit standalone
 execution. External HTTP and WebSocket validation and these selection rules remain.
 

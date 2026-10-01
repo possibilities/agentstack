@@ -1,4 +1,4 @@
-# 142. Separate internal MCP availability from the Server lifecycle
+# 144. Separate internal MCP availability from the Server lifecycle
 
 Status: proposed, 2026-09-30. Supersedes the live-socket-only internal MCP
 discovery and execution rules in [ADR 0096](0096-explicit-transport-exposure.md)
