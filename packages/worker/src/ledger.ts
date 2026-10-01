@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { WorkerHistory, type ObservedSettings } from "./history.js";
 import { SettingsStore } from "@stack/settings";
+import { stateHash } from "@stack/api";
 import type { WorkContext } from "@stack/hud/schema";
 import type { WorkAdmission } from "@stack/hud/client";
 
@@ -14,9 +15,11 @@ export type WorkerRecord = {
   model: string; effort: string | null; repo: string; cwd: string | null; branch: string | null; baseCommit: string | null;
   sourceDirty: boolean; roleId: string | null; roleRevision: number | null; sessionId: string | null; phase: WorkerPhase;
   runtimeInstance: string | null;
+  contentClearedAt: number | null;
   currentTurnId: string | null; issue: string | null; createdAt: number; updatedAt: number;
 };
 export type TurnRecord = { id: string; workerId: string; phase: TurnPhase; stopReason: string | null; issue: string | null;
+  contentClearedAt: number | null;
   workContext: WorkContext | null;
   requestId: string; prompt: string | null; requestedModel: string | null; requestedEffort: string | null;
   observedSettings: ObservedSettings | null; dispatchedAt: number | null; dispatchedPromptSeq: number | null;
@@ -75,7 +78,7 @@ export class WorkerLedger {
     const columns = this.db.prepare("PRAGMA table_info(workers)").all() as Array<{ name: string }>;
     if (!columns.some((column) => column.name === "role_id")) this.db.exec("ALTER TABLE workers ADD COLUMN role_id TEXT");
     if (!columns.some((column) => column.name === "runtime_instance")) this.db.exec("ALTER TABLE workers ADD COLUMN runtime_instance TEXT");
-    for (const [table, additions] of Object.entries({ turns: { prompt: "TEXT", requested_model: "TEXT", requested_effort: "TEXT",
+    for (const [table, additions] of Object.entries({ workers: { content_cleared_at: "INTEGER" }, turns: { content_cleared_at: "INTEGER", prompt: "TEXT", requested_model: "TEXT", requested_effort: "TEXT",
       observed_settings_json: "TEXT", dispatched_at: "INTEGER", dispatched_prompt_seq: "INTEGER", work_context_json: "TEXT" },
     pending_requests: { runtime_instance: "TEXT", tool_call_id: "TEXT", record_seq: "INTEGER" } })) {
       const existing = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
@@ -85,6 +88,8 @@ export class WorkerLedger {
     this.history = new WorkerHistory(this.db);
     this.db.exec("CREATE INDEX IF NOT EXISTS turns_work_item ON turns(json_extract(work_context_json,'$.workItemId'))");
     this.settings = new SettingsStore(this.db, "worker");
+    this.db.exec(`CREATE TABLE IF NOT EXISTS worker_branches(worker_id TEXT PRIMARY KEY,repo TEXT NOT NULL,branch TEXT NOT NULL,base_commit TEXT NOT NULL,collected_at INTEGER);
+      INSERT OR IGNORE INTO worker_branches SELECT id,repo,branch,base_commit,NULL FROM workers WHERE base_commit IS NOT NULL AND branch='stack-worker-'||id;`);
     for (const provider of ["codex", "devin", "claude"]) this.settings.seed(`worker-defaults:${provider}`, {}, "Native Worker selection");
     this.db.prepare("UPDATE workers SET phase = 'needs_recovery', issue = 'Owner restarted during a worker operation; inspect before resuming', updated_at = ? WHERE provider IN ('codex','devin','claude') AND phase IN ('preparing','running','awaiting_input','cancelling')").run(Date.now());
     this.db.prepare("UPDATE turns SET phase = 'unknown', issue = 'Turn outcome is unknown after owner restart', updated_at = ? WHERE worker_id IN (SELECT id FROM workers WHERE provider IN ('codex','devin','claude')) AND phase IN ('queued','running','awaiting_input','cancelling')").run(Date.now());
@@ -103,6 +108,7 @@ export class WorkerLedger {
       sourceDirty: Boolean(row.source_dirty), roleId: row.role_id as string | null, roleRevision: row.role_revision as number | null,
       sessionId: row.acp_session_id as string | null, phase: row.phase as WorkerPhase,
       runtimeInstance: row.runtime_instance as string | null,
+      contentClearedAt: row.content_cleared_at as number | null,
       currentTurnId: row.current_turn_id as string | null, issue: row.issue as string | null,
       createdAt: row.created_at as number, updatedAt: row.updated_at as number,
     };
@@ -166,6 +172,7 @@ export class WorkerLedger {
   }
 
   setWorktree(id: string, claim: { repo: string; cwd: string; branch: string; baseCommit: string; sourceDirty: boolean; roleId: string; roleRevision: number }): WorkerRecord {
+    this.db.prepare("INSERT OR IGNORE INTO worker_branches VALUES(?,?,?,?,NULL)").run(id, claim.repo, claim.branch, claim.baseCommit);
     this.db.prepare("UPDATE workers SET repo = ?, cwd = ?, branch = ?, base_commit = ?, source_dirty = ?, role_id = ?, role_revision = ?, updated_at = ? WHERE id = ?")
       .run(claim.repo, claim.cwd, claim.branch, claim.baseCommit, Number(claim.sourceDirty), claim.roleId, claim.roleRevision, Date.now(), id);
     return this.worker(id)!;
@@ -202,6 +209,7 @@ export class WorkerLedger {
   turn(id: string): TurnRecord | null {
     const row = this.db.prepare("SELECT * FROM turns WHERE id = ?").get(id) as Record<string, unknown> | undefined;
     return row ? { id: row.id as string, workerId: row.worker_id as string, phase: row.phase as TurnPhase,
+      contentClearedAt: row.content_cleared_at as number | null,
       workContext: row.work_context_json ? JSON.parse(row.work_context_json as string) as WorkContext : null,
       stopReason: row.stop_reason as string | null, issue: row.issue as string | null,
       requestId: row.request_id as string, prompt: row.prompt as string | null,
@@ -355,6 +363,21 @@ export class WorkerLedger {
   }
   cancelPending(workerId: string): void {
     this.db.prepare("UPDATE pending_requests SET state = 'unknown' WHERE worker_id = ? AND state = 'pending'").run(workerId);
+  }
+  branches() { return this.db.prepare("SELECT worker_id AS workerId,repo,branch,base_commit AS baseCommit,collected_at AS collectedAt FROM worker_branches ORDER BY worker_id").all() as Array<{ workerId: string; repo: string; branch: string; baseCommit: string; collectedAt: number | null }>; }
+  collectBranch(id: string) { this.db.prepare("UPDATE worker_branches SET collected_at=? WHERE worker_id=?").run(Date.now(), id); }
+  contentRevision(id: string) {
+    return stateHash([this.worker(id), this.turns(id), this.db.prepare("SELECT * FROM transcript WHERE worker_id=? ORDER BY seq").all(id),
+      this.db.prepare("SELECT * FROM worker_records WHERE worker_id=? ORDER BY seq").all(id), this.db.prepare("SELECT * FROM pending_requests WHERE worker_id=? ORDER BY id").all(id)]);
+  }
+  clearContent(id: string) {
+    const worker = this.worker(id); if (!worker || worker.phase !== "closed") throw new Error("Worker must be closed before transcript maintenance");
+    const now = Date.now();
+    this.db.prepare("UPDATE transcript SET text='' WHERE worker_id=?").run(id);
+    this.db.prepare("UPDATE turns SET prompt=NULL,content_cleared_at=? WHERE worker_id=?").run(now, id);
+    this.db.prepare("UPDATE pending_requests SET title='',options_json='[]' WHERE worker_id=?").run(id);
+    this.history.clearContent(id);
+    this.db.prepare("UPDATE workers SET content_cleared_at=?,updated_at=? WHERE id=?").run(now, now, id);
   }
   resolvePermission(id: string): void {
     this.db.prepare("UPDATE pending_requests SET state = 'responded' WHERE id = ? AND state = 'pending'").run(id);

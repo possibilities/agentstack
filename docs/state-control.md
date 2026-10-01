@@ -64,7 +64,7 @@ can retain `.stack-clear-<uuid>` quarantine, named in the result for inspection.
 | --- | --- | --- |
 | Bots | `bot_state_read`, `bot_workspace_list/read`, `bot_history_list`, `bot_queue_history`, `bot_launch_read`, `bot_log_read`, `bot_recovery_list`, `chat_upload_list/read` | `bot_state_plan` selects `workspace_clear`, `session_reset` with `history:retain/purge`, `history_clear` of one retired generation, `queue_bodies_clear` with exact IDs or an attributed retired generation, `log_clear`, `launch_args_clear`, `upload_remove` or `recovery_discard`. Apply through corresponding `bot_<kind>`. Terminal queue clearing retains original bytes/digest, destination and sent/unknown/cancelled outcome; pending/dispatching blocks. |
 | Serve | `serve_state_list`, `serve_subscription_list/get`, `serve_settings_read`, enabled-only `serve_harness_releases` | `serve_subscription_remove` uses exact ID/revision. Pending reads are aborted; already admitted native input cannot be recalled. `serve_settings_update` uses the observed revision and applies developer mode immediately; disabling aborts/fences release checks while retaining observations. |
-| Worker | Existing status/detail/transcript/turn/record/tool/diff reads; `worker_workspace_list/read` | Existing `worker_close` and `worker_remove` remain the removal authority. Worktree deletion requires explicit discard; source branch and provider-native history are distinct. |
+| Worker | Status/detail/transcript/turn/record/tool/diff; `worker_workspace_list/read`; `worker_state_branches` retains recorded branch metadata after Worker removal | `worker_state_plan({ids,kind:"git_reset"\|"transcript"\|"branch"\|"native_session"\|"catalog",allowUnmerged:[]})` / `worker_state_clear`. Closed-only except catalog; reset preserves old tip at `refs/stack/retained/<worker>`. Transcript redaction keeps turn/replay/outcome/usage/settings/Work authority with `contentClearedAt`. Branch collection requires recorded, unreferenced, unchecked-out scope and merge into recorded base or per-branch override. Native purge requires disabled/drained account, idle sign-in and verified exact scope/version. Account-shared catalog clearing fences discovery. `worker_state_receipt_get` covers every kind; existing close/remove remain separate. |
 | Bot / Worker settings receipts | Existing `bot_settings_read` / `worker_settings_read` | `bot_settings_receipts_plan({targets:[{id?}],retainDays:7})` / `bot_settings_receipts_clear`; `worker_settings_receipts_plan({targets:[{id?\|provider?}],retainDays:7})` / `worker_settings_receipts_clear`. Exact targets, below current revision and at least seven days old; retain unknown-age legacy rows and permanent minimal intent-digest/revision tombstones. Saved/loaded/native settings never change. Receipts are read through `bot_state_receipt_get` / `worker_state_receipt_get`. |
 | Infer | Existing request list/get, trace export and `infer_model_list` | `infer_history_plan({requestIds})` / `infer_history_clear`: terminal input, instructions, output, errors and events; preserve request digest, account/model/usage/timing and outcome. `infer_catalog_clear({accountIds?})` evicts exact account observations (omitted means all), aborts/fences discovery and never refreshes or dispatches inference. Already dispatched inference is untouched. |
 | Notify | Existing notification list/get/counts | `notification_history_plan({ids})` / `notification_history_clear`: dismissed authored content/actions/prompts/responses/source/group; preserve send/dismissal digests and first outcome. |
@@ -120,6 +120,17 @@ captured bodies and distinguish cleared content. Signal replay of cleared conten
 is refused; correlated Infer requests remain selectable for separate cleanup.
 Native completion never changes HUD Work state.
 
+Worker transcript clearing advances Worker/turn `contentClearedAt`; existing
+Conversation and Records feeds discard append-only cached bodies when that marker
+changes. Turn identities, captured Work context, outcomes (including unknown),
+usage/configuration records and admission digests remain. Git/native/catalog effects
+persist admission before external mutation; a restart makes it unknown, never
+rerunnable. Minimal recorded branch identities outlive Worker removal and collection,
+so a recreated same-name branch is not silently adopted. Native inspection/apply
+uses a single-use Worker callback while Auth holds its disabled-account/sign-in/
+enable/removal mutex and Worker fences drained runtime/catalog teardown. External
+processes are not covered by those locks. See [ADR 0153](adr/0153-exact-worker-state-maintenance.md).
+
 Serve's `settings` category inventories `serve/settings.json`; `harness-releases`
 inventories `serve/harness-releases.json`. The global developer-mode default is
 disabled. Release observations survive disable and restart; restored evidence is
@@ -133,8 +144,14 @@ reset or release-cache deletion operation is supplied. See
 
 The following remain explicit backend gaps rather than implied erase controls:
 
-- Worker in-place Git reset, native-session reset/purge, transcript-only purge,
-  retained-branch collection and catalog-only clearing.
+- Worker native purge is scope-verified only for OpenCode 2.0.16, Devin 3000.11.3
+  and Claude SDK 0.3.283 under the macOS offline guard; unknown versions, unsafe or
+  missing scope and external writers block it. One native root per account/plan;
+  verified descendants are disclosed, sibling Worker identities cannot be included.
+  Native logs/caches/instruction blobs, external shares and backups remain. There
+  is no implicit session reset/reopening, shared-profile deletion, remote branch
+  deletion or retained-ref collection. Git resets refuse symlinks/submodules,
+  checkout filters and overwriting an earlier different retained tip.
 - Browser default-profile reset, origin/category site-data clearing, resolved
   handoff redaction and orphan-volume collection.
 - Brain collection of missing/corrupt Artifact paths without an exact file snapshot

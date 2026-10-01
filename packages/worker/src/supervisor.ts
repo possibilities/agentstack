@@ -4,7 +4,7 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { accountEnvironment, accountRoot, type WorkerAccount } from "@stack/auth";
-import { socketCall, socketPath, socketSubscribe, stateHash, type SocketSubscription } from "@stack/api";
+import { clearStateFiles, snapshotStateFiles, socketCall, socketPath, socketSubscribe, stateHash, type FileSnapshot, type SocketSubscription } from "@stack/api";
 import { AcpProcess, record } from "./acp.js";
 import type { WorkerBackend } from "./backend.js";
 import { ClaudeBackend, CLAUDE_SDK_VERSION, CLAUDE_CODE_VERSION, type ClaudeQueryFactory } from "./claude.js";
@@ -26,6 +26,8 @@ export class WorkerSupervisor {
   private launchRetry = new Map<string, { after: number; delay: number }>();
   private catalogs = new Map<string, Catalog>();
   private inflight = new Map<string, Promise<Catalog>>();
+  private readonly catalogFences = new Set<string>();
+  private readonly nativeFences = new Set<string>();
   private draining = new Map<string, Promise<void>>();
   private teardown = new Map<string, WorkerBackend>();
   private retryAfter = new Map<string, number>();
@@ -76,7 +78,7 @@ export class WorkerSupervisor {
       }
       for (const id of this.errors.keys()) if (!wanted.has(id)) { this.errors.delete(id); this.launchRetry.delete(id); this.onChange?.(); }
       for (const account of wanted.values()) {
-        if (this.live.has(account.id) || this.draining.has(account.id) || this.teardown.has(account.id)) continue;
+        if (this.live.has(account.id) || this.draining.has(account.id) || this.teardown.has(account.id) || this.nativeFences.has(account.id)) continue;
         if (Date.now() < (this.launchRetry.get(account.id)?.after ?? 0)) continue;
         await this.launch(account);
         // A newly ready account has never been observed; observe it now rather than on its first catalog read.
@@ -194,15 +196,18 @@ export class WorkerSupervisor {
   runtime(id: string): Runtime | null { return this.live.get(id) ?? null; }
 
   async catalog(id: string, refresh: boolean): Promise<Catalog> {
+    if (this.catalogFences.has(id) || this.nativeFences.has(id)) throw new Error("Account catalog/native maintenance is in progress");
     const account = (await this.accounts()).find((item) => item.id === id);
     if (!account || !account.ready || !account.enabled || account.removing) throw new Error("worker account is not enabled and ready");
     const saved = this.catalogs.get(id) ?? await this.readCatalog(id);
+    if (this.catalogFences.has(id) || this.nativeFences.has(id)) throw new Error("Account catalog/native maintenance is in progress");
     if (saved) this.catalogs.set(id, saved);
     if (!refresh && saved && !saved.stale && Date.now() - Date.parse(saved.observedAt) < 30 * 60_000 && this.live.has(id)) return saved;
     if (!refresh && saved?.stale && Date.now() < (this.retryAfter.get(id) ?? 0)) return saved;
     const prior = this.inflight.get(id);
     if (prior) return prior;
     if (!this.live.has(id)) await this.reconcile();
+    if (this.catalogFences.has(id) || this.nativeFences.has(id)) throw new Error("Account catalog/native maintenance is in progress");
     const run = this.discover(account).then((result) => {
       this.catalogs.set(id, result);
       this.retryAfter.delete(id);
@@ -278,6 +283,29 @@ export class WorkerSupervisor {
   }
 
   private catalogPath(id: string): string { return join(accountRoot(this.stateDir, id), "catalog.json"); }
+  async maintainNative<T>(id: string, run: () => Promise<T>) {
+    if (this.nativeFences.has(id)) throw new Error("Account native maintenance is in progress");
+    this.nativeFences.add(id);
+    try { const deps = await this.stateDependencies(id); if (deps.blockedBy.length) throw new Error(deps.blockedBy.join("; ")); return await run(); }
+    finally { this.nativeFences.delete(id); }
+  }
+  async catalogObservation(id: string) {
+    let files: FileSnapshot | null = null;
+    try { files = await snapshotStateFiles(accountRoot(this.stateDir, id), { paths: ["catalog.json"] }); }
+    catch (error) { if (!String(error).includes("No such file or directory")) throw error; }
+    return { revision: stateHash([this.catalogs.get(id) ?? null, files, this.inflight.has(id)]), files,
+      blockedBy: this.inflight.has(id) ? ["Catalog discovery is in flight"] : [] };
+  }
+  async maintainCatalogs<T>(ids: string[], run: () => Promise<T>) {
+    if (ids.some(id => this.catalogFences.has(id) || this.inflight.has(id))) throw new Error("Account catalog observation/maintenance is in progress");
+    ids.forEach(id => this.catalogFences.add(id));
+    try { return await run(); } finally { ids.forEach(id => this.catalogFences.delete(id)); }
+  }
+  async clearCatalog(id: string, files: FileSnapshot | null) {
+    if (!this.catalogFences.has(id) || this.inflight.has(id)) throw new Error("Account catalog lifecycle is not fenced");
+    if (files) { const result = await clearStateFiles(accountRoot(this.stateDir, id), { paths: ["catalog.json"] }, files); if (result.error) throw new Error("Catalog file retirement partial; inspect quarantine"); }
+    this.catalogs.delete(id); this.retryAfter.delete(id); this.onChange?.();
+  }
   private async readCatalog(id: string): Promise<Catalog | null> {
     try {
       const value = JSON.parse(await readFile(this.catalogPath(id), "utf8")) as Catalog;

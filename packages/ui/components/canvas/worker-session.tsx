@@ -199,12 +199,12 @@ export function WorkerWindow({ id }: { id: string }) {
                 </button>
               ))}
             </div>
-            {tab === "conversation" ? <ConversationTab key={worker.id} worker={worker} generation={generation} />
+            {tab === "conversation" ? <ConversationTab key={`${worker.id}:${worker.contentClearedAt ?? "original"}`} worker={worker} generation={generation} />
               : tab === "changes" ? <ChangesTab key={worker.id} worker={worker} generation={generation} />
               : tab === "files" ? <WorkerFilesTab key={worker.id} worker={worker} generation={generation} />
               : tab === "turns" ? <TurnsTab key={worker.id} worker={worker} generation={generation} />
               : tab === "tools" ? <ToolsTab key={worker.id} worker={worker} generation={generation} />
-              : tab === "records" ? <RecordsTab key={worker.id} worker={worker} generation={generation} />
+              : tab === "records" ? <RecordsTab key={`${worker.id}:${worker.contentClearedAt ?? "original"}`} worker={worker} generation={generation} />
               : tab === "settings" ? <WorkerSettingsTab key={worker.id} worker={worker} status={status} />
               : <SessionTab key={worker.id} worker={worker} generation={generation} />}
             <StatusLine worker={worker} status={status} />
@@ -571,7 +571,7 @@ function TurnsTab({ worker, generation }: { worker: WorkerSession; generation: n
               <Time at={turn.createdAt} className="ml-auto text-[0.65rem] text-muted-foreground" />
             </div>
             {turn.prompt !== null ? <p className="line-clamp-4 text-[0.75rem] break-words whitespace-pre-wrap text-foreground/90">{turn.prompt}</p>
-              : <p className="text-[0.72rem] text-muted-foreground italic">Prompt not recorded</p>}
+              : <p className="text-[0.72rem] text-muted-foreground italic">{turn.contentClearedAt ? "Prompt cleared" : "Prompt not recorded"}</p>}
             <dl className="flex flex-col">
               <Row label="Requested" mono>{[turn.requestedModel, turn.requestedEffort].filter(Boolean).join(" · ") || "—"}</Row>
               <Row label="Observed" mono className={mismatch ? "text-warning" : undefined}>{turn.observedSettings ? [turn.observedSettings.model, turn.observedSettings.effort, turn.observedSettings.mode].filter(Boolean).join(" · ") || "—" : "not reported"}</Row>

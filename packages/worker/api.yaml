@@ -10,4 +10,4 @@ mcp:
 websocket:
   operations: all
   events: all
-  description: Loopback WebSocket for Worker reads, local-operator settings-receipt maintenance, account-state dependency observations and change notices.
+  description: Loopback WebSocket for Worker reads, exact local-operator Git/transcript/native-session/branch/catalog and settings-receipt maintenance, lifecycle coordination and change notices.

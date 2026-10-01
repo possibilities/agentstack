@@ -55,7 +55,7 @@ const settingsReceiptOperations = [
   operation({ name: "worker_settings_receipts_clear", description: "Atomically retire exact old settings receipts with minimal dedupe tombstones and a maintenance receipt. Changed saved revisions invalidate plans; identical retry never reapplies an edit or starts a turn/runtime. Local operator only.",
     input: stateApplyInput, output: stateReceipt, annotations: { destructiveHint: true, idempotentHint: true },
     async call(ctx: WorkersContext, input, invocation) { requireStateOperator(invocation); const result = ctx.manager.ledger.settings.receiptsClear(input); ctx.manager.onChange?.(); return result; } }),
-  operation({ name: "worker_state_receipt_get", description: "Read a durable Worker settings-receipt maintenance outcome, including unknown admissions after restart. Local operator only.",
+  operation({ name: "worker_state_receipt_get", description: "Read a durable Worker maintenance outcome for Git, transcript, native-session, branch, catalog or settings-receipt retirement, including partial/unknown admissions after restart. Local operator only.",
     input: z.strictObject({ requestId: z.uuid() }), output: z.strictObject({ receipt: stateReceipt.nullable() }), annotations: { readOnlyHint: true },
     async call(ctx: WorkersContext, { requestId }, invocation) { requireStateOperator(invocation); return { receipt: ctx.manager.ledger.settings.maintenance.receipt(requestId) }; } }),
 ];
