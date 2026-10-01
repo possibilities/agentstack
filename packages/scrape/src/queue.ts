@@ -25,6 +25,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { fetchMarkdown } from "./api.js";
 import { AgentscrapeUpstreamDownError, cancellationError, throwIfAborted } from "./errors.js";
 import { resolveQueuePaths } from "./queue-paths.js";
+import { queueGenerationFenced, queueFencesFor } from "./queue-fences.js";
 import { runProcess } from "./subprocess.js";
 
 export { resolveDataHome } from "./queue-paths.js";
@@ -484,6 +485,7 @@ function acquireClaim(
   path: string,
   expectedSha256: string,
   displayName: string,
+  recover = true,
 ): ClaimResult {
   privateDirectory(CLAIM_OWNERS_DIR);
   privateDirectory(CLAIM_SLOTS_DIR);
@@ -550,10 +552,14 @@ function acquireClaim(
       return { status: "claimed", claim: publishedClaim };
     } catch (error) {
       if (publishedClaim) releaseClaimPreserving(publishedClaim, error);
-      if (errorCode(error) !== "EEXIST") {
+    if (errorCode(error) !== "EEXIST") {
         removeExactFile(ownerPath, ownerInfo);
         throw error;
       }
+    }
+    if (!recover) {
+      removeExactFile(ownerPath, ownerInfo);
+      return { status: "busy" };
     }
     const observed = inspectClaim(slotPath, slotName);
     if (!observed) {
@@ -594,16 +600,18 @@ function acquireGenerationClaim(
   expectedSha256: string,
   displayName: string,
   legacyName?: string,
+  maintenance = false,
 ): GenerationClaimResult {
+  if (!maintenance && queueGenerationFenced(id)) return { status: "busy" };
   let legacy: HeldClaim | undefined;
   if (legacyName !== undefined) {
-    const legacyResult = acquireClaim("pending", legacyName, path, expectedSha256, displayName);
+    const legacyResult = acquireClaim("pending", legacyName, path, expectedSha256, displayName, !maintenance);
     if (legacyResult.status !== "claimed") return legacyResult;
     legacy = legacyResult.claim;
   }
   let generationResult: ClaimResult;
   try {
-    generationResult = acquireClaim("generation", id, path, expectedSha256, displayName);
+    generationResult = acquireClaim("generation", id, path, expectedSha256, displayName, !maintenance);
   } catch (error) {
     if (legacy) releaseClaimPreserving(legacy, error);
     throw error;
@@ -1741,6 +1749,7 @@ export async function processQueue(
 
 export type QueueJobState = "pending" | "retrying" | "failed";
 export interface QueueJob {
+  maintenanceFence?: { requestId: string; action: string; status: string };
   /** The job's generation ID where it can be derived, so one job keeps its ID as it moves between states. */
   id: string;
   state: QueueJobState;
@@ -1897,5 +1906,89 @@ export function listQueue(options: { limit?: number } = {}): QueueListing {
   );
   const counts: Record<QueueJobState, number> = { pending: 0, retrying: 0, failed: 0 };
   for (const job of all) counts[job.state] += 1;
+  const fences = queueFencesFor(all.slice(0, limit).map(job => job.id));
+  for (const job of all.slice(0, limit)) { const fence = fences.get(job.id); if (fence) job.maintenanceFence = fence; }
   return { jobs: all.slice(0, limit), counts, truncated: all.length > limit };
+}
+
+export type QueueMaintenanceAction = "cancel" | "retry" | "discard";
+export type QueueMaintenanceJob = { id: string; state: QueueJobState; originalName: string;
+  digest: string; files: Array<{ path: string; digest: string }>; claims: string[]; blockedBy: string[] };
+
+export function initializeQueueMaintenance(): void {
+  for (const directory of [CLAIM_OWNERS_DIR, CLAIM_SLOTS_DIR, CLAIM_QUARANTINE_DIR]) privateDirectory(directory);
+}
+
+/** Resolve all physical forms of exact generations without claiming, repairing or recovering anything. */
+export function queueMaintenanceSelection(ids: string[], action: QueueMaintenanceAction, retired = new Set<string>()): QueueMaintenanceJob[] {
+  const selected = new Set(ids), rows = new Map<string, QueueMaintenanceJob>();
+  for (const [directory, state, extension] of [[QUEUE_DIR, "pending", ".yaml"], [RETRY_DIR, "retrying", ".json"], [FAILED_DIR, "failed", ".yaml"]] as const) {
+    const entries = directoryEntries(directory);
+    if (entries.length > MAX_STATE_DIRECTORY_ENTRIES) throw new Error("Queue inventory exceeds its bound; resolve queue recovery first");
+    if (entries.some(entry => entry.name.startsWith(PUBLICATION_TEMP_PREFIX))) throw new Error("Queue publication recovery is unresolved; run the queue lifecycle before maintenance");
+    for (const entry of entries) {
+      if (!entry.name.endsWith(extension) || entry.name.startsWith(".")) continue;
+      const path = join(directory, entry.name);
+      const captured = captureSource(path);
+      if (!captured) throw new Error("Queue record is unsafe or changed; maintenance refuses ambiguous attribution");
+      const retry = state === "retrying" ? readRetryEnvelope(path) : null;
+      const terminal = state === "failed" ? /^(.*)--failed-([0-9a-f]{64})\.yaml$/.exec(entry.name) : null;
+      const originalName = retry?.envelope.originalFilename ?? (terminal ? `${terminal[1]}.yaml` : entry.name);
+      const raw = retry?.raw ?? captured.raw;
+      const id = retry?.envelope.generationId ?? terminal?.[2] ?? generationId(originalName, raw);
+      if (!selected.has(id)) continue;
+      const row = rows.get(id) ?? { id, state, originalName, digest: digest(raw), files: [], claims: [], blockedBy: [] };
+      if (row.digest !== digest(raw)) throw new Error("Same-generation physical forms disagree; resolve publication recovery first");
+      if (LIST_STATE_ORDER[state] < LIST_STATE_ORDER[row.state]) { row.state = state; row.originalName = originalName; }
+      row.files.push({ path: relative(queuePaths.dataHome, path), digest: captured.identity.sha256 });
+      rows.set(id, row);
+    }
+  }
+  return [...selected].sort().map(id => {
+    const row = rows.get(id);
+    if (!row) throw new Error(`Queue generation not found: ${id}`);
+    const slots = [["generation", id], ...row.files.filter(file => file.path.startsWith("queue/")).map(file => ["pending", basename(file.path)])];
+    for (const [area, name] of slots) {
+      const slot = digest(`${area}\0${name}`), path = join(CLAIM_SLOTS_DIR, slot);
+      try {
+        lstatSync(path);
+        const observed = inspectClaim(path, slot);
+        row.claims.push(observed ? `${area}:${name}:pid:${observed.value.pid}:token:${observed.value.token}` : `${area}:${name}:unresolved`);
+      } catch (error) { if (errorCode(error) !== "ENOENT") throw error; }
+    }
+    if (row.claims.length) row.blockedBy.push(`Generation ${id} has claim evidence (${row.claims.join(", ")}); maintenance never breaks or recovers a claim`);
+    if (action === "cancel" && (row.state !== "pending" || row.files.some(file => !file.path.startsWith("queue/")))) row.blockedBy.push(`Cancel requires pending-only generation ${id}`);
+    if (action === "retry" && row.state !== "failed" || action === "discard" && row.state !== "failed" && !retired.has(id)) row.blockedBy.push(`${action} requires a failed or already retired generation ${id}`);
+    if (action === "retry" && row.state === "failed") parseStandaloneJob(readListedRecord(join(queuePaths.dataHome, row.files.find(file => file.path.startsWith("failed/"))!.path)));
+    row.files.sort((a, b) => a.path.localeCompare(b.path));
+    return row;
+  });
+}
+
+/** Hold native generation slots around admission and file effects. Never recover an existing slot. */
+export function withQueueMaintenanceClaims<T>(jobs: QueueMaintenanceJob[], apply: () => T): T {
+  const held: HeldGenerationClaims[] = [];
+  try {
+    for (const job of jobs) {
+      const file = job.files[0]!, path = join(queuePaths.dataHome, file.path);
+      const result = acquireGenerationClaim(job.id, path, file.digest, job.id,
+        file.path.startsWith("queue/") ? basename(file.path) : undefined, true);
+      if (result.status !== "claimed") throw new Error(`Generation ${job.id} changed or gained a claim; prepare a new plan`);
+      held.push(result.claims);
+    }
+    return apply();
+  } finally { for (const claims of held.reverse()) releaseGenerationClaims(claims); }
+}
+
+/** No extraction here: an explicit retry publishes a new filename/generation, never the old claim identity. */
+export function publishQueueMaintenanceRetry(job: QueueMaintenanceJob, filename: string): string {
+  if (!validOriginalName(filename)) throw new Error("Invalid retry attempt name");
+  const failed = job.files.find(file => file.path.startsWith("failed/"));
+  if (!failed) throw new Error("Failed queue body unavailable");
+  const captured = captureSource(join(queuePaths.dataHome, failed.path));
+  if (!captured || captured.identity.sha256 !== failed.digest || digest(captured.raw) !== job.digest) throw new Error("Failed queue body changed");
+  parseStandaloneJob(captured.raw);
+  publicDirectory(QUEUE_DIR);
+  publishBytesNoClobber(QUEUE_DIR, join(QUEUE_DIR, filename), captured.raw);
+  return generationId(filename, captured.raw);
 }
