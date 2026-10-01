@@ -17,6 +17,8 @@ import type { SettingsCatalog, SettingsView } from "./types";
 import { catalogRequest, readRequest, settingsKey, settingsPackage, type SettingsTarget } from "./settings";
 import { loadTree, type HudTree } from "./hud";
 import { continueInventory, continueSubscriptions, loadInventory, loadSubscriptions, type StateInventory, type StateSelection, type SubscriptionFilter, type SubscriptionList } from "./state";
+import { checkSettled, developerModeOn, type HarnessCheck } from "./developer";
+import type { HarnessCheckAdmission, HarnessReleases, ServeSettings } from "./types";
 
 export type StackState = Snapshot & {
   access: Resource<AccessSnapshot>;
@@ -67,6 +69,15 @@ export type StackState = Snapshot & {
   roleInternal: Resource<RoleInternalMcp>;
   /** Cached Codex tool bridge observations; only `checkCodexTools` starts a runtime. */
   codexTools: Resource<CodexToolsStatus>;
+  /**
+   * Global Stack settings from `serve_settings_read`, as read on the current serve connection. Local operator only: a
+   * remote page never reads them. Empty while unknown: before the first read, after a failed one and while disconnected.
+   */
+  serveSettings: Resource<ServeSettings>;
+  /** Cached upstream harness releases. Read only while `developerModeOn`, and cleared when it stops being so. */
+  harnessReleases: Resource<HarnessReleases>;
+  /** This page's latest Check now, until a snapshot shows that check finished. Cleared with the developer feature. */
+  harnessCheck: HarnessCheck | null;
   /** Loaded pages of `serve_state_list` for `stateSelection`. Local operator only; a remote session never reads it. */
   stateInventory: Resource<StateInventory>;
   stateSelection: StateSelection;
@@ -296,6 +307,16 @@ export class StackStore {
   /** Settings reads in flight by view or catalog key; a notice during one schedules a single follow-up. */
   private settingsInflight = new Set<string>();
   private settingsDirty = new Set<string>();
+  /** Bumped whenever settings read so far stop being current authority: a serve (re)connection or loss of one. */
+  private serveEpoch = 0;
+  private serveSettingsReading = false;
+  private serveSettingsDirty = false;
+  /** Bumped whenever the developer feature turns on or off; a release read or check admission from another generation is dropped. */
+  private developerGeneration = 0;
+  /** The `harness_releases_changed` subscription, held only while the developer feature is on. */
+  private releasesChannel: Channel | null = null;
+  private releasesReading = false;
+  private releasesDirty = false;
 
   constructor(snapshot: Snapshot) {
     this.state = {
@@ -309,6 +330,7 @@ export class StackStore {
       roleId: null, role: { data: null, error: null, at: null }, rolePreview: { data: null, error: null, at: null },
       roleLaunch: { data: null, error: null, at: null }, roleInternal: { data: null, error: null, at: null }, roleShims: { data: null, error: null, at: null },
       codexTools: { data: null, error: null, at: null },
+      serveSettings: { data: null, error: null, at: null }, harnessReleases: { data: null, error: null, at: null }, harnessCheck: null,
       stateInventory: { data: null, error: null, at: null }, stateSelection: { owners: null, measure: false },
       subscriptions: { data: null, error: null, at: null }, subscriptionFilter: {}, serveStateGeneration: 0,
       botStateId: null, botStateGenerations: {}, xcomGeneration: 0,
@@ -351,13 +373,17 @@ export class StackStore {
     this.scopedBots = scopedBots;
     const { endpoints } = this.state;
     const enabled = packages && new Set(packages);
-    const open = (pkg: string, onOpen: () => void, onNotice?: (topic: string) => void, topics?: string[], options?: { silent?: readonly string[] }) => {
+    const open = (pkg: string, onOpen: () => void, onNotice?: (topic: string) => void, topics?: string[], options?: { silent?: readonly string[]; onStatus?(status: ChannelStatus): void }) => {
       if (enabled && !enabled.has(pkg)) return;
       const url = endpoints[pkg];
       if (!url) return;
       const silent = new Set(options?.silent ?? []);
       const channel = new Channel(url, pkg, {
-        onStatus: (status) => { this.set({ status: { ...this.state.status, [pkg]: status } }); if (status === "closed" && this.state.remote) void this.syncRemote(); },
+        onStatus: (status) => {
+          this.set({ status: { ...this.state.status, [pkg]: status } });
+          if (status === "closed" && this.state.remote) void this.syncRemote();
+          options?.onStatus?.(status);
+        },
         onOpen,
         onNotice: (topic) => {
           if (!silent.has(topic)) this.log(pkg, topic, null);
@@ -368,13 +394,17 @@ export class StackStore {
       this.main.set(pkg, channel.connect());
     };
     // resources_changed is a five-second sampling tick: refreshing state must not flood the activity log.
-    // State inventories and subscriptions are local operator reads; notices are not replayed, so (re)connect re-reads them.
-    open("serve", () => { this.refresh("server"); this.refresh("codexTools"); this.refresh("resources"); this.refreshWatchedHistories(); this.invalidateServeState(); }, (topic) => {
+    // State inventories, subscriptions and global settings are local operator reads; notices are not replayed, so
+    // (re)connect re-reads them. Settings read on an earlier connection are forgotten before they are read again, so
+    // the developer feature waits for this connection's answer; it holds its own release subscription (reconcileDeveloper).
+    open("serve", () => { this.refresh("server"); this.refresh("codexTools"); this.refresh("resources"); this.refreshWatchedHistories(); this.invalidateServeState(); this.forgetServeSettings(); this.readServeSettings(); }, (topic) => {
       if (topic === "pids_changed") this.refresh("server");
       if (topic === "codex_tools_changed") this.refresh("codexTools");
       if (topic === "resources_changed") { this.refresh("resources"); this.refreshWatchedHistories(); }
       if (topic === "serve_state_changed") this.invalidateServeState();
-    }, this.state.remote ? ["pids_changed", "codex_tools_changed", "resources_changed"] : ["pids_changed", "codex_tools_changed", "resources_changed", "serve_state_changed"], { silent: ["resources_changed"] });
+      if (topic === "serve_settings_changed") this.readServeSettings();
+    }, this.state.remote ? ["pids_changed", "codex_tools_changed", "resources_changed"] : ["pids_changed", "codex_tools_changed", "resources_changed", "serve_state_changed", "serve_settings_changed"],
+    { silent: ["resources_changed"], onStatus: (status) => { if (status !== "open") this.forgetServeSettings(); } });
     open("auth", () => { this.refresh("accounts"); this.refresh("workerAccounts"); this.refresh("login"); this.refresh("workerLogins"); }, (topic) => {
       this.refresh("accounts");
       if (topic === "worker_accounts_changed") this.refresh("workerAccounts");
@@ -451,6 +481,7 @@ export class StackStore {
   }
 
   stop(): void {
+    this.forgetServeSettings();
     this.catalogDirty.clear();
     for (const id of this.catalogAvailable) this.catalogGeneration.set(id, (this.catalogGeneration.get(id) ?? 0) + 1);
     for (const channel of [...this.main.values(), ...this.scopedChannels.values(), ...this.workerChannels.values(), ...this.procChannels.values(), ...this.workItemChannels.values()]) channel.dispose();
@@ -610,6 +641,143 @@ export class StackStore {
     this.call<{ admitted: boolean; status: CodexToolsStatus }>("serve", "serve_codex_tools_check", { chromeBrowser })
       .then((result) => { this.set({ codexTools: { data: result.status, error: null, at: Date.now() } }); })
       .finally(() => this.refresh("codexTools"));
+
+  /**
+   * Save developer mode at the revision this page last read. A stale revision is refused and never retried with a newer
+   * one: the settings are re-read after any failure, since another client may have saved first or a lost
+   * acknowledgement may still have saved, and the person decides whether to try again.
+   */
+  saveServeSettings = async (developerMode: boolean): Promise<ServeSettings> => {
+    const held = this.state.serveSettings.data;
+    if (this.state.remote || !held || this.state.serveSettings.error) throw new Error("Server settings are not loaded");
+    const epoch = this.serveEpoch;
+    try {
+      const saved = await this.call<ServeSettings>("serve", "serve_settings_update", { developerMode, expectedRevision: held.revision });
+      if (epoch === this.serveEpoch) this.applyServeSettings(saved);
+      return saved;
+    } catch (error) {
+      this.readServeSettings();
+      throw error;
+    }
+  };
+
+  /**
+   * Ask the server to check the upstream release channels now. It returns on admission, joining a check already
+   * running; outcomes arrive with harness_releases_changed. A refusal is kept as such, never shown as a started check.
+   */
+  checkHarnessReleases = async (): Promise<void> => {
+    if (!this.releasesChannel || this.state.harnessCheck?.pending) return;
+    const generation = this.developerGeneration;
+    this.set({ harnessCheck: { pending: true, admitted: null, startedAt: null, error: null } });
+    try {
+      const { admitted, startedAt } = await this.call<HarnessCheckAdmission>("serve", "serve_harness_releases_check");
+      if (generation !== this.developerGeneration) return;
+      const check = { pending: false, admitted, startedAt, error: null };
+      this.set({ harnessCheck: checkSettled(check, this.state.harnessReleases.data) ? null : check });
+    } catch (error) {
+      if (generation !== this.developerGeneration) return;
+      const message = callMessage(error);
+      this.set({ harnessCheck: { pending: false, admitted: null, startedAt: null, error: message } });
+      // The server's gate is the authority: a refusal means the setting changed before this page heard.
+      if (/developer_mode_disabled/.test(message)) this.readServeSettings();
+    } finally {
+      // A lost acknowledgement may still have admitted a check: read what the server holds either way, never resend.
+      if (generation === this.developerGeneration) this.readHarnessReleases();
+    }
+  };
+
+  /**
+   * Settings read so far are no longer current authority (the serve connection closed, reopened or the store stopped):
+   * forget them, and with them the developer feature, its data and pending check. Reads in flight are dropped on landing.
+   */
+  private forgetServeSettings(): void {
+    this.serveEpoch++;
+    const { serveSettings } = this.state;
+    if (serveSettings.data || serveSettings.error || serveSettings.at) this.set({ serveSettings: { data: null, error: null, at: null } });
+    this.reconcileDeveloper();
+  }
+
+  /** Read global settings on the current connection; a notice during a read schedules one follow-up. */
+  private readServeSettings(): void {
+    if (this.state.remote || this.main.get("serve")?.status !== "open") return;
+    if (this.serveSettingsReading) { this.serveSettingsDirty = true; return; }
+    this.serveSettingsReading = true;
+    const epoch = this.serveEpoch;
+    this.call<ServeSettings>("serve", "serve_settings_read")
+      .then((data) => { if (epoch === this.serveEpoch) this.applyServeSettings(data); }, (error) => {
+        if (epoch !== this.serveEpoch) return;
+        // A failed read is not authority either way: the setting is unknown until a read succeeds.
+        this.set({ serveSettings: { data: null, error: callMessage(error), at: Date.now() } });
+        this.reconcileDeveloper();
+      })
+      .finally(() => {
+        this.serveSettingsReading = false;
+        if (this.serveSettingsDirty) { this.serveSettingsDirty = false; this.readServeSettings(); }
+      });
+  }
+
+  /** Revisions only grow, so a read that started before a newer save or read never rolls it back. */
+  private applyServeSettings(data: ServeSettings): void {
+    const held = this.state.serveSettings.data;
+    if (held && data.revision < held.revision) return;
+    this.set({ serveSettings: { data, error: null, at: Date.now() } });
+    this.reconcileDeveloper();
+  }
+
+  /**
+   * Turn the developer feature on or off to match `developerModeOn`. Each change starts a new generation, so a release
+   * read or check admission from before it can't restore the window or its old observations. Off drops the release
+   * subscription, data and pending check; on subscribes first and reads once subscribed. Reads never start a check.
+   */
+  private reconcileDeveloper(): void {
+    const on = developerModeOn(this.state);
+    if (on === (this.releasesChannel !== null)) return;
+    this.developerGeneration++;
+    this.releasesChannel?.dispose();
+    this.releasesChannel = null;
+    this.releasesDirty = false;
+    if (!on) {
+      const { harnessReleases, harnessCheck } = this.state;
+      if (harnessReleases.data || harnessReleases.error || harnessReleases.at || harnessCheck) this.set({ harnessReleases: { data: null, error: null, at: null }, harnessCheck: null });
+      return;
+    }
+    const url = this.state.endpoints.serve;
+    if (!url) return;
+    const channel: Channel = new Channel(url, "serve", {
+      // Also runs when the socket subscription resumes without the WebSocket closing; notices are not replayed.
+      onOpen: () => { if (this.releasesChannel === channel) this.readHarnessReleases(); },
+      onNotice: (topic) => {
+        if (this.releasesChannel !== channel) return;
+        this.log("serve", topic, null);
+        this.readHarnessReleases();
+      },
+    });
+    this.releasesChannel = channel;
+    channel.subscribe(["harness_releases_changed"]).connect();
+  }
+
+  /** Read the cached observations for the current generation; a notice during a read schedules one follow-up. */
+  private readHarnessReleases(): void {
+    if (!this.releasesChannel) return;
+    if (this.releasesReading) { this.releasesDirty = true; return; }
+    this.releasesReading = true;
+    const generation = this.developerGeneration;
+    this.call<HarnessReleases>("serve", "serve_harness_releases")
+      .then((data) => {
+        if (generation !== this.developerGeneration) return;
+        this.set({ harnessReleases: { data, error: null, at: Date.now() } });
+        if (checkSettled(this.state.harnessCheck, data)) this.set({ harnessCheck: null });
+      }, (error) => {
+        if (generation !== this.developerGeneration) return;
+        const message = callMessage(error);
+        this.set({ harnessReleases: { ...this.state.harnessReleases, error: message, at: Date.now() } });
+        if (/developer_mode_disabled/.test(message)) this.readServeSettings();
+      })
+      .finally(() => {
+        this.releasesReading = false;
+        if (this.releasesDirty) { this.releasesDirty = false; this.readHarnessReleases(); }
+      });
+  }
 
   /** Re-read Scrape's status, presets and canary inventory. */
   refreshScrape = (): void => {

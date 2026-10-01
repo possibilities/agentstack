@@ -1,13 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { ArrowUpRightIcon, BookOpenIcon, CheckIcon, CopyIcon, CpuIcon, PackageIcon, RadioIcon, SearchIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { Spinner } from "@/components/ui/spinner";
+import { Switch } from "@/components/ui/switch";
 import { clockTime, relativeTime } from "@/lib/stack/derive";
+import { settingsSaveProblem, type SaveProblem } from "@/lib/stack/developer";
 import { formatBytes, formatDuration, formatPercent } from "@/lib/stack/resources";
+import { cn } from "@/lib/utils";
+import { errorMessage } from "./auth-actions";
 import { Empty, NodeCard, NodeTitle, Row, StatusDot, Time } from "./primitives";
-import { useNow, useStack, useWorkbench } from "./provider";
+import { useNow, useStack, useStore, useWorkbench } from "./provider";
 import { Section, Window } from "./window";
 
 /** A labeled copy chip: the URL stays out of the layout but in the title and clipboard. */
@@ -117,7 +122,52 @@ export function ServerWindow() {
           </div>
         </Section>
       ) : null}
+      <StackSettings />
     </Window>
+  );
+}
+
+/**
+ * Global Stack settings (ADR 0138): durable, revisioned and separate from Bot and Worker settings. A change saves only
+ * on an explicit toggle, at the revision last read; the switch shows no value until this connection has read one.
+ * Local operator only: a remote page renders nothing here.
+ */
+function StackSettings() {
+  const { serveSettings, status, remote } = useStack();
+  const store = useStore();
+  const now = useNow(30_000);
+  const id = useId();
+  const [saving, setSaving] = useState(false);
+  const [problem, setProblem] = useState<SaveProblem | null>(null);
+  if (remote) return null;
+  const data = serveSettings.data;
+  const known = status.serve === "open" && data !== null && serveSettings.error === null;
+  const save = (developerMode: boolean) => {
+    setSaving(true);
+    setProblem(null);
+    store.saveServeSettings(developerMode).catch((error) => setProblem(settingsSaveProblem(errorMessage(error)))).finally(() => setSaving(false));
+  };
+  const note = status.serve !== "open" ? "Unknown until the server connection opens."
+    : serveSettings.error ? `Unknown: ${serveSettings.error}`
+      : !data ? "Reading the current setting…"
+        : saving ? "Saving…"
+          : data.updatedAt ? `${data.developerMode ? "On" : "Off"} · saved ${relativeTime(Date.parse(data.updatedAt), now)}` : "Off by default";
+  return (
+    <Section title="Stack settings">
+      <div className="flex items-center gap-3 rounded-xl border px-3 py-2.5">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span id={`${id}-label`} className="text-sm font-medium">Developer mode</span>
+          <span id={`${id}-hint`} className="text-[0.68rem] text-pretty text-muted-foreground">Show developer tools and check upstream harness releases.</span>
+        </div>
+        {saving ? <Spinner /> : null}
+        {/* Unknown is neither on nor off: no thumb position until a read says which. */}
+        <Switch aria-labelledby={`${id}-label`} aria-describedby={`${id}-hint ${id}-state`} checked={known && data.developerMode} disabled={!known || saving}
+          data-unknown={known ? undefined : ""} className={cn(!known && "border-dashed border-muted-foreground/50 data-unchecked:bg-transparent dark:data-unchecked:bg-transparent [&>[data-slot=switch-thumb]]:invisible")}
+          onCheckedChange={save} />
+      </div>
+      <p id={`${id}-state`} role="status" className="px-0.5 text-[0.68rem] text-pretty text-muted-foreground">{note}</p>
+      {problem ? <p role="alert" className={cn("px-0.5 text-[0.72rem] text-pretty", problem.kind === "failed" ? "text-destructive" : "text-warning")}>{problem.text}</p> : null}
+    </Section>
   );
 }
 

@@ -28,6 +28,8 @@ import { InferenceWindow } from "./inference-window";
 import { HostWindow, ProcessesWindow, ResourcesWindow, SamplingWindow } from "./resource-windows";
 import { ActivityWindow, ServerWindow, PackagesWindow } from "./system-windows";
 import { CodexToolsWindow } from "./codex-tools";
+import { DeveloperWindow } from "./developer-window";
+import { developerModeOn } from "@/lib/stack/developer";
 import { StateInventoryWindow, SubscriptionsWindow } from "./state-windows";
 import { XcomStateWindow } from "./xcom-state";
 import { ArchiveIcon } from "lucide-react";
@@ -124,7 +126,7 @@ export const spaceViews: Record<SpaceId, {
   system: {
     icon: CpuIcon,
     accent: "server",
-    windows: () => [
+    windows: (state) => [
       { id: "server", title: "Server", icon: CpuIcon, accent: "server", width: 400, height: 520, column: 0, element: <ServerWindow /> },
       { id: "access", title: "Access", icon: KeyRoundIcon, accent: "server", width: 460, height: 720, column: 4, element: <AccessWindow /> },
       { id: "packages", title: "Packages", icon: PackageIcon, accent: "server", width: 400, height: 420, column: 0, element: <PackagesWindow /> },
@@ -137,6 +139,9 @@ export const spaceViews: Record<SpaceId, {
       { id: "state", title: "State", icon: DatabaseIcon, accent: "server", width: 500, height: 760, column: 5, element: <StateInventoryWindow /> },
       { id: "subscriptions", title: "Subscriptions", icon: CableIcon, accent: "server", width: 460, height: 560, column: 6, element: <SubscriptionsWindow /> },
       { id: "xcom-state", title: "Xcom", icon: ArchiveIcon, accent: "server", width: 440, height: 720, column: 6, element: <XcomStateWindow /> },
+      // Registered only while this page's current serve connection read developer mode on (ADR 0138). Last in the
+      // Server column and no wider or taller than it has room for, so it appears and leaves without moving other windows.
+      ...developerModeOn(state) ? [{ id: "developer", title: "Developer", icon: HammerIcon, accent: "server" as const, width: 400, height: 400, column: 0, element: <DeveloperWindow /> }] : [],
     ],
   },
   roles: {

@@ -706,3 +706,251 @@ test("hud subscribes before its first read, resnapshots after reconnecting, and 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+/**
+ * A fake serve socket for developer mode: settings with real revision fences, releases refused while disabled,
+ * a trace of serve subscriptions and calls in send order, and `hold(name)` to delay one answer computed at request time.
+ */
+function developerServe() {
+  const sockets = new Set();
+  const trace = [];
+  const held = new Map();
+  const server = {
+    settings: { developerMode: false, revision: 0, updatedAt: null },
+    releases: { checking: null, intervalMs: 21_600_000, timeoutMs: 15_000, maxResponseBytes: 262_144, lastAttemptAt: null, lastCompletedAt: null,
+      nextCheckAt: null, cacheError: null, observations: [{ id: "codex", title: "Codex", sourceUrl: "https://registry.npmjs.org/@openai/codex/latest",
+        packageName: "@openai/codex", channel: "npm-latest", version: "0.50.0", previousVersion: null, changedAt: null, lastAttemptAt: null, lastCompletedAt: null,
+        lastSuccessAt: null, outcome: "succeeded", error: null, freshness: "fresh", staleReason: null }] },
+    updates: [],
+    admission: null,
+  };
+  const results = {
+    serve_settings_read: () => ({ ...server.settings }),
+    serve_settings_update: (args) => {
+      server.updates.push(args);
+      if (args.expectedRevision !== server.settings.revision) throw new Error("serve_settings_revision_conflict: read settings before retrying");
+      if (args.developerMode !== server.settings.developerMode) server.settings = { developerMode: args.developerMode, revision: server.settings.revision + 1, updatedAt: new Date().toISOString() };
+      return { ...server.settings };
+    },
+    serve_harness_releases: () => {
+      if (!server.settings.developerMode) throw new Error("developer_mode_disabled");
+      return structuredClone(server.releases);
+    },
+    serve_harness_releases_check: () => {
+      if (!server.settings.developerMode) throw new Error("developer_mode_disabled");
+      return server.admission;
+    },
+  };
+  class FakeWebSocket {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    readyState = FakeWebSocket.CONNECTING;
+    subscriptions = new Map();
+    constructor(url) {
+      this.url = url;
+      sockets.add(this);
+      queueMicrotask(() => { this.readyState = FakeWebSocket.OPEN; this.onopen?.(); });
+    }
+    send(raw) {
+      const { id, method, params } = JSON.parse(raw);
+      if (params?.package === "serve") trace.push(method === "tools/call" ? params.name : `${method}:${params.topics?.join(",") ?? ""}`);
+      if (method === "events/subscribe") this.subscriptions.set(params.subscription, params);
+      if (method === "events/unsubscribe") this.subscriptions.delete(params.subscription);
+      let result, error;
+      try {
+        result = method.startsWith("events/") ? params : results[params.name]?.(params.arguments);
+      } catch (cause) {
+        error = { message: cause instanceof Error ? cause.message : String(cause) };
+      }
+      const gate = method === "tools/call" ? held.get(params.name) : undefined;
+      held.delete(params?.name);
+      void Promise.resolve(gate?.promise).then(() => this.onmessage?.({ data: JSON.stringify({ id, ...(error ? { error } : { result }) }) }));
+    }
+    close() { this.readyState = 3; sockets.delete(this); this.onclose?.(); }
+  }
+  return {
+    server, trace, sockets, FakeWebSocket,
+    subscriptions: () => [...sockets].flatMap((socket) => [...socket.subscriptions.values()]).filter((item) => item.package === "serve"),
+    hold(name) { const gate = Promise.withResolvers(); held.set(name, gate); return gate.resolve; },
+    publish(topic) {
+      for (const socket of sockets) for (const subscription of socket.subscriptions.values()) {
+        if (subscription.package !== "serve" || !subscription.topics.includes(topic)) continue;
+        socket.onmessage?.({ data: JSON.stringify({ method: "events/changed", params: { package: "serve", subscription: subscription.subscription, topic } }) });
+      }
+    },
+  };
+}
+
+const serveSnapshot = (extra = {}) => ({
+  server: resource(null), resources: resource(null), accounts: resource([]), workerAccounts: resource([]), workerRuntimes: resource([]),
+  login: resource(null), workerLogins: resource([]), bots: resource([]), voice: resource(null), catalog: resource(null),
+  endpoints: { serve: "ws://fixture.invalid/websocket" }, ...extra,
+});
+const settle = () => new Promise((resolve) => setTimeout(resolve, 25));
+const releaseTopic = (item) => item.topics.includes("harness_releases_changed");
+
+test("developer mode gates release reads: disabled never reads them, enabling subscribes first, and a late reply after disabling is dropped", async () => {
+  const fake = developerServe();
+  const original = globalThis.WebSocket;
+  globalThis.WebSocket = fake.FakeWebSocket;
+  const store = new StackStore(serveSnapshot());
+  const count = (name) => fake.trace.filter((entry) => entry === name).length;
+  try {
+    store.start({ packages: ["serve"], scopedBots: false });
+    await until(store, () => store.getState().serveSettings.data !== null);
+    assert.ok(fake.trace.findIndex((entry) => entry.startsWith("events/subscribe:") && entry.includes("serve_settings_changed")) < fake.trace.indexOf("serve_settings_read"),
+      "the settings invalidation subscription precedes the settings snapshot");
+    await settle();
+    assert.equal(count("serve_harness_releases"), 0, "disabled settings never read releases");
+    assert.ok(!fake.subscriptions().some(releaseTopic), "nor subscribe to their notices");
+    assert.equal(store.getState().harnessReleases.data, null);
+
+    // An explicit save at the read revision; the returned settings turn the feature on, subscription first.
+    await store.saveServeSettings(true);
+    assert.deepEqual(fake.server.updates, [{ developerMode: true, expectedRevision: 0 }]);
+    await until(store, () => store.getState().harnessReleases.data !== null);
+    const subscribed = fake.trace.findIndex((entry) => entry === "events/subscribe:harness_releases_changed");
+    assert.ok(subscribed >= 0 && subscribed < fake.trace.indexOf("serve_harness_releases"), "subscribed before the first release snapshot");
+    assert.equal(count("serve_harness_releases_check"), 0, "reading starts no check");
+
+    // A release notice re-reads the cache.
+    fake.server.releases.checking = { startedAt: new Date().toISOString() };
+    fake.publish("harness_releases_changed");
+    await until(store, () => store.getState().harnessReleases.data?.checking !== null);
+
+    // A read answered while enabled lands only after another client disabled: it is dropped.
+    const release = fake.hold("serve_harness_releases");
+    const reads = count("serve_harness_releases");
+    fake.publish("harness_releases_changed");
+    await settle();
+    assert.equal(count("serve_harness_releases"), reads + 1, "the held read was sent while enabled");
+    fake.server.settings = { developerMode: false, revision: 2, updatedAt: new Date().toISOString() };
+    fake.publish("serve_settings_changed");
+    await until(store, () => store.getState().serveSettings.data?.developerMode === false);
+    assert.equal(store.getState().harnessReleases.data, null, "disabling clears the feature at once");
+    assert.ok(!fake.subscriptions().some(releaseTopic), "and drops its subscription");
+    release();
+    await settle();
+    assert.equal(store.getState().harnessReleases.data, null, "the late answer did not restore old observations");
+    assert.equal(store.getState().harnessReleases.error, null);
+  } finally {
+    store.stop();
+    globalThis.WebSocket = original;
+  }
+});
+
+test("a reconnect forgets settings and the feature, then reads settings again before any release data", async () => {
+  const fake = developerServe();
+  fake.server.settings = { developerMode: true, revision: 1, updatedAt: new Date().toISOString() };
+  const original = globalThis.WebSocket;
+  globalThis.WebSocket = fake.FakeWebSocket;
+  const store = new StackStore(serveSnapshot());
+  try {
+    store.start({ packages: ["serve"], scopedBots: false });
+    await until(store, () => store.getState().harnessReleases.data !== null);
+    // A pending check is part of the feature too.
+    const admit = fake.hold("serve_harness_releases_check");
+    fake.server.admission = { admitted: true, startedAt: new Date().toISOString() };
+    const checking = store.checkHarnessReleases();
+    assert.equal(store.getState().harnessCheck?.pending, true);
+
+    fake.trace.length = 0;
+    [...fake.sockets][0].close();
+    let state = store.getState();
+    assert.equal(state.serveSettings.data, null, "settings from a closed connection are not authority");
+    assert.equal(state.harnessReleases.data, null);
+    assert.equal(state.harnessCheck, null, "a pending check is cleared, not left spinning");
+    admit();
+    await checking;
+    assert.equal(store.getState().harnessCheck, null, "its late answer is dropped");
+
+    await until(store, () => store.getState().harnessReleases.data !== null);
+    assert.ok(fake.trace.indexOf("serve_settings_read") < fake.trace.indexOf("serve_harness_releases"), "settings are read before release data");
+    state = store.getState();
+    assert.equal(state.serveSettings.data?.developerMode, true);
+  } finally {
+    store.stop();
+    globalThis.WebSocket = original;
+  }
+});
+
+test("a stale-revision save is refused once and never retried; the current setting is re-read and shown", async () => {
+  const fake = developerServe();
+  const original = globalThis.WebSocket;
+  globalThis.WebSocket = fake.FakeWebSocket;
+  const store = new StackStore(serveSnapshot());
+  try {
+    store.start({ packages: ["serve"], scopedBots: false });
+    await until(store, () => store.getState().serveSettings.data !== null);
+    // Another client enables it without this page hearing yet.
+    fake.server.settings = { developerMode: true, revision: 1, updatedAt: new Date().toISOString() };
+    await assert.rejects(store.saveServeSettings(true), /serve_settings_revision_conflict/);
+    await until(store, () => store.getState().serveSettings.data?.revision === 1);
+    await settle();
+    assert.deepEqual(fake.server.updates, [{ developerMode: true, expectedRevision: 0 }], "one attempt at the observed revision, no automatic retry");
+    assert.equal(store.getState().serveSettings.data.developerMode, true, "the current value replaces the stale one");
+    await until(store, () => store.getState().harnessReleases.data !== null);
+
+    // Saving again is the person's choice, at the revision now shown.
+    await store.saveServeSettings(false);
+    assert.deepEqual(fake.server.updates.at(-1), { developerMode: false, expectedRevision: 1 });
+    assert.equal(store.getState().harnessReleases.data, null);
+  } finally {
+    store.stop();
+    globalThis.WebSocket = original;
+  }
+});
+
+test("Check now follows admission to the event-driven read, and a refusal is never shown as a started check", async () => {
+  const fake = developerServe();
+  fake.server.settings = { developerMode: true, revision: 1, updatedAt: new Date().toISOString() };
+  const original = globalThis.WebSocket;
+  globalThis.WebSocket = fake.FakeWebSocket;
+  const store = new StackStore(serveSnapshot());
+  try {
+    store.start({ packages: ["serve"], scopedBots: false });
+    await until(store, () => store.getState().harnessReleases.data !== null);
+    const startedAt = new Date().toISOString();
+    fake.server.admission = { admitted: false, startedAt };
+    fake.server.releases.checking = { startedAt };
+    await store.checkHarnessReleases();
+    assert.deepEqual(store.getState().harnessCheck, { pending: false, admitted: false, startedAt, error: null }, "joined the running check");
+    await until(store, () => store.getState().harnessReleases.data?.checking?.startedAt === startedAt);
+    assert.ok(store.getState().harnessCheck, "admission is not completion");
+
+    fake.server.releases = { ...fake.server.releases, checking: null, lastCompletedAt: new Date(Date.parse(startedAt) + 1_000).toISOString() };
+    fake.publish("harness_releases_changed");
+    await until(store, () => store.getState().harnessCheck === null);
+
+    // Disabled elsewhere before this page heard: the refusal stays a refusal, and settings are re-read.
+    fake.server.settings = { developerMode: false, revision: 2, updatedAt: new Date().toISOString() };
+    const release = fake.hold("serve_settings_read");
+    await store.checkHarnessReleases();
+    assert.equal(store.getState().harnessCheck?.error, "developer_mode_disabled");
+    assert.equal(store.getState().harnessCheck?.startedAt, null);
+    release();
+    await until(store, () => store.getState().serveSettings.data?.developerMode === false);
+    assert.equal(store.getState().harnessCheck, null);
+  } finally {
+    store.stop();
+    globalThis.WebSocket = original;
+  }
+});
+
+test("a remote page never reads global settings or subscribes to their notices", async () => {
+  const fake = developerServe();
+  const original = globalThis.WebSocket;
+  globalThis.WebSocket = fake.FakeWebSocket;
+  const store = new StackStore(serveSnapshot({ remote: { scope: "control", scopes: ["ui:view", "ui:control"], contentOrigins: {} } }));
+  try {
+    store.start({ packages: ["serve"], scopedBots: false });
+    await until(store, () => fake.subscriptions().length > 0);
+    await settle();
+    assert.ok(!fake.trace.some((entry) => /serve_settings|harness_releases/.test(entry)), fake.trace.join("\n"));
+    await assert.rejects(store.saveServeSettings(true), /not loaded/);
+    assert.deepEqual(fake.server.updates, []);
+  } finally {
+    store.stop();
+    globalThis.WebSocket = original;
+  }
+});
