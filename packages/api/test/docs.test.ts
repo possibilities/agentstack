@@ -60,7 +60,8 @@ test("the api package serves structured documents for every workspace package", 
       for (const transport of doc.transports.filter((entry) => entry.type === "mcp" || entry.type === "websocket")) {
         const omitted = [...(transport.type === "mcp" ? [`${pkg}_state_read`] : []), ...internal.filter((name) => !(pkg === "brain" && transport.type === "websocket" && name === "share_read_states")),
           ...(pkg === "roles" && transport.type === "mcp" ? ["role_editor_snapshot", "role_launch_preview", "role_shim_list", "role_shim_create", "role_shim_update", "role_shim_delete"] : [])];
-        assert.deepEqual([...transport.operations].sort(), doc.operations.map((op) => op.name).filter((name) => !omitted.includes(name)).sort());
+        assert.deepEqual([...transport.operations].sort(), doc.operations.map((op) => op.name)
+          .filter((name) => !omitted.includes(name) && !(transport.type === "mcp" && stateOperation(name))).sort());
       }
     }
     assert.deepEqual(snapshot.packages, [...found.values()]);
@@ -195,7 +196,8 @@ test("the api package serves structured documents for every workspace package", 
     const agentFacing = ["scrape_canary_inventory", "scrape_convert_html", "scrape_feed_discover", "scrape_feed_parse", "scrape_fetch", "scrape_links", "scrape_preset_show", "scrape_presets_list", "scrape_status"];
     assert.deepEqual([...exposed].sort(), agentFacing);
     assert.deepEqual([...scrape.transports.find((transport) => transport.type === "websocket")!.operations].sort(),
-      [...agentFacing, "scrape_corpus_replay", "scrape_presets_check", "scrape_queue_list", "scrape_queue_process", "scrape_queue_submit", "scrape_state_read"].sort());
+      [...agentFacing, "scrape_corpus_replay", "scrape_presets_check", "scrape_queue_list", "scrape_queue_process", "scrape_queue_submit", "scrape_state_read",
+        "scrape_queue_plan", "scrape_queue_apply", "scrape_corpus_list", "scrape_corpus_plan", "scrape_corpus_clear", "scrape_state_receipt_get"].sort());
     assert.equal(scrape.operations.find((operation) => operation.name === "scrape_queue_list")?.annotations.readOnlyHint, true);
 
     const bots = found.get("bots") as PackageDoc;

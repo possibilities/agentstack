@@ -115,6 +115,15 @@ test("Run payload retirement preserves immutable recovery authority and refuses 
     f.ctx.store.db.query("UPDATE runs SET state='cancelled',checkpoint=?,warnings=? WHERE id=?").run('"private cursor"', '["private warning"]', run.id);
     f.ctx.store.db.query("INSERT INTO operator_run_policies VALUES(?,?,?,?,?,?)").run(run.id, "offline", "a".repeat(64), '["text"]', 1, new Date().toISOString());
     const policy = f.ctx.store.db.query("SELECT * FROM operator_run_policies WHERE run_id=?").get(run.id);
+    const document = f.ctx.store.upsertDocument({ sourceType: "text", sourceUri: "fixture:run-document", content: "indexed run evidence" });
+    const resource = Number(f.ctx.store.db.query("INSERT INTO resources(key_type,key_value,kind,sensitivity,document_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?)")
+      .run("fixture", "run-document", "text", "normal", document.document_id, at, at).lastInsertRowid);
+    f.ctx.store.db.query("UPDATE jobs SET resource_id=? WHERE id=?").run(resource, job.job.id);
+    const indexed = await f.call("brain_runs_plan", { ids: [run.id], scope: "payload" });
+    await assert.rejects(f.call("brain_runs_clear", apply(indexed)), /indexed documents/);
+    // Existing document deletion remains usable for a drained controlled Run;
+    // redaction must not relax its immutable generation/authorization binding.
+    f.ctx.store.deleteDocument({ documentId: document.document_id, confirm: "delete" });
     const plan = await f.call("brain_runs_plan", { ids: [run.id], scope: "payload" });
     const request = apply(plan);
     await f.call("brain_runs_clear", request);

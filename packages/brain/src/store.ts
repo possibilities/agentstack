@@ -928,7 +928,10 @@ const MIGRATION_V14 = `
         AND NEW.content_cleared_at IS NOT NULL AND json_valid(NEW.intent)
         AND json_extract(NEW.intent,'$.redacted')=1
         AND EXISTS (SELECT 1 FROM runs r WHERE r.id=OLD.run_id
-          AND r.content_cleared_at IS NOT NULL AND r.state NOT IN ('pending','active')))
+          AND r.state NOT IN ('pending','active')
+          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.run_id=r.id AND j.state NOT IN ('failed','completed','cancelled','excluded'))
+          AND NOT EXISTS (SELECT 1 FROM attempts a JOIN jobs j ON j.id=a.job_id WHERE j.run_id=r.id AND a.state='leased')
+          AND NOT EXISTS (SELECT 1 FROM operator_run_execution_leases l WHERE l.run_id=r.id)))
     BEGIN SELECT RAISE(ABORT, 'operator-controlled Run job binding is immutable'); END;
   UPDATE meta SET value='14' WHERE key='schema_version';
 `;
