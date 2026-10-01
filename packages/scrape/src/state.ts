@@ -29,6 +29,10 @@ export class ScrapeState {
     if (!lstatSync(path).isFile()) throw new Error("Scrape maintenance journal must be a regular file");
     chmodSync(path, 0o600);
     this.db = new DatabaseSync(path);
+    // This owner binds its root's directory identity in filesystem plans. WAL
+    // keeps plan/receipt writes from creating and removing rollback-journal
+    // entries in that root between observation and apply.
+    this.db.exec("PRAGMA journal_mode=WAL");
     this.db.exec(`CREATE TABLE IF NOT EXISTS queue_fences(id TEXT PRIMARY KEY,digest TEXT NOT NULL,request_id TEXT NOT NULL,action TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS corpus_fences(preset TEXT NOT NULL,id TEXT NOT NULL,request_id TEXT NOT NULL,PRIMARY KEY(preset,id))`);
     this.journal = new StateJournal(this.db, "scrape");
