@@ -772,7 +772,7 @@ export class ArtifactStore {
     return jobId;
   }
 
-  private hashRegularFile(path: string, expectedSize?: number): StoredArtifact {
+  private hashRegularFile(path: string, expectedSize?: number, metadataRetries = 2): StoredArtifact {
     let fd: number | undefined;
     try {
       fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
@@ -800,6 +800,15 @@ export class ArtifactStore {
       }
       const after = fdIdentity(fd);
       if (!sameIdentity(before, after)) {
+        // Atomic hard-link publication ends by unlinking the staging name. A
+        // concurrent duplicate verifier can observe that inode's ctime change
+        // without a byte change. Re-read a bounded number of times, accepting
+        // only a fully stable descriptor observation, never a moving read.
+        if (metadataRetries > 0 && after.regular && before.dev === after.dev && before.ino === after.ino
+          && before.size === after.size && before.mtimeNs === after.mtimeNs) {
+          closeSync(fd); fd = undefined;
+          return this.hashRegularFile(path, expectedSize, metadataRetries - 1);
+        }
         throw new ArtifactStoreError(
           "digest_mismatch",
           "Artifact changed while it was being verified",
