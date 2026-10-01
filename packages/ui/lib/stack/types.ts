@@ -716,6 +716,7 @@ export type ScrapeReplay = { passed: number; failed: number; lines: string[] };
 
 /** A durable Browser profile from `browser_profile_list`. `observation` follows the visible tab; its delivery is never verified. */
 export type BrowserProfile = {
+  generation: number; maintenanceRequestId: string | null;
   id: string; botId: string | null; label: string; default: boolean; createdAt: string;
   state: "starting" | "ready" | "recovering" | "failed"; error: string | null; observedAt: string | null; cdpUrl: string | null;
   observation: { url: string; udpPort: number; follows: "visible-tab"; verified: false } | null;
@@ -727,6 +728,7 @@ export type BrowserController = {
 };
 /** A durable Browser handoff. `issue` is a runtime problem separate from the human outcome; completed is a report, not verification. */
 export type BrowserHandoff = {
+  contentClearedAt: string | null; requestDigest: string | null;
   id: string; profileId: string; botId: string; threadId: string; instance: string; requestId: string;
   targetId: string | null; targetStatus: "unspecified" | "present" | "missing" | "unknown"; message: string;
   state: "preparing" | "awaiting_human" | "human_controlling" | "returning" | "resolved";

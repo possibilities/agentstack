@@ -182,7 +182,7 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
       name, description: "Server control.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: !name.endsWith("update") && !name.endsWith("check") },
       async call() { developerCalls++; return { ok: true }; },
     })), events: { topics: { pids_changed: "Changed.", serve_settings_changed: "Settings changed.", harness_releases_changed: "Releases changed." } } });
-  for (const owner of ["infer", "hud", "scrape", "signal", "worker", "auth", "access"]) {
+  for (const owner of ["infer", "hud", "scrape", "signal", "worker", "auth", "access", "browse", "content"]) {
     const dir = join(root, "packages", owner); mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "api.yaml"), `name: ${owner}\ndescription: Fixture.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: all\n  events: []\n  description: WebSocket.\n`);
   }
@@ -191,7 +191,9 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
     ["signal", ["attention_checkpoint_plan", "attention_checkpoint_reset"]],
     ["worker", ["worker_settings_receipts_plan", "worker_settings_receipts_clear", "worker_state_receipt_get", "worker_account_state_dependencies", "worker_state_plan", "worker_state_clear", "worker_state_branches", "worker_state_native_effect"]],
     ["auth", ["worker_account_cache_plan", "worker_account_cache_clear", "auth_state_receipt_get", "worker_account_state_guard"]],
-    ["access", ["access_history_plan", "access_history_clear", "access_state_receipt_get"]] ] as const).map(([owner, names]) =>
+    ["access", ["access_history_plan", "access_history_clear", "access_state_receipt_get"]],
+    ["browse", ["browser_profile_reset_plan", "browser_profile_reset_clear", "browser_site_data_plan", "browser_site_data_clear", "browser_handoff_history_plan", "browser_handoff_history_clear", "browser_volume_list", "browser_volume_plan", "browser_volume_clear", "browse_state_receipt_get", "browse_state_fence_release", "browse_state_bot_effect"]],
+    ["content", ["content_vault_history_plan", "content_publication_list", "content_publication_plan", "content_publication_clear"]] ] as const).map(([owner, names]) =>
     serveSocket({ info: { name: owner, description: "Fixture.", transportDescription: "Socket.", path: socketPath(owner, env) }, context: {},
       operations: names.map(name => operation({ name, description: "Local maintenance.", input: z.strictObject({}), output: ok,
         annotations: { readOnlyHint: true }, async call() { maintenanceCalls++; return { ok: true }; } })) })));
@@ -234,7 +236,9 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
       ["signal", ["attention_checkpoint_plan", "attention_checkpoint_reset"]],
       ["worker", ["worker_settings_receipts_plan", "worker_settings_receipts_clear", "worker_state_receipt_get", "worker_account_state_dependencies", "worker_state_plan", "worker_state_clear", "worker_state_branches", "worker_state_native_effect"]],
       ["auth", ["worker_account_cache_plan", "worker_account_cache_clear", "auth_state_receipt_get", "worker_account_state_guard"]],
-      ["access", ["access_history_plan", "access_history_clear", "access_state_receipt_get"]]] as const) {
+      ["access", ["access_history_plan", "access_history_clear", "access_state_receipt_get"]],
+      ["browse", ["browser_profile_reset_plan", "browser_profile_reset_clear", "browser_site_data_plan", "browser_site_data_clear", "browser_handoff_history_plan", "browser_handoff_history_clear", "browser_volume_list", "browser_volume_plan", "browser_volume_clear", "browse_state_receipt_get", "browse_state_fence_release", "browse_state_bot_effect"]],
+      ["content", ["content_vault_history_plan", "content_publication_list", "content_publication_plan", "content_publication_clear"]]] as const) {
       assert.deepEqual((await send("tools/list", { package: owner })).result.tools.map((tool: { name: string }) => tool.name), owner === "brain" ? ["jobs_show"] : []);
       for (const name of names) assert.match((await send("tools/call", { package: owner, name, arguments: {} })).error.message, /not available/);
     }

@@ -113,6 +113,7 @@ export class BrowserSystem {
     this.operation = task.then(() => undefined, () => undefined);
     return task;
   }
+  maintainProvider<T>(run: () => Promise<T>): Promise<T> { return this.serial(run); }
 
   private browserPath(): string {
     return join(this.root, "toolchain", "current", "node_modules", "agent-browser", "bin", process.platform === "darwin" && process.arch === "arm64" ? "agent-browser-darwin-arm64" : process.platform === "darwin" ? "agent-browser-darwin-x64" : process.arch === "arm64" ? "agent-browser-linux-arm64" : "agent-browser-linux-x64");

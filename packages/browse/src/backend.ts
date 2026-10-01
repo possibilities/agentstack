@@ -8,6 +8,7 @@ import { z } from "zod";
 import { BrowserSystem } from "./system.js";
 import { egressPolicy, type EgressPolicy } from "@stack/scrape/network";
 import { researchFirewall, researchPolicyId } from "./research-egress.js";
+import { stateHash, type StateOutcome } from "@stack/api";
 
 const IMAGE = "docker.io/onkernel/chromium-headful@sha256:da9ee68cb9d2de0b3c26885ff3bdcf04c944254a36eb127219028ac017ff56f3";
 const MAX_SESSIONS = 16;
@@ -50,6 +51,7 @@ const tags = (session: string, lease: string, role: string) => ({
 export class Backend {
   private queue = Promise.resolve();
   private draining = false;
+  private maintenanceConnection: { baseUrl: string; token: string } | null = null;
   private readonly path: string;
   private readonly relays = new Map<string, { server: Server; port: number; sockets: Set<Duplex> }>();
   onChange?: () => void;
@@ -83,7 +85,7 @@ export class Backend {
 
   private async request(method: string, path: string, body?: unknown): Promise<unknown> {
     await this.system.ensureRunning();
-    const { baseUrl, token } = await this.system.connection();
+    const { baseUrl, token } = this.maintenanceConnection ?? await this.system.connection();
     const response = await fetch(baseUrl + path, {
       method, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -99,6 +101,90 @@ export class Backend {
   }
 
   async list(): Promise<Receipt[]> { return (await this.read()).map(({ native: _, ...receipt }) => receipt); }
+
+  async stateProfile(session: string) {
+    const name = backendSession(session), all = await this.read(), receipt = all.find(row => row.session === name) ?? null;
+    const connection = this.maintenanceConnection ?? await this.system.connection();
+    const instances = records(await this.request("GET", "/instances")), volumes = records(await this.request("GET", "/volumes"));
+    const selectedInstances = instances.filter(row => receipt && owned(row, name, receipt.lease, "browser"));
+    const selectedVolumes = volumes.filter(row => receipt && owned(row, name, receipt.lease, "durable-profile"));
+    const blockedBy = !receipt?.persistent ? ["Exact durable profile receipt unavailable"] : [];
+    const suffix = receipt && `${name}-${receipt.lease.slice(0, 8)}`;
+    if (selectedInstances.some(row => typeof row.id !== "string" || row.name !== `stack-browser-${suffix}`)
+      || selectedVolumes.some(row => typeof row.id !== "string" || row.name !== `stack-profile-${suffix}`)) blockedBy.push("Owned profile resource name/identity cannot be verified");
+    if (selectedInstances.length > 1 || selectedVolumes.length !== 1) blockedBy.push("Profile has ambiguous or missing owned provider resources");
+    if (selectedVolumes.some(volume => instances.some(instance => !selectedInstances.includes(instance) && Array.isArray(instance.volumes) && instance.volumes.some(mount => row(mount).volume_id === volume.id)))) blockedBy.push("Profile volume is mounted by another provider instance");
+    if (receipt?.native && (!selectedInstances.some(row => row.id === receipt.native!.instanceId && row.name === receipt.native!.instanceName)
+      || !selectedVolumes.some(row => row.id === receipt.native!.volumeId && row.name === receipt.native!.volumeName))) blockedBy.push("Native profile incarnation or volume changed/missing");
+    return { revision: stateHash([this.system.selectedHypemanRoot(), connection, receipt, selectedInstances, selectedVolumes]), receipt, instances: selectedInstances, volumes: selectedVolumes, blockedBy };
+  }
+
+  async stateReset(session: string, expected: string, progress: (outcomes: StateOutcome[]) => void) {
+    return this.serial(() => this.maintainProvider(async () => {
+      const current = await this.stateProfile(session);
+      if (current.revision !== expected || current.blockedBy.length || !current.receipt) throw new Error("Native profile changed or unavailable");
+      const all = await this.read(), old = all.find(row => row.session === backendSession(session))!;
+      const removed: StateOutcome[] = [];
+      await this.removeNative(old, current.instances[0], current.volumes[0]!, resource => {
+        removed.push({ resource, outcome: "removed", detail: "Exact old profile provider resource absent" });
+        progress(removed);
+      });
+      const next: NativeRecord = { ...old, native: null, target: null, lease: randomBytes(16).toString("hex"), createdAt: new Date().toISOString() };
+      all[all.findIndex(row => row.session === old.session)] = next; await this.save(all);
+      const provisioned = await this.provision(next);
+      all[all.findIndex(row => row.session === old.session)] = provisioned; await this.save(all);
+      return provisioned;
+    }));
+  }
+
+  async stateVolumes() {
+    const ledger = await this.read(), instances = records(await this.request("GET", "/instances"));
+    const providerRevision = stateHash([this.system.selectedHypemanRoot(), this.maintenanceConnection ?? await this.system.connection()]);
+    const volumes = records(await this.request("GET", "/volumes")).filter(row => {
+      const tag = row.tags && typeof row.tags === "object" ? row.tags as Record<string, string> : {};
+      const session = tag["dev.stack.session"], lease = tag["dev.stack.lease"], kind = tag["dev.stack.role"];
+      return typeof row.id === "string" && typeof session === "string" && namePattern.test(session) && typeof lease === "string" && /^[a-f0-9]{32}$/.test(lease)
+        && ["durable-profile", "disposable-profile"].includes(kind!) && row.name === `stack-profile-${session}-${lease.slice(0, 8)}` && owned(row, session, lease, kind!);
+    }).map((row): Record<string, unknown> & { id: string; blockedBy: string[] } => ({ ...row, id: String(row.id), providerRevision, blockedBy: [
+      ...(ledger.some(receipt => receipt.native?.volumeId === row.id || row.name === `stack-profile-${receipt.session}-${receipt.lease.slice(0, 8)}`) ? ["Volume is referenced by a Browser session receipt (including incomplete/disposable leases)"] : []),
+      ...(instances.some(instance => Array.isArray(instance.volumes) && instance.volumes.some(mount => (mount as Record<string, unknown>).volume_id === row.id)) ? ["Volume is mounted by a provider instance"] : []),
+    ] }));
+    volumes.sort((a, b) => a.id.localeCompare(b.id));
+    return { revision: stateHash([this.system.selectedHypemanRoot(), ledger, volumes]), volumes };
+  }
+
+  async stateCollectVolume(id: string, expected: string) {
+    return this.serial(() => this.maintainProvider(async () => {
+      const current = await this.stateVolumes(), volume = current.volumes.find(row => row.id === id);
+      if (!volume || stateHash(volume) !== expected || volume.blockedBy.length) throw new Error("Exact orphan volume changed, occupied or unavailable");
+      await this.request("DELETE", `/volumes/${encodeURIComponent(id)}`);
+      if (records(await this.request("GET", "/volumes")).some(row => row.id === id)) throw new Error("Provider did not verify exact volume absence");
+    }));
+  }
+
+  private maintainProvider<T>(run: () => Promise<T>): Promise<T> {
+    return this.system.maintainProvider(async () => {
+      if (this.draining) throw new Error("Browser provider is shutting down");
+      this.maintenanceConnection = await this.system.connection();
+      try { return await run(); } finally { this.maintenanceConnection = null; }
+    });
+  }
+
+  private async removeNative(receipt: NativeRecord, expectedInstance: Record<string, unknown> | undefined, expectedVolume: Record<string, unknown>, removed: (id: string) => void) {
+    const instances = records(await this.request("GET", "/instances")), volumes = records(await this.request("GET", "/volumes"));
+    const instance = expectedInstance && instances.find(item => item.id === expectedInstance.id);
+    const volume = volumes.find(item => item.id === expectedVolume.id);
+    if (instance && (!owned(instance, receipt.session, receipt.lease, "browser") || instance.name !== expectedInstance!.name)) throw new Error("Refusing changed or foreign profile instance");
+    if (volume && (!owned(volume, receipt.session, receipt.lease, "durable-profile") || volume.name !== expectedVolume.name)) throw new Error("Refusing changed or foreign profile volume");
+    if (volume && instances.some(item => item !== instance && Array.isArray(item.volumes) && item.volumes.some(mount => row(mount).volume_id === volume.id))) throw new Error("Profile volume is mounted by another instance");
+    if (instance) await this.request("DELETE", `/instances/${encodeURIComponent(String(instance.id))}`);
+    if (instance && records(await this.request("GET", "/instances")).some(item => item.id === instance.id)) throw new Error("Profile instance absence not verified");
+    if (expectedInstance) removed(String(expectedInstance.id));
+    if (volume) await this.request("DELETE", `/volumes/${encodeURIComponent(String(volume.id))}`);
+    if (volume && records(await this.request("GET", "/volumes")).some(item => item.id === volume.id)) throw new Error("Profile volume absence not verified");
+    removed(String(expectedVolume.id));
+    await this.stopRelay(receipt.session);
+  }
   async get(session: string): Promise<Receipt | null> {
     return (await this.list()).find((item) => item.session === backendSession(session)) ?? null;
   }

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { completionReceipt, type CompletionWatch } from "@stack/api";
 
 export const handoffSchema = z.strictObject({
+  contentClearedAt: z.iso.datetime().nullable().default(null), requestDigest: z.string().nullable().default(null),
   id: z.uuid(), profileId: z.uuid(), botId: z.string(), threadId: z.string(), instance: z.string(), requestId: z.uuid(),
   targetId: z.string().nullable(), targetStatus: z.enum(["unspecified", "present", "missing", "unknown"]), message: z.string(),
   state: z.enum(["preparing", "awaiting_human", "human_controlling", "returning", "resolved"]),

@@ -7,8 +7,9 @@ import { handoffSchema, handoffRequestSchema, handoffRequestResult, handoffCompl
 import { egressPolicy } from "@stack/scrape/network";
 import { withStateInventory } from "@stack/api";
 import { browseStateCategories } from "./src/state-categories.js";
+import { BrowseState, browseStateOperations } from "./src/state.js";
 
-export type BrowserContext = { backend: Backend; system: BrowserSystem; profiles: Profiles };
+export type BrowserContext = { backend: Backend; system: BrowserSystem; profiles: Profiles; state: BrowseState };
 export const browseBotDependencies = operation({ name: "browse_bot_dependencies", description: "Inspect Bot-bound profiles, controllers and unresolved human handoffs for a maintenance plan. Close selected controllers and resolve handoffs explicitly first. Profile data and resolved handoff history survive a Bot conversation reset.",
   input: stateDependencyInput, output: stateDependencies, annotations: { readOnlyHint: true },
   async call(ctx: BrowserContext, { botId }, invocation) {
@@ -273,7 +274,7 @@ export const topics = {
   browser_sessions_changed: "A disposable browser reservation changed. Re-read browser_session_list; this does not prove a daemon is still driving it.",
 } as const;
 const packageApi: PackageApi<BrowserContext, keyof typeof topics> = {
-  operations: [browseBotDependencies, browserStatus, browserProfileList, browserProfileCreate, browserProfileDelete, browserControllerList, browserControllerSelect, browserControllerLaunch, browserControllerClose, browserBotRelease,
+  operations: [...browseStateOperations, browseBotDependencies, browserStatus, browserProfileList, browserProfileCreate, browserProfileDelete, browserControllerList, browserControllerSelect, browserControllerLaunch, browserControllerClose, browserBotRelease,
     browserHandoffRequest, browserHandoffGet, browserHandoffList, browserHandoffCompletion, browserHandoffTake, browserHandoffFinish, browserHandoffCancel,
     browserSessionGet, browserSessionList, browserSessionClose, browserSessionReconcile, browserResearchAcquire,
     browserToolStatus, browserToolDetect, browserToolCheck, browserToolPolicy, browserToolInstall, browserToolAccept, browserToolUninstall,
@@ -285,8 +286,13 @@ const packageApi: PackageApi<BrowserContext, keyof typeof topics> = {
     ctx.profiles.onHandoffChange = () => publish("browser_handoffs_changed");
     return () => { ctx.system.onChange = undefined; ctx.backend.onChange = undefined; ctx.profiles.onChange = undefined; ctx.profiles.onHandoffChange = undefined; };
   } },
-  async createContext(env) { const system = new BrowserSystem(env); await system.start(); const backend = new Backend(system); const profiles = new Profiles(backend, system, env); await profiles.start(); return { backend, system, profiles }; },
+  async createContext(env) {
+    const system = new BrowserSystem(env); await system.start(); const backend = new Backend(system); const profiles = new Profiles(backend, system, env);
+    const state = new BrowseState(profiles, backend, env, system.root);
+    try { await profiles.start(); return { backend, system, profiles, state }; }
+    catch (error) { state.journal.close(); await backend.closeContext(); await system.close(); throw error; }
+  },
   prepareCloseContext(ctx) { ctx.profiles.prepareClose(); },
-  async closeContext(ctx) { await ctx.profiles.close(); await ctx.backend.closeContext(); await ctx.system.close(); },
+  async closeContext(ctx) { try { await ctx.profiles.close(); } finally { ctx.state?.journal.close(); await ctx.backend.closeContext(); await ctx.system.close(); } },
 };
 export const api = withStateInventory("browse", browseStateCategories, packageApi);

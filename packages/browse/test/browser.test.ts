@@ -6,22 +6,156 @@ import { join } from "node:path";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { WebSocketServer } from "ws";
 import { BrowserSystem } from "../src/system.js";
 import { researchFirewall } from "../src/research-egress.js";
 import { Backend, backendSession } from "../src/backend.js";
 import { handleProvider } from "../src/provider.js";
 import { prepareBrowserConfig } from "../src/config.js";
 import { Profiles } from "../src/profiles.js";
+import { BrowseState } from "../src/state.js";
 import type { ManagedGate } from "../src/gate.js";
 const fakeGate = (cdp: string, neko: string): ManagedGate => ({
   cdpUrl: cdp, observationUrl: neko, async start() {}, async close() {}, hold() {}, async drain() {}, resume() {}, unknownDrain() {},
   async grantHuman() { return neko + "/human"; }, async revokeHuman() {},
 });
-import { botMcpUrl, botInstance, invocationContext, McpEventSubscriptions, serveSocket, socketPath, operation, type EventValue, type InvocationContext } from "@stack/api";
-import { browserHandoffRequest, browserHandoffCompletion, browserProfileList, browserProfileCreate, browserProfileDelete, browserControllerList, browserControllerSelect } from "../api.js";
+import { botMcpUrl, botInstance, invocationContext, McpEventSubscriptions, serveSocket, socketCall, socketPath, operation, type EventValue, type InvocationContext, type StatePlan } from "@stack/api";
+import { api, browserHandoffRequest, browserHandoffCompletion, browserProfileList, browserProfileCreate, browserProfileDelete, browserControllerList, browserControllerSelect } from "../api.js";
 import type { Handoff } from "../src/handoff.js";
 
 type Item = Record<string, unknown>;
+const applyState = (plan: StatePlan) => ({ planId: plan.id, expectedRevision: plan.revision, requestId: randomUUID() });
+
+test("profile reset preserves default assignment/generation and siblings, exact provider plans refuse races and partial/restart effects stay fenced", async () => {
+  const options = { failInstanceCreate: false }, s = await fixture(options), backend = new Backend(s.system, async () => undefined);
+  const bot = { id: "reset-bot", url: null as string | null, state: "stopped", recoveryIssue: null };
+  const profiles = new Profiles(backend, s.system, s.env, async () => [bot], fakeGate), state = new BrowseState(profiles, backend, s.env, s.system.root), ctx = { backend, system: s.system, profiles, state };
+  let journalClosed = false;
+  const browser = await serveSocket({ info: { name: "browse", description: "Fixture", transportDescription: "Socket", path: socketPath("browse", s.env) }, context: ctx, operations: api.operations });
+  const bots = await serveSocket({ info: { name: "bots", description: "Fixture", transportDescription: "Socket", path: socketPath("bots", s.env) }, context: {}, operations: [operation({
+    name: "bot_state_browser_guard", description: "Stopped Bot callback transport fixture; real mutex proof belongs to Bots tests", input: z.strictObject({ botId: z.string(), profileId: z.uuid(), token: z.uuid() }), output: z.record(z.string(), z.unknown()),
+    async call(_ctx, input) { if (bot.state !== "stopped") throw new Error("Stop Bot before maintenance"); return await socketCall(browser.path, "tools/call", { name: "browse_state_bot_effect", arguments: input }) as Record<string, unknown>; },
+  })] });
+  const call = async (name: string, args: unknown): Promise<any> => socketCall(browser.path, "tools/call", { name, arguments: args });
+  try {
+    await s.system.setHypemanLocation(s.root); await s.system.enableHypeman(s.root); await profiles.start(false);
+    const selected = await profiles.create(bot.id, "Default", true), sibling = await profiles.create(null, "Retained sibling");
+    await profiles.ensure(selected.id); await profiles.ensure(sibling.id);
+    const old = await backend.stateProfile(`profile:${selected.id}`), siblingNative = await backend.stateProfile(`profile:${sibling.id}`);
+    const stale = await call("browser_profile_reset_plan", { profileId: selected.id });
+    s.volumes()[0]!.size = "changed-after-plan";
+    await assert.rejects(call("browser_profile_reset_clear", applyState(stale)), /changed/);
+    const volumeName = s.volumes()[0]!.name; s.volumes()[0]!.name = "renamed-externally";
+    const renamed = await call("browser_profile_reset_plan", { profileId: selected.id });
+    assert.ok(renamed.blockedBy.some((text: string) => text.includes("name/identity")));
+    await assert.rejects(call("browser_profile_reset_clear", applyState(renamed)), /name\/identity/);
+    s.volumes()[0]!.name = volumeName;
+    bot.state = "running"; bot.url = "unix:///not-started";
+    assert.ok((await call("browser_profile_reset_plan", { profileId: selected.id })).blockedBy.some((text: string) => text.includes("Stop")));
+    bot.state = "stopped"; bot.url = null;
+    let notices = 0; profiles.onChange = () => notices++;
+    const input = applyState(await call("browser_profile_reset_plan", { profileId: selected.id }));
+    const receipt = await call("browser_profile_reset_clear", input); assert.equal(receipt.status, "completed"); assert.deepEqual(await call("browser_profile_reset_clear", input), receipt);
+    const reset = profiles.list().find(row => row.id === selected.id)!; assert.equal(reset.botId, bot.id); assert.equal(reset.default, true); assert.equal(reset.generation, 1); assert.equal(reset.maintenanceRequestId, null); assert.ok(notices > 0);
+    const next = await backend.stateProfile(`profile:${selected.id}`); assert.notEqual(next.receipt!.lease, old.receipt!.lease); assert.notEqual(next.volumes[0]!.id, old.volumes[0]!.id);
+    assert.equal((await backend.stateProfile(`profile:${sibling.id}`)).revision, siblingNative.revision);
+    await profiles.ensure(selected.id);
+    options.failInstanceCreate = true;
+    const partialInput = applyState(await call("browser_profile_reset_plan", { profileId: selected.id }));
+    const partial = await call("browser_profile_reset_clear", partialInput); assert.equal(partial.status, "partial");
+    const leftovers = await backend.stateProfile(`profile:${selected.id}`); assert.equal(leftovers.volumes.length, 1); assert.equal(leftovers.instances.length, 0);
+    assert.ok(partial.outcomes.some((row: any) => row.resource === leftovers.volumes[0]!.id && row.outcome === "retained"));
+    assert.equal(profiles.list().find(row => row.id === selected.id)!.maintenanceRequestId, partialInput.requestId);
+    const counts = s.counts(); await assert.rejects(profiles.ensure(selected.id), /fenced/); assert.deepEqual(s.counts(), counts);
+    assert.deepEqual(await call("browser_profile_reset_clear", partialInput), partial);
+    await assert.rejects(call("browse_state_fence_release", { profileId: selected.id, requestId: partialInput.requestId, expectedGeneration: 1 }), /generation/);
+    await call("browse_state_fence_release", { profileId: selected.id, requestId: partialInput.requestId, expectedGeneration: 2 }); options.failInstanceCreate = false;
+    await profiles.ensure(selected.id);
+    const interrupted = await call("browser_profile_reset_plan", { profileId: selected.id }), interruptedInput = applyState(interrupted);
+    state.journal.begin(interruptedInput, interrupted); await profiles.stateFence(selected.id, interruptedInput.requestId); state.journal.close(); journalClosed = true;
+    const restoredProfiles = new Profiles(backend, s.system, s.env, async () => [bot], fakeGate); await restoredProfiles.start(false);
+    const restored = new BrowseState(restoredProfiles, backend, s.env, s.system.root);
+    try { assert.equal((await restored.clear(interruptedInput)).status, "unknown"); await assert.rejects(restoredProfiles.ensure(selected.id), /fenced/); assert.deepEqual(s.counts(), { instances: 2, volumes: 2 }); }
+    finally { restored.journal.close(); }
+  } finally { await browser.close(); await bots.close(); if (!journalClosed) state.journal.close(); await backend.closeContext(); await s.close(); }
+});
+
+test("volume collection excludes foreign/unrecorded names, blocks referenced/mounted leases and verifies exact orphan absence", async () => {
+  const s = await fixture(), backend = new Backend(s.system, async () => undefined), profiles = new Profiles(backend, s.system, s.env, async () => [], fakeGate), state = new BrowseState(profiles, backend, s.env, s.system.root);
+  try {
+    await s.system.setHypemanLocation(s.root); await s.system.enableHypeman(s.root); await profiles.start(false);
+    const live = await profiles.create(null, "Referenced"); await profiles.ensure(live.id);
+    const owned = structuredClone(s.volumes()[0]!); owned.id = "orphan-owned";
+    const tags = owned.tags as Item; tags["dev.stack.session"] = backendSession("retired-orphan"); tags["dev.stack.lease"] = "a".repeat(32); owned.name = `stack-profile-${tags["dev.stack.session"]}-${"a".repeat(8)}`; s.volumes().push(owned);
+    const foreign = { ...owned, id: "foreign-volume", tags: { ...tags, "dev.stack.browser": "false" } }; s.volumes().push(foreign);
+    assert.equal((await backend.stateVolumes()).volumes.some(row => row.id === foreign.id), false);
+    await assert.rejects(state.plan({ kind: "volume", ids: [foreign.id] }), /foreign/);
+    const referenced = await state.plan({ kind: "volume", ids: [String(s.volumes()[0]!.id)] }); assert.ok(referenced.blockedBy.length); await assert.rejects(state.clear(applyState(referenced)), /referenced|mounted/);
+    const stale = await state.plan({ kind: "volume", ids: [String(owned.id)] });
+    s.instances().push({ id: "foreign-instance", volumes: [{ volume_id: owned.id }] }); await assert.rejects(state.clear(applyState(stale)), /changed/);
+    const occupied = await state.plan({ kind: "volume", ids: [String(owned.id)] }); assert.ok(occupied.blockedBy.some(text => text.includes("mounted"))); s.instances().pop();
+    const input = applyState(await state.plan({ kind: "volume", ids: [String(owned.id)] })), receipt = await state.clear(input); assert.equal(receipt.status, "completed"); assert.deepEqual(await state.clear(input), receipt);
+    assert.equal(s.volumes().some(row => row.id === owned.id), false); assert.equal(s.volumes().some(row => row.id === foreign.id), true); assert.ok(s.volumes().some(row => row.id !== foreign.id));
+  } finally { state.journal.close(); await backend.closeContext(); await s.close(); }
+});
+
+test("CDP site maintenance binds native observations and deletes only selected origin/storage and exact cookie partitions without global cache/history calls", async () => {
+  const s = await fixture(), backend = new Backend(s.system, async () => undefined), frames: Array<{ method: string; params: any }> = [];
+  const storage = { indexeddb: 10, cache_storage: 5 };
+  let refuseStorage = false;
+  let cookies: any[] = [
+    { name: "selected", domain: ".selected.example", path: "/", value: "secret-value" },
+    { name: "partitioned", domain: ".selected.example", path: "/private", value: "partition-secret", partitionKey: { topLevelSite: "https://selected.example", hasCrossSiteAncestor: false } },
+    { name: "other-partition", domain: ".selected.example", path: "/", value: "retained-partition", partitionKey: { topLevelSite: "https://other.example", hasCrossSiteAncestor: true } },
+    { name: "other", domain: "other.example", path: "/", value: "retained" },
+  ];
+  const cdp = createServer((req, res) => { if (req.url === "/json/version") res.end(JSON.stringify({ webSocketDebuggerUrl: `ws://127.0.0.1:${(cdp.address() as any).port}/devtools/browser/fixture` })); else res.writeHead(404).end(); });
+  const ws = new WebSocketServer({ server: cdp });
+  ws.on("connection", peer => peer.on("message", raw => {
+    const request = JSON.parse(String(raw)); frames.push(request); let result: any = {};
+    switch (request.method) {
+      case "Storage.getCookies": result = { cookies }; break;
+      case "Storage.getUsageAndQuota": result = { usage: storage.indexeddb + storage.cache_storage, quota: 100, usageBreakdown: Object.entries(storage).map(([storageType, usage]) => ({ storageType, usage })) }; break;
+      case "Target.getTargets": result = { targetInfos: [{ targetId: "retained-human-tab", type: "page", url: "https://other.example/private" }] }; break;
+      case "Target.createTarget": result = { targetId: "maintenance-blank" }; break;
+      case "Target.attachToTarget": result = { sessionId: "maintenance-session" }; break;
+      case "Network.deleteCookies": cookies = cookies.filter(cookie => JSON.stringify([cookie.name, cookie.domain, cookie.path, cookie.partitionKey]) !== JSON.stringify([request.params.name, request.params.domain, request.params.path, request.params.partitionKey])); break;
+      case "Storage.clearDataForOrigin":
+        if (refuseStorage) { peer.send(JSON.stringify({ id: request.id, error: { code: -1, message: "Native storage failure" } })); return; }
+        for (const type of String(request.params.storageTypes).split(",")) if (type in storage) storage[type as keyof typeof storage] = 0;
+        break;
+      case "Target.closeTarget": result = { success: true }; break;
+      default: peer.send(JSON.stringify({ id: request.id, error: { code: -1, message: "Unsupported native command" } })); return;
+    }
+    peer.send(JSON.stringify({ id: request.id, result }));
+  }));
+  await new Promise<void>(resolve => cdp.listen(0, "127.0.0.1", resolve));
+  const launch = backend.launch.bind(backend); backend.launch = async (...args) => ({ ...await launch(...args), cdpUrl: `http://127.0.0.1:${(cdp.address() as any).port}` });
+  const profiles = new Profiles(backend, s.system, s.env, async () => [], fakeGate), state = new BrowseState(profiles, backend, s.env, s.system.root), ctx = { backend, system: s.system, profiles, state };
+  const call = async (name: string, input: unknown, invocation?: InvocationContext): Promise<any> => { const op = api.operations.find(op => op.name === name)!; return op.output.parse(await op.call(ctx, op.input.parse(input), invocation)); };
+  try {
+    await s.system.setHypemanLocation(s.root); await s.system.enableHypeman(s.root); await profiles.start(false); const profile = await profiles.create(null, "Site fixture"); await profiles.ensure(profile.id);
+    const selection = { profileId: profile.id, origins: ["https://selected.example"], categories: ["cookies", "storage", "cache"] };
+    await assert.rejects(call("browser_site_data_plan", { ...selection, origins: ["https://name:secret@selected.example/path"] }), /origins/);
+    const history = await call("browser_site_data_plan", { ...selection, categories: ["history"] }); assert.ok(history.blockedBy.some((text: string) => text.includes("unsupported")));
+    await assert.rejects(call("browser_site_data_clear", applyState(history)), /unsupported/);
+    const stale = await call("browser_site_data_plan", selection); assert.equal(JSON.stringify(stale).includes("secret-value"), false);
+    cookies[0].value = "changed-after-plan"; await assert.rejects(call("browser_site_data_clear", applyState(stale)), /changed/);
+    const input = applyState(await call("browser_site_data_plan", selection)), receipt = await call("browser_site_data_clear", input); assert.equal(receipt.status, "completed"); assert.deepEqual(await call("browser_site_data_clear", input), receipt);
+    assert.deepEqual(cookies.map(cookie => cookie.name), ["other-partition", "other"]); assert.equal(cookies[1].value, "retained");
+    const deletions = frames.filter(frame => frame.method === "Storage.clearDataForOrigin"); assert.equal(deletions.length, 2); assert.equal(deletions.every(frame => frame.params.origin === "https://selected.example"), true);
+    assert.equal(frames.some(frame => ["Network.clearBrowserCache", "Network.clearBrowserCookies", "Page.resetNavigationHistory"].includes(frame.method)), false);
+    assert.equal(receipt.outcomes.filter((row: any) => row.outcome === "removed").length, 3);
+    storage.cache_storage = 5; refuseStorage = true;
+    const failedInput = applyState(await call("browser_site_data_plan", selection));
+    const failed = await call("browser_site_data_clear", failedInput); assert.equal(failed.status, "partial");
+    for (const category of ["cache", "storage"]) assert.ok(failed.outcomes.some((row: any) => row.resource === `https://selected.example:${category}` && row.outcome === "unknown"));
+    const beforeRetry = frames.length; assert.deepEqual(await call("browser_site_data_clear", failedInput), failed); assert.equal(frames.length, beforeRetry);
+    assert.equal(profiles.list().find(row => row.id === profile.id)!.maintenanceRequestId, failedInput.requestId);
+    assert.deepEqual(cookies.map(cookie => cookie.name), ["other-partition", "other"]);
+    await assert.rejects(call("browser_site_data_plan", selection, { transport: "mcp", botId: null, instance: null, sessionId: null, threadId: null }), /operator authority/);
+  } finally { state.journal.close(); await backend.closeContext(); for (const peer of ws.clients) peer.terminate(); await new Promise<void>(resolve => ws.close(() => resolve())); await new Promise<void>(resolve => cdp.close(() => resolve())); await s.close(); }
+});
 
 test("research firewall denies guest private ranges, direct UDP and non-global IPv6 before Chrome starts", () => {
   const script = researchFirewall({ privateDestinations: [{ address: "10.1.2.3", port: 8443 }] });
@@ -63,6 +197,7 @@ async function fixture(options: { failInstanceCreate?: boolean } = {}) {
   await writeFile(join(root, "config.yaml"), JSON.stringify({ port: "4975", network: { subnet_cidr: "192.168.64.0/24" } }));
   let instances: Item[] = [];
   let volumes: Item[] = [];
+  let volumeSeq = 0, instanceSeq = 0;
   const server: Server = createServer(async (req, res) => {
     try {
       if (req.headers.authorization !== "Bearer test-token") { res.writeHead(403).end(); return; }
@@ -76,10 +211,10 @@ async function fixture(options: { failInstanceCreate?: boolean } = {}) {
       else if (req.method === "GET" && path === "/resources") output = { disk: { available: 100 * 1024 ** 3 } };
       else if (req.method === "GET" && path.startsWith("/images/")) output = { status: "ready" };
       else if (req.method === "POST" && path === "/volumes") {
-        volumes.push({ id: `volume-${volumes.length + 1}`, ...value }); output = volumes.at(-1);
+        volumes.push({ id: `volume-${++volumeSeq}`, ...value }); output = volumes.at(-1);
       } else if (req.method === "POST" && path === "/instances") {
         if (options.failInstanceCreate) { res.writeHead(503).end(); return; }
-        instances.push({ id: `instance-${instances.length + 1}`, ...value, state: "Running", network: { ip: "192.168.64.2" } }); output = instances.at(-1);
+        instances.push({ id: `instance-${++instanceSeq}`, ...value, state: "Running", network: { ip: "192.168.64.2" } }); output = instances.at(-1);
       } else if (req.method === "POST" && path.endsWith("/start")) {
         assert.equal(body, "{}");
         const item = instances.find((item) => path === `/instances/${String(item.id)}/start`)!;
@@ -228,7 +363,8 @@ test("MCP management scopes reads and every mutation to a verified live Bot laun
   const s = await fixture(); const backend = new Backend(s.system, async () => undefined);
   const bots = ["a", "b"].map((id) => ({ id, url: `unix:///bot-${id}`, state: "running", mainThreadId: `root-${id}`, recoveryIssue: null as string | null }));
   const profiles = new Profiles(backend, s.system, s.env, async () => bots, fakeGate);
-  const ctx = { backend, system: s.system, profiles };
+  const state = new BrowseState(profiles, backend, s.env, s.system.root);
+  const ctx = { backend, system: s.system, profiles, state };
   const invocation: InvocationContext = { transport: "mcp", botId: "a", instance: botInstance(bots[0]!.url), threadId: "main", sessionId: null };
   const receipts: Array<{ controller: string; revision: number }> = [];
   try {
@@ -276,7 +412,7 @@ test("MCP management scopes reads and every mutation to a verified live Bot laun
     for (const receipt of receipts) await profiles.disconnected(receipt.controller, receipt.revision);
     for (const bot of bots) await profiles.releaseBot(bot.id);
     for (const profile of profiles.list()) await profiles.remove(profile.id);
-    await profiles.close(); await backend.closeContext(); await s.close();
+    state.journal.close(); await profiles.close(); await backend.closeContext(); await s.close();
   }
 });
 
@@ -292,6 +428,7 @@ test("handoff admission, human revisions, retry-safe return, cancellation and re
   const makeGate = (cdp: string, neko: string): ManagedGate => ({ ...fakeGate(cdp, neko), hold() { held = true; }, resume() { if (failResume) throw new Error("resume failed"); held = false; },
     async drain() { if (blocked) throw new Error("drain pending"); }, async revokeHuman() { revoked++; }, async grantHuman() { granted++; return "http://human/grant"; } });
   let profiles = new Profiles(backend, s.system, s.env, async () => [bot], makeGate);
+  const maintenance = new BrowseState(profiles, backend, s.env, s.system.root);
   const workspace = join(s.root, "workspace");
   await mkdir(join(workspace, "packages", "browse"), { recursive: true });
   await writeFile(join(workspace, "packages", "browse", "api.yaml"), "name: browse\ndescription: Browse\nmcp:\n  description: Browse\n  operations: [browser_handoff_request, browser_handoff_completion]\n  events: [browser_handoffs_changed]\n");
@@ -301,7 +438,7 @@ test("handoff admission, human revisions, retry-safe return, cancellation and re
     operation({ name: "serve_completion_check", description: "Verify coordination", input: z.strictObject({ id: z.uuid(), package: z.string(), operation: z.string(), recordId: z.uuid(), caller: invocationContext }), output: z.object({ verified: z.boolean() }),
       async call(_ctx, input) { await owner.verifyCompletion(input.id, input.package, input.operation, input.recordId, input.caller); return { verified: true }; } }),
   ] });
-  const browse = await serveSocket({ info: { name: "browse", description: "Browse", transportDescription: "Socket", path: socketPath("browse", s.env) }, context: { get profiles() { return profiles; }, backend, system: s.system }, operations: [browserHandoffRequest, browserHandoffCompletion], events: { topics: { browser_handoffs_changed: "Handoff state changed." } } });
+  const browse = await serveSocket({ info: { name: "browse", description: "Browse", transportDescription: "Socket", path: socketPath("browse", s.env) }, context: { get profiles() { return profiles; }, backend, system: s.system, state: maintenance }, operations: [browserHandoffRequest, browserHandoffCompletion], events: { topics: { browser_handoffs_changed: "Handoff state changed." } } });
   profiles.onHandoffChange = () => browse.publish!("browser_handoffs_changed");
   try {
     await s.system.setHypemanLocation(s.root); await s.system.enableHypeman(s.root); await profiles.start(false);
@@ -316,6 +453,8 @@ test("handoff admission, human revisions, retry-safe return, cancellation and re
     const admission = await owner.callAndWatch("browse", "browser_handoff_request", { ...input, subscribe: undefined }, invocation);
     assert.deepEqual(admission.observation, { result: null });
     let h = admission as Handoff;
+    const openPlan = await maintenance.plan({ kind: "handoff", ids: [h.id] });
+    await assert.rejects(maintenance.clear({ planId: openPlan.id, expectedRevision: openPlan.revision, requestId: randomUUID() }), /Open handoff/);
     assert.equal(h.state, "preparing"); assert.match(h.issue!, /drain pending/); assert.equal(held, true);
     await assert.rejects(profiles.select("a", "later", own.id), /held/);
     await assert.rejects(profiles.requestHandoff({ ...input, requestId: randomUUID() }, invocation), /unresolved/);
@@ -355,6 +494,20 @@ test("handoff admission, human revisions, retry-safe return, cancellation and re
     assert.equal(owner.status(invocation).completions[0]?.state, "delivered");
     profiles.onHandoffChange = undefined;
     await assert.rejects(profiles.actHandoff("finish", { ...finish, note: "changed" }), /conflicts/);
+    const redaction = await maintenance.plan({ kind: "handoff", ids: [h.id] });
+    const staleRedaction = await maintenance.plan({ kind: "handoff", ids: [h.id] });
+    const redactionInput = { planId: redaction.id, expectedRevision: redaction.revision, requestId: randomUUID() };
+    const receipt = await maintenance.clear(redactionInput); assert.equal(receipt.status, "completed"); assert.deepEqual(await maintenance.clear(redactionInput), receipt);
+    await assert.rejects(maintenance.clear(applyState(staleRedaction)), /changed/);
+    const cleared = profiles.handoffs(null).find(row => row.id === h.id)!;
+    assert.equal(cleared.message, ""); assert.equal(cleared.note, null); assert.ok(cleared.contentClearedAt); assert.equal(cleared.outcome, "completed"); assert.equal(cleared.resolvedAt, h.resolvedAt);
+    assert.equal((await profiles.requestHandoff(input, invocation)).id, h.id, "original intent retry survives redaction via permanent digest");
+    const clearedRetry = await owner.callAndWatch("browse", "browser_handoff_request", { ...input, subscribe: undefined }, invocation);
+    assert.equal(clearedRetry.contentClearedAt, cleared.contentClearedAt);
+    assert.equal((clearedRetry.subscription as { state: string }).state, "delivered");
+    assert.equal(deliveries.length, 1, "content maintenance must not rearm an acknowledged handoff watch");
+    await assert.rejects(profiles.requestHandoff({ ...input, message: "changed" }, invocation), /conflicts/);
+    assert.equal((await profiles.actHandoff("finish", finish)).handoff.contentClearedAt, cleared.contentClearedAt);
     h = await profiles.requestHandoff({ ...input, requestId: randomUUID() }, invocation);
     h = (await profiles.actHandoff("finish", { id: h.id, expectedRevision: h.revision, requestId: randomUUID(), outcome: "skipped" })).handoff;
     assert.equal(h.outcome, "skipped");
@@ -380,6 +533,7 @@ test("handoff admission, human revisions, retry-safe return, cancellation and re
     // Native resource cleanup is exact and independent of the test handoff.
     for (const r of await backend.list()) if (r.target) await backend.close({ session: r.session, lease: r.lease, browserProfile: r.profile, browserTarget: r.target.name, backend: "local" });
     await backend.closeContext(); await server.close(); await s.close();
+    maintenance.journal.close();
   }
 });
 
