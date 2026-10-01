@@ -3,15 +3,16 @@ import { createHmac, randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { installationControlRoot, McpEventSubscriptions, serveApi, socketCall, type EventValue, type InvocationContext, type StatePlan } from "@stack/api";
+import { installationControlRoot, McpEventSubscriptions, serveApi, socketCall, type EventValue, type InvocationContext, type StatePage, type StatePlan, type StateReceipt } from "@stack/api";
 import type { Delivery, Endpoint, Watch, RemoteReceipt } from "../src/schema.js";
 
 const caller: InvocationContext = { transport: "mcp", botId: "bot-1", instance: "launch-1", threadId: "main", sessionId: null };
 async function fixture(extra: NodeJS.ProcessEnv = {}) {
   const root = await mkdtemp(join(tmpdir(), "stack-github-"));
   const env = { ...process.env, ...extra, STACK_STATE_DIR: root, STACK_GITHUB_PORT: "0" };
-  let served = await serveApi({ name: "github", transport: "socket", env });
+  let served = await serveApi({ name: "source", transport: "socket", env });
   const call = <T = any>(name: string, args: Record<string, unknown> = {}, invocation?: InvocationContext) => socketCall(served.socketPath!, "tools/call", { name, arguments: args, ...(invocation ? { invocation } : {}) }) as Promise<T>;
   const create = async (target: Endpoint["target"] = { kind: "repository", repository: "owner/project" }) => {
     const endpoint = await call<Endpoint>("github_endpoint_create", { id: randomUUID(), label: "Receiver", target, publicOrigin: "https://hooks.example.com" });
@@ -27,7 +28,7 @@ async function fixture(extra: NodeJS.ProcessEnv = {}) {
       "x-hub-signature-256": options.signature ?? `sha256=${createHmac("sha256", secret).update(raw).digest("hex")}`, ...options.headers,
     }, body: raw });
   };
-  return { root, env, call, create, send, async restart() { await served.close(); served = await serveApi({ name: "github", transport: "socket", env }); },
+  return { root, env, call, create, send, async restart() { await served.close(); served = await serveApi({ name: "source", transport: "socket", env }); },
     async close() { await served.close(); await rm(root, { recursive: true, force: true }); } };
 }
 const issue = (action = "opened", extra: Record<string, unknown> = {}) => ({ action, repository: { id: 3, full_name: "owner/project", owner: { login: "owner" } }, sender: { login: "human" }, issue: { id: 7, number: 4, title: "Unicode 🐙", labels: ["bug"], html_url: "https://github.com/owner/project/issues/4" }, ...extra });
@@ -38,13 +39,18 @@ test("signed arrivals drive scoped Stack subscriptions and survive coalescing, a
   let subscriptions: McpEventSubscriptions | undefined;
   try {
     const { endpoint, secret } = await f.create();
+    const inventory = await f.call<StatePage>("source_state_read", { measure: true });
+    const storage = inventory.entries.find(entry => entry.id === "source:webhooks")!;
+    assert.equal(storage.ownerPackage, "source");
+    assert.equal(storage.coverage, "complete"); assert.ok(storage.bytes! > 0);
+    assert.ok([...storage.reads, ...storage.actions].every(link => link.package === "source"));
     const watchId = randomUUID();
     const definition = { id: watchId, label: "Opened bugs", filter: { events: ["issues"], actions: ["opened"], repositories: ["OWNER/PROJECT"], predicates: [{ path: "/issue/labels", op: "contains", value: "bug" }] } };
     const watch = await f.call<Watch>("github_watch_create", definition, caller);
     assert.equal((await f.call<Watch>("github_watch_create", definition, caller)).id, watch.id);
     const snapshots: EventValue[] = [];
     subscriptions = new McpEventSubscriptions(f.env, async target => assert.equal(target.threadId, "main"), async event => { snapshots.push(event); });
-    const initial = await subscriptions.subscribe("github", { topic: "github_watches_changed", scope: watch.scope, readOperation: "github_watch_read", readArguments: { id: watch.id, limit: 1 } }, caller);
+    const initial = await subscriptions.subscribe("source", { topic: "github_watches_changed", scope: watch.scope, readOperation: "github_watch_read", readArguments: { id: watch.id, limit: 1 } }, caller);
     assert.equal((initial.value as { pending: number }).pending, 0);
     assert.equal((await f.send(endpoint, secret, "issues", issue("closed"))).status, 202);
     const firstPayload = issue();
@@ -70,15 +76,25 @@ test("signed arrivals drive scoped Stack subscriptions and survive coalescing, a
     assert.equal(acknowledged.acknowledgedThrough, admitted.sequence);
     await assert.rejects(f.call("github_watch_acknowledge", { id: watch.id, through: secondSequence, expectedAcknowledgedThrough: 0 }), /cursor_changed/);
     const plan = await f.call<StatePlan>("github_history_plan", { sequences: [secondSequence] });
+    assert.equal(plan.ownerPackage, "source");
     const clear = { planId: plan.id, expectedRevision: plan.revision, requestId: randomUUID() };
-    const cleared = await f.call("github_history_clear", clear);
+    const cleared = await f.call<StateReceipt>("github_history_clear", clear);
+    assert.equal(cleared.ownerPackage, "source");
     assert.deepEqual(await f.call("github_history_clear", clear), cleared);
     assert.equal((await f.call("github_watch_read", { id: watch.id })).pending, 1, "clearing does not erase frozen matches or acknowledge them");
     assert.equal((await f.call("github_delivery_payload", { sequence: secondSequence })).cleared, true);
     assert.equal((await f.send(endpoint, secret, "issues", secondPayload, { deliveryId: secondGuid })).status, 202);
     assert.equal((await f.call("github_delivery_payload", { sequence: secondSequence })).cleared, true, "duplicate redelivery cannot restore an intentionally cleared payload");
     await subscriptions.close(); subscriptions = undefined;
+    // Simulate a receipt persisted before the Package API rename. Reopening must
+    // preserve its historical owner rather than migrating or replaying it.
+    const legacyReceipt = { ...cleared, ownerPackage: "github" };
+    const legacy = new DatabaseSync(join(f.root, "github", "github.sqlite"));
+    try { legacy.prepare("UPDATE state_receipts SET receipt=? WHERE id=?").run(JSON.stringify(legacyReceipt), clear.requestId); }
+    finally { legacy.close(); }
     await f.restart();
+    assert.deepEqual((await f.call("github_state_receipt_get", { requestId: clear.requestId })).receipt, legacyReceipt);
+    assert.deepEqual(await f.call("github_history_clear", clear), legacyReceipt);
     assert.equal((await f.call("github_watch_read", { id: watch.id })).entries[0].sequence, secondSequence);
     assert.equal((await f.call("github_delivery_payload", { sequence: secondSequence })).cleared, true);
     assert.equal((await lstat(join(f.root, "github", "github.sqlite"))).mode & 0o777, 0o600);

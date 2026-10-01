@@ -23,7 +23,7 @@ export function factoryLifecycle(env: NodeJS.ProcessEnv, server: RunningServer, 
     },
     async quiesce() {
       await ingress();
-      for (const owner of ["github", "proc", "signal", "infer", "auth", "worker", "hud", "bots", "usage", "brain", "xcom", "scrape", "content", "roles", "notify", "api"]) await server.stop([owner], { graceful: true });
+      for (const owner of ["source", "proc", "signal", "infer", "auth", "worker", "hud", "bots", "usage", "brain", "xcom", "scrape", "content", "roles", "notify", "api"]) await server.stop([owner], { graceful: true });
     },
     async cleanup(selection, requestId, progress) {
       const blockers = await factoryRoleLaunchBlockers(root); if (blockers.length) throw new Error(blockers.join("; "));

@@ -8,7 +8,7 @@ Status: accepted, 2026-10-01. Extends [ADR 0033](0033-agent-facing-event-subscri
 
 ## Decision
 
-`packages/github` is a Server-supervised Package API process, not an agent-side
+`packages/source` is a Server-supervised Package API process, not an agent-side
 poller or another Bot wakeup service. Its separate loopback HTTP surface receives
 GitHub webhook POSTs at `/github/webhooks/{endpointId}`. Socket is the local
 superset; MCP selects agent discovery, delivery reads and watches; WebSocket

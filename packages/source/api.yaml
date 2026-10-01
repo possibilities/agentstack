@@ -1,4 +1,4 @@
-name: github
+name: source
 description: Signed GitHub webhook intake, lossless durable delivery records, exhaustive event/payload discovery and filtered watch inboxes delivered through Stack subscriptions. Local operator APIs guide and reconcile GitHub setup.
 socket:
   description: Full local GitHub control, webhook setup, delivery reads, watches and owner maintenance. Receiver secrets and remote hook changes require local operator authority.

@@ -14,7 +14,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { serverResourcesOutput, serverResourceHistoryOutput } from "../src/resources/schema.js";
 
 const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
-const socketNames = ["access", "api", "signal", "auth", "roles", "bots", "brain", "github", "xcom", "proc", "browse", "scrape", "content", "worker", "usage", "infer", "notify", "hud", "serve"];
+const socketNames = ["access", "api", "signal", "auth", "roles", "bots", "brain", "source", "xcom", "proc", "browse", "scrape", "content", "worker", "usage", "infer", "notify", "hud", "serve"];
 const brainEnv = { STACK_BRAIN_SHARE_HOST: "127.0.0.1", STACK_BRAIN_SHARE_PORT: "0", STACK_GITHUB_PORT: "0" };
 
 test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a standalone reference listener, then shuts them down", { timeout: 120_000 }, async () => {
@@ -64,7 +64,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       children: Array<{ name: string; pid: number | null; running: boolean }>;
     };
     assert.equal(status.pid, child.pid);
-    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["access", "api", "auth", "bots", "brain", "browse", "content", "github", "hud", "infer", "inspector", "notify", "proc", "roles", "scrape", "signal", "ui", "usage", "websocket", "worker", "xcom"]);
+    assert.deepEqual(status.children.map((entry) => entry.name).sort(), ["access", "api", "auth", "bots", "brain", "browse", "content", "hud", "infer", "inspector", "notify", "proc", "roles", "scrape", "signal", "source", "ui", "usage", "websocket", "worker", "xcom"]);
     for (let i = 0; i < 200 && status.children.some((entry) => !entry.running); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
       status = (await socketCall(serverSock, "tools/call", { name: "serve_status", arguments: {} })) as typeof status;
@@ -171,7 +171,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     assert.equal(servers?.status, 200, stderr);
-    assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["api", "auth", "bots", "brain", "browse", "chrome", "computer-history", "computer-use", "content", "github", "hud", "messages", "notify", "openai-developer-docs", "proc", "roles", "scrape", "serve", "usage", "worker", "xcom"]);
+    assert.deepEqual(Object.keys((await servers.json() as { mcpServers: Record<string, unknown> }).mcpServers).sort(), ["api", "auth", "bots", "brain", "browse", "chrome", "computer-history", "computer-use", "content", "hud", "messages", "notify", "openai-developer-docs", "proc", "roles", "scrape", "serve", "source", "usage", "worker", "xcom"]);
     const inspectorUrl = `http://127.0.0.1:${inspectorPort}/`;
     assert.equal((await fetch(inspectorUrl, { redirect: "manual" })).status, 303);
     assert.equal((await fetch(`${inspectorUrl}api/servers`, { headers: { "x-mcp-remote-auth": "Bearer test-token" } })).status, 401);

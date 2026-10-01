@@ -52,8 +52,8 @@ async function fixture(options: NodeJS.ProcessEnv = {}) {
   try {
     await new Promise<void>((resolve, reject) => { child.once("message", () => resolve()); child.once("error", reject); child.once("exit", () => reject(new Error(logs))); });
     // Readiness calls are observation only, never retries of an uncertain mutation.
-    await ready(async () => { await socketCall(socketPath("content", env), "tools/call", { name: "list", arguments: {} }); await socketCall(socketPath("github", env), "tools/call", { name: "github_status", arguments: {} }); await call("serve_factory_reset_plan", { scope: "installation" }); });
-    await socketCall(socketPath("github", env), "tools/call", { name: "github_endpoint_create", arguments: { id: randomUUID(), label: "Reset receiver", target: { kind: "app" } } });
+    await ready(async () => { await socketCall(socketPath("content", env), "tools/call", { name: "list", arguments: {} }); await socketCall(socketPath("source", env), "tools/call", { name: "github_status", arguments: {} }); await call("serve_factory_reset_plan", { scope: "installation" }); });
+    await socketCall(socketPath("source", env), "tools/call", { name: "github_endpoint_create", arguments: { id: randomUUID(), label: "Reset receiver", target: { kind: "app" } } });
   } catch (error) { child.kill("SIGTERM"); await exited; await rm(directory, { recursive: true, force: true }); throw error; }
   return { directory, root, env, repo, claim, tip, oldIdentity, child, exited, call, logs: () => logs,
     async close() { if (child.exitCode === null && child.signalCode === null) { child.kill("SIGTERM"); await exited; } await rm(directory, { recursive: true, force: true }); } };
@@ -66,6 +66,7 @@ async function ready(read: () => Promise<unknown>) {
 test("factory reset socket admission drains actual owners, retains source/Git/device copies, empties the generation and stays stopped until exact cold release", { timeout: 30_000 }, async () => {
   const f = await fixture({ FACTORY_DRAIN_DELAY: "400" });
   try {
+    assert.ok(existsSync(join(f.root, "github", "github.sqlite")), "source owns the unchanged GitHub storage path");
     await writeFile(join(f.root, "foreign.txt"), "not owned");
     await assert.rejects(f.call("serve_factory_reset_plan", { scope: "installation" }), /Unknown\/unsafe/);
     assert.equal(existsSync(join(installationControlRoot(f.env), "fence.json")), false);

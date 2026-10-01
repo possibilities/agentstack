@@ -60,7 +60,7 @@ const controls: Record<string, (name: string) => boolean> = {
 // do not extend a remote grant to these new operator surfaces.
 const localStateOperation = (name: string) => /_state_|_bot_dependencies$|_history_(plan|clear)$|_catalog_clear$|_settings_receipts_(plan|clear)$|^browser_(profile_reset_|site_data_|volume_|handoff_history_)|^role_launch_(list|plan|clear)$|^worker_account_cache_(plan|clear)$|^attention_checkpoint_(plan|reset)$|^brain_(jobs|runs|source|artifacts)_(plan|clear)$|^scrape_(queue_(plan|apply)$|corpus_(list|plan|clear)$)|^serve_subscription_|^bot_(workspace_|history_|log_|launch_|recovery_|session_reset$|upload_remove$|queue_history$|queue_bodies_clear$)|^chat_upload_(list|read)$|^content_(blob_list|storage_|publication_)|^blob_stage_(list|abort)$|^attention_infer_requests$|^usage_observations_|^xcom_control$|^worker_workspace_|^work_focus_(list|retire)/.test(name);
 const localDeveloperOperation = (pkg: string, name: string) => /^(?:serve|browser)_factory_reset_/.test(name) || pkg === "serve" && /^(serve_settings_|serve_harness_releases)/.test(name);
-const localGithubOperation = (pkg: string, name: string) => pkg === "github" && /^(github_auth_|github_repositories$|github_organizations$|github_hook_|github_remote_receipt_|github_endpoint_(create|update|secret_))/.test(name);
+const localGithubOperation = (pkg: string, name: string) => pkg === "source" && /^(github_auth_|github_repositories$|github_organizations$|github_hook_|github_remote_receipt_|github_endpoint_(create|update|secret_))/.test(name);
 
 export type RemoteUiOptions = { store: AccessStore; env: NodeJS.ProcessEnv; host: string; port: number;
   verify?: (peer: Peer) => Promise<void>; fetchBackend?: typeof fetch; root?: string };

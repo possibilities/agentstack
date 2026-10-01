@@ -40,7 +40,7 @@ export class GithubStore {
         CREATE TABLE hook_plans(id TEXT PRIMARY KEY, expires INTEGER NOT NULL, value TEXT NOT NULL);
         CREATE TABLE remote_requests(id TEXT PRIMARY KEY, digest TEXT NOT NULL, value TEXT NOT NULL);
         PRAGMA user_version=1; COMMIT;`);
-      this.maintenance = new StateJournal(this.db, "github");
+      this.maintenance = new StateJournal(this.db, "source");
       for (const row of this.db.prepare("SELECT id,value FROM remote_requests WHERE json_extract(value,'$.status')='running'").all() as { id: string; value: string }[]) {
         const receipt = JSON.parse(row.value) as RemoteReceipt;
         this.finishRemote({ ...receipt, status: "unknown", completedAt: new Date().toISOString(), error: "owner_interrupted: inspect GitHub before preparing a new request; this request will not execute again" });
