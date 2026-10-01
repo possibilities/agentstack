@@ -260,11 +260,12 @@ export function NodeLink({ node, label, children, className }: {
 }
 
 /** A window's placeholder: its icon and a short title, nothing more. Creation lives in the window header. */
-export function Empty({ icon: Icon, title }: { icon: React.ComponentType<{ className?: string }>; title: string }) {
+export function Empty({ icon: Icon, title, hint }: { icon: React.ComponentType<{ className?: string }>; title: string; hint?: string }) {
   return (
     <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed px-4 py-6 text-center">
       <Icon className="size-5 text-muted-foreground/70" />
       <p className="text-sm font-medium">{title}</p>
+      {hint ? <p className="max-w-72 text-[0.72rem] text-pretty text-muted-foreground">{hint}</p> : null}
     </div>
   );
 }

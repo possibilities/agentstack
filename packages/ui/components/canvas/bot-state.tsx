@@ -10,6 +10,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { botBlockers, purgeable, queueWords, workspaceOwned, type BotHistoryGeneration, type BotLaunch, type BotQueueEntry, type BotStateRead } from "@/lib/stack/bot-state";
 import { relativeTime, shortId } from "@/lib/stack/derive";
+import { orientationLabel, orientationMeaning, orientationPhase } from "@/lib/stack/orientation";
 import { formatBytes } from "@/lib/stack/resources";
 import { localOperation } from "@/lib/stack/state";
 import type { Bot, StateReceipt } from "@/lib/stack/types";
@@ -20,8 +21,8 @@ import { BotAction, hintClass, labelClass, MoreButton, Pill, ReadError, useBotAc
 import { LogView, RecoveryView, UploadsView, WorkspaceView } from "./bot-state-files";
 import { StateFlowView, StateReceiptView } from "./state-flow";
 import { StateEntryDetails } from "./state-windows";
-import { Empty, NodeLink } from "./primitives";
-import { useNow, useProcWindows, useStack, useStore, useWorkbench, useWorkerWindows } from "./provider";
+import { CopyButton, Empty, NodeLink } from "./primitives";
+import { useChatWindows, useNow, useProcWindows, useStack, useStore, useWorkbench, useWorkerWindows } from "./provider";
 import { Window } from "./window";
 
 type View = "overview" | "workspace" | "conversation" | "queue" | "uploads" | "launch" | "log" | "recovery";
@@ -127,6 +128,47 @@ function DependencyLinks({ bot }: { bot: Bot }) {
   );
 }
 
+/** An ID the owner recorded for the introduction, selectable and copyable like the other IDs here. */
+function RecordedId({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      <span className="shrink-0 text-muted-foreground">{label}</span>
+      <code className="min-w-0 truncate font-mono text-[0.68rem]" title={value}>{value}</code>
+      <CopyButton value={value} label={`${label.toLowerCase()} ID`} className="-my-1 size-5 opacity-100" />
+    </span>
+  );
+}
+
+/**
+ * The Bot's one-time introduction, kept apart from its process state: a root or an idle thread does not establish an
+ * outcome, and a legacy Bot is not enrolled rather than waiting. Reads the owner's record; it starts and retries nothing.
+ */
+function Initialization({ bot }: { bot: Bot }) {
+  const now = useNow(15_000);
+  const { chats } = useChatWindows();
+  const { goTo } = useWorkbench();
+  const orientation = bot.orientation;
+  if (!orientation) return <span>Not enrolled (legacy Bot)</span>;
+  const phase = orientationPhase(orientation);
+  const retired = phase === "retired";
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <span title={orientationMeaning(orientation) ?? undefined}>{orientationLabel(orientation)}<span className="text-muted-foreground"> · {relativeTime(orientation.updatedAt, now)}</span></span>
+      {orientation.issue ? <span className="text-pretty text-muted-foreground">{orientation.issue}</span> : null}
+      {orientation.threadId ? <RecordedId label={retired ? "Retired root" : "Root"} value={orientation.threadId} /> : null}
+      {orientation.turnId ? <RecordedId label={retired ? "Retired turn" : "Turn"} value={orientation.turnId} /> : null}
+      {phase === "unknown" ? (
+        <p className={hintClass}>
+          Stack couldn&rsquo;t confirm the native outcome. Voice stays closed and nothing is resent. Inspect its{" "}
+          <button type="button" className="underline-offset-4 hover:underline" onClick={() => goTo({ kind: "chat", id: chats.show(bot.id) })}>Chat</button>,
+          or stop the Bot and reset its conversation to start over.
+        </p>
+      ) : null}
+      {retired ? <p className={hintClass}>The conversation was reset. This is not a native completion, and the introduction will not repeat.</p> : null}
+    </div>
+  );
+}
+
 function Overview({ scope, bot, data, refresh }: { scope: BotScope; bot: Bot; data: BotStateRead; refresh(): void }) {
   const blockers = botBlockers(data);
   const [open, setOpen] = useState<string | null>(null);
@@ -137,6 +179,7 @@ function Overview({ scope, bot, data, refresh }: { scope: BotScope; bot: Bot; da
         <dt className="text-muted-foreground">Incarnation</dt><dd className="truncate font-mono text-[0.68rem]" title={data.incarnation}>{data.incarnation}</dd>
         <dt className="text-muted-foreground">Generation</dt><dd className="truncate font-mono text-[0.68rem]" title={data.generation}>{data.generation}</dd>
         <dt className="text-muted-foreground">Main thread</dt><dd className="truncate font-mono text-[0.68rem]" title={bot.mainThreadId ?? undefined}>{bot.mainThreadId ?? "None bound yet"}</dd>
+        <dt className="text-muted-foreground">Initialization</dt><dd className="min-w-0"><Initialization bot={bot} /></dd>
       </dl>
       {data.maintenanceRequestId ? <MaintenanceFence scope={scope} requestId={data.maintenanceRequestId} onReleased={refresh} /> : null}
       <section aria-label="Cleanup blockers" className="flex flex-col gap-1.5">
@@ -257,6 +300,7 @@ function ConversationView({ scope, bot }: { scope: BotScope; bot: Bot }) {
         <span className={labelClass}>Reset conversation</span>
         <ul className="flex list-disc flex-col gap-0.5 pl-4 text-[0.72rem] text-muted-foreground">
           <li>The current root {bot.mainThreadId ? <code className="font-mono">{shortId(bot.mainThreadId)}</code> : null} is retired and the history namespace advances. The next durable turn binds a new root.</li>
+          <li>{bot.orientation ? "The Bot’s introduction is retired too, which is not a native completion, and Stack will not repeat it. The next first message starts the new main thread." : "This Bot has no introduction to retire. The next first message starts the new main thread."}</li>
           <li>Bot identity, account, workspace and settings stay. Pending queue entries are cancelled; sent and unknown admissions and queued bodies stay as evidence.</li>
           <li>Signal, Infer, Worker, Browser and HUD copies are separate and stay. A server restart can autostart this Bot.</li>
         </ul>

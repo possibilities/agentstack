@@ -37,6 +37,22 @@ const defaults = { model: "gpt-6-sol", reasoningEffort: "medium", sandboxMode: "
 const bot = (name, state = "stopped") => ({ id: name, state, pid: state === "running" ? 321 : null, cwd: "/fixture/private/workspace", url: null,
   account: id(1), runningAccount: state === "running" ? id(1) : null, mainThreadId: id(10), recoveryIssue: null, roleRevision: 1, settings: defaults });
 let bots = [bot("bot-1", "running"), bot("bot-2")];
+// One-time introductions (orientation). Each phase must read differently on the card, in Chat, in the call list and in the workbench.
+const introduction = (state, fields = {}) => ({ admissionId: id(40), state, threadId: null, turnId: null, issue: null, updatedAt: Date.now() - 90_000, ...fields });
+const introduced = (name, orientation, mainThreadId = null) => ({ ...bot(name, "running"), url: "ws://127.0.0.1:4100", mainThreadId, orientation });
+const uncertain = "Orientation admission or outcome is uncertain. Inspect the exact root and native history; Stack will not resend the introduction automatically.";
+const introductions = () => [
+  introduced("orient-admitting", introduction("creating")),
+  introduced("orient-running", introduction("running", { threadId: id(11), turnId: id(12) }), id(11)),
+  introduced("orient-unknown", introduction("unknown", { threadId: id(13), turnId: id(14), issue: uncertain }), id(13)),
+  introduced("orient-lost-root", introduction("unknown", { issue: "No exact native evidence confirms orientation admission. Inspect history or explicitly reset the conversation; no automatic retry is permitted." })),
+  introduced("orient-failed", introduction("failed", { threadId: id(15), turnId: id(16) }), id(15)),
+  introduced("orient-interrupted", introduction("interrupted")),
+  introduced("orient-retired", introduction("retired", { threadId: id(17), turnId: id(18), issue: "Orientation belongs to an explicitly retired conversation generation; it will not repeat." })),
+  introduced("orient-legacy", null),
+  introduced("orient-done", introduction("completed", { threadId: id(19), turnId: id(20) }), id(19)),
+];
+let callOpen = true;
 let stamp = Date.now();
 const observation = { observedAtMs: stamp, lastAttemptAtMs: stamp, fresh: true, error: null };
 const usage = { atMs: stamp, inventoryAtMs: stamp, inventoryError: null, accounts: [
@@ -69,7 +85,9 @@ const handlers = {
   serve_status: () => ({ pid: process.pid, startedAt: new Date().toISOString(), nodeVersion: process.version, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
   account_list: () => ({ accounts: botAccounts }), worker_account_list: () => ({ accounts: workerAccounts }),
   account_login_current: () => ({ login: null }), worker_account_login_current: () => ({ logins: [] }),
-  bot_list: () => ({ bots }), bot_defaults_get: () => defaults, voice_status: () => ({ call: activeCall }),
+  bot_list: () => ({ bots }), bot_defaults_get: () => defaults, voice_status: () => ({ call: callOpen ? activeCall : null }),
+  bot_state_read: () => ({ incarnation: id(50), generation: id(51), maintenanceRequestId: null, entries: [] }),
+  bot_history_list: () => ({ generations: [], revision: "fixture", nextOffset: null }),
   voice_speak: ({ sessionId }) => ({ sessionId, status: "submitted" }),
   bot_start: (input) => { let item = bots.find((bot) => bot.id === input.id); if (!item) { item = bot(input.id ?? "bot-3"); bots.push(item); } Object.assign(item, { state: "running", pid: 456, account: input.account, runningAccount: input.account, cwd: input.cwd ?? item.cwd, settings: { ...item.settings, ...input.settings } }); return item; },
   bot_stop: (input) => { const item = bots.find((bot) => bot.id === input.id); Object.assign(item, { state: "stopped", pid: null, runningAccount: null }); return item; },
@@ -468,6 +486,144 @@ try {
   await page.mouse.up();
   const fitted = await accountsWindow.evaluate((el) => ({ height: el.offsetHeight, style: el.style.height }));
   assert.deepEqual(fitted, { height: natural, style: "" }, "released in the groove, the window keeps fitting its content");
+  // One-time introductions. A running process, an admitted introduction and a known outcome are different facts; Bots are
+  // added only here so the checks above and below are untouched.
+  const settled = bots;
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin });
+  bots = [...settled, ...introductions()];
+  callOpen = false;
+  served.get("bots").publish("bots_changed");
+  served.get("bots").publish("voice_changed");
+  await jump("bot orient-admitting", /orient-admitting/);
+  const cardOf = (name) => page.locator(`[data-node="bot:${name}"]`);
+  const chips = { "orient-admitting": "Preparing introduction", "orient-running": "Introducing", "orient-unknown": "Introduction needs inspection", "orient-lost-root": "Introduction needs inspection",
+    "orient-failed": "Introduction failed", "orient-interrupted": "Introduction interrupted" };
+  for (const [name, text] of Object.entries(chips)) {
+    await cardOf(name).getByText(text, { exact: true }).waitFor();
+    await cardOf(name).getByText("running", { exact: true }).waitFor();
+  }
+  // Settled Bots stay quiet: a legacy Bot is not enrolled, an introduction that finished needs no flag, and a reset is not an outcome.
+  for (const name of ["orient-retired", "orient-legacy", "orient-done"]) assert.equal(await cardOf(name).getByText(/introduc|preparing|orientation/i).count(), 0, `${name} shows no introduction chip`);
+  // The Bots window is taller than the page; a tall viewport shows every card in the capture.
+  const cards = async (name) => { await page.setViewportSize({ width: 1440, height: 2400 }); await page.locator('[data-window="bots"]').screenshot({ path: join(evidence, name), animations: "disabled" }); await page.setViewportSize({ width: 1440, height: 1100 }); };
+  await cards("orientation-fleet-cards.png");
+
+  // The workbench offers no first chat while initialization is unfinished, and refuses competing input only during admission.
+  const tools = async (name) => { await cardOf(name).getByRole("button", { name: "Tools", exact: true }).click(); return dialog.getByLabel("Operation", { exact: true }); };
+  const operation = await tools("orient-admitting");
+  assert.equal(await operation.inputValue(), "chat_list", "an unfinished introduction starts on a read, not a refused first chat");
+  await operation.selectOption("chat_open");
+  await dialog.getByText("Initialization is unfinished; Stack won’t create another main thread.", { exact: true }).waitFor();
+  assert.equal(await dialog.getByRole("button", { name: "Open first chat", exact: true }).isDisabled(), true);
+  await dialog.screenshot({ path: join(evidence, "orientation-tools-refused.png"), animations: "disabled" });
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  assert.equal(await (await tools("orient-legacy")).inputValue(), "chat_open", "a legacy Bot with no root still opens its first chat");
+  assert.equal(await dialog.getByRole("button", { name: "Open first chat", exact: true }).isDisabled(), false);
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  assert.equal(await (await tools("orient-failed")).inputValue(), "chat_list");
+  await dialog.getByLabel("Operation", { exact: true }).selectOption("chat_open");
+  await dialog.getByText("This Bot already has a main thread; use chat_send.", { exact: true }).waitFor();
+  await dialog.getByLabel("Operation", { exact: true }).selectOption("chat_send");
+  assert.equal(await dialog.getByRole("button", { name: "Send chat message", exact: true }).isDisabled(), false, "after a known outcome, input is ordinary start-or-steer");
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  const running = await tools("orient-running");
+  await running.selectOption("chat_send");
+  assert.equal(await dialog.getByRole("button", { name: "Send chat message", exact: true }).isDisabled(), false, "an admitted, running introduction keeps start-or-steer");
+  await running.selectOption("chat_open");
+  await dialog.getByText("Initialization is unfinished; Stack won’t create another main thread.", { exact: true }).waitFor();
+  await running.selectOption("chat_send");
+  bots.find((bot) => bot.id === "orient-running").orientation = introduction("submitting", { threadId: id(11) });
+  served.get("bots").publish("bots_changed");
+  await dialog.getByText("Stack is admitting this Bot’s introduction; refresh before sending competing input.", { exact: true }).waitFor();
+  assert.equal(await dialog.getByRole("button", { name: "Send chat message", exact: true }).isDisabled(), true);
+  assert.equal(await dialog.getByRole("button", { name: "Read", exact: true }).count(), 0, "chat_send is not a read");
+  await running.selectOption("chat_list");
+  assert.equal(await dialog.getByRole("button", { name: "Read", exact: true }).isDisabled(), false, "reads stay available during admission");
+  bots.find((bot) => bot.id === "orient-running").orientation = introduction("running", { threadId: id(11), turnId: id(12) });
+  served.get("bots").publish("bots_changed");
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  assert.deepEqual(calls.filter((call) => ["chat_open", "chat_send", "chat_enqueue"].includes(call.name) && call.input.botId?.startsWith("orient-")), [], "no competing input or root was ever submitted");
+
+  // Chat says what a Bot with no main thread is waiting for.
+  const chat = page.locator('[data-window="chat"]');
+  const chatOf = async (name, title, hint, status) => {
+    await cardOf(name).getByRole("button", { name: "Chat", exact: true }).click();
+    await chat.getByText(title, { exact: true }).waitFor();
+    await chat.getByText(hint, { exact: true }).waitFor();
+    if (status) await chat.getByText(status, { exact: true }).waitFor();
+  };
+  await chatOf("orient-admitting", "Preparing introduction", "Stack is starting orient-admitting’s one-time introduction. Its main thread appears here once admitted.", "preparing introduction");
+  await chat.screenshot({ path: join(evidence, "orientation-chat-admitting.png"), animations: "disabled" });
+  await chatOf("orient-lost-root", "Initialization needs inspection", `No exact native evidence confirms orientation admission. Inspect history or explicitly reset the conversation; no automatic retry is permitted. Stack won’t create another main thread automatically. Inspect orient-lost-root for details.`, "initialization needs inspection");
+  await chat.screenshot({ path: join(evidence, "orientation-chat-unknown.png"), animations: "disabled" });
+  await chatOf("orient-interrupted", "No main thread yet", "orient-interrupted’s introduction did not complete. Sending a first message starts its main thread.");
+  await chatOf("orient-retired", "No main thread yet", "orient-retired’s conversation was reset and its introduction will not repeat. The main thread begins with its first message.");
+  await chatOf("orient-legacy", "No main thread yet", "orient-legacy’s main thread begins with its first turn.");
+
+  // Voice stays closed until the outcome is known; the empty list no longer tells a new Bot to be given a first turn.
+  const callList = async () => { await page.getByRole("button", { name: "Call a bot", exact: true }).click(); return page.getByRole("dialog"); };
+  const callRow = (list, name) => list.getByRole("listitem").filter({ hasText: name, has: page.getByText(name, { exact: true }) });
+  let list = await callList();
+  for (const [name, reason] of Object.entries({ "orient-admitting": "Preparing introduction", "orient-running": "Introducing", "orient-unknown": "Needs inspection",
+    "orient-lost-root": "Needs inspection", "orient-interrupted": "Needs first turn", "orient-retired": "Needs first turn", "orient-legacy": "Needs first turn" })) {
+    await callRow(list, name).getByText(reason, { exact: true }).waitFor();
+    assert.equal(await callRow(list, name).getByRole("button", { name: "Call", exact: true }).count(), 0, `${name} cannot be called`);
+  }
+  for (const name of ["orient-failed", "orient-done"]) await callRow(list, name).getByRole("button", { name: "Call", exact: true }).waitFor();
+  await page.screenshot({ path: join(evidence, "orientation-voice-list.png"), animations: "disabled" });
+  await page.keyboard.press("Escape");
+  bots = [];
+  served.get("bots").publish("bots_changed");
+  list = await callList();
+  await list.getByText("Start a bot. It introduces itself first; once that finishes you can call it.", { exact: true }).waitFor();
+  assert.equal(await list.getByText(/first turn/).count(), 0);
+  await page.screenshot({ path: join(evidence, "orientation-voice-empty.png"), animations: "disabled" });
+  await page.keyboard.press("Escape");
+  bots = [...settled, ...introductions()];
+  served.get("bots").publish("bots_changed");
+
+  // Bot state separates initialization from lifecycle: the owner's issue and recorded IDs, a retired introduction, a legacy Bot.
+  await cardOf("orient-unknown").getByRole("button", { name: "State", exact: true }).click();
+  const state = page.locator('[data-window="bot-state"]');
+  const row = state.locator("dt", { hasText: "Initialization" }).locator("xpath=following-sibling::dd[1]");
+  await state.getByText("Initialization", { exact: true }).waitFor();
+  await row.getByText("Needs inspection", { exact: false }).waitFor();
+  await row.getByText(uncertain, { exact: true }).waitFor();
+  await row.getByText(id(13), { exact: true }).waitFor();
+  await row.getByText(id(14), { exact: true }).waitFor();
+  await row.getByText("Stack couldn’t confirm the native outcome. Voice stays closed and nothing is resent.", { exact: false }).waitFor();
+  await row.getByRole("button", { name: "Chat", exact: true }).waitFor();
+  await state.getByRole("button", { name: "Copy turn ID", exact: true }).click();
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), id(14));
+  await state.screenshot({ path: join(evidence, "orientation-bot-state-unknown.png"), animations: "disabled" });
+  await state.getByRole("combobox", { name: "Bot" }).selectOption("orient-legacy");
+  await state.getByText("Not enrolled (legacy Bot)", { exact: true }).waitFor();
+  await state.getByRole("combobox", { name: "Bot" }).selectOption("orient-retired");
+  await row.getByText("Orientation retired", { exact: false }).waitFor();
+  await state.getByText("The conversation was reset. This is not a native completion, and the introduction will not repeat.", { exact: true }).waitFor();
+  await state.getByText(id(17), { exact: true }).waitFor();
+  assert.equal(await state.getByText("Retired root", { exact: true }).count(), 1);
+  await state.getByRole("radio", { name: "Conversation", exact: true }).or(state.getByRole("button", { name: "Conversation", exact: true })).first().click();
+  await state.getByText("The Bot’s introduction is retired too, which is not a native completion, and Stack will not repeat it. The next first message starts the new main thread.", { exact: true }).waitFor();
+  await state.getByRole("combobox", { name: "Bot" }).selectOption("orient-legacy");
+  await state.getByText("This Bot has no introduction to retire. The next first message starts the new main thread.", { exact: true }).waitFor();
+
+  // Dark and narrow keep the same words.
+  await page.emulateMedia({ colorScheme: "dark" });
+  await cards("orientation-fleet-cards-dark.png");
+  await state.getByRole("combobox", { name: "Bot" }).selectOption("orient-unknown");
+  await state.getByRole("radio", { name: "Overview", exact: true }).or(state.getByRole("button", { name: "Overview", exact: true })).first().click();
+  await state.screenshot({ path: join(evidence, "orientation-bot-state-unknown-dark.png"), animations: "disabled" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await jump("bot orient-unknown", /orient-unknown/);
+  await cardOf("orient-unknown").getByText("Introduction needs inspection", { exact: true }).waitFor();
+  await page.screenshot({ path: join(evidence, "orientation-fleet-mobile.png"), fullPage: true, animations: "disabled" });
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.emulateMedia({ colorScheme: "light" });
+  bots = settled;
+  callOpen = true;
+  served.get("bots").publish("bots_changed");
+  served.get("bots").publish("voice_changed");
   await page.emulateMedia({ colorScheme: "dark" });
   await page.screenshot({ path: join(evidence, "fleet-dark.png"), fullPage: true, animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -478,7 +634,7 @@ try {
   assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 391, "mobile dialog fits the viewport");
   await page.screenshot({ path: join(evidence, "create-mobile.png"), animations: "disabled" });
   assert.deepEqual(errors, [], "browser has no uncaught application errors");
-  console.log(JSON.stringify({ ok: true, evidence, assertions: "live discovery defaults, catalog tabs/filter/refresh, usage meters/inspection, create validation/payload, stop/assign/restart/remove, scoped history/speech, Lab call speech, Lab inference discovery/ledger/unknown outcome/idempotent resend, stopped queue admission, interrupted upload reopening/resume, light/dark/mobile", actions: calls.filter((call) => mutations.has(call.name)) }, null, 2));
+  console.log(JSON.stringify({ ok: true, evidence, assertions: "live discovery defaults, catalog tabs/filter/refresh, usage meters/inspection, create validation/payload, stop/assign/restart/remove, scoped history/speech, Lab call speech, Lab inference discovery/ledger/unknown outcome/idempotent resend, stopped queue admission, interrupted upload reopening/resume, one-time introduction phases on cards, Chat, call list, workbench and Bot state, light/dark/mobile", actions: calls.filter((call) => mutations.has(call.name)) }, null, 2));
 } catch (error) {
   const page = browser?.contexts()[0]?.pages()[0];
   if (page) await page.screenshot({ path: join(evidence, "failure.png"), animations: "disabled" }).catch(() => undefined);

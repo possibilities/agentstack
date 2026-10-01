@@ -38,6 +38,8 @@ export function RolePreviewWindow() {
   // Follow the editor: instruction records show the text, resource records show the launch.
   useEffect(() => { if (editingResource !== null) setView(editingResource ? "launch" : "instructions"); }, [editingResource]);
   const preview = rolePreview.data;
+  // The renderer delivers bot.md only when it has text beyond whitespace.
+  const personality = preview?.botMarkdown?.trim() ? preview.botMarkdown : null;
   const pieces = preview ? previewPieces(preview, role.data) : [];
   const bytes = preview ? preview.botBytes ?? previewBytes(preview) : 0;
   const limit = typeof preview?.limitBytes === "number" ? preview.limitBytes : fallbackLimitBytes;
@@ -107,8 +109,8 @@ export function RolePreviewWindow() {
 
   return (
     <Window id="role-preview" title="Preview" subtitle={[roleView.label, "SYSTEM_APPEND.md"].filter(Boolean).join(" · ")} icon={FileTextIcon} accent="roles"
-      status={status.roles} endpoint={endpoints.roles} updatedAt={rolePreview.at} error={rolePreview.error} empty={!preview?.rendered && !preview?.botMarkdown}
-      actions={preview?.rendered ? <CopyButton value={preview.rendered} label="rendered instructions" className="opacity-100" /> : undefined}>
+      status={status.roles} endpoint={endpoints.roles} updatedAt={rolePreview.at} error={rolePreview.error} empty={!preview?.rendered && !personality}
+      actions={preview?.rendered ? <CopyButton value={preview.rendered} label="Fragments" className="opacity-100" /> : undefined}>
       <DefaultNote />
       {tabs}
       {context}
@@ -121,13 +123,13 @@ export function RolePreviewWindow() {
           </p>
           <p className="px-0.5 text-[0.66rem] text-pretty text-muted-foreground">
             {contextSummary(roleContext)
-              ? "What an injected launch with this context receives. Bots and Workers supply no context, so they receive the preview without it."
+              ? "Context selects which fragments render for an injected launch; Bots and Workers supply none, so they receive the preview without it. bot.md is Bot-only and is excluded from Workers and injected CLIs, so the size above is not what an injected launch receives."
               : "Bots append these fragments and bot.md to SYSTEM_APPEND.md; Workers receive only the fragments."} Native and repository guidance still apply.
           </p>
         </div>
       ) : null}
-      {preview?.botMarkdown ? <Section title="bot.md · Bots only" aside={<Button size="xs" variant="ghost" onClick={() => roleView.role && actions.open({ kind: "role", id: roleView.role.id })}>Edit personality</Button>}>
-        <pre className="rounded-lg border bg-background/60 px-2.5 py-2 font-mono text-[0.72rem] leading-relaxed break-words whitespace-pre-wrap">{preview.botMarkdown}</pre>
+      {personality ? <Section title="bot.md · Bots only" aside={<Button size="xs" variant="ghost" onClick={() => roleView.role && actions.open({ kind: "role", id: roleView.role.id })}>Edit personality</Button>}>
+        <pre className="rounded-lg border bg-background/60 px-2.5 py-2 font-mono text-[0.72rem] leading-relaxed break-words whitespace-pre-wrap">{personality}</pre>
       </Section> : null}
       {launched}
       {preview?.rendered && !pieces ? (
@@ -148,7 +150,8 @@ export function RolePreviewWindow() {
           ))}
         </ol>
       ) : (
-        <Empty icon={FileTextIcon} title={roleView.blank ?? (preview ? "Nothing renders" : rolePreview.error ? "Preview unavailable" : "Reading preview…")} />
+        <Empty icon={FileTextIcon} title={roleView.blank ?? (preview ? personality ? "No instruction Fragments" : "Nothing renders" : rolePreview.error ? "Preview unavailable" : "Reading preview…")}
+          hint={roleView.blank || !preview ? undefined : personality ? "Bot launches still receive bot.md above. Workers and injected launches receive no fragments from this Role." : "No fragments render and bot.md has no text, so a Bot launch receives no Role instructions."} />
       )}
     </Window>
   );

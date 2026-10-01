@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOptGroup, NativeSelectOption } from "@/components/ui/native-select";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
-import { botControlOperations, botOperationDraft, connectedVoiceSession, inputKind, inputRequired, operationScopeError, parseOperationDraft } from "@/lib/stack/bot-operations";
+import { botControlOperations, botOperationDraft, connectedVoiceSession, defaultBotOperation, inputKind, inputRequired, operationScopeError, parseOperationDraft } from "@/lib/stack/bot-operations";
 import type { BotUploads } from "@/lib/stack/bot-uploads";
 import { operationTitle } from "@/lib/stack/catalog";
 import type { Bot, OperationDoc } from "@/lib/stack/types";
@@ -20,7 +20,7 @@ import { RecordTree } from "./record-tree";
 export function BotOperations({ bot, uploads, onPendingChange }: { bot: Bot; uploads: BotUploads; onPendingChange(pending: boolean): void }) {
   const { catalog } = useStack();
   const operations = catalog.data?.find((doc) => doc.name === "bots")?.operations.filter((operation) => !botControlOperations.has(operation.name)) ?? [];
-  const [name, setName] = useState(bot.mainThreadId ? "chat_list" : "chat_open");
+  const [name, setName] = useState(() => defaultBotOperation(bot));
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
   const pendingChanged = (value: boolean) => { pendingRef.current = value; setPending(value); onPendingChange(value); };

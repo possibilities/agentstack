@@ -1,5 +1,7 @@
-// Optional rendered check of System's State and Subscriptions windows after pnpm test (and a ui build, or NEXT_MODE=dev).
-// A fixture serve socket answers the state reads from a disposable state directory; no live Server or state is touched.
+// Optional rendered check of System's State and Subscriptions windows, the Server window's Stack settings and the
+// developer-only Developer window, after pnpm test (and a ui build, or NEXT_MODE=dev). A fixture serve socket answers
+// the state reads, global settings (with real revision fences) and harness release snapshots from a disposable state
+// directory; no live Server, state or network release channel is touched.
 // PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs node test/state-browser-check.mjs
 // CHROME_BIN may override the local headless Chrome executable; STATE_EVIDENCE_DIR keeps the screenshots.
 import assert from "node:assert/strict";
@@ -45,6 +47,43 @@ let subscriptions = [subscription("00000000-0000-4000-8000-0000000000a1"),
   subscription("00000000-0000-4000-8000-0000000000a2", { pkg: "brain", topic: "jobs_changed", readOperation: "jobs_list", state: "error", lastDeliveredAt: null, scope: "ingest" })];
 const removals = [];
 
+// Developer mode (ADR 0138). Settings carry real revision fences; release reads and checks refuse while it is off.
+const started = Date.now();
+const iso = (offset) => new Date(started + offset).toISOString();
+const hour = 3_600_000;
+let devSettings = { developerMode: false, revision: 0, updatedAt: null };
+let settingsGate = null;
+const devCalls = [];
+const settingsUpdates = [];
+const harness = (id, title, sourceUrl, packageName, extra = {}) => ({ id, title, sourceUrl, packageName, channel: packageName ? "npm-latest" : "devin-current",
+  version: null, previousVersion: null, changedAt: null, lastAttemptAt: null, lastCompletedAt: null, lastSuccessAt: null, outcome: "not_checked", error: null,
+  freshness: "unobserved", staleReason: null, ...extra });
+const opencode = (extra) => harness("opencode", "OpenCode", "https://registry.npmjs.org/@opencode/cli/latest", "@opencode/cli", extra);
+const codex = (extra) => harness("codex", "Codex", "https://registry.npmjs.org/@openai/codex/latest", "@openai/codex", extra);
+const claude = (extra) => harness("claude", "Claude Code", "https://registry.npmjs.org/@anthropic-ai/claude-code/latest", "@anthropic-ai/claude-code", extra);
+const devin = (extra) => harness("devin", "Devin CLI", "https://static.devin.ai/cli/current/manifest.json", null, extra);
+const checked = (at, extra) => ({ lastAttemptAt: at, lastCompletedAt: at, ...extra });
+const observed = (version, at, extra) => checked(at, { version, lastSuccessAt: at, outcome: "succeeded", freshness: "fresh", ...extra });
+const problem = (code, message) => ({ code, message });
+const unreachable = problem("network_error", "The public release channel could not be reached.");
+const rateLimited = problem("rate_limited", "The public release channel rate-limited the check. Retry later or wait for the next scheduled check.");
+const invalid = problem("invalid_response", "The release response was not valid JSON with the expected identity and release version.");
+const releases = (observations, extra = {}) => ({ checking: null, intervalMs: 21_600_000, timeoutMs: 15_000, maxResponseBytes: 262_144,
+  lastAttemptAt: iso(-2 * hour), lastCompletedAt: iso(-2 * hour), nextCheckAt: iso(4 * hour), cacheError: null, observations, ...extra });
+const changed = { previousVersion: "2.0.13", changedAt: iso(-2 * hour) };
+// Retained from an earlier session: a never-checked source, a baseline, a channel change and a source never reached.
+let harnessSnapshot = releases([opencode(), codex(observed("0.50.0", iso(-2 * hour))), claude(observed("2.0.14", iso(-2 * hour), changed)),
+  devin(checked(iso(-2 * hour), { outcome: "failed", error: unreachable }))]);
+// Mid-check after Check now: one source checking, one failure that keeps its last good value, one first-time failure.
+const midCheck = (at) => releases([opencode({ lastAttemptAt: at, outcome: "checking" }),
+  codex(observed("0.50.0", iso(-2 * hour), { lastAttemptAt: at, lastCompletedAt: at, outcome: "failed", error: rateLimited, freshness: "stale", staleReason: "check_failed" })),
+  claude(observed("2.0.14", iso(-2 * hour), { ...changed, lastAttemptAt: at, outcome: "checking" })),
+  devin(checked(at, { outcome: "failed", error: invalid }))], { checking: { startedAt: at }, lastAttemptAt: at, nextCheckAt: new Date(Date.parse(at) + 6 * hour).toISOString() });
+const finished = (at, done) => releases([opencode(observed("1.4.2", done, { lastAttemptAt: at })), midCheck(at).observations[1],
+  claude(observed("2.0.14", done, { ...changed, lastAttemptAt: at })), midCheck(at).observations[3]],
+  { lastAttemptAt: at, lastCompletedAt: done, nextCheckAt: new Date(Date.parse(at) + 6 * hour).toISOString() });
+let admitted = null;
+
 const handlers = {
   serve_state_list(args) {
     lists.push(args);
@@ -62,6 +101,36 @@ const handlers = {
   serve_subscription_get({ id }) {
     const row = subscriptions.find((item) => item.id === id);
     return { subscription: row ? { ...row, readArguments: { limit: 20, filter: { source: "ci" } }, lastError: row.state === "error" ? "jobs_list: brain socket unavailable" : null } : null };
+  },
+  async serve_settings_read() {
+    devCalls.push("serve_settings_read");
+    await settingsGate?.promise;
+    return { ...devSettings };
+  },
+  serve_settings_update(args) {
+    settingsUpdates.push(args);
+    if (args.expectedRevision !== devSettings.revision) throw new Error("serve_settings_revision_conflict: read settings before retrying");
+    if (args.developerMode === devSettings.developerMode) return { ...devSettings };
+    devSettings = { developerMode: args.developerMode, revision: devSettings.revision + 1, updatedAt: new Date().toISOString() };
+    setTimeout(() => serveSock.publish("serve_settings_changed"), 0);
+    return { ...devSettings };
+  },
+  serve_harness_releases() {
+    devCalls.push("serve_harness_releases");
+    if (!devSettings.developerMode) throw new Error("developer_mode_disabled");
+    return harnessSnapshot;
+  },
+  serve_harness_releases_check() {
+    devCalls.push("serve_harness_releases_check");
+    if (!devSettings.developerMode) throw new Error("developer_mode_disabled");
+    if (!admitted) {
+      admitted = new Date().toISOString();
+      harnessSnapshot = midCheck(admitted);
+      // Like the server, the start notice goes out with admission; the reply says only that it was admitted.
+      setTimeout(() => serveSock.publish("harness_releases_changed"), 0);
+      return { admitted: true, startedAt: admitted };
+    }
+    return { admitted: false, startedAt: admitted };
   },
   serve_subscription_remove({ id, expectedRevision }) {
     removals.push({ id, expectedRevision });
@@ -189,11 +258,154 @@ try {
 
   await page.emulateMedia({ colorScheme: "dark" });
   await shot("state-dark", state);
+  assert.ok(!devCalls.includes("serve_harness_releases"), "a page with developer mode off never reads releases");
+  await page.close();
+
+  // Developer mode, on a fresh local page at 2x so the evidence is legible.
+  const dev = await browser.newPage({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 2, reducedMotion: "reduce" });
+  await authorizeBrowser(dev, origin, env);
+  dev.on("pageerror", (error) => errors.push(error.message));
+  const server = dev.locator('[data-window="server"]');
+  const developer = dev.locator('[data-window="developer"]');
+  const toggle = server.getByRole("switch", { name: "Developer mode" });
+  const releaseReads = () => devCalls.filter((name) => name === "serve_harness_releases").length;
+  /** Pan the bench so a window is centered, then show it at 100% for a legible element screenshot. */
+  const frame = async (locator) => {
+    const box = await locator.boundingBox();
+    const size = dev.viewportSize();
+    await dev.locator('[data-canvas="workbench"][data-space="system"]').evaluate((main, delta) => main.dispatchEvent(new WheelEvent("wheel", { deltaX: delta.x, deltaY: delta.y, bubbles: true, cancelable: true })),
+      { x: box.x + box.width / 2 - size.width / 2, y: box.y + Math.min(box.height, size.height - 160) / 2 - size.height / 2 });
+    await dev.getByRole("button", { name: "Actual size" }).click();
+  };
+  const devShot = async (name, locator) => { await frame(locator); await locator.screenshot({ path: join(evidence, `${name}.png`), animations: "disabled" }); };
+
+  // Unknown until this connection reads the setting: disabled, with no thumb position implying a value.
+  settingsGate = Promise.withResolvers();
+  await dev.goto(`${origin}/system?focus=developer`);
+  await server.getByText("Reading the current setting…").waitFor();
+  assert.equal(await toggle.isDisabled(), true, "no save is possible before a read");
+  assert.equal(await toggle.getAttribute("data-unknown"), "");
+  await devShot("developer-settings-unknown", server);
+  settingsGate.resolve();
+  settingsGate = null;
+
+  // Off by default. A link naming the window reveals nothing, and nothing reads releases.
+  await server.getByText("Off by default").waitFor();
+  assert.equal(await toggle.getAttribute("aria-checked"), "false");
+  assert.equal(await toggle.isDisabled(), false);
+  assert.equal(await developer.count(), 0, "a deep link does not reveal the Developer window while off");
+  assert.equal(releaseReads(), 0);
+  assert.deepEqual(settingsUpdates, [], "nothing is saved on mount");
+  await devShot("developer-settings-off", server);
+
+  // An explicit keyboard toggle saves at the read revision and reveals the window with the retained observations.
+  await toggle.focus();
+  await dev.keyboard.press("Space");
+  await developer.waitFor();
+  assert.deepEqual(settingsUpdates, [{ developerMode: true, expectedRevision: 0 }]);
+  await server.getByText(/^On · saved/).waitFor();
+  assert.equal(await toggle.getAttribute("aria-checked"), "true");
+  await developer.getByText("Changed upstream").waitFor();
+  await developer.getByText(/^was 2\.0\.13 · 2h/).waitFor();
+  await developer.getByText("Not checked", { exact: true }).waitFor();
+  await developer.getByText("Observed", { exact: true }).waitFor();
+  await developer.getByText("Failed", { exact: true }).waitFor();
+  await developer.getByText(unreachable.message).waitFor();
+  await developer.getByText("Checks every 6 h · 15 s timeout per source", { exact: false }).waitFor();
+  const link = developer.getByRole("link", { name: "Claude Code release channel, opens in a new tab" });
+  assert.equal(await link.getAttribute("href"), "https://registry.npmjs.org/@anthropic-ai/claude-code/latest");
+  assert.equal(await link.getAttribute("target"), "_blank");
+  assert.equal(await link.getAttribute("rel"), "noreferrer");
+  assert.doesNotMatch(await developer.innerText(), /update available|\binstalled\b|up to date/i, "no installed-version verdicts");
+  assert.equal(await developer.getByRole("button", { name: /install|upgrade/i }).count(), 0, "and no install or upgrade action");
+  await devShot("developer-settings-on", server);
+  await devShot("developer-light", developer);
+  // It joins the Server column below Packages; nothing else moves.
+  await dev.getByRole("button", { name: /Fit bench/ }).click();
+  await dev.screenshot({ path: join(evidence, "developer-bench.png"), animations: "disabled" });
+
+  // Check now returns on admission; the started check's progress arrives through the event-driven read.
+  const checkNow = developer.getByRole("button", { name: "Check now" });
+  await checkNow.click();
+  await developer.getByText(/^Check started/).waitFor();
+  await developer.getByText("Stale · check failed").waitFor();
+  await developer.getByText(rateLimited.message).waitFor();
+  await developer.getByText("Checking…").first().waitFor();
+  assert.equal(await checkNow.isDisabled(), true, "Check now waits while a check runs");
+  assert.equal(devCalls.filter((name) => name === "serve_harness_releases_check").length, 1);
+  await devShot("developer-checking", developer);
+  harnessSnapshot = finished(admitted, new Date().toISOString());
+  serveSock.publish("harness_releases_changed");
+  await developer.getByText(/^Last check finished/).waitFor();
+  await developer.getByText("1.4.2").waitFor();
+  assert.equal(await checkNow.isDisabled(), false);
+
+  await dev.emulateMedia({ colorScheme: "dark" });
+  await devShot("developer-dark", developer);
+  await devShot("developer-settings-dark", server);
+  await dev.emulateMedia({ colorScheme: "light" });
+
+  // Narrow: the four columns reflow to two lines per harness without horizontal overflow.
+  await frame(developer);
+  const grip = developer.locator('span[title="Resize Developer"]').first();
+  const edge = await grip.boundingBox();
+  await dev.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2);
+  await dev.mouse.down();
+  await dev.mouse.move(edge.x - 70, edge.y + edge.height / 2, { steps: 6 });
+  await dev.mouse.up();
+  assert.ok((await developer.boundingBox()).width < 352, "resized narrow");
+  assert.equal(await developer.locator("li[aria-hidden]").isVisible(), false, "the column header gives way to two-line rows");
+  assert.ok(await developer.locator("[data-scroll]").evaluate((body) => body.scrollWidth <= body.clientWidth), "no horizontal overflow");
+  await devShot("developer-narrow", developer);
+  await grip.dblclick();
+
+  // A save at a revision another client has since replaced is refused once, the current value is shown, nothing retries.
+  devSettings = { developerMode: true, revision: devSettings.revision + 2, updatedAt: new Date().toISOString() };
+  await frame(server);
+  await toggle.click();
+  await server.getByText("Changed elsewhere — showing the current value. Try again if you still want to change it.").waitFor();
+  assert.deepEqual(settingsUpdates.at(-1), { developerMode: false, expectedRevision: 1 });
+  assert.equal(settingsUpdates.length, 2, "no automatic retry with the newer revision");
+  await server.getByText(/^On · saved/).waitFor();
+  assert.equal(await toggle.getAttribute("aria-checked"), "true");
+  await devShot("developer-settings-conflict", server);
+
+  // Turning it off here, now at the current revision, removes the window and stops release reads at once.
+  await toggle.click();
+  await developer.waitFor({ state: "detached" });
+  assert.deepEqual(settingsUpdates.at(-1), { developerMode: false, expectedRevision: 3 });
+  await server.getByText(/^Off · saved/).waitFor();
+  const offReads = releaseReads();
+  serveSock.publish("harness_releases_changed");
+  await wait(300);
+  assert.equal(releaseReads(), offReads, "no release reads while off");
+  await toggle.click();
+  await developer.getByText("1.4.2").waitFor();
+
+  // Another client turns it off while keyboard focus is in the window: it leaves, focus returns to the bench, reads stop.
+  await checkNow.focus();
+  devSettings = { developerMode: false, revision: devSettings.revision + 1, updatedAt: new Date().toISOString() };
+  serveSock.publish("serve_settings_changed");
+  await developer.waitFor({ state: "detached" });
+  await dev.waitForFunction(() => document.activeElement?.getAttribute("data-canvas") === "workbench");
+  assert.equal(await toggle.getAttribute("aria-checked"), "false");
+  const reads = releaseReads();
+  serveSock.publish("harness_releases_changed");
+  await wait(400);
+  assert.equal(releaseReads(), reads, "no release reads after developer mode is off");
+
+  // A reload with the window's layout remembered still shows nothing while off.
+  await dev.goto(`${origin}/system?focus=developer`);
+  await server.getByText(/^Off · saved/).waitFor();
+  await wait(300);
+  assert.equal(await developer.count(), 0);
+  assert.equal(releaseReads(), reads);
+
   assert.deepEqual(errors, [], "browser has no uncaught application errors");
-  console.log(JSON.stringify({ ok: true, evidence, assertions: "mixed owner availability with a visible gap, nullable and measured bytes, drill-down action note, stale-page restart, inspector, explicit per-owner measurement, argument reveal only on drill-down, stale-revision removal refused then exact removal, serve_state_changed refresh, dark" }, null, 2));
+  console.log(JSON.stringify({ ok: true, evidence, assertions: "mixed owner availability with a visible gap, nullable and measured bytes, drill-down action note, stale-page restart, inspector, explicit per-owner measurement, argument reveal only on drill-down, stale-revision removal refused then exact removal, serve_state_changed refresh, dark; developer mode unknown before read, off by default with no release reads or deep-link reveal, keyboard enable at the read revision, retained not-checked/observed/changed/failed rows, source links, Check now admission through event-driven read with checking and stale-after-failure, dark, narrow reflow, refused stale-revision save without retry, remote disable removing the window and returning focus, no reads after disable or reload" }, null, 2));
 } catch (error) {
   failed = true;
-  const page = browser?.contexts()[0]?.pages()[0];
+  const page = browser?.contexts().flatMap((context) => context.pages()).at(-1);
   if (page) await page.screenshot({ path: join(evidence, "failure.png"), animations: "disabled" }).catch(() => undefined);
   if (log) console.error(log.slice(-4000));
   throw error;

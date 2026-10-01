@@ -369,6 +369,58 @@ export type CodexToolsStatus = {
   connections: CodexToolsConnection[];
 };
 
+/**
+ * `serve_settings_read` / `serve_settings_update`: durable global Stack settings (ADR 0138), separate from Bot and Worker
+ * managed runtime settings. Missing saved settings read as `developerMode: false`, revision 0 and `updatedAt: null`.
+ */
+export type ServeSettings = { developerMode: boolean; revision: number; updatedAt: string | null };
+
+/** A sanitized release-check or cache diagnostic; its message is human-readable text, never provider content. */
+export type HarnessReleaseError = {
+  code: "timeout" | "network_error" | "http_error" | "rate_limited" | "response_too_large" | "invalid_response" | "interrupted" | "cache_read_failed" | "cache_write_failed";
+  message: string;
+};
+
+/** One harness's public upstream release channel as last observed. Not an installed version or Stack's fork pin. */
+export type HarnessRelease = {
+  id: "opencode" | "codex" | "claude" | "devin";
+  title: string;
+  /** The fixed public channel checked for this harness. */
+  sourceUrl: string;
+  packageName: string | null;
+  channel: "npm-latest" | "devin-current";
+  /** Last successfully observed upstream release, kept through later failures and restarts. */
+  version: string | null;
+  /** The most recent different observed version; null until a change has been observed. */
+  previousVersion: string | null;
+  /** When that different version was first observed; a channel change, not an upgrade verdict. */
+  changedAt: string | null;
+  lastAttemptAt: string | null;
+  lastCompletedAt: string | null;
+  lastSuccessAt: string | null;
+  outcome: "not_checked" | "checking" | "succeeded" | "failed" | "interrupted";
+  error: HarnessReleaseError | null;
+  freshness: "unobserved" | "fresh" | "stale";
+  staleReason: "not_observed" | "restart" | "check_failed" | "expired" | "cache_error" | null;
+};
+
+/** `serve_harness_releases`: the server's cached observations; reading starts no check. Developer mode only. */
+export type HarnessReleases = {
+  checking: { startedAt: string } | null;
+  intervalMs: number;
+  timeoutMs: number;
+  maxResponseBytes: number;
+  lastAttemptAt: string | null;
+  lastCompletedAt: string | null;
+  nextCheckAt: string | null;
+  /** A retained-cache read or write failure; observations in memory may be newer than what survives a restart. */
+  cacheError: HarnessReleaseError | null;
+  observations: HarnessRelease[];
+};
+
+/** `serve_harness_releases_check`: admission only. `admitted: false` joined the check already running. */
+export type HarnessCheckAdmission = { admitted: boolean; startedAt: string };
+
 /** Mirror of the server resource API's wire shapes (packages/serve resources schema). */
 export type ResourceMetrics = {
   processCount: number;

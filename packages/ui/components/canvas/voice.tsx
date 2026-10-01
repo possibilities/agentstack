@@ -9,6 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { shortId } from "@/lib/stack/derive";
+import { orientationLabel, voiceBlockedByOrientation } from "@/lib/stack/orientation";
 import type { Bot } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { errorMessage } from "./auth-actions";
@@ -51,8 +52,8 @@ export function useVoice(): Voice {
 export function callable(bot: Bot): string | null {
   if (bot.state !== "running") return "Stopped";
   if (bot.recoveryIssue) return "Needs inspection";
-  if (bot.orientation && !["completed", "failed", "interrupted", "retired"].includes(bot.orientation.state))
-    return bot.orientation.state === "unknown" ? "Orientation needs inspection" : "Orienting";
+  const orienting = voiceBlockedByOrientation(bot.orientation) ? orientationLabel(bot.orientation) : null;
+  if (orienting) return orienting;
   if (!bot.mainThreadId) return "Needs first turn";
   if (!bot.url || !bot.runningAccount) return "Account not launched";
   return null;
@@ -451,7 +452,7 @@ export function CallLauncher() {
           <p className="flex flex-col items-center gap-1.5 px-3 py-5 text-center">
             <PhoneIcon className="size-4 text-muted-foreground/70" />
             <span className="text-[0.8rem] font-medium">No bots to call</span>
-            <span className="text-[0.7rem] text-pretty text-muted-foreground">Start a bot and give it a first turn.</span>
+            <span className="text-[0.7rem] text-pretty text-muted-foreground">Start a bot. It introduces itself first; once that finishes you can call it.</span>
           </p>
         )}
       </PopoverContent>

@@ -87,7 +87,8 @@ const noResources = () => ({
  * A `serve` fixture the WebSocket gateway admits: it answers every operation the real serve
  * manifest selects and declares every real topic, so a new serve operation can't silently stop
  * a check from connecting. A check's own `serve_*` handlers take precedence; other reads report no
- * observation (resources unavailable, Codex tools and history unobserved).
+ * observation (resources unavailable, Codex tools and history unobserved). Global settings read as the
+ * server's default, so developer mode is off and its release reads stay unobserved.
  */
 export async function serveFixture(handlers = {}) {
   const overrides = Object.fromEntries(Object.entries(handlers).filter(([name]) => name.startsWith("serve_")));
@@ -98,6 +99,7 @@ export async function serveFixture(handlers = {}) {
   const served = {
     serve_status: () => ({ pid: process.pid, startedAt: new Date().toISOString(), nodeVersion: process.version, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
     serve_resources: noResources,
+    serve_settings_read: () => ({ developerMode: false, revision: 0, updatedAt: null }),
     ...overrides,
   };
   for (const name of names) served[name] ??= unobserved(name);

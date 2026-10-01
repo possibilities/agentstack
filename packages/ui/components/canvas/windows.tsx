@@ -42,6 +42,7 @@ import { annotationBadges, fieldsOf, findOperation } from "@/lib/stack/catalog";
 import { accountLabels, addableWorkerProviders, botsFor, histogram, pairedWorker, providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
 import type { Account, Bot, BrowserHandoff, Login, OperationDoc, PackageDoc, WorkerAccount, WorkerLogin } from "@/lib/stack/types";
 import { botHandoff } from "@/lib/stack/browse";
+import { orientationChip, orientationMeaning, orientationPhase } from "@/lib/stack/orientation";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
 import { BotTile, CopyButton, Empty, NodeCard, NodeLink, NodeTitle, Orb, Row, Sparkline, StatusDot, Time } from "./primitives";
@@ -51,6 +52,7 @@ import { useVoice } from "./voice";
 import { footerButton, Section, Window } from "./window";
 import { WorkersLink } from "./worker-windows";
 import { BotStateLink } from "./bot-state";
+import { Pill } from "./bot-state-shared";
 import { ProcSchedulesLink } from "./proc-schedules";
 
 const activitySpan = 5 * 60_000;
@@ -568,6 +570,14 @@ export function RecoveryWarning({ message }: { message: string }) {
   );
 }
 
+/** Beside process state: only an introduction that is being admitted, running, unconfirmed or did not complete. Text names it; tone only adds emphasis. */
+function OrientationChip({ bot }: { bot: Bot }) {
+  const chip = orientationChip(bot.orientation);
+  if (!chip) return null;
+  const attention = ["unknown", "failed", "interrupted"].includes(orientationPhase(bot.orientation));
+  return <Pill tone={attention ? "warning" : "muted"} title={orientationMeaning(bot.orientation) ?? undefined}>{chip}</Pill>;
+}
+
 function BotChip({ icon: Icon, children, title, copy, label }: { icon: React.ComponentType<{ className?: string }>; children: React.ReactNode; title?: string; copy?: string | null; label?: string }) {
   return (
     <span title={title} className="group/row inline-flex h-6 max-w-full min-w-0 items-center gap-1 rounded-md bg-muted/70 px-1.5 text-[0.7rem] text-muted-foreground">
@@ -622,10 +632,11 @@ export function BotsWindow() {
                   <BotTile bot={bot} pulse={!bot.recoveryIssue && Boolean(events[0] && now - events[0].at < 4_000)} />
                   <div className="flex min-w-0 flex-col gap-0.5">
                     <NodeTitle node={{ kind: "bot", id: bot.id }} label={`bot ${bot.id}`} className="font-mono text-sm font-semibold">{bot.id}</NodeTitle>
-                    <span className="flex min-w-0 items-center gap-1.5 text-[0.72rem] text-muted-foreground">
+                    <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[0.72rem] text-muted-foreground">
                       <span title={bot.pid ? `pid ${bot.pid}` : undefined} className={cn(bot.recoveryIssue ? "text-warning" : bot.state === "running" && "text-success")}>{bot.recoveryIssue ? "Needs inspection" : bot.state}</span>
                       <span aria-hidden>·</span>
                       <AccountChip id={bot.account} labels={labels} />
+                      <OrientationChip bot={bot} />
                     </span>
                   </div>
                   <div className="ml-auto flex shrink-0 items-center gap-2 self-start">

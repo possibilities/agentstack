@@ -131,6 +131,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 2400, height: 1400 }, reducedMotion: "reduce" });
   await page.addInitScript(wrapSockets);
   await authorizeBrowser(page, origin, env);
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   const shot = (name) => page.screenshot({ path: join(evidence, `${name}.png`), animations: "disabled" });
@@ -342,9 +343,24 @@ try {
   // A disabled category keeps its fragments out of launches.
   await instructions.getByRole("switch", { name: "Working style enabled" }).click();
   await instructions.getByText("Off · none of these reach new launches", { exact: true }).waitFor();
-  await preview.getByText("Nothing renders", { exact: true }).waitFor();
+  // Researcher keeps its starter bot.md, so with every fragment off Bots still receive something: that is not an empty composition.
+  await preview.getByText("No instruction Fragments", { exact: true }).waitFor();
+  await preview.getByText("Bot launches still receive bot.md above. Workers and injected launches receive no fragments from this Role.", { exact: true }).waitFor();
+  await preview.getByText("bot.md · Bots only", { exact: true }).waitFor();
+  assert.equal(await preview.getByText("Nothing renders", { exact: true }).count(), 0);
+  assert.equal(await preview.getByRole("button", { name: "Copy Fragments", exact: true }).count(), 0, "no Fragments render, so there is nothing to copy");
+  await preview.screenshot({ path: join(evidence, "roles-preview-personality-only-fragments-off.png"), animations: "disabled" });
   await instructions.getByRole("switch", { name: "Working style enabled" }).click();
   await preview.getByText("Use plain words.", { exact: true }).waitFor();
+  // The copy action says what it copies, and copies exactly the rendered Fragments, never bot.md.
+  const starterPersonality = (await snap(A)).botMarkdown;
+  assert.ok(starterPersonality.trim(), "a new Role starts with a bot.md");
+  assert.equal(await preview.getByRole("button", { name: "Copy rendered instructions" }).count(), 0, "the old ambiguous label is gone");
+  await preview.getByRole("button", { name: "Copy Fragments", exact: true }).click();
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  assert.equal(copied, await rendered(), "Copy Fragments copies the rendered Fragments");
+  assert.equal(copied.includes(starterPersonality.trim()), false, "bot.md is not in the copied Fragments");
+  await preview.getByText(/Bots append these fragments and bot\.md to SYSTEM_APPEND\.md; Workers receive only the fragments\./).waitFor();
 
   // Conditions are fragment metadata: they save with the draft, survive unrelated edits, and a fragment that
   // lacks its context is never called Off. The shared preview context changes only what the previews show.
@@ -375,6 +391,7 @@ try {
   await preview.getByText("Use plain, short words.", { exact: true }).waitFor();
   await instructions.getByRole("status").filter({ hasText: "2 of 3 fragments render with model = foo · harness = codex" }).waitFor();
   await preview.getByText("stack roles inject Researcher --with-model foo --with-harness codex -- <cli> …", { exact: true }).waitFor();
+  await preview.getByText(/Context selects which fragments render for an injected launch; Bots and Workers supply none.*bot\.md is Bot-only and is excluded from Workers and injected CLIs, so the size above is not what an injected launch receives\./).waitFor();
   await editor.getByRole("status").filter({ hasText: "Preview context (model = foo · harness = codex): renders here" }).waitFor();
   const previewRevision = (await snap(A)).revision;
   await shot("roles-conditions");
@@ -699,6 +716,35 @@ try {
   await until(() => snap(A), (value) => value.botMarkdown === "Stay incisive, evidence-led and practical.", "the resolved personality edit");
   assert.equal((await snap(B)).botMarkdown, otherPersonality);
   await preview.getByText("Stay incisive, evidence-led and practical.", { exact: true }).waitFor();
+
+  // The Preview tells Fragments from bot.md. Personality-only still reaches Bots; Fragment-only has no bot.md section; only a Role with
+  // neither (or with whitespace the renderer drops) is empty.
+  const fooId = (await rolesCall("roles_snapshot")).roles.find((role) => role.name === "Foo").id;
+  await selectRole("Foo");
+  await preview.getByText("No instruction Fragments", { exact: true }).waitFor();
+  await preview.getByText("bot.md · Bots only", { exact: true }).waitFor();
+  await preview.screenshot({ path: join(evidence, "roles-preview-personality-only.png"), animations: "disabled" });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await preview.screenshot({ path: join(evidence, "roles-preview-personality-only-dark.png"), animations: "disabled" });
+  await page.emulateMedia({ colorScheme: "light" });
+  await rolesCall("role_update", { roleId: fooId, expectedRevision: await revisionOf(fooId), botMarkdown: "  \n\t  " });
+  await preview.getByText("Nothing renders", { exact: true }).waitFor();
+  await preview.getByText("No fragments render and bot.md has no text, so a Bot launch receives no Role instructions.", { exact: true }).waitFor();
+  assert.equal(await preview.getByText("bot.md · Bots only", { exact: true }).count(), 0, "whitespace-only bot.md is not delivered, as the renderer decides");
+  assert.equal((await rolesCall("role_preview", { roleId: fooId })).botBytes, 0, "the renderer agrees: a whitespace-only personality adds nothing");
+  await preview.screenshot({ path: join(evidence, "roles-preview-empty.png"), animations: "disabled" });
+  await selectRole("Reviewer");
+  const reviewerPersonality = (await snap(B)).botMarkdown;
+  await rolesCall("role_update", { roleId: B, expectedRevision: await revisionOf(B), botMarkdown: "" });
+  await preview.getByText("Run the tests and the linter before approving.", { exact: true }).waitFor();
+  assert.equal(await preview.getByText("bot.md · Bots only", { exact: true }).count(), 0, "an empty personality shows no bot.md section");
+  assert.equal(await preview.getByText(/^No instruction Fragments$|^Nothing renders$/).count(), 0, "a Role with Fragments is never called empty");
+  await preview.getByRole("button", { name: "Copy Fragments", exact: true }).click();
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), (await rolesCall("role_preview", { roleId: B })).rendered);
+  await preview.screenshot({ path: join(evidence, "roles-preview-fragments-only.png"), animations: "disabled" });
+  await rolesCall("role_update", { roleId: B, expectedRevision: await revisionOf(B), botMarkdown: reviewerPersonality });
+  await selectRole("Research");
+  await editor.getByRole("form", { name: "Edit Role Research" }).waitFor();
 
   // A stale catalog revision commits nothing: the page rereads the catalog and rebuilds the write once.
   await drop(true);
