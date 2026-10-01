@@ -1,4 +1,4 @@
-# 147. Coordinate Notification sends and one-shot dismissal watches in the Server
+# 152. Coordinate Notification sends and one-shot dismissal watches in the Server
 
 Status: accepted, 2026-09-30. Extends [ADR 0095](0095-one-dismissal-with-an-outcome.md),
 [ADR 0033](0033-agent-facing-event-subscriptions.md) and
