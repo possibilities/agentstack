@@ -421,7 +421,7 @@ _Avoid_: caller network boolean, source credential, indexing permission
 ## GitHub receiver
 
 An explicitly configured, uniquely secreted GitHub webhook destination owned by
-`packages/github`. Its target is a repository, organization, enterprise, GitHub
+`packages/source`. Its target is a repository, organization, enterprise, GitHub
 App, Marketplace listing or Sponsors listing. The Server supervises its loopback intake; an operator separately publishes
 only the webhook path on public HTTPS. Secret verification authenticates original
 body bytes, not routing headers. Local configuration, remote hook configuration

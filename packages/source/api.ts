@@ -133,4 +133,4 @@ const packageApi: PackageApi<Context, Topic> = {
   async prepareCloseContext(ctx) { ctx.remote.stopAdmission(); ctx.ingress.stopAdmission(); await ctx.ingress.close(); },
   async closeContext(ctx) { ctx.store.close(); },
 };
-export const api = withStateInventory("github", githubStateCategories, packageApi);
+export const api = withStateInventory("source", githubStateCategories, packageApi);

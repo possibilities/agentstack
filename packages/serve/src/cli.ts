@@ -2,11 +2,11 @@
 import { assertInstallationOpen, mcpPort, runApi, runMcp, runMcpStdio, runWebSocket, serveApi, serveMcp, socketCall, socketPath, websocketPort, withLocalAuth, executeOperation } from "@stack/api";
 import { spawn } from "node:child_process";
 import { contentNetworkConfig } from "@stack/content";
-import { githubPort } from "@stack/github";
+import { githubPort } from "@stack/source";
 import { lookup } from "node:dns/promises";
 import { connect } from "node:net";
 import { fileURLToPath } from "node:url";
-import { accessChild, apiChild, signalChild, authChild, brainChild, githubChild, xcomChild, browseChild, contentChild, hudChild, inferChild, notifyChild, procChild, rolesChild, scrapeChild, usageChild, workerChild, websocketChild } from "./children.js";
+import { accessChild, apiChild, signalChild, authChild, brainChild, sourceChild, xcomChild, browseChild, contentChild, hudChild, inferChild, notifyChild, procChild, rolesChild, scrapeChild, usageChild, workerChild, websocketChild } from "./children.js";
 import { botsChild } from "./bots.js";
 import { createMcpEventSubscriptions } from "./mcp-delivery.js";
 import { serveInspectorCatalog } from "./inspector-catalog.js";
@@ -211,14 +211,14 @@ const shutdown = () => {
     process.exit(childFailed || failed ? 1 : 0);
   });
 };
-server = startServer([apiChild(), accessChild(), authChild(), rolesChild(), browseChild(), botsChild(mcp.port), hudChild(), workerChild(), usageChild(), inferChild(), signalChild(), notifyChild(), contentChild(), scrapeChild(), brainChild(), githubChild(), xcomChild(), procChild(), websocketChild(), inspectorChild(catalog.path, inspectorListenPort), uiChild(uiListenPort)], process.env, () => {
+server = startServer([apiChild(), accessChild(), authChild(), rolesChild(), browseChild(), botsChild(mcp.port), hudChild(), workerChild(), usageChild(), inferChild(), signalChild(), notifyChild(), contentChild(), scrapeChild(), brainChild(), sourceChild(), xcomChild(), procChild(), websocketChild(), inspectorChild(catalog.path, inspectorListenPort), uiChild(uiListenPort)], process.env, () => {
   statusSource.notify();
   if (!closing && server.children().some((child) => !child.running)) {
     childFailed = true;
     console.error("a required child stopped; shutting down stack");
     shutdown();
   }
-}, [["access"], ["github"], ["proc"], ["signal"], ["infer"], ["auth"], ["worker"], ["hud"], ["bots"], ["usage"], ["brain"], ["xcom"], ["scrape"], ["browse"], ["content"], ["roles"], ["notify"], ["api"]]);
+}, [["access"], ["source"], ["proc"], ["signal"], ["infer"], ["auth"], ["worker"], ["hud"], ["bots"], ["usage"], ["brain"], ["xcom"], ["scrape"], ["browse"], ["content"], ["roles"], ["notify"], ["api"]]);
 statusSource.attach(server);
 statusSource.factoryReset = factoryLifecycle(process.env, server, async () => {
   closing = true;

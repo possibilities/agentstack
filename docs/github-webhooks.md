@@ -1,10 +1,17 @@
 # GitHub webhook operations
 
-`packages/github` receives signed GitHub webhooks, retains durable deliveries and
+`packages/source` receives signed GitHub webhooks, retains durable deliveries and
 exposes filtered inboxes through Stack's existing subscriptions. The Server
 supervises the process; it is not a second Bot wakeup service. See
 [ADR 0159](adr/0159-github-webhook-ledger-and-watches.md) and `docs_get` with
-`package: "github"` for the typed operation and transport contracts.
+`package: "source"` for the typed operation and transport contracts.
+
+The `source` Package API owns the GitHub APIs. Provider-specific `github_*`
+operations/events, `STACK_GITHUB_*` configuration, `/github/webhooks/*` routes and
+`<STACK_STATE_DIR>/github/github.sqlite` storage remain unchanged; no state
+migration is required. Its generic inventory is `source_state_read`, and new
+maintenance plans/receipts identify `source` as owner; existing receipts retain
+their original owner as history.
 
 ## Runtime and publication
 
@@ -93,7 +100,7 @@ and payload scalars are exact. `repositoryIds` survive renames. JSON Pointer
 predicates support `equals`, `one_of`, `contains`, `starts_with` and `exists`, not
 regex/eval or webhook-triggered commands.
 
-On the GitHub MCP server, attach the existing `events_subscribe`:
+On the `source` MCP connection, attach the existing `events_subscribe`:
 
 ```json
 {

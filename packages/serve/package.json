@@ -27,7 +27,7 @@
     "@stack/bots": "workspace:*",
     "@stack/browse": "workspace:*",
     "@stack/brain": "workspace:*",
-    "@stack/github": "workspace:*",
+    "@stack/source": "workspace:*",
     "@stack/xcom": "workspace:*",
     "@stack/proc": "workspace:*",
     "@stack/scrape": "workspace:*",

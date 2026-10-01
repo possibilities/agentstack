@@ -39,7 +39,7 @@ test("the api package serves structured documents for every workspace package", 
     };
     assert.deepEqual(
       docs.packages.map((item) => item.name),
-       ["access", "api", "auth", "bots", "brain", "browse", "content", "github", "hud", "infer", "notify", "proc", "roles", "scrape", "serve", "signal", "usage", "worker", "xcom"],
+       ["access", "api", "auth", "bots", "brain", "browse", "content", "hud", "infer", "notify", "proc", "roles", "scrape", "serve", "signal", "source", "usage", "worker", "xcom"],
     );
     assert.ok(docs.packages.every((item) => item.description.length > 0 && item.packageName === `@stack/${item.name}`));
 
@@ -108,15 +108,17 @@ test("the api package serves structured documents for every workspace package", 
     assert.ok(!found.get("content")!.transports.find(t => t.type === "mcp")!.workerOperations.includes("blob_stage_status"));
     assert.ok(!found.get("worker")!.transports.find(t => t.type === "mcp")!.workerOperations.includes("worker_runtime_list"));
     const xcom = found.get("xcom")!;
-    const github = found.get("github")!;
-    const githubMcp = github.transports.find(t => t.type === "mcp")!;
-    assert.deepEqual(githubMcp.workerEvents, ["github_delivery"]);
-    assert.deepEqual(githubMcp.workerOperations, ["github_watch_events"]);
+    const source = found.get("source")!;
+    assert.equal(source.transports.find(t => t.type === "socket")!.endpoint, join(stateDir, "sockets", "source.sock"));
+    const sourceMcp = source.transports.find(t => t.type === "mcp")!;
+    assert.equal(sourceMcp.endpoint, "http://127.0.0.1:8743/mcp/source");
+    assert.deepEqual(sourceMcp.workerEvents, ["github_delivery"]);
+    assert.deepEqual(sourceMcp.workerOperations, ["github_watch_events"]);
     for (const transport of found.get("worker")!.transports.filter(t => t.type !== "socket"))
       assert.ok(!transport.operations.includes("worker_event_receive"), "native intake remains owner-only, not a transport-disclosed mutation");
-    assert.ok(githubMcp.operations.includes("github_watch_read") && githubMcp.events.includes("github_watches_changed"));
-    assert.ok(!githubMcp.operations.includes("github_endpoint_secret_reveal") && !githubMcp.operations.includes("github_hook_apply"));
-    const webhookRoute = github.transports.find(t => t.type === "http")!.routes[0]!;
+    assert.ok(sourceMcp.operations.includes("github_watch_read") && sourceMcp.events.includes("github_watches_changed"));
+    assert.ok(!sourceMcp.operations.includes("github_endpoint_secret_reveal") && !sourceMcp.operations.includes("github_hook_apply"));
+    const webhookRoute = source.transports.find(t => t.type === "http")!.routes[0]!;
     assert.equal(webhookRoute.path, "/github/webhooks/{endpointId}");
     assert.ok(webhookRoute.outputSchema && webhookRoute.errorSchema);
     assert.deepEqual(xcom.transports.map(t => t.type), ["socket", "mcp", "websocket"]);

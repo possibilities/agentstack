@@ -25,7 +25,7 @@
         "@stack/worker#build",
         "@stack/hud#build",
         "@stack/brain#build",
-        "@stack/github#build",
+        "@stack/source#build",
         "@stack/xcom#build",
         "@stack/browse#build",
         "@stack/content#build"

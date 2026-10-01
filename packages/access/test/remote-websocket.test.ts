@@ -184,7 +184,7 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
       async call() { developerCalls++; return { ok: true }; },
     })), events: { topics: { pids_changed: "Changed.", serve_settings_changed: "Settings changed.", harness_releases_changed: "Releases changed." } } });
   const githubLocal = ["github_auth_status", "github_repositories", "github_organizations", "github_hook_list", "github_hook_apply", "github_remote_receipt_get", "github_endpoint_secret_reveal", "github_endpoint_secret_rotate", "github_endpoint_create", "github_endpoint_update"];
-  for (const owner of ["infer", "hud", "scrape", "signal", "worker", "auth", "access", "browse", "content", "github"]) {
+  for (const owner of ["infer", "hud", "scrape", "signal", "worker", "auth", "access", "browse", "content", "source"]) {
     const dir = join(root, "packages", owner); mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "api.yaml"), `name: ${owner}\ndescription: Fixture.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: all\n  events: []\n  description: WebSocket.\n`);
   }
@@ -195,7 +195,7 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
     ["auth", ["worker_account_cache_plan", "worker_account_cache_clear", "auth_state_receipt_get", "worker_account_state_guard"]],
     ["access", ["access_history_plan", "access_history_clear", "access_state_receipt_get"]],
     ["browse", ["browser_factory_reset_inspect", "browser_factory_reset_clear", "browser_profile_reset_plan", "browser_profile_reset_clear", "browser_site_data_plan", "browser_site_data_clear", "browser_handoff_history_plan", "browser_handoff_history_clear", "browser_volume_list", "browser_volume_plan", "browser_volume_clear", "browse_state_receipt_get", "browse_state_fence_release", "browse_state_bot_effect"]],
-    ["content", ["content_vault_history_plan", "content_publication_list", "content_publication_plan", "content_publication_clear"]], ["github", githubLocal] ] as const).map(([owner, names]) =>
+    ["content", ["content_vault_history_plan", "content_publication_list", "content_publication_plan", "content_publication_clear"]], ["source", githubLocal] ] as const).map(([owner, names]) =>
     serveSocket({ info: { name: owner, description: "Fixture.", transportDescription: "Socket.", path: socketPath(owner, env) }, context: {},
       operations: names.map(name => operation({ name, description: "Local maintenance.", input: z.strictObject({}), output: ok,
         annotations: { readOnlyHint: true }, async call() { maintenanceCalls++; return { ok: true }; } })) })));
@@ -245,8 +245,8 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
       for (const name of names) assert.match((await send("tools/call", { package: owner, name, arguments: {} })).error.message, /not available/);
     }
     assert.equal(maintenanceCalls, 0, "even read-only annotations cannot expose local maintenance");
-    assert.deepEqual((await send("tools/list", { package: "github" })).result.tools, []);
-    for (const name of githubLocal) assert.match((await send("tools/call", { package: "github", name, arguments: {} })).error.message, /not available/);
+    assert.deepEqual((await send("tools/list", { package: "source" })).result.tools, []);
+    for (const name of githubLocal) assert.match((await send("tools/call", { package: "source", name, arguments: {} })).error.message, /not available/);
     assert.equal(maintenanceCalls, 0, "remote UI control scope never grants local gh or receiver-credential authority");
     const listed = await send("tools/list", { package: "serve" });
     assert.deepEqual(listed.result.tools.map((tool: { name: string }) => tool.name), ["serve_status"]);
