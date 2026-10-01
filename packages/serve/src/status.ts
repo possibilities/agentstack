@@ -1,5 +1,6 @@
 import type { ChildStatus, RunningServer } from "./server.js";
 import type { McpEventSubscriptions } from "@stack/api";
+import type { FactoryResetHooks } from "./factory-reset.js";
 
 export type ServerStatus = {
   pid: number;
@@ -15,6 +16,7 @@ export type ServerStatus = {
 };
 
 export class StatusSource {
+  factoryReset: FactoryResetHooks | null = null;
   subscriptions: McpEventSubscriptions | null = null;
   onStateChange?: () => void;
   private server: RunningServer | null = null;

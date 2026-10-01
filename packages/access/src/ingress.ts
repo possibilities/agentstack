@@ -191,9 +191,9 @@ export async function startIngress(store: AccessStore, env: NodeJS.ProcessEnv) {
       || uiOrigin.protocol !== "https:" || uiOrigin.origin !== env.STACK_ACCESS_UI_ORIGIN || Number(uiOrigin.port || 443) !== uiPort || !uiOrigin.hostname || uiOrigin.username || uiOrigin.password)
       throw new Error("STACK_ACCESS_UI_ORIGIN must be the exact HTTPS origin on a distinct STACK_ACCESS_UI_PORT");
   }
-  const documents = await serveHttp({ host, port, tls, handle: handler({ store, env, origin: "documents" }), requestTimeout: 30_000, headersTimeout: 10_000, forceCloseConnections: true });
+  const documents = await serveHttp({ host, port, tls, env, handle: handler({ store, env, origin: "documents" }), requestTimeout: 30_000, headersTimeout: 10_000, forceCloseConnections: true });
   try {
-    const artifacts = await serveHttp({ host, port: artifactPort, tls, handle: handler({ store, env, origin: "artifacts" }), requestTimeout: 30_000, headersTimeout: 10_000, forceCloseConnections: true });
+    const artifacts = await serveHttp({ host, port: artifactPort, tls, env, handle: handler({ store, env, origin: "artifacts" }), requestTimeout: 30_000, headersTimeout: 10_000, forceCloseConnections: true });
     try {
       const ui = env.STACK_ACCESS_UI_ORIGIN ? await startRemoteUi({ store, env, host, port: uiPort }, tls) : null;
       return { host, port, artifactPort, uiPort: ui ? uiPort : null,

@@ -9,3 +9,4 @@ export { botsChild } from "./bots.js";
 export { startServer, type ChildStatus, type OwnedChild, type RunningServer } from "./server.js";
 export { statusSource, type ServerStatus, type StatusSource } from "./status.js";
 export { serverStateOperations } from "./state.js";
+export { factoryResetOperations } from "./factory-operations.js";

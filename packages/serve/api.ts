@@ -9,6 +9,8 @@ import { serverStateCategories } from "./src/state-categories.js";
 import { invocationContext, mcpEventRelayInput, relayMcpEvent, workspaceRoot } from "@stack/api";
 import { DeveloperService } from "./src/developer/service.js";
 import { serveSettings, harnessReleases } from "./src/developer/schema.js";
+import { factoryResetOperations } from "./src/factory-operations.js";
+import type { FactoryReset } from "./src/factory-reset.js";
 
 const childStatusSchema = z.object({
   name: z.string().describe("Required child name."),
@@ -27,6 +29,7 @@ export type ServerContext = {
   codexTools: CodexToolsDiagnostics;
   developer: DeveloperService;
   env?: NodeJS.ProcessEnv;
+  factoryReset?: FactoryReset;
 };
 
 const at = z.iso.datetime().nullable().describe("When this observation was recorded; null when it has not been checked since the server started.");
@@ -204,7 +207,7 @@ export const topics = {
 export type ServerTopic = keyof typeof topics;
 
 const packageApi: PackageApi<ServerContext, ServerTopic> = {
-  operations: [...serverStateOperations, serverStatus, serverCodexTools, serverCodexToolsCheck, serverResources, serverResourceHistory, serverLocalConnect, serverLocalRevoke, serverMcpEvent, serverCompletionCheck,
+  operations: [...factoryResetOperations, ...serverStateOperations, serverStatus, serverCodexTools, serverCodexToolsCheck, serverResources, serverResourceHistory, serverLocalConnect, serverLocalRevoke, serverMcpEvent, serverCompletionCheck,
     serverSettingsRead, serverSettingsUpdate, serverHarnessReleases, serverHarnessReleasesCheck],
   events: {
     topics,
@@ -234,6 +237,7 @@ const packageApi: PackageApi<ServerContext, ServerTopic> = {
   },
   async closeContext(ctx) {
     await Promise.all([ctx.resources.close(), ctx.codexTools.close(), ctx.developer.close()]);
+    ctx.factoryReset?.close();
     ctx.source.detach();
   },
 };

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mcpPort, runApi, runMcp, runMcpStdio, runWebSocket, serveApi, serveMcp, socketCall, socketPath, websocketPort, withLocalAuth } from "@stack/api";
+import { assertInstallationOpen, mcpPort, runApi, runMcp, runMcpStdio, runWebSocket, serveApi, serveMcp, socketCall, socketPath, websocketPort, withLocalAuth, executeOperation } from "@stack/api";
 import { spawn } from "node:child_process";
 import { contentNetworkConfig } from "@stack/content";
 import { lookup } from "node:dns/promises";
@@ -14,8 +14,18 @@ import { startServer } from "./server.js";
 import { startWithServerSocketRecovery } from "./server-socket.js";
 import { statusSource } from "./status.js";
 import { uiChild, uiPort } from "./ui.js";
+import { factoryControlOperations } from "./factory-operations.js";
+import { factoryLifecycle } from "./factory-lifecycle.js";
 
 export async function runServeCommand(command: string, args: string[]): Promise<void> {
+if (command === "factory-reset-control") {
+  const [name, json] = args;
+  const operation = factoryControlOperations.find(op => op.name === name);
+  if (!operation || args.length !== 2) throw new Error("usage: stack serve factory-reset-control <serve_factory_reset_receipt_get|serve_factory_reset_fence_release|serve_factory_reset_recover> '<JSON input>'");
+  const result = await executeOperation(operation, { env: process.env }, JSON.parse(json!));
+  console.log(JSON.stringify(result)); return;
+}
+assertInstallationOpen(process.env);
 
 if (command === "open") {
   const target = args[0] ?? "ui";
@@ -207,6 +217,14 @@ server = startServer([apiChild(), accessChild(), authChild(), rolesChild(), brow
   }
 }, [["access"], ["proc"], ["signal"], ["infer"], ["auth"], ["worker"], ["hud"], ["bots"], ["usage"], ["brain"], ["xcom"], ["scrape"], ["browse"], ["content"], ["roles"], ["notify"], ["api"]]);
 statusSource.attach(server);
+statusSource.factoryReset = factoryLifecycle(process.env, server, async () => {
+  closing = true;
+  const results = await Promise.allSettled([subscriptions.close(), server.stop(["access", "websocket"], { graceful: true }), server.stop(["inspector", "ui"]), events.close(), mcp?.close(), catalog?.close()]);
+  if (results.some(result => result.status === "rejected")) throw new Error("Factory reset ingress teardown is unverified");
+}, failed => {
+  closing = true;
+  void server.close().then(() => process.exit(failed ? 1 : 0), () => process.exit(1));
+});
 subscriptions.resume();
 const indexUrl = `http://127.0.0.1:${uiListenPort}/`;
 const uiUrl = `http://127.0.0.1:${uiListenPort}/`;

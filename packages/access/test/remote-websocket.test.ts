@@ -177,8 +177,9 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
   const serveDirectory = join(root, "packages", "serve"); mkdirSync(serveDirectory, { recursive: true });
   writeFileSync(join(serveDirectory, "api.yaml"), "name: serve\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: all\n  events: all\n  description: WebSocket.\n");
   let developerCalls = 0;
+  const factoryControls = ["serve_factory_reset_plan", "serve_factory_reset_clear", "serve_factory_reset_receipt_get", "serve_factory_reset_recover", "serve_factory_reset_fence_release"];
   const server = await serveSocket({ info: { name: "serve", description: "Demo.", transportDescription: "Socket.", path: socketPath("serve", env) }, context: {},
-    operations: ["serve_status", "serve_settings_read", "serve_settings_update", "serve_harness_releases", "serve_harness_releases_check"].map(name => operation({
+    operations: ["serve_status", "serve_settings_read", "serve_settings_update", "serve_harness_releases", "serve_harness_releases_check", ...factoryControls].map(name => operation({
       name, description: "Server control.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: !name.endsWith("update") && !name.endsWith("check") },
       async call() { developerCalls++; return { ok: true }; },
     })), events: { topics: { pids_changed: "Changed.", serve_settings_changed: "Settings changed.", harness_releases_changed: "Releases changed." } } });
@@ -192,7 +193,7 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
     ["worker", ["worker_settings_receipts_plan", "worker_settings_receipts_clear", "worker_state_receipt_get", "worker_account_state_dependencies", "worker_state_plan", "worker_state_clear", "worker_state_branches", "worker_state_native_effect"]],
     ["auth", ["worker_account_cache_plan", "worker_account_cache_clear", "auth_state_receipt_get", "worker_account_state_guard"]],
     ["access", ["access_history_plan", "access_history_clear", "access_state_receipt_get"]],
-    ["browse", ["browser_profile_reset_plan", "browser_profile_reset_clear", "browser_site_data_plan", "browser_site_data_clear", "browser_handoff_history_plan", "browser_handoff_history_clear", "browser_volume_list", "browser_volume_plan", "browser_volume_clear", "browse_state_receipt_get", "browse_state_fence_release", "browse_state_bot_effect"]],
+    ["browse", ["browser_factory_reset_inspect", "browser_factory_reset_clear", "browser_profile_reset_plan", "browser_profile_reset_clear", "browser_site_data_plan", "browser_site_data_clear", "browser_handoff_history_plan", "browser_handoff_history_clear", "browser_volume_list", "browser_volume_plan", "browser_volume_clear", "browse_state_receipt_get", "browse_state_fence_release", "browse_state_bot_effect"]],
     ["content", ["content_vault_history_plan", "content_publication_list", "content_publication_plan", "content_publication_clear"]] ] as const).map(([owner, names]) =>
     serveSocket({ info: { name: owner, description: "Fixture.", transportDescription: "Socket.", path: socketPath(owner, env) }, context: {},
       operations: names.map(name => operation({ name, description: "Local maintenance.", input: z.strictObject({}), output: ok,
@@ -237,7 +238,7 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
       ["worker", ["worker_settings_receipts_plan", "worker_settings_receipts_clear", "worker_state_receipt_get", "worker_account_state_dependencies", "worker_state_plan", "worker_state_clear", "worker_state_branches", "worker_state_native_effect"]],
       ["auth", ["worker_account_cache_plan", "worker_account_cache_clear", "auth_state_receipt_get", "worker_account_state_guard"]],
       ["access", ["access_history_plan", "access_history_clear", "access_state_receipt_get"]],
-      ["browse", ["browser_profile_reset_plan", "browser_profile_reset_clear", "browser_site_data_plan", "browser_site_data_clear", "browser_handoff_history_plan", "browser_handoff_history_clear", "browser_volume_list", "browser_volume_plan", "browser_volume_clear", "browse_state_receipt_get", "browse_state_fence_release", "browse_state_bot_effect"]],
+      ["browse", ["browser_factory_reset_inspect", "browser_factory_reset_clear", "browser_profile_reset_plan", "browser_profile_reset_clear", "browser_site_data_plan", "browser_site_data_clear", "browser_handoff_history_plan", "browser_handoff_history_clear", "browser_volume_list", "browser_volume_plan", "browser_volume_clear", "browse_state_receipt_get", "browse_state_fence_release", "browse_state_bot_effect"]],
       ["content", ["content_vault_history_plan", "content_publication_list", "content_publication_plan", "content_publication_clear"]]] as const) {
       assert.deepEqual((await send("tools/list", { package: owner })).result.tools.map((tool: { name: string }) => tool.name), owner === "brain" ? ["jobs_show"] : []);
       for (const name of names) assert.match((await send("tools/call", { package: owner, name, arguments: {} })).error.message, /not available/);
@@ -246,7 +247,7 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
     const listed = await send("tools/list", { package: "serve" });
     assert.deepEqual(listed.result.tools.map((tool: { name: string }) => tool.name), ["serve_status"]);
     assert.equal((await send("tools/call", { package: "serve", name: "serve_status", arguments: {} })).result.ok, true);
-    for (const name of ["serve_settings_read", "serve_settings_update", "serve_harness_releases", "serve_harness_releases_check"])
+    for (const name of ["serve_settings_read", "serve_settings_update", "serve_harness_releases", "serve_harness_releases_check", ...factoryControls])
       assert.match((await send("tools/call", { package: "serve", name, arguments: {} })).error.message, /not available/);
     for (const topic of ["serve_settings_changed", "harness_releases_changed"])
       assert.match((await send("events/subscribe", { package: "serve", subscription: topic, topics: [topic] })).error.message, /not available|selected|topic/i);

@@ -24,7 +24,7 @@ export type ChildStatus = {
 };
 
 export type RunningServer = {
-  stop(names: readonly string[]): Promise<void>;
+  stop(names: readonly string[], options?: { graceful: true }): Promise<void>;
   close(): Promise<void>;
   children(): ChildStatus[];
 };
@@ -90,8 +90,10 @@ export function startServer(children: OwnedChild[], env: NodeJS.ProcessEnv = pro
   }
 
   return {
-    stop(names) {
-      return halt(running.filter((item) => names.includes(item.child.name)).map((item) => ({ proc: item.proc, parentFirst: item.child.parentFirst })));
+    async stop(names, options) {
+      const selected = running.filter((item) => names.includes(item.child.name));
+      await halt(selected.map((item) => ({ proc: item.proc, parentFirst: options?.graceful || item.child.parentFirst })));
+      if (options?.graceful && selected.some(item => item.error || item.proc.exitCode !== 0 || item.proc.signalCode !== null)) throw new Error("Owner teardown did not confirm clean exit; installation deletion is refused");
     },
     async close() {
       const staged = new Set(shutdownStages.flat());
