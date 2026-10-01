@@ -8,7 +8,7 @@ export type AccessSnapshot = {
   credentials: { id: string; client_id: string; grant_id: string; generation: number; created: number; expires: number; revoked: number | null }[];
   audit: { seq: number; time: number; action: string; subject: string }[];
   ingress: { host: string; port: number; artifactPort: number; uiPort: number | null } | null;
-  uiSessions: { credential_id: string; expires: number }[];
+  uiSessions: { id?: string; credential_id: string; expires: number }[];
 };
 
 export type JsonSchema = {

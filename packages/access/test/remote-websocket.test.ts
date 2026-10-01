@@ -157,19 +157,20 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
       ...brainMaintenance.map(name => operation({ name, description: "Local maintenance.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { maintenanceCalls++; return { ok: true }; } })),
     ], events: { topics: {} } });
   const rolesDirectory = join(root, "packages", "roles"); mkdirSync(rolesDirectory, { recursive: true });
-  writeFileSync(join(rolesDirectory, "api.yaml"), "name: roles\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: [roles_snapshot, role_shim_list, role_shim_create]\n  events: [role_shims_changed]\n  description: WebSocket.\n");
+  writeFileSync(join(rolesDirectory, "api.yaml"), "name: roles\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: all\n  events: [role_shims_changed]\n  description: WebSocket.\n");
   let shimCalls = 0;
   const roles = await serveSocket({ info: { name: "roles", description: "Demo.", transportDescription: "Socket.", path: socketPath("roles", env) }, context: {},
     operations: [
       operation({ name: "roles_snapshot", description: "Catalog.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { return { ok: true }; } }),
       operation({ name: "role_shim_list", description: "Local PATH inventory.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { shimCalls++; return { ok: true }; } }),
       operation({ name: "role_shim_create", description: "Local PATH write.", input: z.strictObject({}), output: ok, async call() { shimCalls++; return { ok: true }; } }),
+      ...["role_launch_list", "role_launch_plan", "role_launch_clear", "roles_state_receipt_get"].map(name => operation({ name, description: "Local launch maintenance.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { maintenanceCalls++; return { ok: true }; } })),
     ], events: { topics: { role_shims_changed: "Changed." } } });
   const botsDirectory = join(root, "packages", "bots"); mkdirSync(botsDirectory, { recursive: true });
   writeFileSync(join(botsDirectory, "api.yaml"), "name: bots\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: all\n  events: []\n  description: WebSocket.\n");
   let stateCalls = 0;
   const bots = await serveSocket({ info: { name: "bots", description: "Demo.", transportDescription: "Socket.", path: socketPath("bots", env) }, context: {},
-    operations: ["bot_state_read", "bot_workspace_read", "bot_session_reset", "bot_recovery_discard", "bot_queue_bodies_clear", "chat_upload_read"].map(name => operation({
+    operations: ["bot_state_read", "bot_workspace_read", "bot_session_reset", "bot_recovery_discard", "bot_queue_bodies_clear", "chat_upload_read", "bot_settings_receipts_plan", "bot_settings_receipts_clear"].map(name => operation({
       name, description: "Local state.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: name.endsWith("read") },
       async call() { stateCalls++; return { ok: true }; },
     })) });
@@ -181,13 +182,16 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
       name, description: "Server control.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: !name.endsWith("update") && !name.endsWith("check") },
       async call() { developerCalls++; return { ok: true }; },
     })), events: { topics: { pids_changed: "Changed.", serve_settings_changed: "Settings changed.", harness_releases_changed: "Releases changed." } } });
-  for (const owner of ["infer", "hud", "scrape", "signal"]) {
+  for (const owner of ["infer", "hud", "scrape", "signal", "worker", "auth", "access"]) {
     const dir = join(root, "packages", owner); mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "api.yaml"), `name: ${owner}\ndescription: Fixture.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: all\n  events: []\n  description: WebSocket.\n`);
   }
   const maintenance = await Promise.all(([ ["infer", ["infer_catalog_clear"]], ["hud", ["hud_history_plan", "hud_history_clear"]],
     ["scrape", ["scrape_queue_plan", "scrape_queue_apply", "scrape_corpus_list", "scrape_corpus_plan", "scrape_corpus_clear"]],
-    ["signal", ["attention_checkpoint_plan", "attention_checkpoint_reset"]] ] as const).map(([owner, names]) =>
+    ["signal", ["attention_checkpoint_plan", "attention_checkpoint_reset"]],
+    ["worker", ["worker_settings_receipts_plan", "worker_settings_receipts_clear", "worker_state_receipt_get", "worker_account_state_dependencies"]],
+    ["auth", ["worker_account_cache_plan", "worker_account_cache_clear", "auth_state_receipt_get"]],
+    ["access", ["access_history_plan", "access_history_clear", "access_state_receipt_get"]] ] as const).map(([owner, names]) =>
     serveSocket({ info: { name: owner, description: "Fixture.", transportDescription: "Socket.", path: socketPath(owner, env) }, context: {},
       operations: names.map(name => operation({ name, description: "Local maintenance.", input: z.strictObject({}), output: ok,
         annotations: { readOnlyHint: true }, async call() { maintenanceCalls++; return { ok: true }; } })) })));
@@ -217,17 +221,20 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
       return response;
     };
     assert.deepEqual((await rolesCall("tools/list", {})).result.tools.map((tool: { name: string }) => tool.name), ["roles_snapshot"]);
-    for (const name of ["role_shim_list", "role_shim_create"])
+    for (const name of ["role_shim_list", "role_shim_create", "role_launch_list", "role_launch_plan", "role_launch_clear", "roles_state_receipt_get"])
       assert.match((await rolesCall("tools/call", { name, arguments: {} })).error.message, /not available/);
     assert.match((await rolesCall("events/subscribe", { subscription: "s", topics: ["role_shims_changed"] })).error.message, /not available|selected|topic/i);
     assert.equal(shimCalls, 0);
-    for (const name of ["bot_state_read", "bot_workspace_read", "bot_session_reset", "bot_recovery_discard", "bot_queue_bodies_clear", "chat_upload_read"])
+    for (const name of ["bot_state_read", "bot_workspace_read", "bot_session_reset", "bot_recovery_discard", "bot_queue_bodies_clear", "chat_upload_read", "bot_settings_receipts_plan", "bot_settings_receipts_clear"])
       assert.match((await send("tools/call", { package: "bots", name, arguments: {} })).error.message, /not available/);
     assert.equal(stateCalls, 0);
     for (const [owner, names] of [["infer", ["infer_catalog_clear"]], ["hud", ["hud_history_plan", "hud_history_clear"]],
       ["brain", ["brain_jobs_plan", "brain_jobs_clear", "brain_runs_plan", "brain_runs_clear", "brain_source_plan", "brain_source_clear", "brain_artifacts_plan", "brain_artifacts_clear"]],
       ["scrape", ["scrape_queue_plan", "scrape_queue_apply", "scrape_corpus_list", "scrape_corpus_plan", "scrape_corpus_clear"]],
-      ["signal", ["attention_checkpoint_plan", "attention_checkpoint_reset"]]] as const) {
+      ["signal", ["attention_checkpoint_plan", "attention_checkpoint_reset"]],
+      ["worker", ["worker_settings_receipts_plan", "worker_settings_receipts_clear", "worker_state_receipt_get", "worker_account_state_dependencies"]],
+      ["auth", ["worker_account_cache_plan", "worker_account_cache_clear", "auth_state_receipt_get"]],
+      ["access", ["access_history_plan", "access_history_clear", "access_state_receipt_get"]]] as const) {
       assert.deepEqual((await send("tools/list", { package: owner })).result.tools.map((tool: { name: string }) => tool.name), owner === "brain" ? ["jobs_show"] : []);
       for (const name of names) assert.match((await send("tools/call", { package: owner, name, arguments: {} })).error.message, /not available/);
     }
