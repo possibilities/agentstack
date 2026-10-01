@@ -15,6 +15,8 @@ import { extname, join, relative, resolve, sep } from "node:path";
 import { CliError } from "./errors.js";
 import type { Environ } from "./paths.js";
 import { slugify } from "./slug.js";
+import { Publications } from "./publications.js";
+import { stateDir } from "@stack/api";
 
 export const MANIFEST_SCHEMA_VERSION = 1;
 
@@ -314,6 +316,7 @@ export class ArtifactStore {
   private constructor(
     private readonly db: Database,
     readonly casRoot: string,
+    readonly publications?: Publications,
   ) {}
 
   static open(env: Environ, home: string, options: { readOnly?: boolean } = {}): ArtifactStore {
@@ -341,10 +344,13 @@ export class ArtifactStore {
       db.close();
       throw error;
     }
-    return new ArtifactStore(db, casDirectory(env, home));
+    return new ArtifactStore(db, casDirectory(env, home), new Publications(join(root, "publications.sqlite"), {
+      artifact: casDirectory(env, home), bundle: join(stateDir(env), "wiki", "collections", "publish"),
+    }));
   }
 
   close(): void {
+    this.publications?.close();
     this.db.close();
   }
 
@@ -408,24 +414,25 @@ export class ArtifactStore {
       // Not stored yet.
     }
     mkdirSync(join(this.casRoot, address.version.slice(0, 2)), { recursive: true, mode: 0o700 });
-    const staging = `${destination}.staging.${process.pid}`;
-    rmSync(staging, { recursive: true, force: true });
-    if (address.isDirectory) {
-      mkdirSync(staging, { recursive: true, mode: 0o700 });
-      for (const file of collectBundle(source)) {
-        const target = join(staging, file.relative.split("/").join(sep));
-        mkdirSync(join(target, ".."), { recursive: true, mode: 0o700 });
-        copyFileSync(file.absolute, target);
-      }
-    } else {
-      copyFileSync(source, staging);
-    }
+    if (!this.publications) throw new Error("Publication admission requires a writable Artifact store");
+    const claim = this.publications.begin("artifact"), staging = join(claim.directory, "payload");
     try {
-      renameSync(staging, destination);
-    } catch {
-      // A concurrent publish of identical bytes won the race; its object is
-      // byte-identical by construction, so keep it and drop ours.
-      rmSync(staging, { recursive: true, force: true });
+      if (address.isDirectory) {
+        mkdirSync(staging, { mode: 0o700 });
+        for (const file of collectBundle(source)) {
+          const target = join(staging, file.relative.split("/").join(sep));
+          mkdirSync(join(target, ".."), { recursive: true, mode: 0o700 });
+          copyFileSync(file.absolute, target);
+        }
+      } else copyFileSync(source, staging);
+      try { renameSync(staging, destination); }
+      catch (error) {
+        // Do not swallow an arbitrary publication failure as a concurrent win.
+        if (addressOf(destination).version !== address.version) throw error;
+      }
+    } finally {
+      rmSync(claim.directory, { recursive: true, force: true });
+      this.publications.release(claim.id);
     }
   }
 
@@ -610,7 +617,7 @@ function listObjects(casRoot: string): string[] {
     return versions;
   }
   for (const shard of shards) {
-    if (!shard.isDirectory()) continue;
+    if (!shard.isDirectory() || !/^[a-f0-9]{2}$/.test(shard.name)) continue;
     let entries: Dirent[];
     try {
       entries = readdirSync(join(casRoot, shard.name), { withFileTypes: true });

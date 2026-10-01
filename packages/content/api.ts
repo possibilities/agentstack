@@ -125,8 +125,7 @@ const artifactPublish = operation({
     files: z.array(z.strictObject({ name: z.string(), blob: z.string() })).min(1).max(1000) }),
   output: artifactSchema, annotations: { title: "Publish static content" },
   async call(ctx: ContentContext, input) {
-    const directory = join(ctx.collections.root, "publish", randomUUID());
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const claim = ctx.store.publications!.begin("bundle"), directory = claim.directory;
     try {
       let total = 0;
       const names = new Set<string>();
@@ -152,7 +151,7 @@ const artifactPublish = operation({
       syncVault(ctx.command.vaultRoot);
       const { stub: _stub, ...data } = result.data as Record<string, unknown>;
       return artifactSchema.parse(data);
-    } finally { rmSync(directory, { recursive: true, force: true }); }
+    } finally { rmSync(directory, { recursive: true, force: true }); ctx.store.publications!.release(claim.id); }
   },
 });
 
