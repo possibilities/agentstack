@@ -1,6 +1,7 @@
 import WebSocket, { type RawData } from "ws";
 import { appServerSocket } from "./threads.js";
 import type { ServerView } from "./supervisor.js";
+import { orientationSettled } from "./orientation.js";
 import { voiceParams, type SettingsSnapshot, type SettingsLoaded } from "@stack/settings";
 
 const START_TIMEOUT_MS = 60_000;
@@ -57,6 +58,7 @@ export class VoiceCalls {
     if (!bot || bot.state !== "running" || !bot.url || bot.recoveryIssue || !bot.mainThreadId || !bot.runningAccount) {
       throw new Error(`Bot ${botId} needs a verified running account and a durable main thread before a voice call`);
     }
+    if (!orientationSettled(bot.orientation)) throw new Error(`Bot ${botId} orientation is unfinished; wait for the exact first turn's known outcome or reconcile its history before dialing`);
 
     let resolveAnswer!: (answer: string) => void;
     let rejectAnswer!: (error: Error) => void;

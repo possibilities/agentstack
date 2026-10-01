@@ -7,7 +7,8 @@ import { roleStateCategories } from "./src/state-categories.js";
 import { fragmentConditions, renderContext } from "./src/conditions.js";
 import { configuredMcpServers, mcpPort, operation, workspaceRoot, type PackageApi } from "@stack/api";
 import { matchingProjects, serverMcpOrigins, roleMcpConfig, roleMcpConflict } from "./src/bundle.js";
-import { RoleStore, instructionLimitBytes, renderSegments, snapshotLimitChars, roleName, roleDescription } from "./src/store.js";
+import { RoleStore, instructionLimitBytes, renderSegments, renderBotInstructions, snapshotLimitChars, roleName, roleDescription } from "./src/store.js";
+import { botMarkdown } from "./src/bot-markdown.js";
 import { mcpDefinition, mcpRecord, projectPath, resourceName, resourceDescription, skillBody, skillFiles, skillRecord, trustedProjectRecord } from "./src/resources.js";
 import { RoleShims, shimArgs, shimName } from "./src/shims.js";
 
@@ -26,13 +27,14 @@ const category = z.strictObject({ id, title, description, enabled: z.boolean(), 
 const index = z.number().int().nonnegative().describe("Zero-based position within the category.");
 const role = z.strictObject({ id: roleId, name: roleName, description: roleDescription, revision, ...stamps });
 const catalog = z.strictObject({ revision: catalogRevision, defaultRoleId: roleId.nullable(), workerDefaultRoleId: roleId.nullable(), roles: z.array(role) });
-const launchSnapshot = role.extend({ categories: z.array(category), skills: z.array(skillRecord), mcpServers: z.array(mcpRecord), trustedProjects: z.array(trustedProjectRecord),
+const launchSnapshot = role.extend({ botMarkdown: botMarkdown.optional().describe("Role-owned bot.md personality. Current reads always include it; absent on older snapshots means empty. Captured verbatim in each Bot launch; empty disables the personality. Never included in Worker or injected CLI instructions."), categories: z.array(category), skills: z.array(skillRecord), mcpServers: z.array(mcpRecord), trustedProjects: z.array(trustedProjectRecord),
   disabledInternalMcpServers: z.array(z.string()).describe("Internal MCP server names disabled for this Role. Other configured internal MCP servers are enabled, including newly added ones.") });
 const snapshot = launchSnapshot.extend({ mcpServers: z.array(mcpRecord.omit({ definition: true }).extend({ transport: z.enum(["http", "stdio"]) })) });
 const receipt = z.strictObject({ roleId, revision }).describe("Applied Role revision. Reread the selected Role to refresh content.");
 const segment = z.strictObject({ categoryId: id, fragmentId: id,
   start: z.number().int().nonnegative(), end: z.number().int().nonnegative() }).describe("One rendered fragment body as [start, end) string offsets; separators belong to no segment.");
-const preview = z.strictObject({ roleId, revision, rendered: z.string(), segments: z.array(segment),
+const preview = z.strictObject({ roleId, revision, rendered: z.string(), segments: z.array(segment), botMarkdown,
+  botBytes: z.number().int().nonnegative().describe("UTF-8 size of the combined Bot instructions, including bot.md."),
   bytes: z.number().int().nonnegative().describe("UTF-8 size of rendered."), limitBytes: z.number().int().positive().describe("Largest rendered size an edit may produce.") });
 const write = selection.extend({ expectedRevision: revision });
 const count = z.number().int().nonnegative();
@@ -40,7 +42,7 @@ const internalServer = z.strictObject({ name: z.string().describe("Stable connec
   description: z.string(), kind: z.enum(["package", "codex"]).describe("A Package API, or a Codex tool bridge whose availability serve_codex_tools reports."), transport: z.literal("stdio").describe("Native transport for internal Bot, Worker and injected Role connections."), enabled: z.boolean() });
 const launchPreview = z.strictObject({
   roleId, revision,
-  instructions: z.strictObject({ bytes: count.describe("UTF-8 size of SYSTEM_APPEND.md."), limitBytes: count, fragments: count.describe("Fragments that render.") }),
+  instructions: z.strictObject({ bytes: count.describe("UTF-8 size of instruction fragments."), botBytes: count.describe("UTF-8 size of Bot SYSTEM_APPEND.md, including bot.md."), limitBytes: count, fragments: count.describe("Fragments that render.") }),
   skills: z.array(z.strictObject({ id, name: resourceName, description: resourceDescription, files: count.describe("Supporting files beside SKILL.md."),
     bytes: count.describe("Decoded size of the body and supporting files.") })).describe("Enabled role skills in order; each becomes skills/<name>/SKILL.md."),
   internalMcpServers: z.array(internalServer).describe("The default MCP fleet and its enablement for this Role. Only enabled servers enter new Bot and Worker launches."),
@@ -79,14 +81,14 @@ export const rolesSnapshot = operation({
   async call(ctx: RolesContext) { return ctx.store.catalog(); },
 });
 export const roleCreate = operation({
-  name: "role_create", description: "Create an empty named Role without changing the Bot or Worker defaults. Pass the catalog revision from roles_snapshot. Names are unique case-insensitively.",
-  input: z.strictObject({ expectedRevision: catalogRevision, name: roleName, description: roleDescription.optional() }), output: catalog,
+  name: "role_create", description: "Create a named Role with no resources or fragments and a starter bot.md personality, without changing the Bot or Worker defaults. Supply botMarkdown to replace the starter; an empty string disables it. Pass the catalog revision from roles_snapshot. Names are unique case-insensitively.",
+  input: z.strictObject({ expectedRevision: catalogRevision, name: roleName, description: roleDescription.optional(), botMarkdown: botMarkdown.optional() }), output: catalog,
   annotations: { title: "Create role" },
-  async call(ctx: RolesContext, { expectedRevision, name, description }) { const result = ctx.store.createRole(expectedRevision, name, description); ctx.changed?.(); return result; },
+  async call(ctx: RolesContext, { expectedRevision, name, description, botMarkdown }) { const result = ctx.store.createRole(expectedRevision, name, description, botMarkdown); ctx.changed?.(); return result; },
 });
 export const roleUpdate = operation({
-  name: "role_update", description: "Rename a Role or edit its human-only description. Pass that Role's revision. The default is selected by ID, so renaming does not change it.",
-  input: write.extend({ name: roleName.optional(), description: roleDescription.optional() }), output: receipt,
+  name: "role_update", description: "Rename a Role, edit its human-only description, or replace its bot.md personality. Omission preserves bot.md; an empty string clears it. Bot personality edits apply on the next launch, not live, and never repeat orientation. Pass that Role's revision. Renaming does not change the default.",
+  input: write.extend({ name: roleName.optional(), description: roleDescription.optional(), botMarkdown: botMarkdown.optional() }), output: receipt,
   annotations: { title: "Update role" },
   async call(ctx: RolesContext, { roleId, expectedRevision, ...fields }) { return changed(ctx, ctx.store.role(roleId).update(expectedRevision, fields)); },
 });
@@ -141,12 +143,12 @@ export const roleEditorSnapshot = operation({
   async call(ctx: RolesContext, { roleId }) { return ctx.store.role(roleId).snapshot(); },
 });
 export const rolePreview = operation({
-  name: "role_preview", description: "Preview the selected Role's exact developer instructions for explicit rendering context; omitted context includes only unconditional fragments. Descriptions and titles are excluded. Context does not configure a native runtime.",
+  name: "role_preview", description: "Preview exact instruction fragments for explicit rendering context, plus the separate Bot-only bot.md personality and combined Bot byte count. Omitted context includes only unconditional fragments. Descriptions and titles are excluded. Context does not configure a native runtime.",
   input: selection.extend({ context: renderContext.optional() }), output: preview, annotations: { title: "Preview role", readOnlyHint: true },
   async call(ctx: RolesContext, { roleId, context }) {
     const value = ctx.store.role(roleId).snapshot();
     const { rendered, segments } = renderSegments(value, context);
-    return { roleId, revision: value.revision, rendered, segments, bytes: Buffer.byteLength(rendered), limitBytes: instructionLimitBytes };
+    return { roleId, revision: value.revision, rendered, segments, botMarkdown: value.botMarkdown ?? "", botBytes: Buffer.byteLength(renderBotInstructions(value, context)), bytes: Buffer.byteLength(rendered), limitBytes: instructionLimitBytes };
   },
 });
 export const roleLaunchPreview = operation({
@@ -168,7 +170,7 @@ export const roleLaunchPreview = operation({
     return {
       roleId,
       revision: value.revision,
-      instructions: { bytes: Buffer.byteLength(rendered), limitBytes: instructionLimitBytes, fragments: segments.length },
+      instructions: { bytes: Buffer.byteLength(rendered), botBytes: Buffer.byteLength(renderBotInstructions(value, context)), limitBytes: instructionLimitBytes, fragments: segments.length },
       skills: value.skills.filter((skill) => skill.enabled).map((skill) => ({ id: skill.id, name: skill.name, description: skill.description, files: skill.files.length,
         bytes: Buffer.byteLength(skill.body) + skill.files.reduce((sum, file) => sum + Buffer.from(file.contentBase64, "base64").length, 0) })),
       internalMcpServers: internalRows(internal, value.disabledInternalMcpServers),

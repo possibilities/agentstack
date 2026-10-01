@@ -37,6 +37,8 @@ export function pageMessages(content: string, sourceId: string, cursor: z.infer<
     if (payload.type !== "message" || !["user", "assistant"].includes(String(payload.role)) || payload.channel === "analysis") continue;
     const text = messageText(payload);
     if (!text.trim()) continue;
+    // A genuine native turn is still Stack-originated, not human conversation input for Signal.
+    if (payload.role === "user" && /^\[Stack orientation [0-9a-f-]{36}\]\n\nThis is a one-time initialization request from Stack, not a message or authorization from the human\./.test(text)) continue;
     if (payload.role === "user" && ["<environment_context>", "<recommended_plugins>", "<user_instructions>", "# AGENTS.md", "<permissions instructions>"].some((marker) => text.startsWith(marker))) continue;
     const key = typeof payload.id === "string" && payload.id ? `item:${payload.id}` : typeof value.ordinal === "number" ? `ordinal:${value.ordinal}` : `${sourceId}:line:${line}`;
     entries.push({ key, revision:hash(text), line, role:payload.role as "user" | "assistant", text:text.length <= 8_000 ? text : null,

@@ -9,9 +9,10 @@ import { StateStore } from "../src/store.js";
 import { chatRpc } from "../src/chats.js";
 import { RoleStore } from "@stack/roles";
 import type { SettingsView } from "@stack/settings";
+import type { Orientation } from "../src/orientation.js";
 
 const fakeBin = fileURLToPath(new URL("../../test/fixtures/fake-app-server.mjs", import.meta.url));
-type View = { id: string; pid: number | null; cwd: string; url: string | null; state: string; account: string | null; runningAccount: string | null; mainThreadId: string | null; settings: { model: string; reasoningEffort: string; sandboxMode: string; approvalPolicy: string } };
+type View = { id: string; pid: number | null; cwd: string; url: string | null; state: string; account: string | null; runningAccount: string | null; mainThreadId: string | null; orientation: Orientation | null; settings: { model: string; reasoningEffort: string; sandboxMode: string; approvalPolicy: string } };
 function call(socket: string, name: string, args: Record<string, unknown> = {}): Promise<unknown> {
   return socketCall(socket, "tools/call", { name, arguments: args }, { timeoutMs: 30_000 });
 }
@@ -55,9 +56,11 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
     assert.equal(first.cwd, join(stateDir, "bots", "bot-1"));
     assert.equal(first.account, account);
     assert.equal(first.state, "running");
-    assert.equal(first.mainThreadId, null);
-    assert.equal((await call(socket, "chat_main_live", { botId: first.id }) as { threadId: string | null }).threadId, null);
-    const opened = await call(socket, "chat_open", { botId: first.id, input: [{ type: "text", text: "first chat" }] }) as { threadId: string; turn: { id: string } };
+    assert.ok(first.mainThreadId);
+    assert.equal(first.orientation?.state, "completed");
+    assert.equal((await call(socket, "chat_main_live", { botId: first.id }) as { threadId: string | null }).threadId, first.mainThreadId);
+    const opened = { threadId: first.mainThreadId };
+    await call(socket, "chat_send", { botId: first.id, threadId: opened.threadId, input: [{ type: "text", text: "first chat" }] });
     assert.equal((await call(socket, "bot_list") as { bots: View[] }).bots[0]?.mainThreadId, opened.threadId);
     const notify = (threadId: string, method: string, params: Record<string, unknown>) => chatRpc(first.url!, "test/notify", { method, params: { threadId, ...params } });
     await notify("cccccccc-cccc-4ccc-8ccc-cccccccccccc", "item/started", { turnId: "other", item: { id: "elsewhere", type: "agentMessage", text: "not this bot" } });
@@ -115,11 +118,11 @@ test("bots own the complete app-server lifecycle on one socket", { timeout: 120_
     await assert.rejects(call(socket, "chat_send", { botId: first.id, threadId: descendant, input: [{ type: "text", text: "do not send" }] }), /descendants are read-only/);
     assert.equal(((await call(socket, "chat_thread_read", { botId: first.id, threadId: opened.threadId }) as { thread: { id: string } }).thread.id), opened.threadId);
     const sent = await call(socket, "chat_send", { botId: first.id, threadId: opened.threadId, input: [{ type: "text", text: "follow-up" }] }) as { turn: { id: string } };
-    assert.equal((await call(socket, "chat_turns", { botId: first.id, threadId: opened.threadId }) as { data: unknown[] }).data.length, 2);
-    assert.equal((await call(socket, "chat_items", { botId: first.id, threadId: opened.threadId }) as { data: unknown[] }).data.length, 2);
+    assert.equal((await call(socket, "chat_turns", { botId: first.id, threadId: opened.threadId }) as { data: unknown[] }).data.length, 3);
+    assert.equal((await call(socket, "chat_items", { botId: first.id, threadId: opened.threadId }) as { data: unknown[] }).data.length, 3);
     const mainItems = await call(socket, "chat_main_items", { botId: first.id }) as { threadId: string; data: unknown[]; nextCursor: string | null };
     assert.equal(mainItems.threadId, opened.threadId);
-    assert.equal(mainItems.data.length, 2);
+    assert.equal(mainItems.data.length, 3);
     assert.equal(mainItems.nextCursor, null);
     assert.equal((await call(socket, "chat_main_live", { botId: first.id }) as { threadId: string }).threadId, opened.threadId);
     assert.deepEqual((await call(socket, "chat_occurrences", { botId: first.id, threadId: opened.threadId, query: "follow" }) as { data: unknown[] }).data, []);

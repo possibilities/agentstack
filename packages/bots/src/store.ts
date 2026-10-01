@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { SettingsStore, type SettingValues } from "@stack/settings";
+import { orientationState, type Orientation } from "./orientation.js";
 
 export type BotSettings = {
   model?: string;
@@ -47,6 +48,8 @@ export type StoredServer = {
   roleRoot?: string | null;
   roleRevision?: number | null;
   roleId?: string | null;
+  roleInstructionsHash?: string | null;
+  orientation?: Orientation | null;
 };
 
 export class StateStore extends AuthStore {
@@ -86,6 +89,8 @@ export class StateStore extends AuthStore {
     // Existing installations of the first SQLite-backed release have neither column.
     const serverColumns = this.db.prepare("PRAGMA table_info(servers)").all() as Array<{ name: string }>;
     if (!serverColumns.some(({ name }) => name === "role_id")) this.db.exec("ALTER TABLE servers ADD COLUMN role_id TEXT");
+    if (!serverColumns.some(({ name }) => name === "orientation_json")) this.db.exec("ALTER TABLE servers ADD COLUMN orientation_json TEXT");
+    if (!serverColumns.some(({ name }) => name === "role_instructions_hash")) this.db.exec("ALTER TABLE servers ADD COLUMN role_instructions_hash TEXT");
     if (!serverColumns.some(({ name }) => name === "auth_version")) this.db.exec("ALTER TABLE servers ADD COLUMN auth_version INTEGER");
     if (!serverColumns.some(({ name }) => name === "runtime_root")) this.db.exec("ALTER TABLE servers ADD COLUMN runtime_root TEXT");
     if (!serverColumns.some(({ name }) => name === "main_thread_id")) this.db.exec("ALTER TABLE servers ADD COLUMN main_thread_id TEXT");
@@ -115,11 +120,14 @@ export class StateStore extends AuthStore {
   }
 
   servers(): StoredServer[] {
-    return (this.db.prepare("SELECT servers.id, pid, cwd, url, state, codex_bin, account, launched_account, auth_version, runtime_root, main_thread_id, thread_starting, role_root, role_revision, role_id, args_json, bot_settings.settings_json FROM servers LEFT JOIN secrets.server_args AS launch_args ON launch_args.id = servers.id LEFT JOIN bot_settings ON bot_settings.id = servers.id").all() as Array<{
+    return (this.db.prepare("SELECT servers.id, pid, cwd, url, state, codex_bin, account, launched_account, auth_version, runtime_root, main_thread_id, thread_starting, role_root, role_revision, role_id, role_instructions_hash, orientation_json, args_json, bot_settings.settings_json FROM servers LEFT JOIN secrets.server_args AS launch_args ON launch_args.id = servers.id LEFT JOIN bot_settings ON bot_settings.id = servers.id").all() as Array<{
       id: string; pid: number | null; cwd: string; url: string | null; state: StoredServer["state"]; codex_bin: string; account: string | null; launched_account: string | null; auth_version: number | null; runtime_root: string | null; main_thread_id: string | null; thread_starting: number; role_root: string | null; role_revision: number | null; role_id: string | null; args_json: string | null; settings_json: string | null;
-    }>).map(({ codex_bin, launched_account, auth_version, runtime_root, main_thread_id, thread_starting, role_root, role_revision, role_id, args_json, settings_json, ...row }) => ({
+      orientation_json: string | null; role_instructions_hash: string | null;
+    }>).map(({ codex_bin, launched_account, auth_version, runtime_root, main_thread_id, thread_starting, role_root, role_revision, role_id, role_instructions_hash, orientation_json, args_json, settings_json, ...row }) => ({
       ...row, codexBin: codex_bin, launchedAccount: launched_account, authVersion: auth_version, runtimeRoot: runtime_root,
       mainThreadId: main_thread_id, threadStarting: Boolean(thread_starting), roleRoot: role_root,
+      orientation: orientation_json === null ? null : orientationState.parse(JSON.parse(orientation_json)),
+      roleInstructionsHash: role_instructions_hash,
       roleRevision: role_revision, roleId: role_id, args: parseArgs(args_json), settings: this.managed.get(`bot:${row.id}`)
         ? legacySettings(this.managed.get(`bot:${row.id}`)!.values) : settings_json === null ? null : parseSettings(settings_json),
     }));
@@ -141,14 +149,16 @@ export class StateStore extends AuthStore {
     const settings = server.settings == null ? null : parseSettings(JSON.stringify(server.settings));
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      this.db.prepare(`INSERT INTO servers (id, pid, cwd, url, state, codex_bin, account, launched_account, auth_version, runtime_root, main_thread_id, thread_starting, role_root, role_revision, role_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      this.db.prepare(`INSERT INTO servers (id, pid, cwd, url, state, codex_bin, account, launched_account, auth_version, runtime_root, main_thread_id, thread_starting, role_root, role_revision, role_id, orientation_json, role_instructions_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET pid=excluded.pid, cwd=excluded.cwd, url=excluded.url,
         state=excluded.state, codex_bin=excluded.codex_bin, account=excluded.account, launched_account=excluded.launched_account,
         auth_version=excluded.auth_version, runtime_root=excluded.runtime_root,
         main_thread_id=excluded.main_thread_id, thread_starting=excluded.thread_starting,
-        role_root=excluded.role_root, role_revision=excluded.role_revision, role_id=excluded.role_id`).run(
+        role_root=excluded.role_root, role_revision=excluded.role_revision, role_id=excluded.role_id, orientation_json=excluded.orientation_json, role_instructions_hash=excluded.role_instructions_hash`).run(
         server.id, server.pid, server.cwd, server.url, server.state, server.codexBin, server.account, server.launchedAccount ?? null, server.authVersion ?? null, server.runtimeRoot ?? null,
         server.mainThreadId ?? null, server.threadStarting ? 1 : 0, server.roleRoot ?? null, server.roleRevision ?? null, server.roleId ?? null,
+        server.orientation ? JSON.stringify(orientationState.parse(server.orientation)) : null,
+        server.roleInstructionsHash ?? null,
       );
       this.db.prepare("INSERT INTO secrets.server_args (id, args_json) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET args_json = excluded.args_json")
         .run(server.id, JSON.stringify(server.args));
@@ -216,13 +226,15 @@ export class StateStore extends AuthStore {
     const generation = randomUUID(), now = new Date().toISOString();
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      const server = this.db.prepare("SELECT main_thread_id,state FROM servers WHERE id=?").get(id) as { main_thread_id: string | null; state: string };
+      const server = this.db.prepare("SELECT main_thread_id,state,orientation_json FROM servers WHERE id=?").get(id) as { main_thread_id: string | null; state: string; orientation_json: string | null };
       if (server.state !== "stopped") throw new Error("Stop the Bot before resetting its conversation");
       this.db.prepare("UPDATE bot_history_generations SET main_thread_id=?,retired_at=? WHERE generation=?").run(server.main_thread_id, now, identity.generation);
       this.db.prepare("INSERT INTO bot_history_generations VALUES(?,?,?,?,?,?,?,?,?)").run(generation, identity.incarnation, id,
         join(this.stateDir, "history-generations", identity.incarnation, generation), "stack", null, now, null, null);
       this.db.prepare("UPDATE bot_state_identity SET generation=? WHERE id=?").run(generation, id);
-      this.db.prepare("UPDATE servers SET main_thread_id=NULL,thread_starting=0 WHERE id=?").run(id);
+      const orientation = server.orientation_json ? orientationState.parse(JSON.parse(server.orientation_json)) : null;
+      this.db.prepare("UPDATE servers SET main_thread_id=NULL,thread_starting=0,orientation_json=? WHERE id=?")
+        .run(orientation ? JSON.stringify({ ...orientation, state: "retired", issue: "Orientation belongs to an explicitly retired conversation generation; it will not repeat.", updatedAt: Date.now() }) : null, id);
       this.db.exec("COMMIT");
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
     return { previous: identity.generation, generation };

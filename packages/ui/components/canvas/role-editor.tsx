@@ -5,6 +5,7 @@ import { FilePenLineIcon, FolderIcon, GitBranchIcon, PlusIcon, TriangleAlertIcon
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
@@ -528,7 +529,7 @@ function RoleFields({ id, value, set, issue, hint }: { id: string; value(field: 
 
 const nameHint = "Names are unique among Roles; letter case is ignored.";
 
-/** Renames a Role or edits its description. It is saved with the Role's revision, and never changes the default. */
+/** Edits Role metadata and bot.md with the Role's revision, never changing a launch default. */
 function RoleDetailsEditor({ id }: { id: string }) {
   const { roleCatalog, role, status } = useStack();
   const actions = useRoleActions();
@@ -538,19 +539,21 @@ function RoleDetailsEditor({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null);
   const found = roleCatalog.data?.roles.find((item) => item.id === id) ?? null;
   const key = `role:${id}`;
-  const draft = useDraft(key, found ? roleText(found) : blankRoleText);
+  const saved = found ? { ...roleText(found), botMarkdown: role.data?.id === id ? role.data.botMarkdown ?? "" : "" } : blankRoleText;
+  const draft = useDraft(key, saved);
   const connected = status.roles === "open";
   const saving = actions.pending.has(`save:${key}`);
-  if (!found) return <EditorFrame empty><Empty icon={FilePenLineIcon} title={role.error ? "Role unavailable" : "Reading Role…"} /></EditorFrame>;
+  if (!found || role.data?.id !== id) return <EditorFrame empty><Empty icon={FilePenLineIcon} title={role.error ? "Role unavailable" : "Reading Role…"} /></EditorFrame>;
 
   const dirty = Object.keys(draft.changes).length > 0;
-  const issue = roleNameIssue(draft.value("name"), roleCatalog.data, id);
+  const personalityIssue = utf8Bytes(draft.value("botMarkdown")) > 65_536 ? "bot.md exceeds 65,536 UTF-8 bytes" : null;
+  const issue = roleNameIssue(draft.value("name"), roleCatalog.data, id) ?? personalityIssue;
   const save = () => {
     if (!dirty || issue || draft.conflicts.length || saving || !connected) return;
     const pendingDraft = draft.draft;
     setError(null);
     actions.write("role_update", (snapshot) => {
-      const current = roleText(snapshot);
+      const current = { ...roleText(snapshot), botMarkdown: snapshot.botMarkdown ?? "" };
       if (draftConflicts(pendingDraft, current).length) return "It changed elsewhere while saving. Choose which version to keep.";
       const { name, ...rest } = draftChanges(pendingDraft, current);
       return { ...rest, ...(name !== undefined ? { name: name.trim() } : {}) };
@@ -568,8 +571,14 @@ function RoleDetailsEditor({ id }: { id: string }) {
           <span className="text-[0.68rem] text-muted-foreground tabular-nums">revision {found.revision}</span>
           <span className="ml-auto"><Stamps record={found} /></span>
         </div>
-        <ConflictNotice fields={draft.conflicts} onKeep={() => draft.replace(keepDraft(draft.draft, roleText(found)))} onYield={() => draft.replace(yieldDraft(draft.draft, roleText(found)))} />
-        <RoleFields id={formId} value={draft.value} set={draft.set} issue={issue} hint={nameHint} />
+        <ConflictNotice fields={draft.conflicts} onKeep={() => draft.replace(keepDraft(draft.draft, saved))} onYield={() => draft.replace(yieldDraft(draft.draft, saved))} />
+        <RoleFields id={formId} value={draft.value} set={draft.set} issue={roleNameIssue(draft.value("name"), roleCatalog.data, id)} hint={nameHint} />
+        <Field data-invalid={Boolean(personalityIssue)} className="gap-1.5">
+          <FieldLabel htmlFor={`${formId}-bot-markdown`} className={labelClass}>bot.md · Bot personality</FieldLabel>
+          <Textarea id={`${formId}-bot-markdown`} value={draft.value("botMarkdown")} maxLength={65_536} rows={12} spellCheck={false}
+            aria-invalid={Boolean(personalityIssue)} aria-describedby={`${formId}-bot-markdown-hint`} onChange={(event) => draft.set("botMarkdown", event.target.value)} className="min-h-48 resize-y font-mono" />
+          <FieldDescription id={`${formId}-bot-markdown-hint`} className={hintClass}>{personalityIssue ?? "Captured with this Role at each Bot launch. Changes apply after stop/start, never repeat the introduction, and do not reach Workers or injected CLIs. Empty text disables the personality."}</FieldDescription>
+        </Field>
         {error ? <p role="alert" className="px-0.5 text-[0.72rem] text-pretty text-destructive">{error}</p> : null}
       </form>
     </EditorFrame>
@@ -605,8 +614,8 @@ function NewRoleEditor() {
       <form className="flex flex-col gap-3" aria-label="New role" onSubmit={(event) => { event.preventDefault(); create(); }} onKeyDown={saveKeys(create)}>
         <p className={hintClass}>
           {catalog && !catalog.roles.length
-            ? "A new Role starts empty. Bots and Workers have separate launch defaults."
-            : "A new Role starts empty and is not a launch default. Existing sessions keep their Role."}
+            ? "A new Role starts with a starter bot.md and no fragments or resources. Bots and Workers have separate launch defaults."
+            : "A new Role starts with a starter bot.md and no fragments or resources. It is not a launch default; existing sessions keep their Role."}
         </p>
         <RoleFields id={formId} value={draft.value} set={draft.set} issue={issue} hint={nameHint} />
         {error ? <p role="alert" className="px-0.5 text-[0.72rem] text-pretty text-destructive">{error}</p> : null}

@@ -115,13 +115,18 @@ test("a role snapshots instructions and MCP configuration without argv content",
   try {
     let state = store.createCategory(0, "Default");
     state = store.createFragment(state.revision, state.categories[0]!.id, "Prompt", "Do useful work.", "not rendered");
+    state = store.update(state.revision, { botMarkdown: "Be an incisive researcher." });
     const first = await materializeRole(root, "bot-1", state, await internal(root));
-    assert.equal(await readFile(join(first, "SYSTEM_APPEND.md"), "utf8"), "Do useful work.");
+    assert.equal(await readFile(join(first, "bot.md"), "utf8"), "Be an incisive researcher.");
+    assert.equal(await readFile(join(first, "SYSTEM_APPEND.md"), "utf8"), "Do useful work.\n\n# Role personality (bot.md)\n\nBe an incisive researcher.");
     assert.match(await readFile(join(first, "config.toml"), "utf8"), /\[mcp_servers.auth\]/);
     state = store.updateFragment(state.revision, state.categories[0]!.fragments[0]!.id, { body: "Changed." });
+    state = store.update(state.revision, { botMarkdown: "Be a warm collaborator." });
     const second = await materializeRole(root, "bot-1", state, {});
-    assert.equal(await readFile(join(first, "SYSTEM_APPEND.md"), "utf8"), "Do useful work.");
-    assert.equal(await readFile(join(second, "SYSTEM_APPEND.md"), "utf8"), "Changed.");
+    assert.equal(await readFile(join(first, "bot.md"), "utf8"), "Be an incisive researcher.");
+    assert.equal(await readFile(join(first, "SYSTEM_APPEND.md"), "utf8"), "Do useful work.\n\n# Role personality (bot.md)\n\nBe an incisive researcher.");
+    assert.equal(await readFile(join(second, "bot.md"), "utf8"), "Be a warm collaborator.");
+    assert.equal(await readFile(join(second, "SYSTEM_APPEND.md"), "utf8"), "Changed.\n\n# Role personality (bot.md)\n\nBe a warm collaborator.");
     await assert.rejects(removeRole(root, "bot-2", first), /unrecognized/);
     await removeRole(root, "bot-1", first);
     await removeRole(root, "bot-1", second);
@@ -136,6 +141,8 @@ test("an oversized assembled prompt is rejected before committing an edit", asyn
     const categoryId = state.categories[0]!.id;
     state = store.createFragment(state.revision, categoryId, "First", "a".repeat(200_000));
     assert.throws(() => store.createFragment(state.revision, categoryId, "Too much", "b".repeat(70_000)), /exceed 262144 bytes/);
+    assert.throws(() => store.update(state.revision, { botMarkdown: "é".repeat(32_769) }), /bot.md exceeds 65536 UTF-8 bytes/);
+    assert.throws(() => store.update(state.revision, { botMarkdown: "b".repeat(65_536) }), /exceed 262144 bytes/);
     assert.deepEqual(store.snapshot(), state);
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 });

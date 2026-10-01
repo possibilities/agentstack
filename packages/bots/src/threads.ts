@@ -64,15 +64,19 @@ export function threadTree(threads: ActiveThread[]): ActiveThread[] {
 }
 
 /** Rejoin the Server's already adopted main thread; never allocate one. */
-export async function bindMainThread(url: string, cwd: string, threadId: string, onSettings?: (value: Record<string, unknown>) => void): Promise<string> {
+export async function bindMainThread(url: string, cwd: string, threadId: string, onSettings?: (value: Record<string, unknown>) => void, instructions?: { text: string; refresh: boolean }): Promise<string> {
   return withAppServer(url, async (call) => {
     const method = "thread/resume";
-    const response = await call(method, { threadId, cwd }) as { thread?: { id?: unknown } };
+    const response = await call(method, { threadId, cwd, ...(instructions === undefined ? {} : { developerInstructions: instructions.text }) }) as { thread?: { id?: unknown } };
     const id = response?.thread?.id;
     if (typeof id !== "string" || id !== threadId) {
       throw new Error(`${method} returned an unexpected thread id`);
     }
     onSettings?.(response as Record<string, unknown>);
+    // Resume updates config, but retains generic developer context already in history.
+    // Supersede a changed Role snapshot without admitting a turn or invoking the model.
+    if (instructions?.refresh) await call("thread/inject_items", { threadId, items: [{ type: "message", role: "developer",
+      content: [{ type: "input_text", text: `[Stack Role launch instructions]\nThis is the current captured Role instruction and bot.md snapshot. It supersedes all earlier Stack Role snapshots and their personality text, including any text now omitted. This is not a human request or an invitation to repeat your introduction.\n\n${instructions.text || "The current Role supplies no instruction Fragments or bot.md personality."}` }] }] });
     return id;
   });
 }

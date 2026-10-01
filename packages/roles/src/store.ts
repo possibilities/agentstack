@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { initializeRoles } from "./schema.js";
+import { botMarkdown, starterBotMarkdown } from "./bot-markdown.js";
 import { fragmentConditions, matchesConditions, renderContext, type FragmentConditions, type RenderContext } from "./conditions.js";
 import { mcpRecord, skillRecord, trustedProjectRecord, type RoleMcpServer, type Skill, type TrustedProject } from "./resources.js";
 
@@ -15,7 +16,7 @@ export const roleName = z.string().trim().min(1).max(200).describe("Human-readab
 export const roleDescription = z.string().max(4_000);
 export type Role = { id: string; name: string; description: string; revision: number } & Stamps;
 export type RoleCatalog = { revision: number; defaultRoleId: string | null; workerDefaultRoleId: string | null; roles: Role[] };
-export type RoleSnapshot = Role & { categories: Category[]; skills: Skill[]; mcpServers: RoleMcpServer[]; trustedProjects: TrustedProject[]; disabledInternalMcpServers: string[] };
+export type RoleSnapshot = Role & { botMarkdown?: string; categories: Category[]; skills: Skill[]; mcpServers: RoleMcpServer[]; trustedProjects: TrustedProject[]; disabledInternalMcpServers: string[] };
 
 function canonicalProjectRoot(path: string): string {
   if (!statSync(path).isDirectory()) throw new Error(`project root is not a directory: ${path}`);
@@ -48,6 +49,15 @@ export function renderSegments(snapshot: Pick<RoleSnapshot, "categories">, conte
 
 export function renderInstructions(snapshot: Pick<RoleSnapshot, "categories">, context: RenderContext = {}): string {
   return renderSegments(snapshot, context).rendered;
+}
+
+/** Bot launches append the Role's personality; Workers and injected CLIs keep their existing instructions. */
+export function renderBotInstructions(snapshot: Pick<RoleSnapshot, "categories" | "botMarkdown">, context: RenderContext = {}): string {
+  const instructions = renderInstructions(snapshot, context);
+  const personality = snapshot.botMarkdown ?? "";
+  const rendered = [instructions, personality.trim() ? `# Role personality (bot.md)\n\n${personality}` : ""].filter(Boolean).join("\n\n");
+  if (Buffer.byteLength(rendered) > instructionLimitBytes) throw new Error(`rendered Bot instructions exceed ${instructionLimitBytes} bytes`);
+  return rendered;
 }
 
 export class RoleStore {
@@ -90,11 +100,12 @@ export class RoleStore {
 
   defaultSnapshot(): RoleSnapshot { return this.launchSnapshot(); }
 
-  createRole(expectedRevision: number, name: string, description = ""): RoleCatalog {
+  createRole(expectedRevision: number, name: string, description = "", personality = starterBotMarkdown): RoleCatalog {
     return this.changeCatalog(expectedRevision, () => {
       const id = randomUUID();
       const now = Date.now();
       this.db.prepare("INSERT INTO roles VALUES (?, ?, ?, 0, ?, ?)").run(id, roleName.parse(name), roleDescription.parse(description), now, now);
+      this.db.prepare("INSERT INTO role_bot_markdown VALUES (?, ?)").run(id, botMarkdown.parse(personality));
       this.db.prepare("UPDATE role_catalog SET default_role_id = ? WHERE default_role_id IS NULL").run(id);
     });
   }
@@ -119,7 +130,7 @@ export class RoleStore {
       const catalog = this.readCatalog();
       if (catalog.defaultRoleId === roleId) throw new Error("cannot delete the default role; mark another role as default first");
       if (catalog.workerDefaultRoleId === roleId) throw new Error("cannot delete the Worker default role; select another Worker default first");
-      for (const table of ["fragments", "categories", "skills", "role_mcp_servers", "trusted_projects", "disabled_internal_mcp"]) {
+      for (const table of ["fragments", "categories", "skills", "role_mcp_servers", "trusted_projects", "disabled_internal_mcp", "role_bot_markdown"]) {
         this.db.prepare(`DELETE FROM ${table} WHERE role_id = ?`).run(roleId);
       }
       this.db.prepare("DELETE FROM roles WHERE id = ?").run(roleId);
@@ -166,11 +177,12 @@ export class RoleContents {
     return role;
   }
 
-  update(expectedRevision: number, fields: { name?: string; description?: string }): RoleSnapshot {
+  update(expectedRevision: number, fields: { name?: string; description?: string; botMarkdown?: string }): RoleSnapshot {
     return this.change(expectedRevision, () => {
       const current = this.metadata();
       this.db.prepare("UPDATE roles SET name = ?, description = ? WHERE id = ?")
         .run(roleName.parse(fields.name ?? current.name), roleDescription.parse(fields.description ?? current.description), this.roleId);
+      if (fields.botMarkdown !== undefined) this.db.prepare("UPDATE role_bot_markdown SET body=? WHERE role_id=?").run(botMarkdown.parse(fields.botMarkdown), this.roleId);
     });
   }
 
@@ -215,7 +227,8 @@ export class RoleContents {
       id: string; path: string; description: string; enabled: number;
     }>).map(({ enabled, ...row }) => trustedProjectRecord.parse({ ...row, enabled: Boolean(enabled) }));
     const disabledInternalMcpServers = (this.db.prepare("SELECT name FROM disabled_internal_mcp WHERE role_id = ? ORDER BY name").all(this.roleId) as Array<{ name: string }>).map(({ name }) => name);
-    return { ...role, categories, skills, mcpServers, trustedProjects, disabledInternalMcpServers };
+    const personality = this.db.prepare("SELECT body FROM role_bot_markdown WHERE role_id=?").get(this.roleId) as { body: string };
+    return { ...role, botMarkdown: personality.body, categories, skills, mcpServers, trustedProjects, disabledInternalMcpServers };
   }
 
   createCategory(expectedRevision: number, title: string, description = "", enabled = true): RoleSnapshot {
@@ -388,7 +401,7 @@ export class RoleContents {
       this.db.exec("UPDATE role_catalog SET revision = revision + 1 WHERE singleton = 1");
       const snapshot = this.readSnapshot();
       // Conservative bound across every context, including mutually exclusive conditions.
-      renderInstructions({ categories: snapshot.categories.map((category) => ({ ...category, fragments: category.fragments.map((fragment) => ({ ...fragment, conditions: {} })) })) });
+      renderBotInstructions({ botMarkdown: snapshot.botMarkdown, categories: snapshot.categories.map((category) => ({ ...category, fragments: category.fragments.map((fragment) => ({ ...fragment, conditions: {} })) })) });
       if (JSON.stringify(snapshot).length > snapshotLimitChars) throw new Error("role snapshot exceeds the socket response budget");
       if (JSON.stringify(readCatalog(this.db)).length > snapshotLimitChars) throw new Error("role catalog exceeds the socket response budget");
       return snapshot;
