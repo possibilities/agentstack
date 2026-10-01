@@ -154,7 +154,7 @@ function StackServers() {
                 <Switch size="sm" checked={server.enabled} disabled={!connected || actions.pending.has(`internal:${server.name}`)} aria-label={`${server.title} on`}
                   onCheckedChange={(enabled) => { actions.setInternalMcp(server.name, enabled).catch((error) => toast.error(errorMessage(error))); }} />
                 <span className={cn("min-w-0 flex-1 truncate text-[0.78rem] font-medium", server.kind === "package" && "font-mono", !server.enabled && "text-muted-foreground")}
-                  title={server.description ? `${server.name}: ${server.description}` : server.name}>{server.title}</span>
+                  title={`${server.name} · ${server.transport}${server.description ? `: ${server.description}` : ""}`}>{server.title}</span>
                 {availability ? <AvailabilityDot availability={availability} /> : null}
                 {!server.enabled ? <span className={cn(chip, "bg-muted text-muted-foreground")}>Off</span> : null}
               </li>
@@ -166,7 +166,7 @@ function StackServers() {
       )}
       {list && !on && total ? <p className="px-1.5 text-[0.7rem] text-muted-foreground">Every Stack server is off; later launches receive none of them.</p> : null}
       <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">
-        Switches apply to later Bot launches and new Workers; running sessions keep their connections. New Stack servers start on.
+        Stack servers use stdio for Bot and Worker launches and <code>stack roles inject</code>. Switches apply to future launches; running sessions keep their connections. New Stack servers start on.
       </p>
       {list?.servers.some((server) => server.kind === "codex") ? <CodexToolsAvailability servers={list.servers.filter((server) => server.kind === "codex")} now={now} /> : null}
     </Section>

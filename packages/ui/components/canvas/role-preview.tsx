@@ -214,9 +214,12 @@ function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating:
             </button>
           ))}
           {launch.internalMcpServers.map((server) => server.enabled
-            ? <span key={server.name} className={cn(chip, "bg-muted text-muted-foreground")} title={`${server.name} · Stack server, bound to each launch. ${server.description}`}>{server.title}</span>
+            ? <span key={server.name} className={cn(chip, "bg-muted text-muted-foreground")} title={`${server.name} · ${server.transport} · Stack server, bound to each launch. ${server.description}`}>{server.title}</span>
             : <span key={server.name} className={cn(chip, "bg-muted/40 text-muted-foreground/70 line-through")} title={`${server.name} · Off for this Role`}>{server.title}<span className="sr-only"> (off for this Role)</span></span>)}
         </div>
+        <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">
+          Stack servers use stdio for future Bot, Worker and <code>stack roles inject</code> launches. This preview does not describe running connections. Additional Role servers keep their configured transport.
+        </p>
         {launch.config ? (
           <div className="flex flex-col gap-1">
             <div className="flex items-center justify-between gap-2 px-1.5">

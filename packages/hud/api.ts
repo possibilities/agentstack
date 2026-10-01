@@ -18,6 +18,12 @@ async function retired(ctx: HudContext, target: s.ChatTarget) {
   if (bots.some(bot => bot.id === target.botId && bot.mainThreadId === target.mainThreadId)) throw new Error("This is the active Bot root; use work_focus_set to select or clear focus");
 }
 export const hudStateOperations = [
+  operation({ name: "hud_history_plan", description: "Preview exact Work journal-body redaction or item-and-journal tombstoning. Open selected/descendant Worker admissions and active-root Chat focus block. Tombstoning requires retained children cleared first or explicitly selected together. Preserve Work identity, hierarchy, state, dependency IDs and replay receipts; captured Worker context and other owner copies remain.",
+    input: s.historySelection, output: statePlan,
+    async call(ctx: HudContext, input, invocation) { requireStateOperator(invocation); return ctx.service.historyPlan(input); } }),
+  operation({ name: "hud_history_clear", description: "Apply exact Work cleanup after rechecking Worker/Chat dependencies. Journal-only redacts bodies, references and edit values; item-and-journal also clears authored fields/metadata and permanently tombstones Work. Advance content generation; invalidate tree/timeline reads. Effects and receipt commit together; identical retries return the receipt. Local operator only.",
+    input: stateApplyInput, output: stateReceipt, annotations: { destructiveHint: true, idempotentHint: true },
+    async call(ctx: HudContext, input, invocation) { requireStateOperator(invocation); return ctx.service.historyClear(input); } }),
   operation({ name: "work_focus_list", description: "Page durable Chat-focus records, including retired roots no longer addressable through work_focus_get. Saved null blocks inheritance; absent focus permits it. Cursor pages follow exact target keys and must be refreshed on hud_changed.",
     input: z.strictObject({ after: z.string().max(2048).optional(), limit: z.number().int().min(1).max(100).default(50), botId: z.string().optional() }), output: z.strictObject({ entries: z.array(s.focus), nextCursor: z.string().nullable() }), annotations: read,
     async call(ctx: HudContext, { after, limit, botId }, invocation) { requireStateOperator(invocation); return ctx.store.focusList(after, limit, botId); } }),

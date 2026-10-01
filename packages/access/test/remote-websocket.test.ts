@@ -166,7 +166,7 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
   writeFileSync(join(botsDirectory, "api.yaml"), "name: bots\ndescription: Demo.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: all\n  events: []\n  description: WebSocket.\n");
   let stateCalls = 0;
   const bots = await serveSocket({ info: { name: "bots", description: "Demo.", transportDescription: "Socket.", path: socketPath("bots", env) }, context: {},
-    operations: ["bot_state_read", "bot_workspace_read", "bot_session_reset", "bot_recovery_discard", "chat_upload_read"].map(name => operation({
+    operations: ["bot_state_read", "bot_workspace_read", "bot_session_reset", "bot_recovery_discard", "bot_queue_bodies_clear", "chat_upload_read"].map(name => operation({
       name, description: "Local state.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: name.endsWith("read") },
       async call() { stateCalls++; return { ok: true }; },
     })) });
@@ -178,6 +178,15 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
       name, description: "Server control.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: !name.endsWith("update") && !name.endsWith("check") },
       async call() { developerCalls++; return { ok: true }; },
     })), events: { topics: { pids_changed: "Changed.", serve_settings_changed: "Settings changed.", harness_releases_changed: "Releases changed." } } });
+  for (const owner of ["infer", "hud"]) {
+    const dir = join(root, "packages", owner); mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "api.yaml"), `name: ${owner}\ndescription: Fixture.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: all\n  events: []\n  description: WebSocket.\n`);
+  }
+  let maintenanceCalls = 0;
+  const maintenance = await Promise.all(([ ["infer", ["infer_catalog_clear"]], ["hud", ["hud_history_plan", "hud_history_clear"]] ] as const).map(([owner, names]) =>
+    serveSocket({ info: { name: owner, description: "Fixture.", transportDescription: "Socket.", path: socketPath(owner, env) }, context: {},
+      operations: names.map(name => operation({ name, description: "Local maintenance.", input: z.strictObject({}), output: ok,
+        annotations: { readOnlyHint: true }, async call() { maintenanceCalls++; return { ok: true }; } })) })));
   const key = join(root, "key.pem"), cert = join(root, "cert.pem");
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "1", "-subj", "/CN=localhost"], { stdio: "ignore" });
   const port = await freePort();
@@ -208,9 +217,14 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
       assert.match((await rolesCall("tools/call", { name, arguments: {} })).error.message, /not available/);
     assert.match((await rolesCall("events/subscribe", { subscription: "s", topics: ["role_shims_changed"] })).error.message, /not available|selected|topic/i);
     assert.equal(shimCalls, 0);
-    for (const name of ["bot_state_read", "bot_workspace_read", "bot_session_reset", "bot_recovery_discard", "chat_upload_read"])
+    for (const name of ["bot_state_read", "bot_workspace_read", "bot_session_reset", "bot_recovery_discard", "bot_queue_bodies_clear", "chat_upload_read"])
       assert.match((await send("tools/call", { package: "bots", name, arguments: {} })).error.message, /not available/);
     assert.equal(stateCalls, 0);
+    for (const [owner, names] of [["infer", ["infer_catalog_clear"]], ["hud", ["hud_history_plan", "hud_history_clear"]]] as const) {
+      assert.deepEqual((await send("tools/list", { package: owner })).result.tools, []);
+      for (const name of names) assert.match((await send("tools/call", { package: owner, name, arguments: {} })).error.message, /not available/);
+    }
+    assert.equal(maintenanceCalls, 0, "even read-only annotations cannot expose local maintenance");
     const listed = await send("tools/list", { package: "serve" });
     assert.deepEqual(listed.result.tools.map((tool: { name: string }) => tool.name), ["serve_status"]);
     assert.equal((await send("tools/call", { package: "serve", name: "serve_status", arguments: {} })).result.ok, true);
@@ -220,7 +234,7 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
       assert.match((await send("events/subscribe", { package: "serve", subscription: topic, topics: [topic] })).error.message, /not available|selected|topic/i);
     assert.equal(developerCalls, 1, "only existing server status reaches the private socket");
   } finally {
-    ws?.terminate(); await remote.close(); await server.close(); await bots.close(); await roles.close(); await backend.close(); store.close(); rmSync(root, { recursive: true, force: true });
+    ws?.terminate(); await remote.close(); for (const owner of maintenance) await owner.close(); await server.close(); await bots.close(); await roles.close(); await backend.close(); store.close(); rmSync(root, { recursive: true, force: true });
   }
 });
 

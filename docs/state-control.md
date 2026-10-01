@@ -62,17 +62,17 @@ can retain `.stack-clear-<uuid>` quarantine, named in the result for inspection.
 
 | Owner | Inspection / selection | Maintenance and effect |
 | --- | --- | --- |
-| Bots | `bot_state_read`, `bot_workspace_list/read`, `bot_history_list`, `bot_queue_history`, `bot_launch_read`, `bot_log_read`, `bot_recovery_list`, `chat_upload_list/read` | `bot_state_plan` selects `workspace_clear`, `session_reset` with `history:retain/purge`, `history_clear` of one retired generation, `log_clear`, `launch_args_clear`, `upload_remove` or `recovery_discard`. Apply through corresponding `bot_<kind>`. |
+| Bots | `bot_state_read`, `bot_workspace_list/read`, `bot_history_list`, `bot_queue_history`, `bot_launch_read`, `bot_log_read`, `bot_recovery_list`, `chat_upload_list/read` | `bot_state_plan` selects `workspace_clear`, `session_reset` with `history:retain/purge`, `history_clear` of one retired generation, `queue_bodies_clear` with exact IDs or an attributed retired generation, `log_clear`, `launch_args_clear`, `upload_remove` or `recovery_discard`. Apply through corresponding `bot_<kind>`. Terminal queue clearing retains original bytes/digest, destination and sent/unknown/cancelled outcome; pending/dispatching blocks. |
 | Serve | `serve_state_list`, `serve_subscription_list/get`, `serve_settings_read`, enabled-only `serve_harness_releases` | `serve_subscription_remove` uses exact ID/revision. Pending reads are aborted; already admitted native input cannot be recalled. `serve_settings_update` uses the observed revision and applies developer mode immediately; disabling aborts/fences release checks while retaining observations. |
 | Worker | Existing status/detail/transcript/turn/record/tool/diff reads; `worker_workspace_list/read` | Existing `worker_close` and `worker_remove` remain the removal authority. Worktree deletion requires explicit discard; source branch and provider-native history are distinct. |
-| Infer | Existing request list/get and trace export | `infer_history_plan({requestIds})` / `infer_history_clear`: terminal input, instructions, output, errors and events; preserve request digest, account/model/usage/timing and outcome. |
+| Infer | Existing request list/get, trace export and `infer_model_list` | `infer_history_plan({requestIds})` / `infer_history_clear`: terminal input, instructions, output, errors and events; preserve request digest, account/model/usage/timing and outcome. `infer_catalog_clear({accountIds?})` evicts exact account observations (omitted means all), aborts/fences discovery and never refreshes or dispatches inference. Already dispatched inference is untouched. |
 | Notify | Existing notification list/get/counts | `notification_history_plan({ids})` / `notification_history_clear`: dismissed authored content/actions/prompts/responses/source/group; preserve send/dismissal digests and first outcome. |
-| Proc | Existing schedule, execution, run and output reads | `proc_history_plan` / `proc_history_clear`: exact `run_output` or `execution_content` selection. Active work blocks; cursor gap/truncation and authority/outcome survive. Protected Brain source schedules remain Brain-controlled. |
+| Proc | Existing schedule, execution, run and output reads | `proc_history_plan` / `proc_history_clear`: exact `run_output`, `execution_content` or removed `schedule_definition` selection. Active work blocks; protected Brain source schedules refuse. Schedule action input, argv, env and cwd redact with `contentClearedAt` and a spec digest; ID/authority/label/target/revision/timing stay. Captured executions and process summaries remain separate copies. |
 | Signal | Existing message/run/evidence reads; `attention_infer_requests` pages correlated Infer request IDs | `attention_history_plan({scope:"all-captured-content"})` / `attention_history_clear`: paused and drained captured content, including cross-conversation source blobs and partial buffers. Retain suppression/cursors/identities and Infer correlation. |
 | Content | `blob_stage_list`, `content_blob_list` alongside existing item/document/Artifact reads | `blob_stage_abort` retires a stage UUID/client key at its revision. `content_storage_plan({digests})` / `content_storage_collect` collects exact unreferenced collection CAS blobs. Items and finalized stages independently hold references. Existing Artifact `gc` is a separate store. |
 | Usage | `usage_snapshot` | `usage_observations_plan({accounts:[{id,scope}]})` / `usage_observations_clear`: exact local observations; fence selected in-flight collectors and persist. Future collection regenerates; provider quota/credentials are independent. |
 | Xcom | Existing archive/status/user/article reads; status includes `paused` | `xcom_control({paused})` persistently pauses/resumes admission. `xcom_history_plan` / `xcom_history_clear` selects posts with reimport/orphan-author policy, article attempts, or one scan checkpoint. Pause and wait for `sync.running:false`. Source rows/raw/FTS clear together. |
-| HUD | `work_focus_list` includes retired roots | `work_focus_retire_plan({target})` / `work_focus_retire` removes one proven retired-root focus. Active-root focus uses existing `work_focus_set`; saved null is an inheritance barrier. Work/journal/Worker associations remain. |
+| HUD | `work_focus_list` includes retired roots; Work/tree/timeline and metadata reads expose redaction markers | `work_focus_retire_plan({target})` / `work_focus_retire` removes one retired-root focus. `hud_history_plan({items,scope})` / `hud_history_clear` redacts exact `journal_bodies`, or tombstones `item_and_journal` including metadata. Retain hierarchy/state/dependency IDs; require retained children first or explicit subtree selection. Open descendant Worker admissions and active-root focus block. Worker-captured context stays independent. |
 | Brain | Owner inventory links existing research, jobs, source, reveal and maintenance reads | Existing document `delete`, job cancel/exclude and source pause remain the domain authorities. Document deletion redacts associated intents and collects unreferenced Artifacts. |
 | Browse | Owner inventory links profiles, controllers and handoffs; provider volume coverage is explicit | Existing profile deletion, controller closure, handoff completion/cancellation and installation lifecycle operations. Profile deletion enforces default/controller/handoff restrictions and calls the native provider. |
 | Auth / Access | Credential-metadata inventories link existing account/client snapshots | Existing account removal/reconciliation and Access revocation. Account removal can cascade; revocation retains identity/admission history. State inventory reveals no bearer values. |
@@ -97,7 +97,8 @@ Reset retains Bot/account/workspace/settings identity while atomically retiring
 the sanctioned root and advancing its history namespace. The next turn binds a
 new root; server startup still autostarts recorded Bots. Legacy shared history is
 labelled shared and cannot be purged wholesale. Pending Stack queue entries become
-cancelled; original queued bodies and sent/unknown admission evidence remain.
+cancelled; original queued bodies remain until separately selected for
+`bot_queue_bodies_clear`. Sent/unknown admission evidence always survives that clear.
 Signal, Infer, HUD, Worker and Browser copies are independent owner state.
 
 Partial or interrupted maintenance leaves `maintenanceRequestId` in `bot_state_read`
@@ -139,8 +140,7 @@ The following remain explicit backend gaps rather than implied erase controls:
   generation claims and publication recovery must remain authoritative.
 - Roles retained injection-launch cleanup, standalone settings-receipt retirement,
   Auth cache-only clearing and Access history/session-specific retirement.
-- HUD Work/journal body purge, Bot queued-body purge, Signal checkpoint reset,
-  Infer catalog-only clearing and Proc removed-schedule payload redaction.
+- Signal checkpoint reset.
 - Content vault/Git-history purge and temporary publication collection. Document
   and Artifact tombstones, local Git, remotes and backups retain independent copies.
 - Client-local Canvas layouts/drafts and Chrome/Android outboxes/history. Device
@@ -150,3 +150,28 @@ Filesystem sizes do not imply complete provider attribution. Logical database
 clearing does not guarantee byte erasure from SQLite free pages/WAL, snapshots or
 backups. Full-installation identity/data-generation reset is a separate operation
 requiring coordinated Access and device receipt semantics.
+
+Infer catalog eviction deliberately has no StatePlan or durable receipt: it drops
+only regenerable in-memory model observations. Epoch fences prevent late discovery
+from recreating the selected cache; request identities and trace history remain in
+their own durable ledger. It is local-operator-only even though it consumes no spend.
+
+HUD history maintenance advances the item revision/content generation and appends
+a content-free maintenance journal entry, invalidating tree pagination and timeline
+reads. Journal entries retain sequence, actor, kind, fields, timing and request IDs,
+with null redacted edit values and `contentClearedAt`. Item tombstones use `[cleared]`
+for title/objective and preserve semantic state, hierarchy and dependency IDs, not
+authored links, labels or metadata. They cannot be edited, reopened, focused or used
+for new admission; create new Work instead. Journal-only clearing retains current
+bodies/metadata and permits new collaboration. Dependency reads fail closed and
+describe observed Stack admissions; they do not lock arbitrary external writers.
+
+Bot queue-body plans and receipts use the same owner `StateJournal` protocol,
+co-located in `chats.sqlite` so payload removal and the receipt are one SQLite
+transaction. Other Bot filesystem plans keep their existing journal and durable
+start fence. `bot_state_receipt_get` reads either journal and request UUIDs cannot
+be reused across them. New enqueue admissions record their Bot history generation;
+legacy rows without attribution remain selectable by exact ID only. Generation
+selection never guesses ownership from a thread ID or deletes native queue copies.
+Cleared bodies cannot transition to pending/dispatching; identical enqueue retries
+return their original terminal admission using the retained digest.

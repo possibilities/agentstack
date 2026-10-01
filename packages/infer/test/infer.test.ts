@@ -4,10 +4,12 @@ import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { discoverModels } from "../src/catalog.js";
 import { completeInput } from "../src/schema.js";
 import { InferService, readCompletion, readCredentials } from "../src/service.js";
+import { api } from "../api.js";
 
 const accountId = "123e4567-e89b-42d3-a456-426614174000";
 const auth = JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "native_account", access_token: "test-secret" } });
@@ -15,6 +17,40 @@ const model = { id: "gpt-6-luna", defaultEffort: "low" as const, supportedEffort
 const input = () => completeInput.parse({ accountId, model: model.id, effort: "low", instructions: "Classify", input: "example" });
 const event = (value: object) => `data: ${JSON.stringify(value)}\n\n`;
 const completion = (body: string) => new Response(body, { headers: { "content-type": "text/event-stream" } });
+
+test("catalog eviction fences late discovery, preserves siblings and never dispatches inference or a refresh", async () => {
+  const pending: Array<{ signal: AbortSignal; resolve: (models: typeof model[]) => void }> = [];
+  let requests = 0, changes = 0;
+  const service = new InferService("unused", async (_dir, _auth, signal) => new Promise(resolve => pending.push({ signal: signal!, resolve })),
+    (async () => { requests++; throw new Error("unexpected inference"); }) as typeof fetch,
+    async () => ({ access: "fixture", nativeId: "fixture", auth }));
+  service.onChange = () => changes++;
+  const sibling = randomUUID();
+  const clear = api.operations.find(op => op.name === "infer_catalog_clear")!;
+  try {
+    const other = service.models(sibling); await new Promise<void>(resolve => setImmediate(resolve));
+    pending[0]!.resolve([model]); await other;
+    const first = service.models(accountId); await new Promise<void>(resolve => setImmediate(resolve));
+    await assert.rejects(clear.call({ service }, { accountIds: [accountId] }, { transport: "websocket", remote: true } as never), /local operator/);
+    assert.deepEqual(await clear.call({ service }, { accountIds: [accountId] }), { cleared: [accountId] });
+    assert.equal(pending[1]!.signal.aborted, true);
+    await service.refreshModels(accountId);
+    pending[1]!.resolve([model]); await assert.rejects(first, /catalog_unavailable/);
+    assert.equal(service.modelList(accountId)[0]!.discovering, true, "late old completion cannot replace the new generation");
+    pending[2]!.resolve([model]); await new Promise<void>(resolve => setImmediate(resolve));
+    assert.deepEqual(service.modelList(accountId)[0]!.models, [model]);
+    assert.deepEqual(service.modelList(sibling)[0]!.models, [model]);
+    await service.refreshModels(accountId);
+    service.clearCatalog([accountId]); pending[3]!.resolve([model]);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.deepEqual(service.modelList(accountId), [], "aborted background completion cannot recreate cleared observations");
+    assert.deepEqual(service.clearCatalog([]), { cleared: [] });
+    service.clearCatalog(); service.clearCatalog();
+    assert.deepEqual(service.modelList(), []);
+    assert.equal(pending.length, 4, "eviction starts no discovery"); assert.equal(requests, 0);
+    assert.ok(changes > 0);
+  } finally { await service.close(); }
+});
 
 test("selects an enabled Bot account without exposing credentials or falling back to another account", async () => {
   const dir = await mkdtemp(join(tmpdir(), "infer-auth-"));

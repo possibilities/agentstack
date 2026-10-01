@@ -1,8 +1,8 @@
-import { botInstance, operatorInvocation, socketCall, socketPath, type InvocationContext } from "@stack/api";
+import { botInstance, operatorInvocation, socketCall, socketPath, stateHash, type InvocationContext, type StateApplyInput } from "@stack/api";
 import { listActiveThreads, type ActiveThread } from "@stack/bots";
 import { workAdmissionPage } from "./client.js";
 import { canonical, HudStore } from "./store.js";
-import type { Actor, Change, ChatTarget, Reference, WorkContext } from "./schema.js";
+import type { Actor, Change, ChatTarget, HistorySelection, Reference, WorkContext } from "./schema.js";
 
 type Bot = { id: string; state: string; url: string | null; mainThreadId: string | null; recoveryIssue: string | null };
 type Caller = { actor: Actor; lineage: string[] };
@@ -89,6 +89,7 @@ export class HudService {
     }
     if (!id) return { context: null };
     const item = this.store.get(id);
+    if (item.contentClearedAt) throw new Error("work_content_cleared: choose new Work before dispatch");
     if (["completed", "cancelled"].includes(item.state)) throw new Error("work_closed: clear Chat focus, choose another item or reopen this work before dispatch");
     return { context: { workItemId: id, scopeRevision: item.scopeRevision, source: workItemId ? "explicit" : "focus" } };
   }
@@ -105,5 +106,53 @@ export class HudService {
       return { workItemId: id, scopeRevision: item.scopeRevision, links: item.links, focuses: this.store.focuses(id), workers: null,
         observation: { state: "unavailable" as const, at: Date.now(), issue: "Worker associations unavailable; retained work remains authoritative", visibility: invocation?.botId ? "own_bot" as const : "all" as const } };
     }
+  }
+
+  private async historyDependencies(selection: HistorySelection) {
+    const closure = this.store.historyClosure(selection.items);
+    const resources: string[] = [], blockedBy: string[] = [], observations: unknown[] = [];
+    for (const item of closure) {
+      try {
+        let after = 0, count = 0;
+        do {
+          const page = workAdmissionPage.parse(await socketCall(socketPath("worker", this.env), "tools/call", {
+            name: "worker_work_list", arguments: { workItemId: item.id, after, limit: 50 },
+          }, { timeoutMs: 5000 }));
+          observations.push(page.entries); count += page.entries.length;
+          if (count > 1000) throw new Error("too many associations");
+          for (const entry of page.entries) {
+            resources.push(`worker:${entry.workerId}:turn:${entry.turnId}:work:${item.id}`);
+            if (!["closed", "failed"].includes(entry.workerPhase) || ["queued", "running", "awaiting_input", "cancelling"].includes(entry.turnPhase))
+              blockedBy.push(`Close Worker ${entry.workerId}; admission ${entry.turnId} holds Work ${item.id}`);
+          }
+          if (page.nextCursor === null) break;
+          if (page.nextCursor <= after) throw new Error("association cursor did not advance");
+          after = page.nextCursor;
+        } while (true);
+      } catch { blockedBy.push(`Worker associations unavailable or exceed the observation bound for Work ${item.id}`); }
+    }
+    const focuses = closure.flatMap(item => {
+      const page = this.store.focuses(item.id);
+      if (page.truncated) blockedBy.push(`Chat focus inventory exceeds the bound for Work ${item.id}`);
+      return page.entries;
+    });
+    if (focuses.length) {
+      try {
+        const bots = await this.bots();
+        const roots = focuses.map(focus => ({ focus, live: bots.some(bot => bot.id === focus.botId && bot.mainThreadId === focus.mainThreadId) }));
+        observations.push(roots);
+        for (const { focus, live } of roots) {
+          resources.push(`focus:${canonical(focus)}`);
+          if (live) blockedBy.push(`Clear live Chat focus ${focus.botId}/${focus.threadId} before Work maintenance`);
+        }
+      } catch { blockedBy.push("Bot roots unavailable; cannot establish retired Chat focus"); }
+    }
+    return { revision: stateHash([observations, blockedBy]), blockedBy, resources };
+  }
+  async historyPlan(selection: HistorySelection) { return this.store.historyPlan(selection, await this.historyDependencies(selection)); }
+  async historyClear(input: StateApplyInput) {
+    const prior = this.store.maintenance.existing(input); if (prior) return prior;
+    const { payload } = this.store.maintenance.getPlan(input.planId);
+    return this.store.historyClear(input, await this.historyDependencies(payload as HistorySelection));
   }
 }
