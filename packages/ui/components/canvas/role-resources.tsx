@@ -37,6 +37,7 @@ import {
   findResource,
   formatBytes,
   internalCounts,
+  injectionGuidance,
   mcpTarget,
   mcpText,
   projectBots,
@@ -168,6 +169,7 @@ function StackServers() {
       <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">
         Stack servers use stdio for Bot and Worker launches and <code>stack roles inject</code>. Switches apply to future launches; running sessions keep their connections. New Stack servers start on.
       </p>
+      <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">{injectionGuidance}</p>
       {list?.servers.some((server) => server.kind === "codex") ? <CodexToolsAvailability servers={list.servers.filter((server) => server.kind === "codex")} now={now} /> : null}
     </Section>
   );

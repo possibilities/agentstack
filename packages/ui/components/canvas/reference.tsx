@@ -6,9 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Separator } from "@/components/ui/separator";
-import { annotationBadges, operationTitle, typeLabel } from "@/lib/stack/catalog";
+import { annotationBadges, operationTitle, standaloneCapability, typeLabel } from "@/lib/stack/catalog";
+import { completionReceiptLabels } from "@/lib/stack/completion";
 import { emptyLocation, locationHref, type ReferenceTarget } from "@/lib/stack/navigation";
-import { inputTemplate, requestExample, subscriptionExample, transportInstructions } from "@/lib/stack/reference";
+import { admissionWatchCaveats, admissionWatchReference, inputTemplate, requestExample, subscriptionExample, transportInstructions } from "@/lib/stack/reference";
 import { nodeKey, type JsonSchema, type NodeRef, type OperationDoc, type PackageDoc, type TransportDoc } from "@/lib/stack/types";
 import { CopyButton, Time } from "./primitives";
 import { useStack, useWorkbench } from "./provider";
@@ -61,7 +62,77 @@ function Transport({ transport }: { transport: TransportDoc }) {
     {transport.type === "mcp" ? <p className="text-xs text-muted-foreground">Worker disclosure (catalog snapshot): {transport.workerOperations.length ? transport.workerOperations.join(", ") : "none"}. Record ownership still applies; read-only hints do not grant access.</p> : null}
     {transport.type !== "http" ? <p className="text-xs text-muted-foreground">{transport.operations.length} control operations · {transport.events.length} event topics available{transport.events.length ? `: ${transport.events.join(", ")}` : ""}.</p> : <p className="text-xs text-muted-foreground">Only the routes below are served; local control operations are not exposed through HTTP.</p>}
     {transport.endpoint ? <div className="flex items-start gap-2"><code className="min-w-0 break-all text-xs">{transport.endpoint}</code><CopyButton value={transport.endpoint} label={`${transport.type} endpoint`} className="shrink-0 opacity-100" /></div> : <p className="text-xs text-muted-foreground">No endpoint advertised.</p>}
+    {transport.type === "mcp" ? <InternalStdio /> : null}
   </div>;
+}
+
+function Fact({ term, children }: { term: React.ReactNode; children: React.ReactNode }) {
+  return <div className="flex min-w-0 flex-col gap-1"><dt className="break-words font-medium">{term}</dt><dd className="break-words leading-relaxed text-muted-foreground">{children}</dd></div>;
+}
+
+function InternalStdio() {
+  return <details className="min-w-0">
+    <summary className="cursor-pointer rounded-sm py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-ring">Internal stdio lifecycle and errors</summary>
+    <dl className="flex min-w-0 flex-col gap-3 pt-2 text-xs">
+      <Fact term="Catalog listed">Installed declarations were disclosed. This does not mean a service, Bot or Worker is running.</Fact>
+      <Fact term="UI disconnected">UI WebSocket reads and actions are unavailable or stale. Independent stdio clients may still be usable; this UI still needs the live service.</Fact>
+      <Fact term={<code>stack_service_unavailable</code>}>MCP tool-error result: definite pre-dispatch absence. The service-dependent call did not dispatch; recovery may require <code>stack serve</code>.</Fact>
+      <Fact term={<code>stack_service_connection_failed</code>}>MCP tool-error result: connection failed without dispatch. Not proof that the socket is absent.</Fact>
+      <Fact term={<code>stack_service_outcome_unknown</code>}>MCP tool-error result: dispatched without a complete result. Inspect owner state before deciding to retry; never replay automatically.</Fact>
+      <Fact term="Routine Server startup">External HTTP and browser authority rotates. Private stdio operator credentials survive, so the same pipe can recover.</Fact>
+      <Fact term="Explicit local revoke">Fences HTTP, stdio and browser authority. Existing pipes do not reacquire credentials; relaunch native operator clients. Signed Bot/Worker identities and remote Access grants are separate.</Fact>
+      <Fact term="Bot event subscriptions">Server-owned, durable and limited to sanctioned Stack-managed Bot threads. Closing a stdio pipe does not remove a watch. Updates arrive out of band as native toolOutput admission. Operators and Workers cannot subscribe Bot threads.</Fact>
+    </dl>
+  </details>;
+}
+
+const capabilityLabels = {
+  standalone: "Standalone-capable via internal stdio",
+  service: "Stack service required via internal stdio",
+  unknown: "Capability unknown — package and UI versions must match",
+};
+
+function AdmissionWatch({ doc, operation }: { doc: PackageDoc; operation: OperationDoc }) {
+  const watch = operation.completionWatch;
+  const reference = admissionWatchReference(operation, doc);
+  if (!watch || !reference) return null;
+  return <section className="flex min-w-0 flex-col gap-4" aria-label="Admission watch">
+    <h4 className="text-sm font-semibold">Admission watch</h4>
+    <p className="text-xs leading-relaxed text-muted-foreground">Watches require the live owner and a verified Bot MCP caller in a sanctioned Bot Chat. Operator socket/WebSocket calls omit <code>subscribe</code> or pass false and receive a null subscription{watch.initialValueField ? <> and null <code>{watch.initialValueField}</code></> : null}. This UI offers no watch toggle.</p>
+    <dl className="flex min-w-0 flex-col gap-3 text-xs">
+      <Fact term={<><code>subscribe</code> omitted</>}>
+        {watch.defaultOnForBot ? "Watches by default for verified Bot MCP calls."
+          : watch.defaultWhen.length ? <>Watches for verified Bot MCP calls when any of <code>{watch.defaultWhen.join(", ")}</code> is present: a nonempty array, or a value other than null or an empty string.</>
+            : "Creates no watch by default; opt in with subscribe:true for a verified Bot MCP call."}
+      </Fact>
+      <Fact term={<code>subscribe: true</code>}>Requests a watch. Without a verified sanctioned Bot Chat, it is refused before mutation.</Fact>
+      <Fact term={<code>subscribe: false</code>}>Creates no new watch. Never cancels an existing one.</Fact>
+    </dl>
+    <dl className="flex min-w-0 flex-col gap-3 text-xs">
+      <Fact term="Correlation argument"><code>{watch.idArgument}</code> · new UUID for new intent.</Fact>
+      <Fact term="Read operation"><LinkTo target={{ kind: "operation", pkg: doc.name, id: watch.readOperation }}><code>{watch.readOperation}</code></LinkTo></Fact>
+      <Fact term="Read arguments">{Object.entries(reference.bindings).map(([name, source]) => <p key={name}><code>{name}</code> ← {"input" in source ? <>input <code>{source.input}</code></> : <>verified invocation <code>{source.invocation}</code></>}</p>)}</Fact>
+      <Fact term="Scope">{watch.scope ? <>Input <code>{watch.scope.input}</code>; prefix {watch.scope.prefix ? <code>{watch.scope.prefix}</code> : "none"}. Template: <code>{reference.scope}</code>.</> : "Unscoped."}</Fact>
+      <Fact term="Topic"><code>{watch.topic}</code></Fact>
+      <Fact term="Terminal field">Non-null <code>{watch.terminalField}</code> marks the terminal read.</Fact>
+      <Fact term="Attention field">{watch.updateField ? <>Changed non-null <code>{watch.updateField}</code> can deliver an update without retiring the watch. Ambiguous update admission freezes later delivery too.</> : "No attention updates declared."}</Fact>
+      <Fact term="Initial value">{watch.initialValueField ? <>Returned under <code>{watch.initialValueField}</code>.</> : "Read fields stay merged into the admission response."}</Fact>
+      <Fact term="Retained fields">{watch.retainFields?.length ? <><code>{watch.retainFields.join(", ")}</code> remain in oversized terminal values.</> : "No retained-field override declared."}</Fact>
+      <Fact term="MCP selection">Admission: {reference.exposure.admission ? "selected" : "not selected"} · read: {reference.exposure.read ? "selected" : "not selected"} · topic: {reference.exposure.topic ? "selected" : "not selected"}. All three must remain selected; event exposure is independent of operation exposure. This snapshot is not live health or permission.</Fact>
+    </dl>
+    {admissionWatchCaveats[`${doc.name}.${operation.name}`]?.map((caveat) => <p key={caveat} className="text-xs leading-relaxed text-muted-foreground">{caveat}</p>)}
+    <details className="min-w-0"><summary className="cursor-pointer rounded-sm py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-ring">Admission and read templates</summary>
+      <div className="flex min-w-0 flex-col gap-3 pt-2">
+        <p className="text-xs leading-relaxed text-muted-foreground">Fill the placeholders; reuse the admission UUID in the read. The client supplies verified launch and per-call Chat identity. No subscribe key is included: this uses the declared default, not explicit opt-in. Templates are illustrative, not validated.</p>
+        {reference.admissionExample ? <Code value={reference.admissionExample} label="MCP admission template" /> : <p className="text-xs text-muted-foreground">Admission operation is not MCP-selected.</p>}
+        {reference.readExample ? <Code value={reference.readExample} label="MCP watch read template" /> : <p className="text-xs text-muted-foreground">Read operation is not MCP-selected.</p>}
+      </div>
+    </details>
+    <p className="text-xs leading-relaxed text-muted-foreground">Same ID and identical input deduplicate; changed intent needs a new ID. An observed terminal initial value means no later wakeup. Unknown native admission freezes delivery: never auto-retry, rearm, poll for idle or wait for turn completion. A retired receipt refuses re-admission if its retained projection was removed or reopened. If the owner or required exposure is unavailable, inspect the receipt and owner state rather than inventing a successful watch.</p>
+    <details className="min-w-0"><summary className="cursor-pointer rounded-sm py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-ring">Receipt states</summary>
+      <dl className="flex min-w-0 flex-col gap-3 pt-2 text-xs">{Object.entries(completionReceiptLabels).map(([state, value]) => <Fact key={state} term={<>{value.label} · <code>{state}</code></>}>{value.description}</Fact>)}</dl>
+    </details>
+  </section>;
 }
 
 function HttpRoutes({ transport }: { transport: TransportDoc }) {
@@ -93,12 +164,15 @@ function HttpRoutes({ transport }: { transport: TransportDoc }) {
 }
 
 function Operation({ doc, operation }: { doc: PackageDoc; operation: OperationDoc }) {
+  const capability = standaloneCapability(operation, doc);
   return <article className="flex min-w-0 flex-col gap-6">
     <header className="flex flex-col gap-2">
       <h3 className="text-xl font-semibold tracking-tight">{operationTitle(operation)}</h3><code className="break-all text-xs">{operation.name}</code><p className="text-sm leading-relaxed text-muted-foreground">{operation.description}</p>
       {annotationBadges(operation).length ? <div className="flex flex-wrap gap-1.5">{annotationBadges(operation).map(({ key, label }) => <Badge key={key} variant={key === "destructiveHint" ? "destructive" : "secondary"}>{label}</Badge>)}</div> : null}
+      {capability ? <div className="flex flex-col gap-1 pt-1"><p className="text-xs font-medium">{capabilityLabels[capability]}</p><p className="text-xs leading-relaxed text-muted-foreground">Owner-declared capability, not live health, store readiness or permission. Operator stdio calls run without the Stack service only when its socket is definitely absent before dispatch; Bot and Worker calls still verify identity; HTTP, WebSocket and this UI always need the live service.</p></div> : null}
     </header>
     <Schema title="Input" schema={operation.inputSchema} /><Separator /><Schema title="Output" schema={operation.outputSchema} /><Separator />
+    {operation.completionWatch ? <><AdmissionWatch doc={doc} operation={operation} /><Separator /></> : null}
     <section className="flex min-w-0 flex-col gap-4"><h4 className="text-sm font-semibold">Request templates</h4><p className="text-xs leading-relaxed text-muted-foreground">Fill each &lt;replace: …&gt; placeholder. Shows required fields only; templates are not validated.</p>
       {doc.transports.map((transport) => {
         const example = requestExample(operation, transport, doc.name);
@@ -126,7 +200,10 @@ function Package({ doc }: { doc: PackageDoc }) {
       })}
       {doc.transports.some((t) => t.type === "mcp" && t.subscriptions) ? <p className="text-xs leading-relaxed text-muted-foreground">Under the server, verified Bot threads get generated event tools for MCP-selected topics and exposed read-only operations. Worker connections cannot subscribe.</p> : null}
     </section><Separator />
-    <section className="flex flex-col gap-3"><h4 className="text-sm font-semibold">Operations</h4><ul className="flex flex-col divide-y">{doc.operations.map((operation) => <li key={operation.name} className="flex flex-col gap-1 py-3"><LinkTo target={{ kind: "operation", pkg: doc.name, id: operation.name }}><span className="text-sm font-medium">{operationTitle(operation)}</span></LinkTo><code className="break-all text-xs text-muted-foreground">{operation.name}</code><p className="text-xs leading-relaxed text-muted-foreground">{operation.description}</p></li>)}</ul></section>
+    <section className="flex flex-col gap-3"><h4 className="text-sm font-semibold">Operations</h4><ul className="flex flex-col divide-y">{doc.operations.map((operation) => {
+      const capability = standaloneCapability(operation, doc);
+      return <li key={operation.name} className="flex flex-col gap-1 py-3"><div className="flex flex-wrap items-center gap-2"><LinkTo target={{ kind: "operation", pkg: doc.name, id: operation.name }}><span className="text-sm font-medium">{operationTitle(operation)}</span></LinkTo>{capability === "standalone" || capability === "unknown" ? <Badge variant="outline">{capability === "standalone" ? "standalone" : "capability unknown"}</Badge> : null}</div><code className="break-all text-xs text-muted-foreground">{operation.name}</code><p className="text-xs leading-relaxed text-muted-foreground">{operation.description}</p></li>;
+    })}</ul></section>
   </article>;
 }
 

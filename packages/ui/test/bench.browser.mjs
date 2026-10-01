@@ -1,5 +1,6 @@
 /** Standalone local-headless check against an existing production build (NEXT_MODE=dev opts into dev).
  * Pass PLAYWRIGHT_MODULE (absolute module path); this script installs nothing and never builds Next.
+ * REFERENCE_ONLY=1 scopes the run to real reference declarations; REFERENCE_EVIDENCE_DIR retains its screenshots.
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -10,21 +11,27 @@ import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { serveSocket, socketPath } from "@stack/api";
-import { passthrough as pass, transport, authorizeBrowser } from "./browser-fixture.mjs";
+import { docsSnapshot, serveSocket, socketPath } from "@stack/api";
+import { passthrough as pass, transport, authorizeBrowser, root } from "./browser-fixture.mjs";
 
 const require = createRequire(import.meta.url);
 const uiDir = dirname(dirname(fileURLToPath(import.meta.url)));
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed playwright module.");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const stateDir = await mkdtemp(join(tmpdir(), "opencode/stack-bench-"));
-const env = { ...process.env, STACK_STATE_DIR: stateDir, STACK_WEBSOCKET_PORT: "0", NEXT_TELEMETRY_DISABLED: "1" };
+const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("STACK_"))), STACK_STATE_DIR: stateDir, STACK_WEBSOCKET_PORT: "0", NEXT_TELEMETRY_DISABLED: "1" };
 // Fixed far-past timestamps keep SSR and hydration rendering the same coarse relative text.
 const fixtureAt = "2020-06-01T12:00:00.000Z";
 const op = (name, result) => ({ name, description: name, input: pass, output: pass, async call() { return result; } });
 const bots = Array.from({ length: 8 }, (_, i) => ({ id: `bot-${i + 1}`, pid: 100 + i, cwd: "/fixture/project", state: "running", account: "account-1", runningAccount: "account-1", mainThreadId: `thread-${i}`, url: null, recoveryIssue: null, roleRevision: 1, settings: { model: "fixture", reasoningEffort: "medium", sandboxMode: "read-only", approvalPolicy: "never" } }));
 const doc = (name, operation) => ({ name, packageName: `@stack/${name}`, description: `${name} fixture description`, events: { changed: "Fixture changed" }, eventScope: { required: true, description: "A current Bot ID", example: "bot-1" }, transports: [transport(socketPath(name, env), [operation], ["changed"], "socket")], operations: [{ name: operation, title: "Read fixture", description: "Read current fixture state", annotations: { readOnlyHint: true, destructiveHint: false }, inputSchema: { type: "object", properties: { id: { type: "string", description: "Current ID", minLength: 1 } }, required: ["id"], additionalProperties: false }, outputSchema: { oneOf: [{ type: "object", properties: { value: { type: "string" } } }, { type: "null" }], $defs: { complete: { type: "number" } } } }] });
 const catalog = [doc("serve", "serve_status"), doc("bots", "bot_status"), doc("auth", "account_list")];
+if (process.env.REFERENCE_ONLY) {
+  const snapshot = await docsSnapshot.call({ root, env }, {});
+  // Discovery imports declarations only. No Brain/Worker contexts or real server connections.
+  catalog.push(...snapshot.packages.filter((doc) => ["brain", "worker"].includes(doc.name)).map((doc) => ({ ...doc,
+    transports: doc.transports.map((transport) => transport.type === "websocket" ? { ...transport, endpoint: null } : transport) })));
+}
 const resourcesFixture = {
   observation: { snapshotId: "snap-1", capturedAt: fixtureAt, ageMs: 400, freshness: "fresh", lastAttemptAt: fixtureAt, error: null,
     source: "darwin_ps", intervalMs: 5_000, staleAfterMs: 14_000, collectionDurationMs: 18,
@@ -93,6 +100,71 @@ try {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, reducedMotion: "reduce" });
   await authorizeBrowser(page, origin, env);
   page.on("pageerror", (error) => issues.push(error.message));
+  if (process.env.REFERENCE_ONLY) {
+    const evidence = process.env.REFERENCE_EVIDENCE_DIR ?? join(uiDir, ".next", "reference-evidence");
+    await mkdir(evidence, { recursive: true });
+    const reference = page.locator("[data-reference]");
+    const scroller = reference.locator("[data-scroll]");
+    const shot = (name) => reference.screenshot({ path: join(evidence, `${name}.png`), animations: "disabled" });
+    const showTop = (locator) => locator.evaluate((element) => {
+      const scroller = element.closest("[data-scroll]");
+      scroller.scrollTop += element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 20;
+    });
+    const open = async (pkg, name) => {
+      await page.goto(`${origin}/fleet?reference=${encodeURIComponent(`operation:${pkg}.${name}`)}`);
+      await reference.getByRole("heading", { name: "Request templates" }).waitFor();
+    };
+    for (const [appearance, width, colorScheme] of [["light", 1440, "light"], ["dark", 1440, "dark"], ["narrow", 390, "light"]]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await page.emulateMedia({ colorScheme });
+      await open("brain", "search");
+      await reference.getByText("Standalone-capable via internal stdio", { exact: true }).waitFor();
+      await shot(`standalone-${appearance}`);
+      await open("worker", "worker_runtime_list");
+      await reference.getByText("Stack service required via internal stdio", { exact: true }).waitFor();
+      await shot(`service-required-${appearance}`);
+      await open("worker", "worker_send");
+      const watch = reference.getByRole("region", { name: "Admission watch" });
+      await showTop(watch);
+      await shot(`watch-${appearance}`);
+      await showTop(watch.locator("dl").nth(1));
+      await shot(`watch-declaration-${appearance}`);
+      await watch.getByText("Admission and read templates", { exact: true }).click();
+      const read = watch.getByLabel("MCP watch read template", { exact: true });
+      await read.scrollIntoViewIfNeeded();
+      await shot(`watch-examples-${appearance}`);
+      const request = JSON.parse(await watch.getByLabel("MCP admission template", { exact: true }).innerText());
+      assert.equal(request.params.arguments.requestId, "<replace: new UUID>");
+      assert.ok(!Object.hasOwn(request.params.arguments, "subscribe"));
+      assert.deepEqual(JSON.parse(await read.innerText()).params.arguments, { requestId: "<replace: new UUID>", botId: "<replace: invoking botId>", threadId: "<replace: invoking threadId>" });
+      assert.equal(await watch.getByRole("switch").count(), 0, "the reference does not offer a watch toggle");
+      await watch.getByText("Receipt states", { exact: true }).click();
+      await watch.getByText("Unknown · unknown", { exact: true }).waitFor();
+      await showTop(watch.getByText("Receipt states", { exact: true }));
+      await shot(`watch-receipts-${appearance}`);
+      await open("brain", "search");
+      const lifecycle = reference.getByText("Internal stdio lifecycle and errors", { exact: true });
+      await lifecycle.scrollIntoViewIfNeeded();
+      await lifecycle.focus();
+      await page.keyboard.press("Space");
+      await lifecycle.locator("..").getByText("stack_service_outcome_unknown", { exact: true }).waitFor();
+      await scroller.evaluate((element) => {
+        const details = [...element.querySelectorAll("details")].find((details) => details.querySelector("summary")?.textContent === "Internal stdio lifecycle and errors");
+        element.scrollTop += details.getBoundingClientRect().top - element.getBoundingClientRect().top;
+      });
+      await shot(`lifecycle-${appearance}`);
+      assert.ok(await scroller.evaluate((element) => element.scrollWidth <= element.clientWidth), `${appearance}: no reference overflow`);
+    }
+    await page.goto(`${origin}/fleet?reference=package%3Abrain`);
+    await reference.getByRole("heading", { name: "Operations", exact: true }).waitFor();
+    // Use the operation's stable name instead of its optional owner title.
+    const standaloneRow = reference.locator("li").filter({ has: page.locator("code").filter({ hasText: /^search$/ }) });
+    assert.equal(await standaloneRow.getByText("standalone", { exact: true }).count(), 1);
+    await standaloneRow.scrollIntoViewIfNeeded();
+    await shot("package-capability-narrow");
+    assert.deepEqual(issues, [], "reference has no uncaught page errors");
+    console.log(`PASS: reference capability, exact watch templates, keyboard lifecycle disclosure, light/dark/narrow wrapping; screenshots: ${evidence}`);
+  } else {
   await page.goto(`${origin}/fleet`);
   await page.getByRole("main", { name: "Open bench" }).waitFor();
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
@@ -405,6 +477,7 @@ try {
   assert.deepEqual(issues, []);
   console.log("PASS: isolated spaces at minimum zoom/pan, independent cameras/history, hidden focus exclusion, retained draft/collapse state, reduced motion and rapid navigation, legacy layout migration; desktop/mobile navigation, joint dock sizing/expanded reading, keyboard resize/Escape/focus return, retained inspection/reference, stacking, inspector scroll, pin persistence, schemas, search, deep links and manual placement reload; no page errors.");
   console.log(`Screenshots: ${evidence}`);
+  }
 } catch (error) {
   console.error(output);
   throw error;
