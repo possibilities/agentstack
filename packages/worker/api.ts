@@ -62,7 +62,7 @@ export const workerEventReceive = operation({ name: "worker_event_receive", desc
   input: workerEventInput, output: workerEventReceipt,
   async call(ctx: WorkersContext, input, invocation) { if (invocation) throw new Error("event intake requires the private owner socket"); return ctx.manager.receiveEvent(input); } });
 export const workerEventList = operation({ name: "worker_event_list", description: "Read the latest 128 event delivery receipts for this Worker. queued is durable intake; interrupting is an attempted native cancellation; dispatched names a recorded turn, not processing success. Read that turn for its outcome. unknown never replays automatically; cancelled queued input was not sent. Self-only for Worker callers. Payloads are excluded.",
-  input: z.strictObject({ id }), output: z.strictObject({ receipts: z.array(workerEventReceipt), limit: z.literal(128) }), annotations: { readOnlyHint: true },
+  input: z.strictObject({ id }), output: z.strictObject({ receipts: z.array(workerEventReceipt), limit: z.literal(128), total: z.number().int(), truncated: z.boolean() }), annotations: { readOnlyHint: true },
   async call(ctx: WorkersContext, { id }, invocation) { return ctx.manager.events(id, invocation); } });
 export const workerAccountStateDependencies = operation({ name: "worker_account_state_dependencies", description: "Observe an account's runtime, native teardown and in-flight catalog blockers for exact Auth cache maintenance. Waits for queued runtime reconciliation, never starts or stops a runtime. Local operator only.",
   input: z.strictObject({ id }), output: stateDependencies, annotations: { readOnlyHint: true },

@@ -56,6 +56,11 @@ export type EventSource = { name: string; description: string; delivery: ["poll"
 export type EventOccurrence = { eventId: string; name: string; timestamp: string; data: Record<string, unknown> };
 export type WorkerEventReceipt = { deliveryId: string; workerId: string; sessionId: string;
   state: "queued" | "interrupting" | "dispatched" | "unknown" | "cancelled"; turnId: string | null; issue: string | null; createdAt: number; updatedAt: number };
+export type WorkerEventPage = { receipts: WorkerEventReceipt[]; limit: 128; total: number; truncated: boolean };
+export type OccurrenceSubscription = { id: string; target: { kind: "bot"; botId: string; threadId: string; instance: string }
+  | { kind: "worker"; workerId: string; sessionId: string; instance: string }; pkg: string; name: string; policy: "native" | "interrupt";
+  cursor: string | null; maxAgeMs?: number; truncated: boolean; revision: string; receiptCount: number; receiptsTruncated: boolean;
+  deliveries: { id: string; eventId: string; state: "pending" | "admitted" | "unknown"; boundary: "native_admission" | "worker_inbox" | null; error: string | null }[] };
 
 export type OperationDoc = {
   standalone: boolean;

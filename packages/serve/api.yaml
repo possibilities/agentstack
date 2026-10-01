@@ -8,6 +8,6 @@ mcp:
   events: [pids_changed, codex_tools_changed, resources_changed]
   description: MCP tools for owned-process status, cached Codex tool diagnostics and read-only resource observations, forwarded to the server socket over internal stdio or external HTTP.
 websocket:
-  operations: [serve_status, serve_codex_tools, serve_codex_tools_check, serve_resources, serve_resource_history, serve_state_read, serve_state_list, serve_subscription_list, serve_subscription_get, serve_subscription_remove, serve_settings_read, serve_settings_update, serve_harness_releases, serve_harness_releases_check]
+  operations: [serve_status, serve_codex_tools, serve_codex_tools_check, serve_resources, serve_resource_history, serve_state_read, serve_state_list, serve_subscription_list, serve_subscription_get, serve_subscription_remove, serve_occurrence_list, serve_occurrence_get, serve_settings_read, serve_settings_update, serve_harness_releases, serve_harness_releases_check]
   events: all
   description: Loopback WebSocket for owned-process status, local-operator Server settings and developer-only release observations/checks, Codex tool diagnostics and checks, resource snapshots/history and change events, forwarded to the server socket.

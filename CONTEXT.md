@@ -12,6 +12,17 @@ Typed operations a workspace package exports so stack can serve them. Descriptio
 
 _Avoid_: MCP server, endpoint, route
 
+## Event occurrence
+
+A typed, stable-ID observation from a Package API source, distinct from a
+payload-free invalidation and its re-read snapshot. Draft MCP `events/list` and
+`events/poll` discover/read occurrences; Stack `events_listen` attaches them to a
+verified Bot Chat or exact Worker conversation through Serve's existing owner.
+Source replay cursors, watch consumption, durable Worker intake, native admission
+and agent processing are separate facts. See [ADR 0160](docs/adr/0160-poll-occurrences-and-runtime-event-intake.md).
+_Avoid_: topic notice as occurrence, inbox ACK as native ACK, delivered as consumed,
+exactly-once processing
+
 ## State maintenance
 
 Owner-specific inspection and exact cleanup of retained Stack state. An inventory

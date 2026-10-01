@@ -32,7 +32,7 @@ export async function serveApi(options: {
   const eventTopics = api.events ? packageEventTopics(options.name, api.events) : undefined;
   const eventNames = declaredEventNames(eventTopics ?? {}, api.operations);
   for (const type of ["mcp", "websocket"] as const) if (located.config[type])
-    resolveExposure(located.config, type, api.operations.map((op) => op.name), eventNames);
+    resolveExposure(located.config, type, api.operations.map((op) => op.name), type === "mcp" ? eventNames : Object.keys(eventTopics ?? {}));
   if (located.config.mcp) resolveWorkerExposure(located.config, api.operations, eventNames);
   let socket: ServedSocket | undefined;
   let stopEvents: (() => void) | void = undefined;

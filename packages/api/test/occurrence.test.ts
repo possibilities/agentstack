@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,9 +29,15 @@ test("draft poll requests and durable Worker intake remain distinct from snapsho
   const manifest = (selection: string) => writeFile(join(dir, "api.yaml"), `name: sample\ndescription: Fixture.\nmcp:\n  description: Fixture.\n  operations: all\n  events: ${selection}\n  workerEvents: [arrived]\n`);
   await manifest("all");
   const history: Occurrence[] = [];
+  let ephemeral = true;
   const source = pollEvent({ name: "arrived", operation: "read_events", description: "Read fixture occurrences.",
     input: z.strictObject({ filter: z.string() }), payload: z.strictObject({ value: z.string() }),
     async poll(_ctx, args, request) {
+      if (args.filter === "ephemeral") {
+        const events = ephemeral ? [{ eventId: "ephemeral", name: "arrived", timestamp: new Date().toISOString(), data: { value: "ephemeral" } }] : [];
+        ephemeral = false;
+        return { events, cursor: null, truncated: false, hasMore: false, nextPollMs: 1000 };
+      }
       const position = request.cursor === null ? history.length : Number(request.cursor);
       return { events: history.slice(position).filter(event => event.data.value === args.filter).slice(0, request.maxEvents), cursor: String(history.length), truncated: false, hasMore: false, nextPollMs: 1000 };
     } });
@@ -61,6 +69,7 @@ test("draft poll requests and durable Worker intake remain distinct from snapsho
     assert.deepEqual(initial.events, []); assert.equal(initial.cursor, "0");
     await assert.rejects(client.request({ method: "events/poll", params: { ...request, arguments: {} } }, pollOutput), error => (error as { code: number }).code === -32602);
     await assert.rejects(client.request({ method: "events/poll", params: { ...request, name: "missing" } }, pollOutput), error => (error as { code: number }).code === -32011);
+    await assert.rejects(client.request({ method: "events/subscribe", params: {} }, z.any()), error => (error as { code: number }).code === -32014);
     const tools = (await client.listTools()).tools.map(tool => tool.name);
     assert.ok(tools.includes("events_listen") && !tools.includes("events_subscribe"));
     const listening = await client.callTool({ name: "events_listen", arguments: { name: "arrived", arguments: { filter: "match" } } });
@@ -83,5 +92,53 @@ test("draft poll requests and durable Worker intake remain distinct from snapsho
     await assert.rejects(client.request({ method: "events/poll", params: { ...request, cursor: "0" } }, pollOutput), error => (error as { code: number }).code === -32011);
     await service.occurrences!.unsubscribe(sub.id, invocation);
     assert.deepEqual(await service.occurrences!.status(invocation), []);
+    await manifest("all");
+    await service.occurrences!.subscribe("sample", { name: "arrived", arguments: { filter: "ephemeral" } }, invocation);
+    await until(async () => delivered.some(event => event.eventId === "ephemeral"));
+    assert.equal(delivered.filter(event => event.eventId === "ephemeral").length, 1, "a cursor-less occurrence in the first response must not be discarded by bootstrap");
   } finally { await client.close(); await server.close(); await service.close(); await socket.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("competing occurrence polls enforce the shared retained-receipt cap without advancing a refused cursor", { timeout: 20_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "stack-occurrence-limit-")), env = { STACK_STATE_DIR: root };
+  const dir = join(root, "packages", "sample"); await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "api.yaml"), "name: sample\ndescription: Fixture.\nmcp:\n  description: Fixture.\n  operations: all\n  events: all\n  workerEvents: [arrived]\n");
+  let release!: () => void, polls = 0;
+  const ready = new Promise<void>(resolve => { release = resolve; });
+  const source = pollEvent({ name: "arrived", operation: "read_events", description: "Fixture.",
+    input: z.strictObject({ id: z.string() }), payload: z.strictObject({ value: z.string() }),
+    async poll(_ctx, args, request) {
+      if (request.cursor === null) return { events: [], cursor: "0", truncated: false, hasMore: false, nextPollMs: 1000 };
+      polls++; await ready;
+      return { events: request.cursor === "0" ? [{ eventId: args.id, name: "arrived", timestamp: new Date().toISOString(), data: { value: args.id } }] : [],
+        cursor: "1", truncated: false, hasMore: false, nextPollMs: 1000 };
+    } });
+  const socket = await serveSocket({ info: { name: "sample", description: "Fixture.", transportDescription: "Fixture.", path: socketPath("sample", env) }, context: {}, operations: [source] });
+  const invocation: InvocationContext = { transport: "mcp", botId: null, instance: null, threadId: null, sessionId: null, workerId: "worker", workerInstance: "instance" };
+  let attempts = 0;
+  const runtime: OccurrenceRuntime = {
+    async resolve() { return { kind: "worker", workerId: "worker", sessionId: "session", instance: "instance" }; },
+    async verify(target) { return target; },
+    async deliver(_target, _event, _id, _policy, _signal, authorize) { await authorize(); attempts++; return { boundary: "worker_inbox" }; },
+  };
+  const service = new McpEventSubscriptions(env, async () => {}, async () => {}, undefined, undefined, root, runtime);
+  try {
+    const first = await service.occurrences!.subscribe("sample", { name: "arrived", arguments: { id: "first" } }, invocation);
+    await service.occurrences!.subscribe("sample", { name: "arrived", arguments: { id: "second" } }, invocation);
+    await until(async () => polls >= 2);
+    // Model retained history committing while both upstream polls are in flight.
+    // This is a durable recovery fixture, not a configurable production limit.
+    const db = new DatabaseSync(join(root, "event-subscriptions.sqlite"));
+    db.exec("BEGIN IMMEDIATE");
+    const insert = db.prepare("INSERT INTO occurrence_deliveries VALUES(?,?,?,?,'admitted','worker_inbox',NULL)");
+    for (let n = 0; n < 9999; n++) insert.run(randomUUID(), first.id, `retained-${n}`, "{}");
+    db.exec("COMMIT"); db.close(); release();
+    await until(async () => attempts >= 1 && (await service.occurrences!.status(invocation)).some(row => row.lastError?.includes("ResourceExhausted")));
+    const rows = await service.occurrences!.status(invocation);
+    assert.equal(rows.reduce((sum, row) => sum + row.receiptCount, 0), 10_000);
+    assert.equal(attempts, 1, "only the capacity winner may admit new input");
+    assert.equal(rows.find(row => row.lastError?.includes("ResourceExhausted"))!.cursor, "0", "a refused batch must remain replayable from its previous cursor");
+    assert.equal(rows.reduce((sum, row) => sum + row.deliveries.length, 0), 128, "conversation receipt output remains bounded across subscriptions");
+    assert.ok(rows.some(row => row.receiptsTruncated));
+  } finally { release(); await service.close(); await socket.close(); await rm(root, { recursive: true, force: true }); }
 });

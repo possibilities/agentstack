@@ -82,6 +82,7 @@ const acpFixture = `#!/usr/bin/env node
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 if (process.argv[2] === '--version') { console.log('fake-acp 2.0'); process.exit(0); }
+if (process.argv[2] === 'models') { console.log(JSON.stringify({ families: [{ variants: [{ model_uid: 'openai/gpt-fixture' }] }] })); process.exit(0); }
 let buffer = '';
 let cwd = '';
 let promptId = null;
@@ -162,8 +163,10 @@ for (const provider of ["codex", "devin"] as const) test(`${provider} ACP event 
     operations: [operation({ name: op, description: "Fixture.", input: z.object({}), output: z.any(), async call() { return value; } })] });
   const auth = await fixtureSocket("auth", "worker_account_list", { accounts: [{ id: accountId, provider, enabled: true, ready: true, removing: false }] });
   const roles = await fixtureSocket("roles", "role_launch_snapshot", role);
-  const supervisor = new WorkerSupervisor(root, env), manager = new WorkerManager(root, supervisor, env);
-  const socket = await serveSocket({ info: { name: "worker", description: "Fixture.", transportDescription: "Fixture.", path: socketPath("worker", env) }, context: { supervisor, manager }, operations: workersApi.operations });
+  const server = await fixtureSocket("serve", "serve_status", { mcpUrls: {} });
+  let supervisor = new WorkerSupervisor(root, env), manager = new WorkerManager(root, supervisor, env);
+  const context = { supervisor, manager };
+  const socket = await serveSocket({ info: { name: "worker", description: "Fixture.", transportDescription: "Fixture.", path: socketPath("worker", env) }, context, operations: workersApi.operations });
   const until = async (check: () => boolean) => { const deadline = Date.now() + 5000; while (!check() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5)); assert.ok(check()); };
   try {
     await supervisor.reconcile();
@@ -190,7 +193,33 @@ for (const provider of ["codex", "devin"] as const) test(`${provider} ACP event 
     await assert.rejects(stat(join(start.worker.cwd!, "approved.txt")), /ENOENT/);
     const inputCount = manager.ledger.turns(id).length;
     await call(event); assert.equal(manager.ledger.turns(id).length, inputCount, "exact intake retry cannot dispatch twice");
-  } finally { await socket.close(); await manager.close(); await roles.close(); await auth.close(); await rm(root, { recursive: true, force: true }); }
+    await manager.send({ id, message: "ASK again", requestId: randomUUID() });
+    await until(() => manager.ledger.worker(id)?.phase === "awaiting_input");
+    const retained = { ...event, deliveryId: randomUUID(), eventId: "retained", text: "Future retained input." };
+    await call(retained);
+    await manager.close();
+    supervisor = new WorkerSupervisor(root, env); manager = new WorkerManager(root, supervisor, env);
+    Object.assign(context, { supervisor, manager });
+    assert.equal((await manager.events(id)).receipts.find(row => row.deliveryId === retained.deliveryId)?.state, "queued");
+    await supervisor.reconcile();
+    assert.equal(manager.ledger.worker(id)?.phase, "needs_recovery");
+    await assert.rejects(manager.resume(id, false), /acknowledge/);
+    await manager.resume(id, true);
+    await until(() => !!manager.ledger.event(retained.deliveryId)?.turnId && manager.ledger.worker(id)?.phase === "idle");
+    assert.equal(manager.ledger.worker(id)?.sessionId, start.worker.sessionId);
+    assert.equal(await readFile(join(start.worker.cwd!, "output.txt"), "utf8"), retained.text);
+    await manager.send({ id, message: "ASK close", requestId: randomUUID() });
+    await until(() => manager.ledger.worker(id)?.phase === "awaiting_input");
+    const current = manager.ledger.worker(id)!;
+    const cancelled = { ...retained, instance: current.runtimeInstance!, deliveryId: randomUUID(), eventId: "cancelled", text: "Must not dispatch after close." };
+    await call(cancelled);
+    await manager.close();
+    supervisor = new WorkerSupervisor(root, env); manager = new WorkerManager(root, supervisor, env);
+    Object.assign(context, { supervisor, manager });
+    await manager.closeWorker(id);
+    assert.equal((await manager.events(id)).receipts.find(row => row.deliveryId === cancelled.deliveryId)?.state, "cancelled");
+    assert.equal(await readFile(join(start.worker.cwd!, "output.txt"), "utf8"), retained.text);
+  } finally { await socket.close(); await manager.close(); await server.close(); await roles.close(); await auth.close(); await rm(root, { recursive: true, force: true }); }
 });
 
 test("durable ACP workers dispatch, follow up, answer permissions, and load after server restart", { timeout: 30_000 }, async () => {

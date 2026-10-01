@@ -63,7 +63,7 @@ export function resolveWorkerExposure(config: PackageConfig,
     throw new Error(`${config.name} mcp workerOperations selects non-read-only operation: ${name}`);
   const sources = tools.filter(tool => tool.eventSource);
   const workerEvents = select(config.mcp!.workerEvents, sources.map(tool => tool.eventSource!.name), `${config.name} mcp workerEvents`)
-    .filter(name => mcp.events.includes(name));
+    .filter(name => mcp.events.includes(name) && sources.some(tool => tool.eventSource!.name === name && mcp.operations.includes(tool.name)));
   const eventReads = sources.filter(tool => workerEvents.includes(tool.eventSource!.name));
   for (const tool of eventReads) if (tool.annotations?.readOnlyHint !== true) throw new Error("occurrence poll must be read-only");
   return { operations: [...new Set([...selected, ...eventReads.map(tool => tool.name)])].filter(name => mcp.operations.includes(name)), events: workerEvents };
@@ -73,7 +73,7 @@ export function resolveWorkerExposure(config: PackageConfig,
  * without importing declarations or creating a Package API context. */
 export async function socketExposure(config: PackageConfig, transport: "mcp" | "websocket", env: NodeJS.ProcessEnv) {
   const catalog = await readSocketCatalog(config.name, env);
-  const names = declaredEventNames(catalog.events?.topics ?? {}, catalog.tools);
+  const names = transport === "mcp" ? declaredEventNames(catalog.events?.topics ?? {}, catalog.tools) : Object.keys(catalog.events?.topics ?? {});
   const exposure = resolveExposure(config, transport, catalog.tools.map((tool) => tool.name), names);
   const workerExposure = transport === "mcp" ? resolveWorkerExposure(config, catalog.tools, names) : undefined;
   return { exposure, workerExposure, catalog: exposeCatalog(catalog, exposure) };

@@ -50,14 +50,20 @@ export function packageMcpServer(name: string, description: string, root: string
     const selected = await selection();
     const source = (worker ? selected.workerCatalog : selected.catalog).tools.find(tool => tool.eventSource?.name === params.name);
     if (!source) throw new McpError(-32011, "NotFound", { kind: "event" });
-    const value = await socketCall(socketPath(name, env), "tools/call", { name: source.name, arguments: pollInput.parse(Object.fromEntries(Object.entries(params).filter(([key]) => key !== "_meta"))),
-      invocation: mcpInvocation(identity, params._meta) }, { signal: extra.signal });
+    const { _meta, ...request } = params;
+    const value = await socketCall(socketPath(name, env), "tools/call", { name: source.name, arguments: request,
+      invocation: mcpInvocation(identity, _meta) }, { signal: extra.signal });
     const current = await selection();
     if (!(worker ? current.workerCatalog : current.catalog).tools.some(tool => tool.name === source.name && tool.eventSource?.name === params.name))
       throw new McpError(-32012, "Forbidden", { kind: "event" });
     await checkAuthority(); assertInstallationOpen(env); extra.signal.throwIfAborted();
     return pollOutput.parse(value);
   });
+  for (const method of ["events/stream", "events/subscribe", "events/unsubscribe"] as const)
+    mcp.setRequestHandler(z.object({ method: z.literal(method), params: z.record(z.string(), z.unknown()).optional() }), async () => {
+      await checkAuthority();
+      throw new McpError(-32014, "Unsupported", { feature: "deliveryMode", supported: ["poll"] });
+    });
   mcp.setRequestHandler(ListToolsRequestSchema, async () => {
     const check = stdio?.checkCatalogAuthority ?? checkAuthority;
     await check();

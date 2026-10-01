@@ -132,8 +132,14 @@ export class WorkerLedger {
     return (this.db.prepare("SELECT value FROM worker_event_inbox WHERE worker_id=? ORDER BY rowid DESC LIMIT 128").all(workerId) as { value: string }[])
       .map(row => { const { input: _, ...receipt } = JSON.parse(row.value) as WorkerEvent; return receipt; });
   }
+  eventReceiptCount(workerId: string): number {
+    return (this.db.prepare("SELECT COUNT(*) AS count FROM worker_event_inbox WHERE worker_id=?").get(workerId) as { count: number }).count;
+  }
   pendingEvents(workerId: string): WorkerEvent[] {
     return (this.db.prepare("SELECT value FROM worker_event_inbox WHERE worker_id=? AND json_extract(value,'$.state') IN ('queued','interrupting') ORDER BY rowid").all(workerId) as { value: string }[]).map(row => JSON.parse(row.value));
+  }
+  eventBlocked(workerId: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM worker_event_inbox WHERE worker_id=? AND json_extract(value,'$.state')='unknown' LIMIT 1").get(workerId);
   }
   updateEvent(id: string, state: WorkerEventReceipt["state"], turnId: string | null = null, issue: string | null = null) {
     const event = this.event(id)!;
@@ -246,6 +252,10 @@ export class WorkerLedger {
       this.db.prepare("UPDATE workers SET phase = 'needs_recovery', issue = 'Worker runtime stopped; load the saved session before sending', updated_at = ? WHERE account_id = ? AND phase NOT IN ('closed','failed')")
         .run(now, accountId);
       this.db.prepare("UPDATE pending_requests SET state = 'unknown' WHERE worker_id IN (SELECT id FROM workers WHERE account_id = ?) AND state = 'pending'").run(accountId);
+      this.db.prepare(`UPDATE worker_event_inbox SET value=json_set(value,'$.state','unknown','$.updatedAt',?,
+        '$.issue','Runtime stopped during event dispatch/interruption; no automatic replay')
+        WHERE worker_id IN (SELECT id FROM workers WHERE account_id=?) AND
+        (json_extract(value,'$.state')='interrupting' OR delivery_id IN (SELECT request_id FROM turns WHERE phase='unknown'))`).run(now, accountId);
       this.db.exec("COMMIT");
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
@@ -343,6 +353,8 @@ export class WorkerLedger {
   setTurnPhase(id: string, phase: TurnPhase, stopReason: string | null = null, issue: string | null = null): TurnRecord {
     this.db.prepare("UPDATE turns SET phase = ?, stop_reason = ?, issue = ?, updated_at = ? WHERE id = ?")
       .run(phase, stopReason, issue, Date.now(), id);
+    if (phase === "unknown") this.db.prepare(`UPDATE worker_event_inbox SET value=json_set(value,'$.state','unknown','$.turnId',?,
+      '$.issue','Native event turn outcome unknown; inspect before any further automatic event input') WHERE delivery_id=(SELECT request_id FROM turns WHERE id=?)`).run(id, id);
     return this.turn(id)!;
   }
   completeTurn(id: string, phase: "completed" | "cancelled" | "failed" | "unknown", stopReason: string | null, issue: string | null): void {

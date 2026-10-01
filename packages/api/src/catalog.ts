@@ -102,7 +102,7 @@ export async function loadCatalog(env: NodeJS.ProcessEnv = process.env, from = i
             }))),
           };
         }
-        const exposure = resolveExposure(item.config, transport.type, api.operations.map((op) => op.name), eventNames);
+        const exposure = resolveExposure(item.config, transport.type, api.operations.map((op) => op.name), transport.type === "mcp" ? eventNames : Object.keys(events));
         const workerExposure = transport.type === "mcp" ? resolveWorkerExposure(item.config, api.operations, eventNames) : { operations: [], events: [] };
         const base = { type: transport.type, description: transport.description, supported: true, ...exposure, workerOperations: workerExposure.operations, workerEvents: workerExposure.events, routes: [] };
         const subscriptions = exposure.events.length > 0;

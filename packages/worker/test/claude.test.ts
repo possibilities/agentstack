@@ -254,7 +254,13 @@ test("Claude SDK workers preserve account/session continuity, exact permission a
     assert.equal(history.includes("PRIVATE REASONING"), false); assert.equal(history.includes("MUST NOT EXPOSE"), false);
     const lastTurn = (await manager.status(id)).turn!;
     const secretRecords = JSON.stringify(await manager.records(id, 0, 50, lastTurn.id));
-    const transcript = JSON.stringify(await manager.read(id, 0, 50));
+    const transcriptRows = [];
+    for (let after = 0;;) {
+      const page = await manager.read(id, after, 50); transcriptRows.push(...page.entries);
+      if (!page.hasMore) break;
+      after = page.nextSeq;
+    }
+    const transcript = JSON.stringify(transcriptRows);
     assert.ok(transcript.includes("This worker must not retain"), "non-secret launch labels must not redact ordinary prose");
     for (const value of [secretRecords, transcript]) {
       assert.equal(value.includes("fixture-bearer-token"), false); assert.equal(value.includes("proof="), false);

@@ -115,6 +115,16 @@ credential refresh and is therefore a separate exact selection.
 
 ### Existing-reader truthfulness
 
+Serve's occurrence subscription inventory is separate from its snapshot/completion
+inventory: `serve_occurrence_list` is bounded metadata, `serve_occurrence_get`
+includes source arguments/errors and latest receipt details, and exact
+`serve_subscription_remove` accepts either kind's intent revision. Removing a
+subscription cannot recall admitted Worker inbox/native input or acknowledge its
+source watch. Worker `worker_event_list` discloses receipt counts/truncation and
+linked turn outcomes; closing cancels queued input and transcript retirement clears
+event text too. Unknown admissions/interruption/turns never automatically replay.
+See [ADR 0160](adr/0160-poll-occurrences-and-runtime-event-intake.md).
+
 Infer and Notification records expose `contentClearedAt`; Signal exposes
 `contentGeneration` and cleared message/run markers. Existing UI reads invalidate
 captured bodies and distinguish cleared content. Signal replay of cleared content

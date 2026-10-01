@@ -95,9 +95,9 @@ export class McpEventSubscriptions {
     // These are durable Bot watches, not historical provenance. Rebind their
     // package selectors before reconnecting; the old sockets are no longer served.
     this.db.exec(`UPDATE subscriptions SET pkg = CASE pkg
-      WHEN 'attention' THEN 'signal' WHEN 'browser' THEN 'browse' WHEN 'workers' THEN 'worker' END,
+      WHEN 'attention' THEN 'signal' WHEN 'browser' THEN 'browse' WHEN 'workers' THEN 'worker' WHEN 'github' THEN 'source' END,
       topic = CASE WHEN pkg = 'attention' AND topic = 'attention_changed' THEN 'signal_changed' ELSE topic END
-      WHERE pkg IN ('attention', 'browser', 'workers')`);
+      WHERE pkg IN ('attention', 'browser', 'workers', 'github')`);
     const rows = this.db.prepare("SELECT * FROM subscriptions").all() as Array<{
       id: string; bot_id: string; instance: string; thread_id: string; pkg: string; topic: string; scope: string | null;
       read_operation: string; read_arguments_json: string; last_delivered_at: number | null; last_error: string | null; last_value_hash: string | null;
@@ -156,7 +156,7 @@ export class McpEventSubscriptions {
     if (!finalReceipt || finalReceipt.state === "cancelled") throw new Error("completion watch was cancelled or removed; nothing was sent");
   }
 
-  async catalog(pkg: string, admitted?: SocketCatalog): Promise<{ topics: Record<string, string>; scope: { description: string; example: string; required: boolean } | null; reads: Array<{ name: string; description: string; inputSchema: unknown }> }> {
+  async catalog(pkg: string, admitted?: SocketCatalog): Promise<ReturnType<typeof mcpEventCatalog>> {
     const doc = admitted ?? await this.definition(pkg);
     return mcpEventCatalog(doc);
   }
@@ -436,6 +436,7 @@ export class McpEventSubscriptions {
     return [...this.records.values()].map(state => ({ ...publicView(state), revision: stateHash([state.id, state.botId, state.threadId, state.pkg, state.topic, state.scope, state.readOperation, state.readArguments, state.completion]) }));
   }
   async operatorRemove(id: string, expectedRevision: string) {
+    if (this.occurrences?.has(id)) return this.occurrences.operatorRemove(id, expectedRevision);
     const current = this.operatorList().find(row => row.id === id);
     if (!current) return { id, removed: false };
     if (current.revision !== expectedRevision) throw new Error("subscription revision changed");
