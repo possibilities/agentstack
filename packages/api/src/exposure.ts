@@ -54,7 +54,8 @@ export function resolveWorkerExposure(config: PackageConfig,
   return { operations: selected.filter(name => mcp.operations.includes(name)), events: [] };
 }
 
-/** The live socket is authoritative; gateways never import or instantiate a Package API. */
+/** External HTTP and WebSocket admission validates the live socket catalog
+ * without importing declarations or creating a Package API context. */
 export async function socketExposure(config: PackageConfig, transport: "mcp" | "websocket", env: NodeJS.ProcessEnv) {
   const catalog = await readSocketCatalog(config.name, env);
   const exposure = resolveExposure(config, transport, catalog.tools.map((tool) => tool.name), Object.keys(catalog.events?.topics ?? {}));

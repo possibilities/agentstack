@@ -6,7 +6,7 @@ mcp:
   workerOperations: [get, list, search, tags, resolve, links, backlinks, graph, artifacts_list, artifacts_versions, artifacts_show, collection_list, collection_get, item_list, item_get, item_read]
   operations: [content_status, blob_stage_start, blob_stage_status, blob_stage_chunk, blob_stage_finish, collection_create, collection_list, collection_get, collection_update, collection_delete, item_put, item_list, item_get, item_move, item_delete, artifact_publish, document_update, item_read, new, add, get, list, search, tags, resolve, links, backlinks, graph, rm, restore, artifacts_list, artifacts_versions, artifacts_show, artifacts_rm, artifacts_restore, gc]
   events: all
-  description: MCP operations forwarded to the content socket over internal stdio or external HTTP.
+  description: Content operations over internal stdio or external HTTP. Operator stdio supports standalone stored reads; mutations, subscriptions, static origins and external HTTP require their services.
 websocket:
   operations: all
   events: all

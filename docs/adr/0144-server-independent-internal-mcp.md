@@ -24,6 +24,27 @@ start listeners, workers or maintenance tasks. Stdio children never start a
 second Bot or Worker supervisor, scheduler, ingestion worker or subscription
 database. Third-party Role MCP definitions retain their configured transports.
 
+The typed operation's `standalone` context factory opens and closes only the
+resources its existing handler needs, per call. The shared execution boundary
+validates input and output and preserves the operation's MCP content projection.
+Discovery publishes `standalone: boolean` on each operation; this is owner
+capability, not observed service health or permission for every caller/transport.
+
+The first supported reads are API documentation, Brain research retrieval
+(`stats`, `search`, `context`, `get`, `tags`), Role catalog/snapshot/preview reads,
+and Content document search, graph, Artifact metadata, collection/item metadata
+and bounded item bytes/media. Private Role launch/editor reads keep their existing
+transport exclusions. Other operations remain service-dependent by default.
+
+Brain uses its existing structurally read-only retrieval path under Stack state;
+it creates no index, ingestion worker, share ingress or token. Content requires
+an existing Vault and coordinates derived-index reconciliation with an immediate
+SQLite transaction spanning observation and update. It may rebuild this derived
+index, but never commits/pushes Vault history during standalone reads. Artifact
+and collection metadata open structurally read-only without migrations or
+maintenance journals. Returned static paths are not proof of a running origin:
+static links still require the Content/Access services.
+
 `stack roles inject` captures a consistent snapshot from the existing local Role
 store through a structurally read-only connection. It neither initializes nor
 migrates that store. Missing or incompatible storage fails with explicit recovery
@@ -41,10 +62,22 @@ Dependency failures are MCP tool results with `isError: true`, an actionable cod
 and recovery, and truthful dispatch status. An unavailable service does not
 terminate the stdio connection; subsequent calls can succeed when its owner starts.
 
+`stack_service_unavailable` means a definite pre-dispatch absence;
+`stack_service_connection_failed` means a connection failed without dispatch;
+`stack_service_outcome_unknown` means the request was dispatched without a complete
+answer. Diagnostics name the package, operation and prerequisite without echoing
+arguments, credentials or native payloads. A received owner error remains that
+owner's error, not an excuse for standalone fallback.
+
 Managed Bot and Worker identities retain their signed launch proof and live
 instance checks. A missing owner never turns managed authority into operator
 authority or relaxes self-only Worker reads. Operator credentials remain
 revocable. Exposure and authority are rechecked at execution boundaries.
+
+Internal operator launch authority must survive routine Server startup to make
+same-connection recovery real, while explicit local revocation must still fence
+it. External operator bearer credentials and browser sessions retain their
+startup rotation. A revoked stdio connection never silently reacquires authority.
 
 Generated event tools continue to use the Server's sole durable subscription
 owner and sanctioned Bot thread lineage. Offline discovery creates no watches;

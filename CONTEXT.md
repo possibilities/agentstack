@@ -21,6 +21,16 @@ native outcome into a known one. See [ADR 0135](docs/adr/0135-owner-state-mainte
 and the [operation matrix](docs/state-control.md). _Avoid_: reset everything,
 clear means cancel, tombstone means erased, unmeasured means zero
 
+## Standalone operation
+
+An operation whose Package API explicitly supplies a scoped context factory for
+operator stdio execution when its private socket is definitely absent before
+dispatch. It reuses the owner's handler, schemas and MCP content projection,
+without the full Server context or background lifecycle. Discovery's `standalone`
+flag describes this capability, not live availability or permission for a managed
+caller. A read-only hint alone does not opt in. _Avoid_: offline server, implicit
+read-only fallback, replay after timeout
+
 ## Access client
 
 A durable phone, extension, browser, desktop or future cloud consumer identity owned by the `access` Package API. A tailnet client pairs through manual local approval, a one-use local QR invitation, or an offline QR request explicitly approved by a permitted enrollment sponsor. Its human approval code or request QR is distinct from its private high-entropy redemption secret. One client may receive multiple Stack resource scopes. _Avoid_: Brain token, Bot, Worker, Tailscale node identity
@@ -152,7 +162,7 @@ _Avoid_: native activity, UI selection, global Bot current task
 
 ## Worker MCP invocation context
 
-Transport-supplied Worker ID and exact native runtime instance from a private signed MCP launch binding, carried in stdio environment or a legacy HTTP URL. The gateway checks both against the durable Worker and live account backend on each request. Missing or invalid bindings never fall back to operator authority. A manifest's positive `mcp.workerOperations` list, intersected with MCP exposure, selects disclosed reads; omission denies all. Read-only hints alone grant no access. Worker record reads are self-only, and Worker calls cannot subscribe Bot threads. It is not an OS sandbox. _Avoid_: Bot identity, operator authority
+Transport-supplied Worker ID and exact native runtime instance from a private signed MCP launch binding, carried in stdio environment or a legacy HTTP URL. Internal stdio catalog admission verifies the signature without requiring a live owner; every call checks both identities against the durable Worker and live account backend. Missing or invalid bindings never fall back to operator authority. A manifest's positive `mcp.workerOperations` list, intersected with MCP exposure, selects disclosed reads; omission denies all. Read-only hints alone grant no access. Worker record reads are self-only, and Worker calls cannot subscribe Bot threads. It is not an OS sandbox. _Avoid_: Bot identity, operator authority
 
 ## Inference request
 
