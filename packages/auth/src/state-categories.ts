@@ -1,5 +1,6 @@
 import { stateCategories } from "@stack/api";
 export const authStateCategories = stateCategories("auth", [
+  { id: "pure-cache", kind: "cache", paths: [], ownership: "shared", reads: ["worker_account_list"], actions: ["worker_account_cache_plan"], retention: "Only exact Codex OpenCode model-list cache is clearable after disabled/drained runtime and idle sign-in. Credentials, keychains, sessions/history and other profile bytes remain.", regeneration: "Explicit native catalog discovery; no implicit runtime launch.", issues: ["Devin/Claude have no proven separable cache allow-list; missing/unsafe paths are blocked, never measured as zero."] },
   { id: "accounts", kind: "credentials", paths: ["configuration.sqlite", "secrets.sqlite"], ownership: "shared", sensitivity: "credential", reads: ["account_list", "worker_account_list"], actions: ["account_remove", "worker_account_remove"],
     retention: "Codex account removal cascades to assigned/launched Bots and paired Worker account. Worker account removal drains its runtime and exact owned profile/keychain item; Worker records/worktrees are separate.", regeneration: "Explicit native sign-in; ambient personal logins and keychains are external." },
   { id: "profiles", kind: "storage", paths: [], ownership: "shared", sensitivity: "credential", reads: ["worker_account_list", "worker_account_login_current"],

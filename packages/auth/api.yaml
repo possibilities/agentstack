@@ -10,4 +10,4 @@ mcp:
 websocket:
   operations: all
   events: all
-  description: Loopback WebSocket for account operations and change events, forwarded to the auth socket.
+  description: Loopback WebSocket for account operations, exact local-operator pure-cache maintenance and change events.

@@ -66,7 +66,7 @@ test("auth serves accounts and device sign-in on its namespaced socket", { timeo
     });
     assert.deepEqual(
       listed.tools.map((tool) => tool.name),
-      ["account_list", "account_set_enabled", "account_remove", "account_login_start", "account_login_replace", "account_login_status", "account_login_current", "account_login_cancel",
+       ["worker_account_cache_plan", "worker_account_cache_clear", "auth_state_receipt_get", "account_list", "account_set_enabled", "account_remove", "account_login_start", "account_login_replace", "account_login_status", "account_login_current", "account_login_cancel",
         "worker_account_list", "worker_account_prepare", "worker_account_confirm", "worker_account_set_enabled", "worker_account_remove",
         "worker_account_login_start", "worker_account_login_status", "worker_account_login_current", "worker_account_login_submit", "worker_account_login_cancel", "auth_state_read"],
     );

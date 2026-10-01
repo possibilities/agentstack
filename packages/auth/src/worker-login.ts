@@ -69,6 +69,7 @@ function nativeCommand(env: NodeJS.ProcessEnv): WorkerCommand {
 }
 
 export class WorkerLoginManager {
+  busy(accountId: string): boolean { return this.startQueues.has(accountId) || [...this.pending.values()].some(entry => entry.state.account === accountId); }
   onChange: (() => void) | undefined;
   onAccountsChange: (() => void) | undefined;
   private readonly pending = new Map<string, Pending>();

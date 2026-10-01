@@ -4,7 +4,7 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { accountEnvironment, accountRoot, type WorkerAccount } from "@stack/auth";
-import { socketCall, socketPath, socketSubscribe, type SocketSubscription } from "@stack/api";
+import { socketCall, socketPath, socketSubscribe, stateHash, type SocketSubscription } from "@stack/api";
 import { AcpProcess, record } from "./acp.js";
 import type { WorkerBackend } from "./backend.js";
 import { ClaudeBackend, CLAUDE_SDK_VERSION, CLAUDE_CODE_VERSION, type ClaudeQueryFactory } from "./claude.js";
@@ -26,6 +26,8 @@ export class WorkerSupervisor {
   private launchRetry = new Map<string, { after: number; delay: number }>();
   private catalogs = new Map<string, Catalog>();
   private inflight = new Map<string, Promise<Catalog>>();
+  private draining = new Map<string, Promise<void>>();
+  private teardown = new Map<string, WorkerBackend>();
   private retryAfter = new Map<string, number>();
   private syncQueue: Promise<void> = Promise.resolve();
   private watch: SocketSubscription | undefined;
@@ -71,7 +73,7 @@ export class WorkerSupervisor {
       for (const [id, runtime] of this.live) if (!wanted.has(id)) { this.live.delete(id); this.onRuntimeExit?.(id); await runtime.process.close(); this.onChange?.(); }
       for (const id of this.errors.keys()) if (!wanted.has(id)) { this.errors.delete(id); this.launchRetry.delete(id); this.onChange?.(); }
       for (const account of wanted.values()) {
-        if (this.live.has(account.id)) continue;
+      if (this.live.has(account.id) || this.draining.has(account.id) || this.teardown.has(account.id)) continue;
         if (Date.now() < (this.launchRetry.get(account.id)?.after ?? 0)) continue;
         await this.launch(account);
         // A newly ready account has never been observed; observe it now rather than on its first catalog read.
@@ -150,14 +152,28 @@ export class WorkerSupervisor {
   }
 
   async drain(id: string): Promise<void> {
-    await this.syncQueue.catch(() => undefined);
-    const runtime = this.live.get(id);
-    if (runtime) { this.live.delete(id); this.onRuntimeExit?.(id); await runtime.process.close(); }
-    this.catalogs.delete(id);
-    this.retryAfter.delete(id);
-    this.launchRetry.delete(id);
-    this.errors.delete(id);
-    this.onChange?.();
+    const prior = this.draining.get(id); if (prior) return prior;
+    const task = (async () => {
+      await this.syncQueue.catch(() => undefined);
+      const runtime = this.live.get(id);
+      if (runtime) { this.live.delete(id); this.teardown.set(id, runtime.process); this.onRuntimeExit?.(id); }
+      // Failed close retains the exact backend for an explicitly requested retry.
+      // Absence from the live map alone is not evidence that native teardown ended.
+      const backend = this.teardown.get(id);
+      if (backend) { await backend.close(); this.teardown.delete(id); }
+      this.catalogs.delete(id); this.retryAfter.delete(id); this.launchRetry.delete(id); this.errors.delete(id);
+      this.onChange?.();
+    })().finally(() => this.draining.delete(id));
+    this.draining.set(id, task); return task;
+  }
+
+  async stateDependencies(id: string) {
+    await this.syncQueue;
+    const runtime = this.live.get(id), draining = this.draining.has(id) || this.teardown.has(id), discovering = this.inflight.has(id);
+    return { revision: stateHash([id, runtime?.instance ?? null, draining, discovering]),
+      blockedBy: [...(runtime ? ["Disable the account and explicitly drain its runtime before cache maintenance"] : []),
+        ...(draining ? ["Account runtime teardown is still in progress"] : []), ...(discovering ? ["Account catalog observation is still in flight"] : [])],
+      retained: ["Worker conversations, captured Work, native sessions, source repositories and account credentials remain"], relationships: [] };
   }
 
   runtimeList(): RuntimeView[] {
@@ -284,7 +300,7 @@ export class WorkerSupervisor {
     const running = [...this.live.values()];
     this.live.clear();
     for (const runtime of running) this.onRuntimeExit?.(runtime.account.id);
-    await Promise.all(running.map((runtime) => runtime.process.close()));
+    await Promise.all([...new Set([...running.map(runtime => runtime.process), ...this.teardown.values()])].map(backend => backend.close()));
     await Promise.all([...this.inflight.values()].map((run) => run.catch(() => undefined)));
   }
 }
