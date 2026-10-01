@@ -467,14 +467,14 @@ export class McpEventSubscriptions {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    await this.occurrences?.close();
+    const occurrencesClosing = this.occurrences?.close();
     const states = [...this.records.values(), ...this.setups];
     this.records.clear();
-    await Promise.all(states.map(async (state) => {
+    await Promise.all([occurrencesClosing, ...states.map(async (state) => {
       state.abort.abort();
       if (state.retry) clearTimeout(state.retry);
       await state.socket?.close();
-    }));
+    })]);
     await Promise.allSettled(this.admissions.values());
     this.db.close();
   }

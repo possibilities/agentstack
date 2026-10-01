@@ -275,8 +275,8 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       assert.match(reference, /data-reference/);
       const rendered = reference.replace(/<!--.*?-->/g, "");
       assert.match(rendered, /Worker disclosure \(catalog snapshot\):/);
-      if (["serve", "bots", "xcom"].includes(pkg)) assert.match(rendered, /Worker disclosure \(catalog snapshot\): none/);
-      if (pkg === "worker") assert.match(rendered, /Worker disclosure \(catalog snapshot\): worker_list, worker_status, worker_read/);
+      if (["serve", "bots", "xcom"].includes(pkg)) assert.match(rendered, /Worker disclosure \(catalog snapshot\): reads none; occurrences none/);
+      if (pkg === "worker") assert.match(rendered, /Worker disclosure \(catalog snapshot\): reads worker_list, worker_status, worker_read/);
       for (const name of names) assert.ok(reference.includes(name), `Reference is missing ${name}`);
     }
     assert.doesNotMatch(canvasHtml, /Local links and Server processes/);

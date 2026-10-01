@@ -20,6 +20,7 @@ import { completionReceipt } from "../src/completion-watch.js";
 import { socketPath, workspaceRoot } from "../src/workspace.js";
 import { loadPackageApi } from "../src/catalog.js";
 import { codexMcpDefinition } from "../src/codex-mcp/catalog.js";
+import { pollEvent } from "../src/occurrence.js";
 import { operatorHeaders, withLocalAuth } from "../src/local-auth.js";
 import { serveMcp } from "../src/mcp.js";
 
@@ -30,13 +31,14 @@ test("stdio children use private sockets, refresh policy, fence identities and l
   const env = { ...process.env, STACK_STATE_DIR: join(root, "state"), STACK_MCP_PORT: "not-an-http-port" };
   const dir = join(root, "packages", "demo");
   await mkdir(dir, { recursive: true });
-  const manifest = (operations = "[read, mutate, send, record]", workers = "[read]") => writeFile(join(dir, "api.yaml"),
-    `name: demo\ndescription: Demo.\nmcp:\n  description: Demo MCP.\n  operations: ${operations}\n  workerOperations: ${workers}\n  events: [changed]\n`);
+  const manifest = (operations = "[read, mutate, send, record, read_events]", workers = "[read]", workerEvents = "[]") => writeFile(join(dir, "api.yaml"),
+    `name: demo\ndescription: Demo.\nmcp:\n  description: Demo MCP.\n  operations: ${operations}\n  workerOperations: ${workers}\n  workerEvents: ${workerEvents}\n  events: [changed, arrived]\n`);
   await manifest();
   await mkdir(join(dir, "dist"));
   await writeFile(join(dir, "dist", "api.js"), `
     import { operation } from ${JSON.stringify(new URL("../src/operation.js", import.meta.url).href)};
     import { completionReceipt } from ${JSON.stringify(new URL("../src/completion-watch.js", import.meta.url).href)};
+    import { pollEvent } from ${JSON.stringify(new URL("../src/occurrence.js", import.meta.url).href)};
     import { z } from ${JSON.stringify(import.meta.resolve("zod"))};
     const record = z.object({ id: z.uuid(), done: z.string().nullable(), answer: z.string().nullable() });
     export const api = { operations: [
@@ -44,7 +46,8 @@ test("stdio children use private sockets, refresh policy, fence identities and l
       operation({ name: "mutate", description: "Change value", input: z.strictObject({}), output: z.object({ value: z.number() }), async call() {} }),
       operation({ name: "send", description: "Send a record with optional completion", input: z.strictObject({ id: z.uuid().optional(), subscribe: z.boolean().optional(), actions: z.array(z.string()).optional() }), output: record.extend({ subscription: completionReceipt.nullable() }),
         completionWatch: { topic: "changed", readOperation: "record", idArgument: "id", terminalField: "done", defaultWhen: ["actions"] }, async call() { throw new Error("send must use the live owner"); } }),
-      operation({ name: "record", description: "Read a durable record", input: z.strictObject({ id: z.uuid() }), output: record, annotations: { readOnlyHint: true }, async call() {} })
+      operation({ name: "record", description: "Read a durable record", input: z.strictObject({ id: z.uuid() }), output: record, annotations: { readOnlyHint: true }, async call() {} }),
+      pollEvent({ name: "arrived", operation: "read_events", description: "Fixture occurrence.", input: z.strictObject({}), payload: z.strictObject({ value: z.number() }), async poll() { throw new Error("poll must use its socket owner"); } })
     ], events: { topics: { changed: "Value changed" } }, async createContext() { throw new Error("gateway must not create contexts"); } };
   `);
   let value = 1, botLive = true, workerLive = true, mutations = 0;
@@ -70,6 +73,8 @@ test("stdio children use private sockets, refresh policy, fence identities and l
       operation({ name: "send", description: "Send a record with optional completion", input: z.strictObject({ id: z.uuid().optional(), subscribe: z.boolean().optional(), actions: z.array(z.string()).optional() }), output: recordSchema.extend({ subscription: completionReceipt.nullable() }),
         completionWatch: { topic: "changed", readOperation: "record", idArgument: "id", terminalField: "done", defaultWhen: ["actions"] },
         async call(_ctx, input) { const id = input.id ?? randomUUID(); const record = records.get(id) ?? { id, done: null, answer: null }; records.set(id, record); return { ...record, subscription: null }; } }),
+      pollEvent({ name: "arrived", operation: "read_events", description: "Fixture occurrence.", input: z.strictObject({}), payload: z.strictObject({ value: z.number() }),
+        async poll() { return { events: [], cursor: "0", truncated: false, hasMore: false, nextPollMs: 1000 }; } }),
       operation({ name: "record", description: "Read a durable record", input: z.strictObject({ id: z.uuid() }), output: recordSchema, annotations: { readOnlyHint: true },
         async call(_ctx, { id }) { const record = records.get(id); if (!record) throw new Error("record not found"); return record; } }),
     ] });
@@ -78,7 +83,17 @@ test("stdio children use private sockets, refresh policy, fence identities and l
   const changed = new Promise<void>(resolve => { delivered = resolve; });
   const owner = new McpEventSubscriptions(env, async target => {
     if (!botLive || !["root", "child"].includes(target.threadId)) throw new Error("thread is outside sanctioned lineage");
-  }, async event => { deliveries.push(event); delivered(); }, undefined, undefined, root);
+  }, async event => { deliveries.push(event); delivered(); }, undefined, undefined, root, {
+    async resolve(invocation) {
+      if (invocation.botId && invocation.instance && invocation.threadId)
+        return { kind: "bot", botId: invocation.botId, instance: invocation.instance, threadId: invocation.threadId };
+      assert.equal(invocation.workerId, workerId); assert.equal(invocation.workerInstance, instance);
+      assert.equal(invocation.botId, null, "Worker relay cannot invent Bot authority");
+      return { kind: "worker", workerId, instance, sessionId: "owner-session" };
+    },
+    async verify(target) { return target; },
+    async deliver() { throw new Error("empty occurrence fixture must not dispatch input"); },
+  });
   let loseOwnerAck = false;
   const serveOwner = () => serveSocket({ info: { name: "serve", description: "Fixture", transportDescription: "Fixture", path: socketPath("serve", env) }, context: {}, operations: [
     operation({ name: "serve_mcp_event", description: "Owner relay", input: mcpEventRelayInput, output: z.any(),
@@ -123,7 +138,18 @@ test("stdio children use private sockets, refresh policy, fence identities and l
     assert.equal((await worker.client.callTool({ name: "mutate" })).isError, true);
     assert.equal((await worker.client.callTool({ name: "events_subscribe", arguments: { topic: "changed", readOperation: "read" } })).isError, true);
     await assert.rejects(connect({ kind: "worker", workerId, instance }, { STACK_MCP_BINDING: worker.launch.env.STACK_MCP_BINDING!.replace(/proof=./, "proof=z") }), /closed/);
-    await assert.rejects(socketCall(serve.path, "tools/call", { name: "serve_mcp_event", arguments: { binding: worker.launch.env.STACK_MCP_BINDING, pkg: "demo", tool: "events_status", arguments: {}, threadId: "child", sessionId: null } }), /Bot launch binding/);
+    await assert.rejects(socketCall(serve.path, "tools/call", { name: "serve_mcp_event", arguments: { binding: worker.launch.env.STACK_MCP_BINDING, pkg: "demo", tool: "events_status", arguments: {}, threadId: "child", sessionId: null } }), /event subscriptions are unavailable over mcp/);
+    await manifest(undefined, undefined, "[arrived]");
+    assert.ok((await worker.client.listTools()).tools.some(tool => tool.name === "events_listen"), "live explicit Worker event selection refreshes the same pipe");
+    const listening = CallToolResultSchema.parse(await worker.client.callTool({ name: "events_listen", arguments: { name: "arrived" }, _meta: { threadId: "foreign-root", sessionId: "forged-session" } }));
+    assert.notEqual(listening.isError, true);
+    const occurrence = (listening.structuredContent as { subscription: { id: string; target: { sessionId: string } } }).subscription;
+    assert.equal(occurrence.target.sessionId, "owner-session");
+    assert.equal(owner.occurrences!.operatorList().length, 1);
+    assert.equal((await worker.client.callTool({ name: "events_subscribe", arguments: { topic: "changed", readOperation: "read" } })).isError, true, "occurrence authority must not admit Bot snapshot watches");
+    const removed = CallToolResultSchema.parse(await worker.client.callTool({ name: "events_unsubscribe", arguments: { id: occurrence.id } }));
+    assert.deepEqual(removed.structuredContent, { id: occurrence.id, removed: true });
+    await manifest();
     const completion = await connect({ kind: "bot", botId: "bot-1", endpoint });
     const request = { actions: ["Yes"] };
     assert.equal((await completion.client.callTool({ name: "send", arguments: request, _meta: { threadId: "foreign-root" } })).isError, true);
