@@ -4,6 +4,7 @@ import { loadPackageApi } from "./catalog.js";
 import { resolveExposure, resolveWorkerExposure } from "./exposure.js";
 import { serveSocket, type ServedSocket, type SocketServerInfo } from "./socket.js";
 import { assertTransport, findPackage, socketPath, workspaceRoot } from "./workspace.js";
+import { assertInstallationOpen } from "./installation-fence.js";
 
 export type ServedApi = {
   name: string;
@@ -21,6 +22,7 @@ export async function serveApi(options: {
   from?: string;
 }): Promise<ServedApi> {
   const env = options.env ?? process.env;
+  assertInstallationOpen(env);
   const root = options.root ?? workspaceRoot(options.from ?? import.meta.dirname);
   const located = await findPackage(root, options.name);
   const transport = assertTransport(options.name, located.config, options.transport);
@@ -59,6 +61,7 @@ export async function serveApi(options: {
       socket = await serveSocket({
         info: socketInfo,
         context: contextReady,
+        env,
         operations: api.operations,
         events: eventTopics ? { topics: eventTopics, scope: api.events?.scope } : undefined,
       });

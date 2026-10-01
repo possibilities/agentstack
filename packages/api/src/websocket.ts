@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
+import { assertInstallationOpen } from "./installation-fence.js";
 import { WebSocketServer, type WebSocket } from "ws";
 import { listPackages, socketPath, websocketPort, workspaceRoot } from "./workspace.js";
 import { socketCall, socketSubscribe, type SocketSubscription } from "./socket.js";
@@ -24,6 +25,7 @@ export async function serveWebSocket(options: { env?: NodeJS.ProcessEnv; root?: 
   server?: Server; authenticate?: (request: IncomingMessage) => Promise<RemoteWebSocketAdmission> } = {}): Promise<ServedWebSocket> {
   if (options.server && !options.authenticate) throw new Error("An attached WebSocket server requires authenticated admission");
   const env = options.env ?? process.env;
+  assertInstallationOpen(env);
   const port = options.port ?? websocketPort(env);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("WebSocket port must be an integer from 0 to 65535");
   const root = options.root ?? workspaceRoot(import.meta.dirname);

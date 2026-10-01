@@ -404,7 +404,7 @@ const packageApi: PackageApi<ContentContext, keyof typeof topics> = {
       const documentPort = port(env, env.STACK_CONTENT_PORT === undefined ? "STACK_WIKI_PORT" : "STACK_CONTENT_PORT", DEFAULT_PORT);
       const artifactPort = port(env, env.STACK_CONTENT_ARTIFACT_PORT === undefined ? "STACK_WIKI_ARTIFACT_PORT" : "STACK_CONTENT_ARTIFACT_PORT", DEFAULT_ARTIFACT_PORT);
       if (documentPort !== 0 && documentPort === artifactPort) throw new Error("content document and artifact ports must differ");
-      const server = await startServer({ vaultRoot, casRoot: store.casRoot, index, store, collections,
+      const server = await startServer({ env, vaultRoot, casRoot: store.casRoot, index, store, collections,
         port: documentPort, artifactPort, ...contentNetworkConfig(env), routes: {
           documents: documentRoutes, artifacts: artifactRoutes,
         } });
@@ -417,3 +417,4 @@ const packageApi: PackageApi<ContentContext, keyof typeof topics> = {
   },
 };
 export const api = withStateInventory("content", contentStateCategories, packageApi);
+export { retainFactoryVault } from "./src/factory-reset.js";

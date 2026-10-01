@@ -274,3 +274,4 @@ const packageApi: PackageApi<WorkersContext, keyof typeof topics> = {
   async closeContext(ctx) { await ctx.manager.close(); },
 };
 export const api = withStateInventory("worker", workerStateCategories, packageApi);
+export { observeWorkerFactoryReset, clearWorkerFactoryWorktrees } from "./src/factory-reset.js";

@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { assertInstallationOpen } from "./installation-fence.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { listPackages, mcpPort, workspaceRoot } from "./workspace.js";
 import { parseBotMcpIdentity, parseWorkerMcpIdentity } from "./bot-mcp-identity.js";
@@ -28,6 +29,7 @@ export async function configuredMcpServers(root: string): Promise<Array<{ name: 
 /** External HTTP ingress. Internal launches use the same handlers over stdio. */
 export async function serveMcp(options: { env?: NodeJS.ProcessEnv; root?: string; port?: number; subscriptions?: McpEventSubscriptions } = {}): Promise<ServedMcp> {
   const env = options.env ?? process.env;
+  assertInstallationOpen(env);
   const port = options.port ?? mcpPort(env);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("MCP port must be an integer from 0 to 65535");
   const root = options.root ?? workspaceRoot(import.meta.dirname);

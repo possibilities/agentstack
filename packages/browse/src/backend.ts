@@ -9,6 +9,7 @@ import { BrowserSystem } from "./system.js";
 import { egressPolicy, type EgressPolicy } from "@stack/scrape/network";
 import { researchFirewall, researchPolicyId } from "./research-egress.js";
 import { stateHash, type StateOutcome } from "@stack/api";
+import type { BrowserResetSnapshot } from "./factory-reset.js";
 
 const IMAGE = "docker.io/onkernel/chromium-headful@sha256:da9ee68cb9d2de0b3c26885ff3bdcf04c944254a36eb127219028ac017ff56f3";
 const MAX_SESSIONS = 16;
@@ -84,7 +85,7 @@ export class Backend {
   }
 
   private async request(method: string, path: string, body?: unknown): Promise<unknown> {
-    await this.system.ensureRunning();
+    if (!this.draining) await this.system.ensureRunning();
     const { baseUrl, token } = this.maintenanceConnection ?? await this.system.connection();
     const response = await fetch(baseUrl + path, {
       method, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -117,6 +118,65 @@ export class Backend {
     if (receipt?.native && (!selectedInstances.some(row => row.id === receipt.native!.instanceId && row.name === receipt.native!.instanceName)
       || !selectedVolumes.some(row => row.id === receipt.native!.volumeId && row.name === receipt.native!.volumeName))) blockedBy.push("Native profile incarnation or volume changed/missing");
     return { revision: stateHash([this.system.selectedHypemanRoot(), connection, receipt, selectedInstances, selectedVolumes]), receipt, instances: selectedInstances, volumes: selectedVolumes, blockedBy };
+  }
+
+  /** Inspection never starts a provider, VM or browser. Only recorded exact
+   * incarnations belong to this installation; similar orphan tags aren't adopted. */
+  async factoryResetSnapshot(): Promise<BrowserResetSnapshot> {
+    const ledger = await this.read(), claims = ledger.map(({ session, lease, profile, persistent }) => ({ session, lease, profile, persistent })).sort((a, b) => a.session.localeCompare(b.session));
+    if (!ledger.length) return { provider: null, claims, resources: [], blockedBy: [], revision: stateHash([null, claims, [], []]) };
+    const connection = this.maintenanceConnection ?? await this.system.connection();
+    const provider = stateHash([this.system.selectedHypemanRoot(), connection]);
+    const instances = records(await this.factoryRequest(connection, "GET", "/instances")), volumes = records(await this.factoryRequest(connection, "GET", "/volumes"));
+    const resources: BrowserResetSnapshot["resources"] = [], blockedBy: string[] = [];
+    for (const claim of ledger) {
+      if (!claim.native) { blockedBy.push("Incomplete Browser admission remains unresolved; inspect native scope before factory reset"); continue; }
+      for (const [kind, all, id, name, role] of [["instance", instances, claim.native.instanceId, claim.native.instanceName, "browser"],
+        ["volume", volumes, claim.native.volumeId, claim.native.volumeName, claim.persistent ? "durable-profile" : "disposable-profile"]] as const) {
+        const matches = all.filter(row => row.id === id || row.name === name);
+        if (matches.length > 1 || matches.some(row => row.id !== id || row.name !== name || !owned(row, claim.session, claim.lease, role))
+          || name !== `${kind === "instance" ? "stack-browser" : "stack-profile"}-${claim.session}-${claim.lease.slice(0, 8)}`) blockedBy.push("Exact Browser resource incarnation/name/ownership changed");
+        resources.push({ id, name, kind, session: claim.session, lease: claim.lease, role });
+      }
+    }
+    const ownedInstances = resources.filter(row => row.kind === "instance").map(row => row.id);
+    for (const volume of resources.filter(row => row.kind === "volume")) if (instances.some(instance => !ownedInstances.includes(String(instance.id)) && Array.isArray(instance.volumes) && instance.volumes.some(mount => row(mount).volume_id === volume.id))) blockedBy.push("Browser volume is mounted by a foreign/unselected instance");
+    resources.sort((a, b) => a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id));
+    return { provider, claims, resources, blockedBy, revision: stateHash([provider, claims, resources, blockedBy]) };
+  }
+  private async factoryRequest(connection: { baseUrl: string; token: string }, method: string, path: string) {
+    const response = await fetch(connection.baseUrl + path, { method, headers: { Authorization: `Bearer ${connection.token}` }, redirect: "error", signal: AbortSignal.timeout(10_000) });
+    if (!response.ok && response.status !== 404) { await response.body?.cancel(); throw new Error("Factory Browser provider outcome unavailable"); }
+    if (response.status === 204 || response.status === 404) return null;
+    return response.json();
+  }
+  async factoryResetClear(expected: BrowserResetSnapshot, progress: (outcome: StateOutcome) => void) {
+    if (!expected.resources.length && !expected.claims.length) {
+      if ((await this.read()).length) throw new Error("Browser reset scope changed");
+      return;
+    }
+    return this.serial(() => this.system.maintainProvider(async () => {
+      this.maintenanceConnection = await this.system.connection();
+      try {
+        const connection = this.maintenanceConnection!;
+        if (stateHash([this.system.selectedHypemanRoot(), connection]) !== expected.provider || expected.blockedBy.length) throw new Error("Browser reset provider scope changed");
+        const ledger = await this.read();
+        if (ledger.some(claim => !expected.claims.some(old => old.session === claim.session && old.lease === claim.lease && old.profile === claim.profile && old.persistent === claim.persistent))) throw new Error("Browser reset has newly admitted/unselected claims");
+        // Delete selected instances first; every volume mount is rechecked at its
+        // own effect boundary. No global VM cleanup, no new incarnation/provisioning.
+        for (const resource of expected.resources) {
+          const all = records(await this.factoryRequest(connection, "GET", resource.kind === "instance" ? "/instances" : "/volumes"));
+          const matches = all.filter(row => row.id === resource.id || row.name === resource.name), native = matches[0];
+          if (matches.length > 1 || native && (native.id !== resource.id || native.name !== resource.name || !owned(native, resource.session, resource.lease, resource.role))) throw new Error("Browser reset resource changed");
+          if (resource.kind === "volume" && records(await this.factoryRequest(connection, "GET", "/instances")).some(instance => Array.isArray(instance.volumes) && instance.volumes.some(mount => row(mount).volume_id === resource.id))) throw new Error("Browser reset volume remains mounted");
+          if (native) await this.factoryRequest(connection, "DELETE", `/${resource.kind === "instance" ? "instances" : "volumes"}/${encodeURIComponent(resource.id)}`);
+          if (records(await this.factoryRequest(connection, "GET", resource.kind === "instance" ? "/instances" : "/volumes")).some(row => row.id === resource.id || row.name === resource.name)) throw new Error("Browser reset resource absence unverified");
+          progress({ resource: resource.id, outcome: "removed", detail: "Exact recorded provider incarnation removed/absent; foreign/unattributed resources remain" });
+        }
+        for (const claim of expected.claims) await this.stopRelay(claim.session);
+        await this.save([]);
+      } finally { this.maintenanceConnection = null; }
+    }));
   }
 
   async stateReset(session: string, expected: string, progress: (outcomes: StateOutcome[]) => void) {

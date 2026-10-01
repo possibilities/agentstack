@@ -10,6 +10,7 @@ import { forwardTimeout } from "./forward-timeout.js";
 import { wantsCompletion } from "./completion-watch.js";
 import { executeOperation } from "./execute.js";
 import { mcpPrerequisite } from "./mcp-prerequisite.js";
+import { assertInstallationOpen } from "./installation-fence.js";
 
 /** HTTP validates live catalogs. Internal stdio uses installed declarations and
  * optional owner-scoped standalone contexts, never full service contexts. */
@@ -38,6 +39,7 @@ export function packageMcpServer(name: string, description: string, root: string
   mcp.setRequestHandler(CallToolRequestSchema, async ({ params }, extra) => {
     try {
       await checkAuthority();
+      assertInstallationOpen(env);
       const { api, catalog, exposure, workerCatalog } = await selection();
       if (worker) {
         if (params.name.startsWith("events_")) throw new Error("worker MCP connections cannot subscribe Bot threads");
@@ -56,6 +58,7 @@ export function packageMcpServer(name: string, description: string, root: string
       op?.input.parse(params.arguments ?? {});
       extra.signal.throwIfAborted();
       await checkAuthority();
+      assertInstallationOpen(env);
       const watch = catalog.tools.find(tool => tool.name === params.name)?.completionWatch;
       if (watch && wantsCompletion(watch, params.arguments ?? {}, invocation)) {
         if (!identity || !("botId" in identity)) throw new Error("subscribe:true requires a verified Bot MCP call and sanctioned Chat; nothing was sent");
@@ -84,8 +87,9 @@ export function packageMcpServer(name: string, description: string, root: string
         if (!identity && op?.standalone && error instanceof SocketCallError && error.absent) {
           extra.signal.throwIfAborted();
           await checkAuthority();
+          assertInstallationOpen(env);
           const ctx = await op.standalone.open(env, extra.signal);
-          try { extra.signal.throwIfAborted(); result = await executeOperation(op, ctx, params.arguments ?? {}, invocation, "mcp"); }
+          try { extra.signal.throwIfAborted(); assertInstallationOpen(env); result = await executeOperation(op, ctx, params.arguments ?? {}, invocation, "mcp"); }
           finally { await op.standalone.close(ctx); }
         } else throw mcpPrerequisite(error, name, params.name);
       }
