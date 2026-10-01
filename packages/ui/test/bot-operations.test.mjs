@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
+import { createRequire, registerHooks } from "node:module";
+import { extname } from "node:path";
 import test from "node:test";
 import { publishedJsonSchema } from "../../api/src/schema.ts";
-import { botControlOperations, botOperationDraft, connectedVoiceSession, inputKind, inputRequired, operationScopeError, parseOperationDraft } from "../lib/stack/bot-operations.ts";
-import { BotUploads } from "../lib/stack/bot-uploads.ts";
+
+// The pure stack modules import one another bundler-style, without extensions.
+registerHooks({ resolve(specifier, context, next) {
+  return next(context.parentURL?.includes("/lib/stack/") && specifier.startsWith("./") && !extname(specifier) ? `${specifier}.ts` : specifier, context);
+} });
+const { botControlOperations, botOperationDraft, connectedVoiceSession, defaultBotOperation, inputKind, inputRequired, interactiveBotOperations, operationScopeError, parseOperationDraft } = await import("../lib/stack/bot-operations.ts");
+const { BotUploads } = await import("../lib/stack/bot-uploads.ts");
 
 const { z } = createRequire(new URL("../../api/package.json", import.meta.url))("zod");
 
@@ -72,6 +78,58 @@ test("stopped Bots can admit durable queue messages only on their main thread", 
   assert.match(operationScopeError(operation, { threadId: "descendant" }, bot, null), /current main thread/);
   assert.match(operationScopeError(operation, { threadId: "root" }, { ...bot, mainThreadId: null }, null), /current main thread/);
   assert.match(operationScopeError({ ...operation, name: "chat_send" }, { threadId: "root" }, bot, null), /verified running Bot/);
+});
+
+const orientation = (state, extra = {}) => ({ admissionId: "8f0f2a54-6a63-4f65-9b3c-0e5d0d0b7a10", state, threadId: null, turnId: null, issue: null, updatedAt: 1, ...extra });
+const running = (fields = {}) => ({ id: "bot-1", state: "running", runningAccount: "account", recoveryIssue: null, mainThreadId: null, orientation: null, ...fields });
+const chatOpen = { name: "chat_open", annotations: {}, inputSchema: { properties: { botId: { type: "string" }, input: { type: "array" } } } };
+const chatSend = { name: "chat_send", annotations: {}, inputSchema: { properties: { botId: { type: "string" }, threadId: { type: "string" }, input: { type: "array" } } } };
+const unfinished = /Initialization is unfinished; Stack won’t create another main thread/;
+const admitting = /admitting this Bot’s introduction/;
+
+test("a first chat opens only a Bot with no main thread and no unfinished initialization", () => {
+  // Legacy Bots (null or absent) and every settled outcome open a first thread once, and default to doing so.
+  for (const settled of [null, undefined, ...["completed", "failed", "interrupted", "retired"].map((state) => orientation(state))]) {
+    const bot = running({ orientation: settled });
+    assert.equal(operationScopeError(chatOpen, {}, bot, null), null, `${settled?.state ?? "legacy"} without a root`);
+    assert.equal(defaultBotOperation(bot), "chat_open");
+    assert.match(operationScopeError(chatOpen, {}, { ...bot, mainThreadId: "root" }, null), /already has a main thread; use chat_send/);
+    assert.equal(defaultBotOperation({ ...bot, mainThreadId: "root" }), "chat_list");
+  }
+  // Admission, a running introduction and an unknown outcome refuse a replacement, whether or not a root is recorded.
+  for (const state of ["pending", "creating", "ready", "submitting", "running", "unknown"]) {
+    for (const mainThreadId of [null, "root"]) {
+      const bot = running({ orientation: orientation(state, { threadId: mainThreadId }), mainThreadId });
+      assert.match(operationScopeError(chatOpen, {}, bot, null), unfinished, `${state} ${mainThreadId ?? "without a root"}`);
+      assert.equal(defaultBotOperation(bot), "chat_list", "the form starts on a read, not a refused action");
+    }
+  }
+  // The server checks the verified live process first.
+  assert.match(operationScopeError(chatOpen, {}, running({ state: "stopped", runningAccount: null }), null), /verified running Bot/);
+});
+
+test("competing direct input is refused only while the introduction is being admitted", () => {
+  const send = (state, fields = {}) => operationScopeError(chatSend, { threadId: "root" }, running({ mainThreadId: "root", orientation: state ? orientation(state) : null, ...fields }), null);
+  for (const state of ["pending", "creating", "ready", "submitting"]) assert.match(send(state), admitting, state);
+  // Once admitted, native start-or-steer stands: a running introduction and an unknown outcome on the exact root still accept input.
+  for (const state of [null, "running", "unknown", "completed", "failed", "interrupted", "retired"]) assert.equal(send(state), null, String(state));
+  // Every operation the Bots API runs through interactive() is refused in admission; reads and other actions are not.
+  for (const name of interactiveBotOperations) {
+    const operation = { name, annotations: {}, inputSchema: { properties: { botId: { type: "string" }, threadId: { type: "string" } } } };
+    assert.match(operationScopeError(operation, { threadId: "root" }, running({ mainThreadId: "root", orientation: orientation("creating") }), null), admitting, name);
+  }
+  const read = { name: "chat_list", annotations: { readOnlyHint: true }, inputSchema: { properties: { botId: { type: "string" } } } };
+  const upload = { name: "chat_upload_start", annotations: {}, inputSchema: { properties: { botId: { type: "string" } } } };
+  const admission = running({ orientation: orientation("submitting") });
+  assert.equal(operationScopeError(read, {}, admission, null), null);
+  assert.equal(operationScopeError(upload, {}, admission, null), null);
+});
+
+test("the workbench refuses exactly the operations the Bots API runs through interactive()", async () => {
+  const api = await readFile(new URL("../../bots/api.ts", import.meta.url), "utf8");
+  const interactive = api.split(/\n(?=export const \w+ = operation\()/).filter((source) => /\binteractive\(ctx, /.test(source)).map((source) => /name: "([a-z_]+)"/.exec(source)[1]);
+  assert.ok(interactive.length >= 10);
+  assert.deepEqual([...interactiveBotOperations].sort(), interactive.sort());
 });
 
 test("page-owned upload state survives observer dismissal and resumes an uncertain chunk from status", async () => {

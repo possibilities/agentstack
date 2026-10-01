@@ -11,6 +11,7 @@ import { primaryChat } from "@/lib/stack/chat-windows";
 import { shortId } from "@/lib/stack/derive";
 import { holdMainChat, type MainChatFeed, type MainChatView } from "@/lib/stack/main-chat";
 import { markdownBlocks } from "@/lib/stack/markdown-blocks";
+import { orientationPhase, orientationSettled, orientationStatus, type Orientation } from "@/lib/stack/orientation";
 import type { ChatActivity, ChatEntry, ChatTurnEnd } from "@/lib/stack/transcript";
 import { cn } from "@/lib/utils";
 import { StatusDot } from "./primitives";
@@ -116,13 +117,27 @@ function Placeholder({ title, hint }: { title: string; hint?: string }) {
 /** Pixels from the end that still count as reading the latest output. */
 const endSlack = 4;
 
+/** What a running Bot with no main thread is waiting for; only a legacy or reset Bot waits for the first human message. */
+function noMainThread(botId: string, orientation: Orientation | null | undefined): { title: string; hint: string } {
+  switch (orientationPhase(orientation)) {
+    case "admitting": return { title: "Preparing introduction", hint: `Stack is starting ${botId}’s one-time introduction. Its main thread appears here once admitted.` };
+    case "introducing": return { title: "Introducing", hint: `${botId}’s one-time introduction is running. Its main thread appears here once Stack has it.` };
+    case "unknown": return { title: "Initialization needs inspection", hint: [orientation?.issue, `Stack won’t create another main thread automatically. Inspect ${botId} for details.`].filter(Boolean).join(" ") };
+    case "failed":
+    case "interrupted": return { title: "No main thread yet", hint: `${botId}’s introduction did not complete. Sending a first message starts its main thread.` };
+    case "retired": return { title: "No main thread yet", hint: `${botId}’s conversation was reset and its introduction will not repeat. The main thread begins with its first message.` };
+    default: return { title: "No main thread yet", hint: `${botId}’s main thread begins with its first turn.` };
+  }
+}
+
 function Transcript({ botId, view, loadOlder }: { botId: string; view: MainChatView | null; loadOlder(): void }) {
+  const { bots } = useStack();
   if (!view || (view.status === "loading" && !view.entries.length)) return <Placeholder title="Reading main thread…" />;
   if (view.entries.length) return <Scrollback botId={botId} view={view} loadOlder={loadOlder} />;
   switch (view.status) {
     case "missing": return <Placeholder title={`${botId} no longer exists`} />;
     case "stopped": return <Placeholder title={`${botId} is stopped`} hint="Start it to read its main thread." />;
-    case "no-thread": return <Placeholder title="No main thread yet" hint={`${botId}'s main thread begins with its first turn.`} />;
+    case "no-thread": return <Placeholder {...noMainThread(botId, bots.data?.find((bot) => bot.id === botId)?.orientation)} />;
     case "error": return <Placeholder title="Could not read the main thread" hint={view.error ?? undefined} />;
     default: return <Placeholder title="No messages yet" />;
   }
@@ -274,9 +289,9 @@ const phaseTitle: Record<ChatActivity["phase"], string> = { thinking: "Thinking"
 function StatusLine({ botId, view }: { botId: string | null; view: MainChatView | null }) {
   const { bots } = useStack();
   const orientation = bots.data?.find((bot) => bot.id === botId)?.orientation;
-  const orienting = orientation && !["completed", "failed", "interrupted", "retired"].includes(orientation.state);
+  const unfinished = orientationSettled(orientation) ? null : orientationStatus(orientation);
   const active = view?.active ?? null;
-  const idle = !botId ? "no bot" : !view ? "connecting" : view.status === "stopped" ? "stopped" : orienting ? orientation.state === "unknown" ? "orientation needs inspection" : "orienting" : view.status === "no-thread" ? "no main thread"
+  const idle = !botId ? "no bot" : !view ? "connecting" : view.status === "stopped" ? "stopped" : unfinished ? unfinished : view.status === "no-thread" ? "no main thread"
     : view.status === "missing" ? "removed" : view.status === "loading" ? "reading" : view.status === "error" && !view.entries.length ? "unavailable" : "idle";
   return (
     <div role="status" aria-live="polite" className="flex h-8 shrink-0 items-center gap-2 border-t border-border/60 px-4 font-mono text-[11.5px] text-muted-foreground">

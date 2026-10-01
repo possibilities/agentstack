@@ -1,3 +1,4 @@
+import { orientationRefusesInput, orientationSettled } from "./orientation";
 import type { Bot, JsonSchema, OperationDoc, VoiceCall } from "./types";
 
 /** Dedicated controls cover these operations; every other Bots operation is in the workbench. */
@@ -5,6 +6,18 @@ export const botControlOperations = new Set([
   "bot_list", "bot_start", "bot_stop", "bot_assign", "bot_remove", "bot_defaults_get", "bot_defaults_set",
   "voice_status", "voice_dial", "voice_hangup",
 ]);
+
+/** The operations the Bots API runs through `interactive()`: direct input to the main thread, which it refuses while an introduction is being admitted. */
+export const interactiveBotOperations = new Set([
+  "chat_send", "chat_steer", "chat_interrupt", "chat_enqueue", "chat_queue_resolve",
+  "chat_codex_queue_add", "chat_codex_queue_update", "chat_codex_queue_delete", "chat_codex_queue_reorder", "chat_codex_queue_start",
+  "chat_attachment_add", "chat_attachment_remove",
+]);
+
+/** A Bot with no main thread opens one only when no initialization is unfinished; otherwise start with a read. */
+export function defaultBotOperation(bot: Bot): string {
+  return !bot.mainThreadId && orientationSettled(bot.orientation) ? "chat_open" : "chat_list";
+}
 
 export function inputKind(schema: JsonSchema): string {
   // Publication expands type arrays (including nullable types) into anyOf.
@@ -30,8 +43,13 @@ export function operationNeedsLiveBot(operation: OperationDoc): boolean {
 export function operationScopeError(operation: OperationDoc, input: Record<string, unknown>, bot: Bot, call: VoiceCall | null): string | null {
   if (operation.annotations.readOnlyHint === true) return null;
   if (operation.inputSchema.properties?.threadId && (!bot.mainThreadId || input.threadId !== bot.mainThreadId)) return "Actions are limited to this Bot’s current main thread. Descendants are read-only.";
+  if (interactiveBotOperations.has(operation.name) && orientationRefusesInput(bot.orientation)) return "Stack is admitting this Bot’s introduction; refresh before sending competing input.";
   if (operation.name === "voice_speak" && (!connectedVoiceSession(bot, call) || input.sessionId !== connectedVoiceSession(bot, call))) return "Select this Bot’s exact current connected voice call before speaking.";
   if (operationNeedsLiveBot(operation) && (bot.state !== "running" || bot.recoveryIssue || !bot.runningAccount)) return "This action needs a verified running Bot with a launched account.";
+  if (operation.name === "chat_open") {
+    if (!orientationSettled(bot.orientation)) return "Initialization is unfinished; Stack won’t create another main thread.";
+    if (bot.mainThreadId) return "This Bot already has a main thread; use chat_send.";
+  }
   return null;
 }
 

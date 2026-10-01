@@ -141,6 +141,10 @@ try {
   await blockers.getByText("Close Worker w-17 (running) before Bot maintenance").waitFor();
   await blockers.getByRole("button", { name: "Workers" }).waitFor();
   await panel.getByText("Stored state").waitFor();
+  // The owner's own record of the one-time introduction is shown apart from lifecycle, whatever its outcome in this fixture.
+  const initialization = panel.locator("dt", { hasText: "Initialization" }).locator("xpath=following-sibling::dd[1]");
+  await initialization.waitFor();
+  assert.doesNotMatch(await initialization.innerText(), /Not enrolled|retired/i, "an account-bound Bot is enrolled and has not been reset");
   await shot("bot-state-blocked", panel);
 
   // The Worker closes; re-reading shows nothing blocks.
@@ -230,6 +234,7 @@ try {
   await tab("Conversation").click();
   const generations = panel.getByRole("list", { name: "History generations" });
   await generations.getByText("active", { exact: true }).waitFor();
+  await panel.getByText("The Bot’s introduction is retired too, which is not a native completion, and Stack will not repeat it. The next first message starts the new main thread.", { exact: true }).waitFor();
   assert.equal(await panel.getByRole("button", { name: "Prepare conversation reset" }).isDisabled(), true, "no default history choice");
   await panel.getByRole("radio", { name: "Retain it as a retired generation" }).check();
   await panel.getByRole("button", { name: "Prepare conversation reset" }).click();
@@ -237,6 +242,12 @@ try {
   await panel.getByText("Completed for the declared scope only.").waitFor();
   await generations.getByText("retired", { exact: true }).waitFor();
   await shot("conversation-reset", panel);
+  // The owner retired the introduction in the same transaction, and the Bot's card data followed.
+  await tab("Overview").click();
+  await initialization.getByText("Orientation retired", { exact: false }).waitFor();
+  await initialization.getByText("The conversation was reset. This is not a native completion, and the introduction will not repeat.", { exact: true }).waitFor();
+  await shot("bot-state-orientation-retired", panel);
+  await tab("Conversation").click();
   await panel.getByRole("button", { name: "Purge this retired history…" }).click();
   await panel.getByRole("button", { name: "Prepare purge of this generation" }).click();
   await panel.getByRole("button", { name: "Purge this history" }).click();
