@@ -14,7 +14,10 @@ const peer = { remoteAddress: "100.80.0.2", localAddress: "100.80.0.1", remotePo
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "stack-connection-"));
   let offset = 0, permitted = true;
-  const store = new AccessStore(root, () => Date.now() + offset);
+  // Time may advance between persistence and response construction. A fixed
+  // clock would hide a retry that returns an expiry different from admission.
+  let clock = Date.now();
+  const store = new AccessStore(root, () => clock++ + offset);
   const env = { STACK_ACCESS_HOST: peer.localAddress, STACK_ACCESS_ORIGIN: origin, STACK_ACCESS_UI_ORIGIN: uiOrigin };
   const verify = async () => { if (!permitted) throw new Error("tailnet unavailable"); };
   const device = handler({ store, env, origin: "documents", verify });

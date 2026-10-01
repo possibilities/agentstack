@@ -268,12 +268,13 @@ export class AccessStore {
       const old = this.get("SELECT * FROM ui_handoffs WHERE hash=?", hash(capability));
       if (old && old.expires <= this.now()) fail("ui_handoff_expired", 409);
       if (old && (old.origin !== origin || old.revision !== row.grant_revision)) fail("request_conflict", 409);
+      const expiresAt = old?.expires ?? this.now() + 60_000;
       if (!old) {
         if (Number(this.get("SELECT count(*) n FROM ui_handoffs WHERE expires>?", this.now())!.n) >= 100) fail("ui_handoff_capacity", 429);
-        this.db.prepare("INSERT INTO ui_handoffs VALUES(?,?,?,?,?,0)").run(hash(capability), principal.credentialId, origin, row.grant_revision, this.now() + 60_000);
+        this.db.prepare("INSERT INTO ui_handoffs VALUES(?,?,?,?,?,0)").run(hash(capability), principal.credentialId, origin, row.grant_revision, expiresAt);
         this.audit("ui_handoff_created", principal.clientId);
       }
-      return { url: `${origin}/connect/device#${capability}`, expiresAt: old?.expires ?? this.now() + 60_000, serverId: this.serverId };
+      return { url: `${origin}/connect/device#${capability}`, expiresAt, serverId: this.serverId };
     });
   }
   exchangeUiHandoff(capability: string, origin: string) {
