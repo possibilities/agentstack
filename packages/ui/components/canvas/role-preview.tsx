@@ -6,7 +6,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { approxTokens, conditionDimensions, conditionValueLimit, contextIssues, contextKey, contextSummary, fallbackLimitBytes, fallbackSnapshotLimit, formatBytes, formatCount, injectCommand, internalCounts, launchHint, normalizeContext, launchLabel, previewBytes, previewPieces, projectBots, roleLaunches, type LaunchState, type WorkerRoleState } from "@/lib/stack/roles";
+import { approxTokens, conditionDimensions, conditionValueLimit, contextIssues, contextKey, contextSummary, fallbackLimitBytes, fallbackSnapshotLimit, formatBytes, formatCount, injectCommand, injectionGuidance, internalCounts, launchHint, normalizeContext, launchLabel, previewBytes, previewPieces, projectBots, roleLaunches, type LaunchState, type WorkerRoleState } from "@/lib/stack/roles";
 import type { RoleLaunchPreview, RoleRenderContext } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { BotTile, CopyButton, Empty, Meter, NodeLink } from "./primitives";
@@ -223,6 +223,7 @@ function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating:
         <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">
           Stack servers use stdio for future Bot, Worker and <code>stack roles inject</code> launches. This preview does not describe running connections. Additional Role servers keep their configured transport.
         </p>
+        <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">{injectionGuidance}</p>
         {launch.config ? (
           <div className="flex flex-col gap-1">
             <div className="flex items-center justify-between gap-2 px-1.5">

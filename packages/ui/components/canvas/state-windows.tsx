@@ -311,6 +311,7 @@ export function SubscriptionsWindow() {
       ) : undefined}>
       <div className="flex flex-col gap-2">
         <p className={hintClass}>Each subscription turns a package event into automatic input for the Bot thread that created it. Removing one aborts pending reads and fences input not yet admitted; input Codex already admitted cannot be recalled.</p>
+        <p className={hintClass}>Bot event subscriptions are server-owned and durable, limited to sanctioned Stack-managed Bot threads. Closing a stdio pipe does not remove a watch. Operators and Workers cannot subscribe Bot threads.</p>
         <div className="flex flex-wrap items-center gap-1.5">
           <NativeSelect size="sm" aria-label="Bot" className="min-w-0 flex-1" value={subscriptionFilter.botId ?? ""} disabled={!listAccess.available}
             onChange={(event) => filter({ ...subscriptionFilter, botId: event.target.value || undefined })}>

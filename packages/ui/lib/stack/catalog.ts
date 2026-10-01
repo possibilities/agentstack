@@ -100,3 +100,9 @@ export function annotationBadges(operation: OperationDoc): { key: string; label:
 export function operationTitle(operation: OperationDoc): string {
   return operation.title ?? (typeof operation.annotations.title === "string" ? operation.annotations.title : operation.name);
 }
+
+/** Owner capability is independent of read-only hints, service health and caller authority. */
+export function standaloneCapability(operation: OperationDoc, doc: PackageDoc): "standalone" | "service" | "unknown" | null {
+  if (!doc.transports.some((transport) => transport.type === "mcp" && transport.operations.includes(operation.name))) return null;
+  return typeof operation.standalone === "boolean" ? operation.standalone ? "standalone" : "service" : "unknown";
+}
