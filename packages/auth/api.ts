@@ -299,6 +299,17 @@ function fenceAccountMutation(op: AnyOperation<AuthContext>): AnyOperation<AuthC
 }
 const packageApi: PackageApi<AuthContext, AuthTopic> = {
   operations: [
+    operation({ name: "worker_account_state_guard", description: "Internal local-operator coordination for Worker native-session maintenance: serialize against account sign-in, enable and removal while the Worker owner observes or applies its exact admitted effect. Requires a disabled nonremoving account and idle sign-in. Never changes credentials, drains a runtime or admits a turn.",
+      input: z.strictObject({ id: accountId, workerId: z.uuid(), token: z.uuid() }), output: z.record(z.string(), z.unknown()),
+      async call(ctx: AuthContext, input, invocation) {
+        requireStateOperator(invocation);
+        return ctx.cache!.mutate(input.id, async () => {
+          const account = ctx.store.workerAccounts().find(row => row.id === input.id);
+          if (!account || account.enabled || account.removing || ctx.workerLogin.busy(input.id)) throw new Error("Native session maintenance requires disabled account and idle sign-in");
+          if (!ctx.workersSocket) throw new Error("Worker maintenance callback unavailable");
+          return await socketCall(ctx.workersSocket, "tools/call", { name: "worker_state_native_effect", arguments: { ...input, provider: account.provider } }, { timeoutMs: 120_000 }) as Record<string, unknown>;
+        });
+      } }),
     operation({ name: "worker_account_cache_plan", description: "Preview pure-cache cleanup in an exact owned Worker account profile. Only Codex OpenCode cache/opencode/models.json is proven; Devin/Claude are unsupported. Requires account disabled, sign-in idle and runtime/catalog/teardown drained. No credentials or sessions selected. Local operator only.",
       input: z.strictObject({ accountId }), output: statePlan, async call(ctx: AuthContext, { accountId }, invocation) { requireStateOperator(invocation); return ctx.cache!.plan(ctx, accountId); } }),
     operation({ name: "worker_account_cache_clear", description: "Apply one exact pure-cache plan after rechecking profile/dependency revisions. Persist admission before safe file removal; partial/unknown outcomes never rerun. Native sign-in and session/history remain intact. No implicit drain or restart. Local operator only.",

@@ -8,6 +8,7 @@ import { workContext } from "@stack/hud/schema";
 import { workAdmissionPage } from "@stack/hud/client";
 import { withStateInventory, statePageInput, stateFilePage, stateFileRead, listStateFiles, readStateFile } from "@stack/api";
 import { workerStateCategories } from "./src/state-categories.js";
+import { workerStateOperations } from "./src/state.js";
 
 const id = z.uuid();
 const model = z.strictObject({ id: z.string(), name: z.string(), efforts: z.array(z.string()), effortConfigId: z.string().nullable() });
@@ -20,11 +21,12 @@ const observedSettingsSchema = z.strictObject({ model: z.string().nullable(), ef
 const workerSchema = z.strictObject({ id, botId: z.string(), threadId: z.string(), accountId: id, provider: z.enum(["codex", "devin", "claude"]),
   model: z.string(), effort: z.string().nullable(), repo: z.string(), cwd: z.string().nullable(), branch: z.string().nullable(),
   baseCommit: z.string().nullable(), sourceDirty: z.boolean(), roleId: z.uuid().nullable().describe("Role ID captured at creation; null for legacy or not-yet-prepared Workers. Recovery retains the saved snapshot."), roleRevision: z.number().int().nullable(), sessionId: z.string().nullable(),
-  runtimeInstance: id.nullable(),
+  runtimeInstance: id.nullable(), contentClearedAt: z.number().int().nullable().describe("Transcript redaction marker; null means no maintenance clear recorded. Native/source copies are independent."),
   phase, currentTurnId: id.nullable(), issue: z.string().nullable(), createdAt: z.number().int(), updatedAt: z.number().int() });
 const turnSchema = z.strictObject({ id, workerId: id, phase: turnPhase, stopReason: z.string().nullable(), issue: z.string().nullable(),
+  contentClearedAt: z.number().int().nullable(),
   workContext: workContext.nullable().describe("HUD work and scope captured at admission; null for unassociated or legacy turns. Native completion does not complete this work."),
-  requestId: id, prompt: z.string().nullable().describe("Submitted user prompt retained at admission; null for legacy turns whose prompt was not recorded."),
+  requestId: id, prompt: z.string().nullable().describe("Submitted user prompt retained at admission; null for legacy unrecorded or maintenance-cleared turns (see contentClearedAt)."),
   requestedModel: z.string().nullable(), requestedEffort: z.string().nullable(), observedSettings: observedSettingsSchema.nullable(),
   dispatchedAt: z.number().int().nullable(), dispatchedPromptSeq: z.number().int().nullable(),
   createdAt: z.number().int(), updatedAt: z.number().int() });
@@ -150,7 +152,7 @@ export const workerRecordList = operation({
   async call(ctx: WorkersContext, { id, afterSeq, limit, turnId }, invocation) { return ctx.manager.records(id, afterSeq ?? 0, limit ?? 20, turnId, invocation); },
 });
 export const workerRecordRead = operation({
-  name: "worker_record_read", description: "Recover one immutable structured Worker record as bounded JSON text chunks. Offsets and totalChars count UTF-16 code units; concatenate chunks before JSON parsing. The exact Worker ownership check also applies to the record sequence.",
+  name: "worker_record_read", description: "Recover a structured Worker record as bounded JSON text chunks. Captures are immutable except explicit closed-Worker content redaction; restart chunks when worker.contentClearedAt changes. Offsets/totalChars count UTF-16 code units; concatenate before JSON parsing. Exact Worker ownership applies.",
   input: z.strictObject({ id, seq: z.number().int().positive(), offset: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(16_000).optional() }),
   output: z.strictObject({ seq: z.number().int(), offset: z.number().int(), data: z.string(), nextOffset: z.number().int(), totalChars: z.number().int(), hasMore: z.boolean(), encoding: z.literal("json-utf16") }),
   annotations: { title: "Read Worker record chunk", readOnlyHint: true },
@@ -219,7 +221,7 @@ export const workerRemove = operation({
 
 export const topics = {
   workers_changed: "Worker account, runtime, catalog, settings defaults or session state changed. Refresh the relevant read operation, including worker_settings_catalog/read for defaults.",
-  worker_changed: "One Worker's turn, permission, settings or recovery state changed. Subscribe with its Worker ID and re-read worker_status and worker_settings_read for the latest values.",
+  worker_changed: "One Worker's turn, permission, settings, recovery or maintenance state changed. Subscribe with its Worker ID; refresh status/history/diff/files and discard cached bodies when contentClearedAt changes.",
   worker_progress: "Scoped UI invalidation for structured transcript, tool and session metadata progress. Subscribe with a Worker ID and refresh Worker detail/history reads. This is separate from Bot wakeups on worker_changed.",
 } as const;
 export const workerWorkList = operation({ name: "worker_work_list", description: "Page immutable work associations captured with Worker turn admission, with separately observed native phases. Bot callers see their own Workers; operators see all. Old scope revisions remain evidence. Restart pagination on workers_changed. Removed Worker records no longer appear; HUD semantic work and notes remain independent.",
@@ -232,7 +234,7 @@ export const workerTurnContext = operation({ name: "worker_turn_context", descri
   async call(ctx: WorkersContext, input, invocation) { return ctx.manager.turnContext(input.id, input.turnId, invocation); },
 });
 const packageApi: PackageApi<WorkersContext, keyof typeof topics> = {
-  operations: [workerAccountStateDependencies, workerBotDependencies, workerWorkspaceList, workerWorkspaceRead, ...workerSettingsOperations, workerCatalog, workerRuntimeList, workerAccountDrain, workerStart, workerList, workerStatus, workerRead,
+   operations: [workerAccountStateDependencies, workerBotDependencies, workerWorkspaceList, workerWorkspaceRead, ...workerStateOperations, ...workerSettingsOperations, workerCatalog, workerRuntimeList, workerAccountDrain, workerStart, workerList, workerStatus, workerRead,
     workerDetail, workerTurnList, workerRecordList, workerRecordRead, workerToolList, workerDiff,
      workerSend, workerRespond, workerCancel, workerResume, workerClose, workerRemove, workerWorkList, workerTurnContext],
   events: {

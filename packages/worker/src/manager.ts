@@ -12,6 +12,7 @@ import { readWorktreeDiff, type DiffOptions } from "./diff.js";
 import { evidence, settingsState, type SettingsPatch, type SettingsBackend, type SettingsSnapshot } from "@stack/settings";
 import { randomUUID } from "node:crypto";
 import { resolveWorkContext } from "@stack/hud/client";
+import { WorkerState } from "./state.js";
 
 /** worker_list's compact most recent turn; worker_status and worker_turn_list carry the rest. */
 export type ListedTurn = Pick<TurnSummary, "id" | "phase" | "stopReason" | "issue" | "dispatchedAt" | "createdAt" | "updatedAt" | "workContext">;
@@ -21,6 +22,9 @@ export type SendInput = { id: string; message: string; requestId: string; model?
 
 export class WorkerManager {
   readonly ledger: WorkerLedger;
+  readonly state: WorkerState;
+  private readonly maintenanceWorkers = new Set<string>();
+  private readonly maintenanceRuns = new Set<Promise<unknown>>();
   onChange?: (workerId?: string) => void;
   onProgress?: (workerId: string) => void;
   private progressTimer: ReturnType<typeof setTimeout> | undefined;
@@ -33,6 +37,7 @@ export class WorkerManager {
 
   constructor(private readonly stateDir: string, readonly supervisor: WorkerSupervisor, private readonly env: NodeJS.ProcessEnv) {
     this.ledger = new WorkerLedger(stateDir);
+    this.state = new WorkerState(this, stateDir, env);
     for (const worker of this.ledger.workers()) if (worker.sessionId)
       this.sessions.set(`${worker.accountId}:${worker.sessionId}`, worker.id);
     supervisor.onChange = () => this.onChange?.();
@@ -47,6 +52,7 @@ export class WorkerManager {
   async close(): Promise<void> {
     this.closing = true;
     if (this.progressTimer) clearTimeout(this.progressTimer);
+    await Promise.allSettled([...this.maintenanceRuns]);
     await this.supervisor.close();
     this.ledger.close();
   }
@@ -144,7 +150,14 @@ export class WorkerManager {
     const worker = this.ledger.worker(id);
     if (!worker) throw new Error("unknown worker");
     ownsWorker(owner, worker);
+    if (this.maintenanceWorkers.has(id)) throw new Error("Worker maintenance/lifecycle operation is in progress");
     return worker;
+  }
+  async maintain<T>(ids: string[], run: () => Promise<T>) {
+    if (this.closing || ids.some(id => this.maintenanceWorkers.has(id) || this.loading.has(id))) throw new Error("Worker maintenance/lifecycle operation is in progress");
+    ids.forEach(id => this.maintenanceWorkers.add(id));
+    const task = Promise.resolve().then(run); this.maintenanceRuns.add(task);
+    try { return await task; } finally { this.maintenanceRuns.delete(task); ids.forEach(id => this.maintenanceWorkers.delete(id)); }
   }
   /** Worker self-reads do not grant Bot/operator ownership or mutation rights. */
   private async readable(id: string, invocation?: InvocationContext): Promise<WorkerRecord> {
@@ -585,14 +598,16 @@ export class WorkerManager {
 
   async remove(id: string, discardWorktree: boolean, invocation?: InvocationContext): Promise<{ id: string; retainedBranch: string | null }> {
     const worker = await this.owned(id, invocation);
-    if (worker.phase !== "closed") throw new Error("close the worker before removing its record");
-    if (!discardWorktree) throw new Error("explicit discardWorktree: true is required; this deletes the worktree, including uncommitted changes");
-    if (worker.cwd && worker.branch) await removeWorktree({ repo: worker.repo, cwd: worker.cwd, branch: worker.branch }, id);
-    await removeWorkerRole(this.stateDir, id);
-    this.ledger.removeWorker(id);
-    if (worker.sessionId) this.sessions.delete(`${worker.accountId}:${worker.sessionId}`);
-    this.changed(false, id);
-    return { id, retainedBranch: worker.branch };
+    return this.maintain([id], async () => {
+      if (worker.phase !== "closed") throw new Error("close the worker before removing its record");
+      if (!discardWorktree) throw new Error("explicit discardWorktree: true is required; this deletes the worktree, including uncommitted changes");
+      if (worker.cwd && worker.branch) await removeWorktree({ repo: worker.repo, cwd: worker.cwd, branch: worker.branch }, id);
+      await removeWorkerRole(this.stateDir, id);
+      this.ledger.removeWorker(id);
+      if (worker.sessionId) this.sessions.delete(`${worker.accountId}:${worker.sessionId}`);
+      this.changed(false, id);
+      return { id, retainedBranch: worker.branch };
+    });
   }
 }
 

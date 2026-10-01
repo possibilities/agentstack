@@ -148,6 +148,41 @@ export class WorkerHistory {
     // An observed but unattributed tool must remain null, distinct from an unseen tool.
     return row?.turn_id;
   }
+  clearContent(workerId: string): void {
+    const accounting = new Set(["used", "size", "cost", "amount", "currency", "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "server_tool_use", "web_search_requests", "web_fetch_requests", "input", "output", "reasoning", "cache", "read", "write"]);
+    const numbers = (value: unknown, depth = 0): unknown => {
+      if (depth > 16) return undefined;
+      if (typeof value === "number" && Number.isFinite(value)) return value;
+      if (!record(value)) return undefined;
+      return Object.fromEntries(Object.entries(value).flatMap(([key, item]) => {
+        if (!accounting.has(key)) return [];
+        const kept = key === "currency" && typeof item === "string" && /^[A-Z]{3}$/.test(item) ? item : numbers(item, depth + 1);
+        return kept === undefined ? [] : [[key, kept]];
+      }));
+    };
+    const rows = this.db.prepare("SELECT seq,kind,data_json FROM worker_records WHERE worker_id=?").all(workerId) as Array<{ seq: number; kind: string; data_json: string }>;
+    const write = this.db.prepare("UPDATE worker_records SET data_json=? WHERE worker_id=? AND seq=?");
+    for (const row of rows) {
+      const old = JSON.parse(row.data_json) as Record<string, unknown>, update = record(old.update) ? old.update : old;
+      let kept: Record<string, unknown> = {};
+      // Native Claude prompt results carry usage outside ACP usage_update. Keep
+      // numeric accounting, never response text, vendor metadata or tool bodies.
+      if (record(old.usage)) kept.usage = numbers(old.usage);
+      if (row.kind === "usage_update") kept.update = { sessionUpdate: "usage_update", ...numbers(update) as object };
+      if (row.kind === "config_option_update") {
+        const options = Array.isArray(update.configOptions) ? update.configOptions : [];
+        kept = { configOptions: options.flatMap((value: unknown) => {
+          if (!record(value) || typeof value.id !== "string" || typeof value.currentValue !== "string"
+            || !["model", "thought_level"].includes(String(value.category)) && !["model", "effort"].includes(value.id)) return [];
+          return [{ id: value.id, name: value.category === "model" || value.id === "model" ? "Model" : "Effort", category: value.category, type: "select", currentValue: value.currentValue, options: [] }];
+        }) };
+      }
+      if (row.kind === "current_mode_update" && typeof update.currentModeId === "string") kept.update = { sessionUpdate: "current_mode_update", currentModeId: update.currentModeId };
+      write.run(JSON.stringify(kept), workerId, row.seq);
+    }
+    this.db.prepare("DELETE FROM worker_tools WHERE worker_id=?").run(workerId);
+    this.db.prepare("UPDATE worker_capture SET chars=(SELECT COALESCE(SUM(length(data_json)),0) FROM worker_records WHERE worker_id=?) WHERE worker_id=?").run(workerId, workerId);
+  }
   get(workerId: string, seq: number): StructuredRecord {
     const row = this.row(workerId, seq);
     if (!row) throw new Error("unknown worker record");

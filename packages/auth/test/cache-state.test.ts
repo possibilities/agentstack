@@ -13,10 +13,12 @@ import { accountRoot, credentialEvidence, prepareAccountProfile } from "../src/w
 const apply = (plan: StatePlan) => ({ planId: plan.id, expectedRevision: plan.revision, requestId: randomUUID() });
 test("allow-listed cache cleanup retains usable sign-in/session/sibling bytes and fences stale/live/uncertain requests", async () => {
   const root = await mkdtemp(join(tmpdir(), "auth-cache-state-")), env = { STACK_STATE_DIR: root };
-  let ctx = await api.createContext(env), blocked = false, hold: Promise<void> | null = null;
+  let ctx = await api.createContext(env), blocked = false, hold: Promise<void> | null = null, guardEntered: (() => void) | null = null;
   const worker = await serveSocket({ info: { name: "worker", description: "Worker", transportDescription: "Socket", path: socketPath("worker", env) }, context: {}, operations: [
     operation({ name: "worker_account_state_dependencies", description: "Native dependency fixture", input: z.strictObject({ id: z.uuid() }), output: stateDependencies,
       async call() { if (hold) await hold; return { revision: blocked ? "live" : "drained", blockedBy: blocked ? ["Runtime still live"] : [], retained: [], relationships: [] }; } }),
+    operation({ name: "worker_state_native_effect", description: "Owner callback fixture", input: z.strictObject({ id: z.uuid(), workerId: z.uuid(), token: z.uuid(), provider: z.enum(["codex", "devin", "claude"]) }), output: z.record(z.string(), z.unknown()),
+      async call() { guardEntered?.(); if (hold) await hold; return { revision: "owner-observed" }; } }),
   ] });
   const call = async (name: string, args: unknown, invocation?: any) => { const op = api.operations.find(op => op.name === name)!; return op.output.parse(await op.call(ctx, op.input.parse(args), invocation)) as any; };
   try {
@@ -58,6 +60,14 @@ test("allow-listed cache cleanup retains usable sign-in/session/sibling bytes an
     const observing = call("worker_account_cache_plan", { accountId: sibling.account.id });
     await assert.rejects(call("worker_account_set_enabled", { id: sibling.account.id, enabled: true }), /in progress/);
     release(); await observing; hold = null;
+    // Auth's actual lifecycle mutex covers asynchronous Worker execution; the
+    // Worker separately enforces its single-use exact callback.
+    let entered!: () => void; const entering = new Promise<void>(resolve => { entered = resolve; }); guardEntered = entered;
+    hold = new Promise(resolve => { release = resolve; });
+    const guarded = call("worker_account_state_guard", { id: first.account.id, workerId: randomUUID(), token: randomUUID() });
+    await entering; await assert.rejects(call("worker_account_set_enabled", { id: first.account.id, enabled: true }), /in progress/);
+    await assert.rejects(call("worker_account_prepare", { id: first.account.id, provider: "codex" }), /in progress/);
+    release(); assert.equal((await guarded).revision, "owner-observed"); hold = null; guardEntered = null;
     ctx.store.enableWorker(sibling.account.id, true);
     assert.ok((await call("worker_account_cache_plan", { accountId: sibling.account.id })).blockedBy.some((row: string) => row.includes("disabled")));
     ctx.store.enableWorker(sibling.account.id, false);

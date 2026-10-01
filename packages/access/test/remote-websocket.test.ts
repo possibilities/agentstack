@@ -189,8 +189,8 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
   const maintenance = await Promise.all(([ ["infer", ["infer_catalog_clear"]], ["hud", ["hud_history_plan", "hud_history_clear"]],
     ["scrape", ["scrape_queue_plan", "scrape_queue_apply", "scrape_corpus_list", "scrape_corpus_plan", "scrape_corpus_clear"]],
     ["signal", ["attention_checkpoint_plan", "attention_checkpoint_reset"]],
-    ["worker", ["worker_settings_receipts_plan", "worker_settings_receipts_clear", "worker_state_receipt_get", "worker_account_state_dependencies"]],
-    ["auth", ["worker_account_cache_plan", "worker_account_cache_clear", "auth_state_receipt_get"]],
+    ["worker", ["worker_settings_receipts_plan", "worker_settings_receipts_clear", "worker_state_receipt_get", "worker_account_state_dependencies", "worker_state_plan", "worker_state_clear", "worker_state_branches", "worker_state_native_effect"]],
+    ["auth", ["worker_account_cache_plan", "worker_account_cache_clear", "auth_state_receipt_get", "worker_account_state_guard"]],
     ["access", ["access_history_plan", "access_history_clear", "access_state_receipt_get"]] ] as const).map(([owner, names]) =>
     serveSocket({ info: { name: owner, description: "Fixture.", transportDescription: "Socket.", path: socketPath(owner, env) }, context: {},
       operations: names.map(name => operation({ name, description: "Local maintenance.", input: z.strictObject({}), output: ok,
@@ -232,8 +232,8 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
       ["brain", ["brain_jobs_plan", "brain_jobs_clear", "brain_runs_plan", "brain_runs_clear", "brain_source_plan", "brain_source_clear", "brain_artifacts_plan", "brain_artifacts_clear"]],
       ["scrape", ["scrape_queue_plan", "scrape_queue_apply", "scrape_corpus_list", "scrape_corpus_plan", "scrape_corpus_clear"]],
       ["signal", ["attention_checkpoint_plan", "attention_checkpoint_reset"]],
-      ["worker", ["worker_settings_receipts_plan", "worker_settings_receipts_clear", "worker_state_receipt_get", "worker_account_state_dependencies"]],
-      ["auth", ["worker_account_cache_plan", "worker_account_cache_clear", "auth_state_receipt_get"]],
+      ["worker", ["worker_settings_receipts_plan", "worker_settings_receipts_clear", "worker_state_receipt_get", "worker_account_state_dependencies", "worker_state_plan", "worker_state_clear", "worker_state_branches", "worker_state_native_effect"]],
+      ["auth", ["worker_account_cache_plan", "worker_account_cache_clear", "auth_state_receipt_get", "worker_account_state_guard"]],
       ["access", ["access_history_plan", "access_history_clear", "access_state_receipt_get"]]] as const) {
       assert.deepEqual((await send("tools/list", { package: owner })).result.tools.map((tool: { name: string }) => tool.name), owner === "brain" ? ["jobs_show"] : []);
       for (const name of names) assert.match((await send("tools/call", { package: owner, name, arguments: {} })).error.message, /not available/);

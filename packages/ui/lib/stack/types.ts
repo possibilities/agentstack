@@ -186,7 +186,7 @@ export type UsageSnapshot = { atMs: number; inventoryAtMs: number | null; invent
   accounts: UsageAccount[] };
 export type WorkerSession = { id: string; botId: string; threadId: string; accountId: string; provider: WorkerAccount["provider"];
   model: string; effort: string | null; repo: string; cwd: string | null; branch: string | null; baseCommit: string | null;
-  sourceDirty: boolean; roleId: string | null; roleRevision: number | null; sessionId: string | null; runtimeInstance: string | null;
+  sourceDirty: boolean; roleId: string | null; roleRevision: number | null; sessionId: string | null; runtimeInstance: string | null; contentClearedAt: number | null;
   phase: "preparing" | "idle" | "running" | "awaiting_input" | "cancelling" | "closed" | "failed" | "needs_recovery";
   currentTurnId: string | null; issue: string | null; createdAt: number; updatedAt: number };
 
@@ -204,6 +204,7 @@ export type WorkerDiff = { workerId: string; branch: string | null; baseCommit: 
 /** Worker conversation details, read by the Workers space. */
 export type WorkerObservedSettings = { model: string | null; effort: string | null; mode: string | null; at: number; recordSeq: number };
 export type WorkerTurn = { id: string; workerId: string;
+  contentClearedAt: number | null;
   workContext: WorkContext | null;
   phase: "queued" | "running" | "awaiting_input" | "cancelling" | "completed" | "cancelled" | "failed" | "unknown";
   stopReason: string | null; issue: string | null; requestId: string; prompt: string | null;
