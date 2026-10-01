@@ -515,6 +515,7 @@ export type InferRequest = InferRequestFields & { instructions: string; input: s
 export type AttentionDefaults = { model: string; reasoningEffort: InferEffort; accountId: string | null; revision: number };
 /** `attention_status`. `changeSeq` advances only when attention records may have changed, never for source-read polling. */
 export type AttentionStatus = { contentGeneration: number; enabled: boolean; activatedAt: number | null; baselined: boolean; settings: AttentionDefaults;
+  checkpointGeneration?: number; checkpointResets?: { source: string; at: number; generation: number }[];
   lastScan: number | null; lastInference: { at?: number; runId?: string; requestId?: string; state?: string; model?: string; reportedModel?: string | null; error?: string } | null;
   sourceErrors: Array<{ source: string; error: string }>; jobs: Array<{ state: string; count: number }>; messages: number; runs: number; changeSeq: number };
 /** `attention_models`: account-bound choices for the effective account; no inference. */

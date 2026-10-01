@@ -17,6 +17,12 @@ const read={readOnlyHint:true} as const;
 const paged=<F extends object>(input:{after:number;limit:number;order:"asc"|"desc";before?:number}&F)=>{const {after,limit,order,before,...filters}=input;return {after,limit,order,before,filters};};
 const packageApi:PackageApi<Context,"signal_changed">={
   operations:[
+    operation({ name: "attention_checkpoint_plan", description: "Preview rebaseline-to-now for bot:<botId>:<threadId>, worker:<workerId>, or all visible sanctioned sources. Requires first baseline established, processing paused and pending/active interpretation drained. Bind current upstream positions; skip existing messages without inference. Keep captured content, suppression and Infer correlation. No historical replay. Local operator only.",
+      input: z.strictObject({ sources: z.union([z.literal("all"), z.array(z.string().max(300).regex(/^(bot:[^:]+:[^:]+|worker:[^:]+)$/)).min(1).max(100)]), mode: z.literal("rebaseline") }), output: statePlan,
+      async call(ctx: Context, input, invocation) { requireStateOperator(invocation); return ctx.service.checkpointPlan(input.sources); } }),
+    operation({ name: "attention_checkpoint_reset", description: "Apply an exact rebaseline plan while paused/drained. Re-read upstream heads; changed positions invalidate the plan. Atomically replace selected cursors/partial buffers with the receipt and checkpointGeneration; never infer or delete captured evidence. Retry/restart returns the original receipt, including unknown outcomes. Resume is separate. Local operator only.",
+      input: stateApplyInput, output: stateReceipt, annotations: { destructiveHint: true, idempotentHint: true },
+      async call(ctx: Context, input, invocation) { requireStateOperator(invocation); return ctx.service.checkpointReset(input); } }),
     operation({ name: "attention_history_plan", description: "Preview clearing all Signal-captured content, including cross-conversation context copies, annotations, feedback, source-read blobs and partial buffers. Requires processing paused and active reads/inference drained. Keeps message revision suppression, cursors and minimal unknown/admission receipts. Infer payloads require separate owner cleanup.",
       input: z.strictObject({ scope: z.literal("all-captured-content") }), output: statePlan,
       async call(ctx: Context, _input, invocation) { requireStateOperator(invocation); ctx.service.requireQuiescent(); return ctx.service.store.historyPlan(); } }),
@@ -27,7 +33,7 @@ const packageApi:PackageApi<Context,"signal_changed">={
     operation({ name: "attention_infer_requests", description: "Page retained correlated Infer request IDs, including fallthrough attempts. Infer owns their payloads and receipts independently; use infer_history_plan/clear for terminal requests. This read dispatches no inference.",
       input: z.strictObject({ offset: z.number().int().nonnegative().default(0), limit: z.number().int().min(1).max(100).default(50) }), output: z.strictObject({ requestIds: z.array(z.string()), nextOffset: z.number().int().nullable() }), annotations: read,
       async call(ctx: Context, { offset, limit }, invocation) { requireStateOperator(invocation); return ctx.service.store.inferRequests(offset, limit); } }),
-    operation({ name: "signal_state_receipt_get", description: "Read one durable Signal content-cleanup receipt; semantic Work and provider-native conversations are independent resources.",
+    operation({ name: "signal_state_receipt_get", description: "Read one durable Signal content-cleanup or checkpoint-reset receipt; semantic Work and provider-native conversations are independent resources.",
       input: z.strictObject({ requestId: z.uuid() }), output: z.strictObject({ receipt: stateReceipt.nullable() }), annotations: read,
       async call(ctx: Context, { requestId }, invocation) { requireStateOperator(invocation); return { receipt: ctx.service.store.maintenance.receipt(requestId) }; } }),
     operation({name:"attention_defaults_get",description:"Read revisioned system inference defaults: model, reasoningEffort and nullable Codex Bot account assignment. Defaults to gpt-5.6-luna/low; null uses the first available enabled account.",input:z.strictObject({}),output:settings.extend({revision:z.number().int()}),annotations:read,

@@ -69,6 +69,7 @@ can retain `.stack-clear-<uuid>` quarantine, named in the result for inspection.
 | Notify | Existing notification list/get/counts | `notification_history_plan({ids})` / `notification_history_clear`: dismissed authored content/actions/prompts/responses/source/group; preserve send/dismissal digests and first outcome. |
 | Proc | Existing schedule, execution, run and output reads | `proc_history_plan` / `proc_history_clear`: exact `run_output`, `execution_content` or removed `schedule_definition` selection. Active work blocks; protected Brain source schedules refuse. Schedule action input, argv, env and cwd redact with `contentClearedAt` and a spec digest; ID/authority/label/target/revision/timing stay. Captured executions and process summaries remain separate copies. |
 | Signal | Existing message/run/evidence reads; `attention_infer_requests` pages correlated Infer request IDs | `attention_history_plan({scope:"all-captured-content"})` / `attention_history_clear`: paused and drained captured content, including cross-conversation source blobs and partial buffers. Retain suppression/cursors/identities and Infer correlation. |
+| Signal checkpoints | `attention_status` reports `checkpointGeneration` and per-source `checkpointResets` | `attention_checkpoint_plan({sources:["bot:<botId>:<threadId>","worker:<workerId>"]\|"all",mode:"rebaseline"})` / `attention_checkpoint_reset` binds current upstream heads and exact local cursor state. Processing must be paused, first baseline established and all pending/active interpretation drained or separately disposed. Atomic cursor/buffer replacement retains captured content, suppression, Infer correlation, activation and siblings. Reset/resume skips existing messages, not historical replay; later observations may admit inference. |
 | Content | `blob_stage_list`, `content_blob_list` alongside existing item/document/Artifact reads | `blob_stage_abort` retires a stage UUID/client key at its revision. `content_storage_plan({digests})` / `content_storage_collect` collects exact unreferenced collection CAS blobs. Items and finalized stages independently hold references. Existing Artifact `gc` is a separate store. |
 | Usage | `usage_snapshot` | `usage_observations_plan({accounts:[{id,scope}]})` / `usage_observations_clear`: exact local observations; fence selected in-flight collectors and persist. Future collection regenerates; provider quota/credentials are independent. |
 | Xcom | Existing archive/status/user/article reads; status includes `paused` | `xcom_control({paused})` persistently pauses/resumes admission. `xcom_history_plan` / `xcom_history_clear` selects posts with reimport/orphan-author policy, article attempts, or one scan checkpoint. Pause and wait for `sync.running:false`. Source rows/raw/FTS clear together. |
@@ -142,7 +143,8 @@ The following remain explicit backend gaps rather than implied erase controls:
   never breaks live, dead or unresolved claim evidence to make a plan pass.
 - Roles retained injection-launch cleanup, standalone settings-receipt retirement,
   Auth cache-only clearing and Access history/session-specific retirement.
-- Signal checkpoint reset.
+- Signal historical checkpoint replay is intentionally unavailable: rebaseline-to-now
+  only. Explicit run replay remains a separate spend-bearing operation.
 - Content vault/Git-history purge and temporary publication collection. Document
   and Artifact tombstones, local Git, remotes and backups retain independent copies.
 - Client-local Canvas layouts/drafts and Chrome/Android outboxes/history. Device

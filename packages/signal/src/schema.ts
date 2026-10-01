@@ -8,6 +8,7 @@ export const settings = z.strictObject({
 export type Settings = z.infer<typeof settings>;
 export const DEFAULTS: Settings = { model:"gpt-5.6-luna", reasoningEffort:"low", accountId:null };
 export const statusSchema=z.strictObject({contentGeneration:z.number().int().nonnegative(),enabled:z.boolean(),activatedAt:z.number().nullable(),baselined:z.boolean(),settings:settings.extend({revision:z.number().int()}),
+  checkpointGeneration:z.number().int().nonnegative(),checkpointResets:z.array(z.strictObject({source:z.string(),at:z.number(),generation:z.number().int()})),
   lastScan:z.number().nullable(),lastInference:z.record(z.string(),z.unknown()).nullable(),sourceErrors:z.array(z.strictObject({source:z.string(),error:z.string()})),
   jobs:z.array(z.strictObject({state:z.string(),count:z.number().int()})),messages:z.number().int(),runs:z.number().int(),
   changeSeq:z.number().int().describe("Newest durable event sequence that can change attention records, excluding source-read polling. Unchanged means list reads are still current.")});

@@ -181,12 +181,13 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
       name, description: "Server control.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: !name.endsWith("update") && !name.endsWith("check") },
       async call() { developerCalls++; return { ok: true }; },
     })), events: { topics: { pids_changed: "Changed.", serve_settings_changed: "Settings changed.", harness_releases_changed: "Releases changed." } } });
-  for (const owner of ["infer", "hud", "scrape"]) {
+  for (const owner of ["infer", "hud", "scrape", "signal"]) {
     const dir = join(root, "packages", owner); mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "api.yaml"), `name: ${owner}\ndescription: Fixture.\nsocket:\n  description: Socket.\nwebsocket:\n  operations: all\n  events: []\n  description: WebSocket.\n`);
   }
   const maintenance = await Promise.all(([ ["infer", ["infer_catalog_clear"]], ["hud", ["hud_history_plan", "hud_history_clear"]],
-    ["scrape", ["scrape_queue_plan", "scrape_queue_apply", "scrape_corpus_list", "scrape_corpus_plan", "scrape_corpus_clear"]] ] as const).map(([owner, names]) =>
+    ["scrape", ["scrape_queue_plan", "scrape_queue_apply", "scrape_corpus_list", "scrape_corpus_plan", "scrape_corpus_clear"]],
+    ["signal", ["attention_checkpoint_plan", "attention_checkpoint_reset"]] ] as const).map(([owner, names]) =>
     serveSocket({ info: { name: owner, description: "Fixture.", transportDescription: "Socket.", path: socketPath(owner, env) }, context: {},
       operations: names.map(name => operation({ name, description: "Local maintenance.", input: z.strictObject({}), output: ok,
         annotations: { readOnlyHint: true }, async call() { maintenanceCalls++; return { ok: true }; } })) })));
@@ -225,7 +226,8 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
     assert.equal(stateCalls, 0);
     for (const [owner, names] of [["infer", ["infer_catalog_clear"]], ["hud", ["hud_history_plan", "hud_history_clear"]],
       ["brain", ["brain_jobs_plan", "brain_jobs_clear", "brain_runs_plan", "brain_runs_clear", "brain_source_plan", "brain_source_clear", "brain_artifacts_plan", "brain_artifacts_clear"]],
-      ["scrape", ["scrape_queue_plan", "scrape_queue_apply", "scrape_corpus_list", "scrape_corpus_plan", "scrape_corpus_clear"]]] as const) {
+      ["scrape", ["scrape_queue_plan", "scrape_queue_apply", "scrape_corpus_list", "scrape_corpus_plan", "scrape_corpus_clear"]],
+      ["signal", ["attention_checkpoint_plan", "attention_checkpoint_reset"]]] as const) {
       assert.deepEqual((await send("tools/list", { package: owner })).result.tools.map((tool: { name: string }) => tool.name), owner === "brain" ? ["jobs_show"] : []);
       for (const name of names) assert.match((await send("tools/call", { package: owner, name, arguments: {} })).error.message, /not available/);
     }
