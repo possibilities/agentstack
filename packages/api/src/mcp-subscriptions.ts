@@ -12,6 +12,7 @@ import { stateHash } from "./state.js";
 import { mcpEventCatalog } from "./mcp-events.js";
 import { completionWatchSchema, McpDeliveryRejected, resolveCompletionRead, wantsCompletion, type CompletionReceipt } from "./completion-watch.js";
 import type { CompletionWatch } from "./operation.js";
+import { OccurrenceSubscriptions, type OccurrenceRuntime } from "./occurrence-subscriptions.js";
 
 export type EventTarget = { botId: string; instance: string; threadId: string };
 export type EventSubscription = EventTarget & {
@@ -58,12 +59,13 @@ export class McpEventSubscriptions {
   private readonly admissions = new Map<string, Promise<Record<string, unknown>>>();
   private readonly setups = new Set<RecordState>();
   onChange?: () => void;
+  readonly occurrences?: OccurrenceSubscriptions;
 
   constructor(private readonly env: NodeJS.ProcessEnv, private readonly validate: (target: EventTarget) => Promise<void>,
     private readonly deliver: (event: EventValue, signal: AbortSignal, authorize: () => Promise<void>, submitting?: () => void) => Promise<void>,
     private readonly rebind?: (botId: string, threadId: string) => Promise<EventTarget | null>,
     private readonly authorizeRead?: (subscription: EventSubscription) => Promise<void>,
-    private readonly workspace: string = workspaceRoot(import.meta.dirname)) {
+    private readonly workspace: string = workspaceRoot(import.meta.dirname), occurrenceRuntime?: OccurrenceRuntime) {
     const root = stateDir(env);
     mkdirSync(root, { recursive: true, mode: 0o700 });
     const file = join(root, "event-subscriptions.sqlite");
@@ -114,10 +116,13 @@ export class McpEventSubscriptions {
         abort: new AbortController(), pending: false, flushing: false, reconnect: true, lastValueHash: row.last_value_hash, retryDelay: 2_000,
       });
     }
+    if (occurrenceRuntime) this.occurrences = new OccurrenceSubscriptions(this.db, workspace, env, occurrenceRuntime,
+      () => this.records.size + this.setups.size + (this.occurrences?.size ?? 0), () => this.onChange?.());
   }
 
   /** Called once after owner children start; each record retries until its Bot thread is loaded. */
   resume(): void {
+    this.occurrences?.resume();
     for (const record of this.records.values()) if (!record.socket && !record.retry && !record.submissionUnknown) void this.reconnect(record);
   }
 
@@ -359,7 +364,7 @@ export class McpEventSubscriptions {
 
   private reserveSetup(state: RecordState): void {
     if (this.closed) throw new Error("event subscriptions are closing; nothing was sent");
-    if (this.records.size + this.setups.size >= maxSubscriptions) throw new Error("too many event subscriptions; nothing was sent");
+    if (this.records.size + this.setups.size + (this.occurrences?.size ?? 0) >= maxSubscriptions) throw new Error("too many event subscriptions; nothing was sent");
     this.setups.add(state);
   }
 
@@ -461,6 +466,7 @@ export class McpEventSubscriptions {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    await this.occurrences?.close();
     const states = [...this.records.values(), ...this.setups];
     this.records.clear();
     await Promise.all(states.map(async (state) => {

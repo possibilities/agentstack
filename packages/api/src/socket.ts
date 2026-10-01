@@ -7,6 +7,7 @@ import type { AnyOperation } from "./operation.js";
 import { invocationContext } from "./invocation.js";
 import { publishedJsonSchema } from "./schema.js";
 import { assertInstallationOpen } from "./installation-fence.js";
+import { McpError } from "@modelcontextprotocol/sdk/types.js";
 
 export type SocketServerInfo = {
   name: string;
@@ -214,9 +215,10 @@ export function socketCall(
           if (!message.error || typeof message.error !== "object" || Array.isArray(message.error)) {
             throw new Error("invalid socket response error");
           }
-          const { message: detail, code } = message.error as { message?: unknown; code?: unknown };
+           const { message: detail, code, data } = message.error as { message?: unknown; code?: unknown; data?: unknown };
           const ErrorType = code === "stack_operation_rejected" ? OperationRejected : Error;
-          rpcError = new ErrorType(typeof detail === "string" ? detail : "rpc failed");
+           rpcError = typeof code === "number" ? new McpError(code, typeof detail === "string" ? detail : "rpc failed", data)
+             : new ErrorType(typeof detail === "string" ? detail : "rpc failed");
         }
         settled = true;
         cleanup();
@@ -520,6 +522,7 @@ function describeServer<Ctx>(options: {
       outputSchema: publishedJsonSchema(operation.output),
       annotations: operation.annotations ?? {},
       ...(operation.completionWatch ? { completionWatch: operation.completionWatch } : {}),
+      ...(operation.eventSource ? { eventSource: operation.eventSource } : {}),
     })),
   };
 }
@@ -551,5 +554,6 @@ function errorMessage(error: unknown): string {
 }
 
 function socketError(error: unknown) {
+  if (error instanceof McpError) return { message: error.message, code: error.code, data: error.data };
   return { message: errorMessage(error), ...(error instanceof OperationRejected ? { code: "stack_operation_rejected" } : {}) };
 }

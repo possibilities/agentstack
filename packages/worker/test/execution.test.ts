@@ -152,6 +152,47 @@ process.stdin.on('data', (chunk) => {
   }
 });`;
 
+for (const provider of ["codex", "devin"] as const) test(`${provider} ACP event inbox wakes the exact session and interrupts only on explicit policy`, { timeout: 20_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "stack-acp-events-"));
+  const repo = await repoFixture(root), binary = join(root, "acp-fixture");
+  await writeFile(binary, acpFixture); await chmod(binary, 0o700);
+  const env = { PATH: process.env.PATH, HOME: root, STACK_STATE_DIR: root, STACK_OPENCODE_BIN: binary, STACK_DEVIN_BIN: binary };
+  const accountId = randomUUID();
+  const fixtureSocket = (name: string, op: string, value: unknown) => serveSocket({ info: { name, description: "Fixture.", transportDescription: "Fixture.", path: socketPath(name, env) }, context: {},
+    operations: [operation({ name: op, description: "Fixture.", input: z.object({}), output: z.any(), async call() { return value; } })] });
+  const auth = await fixtureSocket("auth", "worker_account_list", { accounts: [{ id: accountId, provider, enabled: true, ready: true, removing: false }] });
+  const roles = await fixtureSocket("roles", "role_launch_snapshot", role);
+  const supervisor = new WorkerSupervisor(root, env), manager = new WorkerManager(root, supervisor, env);
+  const socket = await serveSocket({ info: { name: "worker", description: "Fixture.", transportDescription: "Fixture.", path: socketPath("worker", env) }, context: { supervisor, manager }, operations: workersApi.operations });
+  const until = async (check: () => boolean) => { const deadline = Date.now() + 5000; while (!check() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5)); assert.ok(check()); };
+  try {
+    await supervisor.reconcile();
+    const start = await manager.start({ accountId, model: "openai/gpt-fixture", effort: "low", repo, task: "ASK permission", requestId: randomUUID() });
+    const id = start.worker.id;
+    await until(() => manager.ledger.worker(id)?.phase === "awaiting_input");
+    const event = { id, sessionId: start.worker.sessionId!, instance: start.worker.runtimeInstance!, deliveryId: randomUUID(),
+      package: "github", eventId: "one", name: "github_delivery", text: "Stack observed event one.", policy: "native" as const };
+    const call = (input: typeof event | (Omit<typeof event, "policy"> & { policy: "interrupt" })) => socketCall(socket.path, "tools/call", { name: "worker_event_receive", arguments: input });
+    const receipt = await call(event) as { state: string; turnId: string | null };
+    assert.equal(receipt.state, "queued"); assert.equal(receipt.turnId, null);
+    assert.equal(manager.ledger.worker(id)?.currentTurnId, start.turn.id);
+    assert.equal(manager.ledger.pending(id).length, 1, "event intake cannot implicitly answer permissions");
+    await call(event); assert.equal(manager.ledger.pendingEvents(id).length, 1);
+    await assert.rejects(call({ ...event, instance: randomUUID(), deliveryId: randomUUID() }), /exact loaded/);
+    const interrupt = { ...event, deliveryId: randomUUID(), eventId: "two", text: "Stack observed event two.", policy: "interrupt" as const };
+    await call(interrupt);
+    await until(() => !!manager.ledger.event(interrupt.deliveryId)?.turnId && manager.ledger.worker(id)?.phase === "idle");
+    assert.equal(manager.ledger.turn(start.turn.id)?.phase, "cancelled");
+    const events = await manager.events(id);
+    assert.equal(events.receipts.length, 2);
+    for (const row of events.receipts) { assert.equal(row.sessionId, start.worker.sessionId); assert.equal(manager.ledger.turn(row.turnId!)?.phase, "completed"); }
+    assert.equal(await readFile(join(start.worker.cwd!, "output.txt"), "utf8"), interrupt.text);
+    await assert.rejects(stat(join(start.worker.cwd!, "approved.txt")), /ENOENT/);
+    const inputCount = manager.ledger.turns(id).length;
+    await call(event); assert.equal(manager.ledger.turns(id).length, inputCount, "exact intake retry cannot dispatch twice");
+  } finally { await socket.close(); await manager.close(); await roles.close(); await auth.close(); await rm(root, { recursive: true, force: true }); }
+});
+
 test("durable ACP workers dispatch, follow up, answer permissions, and load after server restart", { timeout: 30_000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), "stack-worker-execution-"));
   const repo = await repoFixture(root);

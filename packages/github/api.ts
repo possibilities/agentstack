@@ -7,6 +7,7 @@ import { GithubStore } from "./src/store.js";
 import { setupRead } from "./src/setup.js";
 import { githubStateCategories } from "./src/state-categories.js";
 import * as s from "./src/schema.js";
+import { githubWatchEvents } from "./src/events.js";
 
 type Topic = "github_endpoints_changed" | "github_deliveries_changed" | "github_watches_changed";
 type Context = { store: GithubStore; remote: GithubRemote; ingress: Awaited<ReturnType<typeof startGithubIngress>>; publish?: (topic: Topic, scope?: string) => void };
@@ -22,6 +23,7 @@ const setup = z.strictObject({ endpoint: s.endpoint, ingress: z.strictObject({ h
 
 const packageApi: PackageApi<Context, Topic> = {
   operations: [
+    githubWatchEvents,
     operation({ name: "github_status", description: "Inspect loopback webhook intake, payload capacity and receiver/watch counts. No tunnel is created and configuration does not prove public reachability. Secrets and original payloads are absent; deliveries are durable before HTTP acknowledgement.", input: z.strictObject({}),
       output: z.strictObject({ ingress: z.strictObject({ host: z.literal("127.0.0.1"), port: s.sequence, route: z.string(), maxBodyBytes: s.sequence }),
         endpoints: s.sequence, watches: s.sequence, latestSequence: s.sequence, payloads: z.strictObject({ bytes: s.sequence, count: s.sequence, maxBytes: s.sequence, maxCount: s.sequence }) }), annotations: read,

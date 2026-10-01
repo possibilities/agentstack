@@ -273,7 +273,7 @@ export class ClaudeBackend implements WorkerBackend {
       return new Promise((resolve, reject) => {
         const uuid = randomUUID();
         session.active = { uuid, resolve, reject, cancelled: false };
-        session.input.push({ type: "user", session_id: session.id, uuid, parent_tool_use_id: null, message: { role: "user", content: text } });
+        session.input.push({ type: "user", session_id: session.id, uuid, parent_tool_use_id: null, ...(params.isSynthetic === true ? { isSynthetic: true } : {}), message: { role: "user", content: text } });
       });
     }
     throw new Error("Unsupported Claude operation");

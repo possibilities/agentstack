@@ -20,6 +20,7 @@ const transportDocSchema = z.object({
   endpoint: z.string().nullable().describe("Socket path or network URL when the transport has a fixed address. MCP URLs are for external HTTP consumers; internal Stack launches use private stdio descriptors."),
   operations: z.array(z.string()).describe("Operations available through this transport; HTTP uses explicit routes instead."),
   workerOperations: z.array(z.string()).describe("Explicit Worker-visible operations intersected with MCP exposure; empty for other transports. Record ownership still applies. Read-only hints alone grant no disclosure authority."),
+  workerEvents: z.array(z.string()).describe("Explicit Worker-visible occurrence names intersected with MCP event and poll operation exposure. Omission grants none."),
   events: z.array(z.string()).describe("Event topics available through this transport; independent of its operation selection."),
   routes: z.array(z.object({ surface: z.string(), surfaceDescription: z.string(), kind: z.enum(["json", "static"]), authentication: z.enum(["bearer", "none"]),
     method: z.string(), path: z.string(), description: z.string(), format: z.string(), operation: z.string().nullable(),
@@ -37,6 +38,7 @@ const operationDocSchema = z.object({
   inputSchema: jsonSchemaRecord.describe("JSON Schema for the operation input."),
   outputSchema: jsonSchemaRecord.describe("JSON Schema for the operation output."),
   completionWatch: completionWatchSchema.nullable().describe("Optional owner-coordinated one-shot Bot completion watch. Requires live MCP operation, read and event exposure."),
+  eventSource: z.object({ name: z.string(), description: z.string(), delivery: z.tuple([z.literal("poll")]), inputSchema: jsonSchemaRecord, payloadSchema: jsonSchemaRecord }).nullable(),
 });
 
 const standaloneDocs = { open(env: NodeJS.ProcessEnv): DocsContext { return { env, root: workspaceRoot(import.meta.dirname) }; }, close() {} };

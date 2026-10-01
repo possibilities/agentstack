@@ -7,6 +7,7 @@ import { SettingsStore } from "@stack/settings";
 import { OperationRejected, stateHash } from "@stack/api";
 import type { WorkContext } from "@stack/hud/schema";
 import type { WorkAdmission } from "@stack/hud/client";
+import type { WorkerEventInput, WorkerEvent, WorkerEventReceipt } from "./event-inbox.js";
 
 export type WorkerPhase = "preparing" | "idle" | "running" | "awaiting_input" | "cancelling" | "closed" | "failed" | "needs_recovery";
 export type TurnPhase = "queued" | "running" | "awaiting_input" | "cancelling" | "completed" | "cancelled" | "failed" | "unknown";
@@ -95,14 +96,50 @@ export class WorkerLedger {
     this.settings = new SettingsStore(this.db, "worker");
     this.db.exec(`CREATE TABLE IF NOT EXISTS worker_branches(worker_id TEXT PRIMARY KEY,repo TEXT NOT NULL,branch TEXT NOT NULL,base_commit TEXT NOT NULL,collected_at INTEGER);
       INSERT OR IGNORE INTO worker_branches SELECT id,repo,branch,base_commit,NULL FROM workers WHERE base_commit IS NOT NULL AND branch='stack-worker-'||id;`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS worker_event_inbox(delivery_id TEXT PRIMARY KEY,worker_id TEXT NOT NULL REFERENCES workers(id),digest TEXT NOT NULL,value TEXT NOT NULL);
+      UPDATE worker_event_inbox SET value=json_set(value,'$.state','unknown','$.issue','Owner restarted during event dispatch/interruption; no automatic replay')
+      WHERE json_extract(value,'$.state')='interrupting';`);
     for (const provider of ["codex", "devin", "claude"]) this.settings.seed(`worker-defaults:${provider}`, {}, "Native Worker selection");
     this.db.prepare("UPDATE workers SET phase = 'needs_recovery', issue = 'Owner restarted during a worker operation; inspect before resuming', updated_at = ? WHERE provider IN ('codex','devin','claude') AND phase IN ('preparing','running','awaiting_input','cancelling')").run(Date.now());
     this.db.prepare("UPDATE turns SET phase = 'unknown', issue = 'Turn outcome is unknown after owner restart', updated_at = ? WHERE worker_id IN (SELECT id FROM workers WHERE provider IN ('codex','devin','claude')) AND phase IN ('queued','running','awaiting_input','cancelling')").run(Date.now());
     this.db.prepare("UPDATE pending_requests SET state = 'unknown' WHERE worker_id IN (SELECT id FROM workers WHERE provider IN ('codex','devin','claude')) AND state = 'pending'").run();
     this.db.prepare("UPDATE workers SET phase = 'needs_recovery', issue = 'Owner restarted; load the saved session before sending', updated_at = ? WHERE provider IN ('codex','devin','claude') AND phase = 'idle' AND acp_session_id IS NOT NULL").run(Date.now());
+    this.db.exec(`UPDATE worker_event_inbox SET value=json_set(value,'$.state','unknown','$.turnId',(SELECT id FROM turns WHERE request_id=delivery_id),
+      '$.issue','Recorded event turn has an unknown outcome; no automatic replay')
+      WHERE delivery_id IN (SELECT request_id FROM turns WHERE phase='unknown');`);
   }
 
   close(): void { this.db.close(); }
+
+  event(deliveryId: string): WorkerEvent | null {
+    const row = this.db.prepare("SELECT value FROM worker_event_inbox WHERE delivery_id=?").get(deliveryId) as { value: string } | undefined;
+    return row ? JSON.parse(row.value) : null;
+  }
+  admitEvent(input: WorkerEventInput): WorkerEventReceipt {
+    const row = this.db.prepare("SELECT digest,value FROM worker_event_inbox WHERE delivery_id=?").get(input.deliveryId) as { digest: string; value: string } | undefined;
+    if (row) {
+      if (row.digest !== stateHash(input)) throw new OperationRejected("Event delivery ID was reused with different input");
+      const { input: _, ...receipt } = JSON.parse(row.value) as WorkerEvent; return receipt;
+    }
+    const size = (this.db.prepare("SELECT COUNT(*) AS count FROM worker_event_inbox WHERE worker_id=?").get(input.id) as { count: number }).count;
+    if (size >= 1000) throw new OperationRejected("Worker event inbox capacity reached; inspect/clear this Worker before new intake");
+    const now = Date.now();
+    const event: WorkerEvent = { deliveryId: input.deliveryId, workerId: input.id, sessionId: input.sessionId, state: "queued", turnId: null, issue: null, createdAt: now, updatedAt: now, input };
+    this.db.prepare("INSERT INTO worker_event_inbox VALUES(?,?,?,?)").run(input.deliveryId, input.id, stateHash(input), JSON.stringify(event));
+    const { input: _, ...receipt } = event; return receipt;
+  }
+  eventReceipts(workerId: string): WorkerEventReceipt[] {
+    return (this.db.prepare("SELECT value FROM worker_event_inbox WHERE worker_id=? ORDER BY rowid DESC LIMIT 128").all(workerId) as { value: string }[])
+      .map(row => { const { input: _, ...receipt } = JSON.parse(row.value) as WorkerEvent; return receipt; });
+  }
+  pendingEvents(workerId: string): WorkerEvent[] {
+    return (this.db.prepare("SELECT value FROM worker_event_inbox WHERE worker_id=? AND json_extract(value,'$.state') IN ('queued','interrupting') ORDER BY rowid").all(workerId) as { value: string }[]).map(row => JSON.parse(row.value));
+  }
+  updateEvent(id: string, state: WorkerEventReceipt["state"], turnId: string | null = null, issue: string | null = null) {
+    const event = this.event(id)!;
+    this.db.prepare("UPDATE worker_event_inbox SET value=? WHERE delivery_id=?").run(JSON.stringify({ ...event, state, turnId, issue, updatedAt: Date.now() }), id);
+  }
+  cancelEvents(workerId: string) { for (const event of this.pendingEvents(workerId)) this.updateEvent(event.deliveryId, "cancelled", event.turnId, "Worker lifecycle ended; queued input was not dispatched"); }
 
   private workerRow(row: Record<string, unknown>): WorkerRecord {
     return {
@@ -266,7 +303,7 @@ export class WorkerLedger {
     return this.turn(row.id);
   }
   reserveTurn(workerId: string, requestId: string, message: string, model: string | null, effort: string | null,
-    workItemId?: string | null, workContext: WorkContext | null = null, origin: { botId: string; threadId: string } | null = null): { turn: TurnRecord; duplicate: boolean } {
+    workItemId?: string | null, workContext: WorkContext | null = null, origin: { botId: string; threadId: string } | null = null, observedEvent = false): { turn: TurnRecord; duplicate: boolean } {
     const hash = digest([workerId, message, model, effort, ...(workItemId !== undefined ? [workItemId] : [])]);
     const prior = this.db.prepare("SELECT id, worker_id, input_digest FROM turns WHERE request_id = ?").get(requestId) as { id: string; worker_id: string; input_digest: string } | undefined;
     if (prior) {
@@ -283,7 +320,7 @@ export class WorkerLedger {
         .run(id, workerId, requestId, hash, now, now, message, model, effort);
       this.db.prepare("UPDATE turns SET work_context_json=?, origin_bot_id=?, origin_thread_id=? WHERE id=?").run(workContext ? JSON.stringify(workContext) : null, origin?.botId ?? null, origin?.threadId ?? null, id);
       this.db.prepare("UPDATE workers SET current_turn_id = ?, phase = 'running', updated_at = ? WHERE id = ?").run(id, now, workerId);
-      this.append(workerId, id, "user", message);
+      this.append(workerId, id, observedEvent ? "event" : "user", message);
       this.db.exec("COMMIT");
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
     return { turn: this.turn(id)!, duplicate: false };
@@ -378,7 +415,8 @@ export class WorkerLedger {
   collectBranch(id: string) { this.db.prepare("UPDATE worker_branches SET collected_at=? WHERE worker_id=?").run(Date.now(), id); }
   contentRevision(id: string) {
     return stateHash([this.worker(id), this.turns(id), this.db.prepare("SELECT * FROM transcript WHERE worker_id=? ORDER BY seq").all(id),
-      this.db.prepare("SELECT * FROM worker_records WHERE worker_id=? ORDER BY seq").all(id), this.db.prepare("SELECT * FROM pending_requests WHERE worker_id=? ORDER BY id").all(id)]);
+      this.db.prepare("SELECT * FROM worker_records WHERE worker_id=? ORDER BY seq").all(id), this.db.prepare("SELECT * FROM pending_requests WHERE worker_id=? ORDER BY id").all(id),
+      this.db.prepare("SELECT * FROM worker_event_inbox WHERE worker_id=? ORDER BY delivery_id").all(id)]);
   }
   clearContent(id: string) {
     const worker = this.worker(id); if (!worker || worker.phase !== "closed") throw new Error("Worker must be closed before transcript maintenance");
@@ -386,6 +424,7 @@ export class WorkerLedger {
     this.db.prepare("UPDATE transcript SET text='' WHERE worker_id=?").run(id);
     this.db.prepare("UPDATE turns SET prompt=NULL,content_cleared_at=? WHERE worker_id=?").run(now, id);
     this.db.prepare("UPDATE pending_requests SET title='',options_json='[]' WHERE worker_id=?").run(id);
+    this.db.prepare("UPDATE worker_event_inbox SET value=json_set(value,'$.input.text','') WHERE worker_id=?").run(id);
     this.history.clearContent(id);
     this.db.prepare("UPDATE workers SET content_cleared_at=?,updated_at=? WHERE id=?").run(now, now, id);
   }
@@ -401,6 +440,7 @@ export class WorkerLedger {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       this.db.prepare("DELETE FROM pending_requests WHERE worker_id = ?").run(id);
+      this.db.prepare("DELETE FROM worker_event_inbox WHERE worker_id = ?").run(id);
       this.history.remove(id);
       this.db.prepare("DELETE FROM transcript WHERE worker_id = ?").run(id);
       this.db.prepare("DELETE FROM turns WHERE worker_id = ?").run(id);

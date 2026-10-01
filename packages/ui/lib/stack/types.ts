@@ -52,6 +52,10 @@ export type JsonSchema = {
 export type CompletionWatch = { topic: string; readOperation: string; idArgument: string; terminalField: string; defaultWhen: string[]; retainFields?: string[];
   defaultOnForBot?: boolean; readArguments?: Record<string, { input: string } | { invocation: "botId" | "threadId" }>;
   scope?: { input: string; prefix?: string }; updateField?: string; initialValueField?: string };
+export type EventSource = { name: string; description: string; delivery: ["poll"]; inputSchema: JsonSchema; payloadSchema: JsonSchema };
+export type EventOccurrence = { eventId: string; name: string; timestamp: string; data: Record<string, unknown> };
+export type WorkerEventReceipt = { deliveryId: string; workerId: string; sessionId: string;
+  state: "queued" | "interrupting" | "dispatched" | "unknown" | "cancelled"; turnId: string | null; issue: string | null; createdAt: number; updatedAt: number };
 
 export type OperationDoc = {
   standalone: boolean;
@@ -62,6 +66,7 @@ export type OperationDoc = {
   inputSchema: JsonSchema;
   outputSchema: JsonSchema;
   completionWatch: CompletionWatch | null;
+  eventSource: EventSource | null;
 };
 
 export type TransportDoc = {
@@ -72,6 +77,7 @@ export type TransportDoc = {
   endpoint: string | null;
   operations: string[];
   workerOperations: string[];
+  workerEvents: string[];
   events: string[];
   routes: { surface: string; surfaceDescription: string; kind: "json" | "static"; authentication: "bearer" | "none";
     method: string; path: string; description: string; format: string; operation: string | null;

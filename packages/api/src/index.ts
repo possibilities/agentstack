@@ -12,6 +12,8 @@ export {
 } from "./operation.js";
 export { completionReceipt, completionWatchSchema, wantsCompletion, requireCompletionCoordination, McpDeliveryRejected, type CompletionReceipt } from "./completion-watch.js";
 export { OperationRejected } from "./execute.js";
+export { pollEvent, pollInput, pollOutput, occurrence, type EventSource, type Occurrence, type PollInput, type PollOutput } from "./occurrence.js";
+export { McpError as EventProtocolError } from "@modelcontextprotocol/sdk/types.js";
 export { publishedJsonSchema } from "./schema.js";
 export { forwardTimeout, mcpToolTimeoutSeconds } from "./forward-timeout.js";
 export { LocalAuth, LocalAuthError, withLocalAuth, operatorHeaders, localOrigin, localCookie, localCookieName, type LocalAudience, type LocalOperatorAudience } from "./local-auth.js";
@@ -48,10 +50,11 @@ export { serveWebSocket, type ServedWebSocket, type RemoteWebSocketAdmission } f
 export { serveHttp, type HttpPeer } from "./http.js";
 export { configuredMcpPackages, configuredMcpServers, serveMcp, type ServedMcp } from "./mcp.js";
 export { McpEventSubscriptions, type EventTarget, type EventValue, type EventSubscription } from "./mcp-subscriptions.js";
+export { type OccurrenceTarget, type OccurrenceRuntime, type EventPolicy } from "./occurrence-subscriptions.js";
 export { runMcp } from "./run-mcp.js";
 export { runMcpStdio } from "./stdio.js";
 export { internalMcpLaunches, type McpStdioLaunch, type McpLaunchAuthority } from "./mcp-launch.js";
-export { parseMcpBinding } from "./mcp-authority.js";
+export { parseMcpBinding, verifyMcpIdentity } from "./mcp-authority.js";
 export { mcpEventRelayInput, relayMcpEvent } from "./mcp-events.js";
 export { runWebSocket } from "./run-websocket.js";
 export { serveApi, type ServedApi } from "./serve.js";

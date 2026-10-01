@@ -9,7 +9,7 @@ import { forwardTimeouts } from "../src/forward-timeout.js";
 import type { CompletionWatch } from "../src/operation.js";
 
 type TransportDoc = { type: string; description: string; supported: boolean; subscriptions: boolean; endpoint: string | null;
-  operations: string[]; workerOperations: string[]; events: string[]; routes: Array<{ surface: string; surfaceDescription: string; kind: "json" | "static"; authentication: "bearer" | "none";
+  operations: string[]; workerOperations: string[]; workerEvents: string[]; events: string[]; routes: Array<{ surface: string; surfaceDescription: string; kind: "json" | "static"; authentication: "bearer" | "none";
     method: string; path: string; description: string; format: string; operation: string | null;
     inputSchema: Record<string, unknown> | null; querySchema: Record<string, unknown> | null;
     outputSchema: Record<string, unknown> | null; errorSchema: Record<string, unknown> | null }> };
@@ -100,7 +100,7 @@ test("the api package serves structured documents for every workspace package", 
         assert.equal(doc.operations.find(op => op.name === name)?.annotations.readOnlyHint, true);
       }
     }
-    for (const pkg of ["auth", "bots", "browse", "github", "hud", "notify", "serve", "proc", "scrape", "usage", "xcom"])
+    for (const pkg of ["auth", "bots", "browse", "hud", "notify", "serve", "proc", "scrape", "usage", "xcom"])
       assert.deepEqual(found.get(pkg)!.transports.find(t => t.type === "mcp")!.workerOperations, []);
     assert.deepEqual(found.get("api")!.transports.find(t => t.type === "mcp")!.workerOperations, ["docs_list", "docs_get", "docs_snapshot"]);
     assert.deepEqual(found.get("roles")!.transports.find(t => t.type === "mcp")!.workerOperations, ["roles_snapshot", "role_internal_mcp_list", "role_snapshot", "role_preview"]);
@@ -110,6 +110,10 @@ test("the api package serves structured documents for every workspace package", 
     const xcom = found.get("xcom")!;
     const github = found.get("github")!;
     const githubMcp = github.transports.find(t => t.type === "mcp")!;
+    assert.deepEqual(githubMcp.workerEvents, ["github_delivery"]);
+    assert.deepEqual(githubMcp.workerOperations, ["github_watch_events"]);
+    for (const transport of found.get("worker")!.transports.filter(t => t.type !== "socket"))
+      assert.ok(!transport.operations.includes("worker_event_receive"), "native intake remains owner-only, not a transport-disclosed mutation");
     assert.ok(githubMcp.operations.includes("github_watch_read") && githubMcp.events.includes("github_watches_changed"));
     assert.ok(!githubMcp.operations.includes("github_endpoint_secret_reveal") && !githubMcp.operations.includes("github_hook_apply"));
     const webhookRoute = github.transports.find(t => t.type === "http")!.routes[0]!;
@@ -382,7 +386,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(workers.eventScope?.required, false);
     assert.deepEqual(workers.operations.map((operation) => operation.name).filter(name => !stateOperation(name)), ["worker_settings_catalog", "worker_settings_read", "worker_settings_preview", "worker_settings_patch", "worker_settings_apply", "worker_catalog", "worker_runtime_list", "worker_account_drain",
       "worker_start", "worker_list", "worker_status", "worker_read", "worker_detail", "worker_turn_list", "worker_record_list", "worker_record_read", "worker_tool_list",
-      "worker_diff", "worker_send", "worker_respond", "worker_cancel", "worker_resume", "worker_close", "worker_remove", "worker_work_list", "worker_turn_context", "worker_turn_observation"]);
+      "worker_diff", "worker_send", "worker_respond", "worker_cancel", "worker_resume", "worker_close", "worker_remove", "worker_work_list", "worker_turn_context", "worker_turn_observation", "worker_event_receive", "worker_event_list"]);
     for (const name of ["worker_list", "worker_detail", "worker_turn_list", "worker_record_list", "worker_record_read", "worker_tool_list", "worker_diff"]) {
       assert.equal(workers.operations.find((operation) => operation.name === name)?.annotations.readOnlyHint, true);
     }
