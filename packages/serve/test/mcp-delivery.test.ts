@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, type WebSocket } from "ws";
 import { z } from "zod";
 import { botInstance, operation, serveApi, serveSocket, socketCall, socketPath, type CompletionReceipt, type EventTarget, type InvocationContext } from "@stack/api";
 import { serverCompletionCheck, type ServerContext } from "../api.js";
@@ -30,7 +30,7 @@ test("Worker UI progress and rich reads cannot become originating-Bot wakeups", 
   await assert.rejects(authorizeWorkerRead({ ...subscription, readOperation: "worker_read" }, {}), /exact worker_changed scope/);
 });
 
-test("event values are admitted on idle and working sanctioned threads without waiting for completion", { timeout: 15_000 }, async () => {
+test("event values are admitted on idle and working sanctioned threads without waiting for completion", { timeout: 30_000 }, async () => {
   const root = await mkdtemp("/tmp/as-turn-events-");
   for (const name of ["sample", "worker", "browse", "notify"]) {
     await mkdir(join(root, "packages", name), { recursive: true });
@@ -45,9 +45,14 @@ test("event values are admitted on idle and working sanctioned threads without w
   let releaseConnection: (() => void) | undefined;
   let rejectSubmission = false;
   let dropSubmission = false;
+  let eventPeer: WebSocket | undefined;
+  let holdAuthorization = false, postInit = false;
+  let releaseAuthorization: (() => void) | undefined;
   let attempts = 0;
   wss.on("connection", (peer) => peer.on("message", (raw) => {
     const frame = JSON.parse(String(raw)) as { id?: number; method?: string; params?: Record<string, unknown> };
+    if (frame.method === "initialize" && (frame.params?.clientInfo as { name?: string })?.name === "stack-events") eventPeer = peer;
+    if (frame.method === "initialized" && peer === eventPeer) postInit = true;
     if (!frame.id || !frame.method) return;
     if (frame.method === "initialize" && (frame.params?.clientInfo as { name?: string })?.name === "stack-events" && holdEventConnection) {
       releaseConnection = () => peer.send(JSON.stringify({ id: frame.id, result: {} }));
@@ -75,7 +80,10 @@ test("event values are admitted on idle and working sanctioned threads without w
   const bots = await serveSocket({
     info: { name: "bots", description: "Bots.", transportDescription: "Socket.", path: socketPath("bots", env) }, context: {},
     operations: [operation({ name: "bot_list", description: "List bots.", input: z.strictObject({}), output: z.object({ bots: z.array(z.unknown()) }),
-      async call() { return { bots: [{ id: "bot-1", state: "running", url: endpoint, mainThreadId: "main", recoveryIssue: null }] }; } })],
+      async call() {
+        if (holdAuthorization && postInit) await new Promise<void>(resolve => { releaseAuthorization = resolve; });
+        return { bots: [{ id: "bot-1", state: "running", url: endpoint, mainThreadId: "main", recoveryIssue: null }] };
+      } })],
   });
   let value = 0;
   const sample = await serveSocket({
@@ -205,6 +213,21 @@ test("event values are admitted on idle and working sanctioned threads without w
     assert.equal(turns[4]!.toolOutput.name, "subscription_update");
     assert.match(turns[4]!.toolOutput.output, /"outcome":"replied"/); assert.match(turns[4]!.toolOutput.output, /"response":"Atlas"/);
     assert.ok(!subscriptions.status(invocation).subscriptions.some(row => row.id === receipt.id), "native ACK retires the one-shot watch without waiting for turn completion");
+
+    const preDispatch = await subscriptions.callAndWatch("notify", "notification_send", { title: "Reconnect", message: "Choose", actions: ["Yes"] }, invocation);
+    const preDispatchId = (preDispatch.subscription as CompletionReceipt).id;
+    postInit = false; holdAuthorization = true;
+    await socketCall(notifications.socketPath!, "tools/call", { name: "notification_dismiss", arguments: { id: preDispatch.id, outcome: "action", response: "Yes" } });
+    await until(() => Boolean(releaseAuthorization));
+    const closed = new Promise<void>(resolve => eventPeer!.once("close", resolve));
+    eventPeer!.close(); await closed;
+    holdAuthorization = false; releaseAuthorization!(); releaseAuthorization = undefined;
+    await until(() => subscriptions.status(invocation).completions.some(row => row.id === preDispatchId && (row.state === "error" || row.state === "unknown")));
+    assert.equal(subscriptions.status(invocation).completions.find(row => row.id === preDispatchId)?.state, "error", "a socket closed during post-init authorization has not dispatched native input");
+    assert.equal(attempts, 6, "the closed event socket received zero turn/start frames");
+    await socketCall(notifications.socketPath!, "tools/call", { name: "notification_send", arguments: { title: "Unrelated", message: "Recover pre-dispatch loss" } });
+    await until(() => subscriptions.status(invocation).completions.some(row => row.id === preDispatchId && row.state === "delivered"));
+    assert.equal(attempts, 7, "a later healthy connection may deliver a proven pre-dispatch failure");
     const uncertain = await subscriptions.callAndWatch("notify", "notification_send", { title: "Unknown", message: "Choose", actions: ["Yes"] }, invocation);
     dropSubmission = true;
     await socketCall(notifications.socketPath!, "tools/call", { name: "notification_dismiss", arguments: { id: uncertain.id, outcome: "action", response: "Yes" } });
@@ -214,6 +237,7 @@ test("event values are admitted on idle and working sanctioned threads without w
     await socketCall(notifications.socketPath!, "tools/call", { name: "notification_send", arguments: { title: "Unrelated", message: "No retry" } });
     await pause(100); assert.equal(attempts, afterUnknown, "a connection lost after turn/start must not replay an unacknowledged answer");
   } finally {
+    holdAuthorization = false; releaseAuthorization?.();
     await subscriptions.close();
     await notifications.close(); await owner.close();
     await browser.close();

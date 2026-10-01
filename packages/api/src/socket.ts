@@ -2,7 +2,7 @@ import { chmod, lstat, mkdir, rm } from "node:fs/promises";
 import { createServer, connect, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import { z } from "zod";
-import { executeOperation } from "./execute.js";
+import { executeOperation, OperationRejected } from "./execute.js";
 import type { AnyOperation } from "./operation.js";
 import { invocationContext } from "./invocation.js";
 import { publishedJsonSchema } from "./schema.js";
@@ -98,7 +98,7 @@ export async function serveSocket<Ctx>(options: {
             () => { active.delete(request); finished(); },
             (error) => {
               active.delete(request);
-              write(socket, { id: null, error: { message: errorMessage(error) } });
+              write(socket, { id: null, error: socketError(error) });
               finished();
             },
           );
@@ -212,8 +212,9 @@ export function socketCall(
           if (!message.error || typeof message.error !== "object" || Array.isArray(message.error)) {
             throw new Error("invalid socket response error");
           }
-          const detail = (message.error as { message?: unknown }).message;
-          rpcError = new Error(typeof detail === "string" ? detail : "rpc failed");
+          const { message: detail, code } = message.error as { message?: unknown; code?: unknown };
+          const ErrorType = code === "stack_operation_rejected" ? OperationRejected : Error;
+          rpcError = new ErrorType(typeof detail === "string" ? detail : "rpc failed");
         }
         settled = true;
         cleanup();
@@ -440,7 +441,7 @@ async function handleLine<Ctx>(
     const result = await dispatch(socket, message.method, message.params, options);
     write(socket, { id, result });
   } catch (error) {
-    write(socket, { id, error: { message: errorMessage(error) } });
+    write(socket, { id, error: socketError(error) });
   }
 }
 
@@ -542,4 +543,8 @@ function errorMessage(error: unknown): string {
     return error.issues.map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`).join("; ");
   }
   return error instanceof Error ? error.message : String(error);
+}
+
+function socketError(error: unknown) {
+  return { message: errorMessage(error), ...(error instanceof OperationRejected ? { code: "stack_operation_rejected" } : {}) };
 }

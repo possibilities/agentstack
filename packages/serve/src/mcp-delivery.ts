@@ -77,8 +77,16 @@ async function submitEvent(url: string, threadId: string, text: string, signal: 
     ws.once("open", () => { clearTimeout(timer); resolve(); });
     ws.once("error", (error) => { clearTimeout(timer); reject(error); });
   });
-  const call = (method: string, params: unknown): Promise<unknown> => new Promise((resolve, reject) => {
+  const call = (method: string, params: unknown, beforeSend?: () => void): Promise<unknown> => new Promise((resolve, reject) => {
     const id = nextId++;
+    const request = JSON.stringify({ id, method, params });
+    // No await separates this readiness proof, the durable fence and ws.send.
+    // Once send is attempted, transport errors remain ambiguous.
+    if (ws.readyState !== 1) {
+      reject(method === "turn/start" ? new McpDeliveryRejected("turn/start: Codex connection closed before dispatch; no native input sent")
+        : new Error(`${method}: Codex connection closed before dispatch`));
+      return;
+    }
     const timer = setTimeout(() => finish(new Error(`${method} timed out; delivery outcome is unknown`)), 15_000);
     const onMessage = (raw: unknown) => {
       let frame: { id?: unknown; result?: unknown; error?: { message?: string } };
@@ -93,7 +101,11 @@ async function submitEvent(url: string, threadId: string, text: string, signal: 
     };
     ws.on("message", onMessage);
     ws.on("close", onClose);
-    ws.send(JSON.stringify({ id, method, params }));
+    try {
+      signal.throwIfAborted();
+      beforeSend?.();
+      ws.send(request, error => { if (error) finish(new Error(`${method}: Codex send failed; delivery outcome is unknown`, { cause: error })); });
+    } catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }
   });
   try {
     await opened;
@@ -101,10 +113,9 @@ async function submitEvent(url: string, threadId: string, text: string, signal: 
     ws.send(JSON.stringify({ method: "initialized" }));
     await authorize();
     if (signal.aborted) throw new Error("subscription delivery cancelled");
-    submitting?.();
     const result = await call("turn/start", { threadId, input: [],
       toolOutput: { namespace: "stack", name: "subscription_update", output: text },
-    }) as { turn?: { id?: unknown } };
+    }, submitting) as { turn?: { id?: unknown } };
     if (typeof result?.turn?.id !== "string") throw new Error("turn/start returned no turn ID; delivery outcome is unknown");
   } finally {
     if (ws.readyState === 1) ws.close(); else ws.terminate();

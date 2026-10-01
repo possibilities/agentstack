@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { createServer, type Socket } from "node:net";
 import { lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -314,4 +316,63 @@ test("subscriptions on one thread submit independently and cancellation fences a
     await pause(30);
     assert.equal(delivered.length, 1, "unsubscribing fences the blocked submission");
   } finally { release?.(); await service.close(); await socket.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("ordinary and completion admissions share bounded active plus in-flight capacity and release failed setup", { timeout: 20_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "as-capacity-events-"));
+  const env = { STACK_STATE_DIR: root };
+  await manifest(root, "sample"); await mkdir(join(root, "sockets"));
+  const peers = new Set<Socket>();
+  const pending: Array<{ peer: Socket; id: unknown }> = [];
+  const records = new Map<string, object>();
+  let held = true, settled = 0;
+  const reply = (peer: Socket, frame: object) => { if (!peer.destroyed) peer.write(`${JSON.stringify(frame)}\n`); };
+  // Hold the real events/subscribe acknowledgements, after owner capacity checks.
+  const socket = createServer(peer => {
+    peers.add(peer); peer.once("close", () => peers.delete(peer)); peer.on("error", () => undefined);
+    peer.once("data", raw => {
+      const request = JSON.parse(String(raw)) as { id: unknown; method: string; params?: any };
+      if (request.method === "tools/list") reply(peer, { id: request.id, result: { tools: [
+        { name: "snapshot", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+        { name: "send", inputSchema: { type: "object" }, completionWatch: { topic: "changed", readOperation: "snapshot", idArgument: "id", terminalField: "done", defaultWhen: [] } },
+      ], events: { topics: { changed: "Refresh" } } } });
+      else if (request.method === "events/subscribe") {
+        pending.push({ peer, id: request.id });
+        if (!held) reply(peer, { id: request.id, result: { topics: ["changed"] } });
+      } else if (request.method === "tools/call") {
+        const input = request.params.arguments;
+        if (request.params.name === "send") records.set(input.id, { id: input.id, done: null });
+        reply(peer, { id: request.id, result: records.get(input.id) ?? { slot: input.slot, done: null } });
+      }
+    });
+  });
+  await new Promise<void>(resolve => socket.listen(socketPath("sample", env), resolve));
+  const service = new McpEventSubscriptions(env, async () => undefined, async () => undefined, undefined, undefined, root);
+  const requests = Array.from({ length: 130 }, (_, n) => (n % 2
+    ? service.callAndWatch("sample", "send", { id: randomUUID(), subscribe: true }, caller)
+    : service.subscribe("sample", { topic: "changed", readOperation: "snapshot", readArguments: { slot: n } }, caller)
+  ).finally(() => { settled++; }));
+  // Observe rejected promises immediately while admitted requests await the ACK.
+  const results = Promise.allSettled(requests);
+  try {
+    await until(() => pending.length + settled === 130);
+    assert.equal(pending.length, 128, "in-flight setup must count against the shared limit before any watch is active");
+    held = false;
+    pending.forEach(({ peer, id }, n) => reply(peer, n ? { id, result: { topics: ["changed"] } } : { id, error: { message: "setup refused" } }));
+    const outcomes = await results;
+    assert.equal(outcomes.filter(result => result.status === "fulfilled").length, 127);
+    assert.equal(outcomes.filter(result => result.status === "rejected").length, 3);
+    assert.equal(service.operatorList().length, 127);
+    const recovered = await service.subscribe("sample", { topic: "changed", readOperation: "snapshot", readArguments: { slot: 999 } }, caller);
+    assert.equal(service.operatorList().length, 128, "failed setup releases its capacity reservation");
+    await assert.rejects(service.callAndWatch("sample", "send", { id: randomUUID(), subscribe: true }, caller), /too many event subscriptions/);
+    await service.unsubscribe(recovered.subscription.id, caller);
+    await service.subscribe("sample", { topic: "changed", readOperation: "snapshot", readArguments: { slot: 1000 } }, caller);
+    assert.equal(service.operatorList().length, 128, "explicit removal releases active capacity");
+  } finally {
+    held = false; pending.forEach(({ peer, id }) => reply(peer, { id, error: { message: "test closing" } }));
+    await results; await service.close();
+    for (const peer of peers) peer.destroy();
+    await new Promise<void>(resolve => socket.close(() => resolve())); await rm(root, { recursive: true, force: true });
+  }
 });

@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, closeSync, constants, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { socketCall, socketSubscribe, type SocketSubscription } from "./socket.js";
+import { socketCall, SocketCallError, socketSubscribe, type SocketSubscription } from "./socket.js";
+import { OperationRejected } from "./execute.js";
 import { socketPath, stateDir, workspaceRoot } from "./workspace.js";
 import type { InvocationContext } from "./operation.js";
 import { currentMcpCatalog, type SocketCatalog } from "./exposure.js";
@@ -55,6 +56,7 @@ export class McpEventSubscriptions {
   private readonly db: DatabaseSync;
   private closed = false;
   private readonly admissions = new Map<string, Promise<Record<string, unknown>>>();
+  private readonly setups = new Set<RecordState>();
   onChange?: () => void;
 
   constructor(private readonly env: NodeJS.ProcessEnv, private readonly validate: (target: EventTarget) => Promise<void>,
@@ -132,7 +134,7 @@ export class McpEventSubscriptions {
     if (!row || row.bot_id !== target.botId || row.thread_id !== target.threadId) throw new Error("completion coordination capability is invalid; nothing was sent");
     if (row.state === "cancelled") throw new Error("completion watch was explicitly cancelled; nothing was sent");
     const active = this.records.get(id);
-    if (active) await this.authorize({ ...active, ...target, abort: new AbortController() });
+    if (active) await this.authorize({ ...active, ...target });
     else {
       const doc = await this.definition(pkg);
       const watch = doc.tools.find(tool => tool.name === operation)?.completionWatch;
@@ -140,6 +142,11 @@ export class McpEventSubscriptions {
         throw new Error("completion operation/read/topic exposure is unavailable; nothing was sent");
       await this.validate(target);
     }
+    // Awaited authority/exposure checks must not outlive the reserved capability.
+    if (this.closed || active && (active.abort.signal.aborted || this.records.get(id) !== active))
+      throw new Error("completion coordination capability was cancelled; nothing was sent");
+    const finalReceipt = this.receipt(id);
+    if (!finalReceipt || finalReceipt.state === "cancelled") throw new Error("completion watch was cancelled or removed; nothing was sent");
   }
 
   async catalog(pkg: string, admitted?: SocketCatalog): Promise<{ topics: Record<string, string>; scope: { description: string; example: string; required: boolean } | null; reads: Array<{ name: string; description: string; inputSchema: unknown }> }> {
@@ -172,13 +179,13 @@ export class McpEventSubscriptions {
       if (existing.retry) clearTimeout(existing.retry);
       await existing.socket?.close();
     }
-    if (this.records.size >= maxSubscriptions) throw new Error("too many event subscriptions");
     const state: RecordState = {
       id: randomUUID(), ...target, pkg, topic: input.topic, scope: scope ?? null,
       readOperation: input.readOperation, readArguments, state: "connecting", lastDeliveredAt: null, lastError: null,
       completion: null,
       abort: new AbortController(), pending: false, flushing: false, reconnect: false, lastValueHash: null, retryDelay: 2_000,
     };
+    this.reserveSetup(state);
     try {
       await this.authorize(state);
       // Subscribe before reading, because notices are invalidations without replay.
@@ -192,6 +199,7 @@ export class McpEventSubscriptions {
       this.db.prepare("INSERT INTO subscriptions (id, bot_id, instance, thread_id, pkg, topic, scope, read_operation, read_arguments_json, last_value_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .run(state.id, state.botId, state.instance, state.threadId, state.pkg, state.topic, state.scope, state.readOperation, JSON.stringify(state.readArguments), state.lastValueHash);
       state.state = "active";
+      this.setups.delete(state);
       this.records.set(state.id, state);
       this.onChange?.();
       this.watchClosed(state);
@@ -201,7 +209,7 @@ export class McpEventSubscriptions {
       state.abort.abort();
       await state.socket?.close();
       throw error;
-    }
+    } finally { this.setups.delete(state); }
   }
 
   status(invocation?: InvocationContext, completionId?: string): { subscriptions: EventSubscription[]; completions: Array<CompletionReceipt & { pkg: string; operation: string; recordId: string }>; completionsTruncated: boolean; lifetime: "durable" } {
@@ -257,45 +265,54 @@ export class McpEventSubscriptions {
       state.instance = target.instance;
       this.db.prepare("UPDATE subscriptions SET instance = ? WHERE id = ?").run(state.instance, state.id);
     }
-    const admissionPolicy = prior ? { ...state, ...target, abort: new AbortController() } : state;
+    const admissionPolicy = prior ? { ...state, ...target } : state;
     await this.authorize(admissionPolicy);
     await this.validate(target);
     const live = (await this.definition(pkg)).tools.find(tool => tool.name === operation)?.completionWatch;
     if (!live || JSON.stringify(completionWatchSchema.parse(live)) !== JSON.stringify(watch)) throw new Error("completion operation exposure changed; nothing was sent");
-    if (!prior && this.records.size >= maxSubscriptions) throw new Error("too many event subscriptions; nothing was sent");
     if (!prior) {
+      this.reserveSetup(state);
       state.admitting = true;
       // Subscribe before the mutation, but reserve durably before invoking it.
-      state.socket = await this.connect(state);
-      this.db.exec("BEGIN IMMEDIATE");
       try {
-        this.db.prepare(`INSERT INTO subscriptions (id, bot_id, instance, thread_id, pkg, topic, scope, read_operation, read_arguments_json, completion_json)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(state.id, state.botId, state.instance, state.threadId, pkg, state.topic, null, state.readOperation, JSON.stringify(state.readArguments), JSON.stringify(state.completion));
-        this.db.prepare("INSERT INTO completion_receipts (id, bot_id, thread_id, pkg, operation, record_id, state) VALUES (?, ?, ?, ?, ?, ?, 'pending')")
-          .run(state.id, state.botId, state.threadId, pkg, operation, recordId);
-        this.db.exec("COMMIT");
-      } catch (error) { this.db.exec("ROLLBACK"); state.abort.abort(); await state.socket.close(); throw error; }
-      this.records.set(state.id, state);
-      this.watchClosed(state);
-      this.onChange?.();
+        state.socket = await this.connect(state);
+        if (this.closed || state.abort.signal.aborted) throw new Error("completion setup cancelled; nothing was sent");
+        this.db.exec("BEGIN IMMEDIATE");
+        try {
+          this.db.prepare(`INSERT INTO subscriptions (id, bot_id, instance, thread_id, pkg, topic, scope, read_operation, read_arguments_json, completion_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(state.id, state.botId, state.instance, state.threadId, pkg, state.topic, null, state.readOperation, JSON.stringify(state.readArguments), JSON.stringify(state.completion));
+          this.db.prepare("INSERT INTO completion_receipts (id, bot_id, thread_id, pkg, operation, record_id, state) VALUES (?, ?, ?, ?, ?, ?, 'pending')")
+            .run(state.id, state.botId, state.threadId, pkg, operation, recordId);
+          this.db.exec("COMMIT");
+        } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+        this.setups.delete(state);
+        this.records.set(state.id, state);
+        this.watchClosed(state);
+        this.onChange?.();
+      } catch (error) { state.abort.abort(); await state.socket?.close(); throw error; }
+      finally { this.setups.delete(state); }
     }
     let result: Record<string, unknown>;
     const ownsInitial = !prior || this.records.get(state.id) === state && !state.submissionUnknown;
     if (ownsInitial) state.admitting = true;
+    let dispatched = false;
     try {
       await this.authorize(admissionPolicy);
       await this.validate(target);
       // Repeating the same ID still visits the record owner to enforce its content digest.
+      dispatched = true;
       result = await socketCall(socketPath(pkg, this.env), "tools/call", { name: operation, arguments: input,
         invocation: { ...invocation, completionWatchId: state.id } }, { timeoutMs: forwardTimeout(pkg, operation) }) as Record<string, unknown>;
     } catch (error) {
       if (ownsInitial) state.admitting = false;
-      if (!prior) {
+      const refused = !dispatched || error instanceof OperationRejected || error instanceof SocketCallError && !error.dispatched;
+      if (!prior && refused) await this.discardUnsent(state);
+      else if (!prior) {
         this.fail(state, new Error(`send outcome may be unknown for ${recordId}; retry only with that ID: ${error instanceof Error ? error.message : String(error)}`));
         // Read-only recovery can discover a successful send even after a lost send acknowledgement.
         state.pending = true; void this.flush(state);
       } else if (ownsInitial && state.pending) void this.flush(state);
-      throw new Error(`completion watch ${state.id}, record ${recordId}: send failed or outcome unknown; retry with the same record ID. ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`completion watch ${state.id}, record ${recordId}: ${refused ? "send refused before mutation" : "send failed or outcome unknown"}; retry with the same record ID. ${error instanceof Error ? error.message : String(error)}`);
     }
     if (!ownsInitial) return { ...result, subscription: this.receipt(state.id) };
     try {
@@ -323,6 +340,29 @@ export class McpEventSubscriptions {
   private terminal(state: RecordState, value: unknown): boolean {
     return !!state.completion && !!value && typeof value === "object" &&
       (value as Record<string, unknown>)[state.completion.terminalField] != null;
+  }
+
+  private reserveSetup(state: RecordState): void {
+    if (this.closed) throw new Error("event subscriptions are closing; nothing was sent");
+    if (this.records.size + this.setups.size >= maxSubscriptions) throw new Error("too many event subscriptions; nothing was sent");
+    this.setups.add(state);
+  }
+
+  /** Only fresh intent with proof of no mutation can be forgotten. Established
+   * watches and ambiguous sends retain their original receipts and recovery. */
+  private async discardUnsent(state: RecordState): Promise<void> {
+    if (this.closed || this.records.get(state.id) !== state) return;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.prepare("DELETE FROM subscriptions WHERE id = ?").run(state.id);
+      this.db.prepare("DELETE FROM completion_receipts WHERE id = ?").run(state.id);
+      this.db.exec("COMMIT");
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    this.records.delete(state.id);
+    state.abort.abort();
+    if (state.retry) clearTimeout(state.retry);
+    await state.socket?.close();
+    this.onChange?.();
   }
 
   private async finishCompletion(state: RecordState, outcome: "observed" | "delivered" | "cancelled"): Promise<void> {
@@ -394,7 +434,7 @@ export class McpEventSubscriptions {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    const states = [...this.records.values()];
+    const states = [...this.records.values(), ...this.setups];
     this.records.clear();
     await Promise.all(states.map(async (state) => {
       state.abort.abort();

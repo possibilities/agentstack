@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { StateJournal, stateHash, type StateApplyInput } from "@stack/api";
+import { OperationRejected, StateJournal, stateHash, type StateApplyInput } from "@stack/api";
 import type { Content, Notification, Outcome } from "./schema.js";
 
 type Row = { id: string; sequence: number; title: string; message: string; subtitle: string | null; source: string | null;
@@ -104,7 +104,7 @@ export class NotificationStore {
     return this.transaction(() => {
       const existing = this.find(id);
       if (existing) {
-        if (existing.initial_digest !== initial) throw new Error("notification_id_conflict");
+        if (existing.initial_digest !== initial) throw new OperationRejected("notification_id_conflict");
         return { record: fromRow(existing), created: false };
       }
       const now = new Date().toISOString();

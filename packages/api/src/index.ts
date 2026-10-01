@@ -11,6 +11,7 @@ export {
   type StandaloneContext,
 } from "./operation.js";
 export { completionReceipt, completionWatchSchema, wantsCompletion, McpDeliveryRejected, type CompletionReceipt } from "./completion-watch.js";
+export { OperationRejected } from "./execute.js";
 export { publishedJsonSchema } from "./schema.js";
 export { forwardTimeout, mcpToolTimeoutSeconds } from "./forward-timeout.js";
 export { LocalAuth, LocalAuthError, withLocalAuth, operatorHeaders, localOrigin, localCookie, localCookieName, type LocalAudience, type LocalOperatorAudience } from "./local-auth.js";

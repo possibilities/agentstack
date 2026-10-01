@@ -24,6 +24,70 @@ function capabilitySocket(env: NodeJS.ProcessEnv, owner: () => McpEventSubscript
   ] });
 }
 
+async function completionBoundary(run: (fixture: {
+  owner: McpEventSubscriptions; caller: InvocationContext; deliveries: EventValue[];
+  send(input: Record<string, unknown>): Promise<Send>; call(name: string, input?: Record<string, unknown>): Promise<any>;
+}) => Promise<void>, validate: () => Promise<void> = async () => undefined, checking: () => void = () => undefined) {
+  const root = await mkdtemp(join(tmpdir(), "stack-notify-refusal-"));
+  const env = { STACK_STATE_DIR: root };
+  const dir = join(root, "packages", "notify"); await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "api.yaml"), "name: notify\ndescription: Notifications.\nmcp:\n  description: Notifications.\n  operations: all\n  events: all\n");
+  const caller: InvocationContext = { transport: "mcp", botId: "bot-1", instance: "launch-1", threadId: "child", sessionId: null };
+  const deliveries: EventValue[] = [];
+  const owner = new McpEventSubscriptions(env, validate, async (event, _signal, authorize, submitting) => {
+    await authorize(); submitting?.(); deliveries.push(event);
+  }, undefined, undefined, root);
+  const server = await capabilitySocket(env, () => owner, () => { checking(); return true; });
+  const notifications = await serveApi({ name: "notify", transport: "socket", env });
+  const call = (name: string, input: Record<string, unknown> = {}) => socketCall(notifications.socketPath!, "tools/call", { name, arguments: input });
+  try {
+    await run({ owner, caller, deliveries, call, send: input => owner.callAndWatch("notify", "notification_send", input, caller) as Promise<Send> });
+  } finally { await owner.close(); await notifications.close(); await server.close(); await rm(root, { recursive: true, force: true }); }
+}
+
+test("definite Notification send refusals retire only fresh intent, never watch another record or cancel an established watch", async () => {
+  await completionBoundary(async ({ owner, caller, deliveries, send, call }) => {
+    const original = await call("notification_send", { title: "Original", message: "Choose", actions: ["Yes"], subscribe: false }) as Send;
+    await assert.rejects(send({ id: original.id, title: "Different", message: "Choose", actions: ["Yes"] }), /notification_id_conflict/);
+    const invalidId = randomUUID();
+    await assert.rejects(send({ id: invalidId, title: "", message: "Invalid", subscribe: true }));
+    await pause(50);
+    assert.equal(owner.status(caller).subscriptions.length, 0, "definitely unsent requests release active capacity");
+    await call("notification_dismiss", { id: original.id, outcome: "action", response: "Yes" });
+    await pause(50);
+    assert.equal(deliveries.length, 0, "a content conflict must not watch the original Notification's answer");
+    const established = await send({ title: "Valid", message: "Choose", actions: ["Yes"] });
+    await assert.rejects(send({ id: established.id, title: "Conflict", message: "Choose", actions: ["Yes"] }), /notification_id_conflict/);
+    assert.equal(owner.status(caller).subscriptions[0]?.id, established.subscription!.id);
+    await call("notification_dismiss", { id: established.id, outcome: "action", response: "Yes" });
+    await until(() => deliveries.length === 1 && owner.status(caller).subscriptions.length === 0);
+    assert.equal((deliveries[0]!.value as Notification).id, established.id);
+  });
+});
+
+test("cancelling the exact watch during capability authorization prevents the Notification mutation", async () => {
+  let checking = false, checks = 0;
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  try {
+    await completionBoundary(async ({ owner, caller, send, call }) => {
+      try {
+        const recordId = randomUUID();
+        const result = send({ id: recordId, title: "Cancelled", message: "Must not be stored", subscribe: true }).then(value => ({ value }), error => ({ error }));
+        await until(() => checks === 2);
+        const watch = owner.status(caller).subscriptions[0]!;
+        assert.ok(watch, "the capability belongs to a durably reserved active watch");
+        await owner.unsubscribe(watch.id, caller);
+        release();
+        const returned = await result;
+        assert.ok("error" in returned, "removed capability cannot return verified:true and create a Notification");
+        assert.equal((await call("notification_counts")).total, 0);
+        assert.equal(owner.status(caller).completions.find(row => row.id === watch.id)?.state, "cancelled");
+      } finally { release(); }
+    }, async () => { if (checking && ++checks === 2) await held; }, () => { checking = true; });
+  } finally { release(); }
+});
+
 // The real Notification owner and HTTP gateway protect defaults, mutation ordering,
 // durable response reads and receipts. Serve's Codex test owns native turn admission.
 test("send-and-watch defaults, terminal-only answers and durable one-shot receipts cross the real Notification boundary", { timeout: 30_000 }, async () => {

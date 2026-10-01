@@ -19,9 +19,9 @@ Chat. Workers gain no Notification operations or Bot wakeup authority.
 
 Package operations may declare a typed `completionWatch`: the invalidation topic,
 record read, UUID input key, terminal field, inputs selecting the omitted
-default and fields retained in oversized terminal values. This declaration is
-installed declaration and live socket/discovery metadata, not implicit transport
-exposure. The send, read and topic must all remain selected over MCP. Notify's
+default and fields retained in oversized terminal values. This metadata travels
+through installed declarations and live socket/discovery catalogs, not implicit
+transport exposure. The send, read and topic must all remain selected over MCP. Notify's
 watch reads `notification_get` and treats non-null `dismissedAt` as completion.
 The once-only outcomes remain action, replied, closed, opened and replaced;
 none is a new semantic state or an inferred permission grant.
@@ -34,6 +34,12 @@ then durably reserves the record ID, watch and private coordination capability
 owner before storing the record. Stdio children create neither contexts nor
 databases. A failed coordination check cannot leave a successfully sent but
 unwatched Notification.
+
+The shared owner counts active watches and in-flight socket setups against one
+128-watch capacity bound for both ordinary and completion subscriptions. Setup
+failure releases its reservation. Capability checks retain the active watch's
+cancellation signal and recheck its identity and receipt after asynchronous
+authorization, immediately before permitting the Notification owner to mutate.
 
 The owner returns the initial record plus `subscription` receipt. Null means no
 watch requested; pending/error describes retained intent separately from send
@@ -65,9 +71,19 @@ intent. Existing ordinary subscriptions retain their continuous snapshot policy.
 The old subscription database gains nullable completion metadata and a separate
 receipt table without replacing old rows.
 
+Input validation and Notify's pre-mutation ID digest conflict use the shared
+`OperationRejected` error. The private socket preserves this proof as structured
+`stack_operation_rejected` error metadata, never inferred from message strings.
+A fresh watch proven unsent (including a request not dispatched) discards its
+reservation and receipt. Rejection of an established watched-ID retry never
+cancels that watch. Generic handler/output errors may follow mutation and retain
+read-only recovery, including successful persistence with a lost send ACK.
+
 Immediately before native `turn/start`, the owner persists an unknown admission
-fence. A definite native refusal proves no admission and permits fresh-read
-recovery. A lost response, disconnected native socket or interrupted owner after
+fence only at the ready socket's synchronous dispatch boundary. A socket closed
+during asynchronous authorization, before dispatch, or a definite native refusal
+proves no admission and permits fresh-read recovery. A lost response, disconnected
+native socket or interrupted owner after
 submission does not: unknown watches remain inspectable and do not automatically
 replay on notices, ID retries or restart. Explicit removal cancels future work
 without recalling admitted input or erasing prior uncertainty. Native admission
