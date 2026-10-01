@@ -1,3 +1,24 @@
+/** GitHub's API-only phase. Existing reference/inspection discovers it generically; dedicated setup and inbox views are a separate UI-team change. */
+export type GithubTarget = { kind: "repository"; repository: string } | { kind: "organization"; organization: string }
+  | { kind: "enterprise"; enterprise: string } | { kind: "app"; appId?: number } | { kind: "marketplace" } | { kind: "sponsors_listing"; account: string };
+export type GithubEndpoint = { id: string; label: string; target: GithubTarget; githubHost: string; publicOrigin: string | null; path: string; webhookUrl: string | null;
+  enabled: boolean; revision: number; secretVersion: number; previousSecretExpiresAt: string | null; createdAt: string; updatedAt: string;
+  lastDeliveryAt: string | null; lastPingAt: string | null; accepted: number; duplicates: number; rejected: number; lastFailure: string | null; managedHookId: number | null; boundTargetId: number | null };
+export type GithubPredicate = { path: string } & ({ op: "equals" | "contains"; value: string | number | boolean | null }
+  | { op: "one_of"; values: (string | number | boolean | null)[] } | { op: "starts_with"; value: string } | { op: "exists"; value: boolean });
+export type GithubFilter = { endpointIds?: string[]; events?: string[]; actions?: string[]; repositories?: string[]; organizations?: string[];
+  enterprises?: string[]; senders?: string[]; installationIds?: number[]; repositoryIds?: number[]; refs?: string[]; predicates?: GithubPredicate[] };
+export type GithubDelivery = { sequence: number; endpointId: string; deliveryId: string; event: string; action: string | null; receivedAt: string;
+  contentType: "application/json" | "application/x-www-form-urlencoded"; hookId: string | null; targetType: string | null; targetId: string | null;
+  repository: string | null; repositoryId: number | null; organization: string | null; enterprise: string | null; sender: string | null; installationId: number | null; ref: string | null; sha: string | null;
+  entities: { kind: string; id: number | string | null; number: number | null; title: string | null; url: string | null; state: string | null; conclusion: string | null }[];
+  payloadBytes: number; payloadSha256: string; payloadClearedAt: string | null; knownEvent: boolean };
+export type GithubWatch = { id: string; label: string; filter: GithubFilter; enabled: boolean; revision: number; startAfter: number; acknowledgedThrough: number;
+  createdAt: string; updatedAt: string; scope: string };
+export type GithubWatchRead = { watch: GithubWatch; entries: GithubDelivery[]; pending: number; through: number; nextCursor: number | null };
+export type GithubRemoteReceipt = { requestId: string; endpointId: string; action: string; status: "running" | "succeeded" | "failed" | "unknown";
+  hookId: number | null; startedAt: string; completedAt: string | null; error: string | null };
+
 /** Desktop connection discovery is not a grant; Access remains the server-side authority. */
 export type AccessConnectionDescriptor = {
   version: 1; serverId: string; deviceOrigin: string; documentOrigin: string; artifactOrigin: string;

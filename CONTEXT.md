@@ -407,6 +407,36 @@ Operator-controlled permission for a URL submission root or exact Research sourc
 
 _Avoid_: caller network boolean, source credential, indexing permission
 
+## GitHub receiver
+
+An explicitly configured, uniquely secreted GitHub webhook destination owned by
+`packages/github`. Its target is a repository, organization, enterprise, GitHub
+App, Marketplace listing or Sponsors listing. The Server supervises its loopback intake; an operator separately publishes
+only the webhook path on public HTTPS. Secret verification authenticates original
+body bytes, not routing headers. Local configuration, remote hook configuration
+and observed signed arrival are independent evidence. _Avoid_: Access client,
+public Stack control, tailnet reachability means GitHub Cloud reachability
+
+## GitHub delivery
+
+One durably admitted signed webhook request, identified by receiver and GitHub
+delivery GUID. A local sequence describes arrival order, not GitHub causality.
+Original JSON/form bytes and compact entity/routing summaries remain addressable;
+same-ID redelivery deduplicates rather than creating another arrival. Explicit
+payload cleanup retains the receipt/digest, summary and frozen watch matches and
+never acknowledges consumption or restores bytes on duplicate redelivery.
+_Avoid_: payload-bearing Stack Event, complete GitHub history, automatic redelivery
+
+## GitHub watch
+
+A durable, immutable-filter inbox of matching GitHub deliveries with an explicit
+monotonic acknowledgement cursor. It captures matches even while notices are
+disabled. A sanctioned Bot attaches the existing MCP event subscription to the
+watch's scope and `github_watch_read`; coalesced notices cause fresh bounded
+snapshots without losing retained arrivals. Native input admission never consumes
+the inbox. _Avoid_: independent Bot wakeup owner, GitHub webhook configuration,
+exactly-once agent processing
+
 ## Proc schedule
 
 A durable, attributed definition for a one-shot or interval invocation of one Package API operation or guarded argv process. It may carry a short label naming its purpose. Its execution authority is the operator, a sanctioned Bot/root/thread, or a protected system task; operator edits do not promote Bot authority. Proc owns the wake-up, authorized due admission and execution evidence; the target Package API owns its own effects and idempotency. A missed interval is coalesced, not replayed. An interrupted API call has an unknown outcome, never an automatic retry. _Avoid_: Brain Source cadence, agent turn, cron job

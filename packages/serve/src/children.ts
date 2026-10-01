@@ -91,6 +91,11 @@ export function xcomChild(): OwnedChild {
   return { name: "xcom", command: process.execPath,
     args: [join(dirname(apiPackage), "dist", "src", "transport-main.js"), "xcom", "socket"] };
 }
+export function githubChild(): OwnedChild {
+  const apiPackage = require.resolve("@stack/api/package.json");
+  return { name: "github", command: process.execPath,
+    args: [join(dirname(apiPackage), "dist", "src", "transport-main.js"), "github", "socket"] };
+}
 export function procChild(): OwnedChild {
   const apiPackage = require.resolve("@stack/api/package.json");
   return {

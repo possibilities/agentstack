@@ -2,10 +2,11 @@
 import { mcpPort, runApi, runMcp, runMcpStdio, runWebSocket, serveApi, serveMcp, socketCall, socketPath, websocketPort, withLocalAuth } from "@stack/api";
 import { spawn } from "node:child_process";
 import { contentNetworkConfig } from "@stack/content";
+import { githubPort } from "@stack/github";
 import { lookup } from "node:dns/promises";
 import { connect } from "node:net";
 import { fileURLToPath } from "node:url";
-import { accessChild, apiChild, signalChild, authChild, brainChild, xcomChild, browseChild, contentChild, hudChild, inferChild, notifyChild, procChild, rolesChild, scrapeChild, usageChild, workerChild, websocketChild } from "./children.js";
+import { accessChild, apiChild, signalChild, authChild, brainChild, githubChild, xcomChild, browseChild, contentChild, hudChild, inferChild, notifyChild, procChild, rolesChild, scrapeChild, usageChild, workerChild, websocketChild } from "./children.js";
 import { botsChild } from "./bots.js";
 import { createMcpEventSubscriptions } from "./mcp-delivery.js";
 import { serveInspectorCatalog } from "./inspector-catalog.js";
@@ -84,6 +85,7 @@ try { contentHost = contentNetworkConfig(process.env).host; }
 catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); }
 const brainSharePort = Number(process.env.STACK_BRAIN_SHARE_PORT ?? 8877);
 const brainShareHost = process.env.STACK_BRAIN_SHARE_HOST ?? "127.0.0.1";
+const githubListenPort = githubPort(process.env);
 for (const [name, value] of [["STACK_CONTENT_PORT", contentPort], ["STACK_CONTENT_ARTIFACT_PORT", contentArtifactPort], ["STACK_BRAIN_SHARE_PORT", brainSharePort]] as const) {
   if (!Number.isInteger(value) || value < 0 || value > 65535 || process.env[name] === "" || (name === "STACK_CONTENT_PORT" && process.env.STACK_CONTENT_PORT === undefined && process.env.STACK_WIKI_PORT === "") || (name === "STACK_CONTENT_ARTIFACT_PORT" && process.env.STACK_CONTENT_ARTIFACT_PORT === undefined && process.env.STACK_WIKI_ARTIFACT_PORT === "")) {
     console.error(`${name} must be a port from 0 to 65535`);
@@ -113,6 +115,7 @@ const listeners: Array<readonly [string, number, string, string]> = [
   ["Content documents", contentPort, "STACK_CONTENT_PORT", contentHost],
   ["Content artifacts", contentArtifactPort, "STACK_CONTENT_ARTIFACT_PORT", contentHost],
   ["Brain share", brainSharePort, "STACK_BRAIN_SHARE_PORT", brainShareHost],
+  ["GitHub webhooks", githubListenPort, "STACK_GITHUB_PORT", "127.0.0.1"],
   ...(accessHost ? [
     ["Access documents", accessPort, "STACK_ACCESS_PORT", accessHost],
     ["Access artifacts", accessArtifactPort, "STACK_ACCESS_ARTIFACT_PORT", accessHost],
@@ -198,14 +201,14 @@ const shutdown = () => {
     process.exit(childFailed || failed ? 1 : 0);
   });
 };
-server = startServer([apiChild(), accessChild(), authChild(), rolesChild(), browseChild(), botsChild(mcp.port), hudChild(), workerChild(), usageChild(), inferChild(), signalChild(), notifyChild(), contentChild(), scrapeChild(), brainChild(), xcomChild(), procChild(), websocketChild(), inspectorChild(catalog.path, inspectorListenPort), uiChild(uiListenPort)], process.env, () => {
+server = startServer([apiChild(), accessChild(), authChild(), rolesChild(), browseChild(), botsChild(mcp.port), hudChild(), workerChild(), usageChild(), inferChild(), signalChild(), notifyChild(), contentChild(), scrapeChild(), brainChild(), githubChild(), xcomChild(), procChild(), websocketChild(), inspectorChild(catalog.path, inspectorListenPort), uiChild(uiListenPort)], process.env, () => {
   statusSource.notify();
   if (!closing && server.children().some((child) => !child.running)) {
     childFailed = true;
     console.error("a required child stopped; shutting down stack");
     shutdown();
   }
-}, [["access"], ["proc"], ["signal"], ["infer"], ["auth"], ["worker"], ["hud"], ["bots"], ["usage"], ["brain"], ["xcom"], ["scrape"], ["browse"], ["content"], ["roles"], ["notify"], ["api"]]);
+}, [["access"], ["github"], ["proc"], ["signal"], ["infer"], ["auth"], ["worker"], ["hud"], ["bots"], ["usage"], ["brain"], ["xcom"], ["scrape"], ["browse"], ["content"], ["roles"], ["notify"], ["api"]]);
 statusSource.attach(server);
 subscriptions.resume();
 const indexUrl = `http://127.0.0.1:${uiListenPort}/`;
