@@ -7,7 +7,7 @@ Status: accepted, 2026-09-30. Supersedes the internal HTTP launch choice in
 policy in [ADR 0096](0096-explicit-transport-exposure.md) and subscription
 delivery in [ADR 0120](0120-codex-native-input-admission.md).
 
-[ADR 0144](0144-server-independent-internal-mcp.md) replaces the live-socket-only
+[ADR 0146](0146-server-independent-internal-mcp.md) replaces the live-socket-only
 internal discovery and execution policy below. Stdio transport, launch authority,
 native bridge ownership and durable subscription delivery remain unchanged.
 

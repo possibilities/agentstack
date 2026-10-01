@@ -9,7 +9,7 @@ The Bot and Worker delivery contracts, including
 
 Internal MCP transport is now native stdio under [ADR 0140](0140-internal-mcp-over-stdio.md), preserving explicit operator authority and native isolation.
 
-[ADR 0144](0144-server-independent-internal-mcp.md) replaces the launcher's socket
+[ADR 0146](0146-server-independent-internal-mcp.md) replaces the launcher's socket
 prerequisite with a consistent read-only snapshot of the existing local Role store.
 
 The Roles package owns `stack roles inject [default|role-name] --

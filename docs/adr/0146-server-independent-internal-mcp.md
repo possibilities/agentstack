@@ -1,6 +1,6 @@
-# 144. Separate internal MCP availability from the Server lifecycle
+# 146. Separate internal MCP availability from the Server lifecycle
 
-Status: proposed, 2026-09-30. Supersedes the live-socket-only internal MCP
+Status: accepted, 2026-09-30. Supersedes the live-socket-only internal MCP
 discovery and execution rules in [ADR 0096](0096-explicit-transport-exposure.md)
 and [ADR 0140](0140-internal-mcp-over-stdio.md), and the socket prerequisite for
 Role injection in [ADR 0123](0123-role-injection-for-native-clis.md).
@@ -78,6 +78,21 @@ Internal operator launch authority must survive routine Server startup to make
 same-connection recovery real, while explicit local revocation must still fence
 it. External operator bearer credentials and browser sessions retain their
 startup rotation. A revoked stdio connection never silently reacquires authority.
+
+The existing permission-checked LocalAuth database holds separate HTTP and stdio
+operator secrets in one authority row. Opening legacy state adds the missing
+stdio secret transactionally without rotating HTTP authority or capabilities.
+`rotateForStartup()` changes only the HTTP secret and deletes browser capabilities
+after the Server socket is claimed. Explicit `serve_local_revoke` uses `rotate()`
+to change both secrets and delete capabilities. Audience-specific validation
+prevents either bearer from authorizing the other transport. A fresh operator
+launch after revocation is a new authorization; an existing pipe keeps its captured
+credential and remains denied. This extends [ADR 0113](0113-authenticated-local-control.md).
+
+Deployment must load the new Server revocation implementation before relying on
+it to fence new stdio launches. A pre-change running owner knows only the HTTP
+secret. Existing operator MCP sessions need an explicit relaunch to adopt the new
+audience; no compatibility fallback or credential refresh is introduced.
 
 Generated event tools continue to use the Server's sole durable subscription
 owner and sanctioned Bot thread lineage. Offline discovery creates no watches;
