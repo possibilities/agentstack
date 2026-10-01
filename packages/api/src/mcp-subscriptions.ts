@@ -10,7 +10,7 @@ import { currentMcpCatalog, type SocketCatalog } from "./exposure.js";
 import { forwardTimeout } from "./forward-timeout.js";
 import { stateHash } from "./state.js";
 import { mcpEventCatalog } from "./mcp-events.js";
-import { completionWatchSchema, McpDeliveryRejected, wantsCompletion, type CompletionReceipt } from "./completion-watch.js";
+import { completionWatchSchema, McpDeliveryRejected, resolveCompletionRead, wantsCompletion, type CompletionReceipt } from "./completion-watch.js";
 import type { CompletionWatch } from "./operation.js";
 
 export type EventTarget = { botId: string; instance: string; threadId: string };
@@ -19,7 +19,7 @@ export type EventSubscription = EventTarget & {
   readOperation: string; readArguments: Record<string, unknown>;
   state: "connecting" | "active" | "delivering" | "error";
   lastDeliveredAt: number | null; lastError: string | null;
-  completion: { operation: string; terminalField: string; retainFields?: string[] } | null;
+  completion: { operation: string; terminalField: string; retainFields?: string[]; updateField?: string; declaration?: CompletionWatch } | null;
 };
 export type EventValue = { subscription: EventSubscription; reason: "changed" | "reconnected"; value: unknown; truncated: boolean };
 
@@ -88,6 +88,8 @@ export class McpEventSubscriptions {
       operation TEXT NOT NULL, record_id TEXT NOT NULL, state TEXT NOT NULL,
       last_delivered_at INTEGER, last_error TEXT, UNIQUE(pkg, operation, record_id)
     )`);
+    const receiptColumns = this.db.prepare("PRAGMA table_info(completion_receipts)").all() as Array<{ name: string }>;
+    if (!receiptColumns.some(({ name }) => name === "delivery_kind")) this.db.exec("ALTER TABLE completion_receipts ADD COLUMN delivery_kind TEXT");
     // These are durable Bot watches, not historical provenance. Rebind their
     // package selectors before reconnecting; the old sockets are no longer served.
     this.db.exec(`UPDATE subscriptions SET pkg = CASE pkg
@@ -222,9 +224,9 @@ export class McpEventSubscriptions {
   }
 
   private receipt(id: string): CompletionReceipt | null {
-    const row = this.db.prepare("SELECT id, state, last_delivered_at, last_error FROM completion_receipts WHERE id = ?").get(id) as
-      { id: string; state: CompletionReceipt["state"]; last_delivered_at: number | null; last_error: string | null } | undefined;
-    return row ? { id: row.id, state: row.state, lastDeliveredAt: row.last_delivered_at, lastError: row.last_error } : null;
+    const row = this.db.prepare("SELECT id, state, last_delivered_at, last_error, delivery_kind FROM completion_receipts WHERE id = ?").get(id) as
+      { id: string; state: CompletionReceipt["state"]; last_delivered_at: number | null; last_error: string | null; delivery_kind: CompletionReceipt["lastDeliveryKind"] } | undefined;
+    return row ? { id: row.id, state: row.state, lastDeliveredAt: row.last_delivered_at, lastError: row.last_error, lastDeliveryKind: row.delivery_kind } : null;
   }
 
   /** Persist intent before mutation. This owner, not a stdio child, closes the send/watch crash gap. */
@@ -255,12 +257,14 @@ export class McpEventSubscriptions {
     const prior = this.db.prepare("SELECT id, bot_id, thread_id FROM completion_receipts WHERE pkg = ? AND operation = ? AND record_id = ?").get(pkg, operation, recordId) as
       { id: string; bot_id: string; thread_id: string } | undefined;
     if (prior && (prior.bot_id !== target.botId || prior.thread_id !== target.threadId)) throw new Error("completion watch belongs to another Bot Chat; nothing was sent");
+    const resolved = resolveCompletionRead(watch, input, invocation);
     const state: RecordState = prior && this.records.get(prior.id) || {
-      id: prior?.id ?? randomUUID(), ...target, pkg, topic: watch.topic, scope: null,
-      readOperation: watch.readOperation, readArguments: { [watch.idArgument]: recordId },
-      completion: { operation, terminalField: watch.terminalField, ...(watch.retainFields ? { retainFields: watch.retainFields } : {}) }, state: "connecting", lastDeliveredAt: null, lastError: null,
+      id: prior?.id ?? randomUUID(), ...target, pkg, topic: watch.topic, ...resolved,
+      readOperation: watch.readOperation,
+      completion: { operation, terminalField: watch.terminalField, ...(watch.retainFields ? { retainFields: watch.retainFields } : {}), ...(watch.updateField ? { updateField: watch.updateField } : {}), declaration: watch }, state: "connecting", lastDeliveredAt: null, lastError: null,
       abort: new AbortController(), pending: false, flushing: false, reconnect: false, lastValueHash: null, retryDelay: 2_000,
     };
+    if (state.scope !== resolved.scope || valueHash(state.readArguments) !== valueHash(resolved.readArguments)) throw new Error("completion retry changes its read identity; nothing was sent");
     if (state.instance !== target.instance) {
       state.instance = target.instance;
       this.db.prepare("UPDATE subscriptions SET instance = ? WHERE id = ?").run(state.instance, state.id);
@@ -280,7 +284,7 @@ export class McpEventSubscriptions {
         this.db.exec("BEGIN IMMEDIATE");
         try {
           this.db.prepare(`INSERT INTO subscriptions (id, bot_id, instance, thread_id, pkg, topic, scope, read_operation, read_arguments_json, completion_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(state.id, state.botId, state.instance, state.threadId, pkg, state.topic, null, state.readOperation, JSON.stringify(state.readArguments), JSON.stringify(state.completion));
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(state.id, state.botId, state.instance, state.threadId, pkg, state.topic, state.scope, state.readOperation, JSON.stringify(state.readArguments), JSON.stringify(state.completion));
           this.db.prepare("INSERT INTO completion_receipts (id, bot_id, thread_id, pkg, operation, record_id, state) VALUES (?, ?, ?, ?, ?, ?, 'pending')")
             .run(state.id, state.botId, state.threadId, pkg, operation, recordId);
           this.db.exec("COMMIT");
@@ -314,12 +318,13 @@ export class McpEventSubscriptions {
       } else if (ownsInitial && state.pending) void this.flush(state);
       throw new Error(`completion watch ${state.id}, record ${recordId}: ${refused ? "send refused before mutation" : "send failed or outcome unknown"}; retry with the same record ID. ${error instanceof Error ? error.message : String(error)}`);
     }
-    if (!ownsInitial) return { ...result, subscription: this.receipt(state.id) };
+    const response = (initial?: unknown) => ({ ...result, ...(watch.initialValueField ? { [watch.initialValueField]: initial ?? null } : initial as Record<string, unknown> | undefined), subscription: this.receipt(state.id) });
+    if (!ownsInitial) return response();
     try {
       const initial = await this.read(state) as Record<string, unknown>;
       if (this.terminal(state, initial)) {
         await this.finishCompletion(state, "observed");
-        return { ...result, ...initial, subscription: this.receipt(state.id) };
+        return response(initial);
       }
       state.lastValueHash = valueHash(initial);
       state.lastError = null;
@@ -328,12 +333,12 @@ export class McpEventSubscriptions {
       state.state = "active";
       state.admitting = false;
       if (state.pending) void this.flush(state);
-      return { ...result, ...initial, subscription: this.receipt(state.id) };
+      return response(initial);
     } catch (error) {
       state.admitting = false;
       this.fail(state, error);
       this.retryCompletion(state);
-      return { ...result, subscription: this.receipt(state.id) };
+      return response();
     }
   }
 
@@ -488,11 +493,16 @@ export class McpEventSubscriptions {
       if (!doc.events || !Object.hasOwn(doc.events.topics, state.topic)) throw new Error(`${state.topic} is not available over mcp`);
       if (!doc.tools.some((tool) => tool.name === state.readOperation && tool.annotations?.readOnlyHint))
         throw new Error(`${state.readOperation} is not an exposed read-only ${state.pkg} operation`);
-      if (state.completion && !doc.tools.some(tool => tool.name === state.completion!.operation &&
-        tool.completionWatch?.topic === state.topic && tool.completionWatch.readOperation === state.readOperation && tool.completionWatch.terminalField === state.completion!.terminalField &&
-        JSON.stringify(tool.completionWatch.retainFields ?? []) === JSON.stringify(state.completion!.retainFields ?? []) &&
-        Object.keys(state.readArguments).length === 1 && typeof state.readArguments[tool.completionWatch.idArgument] === "string"))
-        throw new Error("completion operation is no longer exposed with its watch declaration");
+      if (doc.events.scope?.required && !state.scope || state.scope && !doc.events.scope) throw new Error("completion event scope is unavailable");
+      if (state.completion) {
+        const watch = doc.tools.find(tool => tool.name === state.completion!.operation)?.completionWatch;
+        const matches = watch && (state.completion.declaration
+          ? valueHash(completionWatchSchema.parse(watch)) === valueHash(state.completion.declaration)
+          : watch.topic === state.topic && watch.readOperation === state.readOperation && watch.terminalField === state.completion.terminalField &&
+            JSON.stringify(watch.retainFields ?? []) === JSON.stringify(state.completion.retainFields ?? []) && !watch.readArguments && !watch.scope && !watch.updateField &&
+            Object.keys(state.readArguments).length === 1 && typeof state.readArguments[watch.idArgument] === "string");
+        if (!matches) throw new Error("completion operation is no longer exposed with its watch declaration");
+      }
       if (this.closed || state.abort.signal.aborted) throw new Error("event subscription cancelled");
     };
     await check();
@@ -574,7 +584,9 @@ export class McpEventSubscriptions {
         state.state = "delivering";
         try {
           const value = await this.read(state);
-          if (state.completion && !this.terminal(state, value)) {
+          const terminal = this.terminal(state, value);
+          const update = state.completion?.updateField && value && typeof value === "object" && (value as Record<string, unknown>)[state.completion.updateField] != null;
+          if (state.completion && !terminal && !update) {
             state.state = "active"; state.lastError = null;
             this.db.prepare("UPDATE subscriptions SET last_error = NULL WHERE id = ?").run(state.id);
             this.db.prepare("UPDATE completion_receipts SET state = 'pending', last_error = NULL WHERE id = ?").run(state.id);
@@ -582,7 +594,7 @@ export class McpEventSubscriptions {
           }
           const encoded = JSON.stringify(value);
           const hash = valueHash(value);
-          if (!state.reconnect && hash === state.lastValueHash) { state.state = "active"; continue; }
+          if ((!state.reconnect || state.completion) && hash === state.lastValueHash) { state.state = "active"; continue; }
           const authorize = async () => {
             await this.authorize(state);
             if (state.completion && state.admitting) throw new Error("completion initial observation is in progress; native submission deferred");
@@ -590,22 +602,27 @@ export class McpEventSubscriptions {
           await authorize();
           await this.deliver({ subscription: publicView(state), reason: state.reconnect ? "reconnected" : "changed",
             value: encoded.length <= maxValueChars ? value : { ...(state.completion && value && typeof value === "object" ?
-               Object.fromEntries(Object.entries(value).filter(([key]) => [state.completion!.terminalField, ...(state.completion!.retainFields ?? [])].includes(key))) : {}),
-              readOperation: state.readOperation, readArguments: state.readArguments, bytes: Buffer.byteLength(encoded), note: "Value exceeds turn limit; call the read operation for the full record. Terminal outcome and answer are retained." },
+                Object.fromEntries(Object.entries(value).filter(([key]) => [state.completion!.terminalField, state.completion!.updateField, ...(state.completion!.retainFields ?? [])].includes(key))) : {}),
+               readOperation: state.readOperation, readArguments: state.readArguments, bytes: Buffer.byteLength(encoded), note: "Value exceeds turn limit; call the read operation for the full record. Outcome and attention fields are retained." },
               truncated: encoded.length > maxValueChars }, state.abort.signal, authorize, state.completion ? () => {
                 if (state.admitting || state.abort.signal.aborted || this.closed) throw new Error("completion submission cancelled before native admission");
                // Persist before the native send. Crash or a lost ACK is ambiguous, never a safe replay.
-               this.db.prepare("UPDATE completion_receipts SET state = 'unknown' WHERE id = ?").run(state.id);
+               this.db.prepare("UPDATE completion_receipts SET state = 'unknown', delivery_kind = ? WHERE id = ?").run(terminal ? "terminal" : "update", state.id);
                state.submissionUnknown = true;
              } : undefined);
           // Admission ACK only: later snapshots must not wait for the agent's turn to finish.
           state.lastDeliveredAt = Date.now();
-          if (state.completion) { await this.finishCompletion(state, "delivered"); return; }
+          if (state.completion && terminal) { await this.finishCompletion(state, "delivered"); return; }
           state.lastValueHash = hash;
           state.lastError = null;
           state.reconnect = false;
           state.state = "active";
           if (!this.closed) this.db.prepare("UPDATE subscriptions SET last_delivered_at = ?, last_error = NULL, last_value_hash = ? WHERE id = ?").run(state.lastDeliveredAt, state.lastValueHash, state.id);
+          if (state.completion && !this.closed && !state.abort.signal.aborted) {
+            this.db.prepare("UPDATE completion_receipts SET state = 'pending', last_delivered_at = ?, last_error = NULL WHERE id = ?").run(state.lastDeliveredAt, state.id);
+            state.submissionUnknown = false;
+            this.onChange?.();
+          }
         } catch (error) {
           if (state.completion && error instanceof McpDeliveryRejected) state.submissionUnknown = false;
           this.fail(state, error);

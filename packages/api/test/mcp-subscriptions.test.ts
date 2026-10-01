@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { z } from "zod";
-import { operation, type InvocationContext } from "../src/operation.js";
+import { operation, type CompletionWatch, type InvocationContext } from "../src/operation.js";
 import { McpEventSubscriptions, type EventValue } from "../src/mcp-subscriptions.js";
 import { serveSocket } from "../src/socket.js";
 import { socketPath } from "../src/workspace.js";
@@ -375,4 +375,75 @@ test("ordinary and completion admissions share bounded active plus in-flight cap
     for (const peer of peers) peer.destroy();
     await new Promise<void>(resolve => socket.close(() => resolve())); await rm(root, { recursive: true, force: true });
   }
+});
+
+test("mapped admission watches retain exact identity, acknowledge attention without retirement and never replay ambiguous attention", { timeout: 15_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "as-turn-watch-"));
+  const env = { STACK_STATE_DIR: root };
+  await manifest(root, "sample");
+  const watch: CompletionWatch = { topic: "changed", readOperation: "observation", idArgument: "requestId", terminalField: "result", defaultWhen: [],
+    defaultOnForBot: true, updateField: "update", initialValueField: "observation", scope: { input: "requestId", prefix: "request:" },
+    readArguments: { requestId: { input: "requestId" }, botId: { invocation: "botId" }, threadId: { invocation: "threadId" } } };
+  const values = new Map<string, { result: Record<string, unknown> | null; update: Record<string, unknown> | null }>();
+  const delivered: EventValue[] = [];
+  let ambiguous: string | null = null;
+  const socket = await serveSocket({
+    info: { name: "sample", description: "Test.", transportDescription: "Test.", path: socketPath("sample", env) }, context: {},
+    operations: [
+      operation({ name: "admit", description: "Admit.", input: z.strictObject({ requestId: z.uuid() }), output: z.object({ admitted: z.string() }), completionWatch: watch,
+        async call(_ctx, { requestId }) { if (!values.has(requestId)) values.set(requestId, { result: null, update: null }); return { admitted: requestId }; } }),
+      operation({ name: "observation", description: "Read exact request.", input: z.strictObject({ requestId: z.uuid(), botId: z.string(), threadId: z.string() }), output: z.object({ result: z.object({}).passthrough().nullable(), update: z.object({}).passthrough().nullable() }), annotations: { readOnlyHint: true },
+        async call(_ctx, { requestId, botId, threadId }) {
+          assert.equal(botId, caller.botId); assert.equal(threadId, caller.threadId);
+          return values.get(requestId) ?? { result: null, update: null };
+        } }),
+    ], events: { topics: { changed: "Semantic change." }, scope: { required: true, description: "Exact pre-admission request.", example: "request:UUID", valid: (_ctx, scope) => /^request:[0-9a-f-]{36}$/.test(scope) } },
+  });
+  const create = () => new McpEventSubscriptions(env, async () => undefined, async (event, _signal, authorize, submitting) => {
+    await authorize(); submitting?.(); delivered.push(event);
+    if (event.subscription.readArguments.requestId === ambiguous) throw new Error("native response lost");
+  }, undefined, undefined, root);
+  let service = create();
+  const requestId = randomUUID(), unknownId = randomUUID();
+  try {
+    const admitted = await service.callAndWatch("sample", "admit", { requestId }, caller);
+    assert.equal(admitted.admitted, requestId, "the read projection must not replace admission fields");
+    assert.deepEqual(admitted.observation, { result: null, update: null });
+    const receiptId = (admitted.subscription as { id: string }).id;
+    assert.equal(service.operatorList()[0]?.scope, `request:${requestId}`);
+    values.set(requestId, { result: null, update: { phase: "awaiting_input", permissionIds: ["permission-1"] } });
+    socket.publish?.("changed", `request:${requestId}`);
+    await until(() => service.status(caller).completions[0]?.lastDeliveredAt !== null);
+    assert.equal(delivered.length, 1);
+    assert.equal(service.status(caller).completions[0]?.state, "pending");
+    assert.equal(service.status(caller).completions[0]?.lastDeliveryKind, "update");
+    await service.close(); service = create(); service.resume();
+    await until(() => service.operatorList()[0]?.state === "active", 5_000);
+    await pause(50);
+    assert.equal(delivered.length, 1, "reconnect must not repeat acknowledged permission facts");
+    values.set(requestId, { result: { turnId: "exact-turn", phase: "completed" }, update: null });
+    socket.publish?.("changed", `request:${requestId}`);
+    await until(() => service.status(caller, receiptId).completions[0]?.state === "delivered");
+    assert.equal(service.operatorList().length, 0, "only terminal acknowledgement retires the watch");
+    assert.equal(service.status(caller, receiptId).completions[0]?.lastDeliveryKind, "terminal");
+    assert.equal(delivered.length, 2);
+    const repeated = await service.callAndWatch("sample", "admit", { requestId }, caller);
+    assert.equal((repeated.subscription as { state: string }).state, "delivered");
+    assert.equal(delivered.length, 2);
+
+    const unknown = await service.callAndWatch("sample", "admit", { requestId: unknownId }, caller);
+    ambiguous = unknownId;
+    values.set(unknownId, { result: null, update: { phase: "awaiting_input", permissionIds: ["permission-2"] } });
+    socket.publish?.("changed", `request:${unknownId}`);
+    const unknownReceipt = (unknown.subscription as { id: string }).id;
+    await until(() => service.status(caller, unknownReceipt).completions[0]?.state === "unknown");
+    assert.equal(service.status(caller, unknownReceipt).completions[0]?.lastDeliveryKind, "update");
+    await service.close(); service = create(); service.resume();
+    values.set(unknownId, { result: { phase: "completed" }, update: null });
+    socket.publish?.("changed", `request:${unknownId}`);
+    await service.callAndWatch("sample", "admit", { requestId: unknownId }, caller);
+    await pause(50);
+    assert.equal(delivered.length, 3, "ambiguous intermediate admission freezes subsequent delivery and ID retries");
+    assert.equal(service.status(caller, unknownReceipt).completions[0]?.state, "unknown");
+  } finally { await service.close(); await socket.close(); await rm(root, { recursive: true, force: true }); }
 });

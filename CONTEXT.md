@@ -113,7 +113,15 @@ A durable, revisionless request by a verified Bot thread to watch one MCP-select
 
 ## Completion watch
 
-An operation-declared, one-shot MCP event subscription owned by the same Server service. Its intent and coordination capability are stored before a record mutation. Only that record's terminal read wakes the invoking sanctioned Chat; an already-terminal initial read is returned and retained as observed instead. Acknowledged native admission retires the watch and retains its receipt for ID retries. An uncertain admission stays inspectable and is never automatically replayed, even after restart. Installed stdio discovery declares this capability without creating watches; sends require the live owner. See [ADR 0154](docs/adr/0154-notification-send-and-watch.md). _Avoid_: approval, consumption acknowledgement, independent delivery loop
+An operation-declared, one-shot MCP event subscription owned by the same Server service. Its intent and coordination capability are stored before a record mutation. A terminal-only watch wakes the invoking sanctioned Chat only for that record's terminal read; an already-terminal initial read is returned and retained as observed instead. Acknowledged native admission retires the watch and retains its receipt for ID retries. An uncertain admission stays inspectable and is never automatically replayed, even after restart. Installed stdio discovery declares this capability without creating watches; sends require the live owner. See [ADR 0154](docs/adr/0154-notification-send-and-watch.md). _Avoid_: approval, consumption acknowledgement, independent delivery loop
+
+Correlated admission watches can also deliver stable, changed attention facts for
+the exact admitted Worker turn without retiring it. Only terminal acknowledgement
+retires the watch. An ambiguous attention admission freezes later delivery too;
+`lastDeliveryKind` distinguishes attention from terminal attempts. Read arguments
+and scopes are resolved from bounded identifiers before admission, never from a
+latest-record lookup or the admission response. See
+[ADR 0155](docs/adr/0155-correlated-admission-watches.md).
 
 ## Codex account
 

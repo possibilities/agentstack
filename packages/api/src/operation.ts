@@ -23,6 +23,15 @@ export type CompletionWatch = {
   defaultWhen: string[];
   /** Fields retained with a full-record pointer when the terminal record exceeds the native input budget. */
   retainFields?: string[];
+  /** Omission selects a watch for verified Bot MCP admissions, never operators. */
+  defaultOnForBot?: boolean;
+  /** Identifier-only bindings resolved before admission, not from its response. */
+  readArguments?: Record<string, { input: string } | { invocation: "botId" | "threadId" }>;
+  scope?: { input: string; prefix?: string };
+  /** Changed non-null attention values may be delivered without retiring the watch. */
+  updateField?: string;
+  /** Put an unlike read projection here rather than merging it into the admission. */
+  initialValueField?: string;
 };
 
 /** Explicit owner opt-in. Open only the resources this operation needs, never

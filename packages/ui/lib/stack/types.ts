@@ -28,6 +28,10 @@ export type JsonSchema = {
   [key: string]: unknown;
 };
 
+export type CompletionWatch = { topic: string; readOperation: string; idArgument: string; terminalField: string; defaultWhen: string[]; retainFields?: string[];
+  defaultOnForBot?: boolean; readArguments?: Record<string, { input: string } | { invocation: "botId" | "threadId" }>;
+  scope?: { input: string; prefix?: string }; updateField?: string; initialValueField?: string };
+
 export type OperationDoc = {
   standalone: boolean;
   name: string;
@@ -36,7 +40,7 @@ export type OperationDoc = {
   annotations: Record<string, boolean | string>;
   inputSchema: JsonSchema;
   outputSchema: JsonSchema;
-  completionWatch: { topic: string; readOperation: string; idArgument: string; terminalField: string; defaultWhen: string[]; retainFields?: string[] } | null;
+  completionWatch: CompletionWatch | null;
 };
 
 export type TransportDoc = {
@@ -606,7 +610,7 @@ export type NotificationOutcome = "closed" | "opened" | "action" | "replied" | "
 export type Notification = { id: string; sequence: number; title: string; message: string; subtitle: string | null; source: string | null; contentClearedAt: string | null;
   group: string | null; open: string | null; actions: string[]; reply: string | null; createdAt: string;
   dismissedAt: string | null; outcome: NotificationOutcome | null; response: string | null };
-export type CompletionReceipt = { id: string; state: "pending" | "error" | "observed" | "delivered" | "unknown" | "cancelled"; lastDeliveredAt: number | null; lastError: string | null };
+export type CompletionReceipt = { id: string; state: "pending" | "error" | "observed" | "delivered" | "unknown" | "cancelled"; lastDeliveredAt: number | null; lastError: string | null; lastDeliveryKind: "update" | "terminal" | null };
 export type NotificationSend = Notification & { subscription: CompletionReceipt | null };
 /** `notification_counts`. A null source counts notifications sent without one. */
 export type NotificationCounts = { open: number; total: number; sources: Array<{ source: string | null; open: number; total: number }> };
@@ -918,7 +922,7 @@ export type StateFileRead = { data: string; encoding: "base64"; bytes: number; t
 export type ServeSubscription = {
   id: string; botId: string; threadId: string; instance: string; pkg: string; topic: string; scope: string | null;
   readOperation: string; state: "connecting" | "active" | "delivering" | "error"; lastDeliveredAt: number | null; revision: string;
-  completion: { operation: string; terminalField: string; retainFields?: string[] } | null;
+  completion: { operation: string; terminalField: string; retainFields?: string[]; updateField?: string; declaration?: CompletionWatch } | null;
 };
 /** `serve_subscription_get`'s explicit drill-down, which can reveal sensitive read arguments and the last error. */
 export type ServeSubscriptionDetail = ServeSubscription & { readArguments: Record<string, unknown>; lastError: string | null };
