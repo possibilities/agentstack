@@ -33,6 +33,12 @@ export class BotState {
   readonly journal: StateJournal;
   onChange?: (botId: string) => void;
   constructor(readonly dir: string, private readonly env: NodeJS.ProcessEnv) { this.journal = new StateJournal(join(dir, "bots", "state-control.sqlite"), "bots"); }
+  async browserGuard(ctx: BotsContext, input: { botId: string; profileId: string; token: string }) {
+    return ctx.supervisor.maintain(input.botId, async () => {
+      if (ctx.store.maintenanceFence(input.botId)) throw new Error("Bot maintenance is unresolved");
+      return await socketCall(socketPath("browse", this.env), "tools/call", { name: "browse_state_bot_effect", arguments: input }, { timeoutMs: 120000 }) as Record<string, unknown>;
+    });
+  }
   close(): void { this.journal.close(); }
   bot(ctx: BotsContext, id: string) {
     const bot = ctx.supervisor.list().find(row => row.id === id);
@@ -189,6 +195,9 @@ export class BotState {
 }
 
 export const botStateOperations = [
+  operation({ name: "bot_state_browser_guard", description: "Internal local-operator coordination: hold a verified stopped Bot's start/stop/adoption mutex through one Browser owner's exact single-use profile maintenance callback. Never stops/starts a Bot, resets conversation, grants human control or admits a turn.",
+    input: z.strictObject({ botId, profileId: z.uuid(), token: z.uuid() }), output: z.record(z.string(), z.unknown()),
+    async call(ctx: BotsContext, input, invocation) { requireStateOperator(invocation); return ctx.state.browserGuard(ctx, input); } }),
   operation({ name: "bot_state_read", description: "Inspect one Bot's workspace ownership, conversation generation, retained state, detailed read links and cleanup blockers. Dependency failures are unavailable, never empty. Does not start the Bot or reveal credentials.",
     input: z.strictObject({ botId }), output: z.strictObject({ incarnation: z.uuid(), generation: z.uuid(), maintenanceRequestId: z.uuid().nullable(), entries: z.array(stateEntry) }), annotations: read,
     async call(ctx: BotsContext, { botId: id }, invocation) { requireStateOperator(invocation); return { ...ctx.store.stateIdentity(id), maintenanceRequestId: ctx.store.maintenanceFence(id), entries: await ctx.state.entries(ctx, id) }; } }),

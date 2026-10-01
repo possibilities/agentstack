@@ -3,7 +3,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { botInstance, operatorInvocation, parseBotMcpIdentity, socketCall, socketPath, type InvocationContext } from "@stack/api";
+import { botInstance, operatorInvocation, parseBotMcpIdentity, socketCall, socketPath, stateHash, type InvocationContext } from "@stack/api";
 import { z } from "zod";
 import { Backend, backendSession } from "./backend.js";
 import { BrowserSystem } from "./system.js";
@@ -13,6 +13,7 @@ import { handoffSchema, actionReceiptSchema, type Handoff, type HandoffRequest, 
 
 const execFile = promisify(execFileCallback);
 export const profileSchema = z.strictObject({
+  generation: z.number().int().nonnegative().default(0), maintenanceRequestId: z.uuid().nullable().default(null),
   id: z.uuid(), botId: z.string().nullable(), label: z.string(), default: z.boolean(), createdAt: z.string(),
   state: z.enum(["starting", "ready", "recovering", "failed"]), error: z.string().nullable(),
   observedAt: z.string().nullable(), cdpUrl: z.string().nullable(),
@@ -115,6 +116,54 @@ export class Profiles {
 
   private held(profileId: string): boolean { return this.ledger.handoffs.some((h) => h.profileId === profileId && h.state !== "resolved"); }
 
+  async maintain<T>(id: string, run: () => Promise<T>): Promise<T> {
+    return this.serial(`handoff:${id}`, () => this.serial(`profile:${id}`, async () => {
+      if (this.closing) throw new Error("Browser owner is shutting down");
+      return run();
+    }));
+  }
+  async stateObservation(id: string) {
+    const profile = this.ledger.profiles.find(row => row.id === id); if (!profile) throw new Error("Unknown Browser profile");
+    const bindings = this.ledger.bindings.filter(row => row.profileId === id || row.actualProfileId === id || row.botId === profile.botId && ["connecting", "unknown"].includes(row.state));
+    const handoffs = this.ledger.handoffs.filter(row => row.profileId === id && row.state !== "resolved");
+    let bot: Bot | null = null, unavailable = false;
+    if (profile.botId) try { bot = (await this.bots()).find(row => row.id === profile.botId) ?? null; if (!bot) unavailable = true; } catch { unavailable = true; }
+    const { observedAt: _at, cdpUrl: _url, observation: _view, error: _error, ...identity } = profile;
+    return { profile: structuredClone(profile), bot, revision: stateHash([identity, bindings, handoffs, bot && [bot.id, bot.state, bot.url, bot.recoveryIssue]]), blockedBy: [
+      ...(bindings.length ? ["Close all selected/uncertain controllers before profile maintenance"] : []),
+      ...(handoffs.length ? ["Resolve open handoffs before profile maintenance"] : []),
+      ...(unavailable ? ["Assigned Bot lifecycle proof unavailable"] : []),
+      ...(bot && (bot.state !== "stopped" || bot.url || bot.recoveryIssue) ? ["Stop and verify the assigned Bot before profile maintenance"] : []),
+      ...(profile.maintenanceRequestId ? ["Profile maintenance remains fenced; inspect its receipt before exact release"] : []),
+    ] };
+  }
+  stateSource(id: string) { return this.gates.get(id)?.source ?? null; }
+  async stateFence(id: string, requestId: string) {
+    const profile = this.ledger.profiles.find(row => row.id === id)!;
+    if (profile.maintenanceRequestId && profile.maintenanceRequestId !== requestId) throw new Error("Another maintenance request holds this profile");
+    profile.maintenanceRequestId = requestId; await this.save();
+    const managed = this.gates.get(id); if (managed) { managed.gate.hold(); await managed.gate.drain(); await managed.gate.revokeHuman(); }
+  }
+  async stateResetMark(id: string) {
+    const profile = this.ledger.profiles.find(row => row.id === id)!;
+    profile.generation++; profile.state = "recovering"; profile.cdpUrl = null; profile.observation = null; profile.error = null;
+    await this.gates.get(id)?.gate.close(); this.gates.delete(id); await this.save();
+  }
+  async stateRelease(id: string, requestId: string, generation: number) {
+    const profile = this.ledger.profiles.find(row => row.id === id); if (!profile || profile.generation !== generation) throw new Error("Profile generation changed");
+    if (profile.maintenanceRequestId !== requestId) throw new Error("Exact profile maintenance fence changed");
+    profile.maintenanceRequestId = null; await this.save();
+    if (!this.held(id)) this.gates.get(id)?.gate.resume();
+  }
+  async stateRedact(ids: string[]) {
+    for (const id of ids) {
+      const row = this.ledger.handoffs.find(row => row.id === id); if (!row || row.state !== "resolved") throw new Error("Handoff must be resolved before redaction");
+      row.requestDigest ??= stateHash([row.profileId, row.targetId, row.message]);
+      row.message = ""; row.note = null; row.issue = null; row.contentClearedAt = new Date().toISOString(); row.revision++; this.humanUrls.delete(id);
+    }
+    await this.changed();
+  }
+
   async origin(invocation?: InvocationContext): Promise<BrowserCaller & { threadId: string }> {
     const caller = await this.caller(invocation);
     if (!caller || !invocation?.threadId) throw new Error("handoff origin requires a verified Bot Chat invocation");
@@ -134,17 +183,19 @@ export class Profiles {
       await this.verifyCaller(origin);
       const previous = this.ledger.handoffs.find((h) => h.botId === origin.botId && h.threadId === origin.threadId && h.requestId === input.requestId);
       if (previous) {
-        if (previous.profileId !== input.profileId || previous.targetId !== (input.targetId ?? null) || previous.message !== input.message) throw new Error("handoff requestId conflicts with existing intent");
+        if ((previous.requestDigest ?? stateHash([previous.profileId, previous.targetId, previous.message])) !== stateHash([input.profileId, input.targetId ?? null, input.message])) throw new Error("handoff requestId conflicts with existing intent");
         if (previous.state === "preparing" && !previous.issue?.startsWith("Owner restarted")) await this.prepareHandoff(previous);
         return structuredClone(previous);
       }
       if (this.closing) throw new Error("browser is shutting down");
       const profile = this.ledger.profiles.find((p) => p.id === input.profileId);
       if (profile?.botId !== origin.botId) throw new Error("handoff profile does not belong to invoking Bot");
+      if (profile.maintenanceRequestId) throw new Error("Profile maintenance remains fenced");
       if (this.held(input.profileId)) throw new Error("profile already has an unresolved handoff");
       const handoff: Handoff = { id: randomUUID(), ...origin, profileId: input.profileId, requestId: input.requestId,
         targetId: input.targetId ?? null, targetStatus: input.targetId ? "unknown" : "unspecified", message: input.message,
-        state: "preparing", outcome: null, note: null, revision: 1, createdAt: new Date().toISOString(), resolvedAt: null, issue: null, quiesced: false };
+        state: "preparing", outcome: null, note: null, revision: 1, createdAt: new Date().toISOString(), resolvedAt: null, issue: null, quiesced: false,
+        contentClearedAt: null, requestDigest: stateHash([input.profileId, input.targetId ?? null, input.message]) };
       // Synchronous admission fence precedes the first durable-write await.
       this.ledger.handoffs.push(handoff); this.gates.get(input.profileId)?.gate.hold();
       await this.changed();
@@ -289,7 +340,7 @@ export class Profiles {
         const existing = this.ledger.profiles.find((profile) => profile.botId === botId && profile.default);
         if (existing) return structuredClone(existing);
       }
-      const profile: Profile = { id: randomUUID(), botId, label, default: isDefault, createdAt: new Date().toISOString(),
+      const profile: Profile = { id: randomUUID(), botId, label, default: isDefault, createdAt: new Date().toISOString(), generation: 0, maintenanceRequestId: null,
         state: "starting", error: null, observedAt: null, cdpUrl: null, observation: null };
       this.ledger.profiles.push(profile); await this.save();
       // Admission is durable; health is reported separately, never guessed.
@@ -306,6 +357,7 @@ export class Profiles {
       if (this.closing) throw new Error("browser is shutting down");
       const profile = this.ledger.profiles.find((item) => item.id === id);
       if (!profile) throw new Error("unknown browser profile");
+      if (profile.maintenanceRequestId) throw new Error("Profile maintenance remains fenced");
       if (profile.state === "failed") { profile.state = "recovering"; await this.save(); }
       try {
         const launched = await this.backend.launch(this.resource(id), true);
@@ -368,6 +420,7 @@ export class Profiles {
       const profile = this.ledger.profiles.find((item) => item.id === id);
       if (caller && profile?.botId !== caller.botId) throw new Error("profile does not belong to the invoking Bot");
       if (!profile) return { deleted: true };
+      if (profile.maintenanceRequestId) throw new Error("Profile maintenance remains fenced");
       if (this.held(id)) throw new Error("profile has an unresolved handoff");
       if (profile.default && profile.botId) throw new Error("cannot delete a Bot's default profile");
       if (this.ledger.bindings.some((binding) => binding.botId === profile.botId && ["connecting", "unknown"].includes(binding.state))) throw new Error("a Bot controller has an uncertain binding; resolve it before deleting a profile");
@@ -477,7 +530,7 @@ export class Profiles {
         if (caller) await this.verifyCaller(caller);
         if (this.held(profileId)) throw new Error("browser profile is held for human handoff");
         const current = this.ledger.profiles.find((item) => item.id === profileId);
-        if (!current || current.botId !== botId || current.state !== "ready") throw new Error("profile changed before controller selection");
+        if (!current || current.botId !== botId || current.state !== "ready" || current.maintenanceRequestId) throw new Error("profile changed before controller selection");
         const binding = await this.binding(bot, instance, session);
         binding.profileId = profileId; binding.revision++; binding.state = "connecting";
         binding.actualProfileId = null; binding.cdpUrl = null; binding.targetId = null; binding.error = null;

@@ -22,6 +22,17 @@ websocket:
   description: Loopback management operations and change notices for future operator clients.
   operations:
     - browse_state_read
+    - browser_profile_reset_plan
+    - browser_profile_reset_clear
+    - browser_site_data_plan
+    - browser_site_data_clear
+    - browser_handoff_history_plan
+    - browser_handoff_history_clear
+    - browser_volume_list
+    - browser_volume_plan
+    - browser_volume_clear
+    - browse_state_receipt_get
+    - browse_state_fence_release
     - browser_handoff_get
     - browser_handoff_list
     - browser_handoff_completion
