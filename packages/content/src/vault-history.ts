@@ -18,9 +18,12 @@ export function vaultHistory(root: string, input: z.infer<typeof vaultHistoryInp
   if (!lstatSync(root).isDirectory() || lstatSync(root).isSymbolicLink()) throw new Error("Vault history requires a real owned directory");
   const metadata = lstatSync(join(root, ".git"));
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("Vault Git metadata is external/linked; exact local history ownership is unavailable");
+  const deadline = Date.now() + 15_000;
   const run = (args: string[]) => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error("Vault history exceeds the inspection time budget; no incomplete disclosure is returned");
     const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
-    const result = spawnSync("git", ["--no-optional-locks", ...args], { cwd: root, encoding: "utf8", timeout: 10_000, maxBuffer: 8_000_000,
+    const result = spawnSync("git", ["--no-optional-locks", ...args], { cwd: root, encoding: "utf8", timeout: Math.min(10_000, remaining), maxBuffer: 8_000_000,
       env: { ...env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_REPLACE_OBJECTS: "1", GIT_CONFIG_NOSYSTEM: "1" }, stdio: ["ignore", "pipe", "pipe"] });
     if (result.error || result.status !== 0) throw new Error("Vault Git retention observation unavailable or exceeds bounded inspection; no state was changed");
     return result.stdout;
