@@ -1,4 +1,4 @@
-# 0146 — Signal checkpoint reset rebaselines exact sources to now
+# 0147 — Signal checkpoint reset rebaselines exact sources to now
 
 Status: accepted, 2026-09-30. Extends [ADR 0135](0135-owner-state-maintenance.md).
 
