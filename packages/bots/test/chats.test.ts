@@ -167,7 +167,7 @@ test("chat submissions return receipt-time state and admit working threads even 
   const bot = { id: "bot-1", mainThreadId: rootId, state: "running", runningAccount: "test", cwd: state,
     url: `ws://127.0.0.1:${address.port}`, recoveryIssue: null } as ServerView;
   const queue = new ChatQueue(chats, () => bot);
-  const ctx = { chats, queue, supervisor: { list: () => [bot] } } as unknown as BotsContext;
+  const ctx = { chats, queue, supervisor: { list: () => [bot] }, store: { stateIdentity: () => ({ generation: randomUUID() }) } } as unknown as BotsContext;
   const input = { botId: bot.id, threadId: rootId, input: [{ type: "text" as const, text: "hello" }] };
   try {
     await fixture(state, rootId, null, "chat send");

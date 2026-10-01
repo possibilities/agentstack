@@ -145,7 +145,8 @@ export type ChatOpenResult = ChatSendResult & { threadId: string };
 export type ChatSteerResult = { turnId: string; threadState: ChatThreadState };
 export type ChatEnqueueResult = ChatQueueEntry & { threadState: ChatThreadState };
 export type ChatQueueEntry = { id: string; botId: string; threadId: string; input: unknown[];
-  state: "pending" | "dispatching" | "sent" | "unknown" | "cancelled"; turnId: string | null; issue: string | null };
+  state: "pending" | "dispatching" | "sent" | "unknown" | "cancelled"; turnId: string | null; issue: string | null;
+  bytes: number; admissionDigest: string; generation: string | null; contentClearedAt: string | null };
 
 export type Account = { id: string; enabled: boolean; removing: boolean; linkedAccounts: Array<{ scope: "bot" | "worker"; id: string }> };
 export type WorkerAccount = Account & { provider: "codex" | "devin" | "claude"; ready: boolean };
@@ -216,13 +217,14 @@ export type WorkLink = { relation: "lead" | "contributor" | "context" | "evidenc
 export type WorkItem = { id: string; sequence: number; revision: number; scopeRevision: number; title: string; objective: string; summary: string;
   state: WorkState; parentId: string | null; order: number; priority: "low" | "normal" | "high" | "urgent";
   nextAction: string; attention: "none" | "human" | "agent"; dependencies: string[]; labels: string[]; links: WorkLink[];
-  createdBy: WorkActor; updatedBy: WorkActor; createdAt: number; updatedAt: number };
+  createdBy: WorkActor; updatedBy: WorkActor; createdAt: number; updatedAt: number;
+  contentGeneration?: number; contentClearedAt?: number | null; contentDigest?: string | null };
 export type WorkTreeRow = { item: WorkItem; depth: number; childCount: number; openDescendants: number; unmetDependencies: string[] };
 export type WorkTree = { rows: WorkTreeRow[]; total: number; nextOffset: number | null; snapshot: number };
 export type WorkFocus = { botId: string; mainThreadId: string; threadId: string; revision: number; workItemId: string | null; updatedAt: number | null; updatedBy: WorkActor | null };
 export type WorkActivity = { sequence: number; workItemId: string; revision: number; scopeRevision: number; requestId: string; actor: WorkActor; at: number;
-  kind: "created" | "updated" | "metadata" | "note" | "progress" | "result" | "decision" | "handoff" | "focus";
-  fields: string[]; changes: Array<{ field: string; before: unknown; after: unknown }>; body: string | null; references: WorkReference[] };
+  kind: "created" | "updated" | "metadata" | "note" | "progress" | "result" | "decision" | "handoff" | "focus" | "maintenance";
+  fields: string[]; changes: Array<{ field: string; before: unknown; after: unknown }>; body: string | null; references: WorkReference[]; contentClearedAt?: number };
 export type WorkReceipt = { requestId: string; duplicate: boolean; cursor: number; items: Array<{ id: string; revision: number; scopeRevision: number }> };
 export type WorkAdmission = { sequence: number; workerId: string; turnId: string; context: WorkContext; botId: string; threadId: string; accountId: string;
   provider: WorkerAccount["provider"]; model: string | null; effort: string | null; workerPhase: WorkerSession["phase"]; turnPhase: WorkerTurn["phase"];
@@ -798,6 +800,7 @@ export type ProcAction =
   | { type: "process"; process: ProcProcessSpec };
 /** `proc_schedule_get`: the durable schedule record, with a tombstone's `removedAt` when removed. */
 export type ProcSchedule = { id: string; label: string | null; action: ProcAction; firstAt: string; everyMs: number | null; enabled: boolean;
+  contentClearedAt?: string | null; specDigest?: string | null;
   revision: number; system: boolean; createdBy: ProcActor; lastEditedBy: ProcActor; authority: ProcAuthority | null;
   blockedReason: string | null; retryAt: string | null; removedAt: string | null; nextAt: string | null; createdAt: string; updatedAt: string };
 export type ProcExecutionState = "running" | "completed" | "failed" | "refused" | "unknown";

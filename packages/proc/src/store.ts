@@ -46,6 +46,7 @@ type RunRow = { id: string; execution_id: string | null; state: "starting" | "ru
   output_truncated: number; retain_output: number; started_at: string; finished_at: string | null };
 type ExecutionSummaryRow = { id: string; schedule_id: string; due_at: number; state: ExecutionRow["state"];
   started_at: string; finished_at: string | null; error: string | null };
+type HistoryKind = "run_output" | "execution_content" | "schedule_definition";
 
 export class ProcStore {
   readonly db: DatabaseSync;
@@ -167,34 +168,47 @@ export class ProcStore {
 
   close() { this.db.close(); }
 
-  private maintenanceRows(kind: "run_output" | "execution_content", ids: string[]) {
+  private maintenanceRows(kind: HistoryKind, ids: string[]) {
     return [...new Set(ids)].sort().map(id => {
+      if (kind === "schedule_definition") {
+        const schedule = this.getSchedule(id, true);
+        if (schedule.system || schedule.authority?.kind === "system" || id === systemBrainId) throw new Error("Protected Brain schedules remain Brain-controlled");
+        return { id, state: schedule.removedAt ? "removed" : "active", revision: stateHash(schedule) };
+      }
       const value = kind === "run_output" ? this.getRunDetail(id) : this.getExecution(id);
       const content = kind === "run_output" ? this.db.prepare("SELECT * FROM lines WHERE run_id=? ORDER BY seq").all(id) : [];
       return { id, state: value.state, revision: stateHash([value, content]) };
     });
   }
-  historyPlan(kind: "run_output" | "execution_content", ids: string[]) {
+  historyPlan(kind: HistoryKind, ids: string[]) {
     const rows = this.maintenanceRows(kind, ids);
     return this.maintenance.plan({ subject: null, action: kind, revision: stateHash(rows), resources: rows.map(row => row.id),
-      blockedBy: rows.filter(row => ["starting", "running"].includes(row.state)).map(row => `Proc record ${row.id} is still active`),
-      retained: ["Run/execution identity, authority, timing and outcome remain under the existing 30-day retention policy", "Process argv summaries, labels and schedule definitions are separate from output", "Schedule removal never cancels already admitted executions"],
+      blockedBy: rows.filter(row => ["starting", "running", "active"].includes(row.state)).map(row => `Proc record ${row.id} is still active; remove schedules before definition cleanup`),
+      retained: ["Run/execution identity, authority, timing and outcome remain under the existing 30-day retention policy", "Schedule IDs, authority, labels, targets, timing and definition digest remain; executable/package/operation names are not payload-cleared", "Captured execution actions, results, argv summaries and output are independent selections", "Schedule removal never cancels already admitted executions"],
       regeneration: ["Enabled schedules can admit new executions. Clearing a terminal record never dispatches it again"] }, { kind, ids: rows.map(row => row.id) });
   }
   historyClear(input: StateApplyInput) {
     return this.maintenance.atomic(input, (plan, payload) => {
-      const { kind, ids } = payload as { kind: "run_output" | "execution_content"; ids: string[] };
+      const { kind, ids } = payload as { kind: HistoryKind; ids: string[] };
       const rows = this.maintenanceRows(kind, ids);
       if (plan.action !== kind || plan.revision !== stateHash(rows)) throw new Error("Proc state changed; prepare a new plan");
-      if (rows.some(row => ["starting", "running"].includes(row.state))) throw new Error("Proc record is still active");
+      if (rows.some(row => ["starting", "running", "active"].includes(row.state))) throw new Error("Proc record is still active");
     }, payload => {
-      const { kind, ids } = payload as { kind: "run_output" | "execution_content"; ids: string[] };
+      const { kind, ids } = payload as { kind: HistoryKind; ids: string[] };
       return ids.map(id => {
-        if (kind === "run_output") {
+        if (kind === "schedule_definition") {
+          const row = this.db.prepare("SELECT spec FROM schedules WHERE id=?").get(id) as { spec: string };
+          const spec = JSON.parse(row.spec) as ScheduleSpec & { contentClearedAt?: string; specDigest?: string };
+          const action: Action = spec.action.type === "api" ? { ...spec.action, input: {} }
+            : { ...spec.action, process: { ...spec.action.process, args: [], env: undefined, cwd: undefined } };
+          this.db.prepare("UPDATE schedules SET spec=?,revision=revision+1,updated_at=? WHERE id=?").run(JSON.stringify({ ...spec, action,
+            contentClearedAt: spec.contentClearedAt ?? iso(), specDigest: spec.specDigest ?? stateHash(spec) }), iso(), id);
+        } else if (kind === "run_output") {
           this.db.prepare("DELETE FROM lines WHERE run_id=?").run(id);
           this.db.prepare("UPDATE runs SET retain_output=0,output_truncated=1,output_bytes=0 WHERE id=?").run(id);
         } else this.db.prepare("UPDATE executions SET action=NULL,result=NULL,error=NULL WHERE id=?").run(id);
-        return { resource: id, outcome: "removed" as const, detail: kind === "run_output" ? "stdout/stderr cleared; existing output cursors disclose a gap" : "Captured action, result and error cleared; authority and outcome retained" };
+        return { resource: id, outcome: "removed" as const, detail: kind === "schedule_definition" ? "Removed schedule input, argv, env and cwd redacted; authority, target, label, timing and spec digest retained"
+          : kind === "run_output" ? "stdout/stderr cleared; existing output cursors disclose a gap" : "Captured action, result and error cleared; authority and outcome retained" };
       });
     });
   }

@@ -43,6 +43,9 @@ export const workItem = fields.extend({
   id: z.uuid(), sequence: z.number().int().positive(), revision: z.number().int().positive(),
   scopeRevision: z.number().int().positive(), createdBy: actor, updatedBy: actor,
   createdAt: z.number().int(), updatedAt: z.number().int(),
+  contentGeneration: z.number().int().nonnegative().optional(),
+  contentClearedAt: z.number().int().nullable().optional(),
+  contentDigest: z.string().nullable().optional(),
 });
 export const namespace = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_.-]{0,79}$/);
 export const metadata = z.record(z.string().min(1).max(128), z.json()).refine(value =>
@@ -61,9 +64,11 @@ export const receipt = z.strictObject({ requestId: z.uuid(), duplicate: z.boolea
   items: z.array(z.strictObject({ id: z.uuid(), revision: z.number().int().positive(), scopeRevision: z.number().int().positive() })) });
 export const activity = z.strictObject({ sequence: z.number().int().positive(), workItemId: z.uuid(), revision: z.number().int().positive(),
   scopeRevision: z.number().int().positive(), requestId: z.uuid(), actor, at: z.number().int(),
-  kind: z.enum(["created", "updated", "metadata", "note", "progress", "result", "decision", "handoff", "focus"]),
+  kind: z.enum(["created", "updated", "metadata", "note", "progress", "result", "decision", "handoff", "focus", "maintenance"]),
   fields: z.array(z.string()), changes: z.array(z.strictObject({ field: z.string(), before: z.json(), after: z.json() })),
-  body: z.string().nullable(), references: z.array(reference) });
+  body: z.string().nullable(), references: z.array(reference), contentClearedAt: z.number().int().optional() });
+export const historySelection = z.strictObject({ items: z.array(z.uuid()).min(1).max(100), scope: z.enum(["journal_bodies", "item_and_journal"]) });
+export type HistorySelection = z.infer<typeof historySelection>;
 export const focus = chatTarget.extend({ revision: z.number().int().nonnegative(), workItemId: z.uuid().nullable(),
   updatedAt: z.number().int().nullable(), updatedBy: actor.nullable() });
 export const workContext = z.strictObject({ workItemId: z.uuid(), scopeRevision: z.number().int().positive(),

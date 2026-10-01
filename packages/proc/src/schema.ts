@@ -52,6 +52,7 @@ export const scheduleRevision = scheduleId.extend({ expectedRevision: z.number()
 export const scheduleRecord = scheduleSpec.extend({ id, revision: z.number().int().positive(), system: z.boolean(),
   createdBy: actor, lastEditedBy: actor, authority: authority.nullable().describe("Null until a legacy schedule is explicitly reauthorized."),
   blockedReason: z.string().nullable(), retryAt: z.iso.datetime({ offset: true }).nullable(), removedAt: z.iso.datetime({ offset: true }).nullable(),
+  contentClearedAt: z.iso.datetime().nullable().optional(), specDigest: z.string().nullable().optional(),
   nextAt: z.iso.datetime({ offset: true }).nullable(), createdAt: z.iso.datetime({ offset: true }), updatedAt: z.iso.datetime({ offset: true }) });
 export type Schedule = z.infer<typeof scheduleRecord>;
 export const executionState = z.enum(["running", "completed", "failed", "refused", "unknown"]);

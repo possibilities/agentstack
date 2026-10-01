@@ -32,7 +32,7 @@
       "cache": false
     },
     "@stack/ui#test": {
-      "dependsOn": ["build", "^build", "@stack/hud#build"],
+      "dependsOn": ["build", "^build", "@stack/hud#build", "@stack/serve#build"],
       "cache": false
     }
   }

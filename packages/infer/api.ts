@@ -66,6 +66,9 @@ export const inferRequestGet = operation({
 export const topics = { infer_changed: "An inference request or cached model discovery changed. Re-read infer_request_list, infer_model_list, or the request you follow." } as const;
 const packageApi: PackageApi<InferContext, keyof typeof topics> = {
   operations: [inferModels, inferModelList, inferDiscover, inferComplete, inferStart, inferRequestList, inferRequestGet, inferTraceRead,
+    operation({ name: "infer_catalog_clear", description: "Evict in-memory model observations for exact accounts, or all when omitted. Abort and fence selected discovery, including request preflight. Already dispatched inference, durable requests, traces and credentials remain. Never starts discovery or inference; explicit future discovery regenerates. Derived eviction needs no plan or durable receipt. Local operator only.",
+      input: z.strictObject({ accountIds: z.array(z.uuid()).max(100).optional() }), output: z.strictObject({ cleared: z.array(z.uuid()) }), annotations: { idempotentHint: true },
+      async call(ctx: InferContext, { accountIds }, invocation) { requireStateOperator(invocation); return ctx.service.clearCatalog(accountIds); } }),
     operation({ name: "infer_history_plan", description: "Preview payload clearing for up to 100 exact terminal inference IDs. Running requests block cleanup; unknown remains unknown. IDs/digests, model/account, usage and outcomes remain so retries cannot charge again. Signal and source copies are separate.",
       input: z.strictObject({ requestIds: z.array(z.uuid()).min(1).max(100) }), output: statePlan,
       async call(ctx: InferContext, { requestIds }, invocation) { requireStateOperator(invocation); if (!ctx.service.traces) throw new Error("tracing unavailable"); return ctx.service.traces.historyPlan(requestIds); } }),

@@ -17,10 +17,12 @@ const action = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("launch_args_clear") }),
   z.strictObject({ kind: z.literal("upload_remove"), uploadId: z.uuid() }),
   z.strictObject({ kind: z.literal("recovery_discard"), directory: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$/) }),
+  z.strictObject({ kind: z.literal("queue_bodies_clear"), selection: z.union([z.strictObject({ ids: z.array(z.uuid()).min(1).max(100) }), z.strictObject({ generation: z.uuid() })]) }),
 ]);
 type Action = z.infer<typeof action>;
 type Prepared = { action: Action; incarnation: string; generation: string; mainThreadId: string | null; cwd: string;
-  botRevision: string; dependencies: StateDependencies; root: string | null; selection: z.infer<typeof selection> | null; snapshot: FileSnapshot | null; argsDigest: string | null };
+  botRevision: string; dependencies: StateDependencies; root: string | null; selection: z.infer<typeof selection> | null; snapshot: FileSnapshot | null; argsDigest: string | null;
+  queue?: ReturnType<BotsContext["chats"]["queueState"]> };
 const read = { readOnlyHint: true } as const;
 const link = (operation: string, args: Record<string, unknown>) => ({ package: "bots", operation, arguments: args });
 const retainedCopies = ["Signal captured messages and source-read blobs", "Infer request payloads and traces", "Worker sessions, transcripts, Git worktrees and retained branches",
@@ -70,7 +72,7 @@ export class BotState {
         reads: [link("chat_tree", { botId: id }), link("bot_history_list", { botId: id })], actions: [{ ...link("bot_state_plan", { botId: id, action: { kind: "session_reset", history: "retain" } }), blockedBy: deps.blockedBy }],
         retention: "Only the active sanctioned root resumes. Retired history generations remain separately addressable until purged.", regeneration: "The first durable turn in a fresh namespace binds a new root. Server startup still autostarts recorded Bots." },
       { ...base, id: `bot:${id}:queue`, kind: "queue", items: ctx.chats.queueState(id).length, coverage: "complete", revision: stateHash(ctx.chats.queueState(id)),
-        reads: [link("bot_queue_history", { botId: id })], actions: [], retention: "Reset cancels pending Stack deliveries; sent and unknown outcomes and admission identities remain. Native queued input remains in retained history, never loaded by the new generation.", regeneration: "Explicit enqueue admissions only." },
+        reads: [link("bot_queue_history", { botId: id })], actions: [{ ...link("bot_state_plan", { botId: id }), blockedBy: deps.blockedBy }], retention: "Exact terminal queue bodies can clear with original byte counts/digests retained. Reset cancels pending deliveries; unknown remains unknown. Native queue/history are independent copies.", regeneration: "Explicit new enqueue IDs only; cleared admissions can never dispatch again." },
       { ...base, id: `bot:${id}:uploads`, kind: "storage", reads: [link("chat_upload_list", { botId: id })], actions: [],
         retention: "Staged and finalized bytes remain until upload removal or Bot removal. Transcript attachment associations and copied bytes are independent.", regeneration: "Explicit upload admissions." },
       { ...base, id: `bot:${id}:launch`, kind: "configuration", sensitivity: "credential", reads: [link("bot_launch_read", { botId: id }), link("bot_settings_read", { id })],
@@ -85,6 +87,17 @@ export class BotState {
   async prepare(ctx: BotsContext, id: string, selected: Action) {
     const bot = this.bot(ctx, id), identity = ctx.store.stateIdentity(id), deps = await this.dependencies(ctx, id);
     const blockedBy = [...deps.blockedBy];
+    let queue: Prepared["queue"];
+    if (selected.kind === "queue_bodies_clear") {
+      if ("generation" in selected.selection) {
+        const generation = selected.selection.generation;
+        const history = ctx.store.historyGenerations(id).find(row => row.generation === generation);
+        if (!history || !history.retiredAt) throw new Error("Queue generation selection requires an exact retired generation of this Bot incarnation");
+      }
+      queue = ctx.chats.queueBodySelection(id, selected.selection);
+      if (queue.length > 10000) throw new Error("Queue generation exceeds the selection bound; select exact IDs");
+      blockedBy.push(...queue.filter(row => ["pending", "dispatching"].includes(row.state)).map(row => `Queue ${row.id} is ${row.state}; cancel or reconcile before body cleanup`));
+    }
     let root: string | null = null, files: Prepared["selection"] = null, snapshot: FileSnapshot | null = null;
     if (selected.kind === "workspace_clear") {
       if (!ctx.ledger.ownsWorkspace(id) || bot.cwd !== join(ctx.root, id)) blockedBy.push("Workspace is external; Stack does not own its contents");
@@ -104,9 +117,9 @@ export class BotState {
       catch (error) { blockedBy.push(`File selection unavailable: ${String(error)}`); }
     }
     const payload: Prepared = { action: selected, ...identity, mainThreadId: bot.mainThreadId, cwd: bot.cwd, botRevision: stateHash(bot),
-      dependencies: deps, root, selection: files, snapshot, argsDigest: selected.kind === "launch_args_clear" ? stateHash(ctx.supervisor.settingsArgs(id)) : null };
+      dependencies: deps, root, selection: files, snapshot, argsDigest: selected.kind === "launch_args_clear" ? stateHash(ctx.supervisor.settingsArgs(id)) : null, ...(queue ? { queue } : {}) };
     return { payload, preview: { subject: { kind: "bot-incarnation", id: identity.incarnation }, action: selected.kind,
-      revision: stateHash(payload), resources: snapshot ? snapshot.roots : [`bot:${id}:${identity.generation}:${selected.kind}`], blockedBy,
+      revision: stateHash(payload), resources: queue ? queue.map(row => row.id) : snapshot ? snapshot.roots : [`bot:${id}:${identity.generation}:${selected.kind}`], blockedBy,
       retained: [...deps.retained, ...(selected.kind === "session_reset" && selected.history === "retain" ? [`History generation ${identity.generation}`] : []),
         ...(selected.kind === "upload_remove" ? ["Attachment associations, transcript paths and copied upload bytes remain; references to these bytes will no longer open", "Upload UUID remains retired for this Bot incarnation; use a new UUID for future uploads"] : []),
         ...(selected.kind === "recovery_discard" ? ["Only the selected retired credential copy is discarded; unsaved credential refreshes in it will be lost"] : [])],
@@ -115,18 +128,30 @@ export class BotState {
   }
   async apply(ctx: BotsContext, id: string, input: StateApplyInput, kind: Action["kind"]) {
     const identity = ctx.store.stateIdentity(id);
-    const existing = this.journal.existing(input);
+    const journal = kind === "queue_bodies_clear" ? ctx.chats.maintenance : this.journal;
+    const other = kind === "queue_bodies_clear" ? this.journal : ctx.chats.maintenance;
+    const existing = journal.existing(input) ?? other.existing(input);
     if (existing) {
       if (existing.subject?.id !== identity.incarnation || existing.action !== kind) throw new Error("receipt belongs to another Bot incarnation or action");
       return existing;
     }
     return ctx.supervisor.maintain(id, async () => {
-      const duplicate = this.journal.existing(input); if (duplicate) return duplicate;
-      const saved = this.journal.getPlan(input.planId), payload = saved.payload as Prepared;
+      const duplicate = journal.existing(input); if (duplicate) return duplicate;
+      const saved = journal.getPlan(input.planId), payload = saved.payload as Prepared;
       if (saved.plan.subject?.id !== identity.incarnation || saved.plan.action !== kind) throw new Error("plan belongs to another Bot incarnation or action");
       const current = await this.prepare(ctx, id, payload.action);
       if (current.preview.revision !== input.expectedRevision || saved.plan.revision !== input.expectedRevision) throw new Error("Bot state or dependencies changed; prepare a new plan");
       if (current.preview.blockedBy.length) throw new Error(current.preview.blockedBy.join("; "));
+      // Dependency observations await other owners. A different Bot may have
+      // admitted this UUID in the other journal while those reads were pending.
+      if (other.existing(input)) throw new Error("state request ID already used by another Bot maintenance journal");
+      if (kind === "queue_bodies_clear") {
+        const ids = payload.queue!.map(row => row.id);
+        const receipt = journal.atomic(input, (plan) => {
+          if (plan.revision !== input.expectedRevision || stateHash(ctx.chats.queueBodySelection(id, { ids })) !== stateHash(payload.queue)) throw new Error("Queue changed; prepare a new plan");
+        }, () => ctx.chats.clearQueueBodies(id, ids));
+        ctx.queue.onChange?.(id); this.onChange?.(id); return receipt;
+      }
       ctx.store.fenceMaintenance(id, input.requestId);
       this.journal.begin(input, saved.plan);
       const outcomes: StateOutcome[] = [];
@@ -172,7 +197,7 @@ export const botStateOperations = [
       return ctx.supervisor.maintain(id, async () => {
         if (ctx.store.stateIdentity(id).generation !== expectedGeneration) throw new Error("Bot generation changed");
         const fence = ctx.store.maintenanceFence(id); if (fence && fence !== requestId) throw new Error("another request holds the maintenance fence");
-        if (ctx.state.journal.receipt(requestId)?.status === "running") throw new Error("maintenance is still running");
+        if ((ctx.state.journal.receipt(requestId) ?? ctx.chats.maintenance.receipt(requestId))?.status === "running") throw new Error("maintenance is still running");
         ctx.store.releaseMaintenance(id, requestId); ctx.state.onChange?.(id); return { released: true as const };
       }); } }),
   operation({ name: "bot_workspace_list", description: "List one relative directory in a Bot workspace, including stopped or externally owned workspaces. Bounded to 10000 siblings and paged at 100. Symlinks are listed but never traversed. Pass revision on later pages; native tools can change files without API events.",
@@ -181,16 +206,16 @@ export const botStateOperations = [
   operation({ name: "bot_workspace_read", description: "Read at most 256 KiB from a workspace regular file as base64 bytes. Relative paths only; no symlink components or special files. Pass the observed file revision to fence changes. Reading does not grant deletion authority over an external cwd.",
     input: z.strictObject({ botId, path: relativePath, offset: z.number().int().nonnegative().default(0), length: z.number().int().min(1).max(262144).default(65536), revision: z.string().optional() }), output: stateFileRead, annotations: read,
     async call(ctx: BotsContext, { botId: id, ...input }, invocation) { requireStateOperator(invocation); return readStateFile(ctx.state.bot(ctx, id).cwd, input); } }),
-  operation({ name: "bot_state_plan", description: "Preview exact workspace, conversation, retired-history, log or saved-argument cleanup. Requires explicit history retention and file selection. Plans expire after one hour and bind the Bot incarnation, generation, file identities and dependencies. Apply never implicitly stops or starts a Bot.",
+  operation({ name: "bot_state_plan", description: "Preview exact workspace, conversation, retired-history, queue-body, log or saved-argument cleanup. Queue bodies select exact IDs or an attributed retired generation; pending/dispatching entries block. Requires explicit history retention/file selection. One-hour plans bind incarnation, generation, resource identities and dependencies. Apply never implicitly stops or starts a Bot.",
     input: z.strictObject({ botId, action }), output: statePlan,
-    async call(ctx: BotsContext, { botId: id, action }, invocation) { requireStateOperator(invocation); const prepared = await ctx.state.prepare(ctx, id, action); return ctx.state.journal.plan(prepared.preview, prepared.payload); } }),
-  ...(["workspace_clear", "session_reset", "history_clear", "log_clear", "launch_args_clear", "upload_remove", "recovery_discard"] as const).map(kind => operation({ name: `bot_${kind}`,
+    async call(ctx: BotsContext, { botId: id, action }, invocation) { requireStateOperator(invocation); const prepared = await ctx.state.prepare(ctx, id, action); return (action.kind === "queue_bodies_clear" ? ctx.chats.maintenance : ctx.state.journal).plan(prepared.preview, prepared.payload); } }),
+  ...(["workspace_clear", "session_reset", "history_clear", "log_clear", "launch_args_clear", "upload_remove", "recovery_discard", "queue_bodies_clear"] as const).map(kind => operation({ name: `bot_${kind}`,
     description: `Apply an exact ${kind} plan under the stopped Bot lifecycle fence. Supply the plan revision and a fresh request ID; identical retries return the durable receipt, including partial or unknown outcomes. Changed state requires a new plan. Related owner copies and minimal receipts remain as disclosed.`,
     input: stateApplyInput.extend({ botId }), output: stateReceipt, annotations: { destructiveHint: true, idempotentHint: true },
     async call(ctx: BotsContext, { botId: id, ...input }, invocation) { requireStateOperator(invocation); return ctx.state.apply(ctx, id, input, kind); } })),
   operation({ name: "bot_state_receipt_get", description: "Read the durable result of one Bot state-maintenance request, including retained copies and partial or unknown outcomes. A lost response never authorizes repeating cleanup against newer files or a reused Bot ID.",
     input: z.strictObject({ requestId: z.uuid() }), output: z.strictObject({ receipt: stateReceipt.nullable() }), annotations: read,
-    async call(ctx: BotsContext, { requestId }, invocation) { requireStateOperator(invocation); return { receipt: ctx.state.journal.receipt(requestId) }; } }),
+    async call(ctx: BotsContext, { requestId }, invocation) { requireStateOperator(invocation); return { receipt: ctx.state.journal.receipt(requestId) ?? ctx.chats.maintenance.receipt(requestId) }; } }),
   operation({ name: "bot_history_list", description: "Page this Bot incarnation's active and retired conversation generations. Each retains its formerly sanctioned root and owned namespace; legacy shared history is labelled shared and cannot be purged wholesale. Purged generations retain only lifecycle metadata.",
     input: statePageInput.extend({ botId }), output: z.strictObject({ generations: z.array(z.strictObject({ generation: z.uuid(), mainThreadId: z.string().nullable(), active: z.boolean(), ownership: z.enum(["stack", "shared"]), createdAt: z.string(), retiredAt: z.string().nullable(), purgedAt: z.string().nullable() })), revision: z.string(), nextOffset: z.number().int().nullable() }), annotations: read,
     async call(ctx: BotsContext, { botId: id, ...input }, invocation) { requireStateOperator(invocation); const current = ctx.store.stateIdentity(id);
@@ -199,7 +224,7 @@ export const botStateOperations = [
       const revision = stateHash(rows); if (input.revision && input.revision !== revision) throw new Error("history generations changed; restart paging");
       return { generations: rows.slice(input.offset, input.offset + input.limit), revision, nextOffset: input.offset + input.limit < rows.length ? input.offset + input.limit : null }; } }),
   operation({ name: "bot_queue_history", description: "Page content-free queue entries across active and retired Bot roots, including stranded, cancelled and unknown admissions. Conversation reset cancels pending entries without changing unknown outcomes. Detailed active-root messages remain in chat_queue_list.",
-    input: statePageInput.extend({ botId }), output: z.strictObject({ entries: z.array(z.strictObject({ id: z.uuid(), threadId: z.string(), state: z.enum(["pending", "dispatching", "sent", "unknown", "cancelled"]), bytes: z.number().int() })), revision: z.string(), nextOffset: z.number().int().nullable() }), annotations: read,
+    input: statePageInput.extend({ botId }), output: z.strictObject({ entries: z.array(z.strictObject({ id: z.uuid(), threadId: z.string(), state: z.enum(["pending", "dispatching", "sent", "unknown", "cancelled"]), bytes: z.number().int(), admissionDigest: z.string(), generation: z.uuid().nullable(), contentClearedAt: z.iso.datetime().nullable() })), revision: z.string(), nextOffset: z.number().int().nullable() }), annotations: read,
     async call(ctx: BotsContext, { botId: id, ...input }, invocation) { requireStateOperator(invocation); ctx.state.bot(ctx, id); const rows = ctx.chats.queueState(id), revision = stateHash(rows);
       if (input.revision && input.revision !== revision) throw new Error("queue changed; restart paging");
       return { entries: rows.slice(input.offset, input.offset + input.limit), revision, nextOffset: input.offset + input.limit < rows.length ? input.offset + input.limit : null }; } }),

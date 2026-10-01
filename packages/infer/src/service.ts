@@ -110,6 +110,9 @@ export class InferService {
   private readonly running = new Map<string, { controller: AbortController; task: Promise<unknown> }>();
   private readonly observations = new Map<string, ModelObservation>();
   private readonly discoveries = new Map<string, { controller: AbortController; task: Promise<void> }>();
+  private readonly catalogTasks = new Set<{ accountId: string; controller: AbortController }>();
+  private catalogGeneration = 0;
+  private readonly accountGenerations = new Map<string, number>();
   private closing = false;
   constructor(readonly stateDir: string, private readonly discover: Discover = (dir, auth, signal) => discoverModels(dir, auth, undefined, signal),
     private readonly fetcher: typeof fetch = fetch, private readonly credentials: typeof readCredentials = readCredentials,
@@ -117,13 +120,15 @@ export class InferService {
 
   /** Discovers now and waits; also refreshes the cached observation. */
   async models(accountId: string): Promise<{ models: Model[]; observedAt: string }> {
+    const generation = this.catalogEpoch(accountId);
     const { auth } = await this.credentials(this.stateDir, accountId);
     try {
-      const observed = { models: await this.discover(this.stateDir, auth), observedAt: new Date().toISOString() };
+      const observed = { models: await this.discoverCatalog(accountId, auth, generation), observedAt: new Date().toISOString() };
+      if (generation !== this.catalogEpoch(accountId)) throw new Error("cancelled");
       this.observe(accountId, { ...observed, error: null });
       return observed;
     } catch {
-      this.observe(accountId, { error: "catalog_unavailable" });
+      if (generation === this.catalogEpoch(accountId)) this.observe(accountId, { error: "catalog_unavailable" });
       throw new Error("catalog_unavailable");
     }
   }
@@ -132,23 +137,48 @@ export class InferService {
     return [...this.observations.values()].filter((row) => !accountId || row.accountId === accountId);
   }
 
+  /** Derived observations only: abort and fence discovery, never dispatch a refresh or cancel admitted inference. */
+  clearCatalog(accountIds?: string[]): { cleared: string[] } {
+    const ids = [...new Set(accountIds ?? [...this.observations.keys(), ...this.discoveries.keys(), ...[...this.catalogTasks].map(task => task.accountId)])].sort();
+    if (accountIds === undefined) { this.catalogGeneration++; this.accountGenerations.clear(); }
+    else for (const id of ids) this.accountGenerations.set(id, (this.accountGenerations.get(id) ?? 0) + 1);
+    for (const id of ids) { this.observations.delete(id); this.discoveries.get(id)?.controller.abort(); this.discoveries.delete(id); }
+    for (const task of this.catalogTasks) if (accountIds === undefined || ids.includes(task.accountId)) task.controller.abort();
+    this.changed();
+    return { cleared: ids };
+  }
+
+  private catalogEpoch(accountId: string): string { return `${this.catalogGeneration}:${this.accountGenerations.get(accountId) ?? 0}`; }
+  private async discoverCatalog(accountId: string, auth: string, generation: string, signal?: AbortSignal): Promise<Model[]> {
+    if (this.closing || generation !== this.catalogEpoch(accountId)) throw new Error("cancelled");
+    const task = { accountId, controller: new AbortController() };
+    this.catalogTasks.add(task);
+    try {
+      const models = await this.discover(this.stateDir, auth, signal ? AbortSignal.any([signal, task.controller.signal]) : task.controller.signal);
+      if (task.controller.signal.aborted || generation !== this.catalogEpoch(accountId)) throw new Error("cancelled");
+      return models;
+    } finally { this.catalogTasks.delete(task); }
+  }
+
   /** Starts a background discovery, coalescing with one already running. An unusable account is refused and forgotten. */
   async refreshModels(accountId: string): Promise<ModelObservation> {
     if (this.closing) throw new Error("infer_closing");
+    const generation = this.catalogEpoch(accountId);
     let auth: string;
     try { ({ auth } = await this.credentials(this.stateDir, accountId)); }
     catch (error) {
-      if (this.observations.delete(accountId)) this.changed();
+      if (generation === this.catalogEpoch(accountId) && this.observations.delete(accountId)) this.changed();
       throw error;
     }
     if (this.closing) throw new Error("infer_closing");
+    if (generation !== this.catalogEpoch(accountId)) throw new Error("cancelled");
     if (!this.discoveries.has(accountId)) {
       const controller = new AbortController();
       this.observe(accountId, { discovering: true });
-      const task = this.discover(this.stateDir, auth, controller.signal)
-        .then((models) => this.observe(accountId, { models, observedAt: new Date().toISOString(), discovering: false, error: null }),
-          () => this.observe(accountId, { discovering: false, error: "catalog_unavailable" }))
-        .finally(() => this.discoveries.delete(accountId));
+      const task = this.discoverCatalog(accountId, auth, generation, controller.signal)
+        .then((models) => { if (generation === this.catalogEpoch(accountId)) this.observe(accountId, { models, observedAt: new Date().toISOString(), discovering: false, error: null }); },
+          () => { if (generation === this.catalogEpoch(accountId)) this.observe(accountId, { discovering: false, error: "catalog_unavailable" }); })
+        .finally(() => { if (this.discoveries.get(accountId)?.controller === controller) this.discoveries.delete(accountId); });
       this.discoveries.set(accountId, { controller, task });
     }
     return this.observations.get(accountId)!;
@@ -198,6 +228,7 @@ export class InferService {
   prepareClose(): void {
     this.closing = true;
     for (const { controller } of [...this.running.values(), ...this.discoveries.values()]) controller.abort();
+    for (const { controller } of this.catalogTasks) controller.abort();
   }
 
   async close(): Promise<void> {
@@ -237,11 +268,12 @@ export class InferService {
   private changed(): void { this.onChange?.(); }
 
   private async completeOnce(input: CompleteInput, requestId: string, signal: AbortSignal): Promise<CompleteOutput> {
+    const generation = this.catalogEpoch(input.accountId);
     const credentials = await this.credentials(this.stateDir, input.accountId);
     let models: Model[];
-    try { models = await this.discover(this.stateDir, credentials.auth, signal); }
+    try { models = await this.discoverCatalog(input.accountId, credentials.auth, generation, signal); }
     catch { throw new Error(signal.aborted ? "cancelled" : "catalog_unavailable"); }
-    this.observe(input.accountId, { models, observedAt: new Date().toISOString(), error: null });
+    if (generation === this.catalogEpoch(input.accountId)) this.observe(input.accountId, { models, observedAt: new Date().toISOString(), error: null });
     if (!models.some((row) => row.id === input.model && row.supportedEfforts.includes(input.effort))) throw new Error("model_unavailable");
     if (signal.aborted) throw new Error("cancelled");
     this.traces?.event(requestId, "catalog", { models });
