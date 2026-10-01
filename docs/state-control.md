@@ -77,7 +77,7 @@ can retain `.stack-clear-<uuid>` quarantine, named in the result for inspection.
 | Brain | Research/jobs/source reads, audited `jobs_reveal`; job/Run `content_cleared_at`, Run `payload_digest`, source `removed_at` and `checkpoint_generation` | `brain_jobs_plan({ids,scope:"payload"})` / `brain_jobs_clear` for terminal jobs without indexed documents; `brain_runs_plan` / `brain_runs_clear` for terminal drained Runs including captured recovery jobs, retaining immutable authorization. `brain_source_plan({id,action:"remove"\|"checkpoint_reset"})` / `brain_source_clear` requires paused/drained source and protected Proc observation. `brain_artifacts_plan({digests})` / `brain_artifacts_clear` fences every live reference before collecting exact stranded objects. `brain_state_receipt_get` reads any receipt. Existing document deletion/cancel/exclude remain separate authorities. |
 | Browse | Owner inventory links profiles, controllers and handoffs; provider volume coverage is explicit | Existing profile deletion, controller closure, handoff completion/cancellation and installation lifecycle operations. Profile deletion enforces default/controller/handoff restrictions and calls the native provider. |
 | Auth / Access | Credential-metadata inventories link existing account/client snapshots | Existing account removal/reconciliation and Access revocation. Account removal can cascade; revocation retains identity/admission history. State inventory reveals no bearer values. |
-| Roles | Catalog, injection-storage and external-shim inventory | Existing granular catalog edits/deletion and hash-fenced shim deletion. A current Role preview is not a retained launch snapshot. |
+| Roles | Catalog, `role_launch_list` injection metadata and external-shim inventory | `role_launch_plan({ids})` / `role_launch_clear` selects exact exited injection directories, binding launch PID/start identity and file snapshot. Live, missing/legacy locks, interrupted teardown and symlink/special content block; descriptor-relative removal retains partial/quarantine or unknown receipts via `roles_state_receipt_get`. Bot/Worker materializations and external histories remain separate. Existing granular catalog edits and shims remain their own lifecycles. |
 | Scrape | `scrape_queue_list` includes any `maintenanceFence`; `scrape_corpus_list({preset})` lists final local capture IDs | `scrape_queue_plan({ids,action:"cancel"\|"retry"\|"discard"})` / `scrape_queue_apply`: cancel pending-only, retry failed under a new generation, discard failed or receipt-retired remaining files. Native claims/publication recovery block. `scrape_corpus_plan({captures:[{preset,id}]})` / `scrape_corpus_clear` selects exact final overlay IDs, not shipped fixtures. `scrape_state_receipt_get` retains partial/unknown admission and planned retry names. External destination files never clear. |
 | API | Reference/discovery inventory | Derived discovery is regenerated from manifests, typed operations and live metadata. |
 
@@ -141,8 +141,9 @@ The following remain explicit backend gaps rather than implied erase controls:
 - Scrape authenticated browser sessions belong to Browse; unattributed retirement
   quarantine and publication temporaries stay with existing queue recovery. Maintenance
   never breaks live, dead or unresolved claim evidence to make a plan pass.
-- Roles retained injection-launch cleanup, standalone settings-receipt retirement,
-  Auth cache-only clearing and Access history/session-specific retirement.
+- Roles legacy/unlocked injection directories or interrupted native teardown are
+  unknown, not automatically adopted for removal. External native histories and
+  Bot/Worker materializations remain with their owners.
 - Signal historical checkpoint replay is intentionally unavailable: rebaseline-to-now
   only. Explicit run replay remains a separate spend-bearing operation.
 - Content vault/Git-history purge and temporary publication collection. Document
