@@ -64,6 +64,7 @@ can retain `.stack-clear-<uuid>` quarantine, named in the result for inspection.
 | --- | --- | --- |
 | Bots | `bot_state_read`, `bot_workspace_list/read`, `bot_history_list`, `bot_queue_history`, `bot_launch_read`, `bot_log_read`, `bot_recovery_list`, `chat_upload_list/read` | `bot_state_plan` selects `workspace_clear`, `session_reset` with `history:retain/purge`, `history_clear` of one retired generation, `queue_bodies_clear` with exact IDs or an attributed retired generation, `log_clear`, `launch_args_clear`, `upload_remove` or `recovery_discard`. Apply through corresponding `bot_<kind>`. Terminal queue clearing retains original bytes/digest, destination and sent/unknown/cancelled outcome; pending/dispatching blocks. |
 | Serve | `serve_state_list`, `serve_subscription_list/get`, `serve_settings_read`, enabled-only `serve_harness_releases` | `serve_subscription_remove` uses exact ID/revision. Pending reads are aborted; already admitted native input cannot be recalled. `serve_settings_update` uses the observed revision and applies developer mode immediately; disabling aborts/fences release checks while retaining observations. |
+| Installation factory reset (Serve) | `serve_factory_reset_plan({scope:"installation"})`; `serve_factory_reset_receipt_get({requestId})` | `serve_factory_reset_clear` adds literal `confirmation:"factory-reset"` and `externalWritersQuiesced:true` to the shared apply input. Return on admission; parent teardown precedes owner resource cleanup and active-state deletion. New data generation and later Access identity; installation stays stopped/fenced. Exact cold `serve_factory_reset_recover` records dead-writer uncertainty without replay; `serve_factory_reset_fence_release({requestId,expectedGeneration})` permits a later explicit start only after completed reset, absent writer and still-empty root. Private socket only; no MCP/WebSocket/UI control. |
 | Worker | Status/detail/transcript/turn/record/tool/diff; `worker_workspace_list/read`; `worker_state_branches` retains recorded branch metadata after Worker removal | `worker_state_plan({ids,kind:"git_reset"\|"transcript"\|"branch"\|"native_session"\|"catalog",allowUnmerged:[]})` / `worker_state_clear`. Closed-only except catalog; reset preserves old tip at `refs/stack/retained/<worker>`. Transcript redaction keeps turn/replay/outcome/usage/settings/Work authority with `contentClearedAt`. Branch collection requires recorded, unreferenced, unchecked-out scope and merge into recorded base or per-branch override. Native purge requires disabled/drained account, idle sign-in and verified exact scope/version. Account-shared catalog clearing fences discovery. `worker_state_receipt_get` covers every kind; existing close/remove remain separate. |
 | Bot / Worker settings receipts | Existing `bot_settings_read` / `worker_settings_read` | `bot_settings_receipts_plan({targets:[{id?}],retainDays:7})` / `bot_settings_receipts_clear`; `worker_settings_receipts_plan({targets:[{id?\|provider?}],retainDays:7})` / `worker_settings_receipts_clear`. Exact targets, below current revision and at least seven days old; retain unknown-age legacy rows and permanent minimal intent-digest/revision tombstones. Saved/loaded/native settings never change. Receipts are read through `bot_state_receipt_get` / `worker_state_receipt_get`. |
 | Infer | Existing request list/get, trace export and `infer_model_list` | `infer_history_plan({requestIds})` / `infer_history_clear`: terminal input, instructions, output, errors and events; preserve request digest, account/model/usage/timing and outcome. `infer_catalog_clear({accountIds?})` evicts exact account observations (omitted means all), aborts/fences discovery and never refreshes or dispatches inference. Already dispatched inference is untouched. |
@@ -136,9 +137,65 @@ inventories `serve/harness-releases.json`. The global developer-mode default is
 disabled. Release observations survive disable and restart; restored evidence is
 explicitly stale until verified. Enabled sampling or an explicit enabled check
 can regenerate observations, but the previous different version is retained
-history, not a reconstructible installed-version comparison. No global-settings
-reset or release-cache deletion operation is supplied. See
+history, not a reconstructible installed-version comparison. No independent global-settings
+reset or release-cache deletion operation is supplied; explicit installation factory
+reset is a separate destructive lifecycle. See
 [ADR 0138](adr/0138-developer-mode-and-harness-releases.md).
+
+### Installation factory-reset lifecycle
+
+Factory reset is a separately confirmed whole-generation operation, not a batch of
+individual maintenance controls. The plan binds installation directory incarnation,
+data generation, Access identity and exact Auth/Worker/Browser resource identities.
+Unknown root entries, live/unresolved standalone Role launches and unproven resources
+refuse. The apply declaration requires independent writers to have been quiesced;
+the Server does not claim a global OS lock. Ordinary state writes up to quiescence
+are included in the selected generation, not silently retained.
+
+Apply durably fences admissions/startup before returning a `running` receipt. The
+parent closes ingress, drains owners and requires clean exit plus owned process-group
+absence; failed/forced teardown does not authorize root deletion. Browse callbacks
+remove recorded provider instances then unmounted volumes; foreign/unattributed
+resources remain. Auth removes exact profile-owned keychain items, never personal
+keychain services. Worker linked worktrees are removed through Git while source
+checkouts/branches/commits/retained refs remain. Old Vault files and Git are relocated
+unchanged to sibling `<state>.retained-git/<requestId>/vault`; the active Vault starts
+empty, but retained authored bodies were **not erased**. Unretained Git metadata,
+quarantines, mounts, special files or over-budget snapshots block root clearing.
+
+An in-root `browser/hypeman` provider store or interrupted `hypeman-staging-*`
+installation **blocks** factory reset before admission. Raw provider databases/disks
+may contain foreign or orphaned resources; exact instance/volume-ID deletion does
+not authorize sweeping them. Resolve/uninstall that store explicitly through Browse
+first, or keep the selected provider outside the installation. External provider
+resources are still cleaned only by exact proven claims; foreign resources remain.
+
+Active accounts, secrets, Roles/settings, owner data/ledgers, sessions/signing keys
+and Access identity are deleted only after verified teardown. The private sibling
+`<state>.factory-control` keeps content-free scope/digest/generation evidence and
+receipts outside that data. Device, Canvas and independent Client-host copies,
+personal credentials/histories, source/retained Git, external binaries/configuration,
+TLS/Tailscale and backups remain; factory reset is not secure media erasure or
+confirmation of external native outcomes. Managed toolchain files inside active
+state are part of that state and may be removed.
+
+Use the same typed cold handlers after Server shutdown, with the **same** explicit
+`STACK_STATE_DIR` as the reset installation:
+
+```sh
+stack serve factory-reset-control serve_factory_reset_receipt_get '{"requestId":"<UUID>"}'
+stack serve factory-reset-control serve_factory_reset_recover '{"requestId":"<UUID>"}'
+stack serve factory-reset-control serve_factory_reset_fence_release '{"requestId":"<UUID>","expectedGeneration":"<nextGeneration UUID>"}'
+```
+
+Receipt read does not initialize erased owners. Recovery requires definitely absent
+reset-writer PID and marks interrupted admissions unknown without redispatch. PID
+reuse/unknown liveness blocks. Partial/unknown and unexplained fences cannot be
+released through this API; inspect exact resources and preserve evidence. Completed
+reset also stays startup-fenced until exact request/new-generation release proves
+writer absence and an empty root. Release starts nothing; a later explicit Server
+start creates fresh defaults and a fresh Access identity, requiring new pairing.
+See [ADR 0158](adr/0158-installation-factory-reset.md).
 
 ## Coverage boundaries
 

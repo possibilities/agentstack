@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { serveHttp } from "@stack/api";
+import { assertInstallationOpen, serveHttp } from "@stack/api";
 import { z } from "zod";
 import { decodePayload } from "./payload.js";
 import { object, type DeliveryHeaders } from "./summary.js";
@@ -56,7 +56,7 @@ const json = (status: number, value: unknown) => new Response(JSON.stringify(val
 export async function startGithubIngress(store: GithubStore, env: NodeJS.ProcessEnv, changed: (endpointId: string, watches: string[], duplicate: boolean) => void) {
   let inFlight = 0, bodyBytes = 0, closing = false;
   let drained: (() => void) | undefined;
-  const running = await serveHttp({ host: "127.0.0.1", port: githubPort(env), headersTimeout: 10_000, requestTimeout: 15_000, forceCloseConnections: true,
+  const running = await serveHttp({ env, host: "127.0.0.1", port: githubPort(env), headersTimeout: 10_000, requestTimeout: 15_000, forceCloseConnections: true,
     async handle(request) {
       if (closing) return json(503, { error: "github_stopping" });
       const url = new URL(request.url), match = /^\/github\/webhooks\/([^/]+)$/.exec(url.pathname);
@@ -90,6 +90,7 @@ export async function startGithubIngress(store: GithubStore, env: NodeJS.Process
           }
         } finally { reader.releaseLock(); }
         const raw = Buffer.concat(parts);
+        try { assertInstallationOpen(env); } catch { throw new IntakeError(503, "github_installation_fenced"); }
         if (!signatureMatches(raw, request.headers.get("x-hub-signature-256"), store.secrets(endpoint.id))) throw new IntakeError(401, "github_signature_invalid");
         let payload: Record<string, unknown>;
         try { payload = decodePayload(raw, type); } catch { throw new IntakeError(400, "github_payload_invalid"); }
@@ -105,7 +106,7 @@ export async function startGithubIngress(store: GithubStore, env: NodeJS.Process
         return json(202, { accepted: true, duplicate: admitted.duplicate, sequence: admitted.record.sequence, deliveryId });
       } catch (error) {
         const failure = error instanceof IntakeError ? error : new IntakeError(400, "github_request_incomplete");
-        store.failure(endpoint.id, failure.code); changed(endpoint.id, [], true);
+        if (failure.code !== "github_installation_fenced") { store.failure(endpoint.id, failure.code); changed(endpoint.id, [], true); }
         return json(failure.status, { error: failure.code });
       } finally { bodyBytes -= reserved; inFlight--; if (!inFlight) drained?.(); }
     },

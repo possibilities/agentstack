@@ -1,7 +1,7 @@
 name: browse
 description: Durable Bot browser profiles, supervised Kernel runtimes, controller binding and local toolchain management. Page actions remain in agent-browser.
 socket:
-  description: Owner-local provider lifecycle, constrained disposable research browsers and system management; not an agent-facing browser transport.
+  description: Owner-local provider lifecycle, constrained disposable research browsers and system management, including exact parent-fenced installation-reset inspection/callbacks; not an agent-facing browser transport.
 mcp:
   workerOperations: []
   events: [browser_handoffs_changed]

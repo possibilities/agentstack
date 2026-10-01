@@ -8,11 +8,29 @@ import test from "node:test";
 import { AuthStore } from "../src/store.js";
 import { accountEnvironment, accountRoot, credentialEvidence, loginCommand, prepareAccountProfile } from "../src/worker-accounts.js";
 import { claudeConfigRoot, claudeKeychainAccount, claudeKeychainService, claudeRuntimePath, readClaudeCredentials, removeClaudeCredentials } from "../src/claude-credentials.js";
+import { observeAuthFactoryReset, clearAuthFactoryCredentials } from "../src/factory-reset.js";
 
 const fileOnly = { platform: "linux" as const };
 const identityA = "10000000-0000-4000-8000-000000000001";
 const identityB = "10000000-0000-4000-8000-000000000002";
 const credential = (access: string) => ({ claudeAiOauth: { accessToken: access, refreshToken: `${access}-refresh`, scopes: ["user:inference"], expiresAt: 9999999999999 } });
+test("factory credential cleanup rejects changed account scope and keychain failure; only reserved installation services are removed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stack-factory-auth-")), store = new AuthStore(root);
+  try {
+    const account = store.prepareWorker("claude"); await prepareAccountProfile(root, account, fileOnly);
+    const snapshot = observeAuthFactoryReset(root), calls: string[][] = [], outcomes: unknown[] = [];
+    const extra = store.prepareWorker("devin");
+    await assert.rejects(clearAuthFactoryCredentials(root, snapshot, value => outcomes.push(value), { platform: "darwin", security: async args => { calls.push(args); return { code: 0, stdout: "" }; } }), /identity changed/);
+    assert.equal(calls.length, 0);
+    store.beginWorkerRemoval(extra.id); store.finishWorkerRemoval(extra.id);
+    await assert.rejects(clearAuthFactoryCredentials(root, snapshot, value => outcomes.push(value), { platform: "darwin", security: async () => ({ code: 1, stdout: "" }) }), /keychain is unavailable/);
+    assert.equal(outcomes.length, 0);
+    await clearAuthFactoryCredentials(root, snapshot, value => outcomes.push(value), { platform: "darwin", security: async args => { calls.push(args); return { code: 44, stdout: "" }; } });
+    assert.deepEqual(calls, [["delete-generic-password", "-s", claudeKeychainService(claudeConfigRoot(root, account.id)), "-a", claudeKeychainAccount()]]);
+    assert.equal(outcomes.length, 1);
+    assert.equal(store.workerAccounts()[0]!.id, account.id, "credentials callback does not race ahead of installation data deletion");
+  } finally { store.close(); await rm(root, { recursive: true, force: true }); }
+});
 async function fixture(root: string, id: string, identity: string, access: string) {
   const dir = claudeConfigRoot(root, id);
   await writeFile(join(dir, ".credentials.json"), JSON.stringify(credential(access)), { mode: 0o600 });

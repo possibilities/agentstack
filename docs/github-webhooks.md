@@ -3,7 +3,7 @@
 `packages/github` receives signed GitHub webhooks, retains durable deliveries and
 exposes filtered inboxes through Stack's existing subscriptions. The Server
 supervises the process; it is not a second Bot wakeup service. See
-[ADR 0158](adr/0158-github-webhook-ledger-and-watches.md) and `docs_get` with
+[ADR 0159](adr/0159-github-webhook-ledger-and-watches.md) and `docs_get` with
 `package: "github"` for the typed operation and transport contracts.
 
 ## Runtime and publication
@@ -140,6 +140,12 @@ watch matches remain; cleanup never acknowledges entries, and duplicate redelive
 never restores cleared bytes. New queries/backfills cannot evaluate predicates
 on cleared payloads; existing frozen matches survive. Metadata is not automatically
 pruned; offline storage/backup management remains separate.
+
+The separate installation factory reset clears local GitHub secrets, deliveries
+and watches only after fencing and stopping the owner. Upstream GitHub hooks
+remain configured: reset does not disable/delete them or claim remote cleanup.
+Explicitly reconfigure or disable those hooks separately; no automatic replay,
+receiver recreation or credential import occurs in the new installation.
 
 `github_hook_deliveries` reads provider attempts for an exact managed hook. Follow
 its opaque `nextCursor` and correlate GUIDs with local `deliveryId`, not sequences.

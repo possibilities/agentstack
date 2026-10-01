@@ -1,4 +1,4 @@
-# 158. Receive GitHub webhooks durably and expose filtered watch inboxes
+# 159. Receive GitHub webhooks durably and expose filtered watch inboxes
 
 Status: accepted, 2026-10-01. Extends [ADR 0033](0033-agent-facing-event-subscriptions.md),
 [ADR 0078](0078-declared-http-surfaces-and-operation-selection.md) and
@@ -75,6 +75,11 @@ policy and imports no archived state or credentials. Request concurrency, body
 memory, 25 MiB body size and listener deadlines are bounded. The shared API HTTP
 listener owns listening and shutdown; GitHub owns route policy and signature
 verification. Shutdown refuses admission and drains handlers before closing state.
+The shared installation-reset fence also blocks webhook intake and native calls;
+GitHub's owned state directory participates in the stopped installation reset
+defined by [ADR 0158](0158-installation-factory-reset.md).
+Upstream GitHub hooks remain retained external configuration; installation reset
+does not delete/disable them or reconstruct old receivers and secrets.
 
 Local setup reads expose exact settings links, prerequisites, steps, capability
 limits, signed-arrival evidence and failure counters. Native `gh` supplies existing

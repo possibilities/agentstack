@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { stateHash } from "@stack/api";
+import { assertInstallationOpen, stateHash } from "@stack/api";
 import { z } from "zod";
 import { hook, type Endpoint, type Hook, type RemoteReceipt } from "./schema.js";
 import type { GithubStore } from "./store.js";
@@ -28,6 +28,7 @@ export class GithubRemote {
   private stopping = false;
   constructor(private readonly store: GithubStore, private readonly env: NodeJS.ProcessEnv, private readonly changed: () => void) {}
   private async request(method: string, path: string, body?: unknown, includeHeaders = false): Promise<unknown> {
+    try { assertInstallationOpen(this.env); } catch { throw new RemoteError("github_installation_fenced", true); }
     if (this.stopping) throw new RemoteError("github_stopping", true);
     if (this.children.size >= 4) throw new RemoteError("github_native_request_capacity", true);
     return new Promise((resolve, reject) => {

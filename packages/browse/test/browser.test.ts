@@ -19,12 +19,50 @@ const fakeGate = (cdp: string, neko: string): ManagedGate => ({
   cdpUrl: cdp, observationUrl: neko, async start() {}, async close() {}, hold() {}, async drain() {}, resume() {}, unknownDrain() {},
   async grantHuman() { return neko + "/human"; }, async revokeHuman() {},
 });
-import { botMcpUrl, botInstance, invocationContext, McpEventSubscriptions, serveSocket, socketCall, socketPath, operation, type EventValue, type InvocationContext, type StatePlan } from "@stack/api";
+import { botMcpUrl, botInstance, installationControlRoot, invocationContext, McpEventSubscriptions, serveSocket, socketCall, socketPath, operation, type EventValue, type InvocationContext, type StatePlan } from "@stack/api";
 import { api, browserHandoffRequest, browserHandoffCompletion, browserProfileList, browserProfileCreate, browserProfileDelete, browserControllerList, browserControllerSelect } from "../api.js";
 import type { Handoff } from "../src/handoff.js";
 
 type Item = Record<string, unknown>;
 const applyState = (plan: StatePlan) => ({ planId: plan.id, expectedRevision: plan.revision, requestId: randomUUID() });
+
+test("factory callback pins the parent's Browser scope, removes only recorded incarnations without provisioning and never repeats partial provider effects", async () => {
+  for (const failVolumeDelete of [false, true]) {
+    const options = { failVolumeDelete: false }, s = await fixture(options), backend = new Backend(s.system, async () => undefined);
+    const profiles = new Profiles(backend, s.system, s.env, async () => [], fakeGate), state = new BrowseState(profiles, backend, s.env, s.system.root);
+    const control = installationControlRoot(s.env);
+    try {
+      await s.system.setHypemanLocation(s.root); await s.system.enableHypeman(s.root);
+      const launched = await backend.launch("factory-selected", true);
+      const selectedVolume = String(s.volumes()[0]!.id);
+      s.instances().push({ id: "foreign-instance", name: "foreign", volumes: [{ volume_id: selectedVolume }] });
+      assert.ok((await backend.factoryResetSnapshot()).blockedBy.some(text => text.includes("foreign/unselected")));
+      (s.instances().at(-1)!.volumes as unknown[]) = [];
+      s.volumes().push({ id: "foreign-volume", name: "foreign", tags: {} });
+      const snapshot = await backend.factoryResetSnapshot();
+      assert.deepEqual(snapshot.blockedBy, []);
+      assert.equal(snapshot.resources.length, 2);
+      const callback = api.operations.find(op => op.name === "browser_factory_reset_clear")!;
+      await assert.rejects(callback.call({ backend, profiles, system: s.system, state }, { requestId: randomUUID(), snapshot }), /No exact admitted/);
+      const probe = await backend.launch("factory-unblocked", false);
+      await backend.close(probe.cleanup); // Invalid callback must not drain the Browser owner.
+      const requestId = randomUUID(); await mkdir(control, { mode: 0o700 });
+      await writeFile(join(control, "fence.json"), JSON.stringify({ version: 1, requestId, generation: randomUUID(), nextGeneration: randomUUID(), pid: process.pid, browserRevision: snapshot.revision }), { mode: 0o600 });
+      await assert.rejects(state.factoryReset(requestId, { ...snapshot, resources: [] }), /scope/);
+      options.failVolumeDelete = failVolumeDelete;
+      const receipt = await state.factoryReset(requestId, snapshot);
+      assert.equal(receipt.status, failVolumeDelete ? "partial" : "completed");
+      assert.equal(s.instances().some(row => row.id === "foreign-instance"), true);
+      assert.equal(s.volumes().some(row => row.id === "foreign-volume"), true);
+      assert.equal(s.instances().some(row => row.name === launched.cleanup.browserTarget), false);
+      assert.equal(s.volumes().some(row => row.id === selectedVolume), failVolumeDelete);
+      const counts = s.counts(); options.failVolumeDelete = false;
+      assert.deepEqual(await state.factoryReset(requestId, snapshot), receipt);
+      assert.deepEqual(s.counts(), counts, "same UUID cannot retry an uncertain provider effect or reprovision");
+      assert.ok(receipt.outcomes.some(row => row.resource === selectedVolume && row.outcome === (failVolumeDelete ? "unknown" : "removed")));
+    } finally { state.journal.close(); await backend.closeContext(); await s.close(); await rm(control, { recursive: true, force: true }); }
+  }
+});
 
 test("profile reset preserves default assignment/generation and siblings, exact provider plans refuse races and partial/restart effects stay fenced", async () => {
   const options = { failInstanceCreate: false }, s = await fixture(options), backend = new Backend(s.system, async () => undefined);
@@ -188,7 +226,7 @@ test("research runtime binds policy to its receipt and never attaches to an unre
     await backend.close(acquired.cleanup);
   } finally { await backend.closeContext(); await s.close(); }
 });
-async function fixture(options: { failInstanceCreate?: boolean } = {}) {
+async function fixture(options: { failInstanceCreate?: boolean; failVolumeDelete?: boolean } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "stack-browser-") );
   const root = join(dir, "local-hypeman");
   await mkdir(join(root, "bin"), { recursive: true, mode: 0o700 });
@@ -221,7 +259,7 @@ async function fixture(options: { failInstanceCreate?: boolean } = {}) {
         item.state = "Running"; item.network = { ip: "192.168.64.3" }; output = item;
       } else if (req.method === "GET" && path.startsWith("/instances/")) output = instances.find((item) => item.name === decodeURIComponent(path.slice(11)));
       else if (req.method === "DELETE" && path.startsWith("/instances/")) { instances = instances.filter((item) => item.id !== decodeURIComponent(path.slice(11))); output = {}; }
-      else if (req.method === "DELETE" && path.startsWith("/volumes/")) { volumes = volumes.filter((item) => item.id !== decodeURIComponent(path.slice(9))); output = {}; }
+      else if (req.method === "DELETE" && path.startsWith("/volumes/")) { if (options.failVolumeDelete) { res.writeHead(503).end(); return; } volumes = volumes.filter((item) => item.id !== decodeURIComponent(path.slice(9))); output = {}; }
       else { res.writeHead(404).end(); return; }
       if (output === undefined) { res.writeHead(404).end(); return; }
       res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(output));

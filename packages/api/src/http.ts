@@ -1,6 +1,7 @@
 import { createServer, type Server, type RequestListener } from "node:http";
 import { Readable } from "node:stream";
 import { createServer as createHttpsServer } from "node:https";
+import { assertInstallationOpen } from "./installation-fence.js";
 
 /** Kernel socket facts. Never constructed from forwarding headers. */
 export type HttpPeer = { remoteAddress: string; remotePort: number; localAddress: string };
@@ -19,9 +20,12 @@ export async function serveHttp(options: {
   requestTimeout?: number;
   headersTimeout?: number;
   forceCloseConnections?: boolean;
+  env?: NodeJS.ProcessEnv;
 }): Promise<{ server: Server; port: number; close(): Promise<void> }> {
+  if (options.env) assertInstallationOpen(options.env);
   const listener: RequestListener = async (incoming, outgoing) => {
     try {
+      if (options.env) assertInstallationOpen(options.env);
       const headers = new Headers();
       for (const [key, value] of Object.entries(incoming.headers)) {
         if (value !== undefined) headers.set(key, Array.isArray(value) ? value.join(", ") : value);

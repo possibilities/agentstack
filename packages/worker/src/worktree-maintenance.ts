@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { lstat, realpath } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { clearStateFiles, snapshotStateFiles, stateHash, type FileSnapshot } from "@stack/api";
 import { readWorktreeDiff } from "./diff.js";
@@ -15,7 +15,7 @@ async function git(cwd: string, args: string[], ok = [0]) {
 const rolePath = (path: string) => [".devin", ".opencode"].some(root => path === root || path.startsWith(`${root}/`));
 export type ResetObservation = { revision: string; head: string; retainedTip: string; files: FileSnapshot; untracked: string[]; untrackedFiles: FileSnapshot | null; summary: string; blockedBy: string[] };
 
-async function owned(root: string, worker: WorkerRecord) {
+async function owned(root: string, worker: Pick<WorkerRecord, "id" | "cwd" | "repo" | "branch" | "baseCommit">) {
   if (!worker.cwd || worker.cwd !== join(root, "workers", "worktrees", worker.id) || worker.branch !== `stack-worker-${worker.id}` || !worker.baseCommit) throw new Error("Worker has no exact owned worktree claim");
   for (const path of [root, join(root, "workers"), join(root, "workers", "worktrees"), worker.cwd]) {
     const info = await lstat(path); if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("Worker worktree path is unsafe");
@@ -27,6 +27,30 @@ async function owned(root: string, worker: WorkerRecord) {
   const listed = await git(worker.repo, ["worktree", "list", "--porcelain", "-z"]);
   const exact = listed.split("\0\0").filter(block => block.split("\0").includes(`worktree ${worker.cwd}`) && block.split("\0").includes(`branch refs/heads/${worker.branch}`));
   if (exact.length !== 1 || (await git(worker.cwd, ["symbolic-ref", "HEAD"])).trim() !== `refs/heads/${worker.branch}`) throw new Error("Worker worktree/branch claim changed");
+}
+export async function observeFactoryWorktree(root: string, worker: Pick<WorkerRecord, "id" | "cwd" | "repo" | "branch" | "baseCommit">) {
+  if (!worker.cwd || worker.cwd !== join(root, "workers", "worktrees", worker.id) || worker.branch !== `stack-worker-${worker.id}` || !worker.baseCommit) throw new Error("Worker has no exact owned worktree claim");
+  const source = await realpath(worker.repo), within = relative(await realpath(root), source);
+  if (source !== worker.repo || !(within === ".." || within.startsWith("../"))) throw new Error("Worker source must be outside the erased installation");
+  try { await lstat(worker.cwd); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const listed = await git(worker.repo, ["worktree", "list", "--porcelain", "-z"]);
+    if (listed.split("\0").includes(`worktree ${worker.cwd}`)) throw new Error("Worker directory missing but Git registration remains unresolved");
+    return { identity: null, claim: worker };
+  }
+  await owned(root, worker);
+  const stat = await lstat(worker.cwd!);
+  return { identity: stateHash([stat.dev, stat.ino, stat.mode, stat.birthtimeMs]), claim: worker };
+}
+export async function removeFactoryWorktree(root: string, observed: Awaited<ReturnType<typeof observeFactoryWorktree>>) {
+  const current = await observeFactoryWorktree(root, observed.claim);
+  if (current.identity !== observed.identity) throw new Error("Worker worktree incarnation changed");
+  if (current.identity === null) return;
+  await git(observed.claim.repo, ["worktree", "remove", "--force", observed.claim.cwd!]);
+  try { await lstat(observed.claim.cwd!); throw new Error("Worker worktree absence not verified"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  // Source commits, branch and refs remain for review; never prune other trees.
 }
 export async function prepareWorkerReset(root: string, worker: WorkerRecord): Promise<ResetObservation> {
   await owned(root, worker);

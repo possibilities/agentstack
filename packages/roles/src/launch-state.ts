@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
@@ -13,6 +13,25 @@ export async function processBirth(pid: number): Promise<string> {
   const birth = stdout.trim(); if (!birth) throw new Error("launch process identity unavailable"); return birth;
 }
 type Prepared = { ids: string[]; snapshot: FileSnapshot };
+export async function factoryRoleLaunchBlockers(stateDir: string) {
+  const root = join(stateDir, "roles", "inject"), blockedBy: string[] = [];
+  if (!existsSync(root)) return blockedBy;
+  const ids = readdirSync(root), deadline = Date.now() + 30_000;
+  if (ids.length > 1000) return ["Standalone Role launch scope exceeds the bounded inspection budget"];
+  for (const id of ids) {
+    if (Date.now() >= deadline) return [...blockedBy, "Standalone Role launch ownership inspection deadline exceeded"];
+    try {
+      launchId.parse(id);
+      const read = await readStateFile(root, { path: `${id}/launch-lock.json`, offset: 0, length: 4096 });
+      if (read.nextOffset !== null) throw new Error("Unbounded launch lock");
+      const lock = launchLock.parse(JSON.parse(Buffer.from(read.data, "base64").toString("utf8")));
+      try { process.kill(lock.pid, 0); throw new Error("Role launch writer remains alive or PID reused"); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+      if (lock.state !== "exited") throw new Error("Role launch native teardown is unresolved");
+    } catch { blockedBy.push(`roles:${id}: live/unresolved/unknown standalone launch; verify teardown before factory reset`); }
+  }
+  return blockedBy;
+}
 
 export class RoleLaunchState {
   readonly root: string;

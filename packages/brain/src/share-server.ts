@@ -22,6 +22,7 @@ import type { ResearchStore } from "./store.js";
 import type { AdmissionStatus } from "./types.js";
 
 export interface ShareServerOptions {
+  env?: NodeJS.ProcessEnv;
   store: ResearchStore;
   token: string | (() => string);
   host?: string;
@@ -371,7 +372,7 @@ export async function startShareServer(
   const port = options.port ?? SHARE_DEFAULT_PORT;
   let served: Awaited<ReturnType<typeof serveHttp>>;
   try {
-    served = await serveHttp({ host: hostname, port, handle: createShareHandler(options), requestTimeout: 30_000, headersTimeout: 10_000,
+    served = await serveHttp({ env: options.env, host: hostname, port, handle: createShareHandler(options), requestTimeout: 30_000, headersTimeout: 10_000,
       forceCloseConnections: true,
       onError: () => new Response(JSON.stringify({ schema_version: 1, ok: false, command: "share", error: { code: "share_failed", message: "share ingestion failed" } }), {
         status: 500, headers: JSON_HEADERS,

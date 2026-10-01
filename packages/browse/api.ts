@@ -8,8 +8,16 @@ import { egressPolicy } from "@stack/scrape/network";
 import { withStateInventory } from "@stack/api";
 import { browseStateCategories } from "./src/state-categories.js";
 import { BrowseState, browseStateOperations } from "./src/state.js";
+import { browserResetSnapshot } from "./src/factory-reset.js";
+import { stateReceipt } from "@stack/api";
 
 export type BrowserContext = { backend: Backend; system: BrowserSystem; profiles: Profiles; state: BrowseState };
+const browserFactoryOperations = [
+  operation({ name: "browser_factory_reset_inspect", description: "Internal parent inspection of exact installation Browser claims/provider incarnations. Reads start no provider, VM or browser; foreign/unattributed objects are not adopted. Not an independent deletion control. Private socket only.", input: z.strictObject({}), output: browserResetSnapshot,
+    async call(ctx: BrowserContext, _input, invocation) { if (invocation) throw new Error("Factory inspection requires private socket authority"); return ctx.backend.factoryResetSnapshot(); } }),
+  operation({ name: "browser_factory_reset_clear", description: "Internal exact admitted installation-reset callback. Drain controllers, remove only recorded provider instances then unmounted volumes, verify absence and persist no-replay partial/unknown receipts. Requires the parent reset fence and pinned scope. No provisioning or restart. Private socket only.", input: z.strictObject({ requestId: z.uuid(), snapshot: browserResetSnapshot }), output: stateReceipt,
+    async call(ctx: BrowserContext, input, invocation) { if (invocation) throw new Error("Factory cleanup requires private socket authority"); return ctx.state.factoryReset(input.requestId, input.snapshot); } }),
+];
 export const browseBotDependencies = operation({ name: "browse_bot_dependencies", description: "Inspect Bot-bound profiles, controllers and unresolved human handoffs for a maintenance plan. Close selected controllers and resolve handoffs explicitly first. Profile data and resolved handoff history survive a Bot conversation reset.",
   input: stateDependencyInput, output: stateDependencies, annotations: { readOnlyHint: true },
   async call(ctx: BrowserContext, { botId }, invocation) {
@@ -274,7 +282,7 @@ export const topics = {
   browser_sessions_changed: "A disposable browser reservation changed. Re-read browser_session_list; this does not prove a daemon is still driving it.",
 } as const;
 const packageApi: PackageApi<BrowserContext, keyof typeof topics> = {
-  operations: [...browseStateOperations, browseBotDependencies, browserStatus, browserProfileList, browserProfileCreate, browserProfileDelete, browserControllerList, browserControllerSelect, browserControllerLaunch, browserControllerClose, browserBotRelease,
+  operations: [...browserFactoryOperations, ...browseStateOperations, browseBotDependencies, browserStatus, browserProfileList, browserProfileCreate, browserProfileDelete, browserControllerList, browserControllerSelect, browserControllerLaunch, browserControllerClose, browserBotRelease,
     browserHandoffRequest, browserHandoffGet, browserHandoffList, browserHandoffCompletion, browserHandoffTake, browserHandoffFinish, browserHandoffCancel,
     browserSessionGet, browserSessionList, browserSessionClose, browserSessionReconcile, browserResearchAcquire,
     browserToolStatus, browserToolDetect, browserToolCheck, browserToolPolicy, browserToolInstall, browserToolAccept, browserToolUninstall,

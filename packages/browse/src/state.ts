@@ -6,6 +6,7 @@ import type { BrowserContext } from "../api.js";
 import type { Profiles } from "./profiles.js";
 import type { Backend } from "./backend.js";
 import { clearSiteData, observeSiteData } from "./site-data.js";
+import { clearBrowserFactoryReset, type BrowserResetSnapshot } from "./factory-reset.js";
 
 const profile = z.strictObject({ profileId: z.uuid() });
 const site = profile.extend({ origins: z.array(z.string().max(2048)).min(1).max(50), categories: z.array(z.enum(["cookies", "storage", "cache", "history"])).min(1).max(4) });
@@ -14,6 +15,7 @@ const selectionSchema = z.discriminatedUnion("kind", [profile.extend({ kind: z.l
 type Selection = z.infer<typeof selectionSchema>;
 const retained = ["Other profiles, foreign/occupied volumes, external copies/backups and other owners' history remain", "Minimal plan/receipt and handoff admission digests remain; unknown effects never retry", "Scoped cache means CacheStorage only; HTTP browser cache and persisted navigation history are unsupported and never silently widened"];
 export class BrowseState {
+  factoryReset(requestId: string, snapshot: BrowserResetSnapshot) { return clearBrowserFactoryReset(this.backend, this.journal, this.env, requestId, snapshot, () => this.profiles.close()); }
   readonly journal: StateJournal;
   private readonly callbacks = new Map<string, { botId: string; profileId: string; run: () => Promise<Record<string, unknown>> }>();
   constructor(private readonly profiles: Profiles, private readonly backend: Backend, private readonly env: NodeJS.ProcessEnv, root: string) { this.journal = new StateJournal(join(root, "maintenance.sqlite"), "browse"); }

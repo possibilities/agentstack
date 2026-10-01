@@ -190,7 +190,7 @@ export async function createBrainContext(env: NodeJS.ProcessEnv, workerOptions: 
       // loopback-only token exists solely for the owner's liveness probe.
       const token = generateShareToken();
       let currentToken = token;
-      server = await startShareServer({ store, artifactStore: artifacts, token: () => currentToken, port, host });
+      server = await startShareServer({ env, store, artifactStore: artifacts, token: () => currentToken, port, host });
       writeIngressRegistration(registrationPath, { version: 1, url: server.url, host, port: server.port, pid: process.pid, started_at: new Date().toISOString() });
       const controller = new AbortController();
       const ctx: BrainContext = { env, stateRoot, dbPath, tokenPath, get shareToken() { return currentToken; }, set shareToken(value) { currentToken = value; }, registrationPath, artifacts, store, server, controller,

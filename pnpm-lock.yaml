@@ -582,6 +582,9 @@ importers:
       '@stack/api':
         specifier: workspace:*
         version: link:../api
+      '@stack/auth':
+        specifier: workspace:*
+        version: link:../auth
       '@stack/bots':
         specifier: workspace:*
         version: link:../bots
@@ -612,6 +615,9 @@ importers:
       '@stack/proc':
         specifier: workspace:*
         version: link:../proc
+      '@stack/roles':
+        specifier: workspace:*
+        version: link:../roles
       '@stack/scrape':
         specifier: workspace:*
         version: link:../scrape

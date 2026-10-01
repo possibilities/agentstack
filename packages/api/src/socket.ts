@@ -6,6 +6,7 @@ import { executeOperation, OperationRejected } from "./execute.js";
 import type { AnyOperation } from "./operation.js";
 import { invocationContext } from "./invocation.js";
 import { publishedJsonSchema } from "./schema.js";
+import { assertInstallationOpen } from "./installation-fence.js";
 
 export type SocketServerInfo = {
   name: string;
@@ -36,6 +37,7 @@ export async function serveSocket<Ctx>(options: {
   context: Ctx | Promise<Ctx>;
   operations: readonly AnyOperation<Ctx>[];
   events?: SocketEvents<Ctx>;
+  env?: NodeJS.ProcessEnv;
 }): Promise<ServedSocket> {
   const names = new Set<string>();
   for (const operation of options.operations) {
@@ -421,6 +423,7 @@ async function handleLine<Ctx>(
     operations: readonly AnyOperation<Ctx>[];
     events?: SocketEvents<Ctx>;
     subscriptions?: Map<Socket, { topics: Set<string>; scope?: string }>;
+    env?: NodeJS.ProcessEnv;
   },
 ): Promise<void> {
   let message: { id?: unknown; method?: unknown; params?: unknown };
@@ -455,10 +458,11 @@ async function dispatch<Ctx>(
     operations: readonly AnyOperation<Ctx>[];
     events?: SocketEvents<Ctx>;
     subscriptions?: Map<Socket, { topics: Set<string>; scope?: string }>;
+    env?: NodeJS.ProcessEnv;
   },
 ): Promise<unknown> {
   if (method === "tools/list") return describeServer(options);
-  if (method === "tools/call") return callTool(params, { context: await options.context, operations: options.operations });
+  if (method === "tools/call") return callTool(params, { context: await options.context, operations: options.operations, env: options.env });
   if (method === "events/subscribe") return subscribeEvents(socket, params, options);
   throw new Error(`unknown method: ${method}`);
 }
@@ -522,11 +526,12 @@ function describeServer<Ctx>(options: {
 
 async function callTool<Ctx>(
   params: unknown,
-  options: { context: Ctx; operations: readonly AnyOperation<Ctx>[] },
+  options: { context: Ctx; operations: readonly AnyOperation<Ctx>[]; env?: NodeJS.ProcessEnv },
 ): Promise<unknown> {
   const record = params && typeof params === "object" ? (params as { name?: unknown; arguments?: unknown; invocation?: unknown; resultFormat?: unknown }) : {};
   if (record.resultFormat !== undefined && record.resultFormat !== "mcp") throw new Error("unknown result format");
   if (typeof record.name !== "string") throw new Error("missing operation name");
+  if (options.env) assertInstallationOpen(options.env, record.name);
   const operation = options.operations.find((item) => item.name === record.name);
   if (!operation) throw new Error(`unknown operation: ${record.name}`);
   const invocation = record.invocation === undefined ? undefined : invocationContext.parse(record.invocation);

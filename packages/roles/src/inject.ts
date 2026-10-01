@@ -5,7 +5,7 @@ import { access, mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/pr
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { internalMcpLaunches, mcpPort, mcpToolTimeoutSeconds, stateDir, workspaceRoot } from "@stack/api";
+import { assertInstallationOpen, internalMcpLaunches, mcpPort, mcpToolTimeoutSeconds, stateDir, workspaceRoot } from "@stack/api";
 import { roleMcpConflict, serverMcpOrigins } from "./bundle.js";
 import { injectArguments, type Harness } from "./inject-args.js";
 import { startOpenCodeHost } from "./inject-opencode.js";
@@ -132,11 +132,13 @@ export async function inject(args: string[]): Promise<number> {
 }
 
 async function launch(args: string[], signal: AbortSignal): Promise<Exit> {
+  assertInstallationOpen(process.env);
   const { role, harness, native, command, commandIndex, context } = injectArguments(args);
   const binary = await executable(harness);
   const snapshot = await snapshotFor(role);
   const servers = await connections(snapshot);
   const instructions = renderInstructions(snapshot, context);
+  assertInstallationOpen(process.env);
   const parent = join(stateDir(), "roles", "inject");
   await mkdir(parent, { recursive: true, mode: 0o700 });
   const root = await mkdtemp(join(parent, `${harness}-`));
@@ -196,6 +198,7 @@ async function launch(args: string[], signal: AbortSignal): Promise<Exit> {
       await file(join(env.XDG_CONFIG_HOME, "opencode", "cli.json"), "{}\n");
       // Version-check the exact CLI before the host can open the native database.
       await compatible(binary, harness, env);
+      assertInstallationOpen(process.env);
       host = await startOpenCodeHost(env, signal);
       // --server belongs to the selected native subcommand, even when root
       // options precede `run` or `mini`; never reorder caller arguments.
@@ -205,6 +208,7 @@ async function launch(args: string[], signal: AbortSignal): Promise<Exit> {
     if (harness !== "opencode") await compatible(binary, harness, env);
     signal.throwIfAborted();
     await file(join(root, "launch-lock.json"), json({ ...lock, state: "running" }));
+    assertInstallationOpen(process.env);
     launched = true;
     result = await foreground(binary, argv, env, signal, host?.closed);
   } finally {

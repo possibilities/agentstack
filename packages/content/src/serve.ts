@@ -24,6 +24,7 @@ import { buildLinkLookup, lookupLinkTarget } from "./resolve.js";
 import { documentUrl, latestArtifactUrl, origin, versionArtifactUrl } from "./urls.js";
 
 export interface ServeOptions {
+  env?: NodeJS.ProcessEnv;
   vaultRoot: string;
   casRoot: string;
   index: VaultIndex;
@@ -87,11 +88,11 @@ export async function startServer(options: ServeOptions): Promise<RunningServer>
   let documentOrigin = "";
   let artifactOrigin = "";
 
-  const artifactServer = await listen(options.artifactPort, options.host, options.routes?.artifacts, (request) =>
+  const artifactServer = await listen(options.env, options.artifactPort, options.host, options.routes?.artifacts, (request) =>
     routeArtifacts(request, options, () => documentOrigin));
   let documentServer: Awaited<ReturnType<typeof serveHttp>>;
   try {
-    documentServer = await listen(options.port, options.host, options.routes?.documents, (request) =>
+    documentServer = await listen(options.env, options.port, options.host, options.routes?.documents, (request) =>
       routeDocuments(request, options, () => artifactOrigin));
   } catch (error) {
     await artifactServer.close();
@@ -112,8 +113,8 @@ export async function startServer(options: ServeOptions): Promise<RunningServer>
   };
 }
 
-function listen(port: number, host: string, routes: readonly { path: string }[] | undefined, route: (request: Request) => Promise<Response>) {
-  return serveHttp({ port, host, routes, handle: route, onError: (error) => {
+function listen(env: NodeJS.ProcessEnv | undefined, port: number, host: string, routes: readonly { path: string }[] | undefined, route: (request: Request) => Promise<Response>) {
+  return serveHttp({ env, port, host, routes, handle: route, onError: (error) => {
     console.error("content serve:", error);
     return new Response(null, { status: 500 });
   } });

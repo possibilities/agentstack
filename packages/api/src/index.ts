@@ -62,3 +62,6 @@ export { stateRevision, stateSubject, stateLink, stateEntry, statePageInput, sta
   requireStateOperator, stateHash, pageState, StateJournal, stateDependencies, stateDependencyInput, type StateDependencies, type StateEntry, type StatePage, type StateOutcome, type StatePlan, type StateApplyInput, type StateReceipt } from "./state.js";
 export { stateFile, stateFilePage, stateFileRead, listStateFiles, readStateFile, snapshotStateFiles, snapshotStateFilesSync, clearStateFiles, clearStateFilesSync, type StateFile, type FileSelection, type FileSnapshot } from "./state-files.js";
 export { withStateInventory, stateCategories, type StateCategory } from "./state-inventory.js";
+export { installationControlRoot, readInstallationFence, assertInstallationOpen, installationFence, type InstallationFence } from "./installation-fence.js";
+export { retainStateDirectory } from "./state-files.js";
+export { executeOperation } from "./execute.js";

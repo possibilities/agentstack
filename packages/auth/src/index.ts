@@ -35,3 +35,4 @@ export { accountEnvironment, accountRoot, credentialEvidence, prepareAccountProf
 export type { WorkerAccount, WorkerProvider } from "./worker-accounts.js";
 export { ClaudeCredentialError, claudeConfigRoot, claudeKeychainService, claudeRuntimePath, readClaudeCredentials, removeClaudeCredentials } from "./claude-credentials.js";
 export type { ClaudeCredentialOptions } from "./claude-credentials.js";
+export { observeAuthFactoryReset, clearAuthFactoryCredentials } from "./factory-reset.js";

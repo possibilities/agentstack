@@ -87,6 +87,27 @@ def run(data):
     try:
         mode=data['mode']; path=data.get('path','.')
         if mode=='snapshot': return snapshot(root,data['selection'])
+        if mode=='retain':
+            old=data['snapshot']; fresh=snapshot(root,dict(paths=[data['path']]))
+            if old!=fresh: raise ValueError('retained selection changed; inspect before moving')
+            targetroot=rootfd(data['targetRoot'])
+            try:
+                name=data['targetName']; names=parts(name)
+                if len(names)!=1: raise ValueError('retained target must be one owned directory name')
+                if os.fstat(root).st_dev!=os.fstat(targetroot).st_dev: raise ValueError('retention crosses a filesystem boundary')
+                os.mkdir(name,mode=0o700,dir_fd=targetroot)
+                destination=directory(targetroot,name)
+                parent,source=parentfd(root,data['path'])
+                try:
+                    before=os.stat(source,dir_fd=parent,follow_symlinks=False)
+                    if not stat.S_ISDIR(before.st_mode): raise ValueError('retention requires a directory')
+                    os.rename(source,source,src_dir_fd=parent,dst_dir_fd=destination)
+                    after=os.stat(source,dir_fd=destination,follow_symlinks=False)
+                    if identity(before)[:5]!=identity(after)[:5]: raise ValueError('retention outcome unknown; inspect exact target')
+                    os.fsync(parent); os.fsync(destination); os.fsync(targetroot)
+                finally: os.close(parent); os.close(destination)
+                return dict(retained=name+'/'+source)
+            finally: os.close(targetroot)
         if mode=='list':
             fd=os.dup(root)
             try:
@@ -185,6 +206,11 @@ export async function snapshotStateFiles(root: string, selection: FileSelection)
 }
 export async function clearStateFiles(root: string, selection: FileSelection, snapshot: FileSnapshot): Promise<{ removed: string[]; error: string | null }> {
   return await files({ mode: "clear", root, selection, snapshot }) as { removed: string[]; error: string | null };
+}
+/** Move an exact owner directory without following links or overwriting another
+ * retention target. Callers own both roots and persist admission before moving. */
+export async function retainStateDirectory(root: string, path: string, targetRoot: string, targetName: string, snapshot: FileSnapshot): Promise<{ retained: string }> {
+  return await files({ mode: "retain", root, path, targetRoot, targetName, snapshot }) as { retained: string };
 }
 /** Synchronous owner transaction boundary prevents new CAS references during collection. */
 export function clearStateFilesSync(root: string, selection: FileSelection, snapshot: FileSnapshot): { removed: string[]; error: string | null } {

@@ -4,7 +4,7 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/p
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { McpEventSubscriptions, serveApi, socketCall, type EventValue, type InvocationContext, type StatePlan } from "@stack/api";
+import { installationControlRoot, McpEventSubscriptions, serveApi, socketCall, type EventValue, type InvocationContext, type StatePlan } from "@stack/api";
 import type { Delivery, Endpoint, Watch, RemoteReceipt } from "../src/schema.js";
 
 const caller: InvocationContext = { transport: "mcp", botId: "bot-1", instance: "launch-1", threadId: "main", sessionId: null };
@@ -90,6 +90,7 @@ test("signed arrivals drive scoped Stack subscriptions and survive coalescing, a
 
 test("intake authenticates original bytes, isolates receiver targets, rotates secrets and accepts non-repository and future events", async () => {
   const f = await fixture();
+  const control = installationControlRoot(f.env);
   try {
     const { endpoint, secret } = await f.create();
     for (const [options, status] of [
@@ -143,7 +144,16 @@ test("intake authenticates original bytes, isolates receiver targets, rotates se
     const organization = await f.create({ kind: "organization", organization: "owner" });
     assert.equal((await f.send(organization.endpoint, organization.secret, "meta", { action: "deleted", hook: { id: 17 } })).status, 202, "signed lifecycle events need not represent the target");
     assert.equal((await f.send(organization.endpoint, organization.secret, "repository", { action: "transferred", repository: { full_name: "outside/project", owner: { login: "outside" } } })).status, 202, "a repository's new owner does not establish the hook's organization");
-  } finally { await f.close(); }
+    const beforeFence = await f.call("github_status");
+    const body = JSON.stringify({ action: "deleted", hook: { id: 17 } });
+    await mkdir(control, { mode: 0o700 });
+    await writeFile(join(control, "fence.json"), JSON.stringify({ version: 1, requestId: randomUUID(), generation: randomUUID(), nextGeneration: randomUUID(), pid: process.pid, browserRevision: "fixture" }), { mode: 0o600 });
+    const fenced = await fetch(`http://127.0.0.1:${beforeFence.ingress.port}${organization.endpoint.path}`, { method: "POST", headers: { "content-type": "application/json", "x-github-event": "meta", "x-github-delivery": randomUUID(),
+      "x-hub-signature-256": `sha256=${createHmac("sha256", organization.secret).update(body).digest("hex")}` }, body });
+    assert.ok(fenced.status >= 400, "the shared installation fence denies even valid signed webhook intake");
+    await rm(join(control, "fence.json"));
+    assert.equal((await f.call("github_status")).latestSequence, beforeFence.latestSequence, "fenced ingress performs no ledger write");
+  } finally { await f.close(); await rm(control, { recursive: true, force: true }); }
 });
 
 test("large delivery summaries page within the transport budget without skipping arrivals", async () => {

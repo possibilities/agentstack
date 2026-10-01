@@ -20,6 +20,8 @@
   "dependencies": {
     "@stack/access": "workspace:*",
     "@stack/api": "workspace:*",
+    "@stack/auth": "workspace:*",
+    "@stack/roles": "workspace:*",
     "@stack/cli": "workspace:*",
     "@stack/signal": "workspace:*",
     "@stack/bots": "workspace:*",

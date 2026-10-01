@@ -23,6 +23,17 @@ native outcome into a known one. See [ADR 0135](docs/adr/0135-owner-state-mainte
 and the [operation matrix](docs/state-control.md). _Avoid_: reset everything,
 clear means cancel, tombstone means erased, unmeasured means zero
 
+## Installation factory reset
+
+An explicit local Server transition that fences admissions, drains owned runtimes,
+clears the active installation's data, credentials and configuration, and reserves
+a new data generation. The installation stays stopped and startup-fenced; an exact
+completed-generation release permits a later explicit start with a new Access
+identity. A private sibling control ledger preserves reset receipts without
+replaying interrupted effects. Source and retained Git, device/Client copies and
+external backups remain independent. See [ADR 0158](docs/adr/0158-installation-factory-reset.md).
+_Avoid_: secure erase, device reset, automatic restart, resumed unknown generation
+
 ## Standalone operation
 
 An operation whose Package API explicitly supplies a scoped context factory for

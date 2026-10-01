@@ -1,7 +1,7 @@
 name: serve
 description: Owns stack child processes, global Server settings and developer-only upstream harness release observations; reports status, cached process-tree CPU and memory observations, bounded resource history, and Codex tool bridge diagnostics.
 socket:
-  description: Unix socket for server status, operator global settings and developer-only release observations/checks, Codex tool diagnostics and checks, paged resource snapshots, recent history and payload-free change events, namespaced as serve.
+  description: Unix socket for server status, local installation factory-reset planning/admission/cold receipts, operator settings and developer release checks, Codex diagnostics, resource observations and payload-free change events. Factory reset is never exposed through MCP or WebSocket.
 mcp:
   workerOperations: []
   operations: [serve_status, serve_codex_tools, serve_resources, serve_resource_history]
