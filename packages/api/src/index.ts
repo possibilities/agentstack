@@ -8,11 +8,12 @@ export {
   type PackageApi,
   type PackageEvents,
   type CompletionWatch,
+  type StandaloneContext,
 } from "./operation.js";
 export { completionReceipt, completionWatchSchema, wantsCompletion, McpDeliveryRejected, type CompletionReceipt } from "./completion-watch.js";
 export { publishedJsonSchema } from "./schema.js";
 export { forwardTimeout, mcpToolTimeoutSeconds } from "./forward-timeout.js";
-export { LocalAuth, LocalAuthError, withLocalAuth, operatorHeaders, localOrigin, localCookie, localCookieName, type LocalAudience } from "./local-auth.js";
+export { LocalAuth, LocalAuthError, withLocalAuth, operatorHeaders, localOrigin, localCookie, localCookieName, type LocalAudience, type LocalOperatorAudience } from "./local-auth.js";
 export { localBrowserResponse, localConnectPage, localConnectPath } from "./local-browser.js";
 export { currentMcpCatalog } from "./exposure.js";
 export { resolveWorkerExposure, currentWorkerCatalog } from "./exposure.js";
@@ -35,6 +36,7 @@ export { loadCatalog, loadPackageApi, type Catalog, type CatalogServer, type Cat
 export {
   serveSocket,
   socketCall,
+  SocketCallError,
   socketSubscribe,
   type ServedSocket,
   type SocketEvents,

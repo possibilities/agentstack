@@ -14,6 +14,8 @@ export interface Context {
   now: () => string;
   readStdin: () => Promise<string>;
   stdinIsTerminal: boolean;
+  /** Standalone retrieval never commits or pushes authoritative Vault history. */
+  history?: boolean;
 }
 
 export interface CommandResult {
@@ -38,8 +40,8 @@ export function openIndex(context: Context, options: { create: boolean }): Vault
     ensureGit(context.vaultRoot);
   } else assertVaultExists(context.vaultRoot);
   const index = VaultIndex.open(context.vaultRoot);
-  index.reconcile();
-  return index;
+  try { index.reconcile(); return index; }
+  catch (error) { index.close(); throw error; }
 }
 
 export function assertVaultExists(root: string): void {

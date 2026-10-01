@@ -1,10 +1,13 @@
-# 146. Coordinate Notification sends and one-shot dismissal watches in the Server
+# 147. Coordinate Notification sends and one-shot dismissal watches in the Server
 
 Status: accepted, 2026-09-30. Extends [ADR 0095](0095-one-dismissal-with-an-outcome.md),
 [ADR 0033](0033-agent-facing-event-subscriptions.md) and
 [ADR 0039](0039-worker-wakeups-and-scoped-mcp.md). Preserves the exposure fences of
 [ADR 0096](0096-explicit-transport-exposure.md) and native admission boundary of
-[ADR 0120](0120-codex-native-input-admission.md).
+[ADR 0120](0120-codex-native-input-admission.md). Compatible with
+[ADR 0146](0146-server-independent-internal-mcp.md): installed stdio discovery
+declares the watch without creating it; watched sends still require the live
+subscription owner and never use standalone mutation or delivery fallback.
 
 ## Decision
 
@@ -17,7 +20,7 @@ Chat. Workers gain no Notification operations or Bot wakeup authority.
 Package operations may declare a typed `completionWatch`: the invalidation topic,
 record read, UUID input key, terminal field, inputs selecting the omitted
 default and fields retained in oversized terminal values. This declaration is
-live socket/discovery metadata, not implicit transport
+installed declaration and live socket/discovery metadata, not implicit transport
 exposure. The send, read and topic must all remain selected over MCP. Notify's
 watch reads `notification_get` and treats non-null `dismissedAt` as completion.
 The once-only outcomes remain action, replied, closed, opened and replaced;

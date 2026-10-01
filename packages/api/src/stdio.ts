@@ -1,4 +1,3 @@
-import { fileURLToPath } from "node:url";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { LocalAuth } from "./local-auth.js";
 import { configuredMcpServers } from "./mcp.js";
@@ -6,7 +5,8 @@ import { parseMcpBinding, verifyMcpIdentity, type McpIdentity } from "./mcp-auth
 import { packageMcpServer } from "./mcp-package.js";
 import { codexMcpDefinition } from "./codex-mcp/catalog.js";
 import { codexMcpServer } from "./codex-mcp/server.js";
-import { currentMcpCatalog } from "./exposure.js";
+import { installedMcpCatalog } from "./exposure.js";
+import { mcpPrerequisite } from "./mcp-prerequisite.js";
 import { socketCall } from "./socket.js";
 import { socketPath, workspaceRoot } from "./workspace.js";
 import { mcpEventCatalog, type McpEventCall } from "./mcp-events.js";
@@ -26,22 +26,26 @@ export async function runMcpStdio(name: string, env: NodeJS.ProcessEnv = process
   else throw new Error("stdio MCP requires explicit launch authority");
   const checkAuthority = async () => {
     if (identity) await verifyMcpIdentity(identity, env);
-    else auth!.operator(env.STACK_MCP_OPERATOR);
+    else auth!.operator(env.STACK_MCP_OPERATOR, "stdio");
   };
+  // Signature validation happened above. Catalog disclosure conveys no live
+  // Bot/Worker authority; every call still verifies its exact live instance.
+  const checkCatalogAuthority = async () => { if (!identity) await checkAuthority(); };
   const events: McpEventCall = async (pkg, tool, args, invocation, signal) => {
     // Catalog is public within an authorized connection; only Bot-owned requests
     // reach the durable owner. Operators never acquire a wakeup target.
     if (tool === "events_catalog") {
-      return mcpEventCatalog(await currentMcpCatalog(root, pkg, env));
+      return mcpEventCatalog((await installedMcpCatalog(root, pkg)).catalog);
     }
     if (!identity || !("botId" in identity)) throw new Error("event subscriptions require a bot-bound MCP tool call with Codex thread metadata");
-    return await socketCall(socketPath("serve", env), "tools/call", { name: "serve_mcp_event", arguments: {
+    try { return await socketCall(socketPath("serve", env), "tools/call", { name: "serve_mcp_event", arguments: {
       binding: env.STACK_MCP_BINDING, pkg, tool, arguments: args, threadId: invocation.threadId, sessionId: invocation.sessionId,
-    } }, { signal, timeoutMs: 30_000 }) as object;
+    } }, { signal, timeoutMs: 30_000 }) as object; }
+    catch (error) { throw mcpPrerequisite(error, pkg, tool, "Stack server event-subscription owner"); }
   };
   const bridge = codexMcpDefinition(name);
-  const native = bridge ? codexMcpServer(bridge, env, checkAuthority, identity) : undefined;
-  const mcp = native?.mcp ?? packageMcpServer(name, definition.description, root, env, identity, checkAuthority, events);
+  const native = bridge ? codexMcpServer(bridge, env, checkAuthority, identity, checkCatalogAuthority) : undefined;
+  const mcp = native?.mcp ?? packageMcpServer(name, definition.description, root, env, identity, checkAuthority, events, { checkCatalogAuthority });
   const transport = new StdioServerTransport();
   let closing: Promise<void> | undefined;
   let finish!: () => void;
@@ -62,7 +66,7 @@ export async function runMcpStdio(name: string, env: NodeJS.ProcessEnv = process
   process.stdout.once("error", shutdown);
   mcp.onclose = shutdown;
   try {
-    await checkAuthority();
+    await checkCatalogAuthority();
     if (closing) return;
     await mcp.connect(transport);
     if (process.stdin.readableEnded) shutdown();
@@ -72,11 +76,4 @@ export async function runMcpStdio(name: string, env: NodeJS.ProcessEnv = process
     signals.forEach(signal => process.off(signal, shutdown));
     process.stdin.off("end", shutdown); process.stdin.off("error", shutdown); process.stdout.off("error", shutdown);
   }
-}
-
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  try {
-    if (process.argv.length !== 3) throw new Error("usage: stack serve mcp <name> --stdio");
-    await runMcpStdio(process.argv[2]!);
-  } catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }
 }

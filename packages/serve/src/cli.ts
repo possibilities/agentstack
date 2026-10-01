@@ -155,7 +155,7 @@ try {
   events = await startWithServerSocketRecovery(socketPath("serve"), () => serveApi({ name: "serve", transport: "socket", env: process.env }));
   // Rotate only after successfully claiming the server socket; duplicate starts
   // must never invalidate the live server's sessions.
-  withLocalAuth(process.env, auth => auth.rotate());
+  withLocalAuth(process.env, auth => auth.rotateForStartup());
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);

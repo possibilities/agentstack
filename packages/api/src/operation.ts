@@ -25,6 +25,14 @@ export type CompletionWatch = {
   retainFields?: string[];
 };
 
+/** Explicit owner opt-in. Open only the resources this operation needs, never
+ * the service context. The same handler, schemas and MCP presentation run in
+ * either context; the gateway always closes a standalone context per call. */
+export type StandaloneContext<Ctx> = {
+  open(env: NodeJS.ProcessEnv, signal?: AbortSignal): Ctx | Promise<Ctx>;
+  close(ctx: Ctx): void | Promise<void>;
+};
+
 export type AnyOperation<Ctx> = {
   name: string;
   description: string;
@@ -32,6 +40,9 @@ export type AnyOperation<Ctx> = {
   output: z.ZodType;
   annotations?: Annotations;
   completionWatch?: CompletionWatch;
+  // Erase the standalone context at the heterogeneous package boundary. The
+  // operation factory checks it against the handler's (possibly narrower) Ctx.
+  standalone?: NoInfer<StandaloneContext<any>>;
   call(ctx: Ctx, input: any, invocation?: InvocationContext): Promise<any>;
   /** Optional MCP presentation of the validated output. Ordinary socket calls
    * and WebSocket callers still receive the operation's declared JSON output. */
@@ -106,6 +117,7 @@ export function operation<Ctx, InputSchema extends z.ZodType, OutputSchema exten
   output: OutputSchema;
   annotations?: Annotations;
   completionWatch?: CompletionWatch;
+  standalone?: StandaloneContext<Ctx>;
   call(ctx: Ctx, input: z.infer<InputSchema>, invocation?: InvocationContext): Promise<z.infer<OutputSchema>>;
   mcpContent?(ctx: Ctx, input: z.infer<InputSchema>, output: z.infer<OutputSchema>): McpContent | Promise<McpContent>;
 }): {
@@ -115,6 +127,7 @@ export function operation<Ctx, InputSchema extends z.ZodType, OutputSchema exten
   output: OutputSchema;
   annotations?: Annotations;
   completionWatch?: CompletionWatch;
+  standalone?: NoInfer<StandaloneContext<Ctx>>;
   call(ctx: Ctx, input: z.infer<InputSchema>, invocation?: InvocationContext): Promise<z.infer<OutputSchema>>;
   mcpContent?(ctx: Ctx, input: z.infer<InputSchema>, output: z.infer<OutputSchema>): McpContent | Promise<McpContent>;
 } {

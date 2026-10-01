@@ -316,7 +316,19 @@ export class ArtifactStore {
     readonly casRoot: string,
   ) {}
 
-  static open(env: Environ, home: string): ArtifactStore {
+  static open(env: Environ, home: string, options: { readOnly?: boolean } = {}): ArtifactStore {
+    if (options.readOnly) {
+      let db: Database | undefined;
+      try {
+        db = new Database(manifestPath(env, home), { readOnly: true });
+        const row = db.query("SELECT value FROM meta WHERE key='schema_version'").get();
+        if (Number(row?.value) !== MANIFEST_SCHEMA_VERSION) throw new Error("incompatible manifest schema");
+        return new ArtifactStore(db, casDirectory(env, home));
+      } catch (error) {
+        db?.close();
+        throw new CliError("artifact_store_unavailable", "Existing Content artifact manifest is missing or incompatible", "Run stack serve and provision or upgrade Content before reading Artifacts.");
+      }
+    }
     const root = artifactHome(env, home);
     mkdirSync(root, { recursive: true, mode: 0o700 });
     mkdirSync(casDirectory(env, home), { recursive: true, mode: 0o700 });

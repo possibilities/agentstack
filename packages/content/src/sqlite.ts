@@ -5,8 +5,8 @@ import { DatabaseSync } from "node:sqlite";
 export class Database {
   readonly db: DatabaseSync;
 
-  constructor(path: string, _options: { create: true }) {
-    this.db = new DatabaseSync(path);
+  constructor(path: string, options: { create: true } | { readOnly: true }) {
+    this.db = new DatabaseSync(path, { readOnly: "readOnly" in options });
   }
 
   run(sql: string): void { this.db.exec(sql); }
@@ -22,9 +22,9 @@ export class Database {
       run: (...parameters) => statement.run(...parameters),
     };
   }
-  transaction<T>(fn: () => T): () => T {
+  transaction<T>(fn: () => T, immediate = false): () => T {
     return () => {
-      this.db.exec("BEGIN");
+      this.db.exec(immediate ? "BEGIN IMMEDIATE" : "BEGIN");
       try {
         const value = fn();
         this.db.exec("COMMIT");

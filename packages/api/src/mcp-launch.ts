@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { botMcpUrl, workerMcpUrl } from "./bot-mcp-identity.js";
-import { operatorHeaders } from "./local-auth.js";
+import { withLocalAuth } from "./local-auth.js";
 import { stateDir, workspaceRoot } from "./workspace.js";
 import { configuredMcpServers } from "./mcp.js";
 
@@ -16,7 +16,7 @@ export async function internalMcpLaunches(root: string, authority: McpLaunchAuth
   const home = env.HOME ?? homedir();
   const values: Record<string, string> = {
     STACK_STATE_DIR: resolve(stateDir(env)), STACK_MCP_ROOT: resolve(root), STACK_MCP_AUTHORITY: authority.kind,
-    STACK_MCP_BINDING: binding, STACK_MCP_OPERATOR: authority.kind === "operator" ? operatorHeaders(env).authorization! : "",
+    STACK_MCP_BINDING: binding, STACK_MCP_OPERATOR: authority.kind === "operator" ? withLocalAuth(env, auth => `Bearer ${auth.credential("stdio")}`) : "",
     // Harnesses may replace HOME and PATH. Bridges still use the operator's installation.
     HOME: home, STACK_CODEX_TOOLS_HOME: env.STACK_CODEX_TOOLS_HOME ?? join(home, ".codex"),
     XDG_CONFIG_HOME: env.XDG_CONFIG_HOME ?? join(home, ".config"),
@@ -24,10 +24,12 @@ export async function internalMcpLaunches(root: string, authority: McpLaunchAuth
     XDG_STATE_HOME: env.XDG_STATE_HOME ?? join(home, ".local", "state"),
     XDG_CACHE_HOME: env.XDG_CACHE_HOME ?? join(home, ".cache"),
   };
-  for (const key of ["PATH", "TMPDIR", "STACK_CODEX_TOOLS_BIN", "STACK_MCP_PORT"])
+  for (const key of ["PATH", "TMPDIR", "STACK_CODEX_TOOLS_BIN", "STACK_MCP_PORT", "STACK_SERVER_MCP_PORT",
+    "STACK_CONTENT_HOST", "STACK_CONTENT_PORT", "STACK_CONTENT_ARTIFACT_PORT", "STACK_WIKI_PORT", "STACK_WIKI_ARTIFACT_PORT",
+    "STACK_CONTENT_DOCUMENT_ORIGIN", "STACK_CONTENT_ARTIFACT_ORIGIN"])
     if (env[key] !== undefined) values[key] = env[key];
   return Object.fromEntries((await configuredMcpServers(root)).map(({ name }) => [name, {
     type: "stdio", command: process.execPath,
-    args: [join(workspaceRoot(import.meta.dirname), "packages/api/dist/src/stdio.js"), name], env: { ...values },
+    args: [join(workspaceRoot(import.meta.dirname), "packages/api/dist/src/stdio-main.js"), name], env: { ...values },
   }]));
 }

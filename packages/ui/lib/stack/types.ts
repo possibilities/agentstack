@@ -24,6 +24,7 @@ export type JsonSchema = {
 };
 
 export type OperationDoc = {
+  standalone: boolean;
   name: string;
   title: string | null;
   description: string;
