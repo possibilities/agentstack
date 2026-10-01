@@ -7,6 +7,7 @@ export {
   type McpContent,
   type PackageApi,
   type PackageEvents,
+  type StandaloneContext,
 } from "./operation.js";
 export { publishedJsonSchema } from "./schema.js";
 export { forwardTimeout, mcpToolTimeoutSeconds } from "./forward-timeout.js";
@@ -33,6 +34,7 @@ export { loadCatalog, loadPackageApi, type Catalog, type CatalogServer, type Cat
 export {
   serveSocket,
   socketCall,
+  SocketCallError,
   socketSubscribe,
   type ServedSocket,
   type SocketEvents,

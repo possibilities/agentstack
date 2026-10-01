@@ -36,7 +36,15 @@ export function serverMcpOrigins(port: number): string[] {
 export function roleMcpConflict(server: RoleMcpServer, ownerNames: ReadonlySet<string>, ownerOrigins: ReadonlySet<string>): string | null {
   if (!server.enabled) return null;
   if (ownerNames.has(server.name.toLowerCase())) return `role MCP server ${server.name} collides with an internal MCP server`;
-  if (server.definition.type === "http" && ownerOrigins.has(new URL(server.definition.url).origin)) return `role MCP server ${server.name} cannot alias the internal MCP listener`;
+  if (server.definition.type === "http") {
+    const url = new URL(server.definition.url);
+    // The configured origins fence the whole listener. Reserve its exact
+    // loopback package paths too: an ephemeral or differently configured live
+    // port must not let a Role reintroduce a disabled internal MCP via HTTP.
+    const internalPath = url.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
+      && ownerNames.has(/^\/mcp\/([^/]+)$/.exec(url.pathname)?.[1]?.toLowerCase() ?? "");
+    if (ownerOrigins.has(url.origin) || internalPath) return `role MCP server ${server.name} cannot alias the internal MCP listener`;
+  }
   return null;
 }
 

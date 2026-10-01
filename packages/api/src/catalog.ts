@@ -28,6 +28,7 @@ export type CatalogOperation = {
   name: string;
   title?: string;
   description: string;
+  standalone: boolean;
   annotations: Record<string, boolean | string>;
   inputSchema: Record<string, unknown>;
   outputSchema: Record<string, unknown>;
@@ -67,6 +68,7 @@ export async function loadCatalog(env: NodeJS.ProcessEnv = process.env, from = i
         name: operation.name,
         title: operation.annotations?.title,
         description: operation.description,
+        standalone: Boolean(operation.standalone),
         annotations: annotationsOf(operation.annotations),
         inputSchema: publishedJsonSchema(operation.input),
         outputSchema: publishedJsonSchema(operation.output),

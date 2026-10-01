@@ -22,6 +22,9 @@ async function internal(root: string) {
 
 test("categories and fragments are durable, ordered, and rendered without human metadata", async () => {
   const root = await mkdtemp(join(tmpdir(), "stack-roles-"));
+  const missing = join(root, "missing");
+  assert.throws(() => new RoleStore(missing, { readOnly: true }), /roles_store_missing.*|Existing Roles store required/);
+  await assert.rejects(readdir(missing), { code: "ENOENT" });
   let store = openRole(root);
   try {
     let state = store.createCategory(0, "Planning", "human-only category");
@@ -52,6 +55,9 @@ test("categories and fragments are durable, ordered, and rendered without human 
     const legacy = new DatabaseSync(join(root, "roles.sqlite"));
     legacy.exec("ALTER TABLE fragments DROP COLUMN conditions_json");
     legacy.close();
+    const beforeUpgrade = await readFile(join(root, "roles.sqlite"));
+    assert.throws(() => new RoleStore(root, { readOnly: true }), /roles_store_incompatible/);
+    assert.deepEqual(await readFile(join(root, "roles.sqlite")), beforeUpgrade, "read-only capture refuses rather than applying the additive migration");
     store = openRole(root);
     assert.deepEqual(store.snapshot(), state);
     state = store.deleteFragment(state.revision, gamma);

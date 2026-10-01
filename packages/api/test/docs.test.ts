@@ -12,7 +12,7 @@ type TransportDoc = { type: string; description: string; supported: boolean; sub
     method: string; path: string; description: string; format: string; operation: string | null;
     inputSchema: Record<string, unknown> | null; querySchema: Record<string, unknown> | null;
     outputSchema: Record<string, unknown> | null; errorSchema: Record<string, unknown> | null }> };
-type OperationDoc = { name: string; title: string | null; description: string; annotations: Record<string, unknown>; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown> };
+type OperationDoc = { name: string; title: string | null; description: string; standalone: boolean; annotations: Record<string, unknown>; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown> };
 type PackageDoc = { name: string; description: string; packageName: string; operations: OperationDoc[]; events: Record<string, string>; eventScope: { description: string; example: string; required: boolean } | null; transports: TransportDoc[] };
 const stateOperation = (name: string) => /_state_|_bot_dependencies$|_history_(plan|clear)$|_catalog_clear$|^serve_subscription_|^bot_(workspace_|history_|log_|launch_|recovery_|session_reset$|upload_remove$|queue_history$|queue_bodies_clear$)|^chat_upload_(list|read)$|^content_(blob_list|storage_)|^blob_stage_(list|abort)$|^attention_infer_requests$|^usage_observations_|^xcom_control$|^worker_workspace_|^work_focus_(list|retire)/.test(name);
 
@@ -65,11 +65,14 @@ test("the api package serves structured documents for every workspace package", 
     }
     assert.deepEqual(snapshot.packages, [...found.values()]);
     for (const doc of found.values()) {
+      for (const op of doc.operations) assert.equal(typeof op.standalone, "boolean");
       const inventory = doc.operations.find(op => op.name === `${doc.name}_state_read`)!;
       assert.ok(inventory, `${doc.name} owns a state inventory`);
       for (const field of ["entries", "revision", "observedAt", "nextOffset"]) assert.ok(Object.hasOwn(inventory.outputSchema.properties ?? {}, field));
       assert.ok(!doc.transports.find(t => t.type === "mcp")?.operations.some(stateOperation), `${doc.name} state operations require local operator transport`);
     }
+    assert.equal(found.get("brain")!.operations.find(op => op.name === "search")!.standalone, true);
+    assert.equal(found.get("brain")!.operations.find(op => op.name === "submit")!.standalone, false);
     for (const [pkg, name] of [["bots", "bot_session_reset"], ["infer", "infer_history_clear"], ["notify", "notification_history_clear"], ["proc", "proc_history_clear"], ["signal", "attention_history_clear"], ["content", "content_storage_collect"]]) {
       const op = found.get(pkg!)!.operations.find(op => op.name === name)!;
       for (const field of ["planId", "requestId", "expectedRevision"]) assert.ok((op.inputSchema.required as string[]).includes(field), `${name} requires ${field}`);

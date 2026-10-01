@@ -4,14 +4,16 @@ import { mcpInvocation, type McpIdentity } from "../mcp-authority.js";
 import type { CodexMcpDefinition } from "./catalog.js";
 import { CodexMcpSession } from "./session.js";
 import { record } from "./rpc.js";
+import { mcpPrerequisite } from "../mcp-prerequisite.js";
 
-export function codexMcpServer(definition: CodexMcpDefinition, env: NodeJS.ProcessEnv, checkAuthority: () => Promise<void>, identity: McpIdentity) {
+export function codexMcpServer(definition: CodexMcpDefinition, env: NodeJS.ProcessEnv, checkAuthority: () => Promise<void>, identity: McpIdentity,
+  checkCatalogAuthority = checkAuthority) {
   const backend = new CodexMcpSession(definition, env);
   const mcp = new Server({ name: definition.name, version: "0.0.0" }, { capabilities: { tools: {} }, instructions: definition.description });
   mcp.setRequestHandler(ListToolsRequestSchema, async (_request, extra) => {
-    await checkAuthority();
+    await checkCatalogAuthority();
     const tools = await backend.listTools(extra.signal);
-    await checkAuthority();
+    await checkCatalogAuthority();
     return { tools };
   });
   mcp.setRequestHandler(CallToolRequestSchema, async ({ params }, extra) => {
@@ -31,7 +33,10 @@ export function codexMcpServer(definition: CodexMcpDefinition, env: NodeJS.Proce
         if (mode === "url" ? typeof upstream.url !== "string" || typeof upstream.elicitationId !== "string" : !record(upstream.requestedSchema)) return { action: "cancel" };
         return extra.sendRequest({ method: "elicitation/create", params: { ...payload, ...(record(upstream._meta) ? { _meta: upstream._meta } : {}) } } as Parameters<typeof extra.sendRequest>[0], ElicitResultSchema, { signal: extra.signal });
       }, checkAuthority, params._meta);
-    } catch (error) { return { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }] }; }
+    } catch (error) {
+      const diagnostic = mcpPrerequisite(error, definition.name, params.name, "live managed identity owner");
+      return { isError: true, content: [{ type: "text", text: diagnostic instanceof Error ? diagnostic.message : String(diagnostic) }] };
+    }
   });
   return { mcp, backend };
 }

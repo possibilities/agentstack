@@ -24,10 +24,12 @@ export async function internalMcpLaunches(root: string, authority: McpLaunchAuth
     XDG_STATE_HOME: env.XDG_STATE_HOME ?? join(home, ".local", "state"),
     XDG_CACHE_HOME: env.XDG_CACHE_HOME ?? join(home, ".cache"),
   };
-  for (const key of ["PATH", "TMPDIR", "STACK_CODEX_TOOLS_BIN", "STACK_MCP_PORT"])
+  for (const key of ["PATH", "TMPDIR", "STACK_CODEX_TOOLS_BIN", "STACK_MCP_PORT", "STACK_SERVER_MCP_PORT",
+    "STACK_CONTENT_HOST", "STACK_CONTENT_PORT", "STACK_CONTENT_ARTIFACT_PORT", "STACK_WIKI_PORT", "STACK_WIKI_ARTIFACT_PORT",
+    "STACK_CONTENT_DOCUMENT_ORIGIN", "STACK_CONTENT_ARTIFACT_ORIGIN"])
     if (env[key] !== undefined) values[key] = env[key];
   return Object.fromEntries((await configuredMcpServers(root)).map(({ name }) => [name, {
     type: "stdio", command: process.execPath,
-    args: [join(workspaceRoot(import.meta.dirname), "packages/api/dist/src/stdio.js"), name], env: { ...values },
+    args: [join(workspaceRoot(import.meta.dirname), "packages/api/dist/src/stdio-main.js"), name], env: { ...values },
   }]));
 }

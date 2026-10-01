@@ -53,7 +53,29 @@ export function renderInstructions(snapshot: Pick<RoleSnapshot, "categories">, c
 export class RoleStore {
   private readonly db: DatabaseSync;
 
-  constructor(stateDir: string) {
+  constructor(stateDir: string, options: { readOnly?: boolean } = {}) {
+    if (options.readOnly) {
+      const path = join(stateDir, "roles.sqlite");
+      if (!existsSync(path)) throw new Error("roles_store_missing\nExisting Roles store required; run stack serve and provision a Role before injecting it.");
+      try { this.db = new DatabaseSync(path, { readOnly: true }); }
+      catch (error) { throw new Error("roles_store_unavailable\nExisting Roles store cannot be opened read-only; inspect or restore it with the Roles owner before injecting. No initialization was attempted.", { cause: error }); }
+      try {
+        this.db.exec("PRAGMA busy_timeout = 5000");
+        // Read every shape in one snapshot. This checks the current schema
+        // without initializing, migrating, chmodding or creating directories.
+        transaction(this.db, false, () => {
+          const catalog = this.readCatalog();
+          for (const role of catalog.roles) this.role(role.id).readSnapshot();
+          if (!catalog.defaultRoleId || !catalog.workerDefaultRoleId) throw new Error("missing catalog defaults");
+          this.role(catalog.defaultRoleId).metadata();
+          this.role(catalog.workerDefaultRoleId).metadata();
+        });
+      } catch (error) {
+        this.db.close();
+        throw new Error("roles_store_incompatible\nExisting Roles store is incompatible; inspect or upgrade it with the Roles owner before injecting. No migration was attempted.", { cause: error });
+      }
+      return;
+    }
     mkdirSync(stateDir, { recursive: true, mode: 0o700 });
     chmodSync(stateDir, 0o700);
     const path = join(stateDir, "roles.sqlite");
@@ -89,6 +111,17 @@ export class RoleStore {
   }
 
   defaultSnapshot(): RoleSnapshot { return this.launchSnapshot(); }
+
+  /** Injection resolves names and reads complete resources in one SQLite snapshot. */
+  namedLaunchSnapshot(name: string): RoleSnapshot {
+    return transaction(this.db, false, () => {
+      const catalog = this.readCatalog();
+      const fold = (text: string) => text.replace(/[A-Z]/g, char => char.toLowerCase());
+      const selected = name === "default" ? catalog.defaultRoleId : catalog.roles.find(role => fold(role.name) === fold(name))?.id;
+      if (!selected) throw new Error(name === "default" ? "no Bot default Role; run stack serve and provision Roles" : `unknown Role name: ${name}`);
+      return this.role(selected).readSnapshot();
+    });
+  }
 
   createRole(expectedRevision: number, name: string, description = ""): RoleCatalog {
     return this.changeCatalog(expectedRevision, () => {

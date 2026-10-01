@@ -7,8 +7,7 @@ import { createServer } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { z } from "zod";
-import { configuredMcpServers, workspaceRoot, operation, operatorHeaders, serveApi, serveSocket, socketCall, socketPath, socketSubscribe } from "@stack/api";
+import { configuredMcpServers, workspaceRoot, operatorHeaders, serveApi, socketCall, socketPath, socketSubscribe } from "@stack/api";
 import { startOpenCodeHost } from "../src/inject-opencode.js";
 
 const cli = fileURLToPath(new URL("../../../cli/dist/src/main.js", import.meta.url));
@@ -95,11 +94,6 @@ async function setup() {
     ROLE_TEST_TOKEN: "private-fixture-token", ROLE_TEST_HEADER: "private-fixture-header", ROLE_TEST_ENV: "private-fixture-env" };
   await mkdir(env.CODEX_HOME); await writeFile(join(env.CODEX_HOME, "auth.json"), '{"fixture":"never-real-auth"}');
   const roles = await serveApi({ name: "roles", transport: "socket", env });
-  const mcpUrls: Record<string, string> = { roles: "http://127.0.0.1:48743/mcp/roles", notify: "http://127.0.0.1:48743/mcp/notify" };
-  const serve = await serveSocket({ info: { name: "serve", description: "fixture", transportDescription: "fixture", path: socketPath("serve", env) }, context: {}, operations: [operation({
-    name: "serve_status", description: "Fixture listener inventory", input: z.object({}), output: z.object({ mcpUrls: z.record(z.string(), z.string()) }),
-    async call() { return { mcpUrls }; },
-  })] });
   const call = (name: string, args: Record<string, unknown> = {}) => socketCall(roles.socketPath!, "tools/call", { name, arguments: args }) as Promise<any>;
   const run = (args: string[], extra: NodeJS.ProcessEnv = {}, direct?: string) => new Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }>((resolve, reject) => {
     const child = direct ? spawn(join(bin, direct), args, { env: { ...env, ...extra }, cwd: home })
@@ -109,7 +103,8 @@ async function setup() {
     child.once("error", reject); child.once("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
     child.stdin.end("piped input\n");
   });
-  return { root, home, bin, state, env, call, run, mcpUrls, close: async () => { await serve.close(); await roles.close(); await rm(root, { recursive: true, force: true }); } };
+  const stop = async () => { await roles.close(); };
+  return { root, home, bin, state, env, call, run, stop, close: async () => { await stop(); await rm(root, { recursive: true, force: true }); } };
 }
 
 async function populate(f: Awaited<ReturnType<typeof setup>>) {
@@ -141,6 +136,11 @@ test("inject launches each native boundary with the selected bytes, private cred
       conditions: { model: "render-only-model", harness: "render-only-harness" } });
     await f.call("fragment_create", { roleId, expectedRevision: snapshot.revision + 1, categoryId: snapshot.categories[0].id,
       title: "Nonmatching", body: "DO NOT INJECT", conditions: { model: "other" } });
+    const catalog = await f.call("roles_snapshot");
+    await f.call("role_set_default", { expectedRevision: catalog.revision, roleId });
+    await f.stop();
+    const rolePath = join(f.state, "roles.sqlite");
+    const before = await readFile(rolePath), beforeStat = await stat(rolePath);
     for (const harness of ["claude", "codex", "opencode"]) {
       const ordinaryBefore = await f.run(["--", "ordinary prompt"], { CODEX_HOME: undefined, OPENCODE_CONFIG_DIR: undefined }, harness);
       const native = harness === "opencode" ? ["run", "-mtest/model#high", "--auto", "--format=json", "--", "--settings", "two words"]
@@ -209,6 +209,22 @@ test("inject launches each native boundary with the selected bytes, private cred
       assert.deepEqual(ordinaryAfter, ordinaryBefore);
       assert.equal(await readFile(join(f.env.CODEX_HOME, "auth.json"), "utf8"), '{"fixture":"never-real-auth"}');
     }
+    const defaultRun = await f.run(["inject", "default", "--with-model=render-only-model", "--with-harness=render-only-harness", "--", "claude"]);
+    assert.equal(defaultRun.code, 0, defaultRun.stderr);
+    assert.equal(JSON.parse(defaultRun.stdout).instructions, instructions);
+    assert.deepEqual(await readFile(rolePath), before);
+    assert.equal((await stat(rolePath)).mtimeMs, beforeStat.mtimeMs);
+    // Imported definitions cannot bypass the launch collision guard merely
+    // because no listener inventory is available. All loopback aliases count.
+    const db = new DatabaseSync(rolePath);
+    try { db.prepare("UPDATE role_mcp_servers SET definition_json=? WHERE name='external'").run(JSON.stringify({ type: "http", url: "http://localhost:48743/mcp/roles" })); }
+    finally { db.close(); }
+    const alias = await f.run(["inject", "Research É", "--", "claude"], { STACK_MCP_PORT: "48743" });
+    assert.equal(alias.code, 1);
+    assert.match(alias.stderr, /cannot alias the internal MCP listener/);
+    const ephemeral = await f.run(["inject", "Research É", "--", "claude"], { STACK_MCP_PORT: "0" });
+    assert.equal(ephemeral.code, 1);
+    assert.match(ephemeral.stderr, /cannot alias the internal MCP listener/, "the reserved internal path is fenced even without a configured HTTP origin");
   } finally { await f.close(); }
 });
 
