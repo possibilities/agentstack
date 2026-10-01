@@ -78,6 +78,11 @@ A fresh watch proven unsent (including a request not dispatched) discards its
 reservation and receipt. Rejection of an established watched-ID retry never
 cancels that watch. Generic handler/output errors may follow mutation and retain
 read-only recovery, including successful persistence with a lost send ACK.
+Graceful shutdown drains proven-unsent cleanup while the subscription database
+remains open, even after its active map is cleared. Deletion binds the exact
+pending reservation, destination and record identity; cancellation, terminal and
+unknown-admission evidence remain retained. Cleanup refuses a closed database and
+emits no change callback during shutdown.
 
 Immediately before native `turn/start`, the owner persists an unknown admission
 fence only at the ready socket's synchronous dispatch boundary. A socket closed

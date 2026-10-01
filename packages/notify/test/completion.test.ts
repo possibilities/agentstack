@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { z } from "zod";
-import { botInstance, botMcpUrl, invocationContext, McpDeliveryRejected, McpEventSubscriptions, operation, operatorHeaders, serveApi, serveMcp,
+import { botInstance, botMcpUrl, invocationContext, McpDeliveryRejected, McpEventSubscriptions, OperationRejected, operation, operatorHeaders, serveApi, serveMcp,
   serveSocket, socketCall, socketPath, type CompletionReceipt, type EventValue, type InvocationContext } from "@stack/api";
 import type { Notification } from "../src/schema.js";
 import { api } from "../api.js";
@@ -27,22 +27,36 @@ function capabilitySocket(env: NodeJS.ProcessEnv, owner: () => McpEventSubscript
 async function completionBoundary(run: (fixture: {
   owner: McpEventSubscriptions; caller: InvocationContext; deliveries: EventValue[];
   send(input: Record<string, unknown>): Promise<Send>; call(name: string, input?: Record<string, unknown>): Promise<any>;
-}) => Promise<void>, validate: () => Promise<void> = async () => undefined, checking: () => void = () => undefined) {
+  restart(): Promise<void>;
+}) => Promise<void>, validate: () => Promise<void> = async () => undefined, checking: () => void = () => undefined,
+  rejected: (error: OperationRejected) => Promise<void> = async () => undefined) {
   const root = await mkdtemp(join(tmpdir(), "stack-notify-refusal-"));
   const env = { STACK_STATE_DIR: root };
   const dir = join(root, "packages", "notify"); await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "api.yaml"), "name: notify\ndescription: Notifications.\nmcp:\n  description: Notifications.\n  operations: all\n  events: all\n");
   const caller: InvocationContext = { transport: "mcp", botId: "bot-1", instance: "launch-1", threadId: "child", sessionId: null };
   const deliveries: EventValue[] = [];
-  const owner = new McpEventSubscriptions(env, validate, async (event, _signal, authorize, submitting) => {
+  const createOwner = () => new McpEventSubscriptions(env, validate, async (event, _signal, authorize, submitting) => {
     await authorize(); submitting?.(); deliveries.push(event);
   }, undefined, undefined, root);
+  let owner = createOwner();
   const server = await capabilitySocket(env, () => owner, () => { checking(); return true; });
-  const notifications = await serveApi({ name: "notify", transport: "socket", env });
-  const call = (name: string, input: Record<string, unknown> = {}) => socketCall(notifications.socketPath!, "tools/call", { name, arguments: input });
+  const context = await api.createContext(env);
+  const notifications = await serveSocket({ info: { name: "notify", description: "Notifications", transportDescription: "Socket", path: socketPath("notify", env) }, context,
+    events: { topics: api.events!.topics }, operations: api.operations.map(op => ({ ...op, async call(ctx: typeof context, input: any, invocation?: InvocationContext) {
+      try { return await op.call(ctx, input, invocation); }
+      catch (error) {
+        // Hold only a genuine owner rejection, after its actual pre-mutation check.
+        if (op.name === "notification_send" && error instanceof OperationRejected) await rejected(error);
+        throw error;
+      }
+    } })) });
+  const stopEvents = await api.events!.start(context, topic => notifications.publish!(topic));
+  const call = (name: string, input: Record<string, unknown> = {}) => socketCall(notifications.path, "tools/call", { name, arguments: input });
   try {
-    await run({ owner, caller, deliveries, call, send: input => owner.callAndWatch("notify", "notification_send", input, caller) as Promise<Send> });
-  } finally { await owner.close(); await notifications.close(); await server.close(); await rm(root, { recursive: true, force: true }); }
+    await run({ get owner() { return owner; }, caller, deliveries, call, send: input => owner.callAndWatch("notify", "notification_send", input, caller) as Promise<Send>,
+      async restart() { await owner.close(); owner = createOwner(); owner.resume(); } });
+  } finally { await owner.close(); stopEvents?.(); await notifications.close(); await api.closeContext(context); await server.close(); await rm(root, { recursive: true, force: true }); }
 }
 
 test("definite Notification send refusals retire only fresh intent, never watch another record or cancel an established watch", async () => {
@@ -86,6 +100,58 @@ test("cancelling the exact watch during capability authorization prevents the No
       } finally { release(); }
     }, async () => { if (checking && ++checks === 2) await held; }, () => { checking = true; });
   } finally { release(); }
+});
+
+test("graceful shutdown discards fresh proven-unsent intent but preserves cancellation and established watches", async t => {
+  for (const variant of ["fresh conflict", "cancelled conflict", "established conflict", "pre-dispatch"] as const) {
+    await t.test(variant, async () => {
+      let release!: () => void;
+      const held = new Promise<void>(resolve => { release = resolve; });
+      let blocked = false, holding = false, rejection: OperationRejected | undefined;
+      let currentOwner: McpEventSubscriptions | undefined;
+      await completionBoundary(async fixture => {
+        try {
+          const original = variant === "pre-dispatch" ? null : variant === "established conflict"
+            ? await fixture.send({ title: "Original", message: "Choose", actions: ["Yes"] })
+            : await fixture.call("notification_send", { title: "Original", message: "Choose", actions: ["Yes"], subscribe: false }) as Send;
+          const recordId = original?.id ?? randomUUID();
+          currentOwner = fixture.owner; holding = true;
+          const result = fixture.send({ id: recordId, title: "Different", message: "Choose", actions: ["Yes"] }).then(value => ({ value }), error => ({ error }));
+          await until(() => blocked);
+          if (variant !== "pre-dispatch") assert.ok(rejection instanceof OperationRejected && rejection.message === "notification_id_conflict");
+          const watch = fixture.owner.operatorList()[0]!;
+          assert.ok(watch, "intent is durable before shutdown and the held result");
+          if (variant === "cancelled conflict") await fixture.owner.unsubscribe(watch.id, fixture.caller);
+          const closing = fixture.owner.close();
+          assert.equal(fixture.owner.operatorList().length, 0, "actual owner close has cleared its active map while draining admission");
+          holding = false; release();
+          const returned = await result;
+          assert.ok("error" in returned);
+          if (variant !== "pre-dispatch") assert.match(String(returned.error), /notification_id_conflict/);
+          await closing;
+          await fixture.restart();
+          const restored = fixture.owner.status(fixture.caller);
+          if (original) await until(() => fixture.owner.status(fixture.caller).subscriptions.every(row => row.state === "active"));
+          if (original) await fixture.call("notification_dismiss", { id: original.id, outcome: "action", response: "Yes" });
+          else await assert.rejects(fixture.call("notification_get", { id: recordId }), /notification_not_found/);
+          if (variant === "established conflict") await until(() => fixture.deliveries.length === 1);
+          else await pause(80);
+          const expected = variant === "established conflict" ? [1, 1, 1] : variant === "cancelled conflict" ? [0, 1, 0] : [0, 0, 0];
+          assert.deepEqual([restored.subscriptions.length, restored.completions.length, fixture.deliveries.length], expected,
+            "shutdown must not resurrect fresh unsent intent or erase prior evidence");
+          if (variant === "cancelled conflict") assert.equal(restored.completions[0]?.state, "cancelled");
+          if (variant === "established conflict") {
+            assert.equal(restored.subscriptions[0]?.id, original!.subscription!.id);
+            await until(() => fixture.owner.status(fixture.caller).completions.some(row => row.id === original!.subscription!.id && row.state === "delivered"));
+          }
+        } finally { holding = false; release(); }
+      }, async () => {
+        if (variant === "pre-dispatch" && holding && !blocked && currentOwner?.operatorList().length) { blocked = true; await held; }
+      }, undefined, async error => {
+        if (holding) { rejection = error; blocked = true; await held; }
+      });
+    });
+  }
 });
 
 // The real Notification owner and HTTP gateway protect defaults, mutation ordering,

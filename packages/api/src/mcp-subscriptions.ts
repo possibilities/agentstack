@@ -306,7 +306,7 @@ export class McpEventSubscriptions {
     } catch (error) {
       if (ownsInitial) state.admitting = false;
       const refused = !dispatched || error instanceof OperationRejected || error instanceof SocketCallError && !error.dispatched;
-      if (!prior && refused) await this.discardUnsent(state);
+      if (!prior && refused) await this.discardUnsent(state, recordId);
       else if (!prior) {
         this.fail(state, new Error(`send outcome may be unknown for ${recordId}; retry only with that ID: ${error instanceof Error ? error.message : String(error)}`));
         // Read-only recovery can discover a successful send even after a lost send acknowledgement.
@@ -350,10 +350,22 @@ export class McpEventSubscriptions {
 
   /** Only fresh intent with proof of no mutation can be forgotten. Established
    * watches and ambiguous sends retain their original receipts and recovery. */
-  private async discardUnsent(state: RecordState): Promise<void> {
-    if (this.closed || this.records.get(state.id) !== state) return;
+  private async discardUnsent(state: RecordState, recordId: string): Promise<void> {
+    // Graceful close clears the live map, but drains these admissions before
+    // closing SQLite. Their proven-unsent reservations must not survive restart.
+    if (!this.db.isOpen || !state.completion || state.submissionUnknown || !this.closed && this.records.get(state.id) !== state) return;
     this.db.exec("BEGIN IMMEDIATE");
     try {
+      const owned = this.db.prepare(`SELECT 1 FROM completion_receipts c JOIN subscriptions s ON s.id = c.id
+        WHERE c.id = ? AND c.bot_id = ? AND c.thread_id = ? AND c.pkg = ? AND c.operation = ? AND c.record_id = ?
+          AND c.state = 'pending' AND c.last_delivered_at IS NULL
+          AND s.bot_id = c.bot_id AND s.thread_id = c.thread_id AND s.pkg = c.pkg
+          AND s.instance = ? AND s.read_operation = ? AND s.read_arguments_json = ? AND s.completion_json = ?`)
+        .get(state.id, state.botId, state.threadId, state.pkg, state.completion.operation, recordId,
+          state.instance, state.readOperation, JSON.stringify(state.readArguments), JSON.stringify(state.completion));
+      // Explicit cancellation and established/uncertain delivery are retained
+      // evidence, never removable by a late fresh-send rejection.
+      if (!owned) { this.db.exec("COMMIT"); return; }
       this.db.prepare("DELETE FROM subscriptions WHERE id = ?").run(state.id);
       this.db.prepare("DELETE FROM completion_receipts WHERE id = ?").run(state.id);
       this.db.exec("COMMIT");
@@ -362,7 +374,7 @@ export class McpEventSubscriptions {
     state.abort.abort();
     if (state.retry) clearTimeout(state.retry);
     await state.socket?.close();
-    this.onChange?.();
+    if (!this.closed) this.onChange?.();
   }
 
   private async finishCompletion(state: RecordState, outcome: "observed" | "delivered" | "cancelled"): Promise<void> {
