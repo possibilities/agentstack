@@ -70,10 +70,13 @@ export class WorkerSupervisor {
       if (this.closing) return;
       const accounts = await this.accounts();
       const wanted = new Map(accounts.filter((account) => account.enabled && account.ready && !account.removing).map((account) => [account.id, account]));
-      for (const [id, runtime] of this.live) if (!wanted.has(id)) { this.live.delete(id); this.onRuntimeExit?.(id); await runtime.process.close(); this.onChange?.(); }
+      for (const [id, runtime] of this.live) if (!wanted.has(id)) {
+        this.live.delete(id); this.teardown.set(id, runtime.process); this.onRuntimeExit?.(id);
+        await runtime.process.close(); this.teardown.delete(id); this.onChange?.();
+      }
       for (const id of this.errors.keys()) if (!wanted.has(id)) { this.errors.delete(id); this.launchRetry.delete(id); this.onChange?.(); }
       for (const account of wanted.values()) {
-      if (this.live.has(account.id) || this.draining.has(account.id) || this.teardown.has(account.id)) continue;
+        if (this.live.has(account.id) || this.draining.has(account.id) || this.teardown.has(account.id)) continue;
         if (Date.now() < (this.launchRetry.get(account.id)?.after ?? 0)) continue;
         await this.launch(account);
         // A newly ready account has never been observed; observe it now rather than on its first catalog read.
@@ -118,7 +121,8 @@ export class WorkerSupervisor {
         agentInfo: record(initialized.agentInfo) ? initialized.agentInfo : null };
       this.register(runtime);
     } catch {
-      await child.close();
+      this.teardown.set(account.id, child);
+      await child.close(); this.teardown.delete(account.id);
       this.errors.set(account.id, { provider: account.provider, message: "ACP initialization failed; inspect the native account and runtime" });
       const delay = Math.min((this.launchRetry.get(account.id)?.delay ?? 30_000) * 2, 30 * 60_000);
       this.launchRetry.set(account.id, { after: Date.now() + delay, delay });
