@@ -39,6 +39,13 @@ kinds persist an `unknown` fence at the synchronous native-send boundary; ambigu
 attention freezes subsequent delivery too, including terminal delivery, and never
 automatically replays. A definite refusal permits fresh-read recovery.
 
+Repeating an observed, delivered or unknown receipt first reads its exact retained
+projection. If owner maintenance removed the admission identity, or an explicit
+domain retry reopened its terminal record without an attention projection, the
+coordinator refuses re-admission rather than interpreting the retained receipt as
+permission to recreate work. The receipt and ordinary domain reads remain
+inspectable; a present projection still visits the owner to enforce its digest.
+
 ## Domain boundaries
 
 - Browser handoff requests default on for verified Bot MCP calls. The exact

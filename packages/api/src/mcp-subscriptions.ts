@@ -254,8 +254,8 @@ export class McpEventSubscriptions {
 
   private async coordinate(pkg: string, operation: string, input: Record<string, unknown>, invocation: InvocationContext, target: EventTarget, watch: CompletionWatch): Promise<Record<string, unknown>> {
     const recordId = input[watch.idArgument] as string;
-    const prior = this.db.prepare("SELECT id, bot_id, thread_id FROM completion_receipts WHERE pkg = ? AND operation = ? AND record_id = ?").get(pkg, operation, recordId) as
-      { id: string; bot_id: string; thread_id: string } | undefined;
+    const prior = this.db.prepare("SELECT id, bot_id, thread_id, state FROM completion_receipts WHERE pkg = ? AND operation = ? AND record_id = ?").get(pkg, operation, recordId) as
+      { id: string; bot_id: string; thread_id: string; state: CompletionReceipt["state"] } | undefined;
     if (prior && (prior.bot_id !== target.botId || prior.thread_id !== target.threadId)) throw new Error("completion watch belongs to another Bot Chat; nothing was sent");
     const resolved = resolveCompletionRead(watch, input, invocation);
     const state: RecordState = prior && this.records.get(prior.id) || {
@@ -274,6 +274,16 @@ export class McpEventSubscriptions {
     await this.validate(target);
     const live = (await this.definition(pkg)).tools.find(tool => tool.name === operation)?.completionWatch;
     if (!live || JSON.stringify(completionWatchSchema.parse(live)) !== JSON.stringify(watch)) throw new Error("completion operation exposure changed; nothing was sent");
+    if (prior && ["observed", "delivered", "unknown"].includes(prior.state)) {
+      // A retained receipt is not permission to recreate work after owner
+      // maintenance removed its admission identity. Still visit retained record
+      // owners below to enforce their digest, but never re-admit a missing one.
+      try {
+        const retained = await this.read(admissionPolicy);
+        const update = watch.updateField && retained && typeof retained === "object" && (retained as Record<string, unknown>)[watch.updateField] != null;
+        if (!this.terminal(state, retained) && !update) throw new Error("the exact projection has no retained result or attention facts");
+      } catch (error) { throw new Error(`retained admission ${recordId} is unavailable or reopened; inspect its receipt and domain reads instead of re-admitting it. ${error instanceof Error ? error.message : String(error)}`, { cause: error }); }
+    }
     if (!prior) {
       this.reserveSetup(state);
       state.admitting = true;

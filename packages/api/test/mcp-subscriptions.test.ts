@@ -430,6 +430,9 @@ test("mapped admission watches retain exact identity, acknowledge attention with
     const repeated = await service.callAndWatch("sample", "admit", { requestId }, caller);
     assert.equal((repeated.subscription as { state: string }).state, "delivered");
     assert.equal(delivered.length, 2);
+    values.delete(requestId);
+    await assert.rejects(service.callAndWatch("sample", "admit", { requestId }, caller), /retained admission.*unavailable/);
+    assert.equal(values.has(requestId), false, "retired receipt retry must not re-admit a record removed by owner maintenance");
 
     const unknown = await service.callAndWatch("sample", "admit", { requestId: unknownId }, caller);
     ambiguous = unknownId;
