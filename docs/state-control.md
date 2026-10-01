@@ -73,11 +73,11 @@ can retain `.stack-clear-<uuid>` quarantine, named in the result for inspection.
 | Usage | `usage_snapshot` | `usage_observations_plan({accounts:[{id,scope}]})` / `usage_observations_clear`: exact local observations; fence selected in-flight collectors and persist. Future collection regenerates; provider quota/credentials are independent. |
 | Xcom | Existing archive/status/user/article reads; status includes `paused` | `xcom_control({paused})` persistently pauses/resumes admission. `xcom_history_plan` / `xcom_history_clear` selects posts with reimport/orphan-author policy, article attempts, or one scan checkpoint. Pause and wait for `sync.running:false`. Source rows/raw/FTS clear together. |
 | HUD | `work_focus_list` includes retired roots; Work/tree/timeline and metadata reads expose redaction markers | `work_focus_retire_plan({target})` / `work_focus_retire` removes one retired-root focus. `hud_history_plan({items,scope})` / `hud_history_clear` redacts exact `journal_bodies`, or tombstones `item_and_journal` including metadata. Retain hierarchy/state/dependency IDs; require retained children first or explicit subtree selection. Open descendant Worker admissions and active-root focus block. Worker-captured context stays independent. |
-| Brain | Owner inventory links existing research, jobs, source, reveal and maintenance reads | Existing document `delete`, job cancel/exclude and source pause remain the domain authorities. Document deletion redacts associated intents and collects unreferenced Artifacts. |
+| Brain | Research/jobs/source reads, audited `jobs_reveal`; job/Run `content_cleared_at`, Run `payload_digest`, source `removed_at` and `checkpoint_generation` | `brain_jobs_plan({ids,scope:"payload"})` / `brain_jobs_clear` for terminal jobs without indexed documents; `brain_runs_plan` / `brain_runs_clear` for terminal drained Runs including captured recovery jobs, retaining immutable authorization. `brain_source_plan({id,action:"remove"\|"checkpoint_reset"})` / `brain_source_clear` requires paused/drained source and protected Proc observation. `brain_artifacts_plan({digests})` / `brain_artifacts_clear` fences every live reference before collecting exact stranded objects. `brain_state_receipt_get` reads any receipt. Existing document deletion/cancel/exclude remain separate authorities. |
 | Browse | Owner inventory links profiles, controllers and handoffs; provider volume coverage is explicit | Existing profile deletion, controller closure, handoff completion/cancellation and installation lifecycle operations. Profile deletion enforces default/controller/handoff restrictions and calls the native provider. |
 | Auth / Access | Credential-metadata inventories link existing account/client snapshots | Existing account removal/reconciliation and Access revocation. Account removal can cascade; revocation retains identity/admission history. State inventory reveals no bearer values. |
 | Roles | Catalog, injection-storage and external-shim inventory | Existing granular catalog edits/deletion and hash-fenced shim deletion. A current Role preview is not a retained launch snapshot. |
-| Scrape | Owner inventory links extraction, preset, check and scrape-to-file queue reads | No new queue or corpus cleanup; publication recovery and generation claims retain their existing lifecycle authority. |
+| Scrape | `scrape_queue_list` includes any `maintenanceFence`; `scrape_corpus_list({preset})` lists final local capture IDs | `scrape_queue_plan({ids,action:"cancel"\|"retry"\|"discard"})` / `scrape_queue_apply`: cancel pending-only, retry failed under a new generation, discard failed or receipt-retired remaining files. Native claims/publication recovery block. `scrape_corpus_plan({captures:[{preset,id}]})` / `scrape_corpus_clear` selects exact final overlay IDs, not shipped fixtures. `scrape_state_receipt_get` retains partial/unknown admission and planned retry names. External destination files never clear. |
 | API | Reference/discovery inventory | Derived discovery is regenerated from manifests, typed operations and live metadata. |
 
 ### Bot lifecycle details
@@ -134,10 +134,12 @@ The following remain explicit backend gaps rather than implied erase controls:
   retained-branch collection and catalog-only clearing.
 - Browser default-profile reset, origin/category site-data clearing, resolved
   handoff redaction and orphan-volume collection.
-- Brain terminal jobs without documents, source removal/checkpoint reset,
-  terminal Run/recovery payload clearing and stranded-Artifact collection.
-- Scrape queue cancel/retry/discard and corpus/session-state maintenance; live
-  generation claims and publication recovery must remain authoritative.
+- Brain collection of missing/corrupt Artifact paths without an exact file snapshot
+  remains unavailable. Recovery authorization and source definition/checkpoint history
+  are retained authority, not deleted payloads. Backups are separate stores.
+- Scrape authenticated browser sessions belong to Browse; unattributed retirement
+  quarantine and publication temporaries stay with existing queue recovery. Maintenance
+  never breaks live, dead or unresolved claim evidence to make a plan pass.
 - Roles retained injection-launch cleanup, standalone settings-receipt retirement,
   Auth cache-only clearing and Access history/session-specific retirement.
 - Signal checkpoint reset.
