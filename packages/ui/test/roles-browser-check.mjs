@@ -497,7 +497,7 @@ try {
   await inspector.getByText("Role MCP server", { exact: true }).waitFor();
   await inspector.getByRole("button", { name: "Edit in Roles" }).click();
   await page.keyboard.press("Escape");
-  await skills.getByRole("button", { name: "review-changes-copy actions" }).click();
+  await tap(skills.getByRole("button", { name: "review-changes-copy actions" }));
   await page.getByRole("menuitem", { name: "Delete…" }).click();
   await dialog.getByText("Delete skill “review-changes-copy”?", { exact: true }).waitFor();
   await dialog.getByRole("button", { name: "Delete", exact: true }).click();
@@ -734,7 +734,7 @@ try {
   await count(total).waitFor();
   assert.deepEqual(Object.values(await enabledNow(A)).every(Boolean), true, "every server is on in a newly created Role");
   assert.deepEqual(Object.values(await enabledNow(B)).every(Boolean), true);
-  await servers.getByText("Switches apply to later Bot launches and new Workers; running sessions keep their connections. New Stack servers start on.").waitFor();
+  await servers.getByText("Stack servers use stdio for Bot and Worker launches and stack roles inject. Switches apply to future launches; running sessions keep their connections. New Stack servers start on.").waitFor();
   await preview.getByRole("button", { name: "Launch", exact: false }).click();
   await preview.getByText(`${total} of ${total} Stack servers on · 1 from the Role`).waitFor();
   // Off for this Role only, and the preview tells enabled from configured.
