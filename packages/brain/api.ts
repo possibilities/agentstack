@@ -22,6 +22,7 @@ import { shareAdmit, shareStates } from "./src/share-server.js";
 import { parseShareRequest } from "./src/share.js";
 import { ResearchStore } from "./src/store.js";
 import { runWorker, type WorkerOptions, type WorkerResult } from "./src/worker.js";
+import { BrainState, brainStateOperations } from "./src/state.js";
 
 export interface BrainContext {
   env: NodeJS.ProcessEnv;
@@ -32,6 +33,7 @@ export interface BrainContext {
   registrationPath: string;
   artifacts: ArtifactStore;
   store: ResearchStore;
+  state: BrainState;
   server: RunningShareServer;
   controller: AbortController;
   worker: Promise<WorkerResult | null>;
@@ -176,7 +178,8 @@ export async function createBrainContext(env: NodeJS.ProcessEnv, workerOptions: 
       writeIngressRegistration(registrationPath, { version: 1, url: server.url, host, port: server.port, pid: process.pid, started_at: new Date().toISOString() });
       const controller = new AbortController();
       const ctx: BrainContext = { env, stateRoot, dbPath, tokenPath, get shareToken() { return currentToken; }, set shareToken(value) { currentToken = value; }, registrationPath, artifacts, store, server, controller,
-        worker: Promise.resolve(null), maintenance: undefined as never, maintenanceTask: null, calls: new Set(), workerState: "running", health: null };
+        state: undefined as never, worker: Promise.resolve(null), maintenance: undefined as never, maintenanceTask: null, calls: new Set(), workerState: "running", health: null };
+      ctx.state = new BrainState(ctx);
       ctx.worker = withBrainEnvironment(env, () => runWorker(store, {
         ...workerOptions, artifactStore: artifacts, signal: controller.signal, installSignalHandlers: false, shutdownGraceMs: 0,
       }), controller.signal).then((result) => { ctx.workerState = "stopped"; return result; }, () => { ctx.workerState = "failed"; ctx.health = "ingestion_worker_failed"; return null; });
@@ -217,6 +220,7 @@ const packageApi: PackageApi<BrainContext, BrainTopic> = {
   http: [{ name: "share", kind: "json", authentication: "bearer",
     description: "Loopback-only internal share listener with ephemeral liveness credential. Devices pair through Access; legacy shared tokens are not accepted.", routes: shareRoutes }],
   operations: [
+    ...brainStateOperations,
     operation({ name: "egress_grant_create", description: "Operator-only socket grant for one URL submission root or exact Research source definition version. Allows only explicit TCP IP/port destinations in addition to public egress. Children inherit the scope; existing sources receive no implicit grants. Revoke an existing grant before changing destinations.",
       input: z.strictObject({ scope: grantScope, policy: egressPolicy }), output: grantRecord,
       async call(ctx, input, invocation) {

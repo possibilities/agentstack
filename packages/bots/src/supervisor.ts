@@ -1,16 +1,17 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { accessSync, constants, createWriteStream, existsSync } from "node:fs";
 import { connect } from "node:net";
 import { codexRuntimePath } from "./paths.js";
 import { DEFAULT_BOT_SETTINGS, StateStore, nativeSettings, legacySettings, type BotSettings, type StoredServer } from "./store.js";
 import { nativeArgs, settingValue, type SettingValues, type SettingsPatch, type SettingsSnapshot } from "@stack/settings";
 import { RuntimeAuth, type SyncStatus } from "./runtime-auth.js";
-import { bindMainThread, findEligibleMainThread } from "./threads.js";
+import { bindMainThread, findEligibleMainThread, watchThreadEvents } from "./threads.js";
+import { orientationSettled, pendingOrientation, orientationPrompt, readOrientationTurn, type Orientation } from "./orientation.js";
 import { chatRpc, observeThreadState, type ThreadStateObservation } from "./chats.js";
-import { RoleStore, materializeRole, removeRole } from "@stack/roles";
+import { RoleStore, materializeRole, removeRole, renderBotInstructions } from "@stack/roles";
 import type { McpStdioLaunch } from "@stack/api";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -33,6 +34,7 @@ export type ServerView = {
   roleRevision: number | null;
   roleId: string | null;
   settings: BotSettings | null;
+  orientation?: Orientation | null;
 };
 
 type RecordFile = StoredServer;
@@ -85,6 +87,8 @@ export class Supervisor {
   private readonly children = new Map<string, RunningChild>();
   private readonly recoveryIssues = new Map<string, string>();
   private readonly settingsObservations = new Map<string, { url: string; threadId: string; values: SettingValues; observedAt: number }>();
+  private readonly orientationWatches = new Map<string, () => void>();
+  private readonly unresolvedOrientationRoots = new Set<string>();
   private readonly launch: (spec: LaunchSpec) => RunningChild;
   private readonly waitReady: (url: string, exited: Promise<number | null>, timeoutMs: number) => Promise<void>;
   private readonly endpoint: (id: string) => Promise<string>;
@@ -241,7 +245,7 @@ export class Supervisor {
   adoptMainThread(id: string, url: string): Promise<ServerView | null> {
     return this.enqueue(id, async () => {
       const record = this.records.get(id);
-      if (!record || record.state !== "running" || record.url !== url || record.mainThreadId || record.threadStarting) return null;
+      if (!record || record.state !== "running" || record.url !== url || record.mainThreadId || record.threadStarting || !orientationSettled(record.orientation)) return null;
       const threadId = await this.findMainThread(url);
       if (!threadId) return null;
       record.mainThreadId = threadId;
@@ -257,6 +261,7 @@ export class Supervisor {
     return this.enqueue(id, async () => {
       const record = this.records.get(id);
       if (!record || record.state !== "running" || !record.url || !record.launchedAccount || this.recoveryIssues.has(id)) throw new Error("Bot is not a verified, account-bound running process");
+      if (!orientationSettled(record.orientation)) throw new Error("Bot orientation is unfinished; inspect bot_list instead of creating another root");
       if (record.mainThreadId) throw new Error("Bot already has a main thread; use chat_send on it");
       const previous = await this.findMainThread(record.url);
       if (previous) {
@@ -335,6 +340,7 @@ export class Supervisor {
     const result = this.store.resetConversation(id, expectedGeneration);
     record.mainThreadId = null;
     record.threadStarting = false;
+    record.orientation = this.store.servers().find((bot) => bot.id === id)!.orientation;
     this.settingsObservations.delete(id);
     return result;
   }
@@ -417,7 +423,7 @@ export class Supervisor {
       managed = this.store.managed.get(`bot:${id}`)!;
     }
     settings = legacySettings(managed.values);
-    if (current?.threadStarting && !current.mainThreadId) {
+    if (current?.threadStarting && !current.mainThreadId && !current.orientation) {
       throw new Error(`server ${id} has an unconfirmed thread/start; inspect its Codex history before retrying to avoid a second main thread`);
     }
     if (current?.runtimeRoot) {
@@ -441,7 +447,11 @@ export class Supervisor {
     }
     // Reconciliation above may advance the saved credential generation.
     const account = selected ? this.store.accountCredentials(selected) : null;
+    // The public API requires an account for new Bots; legacy/unbound records are never enrolled retroactively.
+    const orientation = current ? current.orientation ?? null : account ? pendingOrientation() : null;
     const snapshot = this.role.defaultSnapshot();
+    const instructions = renderBotInstructions(snapshot);
+    const instructionsHash = createHash("sha256").update(instructions).digest("hex");
     const privateHistory = join(this.options.stateDir, "history", id);
     const history = current ? this.store.historyPath(id) : privateHistory;
     await mkdir(history, { recursive: true, mode: 0o700 });
@@ -483,6 +493,8 @@ export class Supervisor {
         id, pid: child.pid, cwd, url, state: "running", codexBin, account: account?.id ?? null, launchedAccount: account?.id ?? null, authVersion: account?.version ?? null, runtimeRoot,
         mainThreadId: current?.mainThreadId ?? null, threadStarting: current?.threadStarting ?? false, args: [...userArgs], settings,
         roleRoot: rolePath, roleRevision: snapshot.revision, roleId: snapshot.id,
+        roleInstructionsHash: current?.mainThreadId ? current.roleInstructionsHash ?? null : instructionsHash,
+        orientation,
       };
       this.records.set(id, record);
       this.watchExit(id, child, record);
@@ -495,12 +507,27 @@ export class Supervisor {
         ready = true;
         this.store.managed.markLoaded(`bot:${id}`, url, { ...managed,
           values: Object.fromEntries(Object.entries(managed.values).filter(([key]) => !key.startsWith("voice."))) });
-        // A fresh Server owns the socket, but the first UI owns thread/start.
-        // Only a previously adopted main thread needs to be resumed here.
-        if (record.mainThreadId) await this.bindThread(url, cwd, record.mainThreadId, (settings) => this.observeSettings(id, url, record.mainThreadId!, settings));
+        if (record.mainThreadId) {
+          try {
+            await this.bindThread(url, cwd, record.mainThreadId, (settings) => this.observeSettings(id, url, record.mainThreadId!, settings),
+              { text: instructions, refresh: record.roleInstructionsHash !== instructionsHash });
+            // Only an acknowledged native binding advances the durable instruction-delivery hash.
+            if (record.roleInstructionsHash !== instructionsHash) {
+              await this.persist({ ...record, roleInstructionsHash: instructionsHash });
+              record.roleInstructionsHash = instructionsHash;
+            }
+          }
+          catch (error) {
+            if (orientationSettled(record.orientation)) throw error;
+            this.unresolvedOrientationRoots.add(id);
+            await this.setOrientation(record, { state: "unknown", issue: "The exact orientation root could not be resumed with its captured Role instructions. Inspect its native history, then stop/start to retry the exact root or explicitly reset the conversation; no new root or introduction was submitted." });
+          }
+        }
         await rm(identity, { recursive: true, force: true });
         await this.runtime.watch(record);
         this.recoveryIssues.delete(id);
+        this.watchOrientation(record);
+        await this.initializeOrientation(record);
         this.notify(id);
         return this.view(record);
       } catch (error) {
@@ -609,10 +636,80 @@ export class Supervisor {
   }
 
   private markStopped(record: RecordFile): void {
+    this.orientationWatches.get(record.id)?.();
+    this.orientationWatches.delete(record.id);
+    this.unresolvedOrientationRoots.delete(record.id);
     record.state = "stopped";
     record.pid = null;
     record.url = null;
     this.recoveryIssues.delete(record.id);
+  }
+
+  private async setOrientation(record: RecordFile, fields: Partial<Orientation>, root?: string): Promise<void> {
+    const next = { ...record.orientation!, ...fields, updatedAt: Date.now() };
+    // Persist before publishing or performing the next native effect.
+    const saved = { ...record, orientation: next, ...(root ? { mainThreadId: root } : {}) };
+    await this.persist(saved);
+    Object.assign(record, saved);
+    if (orientationSettled(next)) {
+      this.orientationWatches.get(record.id)?.();
+      this.orientationWatches.delete(record.id);
+    }
+    this.notify(record.id);
+  }
+
+  private watchOrientation(record: RecordFile): void {
+    this.orientationWatches.get(record.id)?.();
+    this.orientationWatches.delete(record.id);
+    if (orientationSettled(record.orientation) || !record.url) return;
+    const url = record.url;
+    const refresh = () => { void this.enqueue(record.id, async () => {
+      if (this.records.get(record.id) === record && record.url === url && record.state === "running") await this.reconcileOrientation(record);
+    }).catch((error) => console.error(`orientation reconciliation for ${record.id}: ${error}`)); };
+    this.orientationWatches.set(record.id, watchThreadEvents(url, refresh));
+  }
+
+  private async initializeOrientation(record: RecordFile): Promise<void> {
+    if (orientationSettled(record.orientation) || !record.url || !record.launchedAccount || this.unresolvedOrientationRoots.has(record.id)) return;
+    try {
+      if (record.orientation!.state === "pending") {
+        await this.setOrientation(record, { state: "creating", issue: null });
+        const started = await chatRpc(record.url, "thread/start", { cwd: record.cwd });
+        const threadId = (started.thread as { id?: unknown } | undefined)?.id;
+        if (typeof threadId !== "string" || !threadId) throw new Error("No native orientation root ID");
+        await this.setOrientation(record, { state: "ready", threadId }, threadId);
+        this.observeSettings(record.id, record.url, threadId, started);
+      }
+      if (record.orientation!.state === "ready") {
+        const { threadId, admissionId } = record.orientation!;
+        await this.setOrientation(record, { state: "submitting", issue: null });
+        const response = await chatRpc(record.url, "turn/start", { threadId, clientUserMessageId: admissionId, turnTrigger: "stack_orientation",
+          input: [{ type: "text", text: orientationPrompt(record.id, admissionId), text_elements: [] }] });
+        const turn = response.turn as { id?: unknown } | undefined;
+        if (typeof turn?.id !== "string" || !turn.id) throw new Error("No native orientation turn ID");
+        await this.setOrientation(record, { state: "running", turnId: turn.id });
+      }
+      // Admission is not completion. One read closes fast-completion races; events/reconnects do the rest.
+      await this.reconcileOrientation(record);
+    } catch {
+      await this.setOrientation(record, { state: "unknown", issue: "Orientation admission or outcome is uncertain. Inspect the exact root and native history; Stack will not resend the introduction automatically." });
+    }
+  }
+
+  private async reconcileOrientation(record: RecordFile): Promise<void> {
+    const orientation = record.orientation;
+    if (orientationSettled(orientation) || !record.url || !orientation || this.unresolvedOrientationRoots.has(record.id) || ["pending", "ready"].includes(orientation.state)) return;
+    try {
+      const evidence = await readOrientationTurn(record.url, orientation);
+      if (evidence) {
+        if (evidence.state !== orientation.state || evidence.turnId !== orientation.turnId || orientation.issue)
+          await this.setOrientation(record, { ...evidence, issue: null }, evidence.threadId);
+      } else if (orientation.state !== "unknown") {
+        await this.setOrientation(record, { state: "unknown", issue: "No exact native evidence confirms orientation admission. Inspect history or explicitly reset the conversation; no automatic retry is permitted." });
+      }
+    } catch {
+      if (orientation.state !== "unknown" || !orientation.issue) await this.setOrientation(record, { state: "unknown", issue: "The exact orientation outcome could not be read. Reconnect to reconcile native history; no automatic retry is permitted." });
+    }
   }
 
   private async releaseRole(record: RecordFile, required = false): Promise<void> {
@@ -791,6 +888,7 @@ function viewOf(record: RecordFile, recoveryIssue: string | null): ServerView {
     roleRevision: record.roleRevision ?? null,
     roleId: record.roleId ?? null,
     settings: record.settings ?? null,
+    orientation: record.orientation ?? null,
   };
 }
 

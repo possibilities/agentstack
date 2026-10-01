@@ -15,6 +15,8 @@ test("fresh Roles start with independent Manager and instruction-free Worker def
     const catalog = store.catalog();
     assert.equal(catalog.roles.length, 2);
     assert.equal(store.defaultSnapshot().name, "Manager");
+    assert.ok(store.defaultSnapshot().botMarkdown?.trim());
+    assert.equal(store.launchSnapshot(undefined, "worker").botMarkdown, "");
     assert.equal(store.launchSnapshot(undefined, "worker").name, "Worker");
     const manager = store.role(catalog.defaultRoleId!);
     let updated = manager.createCategory(0, "Guidance");
@@ -25,6 +27,31 @@ test("fresh Roles start with independent Manager and instruction-free Worker def
     const reopened = new RoleStore(root);
     try { assert.equal(reopened.catalog().workerDefaultRoleId, catalog.workerDefaultRoleId); }
     finally { reopened.close(); }
+  } finally { store.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("existing Roles gain empty bot.md without changing instructions or revisions, and later edits survive reopening", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stack-role-personality-upgrade-"));
+  let store = new RoleStore(root);
+  try {
+    const roleId = store.catalog().defaultRoleId!;
+    const role = store.role(roleId);
+    const category = role.createCategory(0, "Authored");
+    const authored = role.createFragment(category.revision, category.categories[0]!.id, "Guidance", "Existing instructions");
+    const catalog = store.catalog();
+    store.close();
+    const db = new DatabaseSync(join(root, "roles.sqlite"));
+    db.exec("DROP TABLE role_bot_markdown"); db.close();
+    store = new RoleStore(root);
+    assert.deepEqual(store.catalog(), catalog);
+    const migrated = store.role(roleId).snapshot();
+    assert.equal(migrated.botMarkdown, "");
+    assert.deepEqual(migrated.categories, authored.categories);
+    assert.equal(migrated.revision, authored.revision);
+    const edited = store.role(roleId).update(migrated.revision, { botMarkdown: "Personality I authored" });
+    assert.equal(store.role(roleId).update(edited.revision, { description: "Metadata only" }).botMarkdown, "Personality I authored");
+    store.close(); store = new RoleStore(root);
+    assert.equal(store.role(roleId).snapshot().botMarkdown, "Personality I authored");
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 });
 
@@ -113,10 +140,13 @@ test("all Role resources are isolated, names and order are local, and deleting a
       state = role.createFragment(state.revision, state.categories[0]!.id, "Same fragment", state.name);
       state = role.createSkill(state.revision, "same", "A skill", state.name);
       state = role.createMcpServer(state.revision, "same", "MCP", { type: "stdio", command: state.name, args: [] });
-      return role.createTrustedProject(state.revision, root);
+      state = role.createTrustedProject(state.revision, root);
+      return role.update(state.revision, { botMarkdown: `Personality for ${state.name}` });
     };
     const a = populate(one!);
     const b = populate(two!);
+    assert.equal(a.botMarkdown, "Personality for One");
+    assert.equal(b.botMarkdown, "Personality for Two");
     assert.equal(b.categories[0]!.fragments[0]!.body, "Two");
     const categoryId = a.categories[0]!.id;
     const fragmentId = a.categories[0]!.fragments[0]!.id;

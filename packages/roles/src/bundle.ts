@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { join, dirname, basename, isAbsolute, relative, sep } from "node:path";
-import { renderInstructions, type RoleSnapshot } from "./store.js";
+import { renderBotInstructions, type RoleSnapshot } from "./store.js";
 import { mcpRecord, skillRecord, trustedProjectRecord, type RoleMcpServer, type TrustedProject } from "./resources.js";
 import { mcpToolTimeoutSeconds, parseMcpBinding, mcpPort, type McpStdioLaunch } from "@stack/api";
 
@@ -64,11 +64,12 @@ export function roleMcpConfig(snapshot: Pick<RoleSnapshot, "mcpServers">): strin
 
 /** Codexnk reads SYSTEM_APPEND.md, config.toml and skills/ from --capabilities. */
 export async function materializeRole(stateDir: string, botId: string, snapshot: RoleSnapshot, mcpServers: Readonly<Record<string, McpStdioLaunch>>, cwd?: string): Promise<string> {
-  const rendered = renderInstructions(snapshot);
+  const rendered = renderBotInstructions(snapshot);
   const parent = join(stateDir, "roles", botId);
   await mkdir(parent, { recursive: true, mode: 0o700 });
   const root = await mkdtemp(join(parent, "launch-"));
   try {
+    await writeFile(join(root, "bot.md"), snapshot.botMarkdown ?? "", { mode: 0o600 });
     if (rendered) await writeFile(join(root, "SYSTEM_APPEND.md"), rendered, { mode: 0o600 });
     const lines: string[] = [];
     if (cwd) for (const project of matchingProjects(snapshot, await realpath(cwd))) lines.push(`[projects.${toml(project.path)}]`, 'trust_level = "trusted"', "");

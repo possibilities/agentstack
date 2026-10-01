@@ -48,9 +48,10 @@ const FAILURE_CLASSES: readonly FailureClass[] = [
 const SAFE_CLASS_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
 const SAFE_JOB_COLUMNS = `id, kind, state, sensitivity, resource_id, source_id,
   run_id, attempt_count, item_retry_count, run_at, failure_class, created_at,
-  updated_at`;
+  updated_at, content_cleared_at`;
 
 export interface SafeJob {
+  content_cleared_at?: string | null;
   id: number;
   kind: string;
   state: JobState;
@@ -99,6 +100,8 @@ export interface JobStats {
 }
 
 export interface SafeRunRecord {
+  content_cleared_at?: string | null;
+  payload_digest?: string | null;
   id: number;
   run_type: string;
   source_id: number | null;
@@ -163,6 +166,7 @@ function safeFailureSummary(value: string | null): string | null {
 export function safeJobView(job: Job): SafeJob {
   return {
     id: job.id,
+    content_cleared_at: job.content_cleared_at ?? null,
     kind: safeClass(job.kind),
     state: job.state,
     sensitivity: job.sensitivity,
@@ -327,11 +331,13 @@ export function showRun(
   const run = cache.db
     .query(
       `SELECT id, run_type, source_id, state, started_at, finished_at,
-              created_at, updated_at FROM runs WHERE id=?`,
+              created_at, updated_at, content_cleared_at, payload_digest FROM runs WHERE id=?`,
     )
     .get(runId) as {
     id: number;
     run_type: string;
+    content_cleared_at: string | null;
+    payload_digest: string | null;
     source_id: number | null;
     state: RunState;
     started_at: string | null;
@@ -430,6 +436,8 @@ export function showRun(
     Date.parse(executionLease.lease_expires_at) > now.getTime();
   return {
     id: run.id,
+    content_cleared_at: run.content_cleared_at ?? null,
+    payload_digest: run.payload_digest ?? null,
     run_type: safeClass(run.run_type),
     source_id: run.source_id,
     state: effectiveState,

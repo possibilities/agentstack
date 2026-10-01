@@ -39,7 +39,7 @@ export function RolePreviewWindow() {
   useEffect(() => { if (editingResource !== null) setView(editingResource ? "launch" : "instructions"); }, [editingResource]);
   const preview = rolePreview.data;
   const pieces = preview ? previewPieces(preview, role.data) : [];
-  const bytes = preview ? previewBytes(preview) : 0;
+  const bytes = preview ? preview.botBytes ?? previewBytes(preview) : 0;
   const limit = typeof preview?.limitBytes === "number" ? preview.limitBytes : fallbackLimitBytes;
   const used = Math.min(100, (bytes / limit) * 100);
   // Behind the Role's revision, or still answering an earlier rendering context.
@@ -107,7 +107,7 @@ export function RolePreviewWindow() {
 
   return (
     <Window id="role-preview" title="Preview" subtitle={[roleView.label, "SYSTEM_APPEND.md"].filter(Boolean).join(" · ")} icon={FileTextIcon} accent="roles"
-      status={status.roles} endpoint={endpoints.roles} updatedAt={rolePreview.at} error={rolePreview.error} empty={!preview?.rendered}
+      status={status.roles} endpoint={endpoints.roles} updatedAt={rolePreview.at} error={rolePreview.error} empty={!preview?.rendered && !preview?.botMarkdown}
       actions={preview?.rendered ? <CopyButton value={preview.rendered} label="rendered instructions" className="opacity-100" /> : undefined}>
       <DefaultNote />
       {tabs}
@@ -116,16 +116,19 @@ export function RolePreviewWindow() {
         <div className="flex flex-col gap-1.5">
           <Meter value={100 - used} label="Share of the rendered size limit left" />
           <p role="status" className="flex items-center gap-1 px-0.5 text-[0.68rem] text-muted-foreground tabular-nums">
-            <span>{formatBytes(bytes)} of {formatBytes(limit)} · ≈{formatCount(approxTokens(bytes))} tokens{pieces ? ` · ${pieces.length} fragment${pieces.length === 1 ? "" : "s"}` : ""}</span>
+            <span>{formatBytes(bytes)} of {formatBytes(limit)} for Bots including bot.md · ≈{formatCount(approxTokens(bytes))} tokens{pieces ? ` · ${pieces.length} fragment${pieces.length === 1 ? "" : "s"}` : ""}</span>
             <span className="ml-auto">{updating ? "Updating…" : `Revision ${preview.revision}`}</span>
           </p>
           <p className="px-0.5 text-[0.66rem] text-pretty text-muted-foreground">
             {contextSummary(roleContext)
               ? "What an injected launch with this context receives. Bots and Workers supply no context, so they receive the preview without it."
-              : "Bots append this to SYSTEM_APPEND.md; Workers that use this Role receive it when they start."} Native and repository guidance still apply.
+              : "Bots append these fragments and bot.md to SYSTEM_APPEND.md; Workers receive only the fragments."} Native and repository guidance still apply.
           </p>
         </div>
       ) : null}
+      {preview?.botMarkdown ? <Section title="bot.md · Bots only" aside={<Button size="xs" variant="ghost" onClick={() => roleView.role && actions.open({ kind: "role", id: roleView.role.id })}>Edit personality</Button>}>
+        <pre className="rounded-lg border bg-background/60 px-2.5 py-2 font-mono text-[0.72rem] leading-relaxed break-words whitespace-pre-wrap">{preview.botMarkdown}</pre>
+      </Section> : null}
       {launched}
       {preview?.rendered && !pieces ? (
         <pre className="rounded-lg border bg-background/60 px-2.5 py-2 font-mono text-[0.72rem] leading-relaxed break-words whitespace-pre-wrap">{preview.rendered}</pre>
@@ -167,7 +170,7 @@ function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating:
       <div className="flex flex-col gap-1.5">
         <Meter value={100 - used} label="Share of the Role size budget left" />
         <p role="status" className="flex items-center gap-1 px-0.5 text-[0.68rem] text-muted-foreground tabular-nums">
-          <span>Role {formatCount(launch.snapshotChars)} of {formatCount(launch.snapshotLimitChars)} characters · {launch.instructions.fragments} fragment{launch.instructions.fragments === 1 ? "" : "s"}, {formatBytes(launch.instructions.bytes)}{roleContextSummary ? ` with ${roleContextSummary}` : ""}</span>
+          <span>Role {formatCount(launch.snapshotChars)} of {formatCount(launch.snapshotLimitChars)} characters · {launch.instructions.fragments} fragment{launch.instructions.fragments === 1 ? "" : "s"}, {formatBytes(launch.instructions.botBytes ?? launch.instructions.bytes)} for Bots including bot.md{roleContextSummary ? ` with ${roleContextSummary}` : ""}</span>
           <span className="ml-auto">{updating ? "Updating…" : `Revision ${launch.revision}`}</span>
         </p>
       </div>

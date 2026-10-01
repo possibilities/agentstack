@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { starterBotMarkdown } from "./bot-markdown.js";
 
 const resources = {
   categories: `id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL, enabled INTEGER NOT NULL,
@@ -60,6 +61,10 @@ export function initializeRoles(db: DatabaseSync): void {
     const fragmentColumns = db.prepare("PRAGMA table_info(fragments)").all() as Array<{ name: string }>;
     if (!fragmentColumns.some(({ name }) => name === "conditions_json"))
       db.exec("ALTER TABLE fragments ADD COLUMN conditions_json TEXT NOT NULL DEFAULT '{}'");
+    db.exec("CREATE TABLE IF NOT EXISTS role_bot_markdown (role_id TEXT PRIMARY KEY REFERENCES roles(id), body TEXT NOT NULL)");
+    // Existing Roles retain their instructions; never seed over an edited personality.
+    db.exec("INSERT OR IGNORE INTO role_bot_markdown SELECT id, '' FROM roles");
+    if (!tables.has("roles")) db.prepare("UPDATE role_bot_markdown SET body=? WHERE role_id=(SELECT default_role_id FROM role_catalog)").run(starterBotMarkdown);
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
 }

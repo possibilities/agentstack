@@ -10,4 +10,4 @@ mcp:
 websocket:
   events: all
   description: Loopback extraction and preset inspection for the UI Scrape space, plus its operator corpus replay, live canary checks and scrape-to-file queue. Machine-path conversion, fetch-to-file, corpus capture and browser session administration remain on the socket.
-  operations: [scrape_fetch, scrape_links, scrape_feed_discover, scrape_feed_parse, scrape_convert_html, scrape_presets_list, scrape_preset_show, scrape_canary_inventory, scrape_status, scrape_corpus_replay, scrape_presets_check, scrape_queue_list, scrape_queue_submit, scrape_queue_process, scrape_state_read]
+  operations: [scrape_fetch, scrape_links, scrape_feed_discover, scrape_feed_parse, scrape_convert_html, scrape_presets_list, scrape_preset_show, scrape_canary_inventory, scrape_status, scrape_corpus_replay, scrape_presets_check, scrape_queue_list, scrape_queue_submit, scrape_queue_process, scrape_state_read, scrape_queue_plan, scrape_queue_apply, scrape_corpus_list, scrape_corpus_plan, scrape_corpus_clear, scrape_state_receipt_get]

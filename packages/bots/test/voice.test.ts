@@ -10,6 +10,7 @@ import type { ServerView } from "../src/supervisor.js";
 import { DEFAULT_BOT_SETTINGS } from "../src/store.js";
 import { voiceSpeak } from "../api.js";
 import type { SettingsSnapshot } from "@stack/settings";
+import type { Orientation } from "../src/orientation.js";
 
 const server = (url: string, threadId: string | null = "main"): ServerView => ({
   id: "bot-1", pid: 123, cwd: "/tmp/bot-1", url, state: "running", account: "account",
@@ -70,7 +71,15 @@ test("voice dials only an adopted main thread, relays SDP, and stops without tou
   });
   await new Promise<void>((resolve) => http.listen(path, resolve));
   try {
-    const voice = new VoiceCalls(() => [server(`unix://${path}`)], undefined, () => settings);
+    const orientation: Orientation = { admissionId: crypto.randomUUID(), threadId: "main", turnId: "orientation-turn", state: "pending", issue: null, updatedAt: Date.now() };
+    const voice = new VoiceCalls(() => [{ ...server(`unix://${path}`), orientation }], undefined, () => settings);
+    for (const state of ["pending", "creating", "ready", "submitting", "running", "unknown"] as const) {
+      orientation.state = state;
+      await assert.rejects(voice.dial("bot-1", crypto.randomUUID(), "offer"), /orientation is unfinished/);
+      assert.equal(voice.status(), null);
+    }
+    assert.equal(methods.length, 0, "unfinished orientation does not open a native voice connection");
+    orientation.state = "completed";
     let changes = 0;
     voice.onChange = () => { changes++; };
     const id = "11111111-1111-4111-8111-111111111111";
@@ -106,6 +115,7 @@ test("voice dials only an adopted main thread, relays SDP, and stops without tou
     assert.deepEqual(methods, ["initialize", "thread/realtime/start", "thread/realtime/appendSpeech", "thread/realtime/appendSpeech", "thread/realtime/stop"]);
 
     const nextId = crypto.randomUUID();
+    orientation.state = "failed";
     expectedVoice = { includeStartupContext: false, prompt: null, realtimeEndInstructions: "" };
     const pending = voice.dial("bot-1", nextId, "offer");
     await until(() => methods.filter((method) => method === "thread/realtime/start").length === 2);

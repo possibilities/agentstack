@@ -41,11 +41,12 @@ export function transport(endpoint, operations = [], events = [], type = "websoc
  * The WebSocket gateway admits a connection only when every package it configures answers on its
  * socket, so give it a workspace root holding just the manifests of the packages a check serves.
  */
-export async function gatewayRoot(dir, names) {
+export async function gatewayRoot(dir, names, synthetic = []) {
   const gateway = join(dir, "gateway");
   for (const name of names) {
     await mkdir(join(gateway, "packages", name), { recursive: true });
-    await copyFile(join(root, "packages", name, "api.yaml"), join(gateway, "packages", name, "api.yaml"));
+    if (synthetic.includes(name)) await writeFile(join(gateway, "packages", name, "api.yaml"), `name: ${name}\ndescription: Fixture.\nsocket:\n  description: Fixture.\nwebsocket:\n  description: Fixture.\n  operations: all\n  events: all\n`);
+    else await copyFile(join(root, "packages", name, "api.yaml"), join(gateway, "packages", name, "api.yaml"));
   }
   return gateway;
 }

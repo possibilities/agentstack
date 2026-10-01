@@ -101,6 +101,8 @@ export type Bot = {
   account: string | null;
   runningAccount: string | null;
   mainThreadId: string | null;
+  orientation?: { admissionId: string; state: "pending" | "creating" | "ready" | "submitting" | "running" | "completed" | "failed" | "interrupted" | "unknown" | "retired";
+    threadId: string | null; turnId: string | null; issue: string | null; updatedAt: number } | null;
   recoveryIssue: string | null;
   /** The Role and revision of its last launch; a record of what was applied, not an assignment. Null ID: legacy launch. */
   roleId: string | null;
@@ -576,14 +578,14 @@ export type RoleCatalog = { revision: number; defaultRoleId: string | null; work
 export type RoleShim = { name: string; args: string[]; path: string; revision: string };
 export type RoleShims = { binDir: string; shims: RoleShim[] };
 /** `role_editor_snapshot`: operator-only definitions; ordinary snapshots and write replies use MCP summaries. */
-export type RoleSnapshot = Role & { categories: RoleCategory[]; skills: RoleSkill[]; mcpServers: RoleMcpServer[]; trustedProjects: RoleTrustedProject[];
+export type RoleSnapshot = Role & { botMarkdown?: string; categories: RoleCategory[]; skills: RoleSkill[]; mcpServers: RoleMcpServer[]; trustedProjects: RoleTrustedProject[];
   /** Internal Package API names switched off for this Role. Not an inventory: an empty list means every configured server is on. */
   disabledInternalMcpServers: string[] };
 export type RoleSummary = Omit<RoleSnapshot, "mcpServers"> & { mcpServers: Array<Omit<RoleMcpServer, "definition"> & { transport: "http" | "stdio" }> };
 /** What a Role write returns instead of a snapshot: reread the Role for its content. */
 export type RoleReceipt = { roleId: string; revision: number };
-/** `role_preview`: the exact SYSTEM_APPEND.md text for the next launch, with each fragment's [start, end) span. */
-export type RolePreview = { roleId: string; revision: number; rendered: string; bytes: number; limitBytes: number;
+/** `role_preview`: exact instruction fragments and their spans, plus the separate Bot-only bot.md personality. */
+export type RolePreview = { roleId: string; revision: number; rendered: string; bytes: number; limitBytes: number; botMarkdown?: string; botBytes?: number;
   segments: Array<{ categoryId: string; fragmentId: string; start: number; end: number }> };
 /** A configured internal Stack MCP server and whether the Role's later launches connect to it. `title` is the key for Package APIs. */
 export type RoleInternalServer = { name: string; title: string; description: string; kind: "package" | "codex"; transport: "stdio"; enabled: boolean };
@@ -605,7 +607,7 @@ export type NotificationPages = { filter: NotificationFilter; entries: Notificat
 export type RoleLaunchPreview = {
   roleId: string;
   revision: number;
-  instructions: { bytes: number; limitBytes: number; fragments: number };
+  instructions: { bytes: number; botBytes?: number; limitBytes: number; fragments: number };
   skills: Array<{ id: string; name: string; description: string; files: number; bytes: number }>;
   /** Every configured internal server with this Role's switch; only enabled ones reach a launch. */
   internalMcpServers: RoleInternalServer[];
@@ -682,6 +684,7 @@ export type ScrapeFeed = {
 };
 /** One scrape-to-file job from `scrape_queue_list`; `id` is its generation ID where derivable, so it survives state moves. */
 export type ScrapeQueueJob = { id: string; state: "pending" | "retrying" | "failed"; file: string; submitted_at: string | null; url: string | null; destination: string | null;
+  maintenanceFence?: { requestId: string; action: string; status: string };
   summarize: boolean; allow_private_network: boolean | null; frontmatter_keys: string[]; completed_failures: number; max_attempts: number | null; next_attempt_at: string | null; problem: string | null };
 export type ScrapeQueue = { jobs: ScrapeQueueJob[]; counts: Record<ScrapeQueueJob["state"], number>; truncated: boolean };
 export type ScrapeQueueResult = { processed: number; failed: number; retry_scheduled: number; retry_waiting: number; retry_exhausted: number };
@@ -757,6 +760,7 @@ export type BrainDocument = {
 export type BrainChunk = { chunk_id: number; document_id: number; chunk_index: number; start_char: number; end_char: number; content: string };
 /** A content-safe Ingestion job: no intent, URL, title or body. */
 export type BrainJob = { id: number; kind: string; state: BrainJobState; sensitivity: string; resource_id: number | null; source_id: number | null; run_id: number | null;
+  content_cleared_at?: string | null;
   attempt_count: number; item_retry_count: number; run_at: string; failure_class: string | null; created_at: string; updated_at: string };
 export type BrainAttempt = { id: number; job_id: number; attempt_number: number; state: "failed" | "cancelled" | "leased" | "succeeded" | "stale"; lease_expires_at: string; heartbeat_at: string;
   started_at: string; finished_at: string | null; failure_class: string | null; failure_summary: string | null };
@@ -771,6 +775,7 @@ export type BrainJobStats = { total: number; by_state: Record<BrainJobState, num
 export type BrainRunState = "pending" | "failed" | "completed" | "cancelled" | "active" | "completed_with_review";
 /** One Research source from `sources_status`: its definition, health, latest Run and checkpoint. */
 export type BrainSource = {
+  removed_at?: string | null; checkpoint_generation?: number;
   id: string; database_id: number; version: number; kind: string; display_name: string; enabled: boolean; paused: boolean; executable: boolean;
   schedule: { cadence_seconds: number } | null; sensitivity: BrainSensitivity; collections: string[]; limits: { max_items_per_run: number; max_pages_per_run: number } | null;
   credential_reference_count: number; created_at: string; updated_at: string; due: boolean; payload: Record<string, unknown>; pause_reason: string | null;

@@ -14,7 +14,7 @@ type TransportDoc = { type: string; description: string; supported: boolean; sub
     outputSchema: Record<string, unknown> | null; errorSchema: Record<string, unknown> | null }> };
 type OperationDoc = { name: string; title: string | null; description: string; standalone: boolean; annotations: Record<string, unknown>; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown> };
 type PackageDoc = { name: string; description: string; packageName: string; operations: OperationDoc[]; events: Record<string, string>; eventScope: { description: string; example: string; required: boolean } | null; transports: TransportDoc[] };
-const stateOperation = (name: string) => /_state_|_bot_dependencies$|_history_(plan|clear)$|_catalog_clear$|^serve_subscription_|^bot_(workspace_|history_|log_|launch_|recovery_|session_reset$|upload_remove$|queue_history$|queue_bodies_clear$)|^chat_upload_(list|read)$|^content_(blob_list|storage_)|^blob_stage_(list|abort)$|^attention_infer_requests$|^usage_observations_|^xcom_control$|^worker_workspace_|^work_focus_(list|retire)/.test(name);
+const stateOperation = (name: string) => /_state_|_bot_dependencies$|_history_(plan|clear)$|_catalog_clear$|^brain_(jobs|runs|source|artifacts)_(plan|clear)$|^scrape_(queue_(plan|apply)$|corpus_(list|plan|clear)$)|^serve_subscription_|^bot_(workspace_|history_|log_|launch_|recovery_|session_reset$|upload_remove$|queue_history$|queue_bodies_clear$)|^chat_upload_(list|read)$|^content_(blob_list|storage_)|^blob_stage_(list|abort)$|^attention_infer_requests$|^usage_observations_|^xcom_control$|^worker_workspace_|^work_focus_(list|retire)/.test(name);
 
 test("the api package serves structured documents for every workspace package", { timeout: 60_000 }, async () => {
   assert.equal(docsSnapshot.name, "docs_snapshot");
@@ -60,7 +60,8 @@ test("the api package serves structured documents for every workspace package", 
       for (const transport of doc.transports.filter((entry) => entry.type === "mcp" || entry.type === "websocket")) {
         const omitted = [...(transport.type === "mcp" ? [`${pkg}_state_read`] : []), ...internal.filter((name) => !(pkg === "brain" && transport.type === "websocket" && name === "share_read_states")),
           ...(pkg === "roles" && transport.type === "mcp" ? ["role_editor_snapshot", "role_launch_preview", "role_shim_list", "role_shim_create", "role_shim_update", "role_shim_delete"] : [])];
-        assert.deepEqual([...transport.operations].sort(), doc.operations.map((op) => op.name).filter((name) => !omitted.includes(name)).sort());
+        assert.deepEqual([...transport.operations].sort(), doc.operations.map((op) => op.name)
+          .filter((name) => !omitted.includes(name) && !(transport.type === "mcp" && stateOperation(name))).sort());
       }
     }
     assert.deepEqual(snapshot.packages, [...found.values()]);
@@ -198,7 +199,8 @@ test("the api package serves structured documents for every workspace package", 
     const agentFacing = ["scrape_canary_inventory", "scrape_convert_html", "scrape_feed_discover", "scrape_feed_parse", "scrape_fetch", "scrape_links", "scrape_preset_show", "scrape_presets_list", "scrape_status"];
     assert.deepEqual([...exposed].sort(), agentFacing);
     assert.deepEqual([...scrape.transports.find((transport) => transport.type === "websocket")!.operations].sort(),
-      [...agentFacing, "scrape_corpus_replay", "scrape_presets_check", "scrape_queue_list", "scrape_queue_process", "scrape_queue_submit", "scrape_state_read"].sort());
+      [...agentFacing, "scrape_corpus_replay", "scrape_presets_check", "scrape_queue_list", "scrape_queue_process", "scrape_queue_submit", "scrape_state_read",
+        "scrape_queue_plan", "scrape_queue_apply", "scrape_corpus_list", "scrape_corpus_plan", "scrape_corpus_clear", "scrape_state_receipt_get"].sort());
     assert.equal(scrape.operations.find((operation) => operation.name === "scrape_queue_list")?.annotations.readOnlyHint, true);
 
     const bots = found.get("bots") as PackageDoc;
@@ -268,7 +270,7 @@ test("the api package serves structured documents for every workspace package", 
       "project_create", "project_delete", "project_reorder", "project_update",
     ].sort());
     const roleView = roles.operations.find((operation) => operation.name === "role_snapshot") as OperationDoc;
-    assert.deepEqual(Object.keys(roleView.outputSchema.properties as object).sort(), ["id", "name", "description", "createdAt", "updatedAt", "categories", "mcpServers", "revision", "skills", "trustedProjects", "disabledInternalMcpServers"].sort());
+    assert.deepEqual(Object.keys(roleView.outputSchema.properties as object).sort(), ["id", "name", "description", "botMarkdown", "createdAt", "updatedAt", "categories", "mcpServers", "revision", "skills", "trustedProjects", "disabledInternalMcpServers"].sort());
     assert.ok((roles.operations.find((operation) => operation.name === "roles_snapshot")?.outputSchema.properties as Record<string, unknown>).workerDefaultRoleId);
     assert.equal(roles.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
     assert.deepEqual(Object.keys(auth.events).sort(), ["accounts_changed", "login_changed", "worker_accounts_changed", "worker_login_changed"]);

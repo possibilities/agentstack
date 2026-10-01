@@ -14,6 +14,7 @@ import { findExecutable } from "./src/subprocess.js";
 import { convertHtmlDirectory, readRegularFileNoFollow } from "./src/html-files.js";
 import { PresetDriftError, PresetOutputError } from "./src/errors.js";
 import type { ExtractionEnvelope } from "./src/schemas.js";
+import { scrapeStateOperations, type ScrapeState } from "./src/state.js";
 
 const url = z.url().max(8192);
 const preset = z.string().min(1).max(100);
@@ -53,10 +54,12 @@ const feedOptions = z.strictObject({ sourceUrl: url, sourceKind: z.enum(["auto",
 const recordedPage = z.strictObject({ url, content: z.string().max(20_000_000), kind: z.enum(["auto", "feed", "archive"]).optional(),
   validators: z.strictObject({ etag: z.string().nullable().optional(), last_modified: z.string().nullable().optional() }).optional(), effectiveUrl: url.optional() });
 const queueJob = z.strictObject({ id: z.string(), state: z.enum(["pending", "retrying", "failed"]), file: z.string(), submitted_at: nullableText,
+  maintenanceFence: z.strictObject({ requestId: z.uuid(), action: z.string(), status: z.string() }).optional(),
   url: nullableText, destination: nullableText, summarize: z.boolean(), allow_private_network: z.boolean().nullable(), frontmatter_keys: z.array(z.string()),
   completed_failures: z.number().int(), max_attempts: z.number().int().nullable(), next_attempt_at: nullableText, problem: nullableText });
 const read = { readOnlyHint: true } as const;
 interface Context {
+  state: ScrapeState | null;
   controller: AbortController;
   maintenance: ReturnType<typeof setInterval>;
   work: Promise<QueueResult> | null;
@@ -76,6 +79,7 @@ async function drain(ctx: Context): Promise<QueueResult> {
 }
 const packageApi: PackageApi<Context, "scrape_queue_changed"> = {
   operations: [
+    ...scrapeStateOperations,
     operation({ name: "scrape_fetch", description: "Fetch a URL as a bounded extraction envelope. A claimed preset never silently falls back: malformed_provider_output means the content shape or preset output contract changed and the named preset needs review. Browser navigation requires explicit unrestricted egress consent.",
       input: z.strictObject({ url, preset: preset.optional(), generic: z.boolean().optional(), selector: z.string().optional(), media: z.enum(["light", "dark"]).optional(), session: z.string().min(1).max(128).optional(), allowPrivateNetwork: z.boolean().default(false), maxContentBytes: z.number().int().positive().max(5_000_000).optional(), maxRelations: z.number().int().nonnegative().max(2048).optional() }),
       output: envelope, annotations: { openWorldHint: true },
@@ -158,12 +162,12 @@ const packageApi: PackageApi<Context, "scrape_queue_changed"> = {
   events: { topics: { scrape_queue_changed: "A scrape-to-file job was submitted or its processing state changed. Re-read scrape_queue_list." },
     start(ctx, publish) { ctx.changed = () => publish("scrape_queue_changed"); return () => { ctx.changed = undefined; }; } },
   async createContext() {
-    const ctx: Context = { controller: new AbortController(), work: null, maintenance: undefined! };
+    const ctx: Context = { controller: new AbortController(), work: null, maintenance: undefined!, state: null };
     ctx.maintenance = setInterval(() => { void drain(ctx).catch(() => undefined); }, 60_000);
     ctx.maintenance.unref();
     return ctx;
   },
   async prepareCloseContext(ctx) { ctx.controller.abort(); clearInterval(ctx.maintenance); },
-  async closeContext(ctx) { ctx.controller.abort(); clearInterval(ctx.maintenance); await ctx.work?.catch(() => undefined); },
+  async closeContext(ctx) { ctx.controller.abort(); clearInterval(ctx.maintenance); await ctx.work?.catch(() => undefined); ctx.state?.close(); },
 };
 export const api = withStateInventory("scrape", scrapeStateCategories, packageApi);

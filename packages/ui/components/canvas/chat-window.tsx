@@ -118,7 +118,7 @@ const endSlack = 4;
 
 function Transcript({ botId, view, loadOlder }: { botId: string; view: MainChatView | null; loadOlder(): void }) {
   if (!view || (view.status === "loading" && !view.entries.length)) return <Placeholder title="Reading main thread…" />;
-  if (view.entries.length) return <Scrollback view={view} loadOlder={loadOlder} />;
+  if (view.entries.length) return <Scrollback botId={botId} view={view} loadOlder={loadOlder} />;
   switch (view.status) {
     case "missing": return <Placeholder title={`${botId} no longer exists`} />;
     case "stopped": return <Placeholder title={`${botId} is stopped`} hint="Start it to read its main thread." />;
@@ -128,7 +128,9 @@ function Transcript({ botId, view, loadOlder }: { botId: string; view: MainChatV
   }
 }
 
-function Scrollback({ view, loadOlder }: { view: MainChatView; loadOlder(): void }) {
+function Scrollback({ botId, view, loadOlder }: { botId: string; view: MainChatView; loadOlder(): void }) {
+  const { bots } = useStack();
+  const orientation = bots.data?.find((bot) => bot.id === botId)?.orientation;
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const sentinel = useRef<HTMLDivElement>(null);
@@ -193,15 +195,18 @@ function Scrollback({ view, loadOlder }: { view: MainChatView; loadOlder(): void
         ) : null}
         <span role="status" className="sr-only">{loadingOlder ? "Reading earlier turns…" : prepends > 0 ? "Earlier turns loaded." : ""}</span>
         {entries.map((entry, index) => (
-          <Entry key={entry.key} entry={entry} end={view.turnEnds.get(entry.key)} first={index === 0} after={entries[index - 1]?.kind} />
+          <Entry key={entry.key} entry={entry} end={view.turnEnds.get(entry.key)} first={index === 0} after={entries[index - 1]?.kind}
+            orientation={Boolean(orientation && view.threadId === orientation.threadId && entry.kind === "human"
+              && (!orientation.turnId || entry.turnId === orientation.turnId) && entry.text.startsWith(`[Stack orientation ${orientation.admissionId}]`))} />
         ))}
       </div>
     </div>
   );
 }
 
-const Entry = memo(function Entry({ entry, end, first, after }: { entry: ChatEntry; end: ChatTurnEnd | undefined; first: boolean; after: ChatEntry["kind"] | undefined }) {
+const Entry = memo(function Entry({ entry, end, first, after, orientation }: { entry: ChatEntry; end: ChatTurnEnd | undefined; first: boolean; after: ChatEntry["kind"] | undefined; orientation: boolean }) {
   if (entry.kind === "human") {
+    if (orientation) return <p data-entry="stack-orientation" className={cn("chat-entry text-[11px] text-muted-foreground", !first && "mt-6")}>Stack · one-time orientation</p>;
     return (
       <div data-entry="human" className={cn("chat-entry rounded-r-md border-l-2 border-pkg-bots/80 bg-foreground/[0.04] py-2 pr-3 pl-3", !first && "mt-6")}>
         {entry.text ? <p className="break-words whitespace-pre-wrap text-foreground">{entry.text}</p> : null}
@@ -267,8 +272,11 @@ export const Markdown = memo(function Markdown({ text, streaming }: { text: stri
 const phaseTitle: Record<ChatActivity["phase"], string> = { thinking: "Thinking", working: "Working", responding: "Responding" };
 
 function StatusLine({ botId, view }: { botId: string | null; view: MainChatView | null }) {
+  const { bots } = useStack();
+  const orientation = bots.data?.find((bot) => bot.id === botId)?.orientation;
+  const orienting = orientation && !["completed", "failed", "interrupted", "retired"].includes(orientation.state);
   const active = view?.active ?? null;
-  const idle = !botId ? "no bot" : !view ? "connecting" : view.status === "stopped" ? "stopped" : view.status === "no-thread" ? "no main thread"
+  const idle = !botId ? "no bot" : !view ? "connecting" : view.status === "stopped" ? "stopped" : orienting ? orientation.state === "unknown" ? "orientation needs inspection" : "orienting" : view.status === "no-thread" ? "no main thread"
     : view.status === "missing" ? "removed" : view.status === "loading" ? "reading" : view.status === "error" && !view.entries.length ? "unavailable" : "idle";
   return (
     <div role="status" aria-live="polite" className="flex h-8 shrink-0 items-center gap-2 border-t border-border/60 px-4 font-mono text-[11.5px] text-muted-foreground">

@@ -51,6 +51,8 @@ export function useVoice(): Voice {
 export function callable(bot: Bot): string | null {
   if (bot.state !== "running") return "Stopped";
   if (bot.recoveryIssue) return "Needs inspection";
+  if (bot.orientation && !["completed", "failed", "interrupted", "retired"].includes(bot.orientation.state))
+    return bot.orientation.state === "unknown" ? "Orientation needs inspection" : "Orienting";
   if (!bot.mainThreadId) return "Needs first turn";
   if (!bot.url || !bot.runningAccount) return "Account not launched";
   return null;

@@ -40,6 +40,15 @@ mcp:
 websocket:
   operations:
     - brain_state_read
+    - brain_state_receipt_get
+    - brain_jobs_plan
+    - brain_jobs_clear
+    - brain_runs_plan
+    - brain_runs_clear
+    - brain_source_plan
+    - brain_source_clear
+    - brain_artifacts_plan
+    - brain_artifacts_clear
     - brain_status
     - jobs_reveal
     - stats

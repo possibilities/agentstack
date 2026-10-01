@@ -447,6 +447,8 @@ export interface OperatorRunExecution extends OperatorRunPolicy {
 }
 
 export interface Run {
+  content_cleared_at?: string | null;
+  payload_digest?: string | null;
   id: number;
   run_type: string;
   source_id: number | null;
@@ -620,6 +622,7 @@ export interface PromotedUrlExtraction extends PromotedUrlExtractionBase {
 }
 
 export interface Job {
+  content_cleared_at?: string | null;
   id: number;
   idempotency_key: string;
   kind: string;

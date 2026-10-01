@@ -19,7 +19,8 @@ test("rewritten prefix resets; incomplete writes, inherited history, tools and r
   assert.equal(rewritten.reset,true);
   const body=meta(4)+message("Inherited",1)+line({type:"response_item",ordinal:4,payload:{type:"function_call",arguments:"tool"}})
     +line({type:"response_item",ordinal:5,payload:{type:"message",role:"assistant",channel:"analysis",content:[{type:"output_text",text:"reasoning"}]}})
-    +message("Own message",6)+message("Partial",7).slice(0,-1);
+     +message("[Stack orientation 11111111-1111-4111-8111-111111111111]\n\nThis is a one-time initialization request from Stack, not a message or authorization from the human.\nIntroduce yourself.",6,"user")
+     +message("Own message",7)+message("Partial",8).slice(0,-1);
   const page=pageMessages(body,"source",undefined,false,25);
   assert.deepEqual(page.entries.map(row=>row.text),["Own message"]);
   assert.equal(pageMessages(body+"\n","source",page.cursor,false,25).entries[0]!.text,"Partial");

@@ -172,7 +172,15 @@ _Avoid_: turn, completion, job
 
 ## Main thread
 
-The single Codex thread ID retained by a Bot. A fresh Bot has no main thread until the first persistent root thread created by a connected UI has a durable turn; later Bot launches resume that ID. Only this root and its descendants belong to Stack's view of the Bot. Other Codex top-level threads on the same socket are ignored.
+The single sanctioned Codex thread ID retained by a Bot. New account-bound Bots allocate it for their one-time orientation turn; the ID alone does not prove durable admission or completed initialization. Legacy Bots bind the first persistent UI root with a durable turn. Later launches resume the exact ID, never allocate a replacement on uncertainty. Only this root and its descendants belong to Stack's view of the Bot. Other Codex top-level threads on the same socket are ignored.
+
+## Bot orientation
+
+One genuine, Stack-originated initialization turn for a new account-bound Bot: bounded orientation, a brief introduction and a grounded offer to help. Its durable admission fence, exact root/turn and observed native outcome are distinct from process readiness. Uncertain allocation or admission never retries automatically; legacy Bots are not enrolled. Voice waits for a known terminal outcome, not merely admission. Explicit conversation reset retires orientation without implying native completion or repeating it. See [ADR 0141](docs/adr/0141-role-bot-personality-and-orientation.md). _Avoid_: human first message, onboarding questionnaire, dummy turn, admission means ready
+
+## bot.md
+
+A Role-owned, editable Bot personality, stored as `botMarkdown` and captured verbatim into a Bot's private launch capabilities. It composes with Role instruction Fragments but is separate from them and from the one-time orientation request. Changes apply on a later Bot launch; Workers and injected CLIs do not receive it. It is not mutable per-Bot memory and cannot expand authority. _Avoid_: Bot-owned identity file, live prompt file, onboarding prompt
 
 ## Chat
 
@@ -192,7 +200,7 @@ A Codex child thread whose parent chain reaches a Bot's sanctioned main thread. 
 
 ## Bot
 
-A Codex app-server process with, after its first turn, a durable main thread. By default it is numbered `bot-N` with a private workspace and copies the current Bot defaults: Sol at medium reasoning effort, unrestricted sandbox, and no approval prompts. The Bots Package API can change defaults for future Bots; `bot_start` requires an explicit enabled Codex account and can override a Bot's ID, working directory, saved settings, and launch arguments. Legacy unbound Bots require assignment before a turn. Bots restart on Stack startup with their saved account and settings and resume their main thread when one exists.
+A Codex app-server process with a sanctioned main thread. New account-bound Bots automatically take one orientation turn; legacy Bots bind their first durable UI root. By default it is numbered `bot-N` with a private workspace and copies the current Bot defaults: Sol at medium reasoning effort, unrestricted sandbox, and no approval prompts. The Bots Package API can change defaults for future Bots; `bot_start` requires an explicit enabled Codex account and can override a Bot's ID, working directory, saved settings, and launch arguments. Legacy unbound Bots require assignment before a turn. Bots restart on Stack startup with their saved account and settings and resume their exact main thread when one exists.
 
 ## Managed runtime settings
 
@@ -218,7 +226,7 @@ update eligibility
 
 ## Role
 
-A named Stack-owned configuration with a stable ID and independent revision: ordered developer-instruction fragments, enabled skills, per-Role internal MCP enablement, additional MCP servers and trusted projects. The first created Role is default; any existing Role can be marked default. Every new Bot launch captures the default; a new Worker captures the default unless `worker_start` selects another Role. Bot launches receive a private snapshot through codexnk's required `--capabilities` directory; Workers receive skills and MCP connections but not instruction fragments. Worker recovery retains its saved snapshot. Edits and default changes affect later launches, not a running process. _Avoid_: singleton Role, capability profile, system-prompt flag, live prompt file
+A named Stack-owned configuration with a stable ID and independent revision: ordered developer-instruction fragments, Bot-only `bot.md` personality, enabled skills, per-Role internal MCP enablement, additional MCP servers and trusted projects. Bot and Worker defaults are independent; any existing Role can be marked default. Every new Bot launch captures the Bot default; a new Worker captures the Worker default unless `worker_start` selects another Role. Bot launches receive a private snapshot through codexnk's required `--capabilities` directory; Workers receive instruction fragments, skills and MCP connections without `bot.md`. Worker recovery retains its saved snapshot. Edits and default changes affect later launches, not a running process. _Avoid_: singleton Role, capability profile, system-prompt flag, live prompt file
 
 ## Role injection
 

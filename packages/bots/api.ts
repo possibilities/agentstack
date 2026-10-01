@@ -19,6 +19,7 @@ import { BotState, botStateOperations } from "./src/state.js";
 import { withStateInventory } from "@stack/api";
 import { botStateCategories } from "./src/state-categories.js";
 import { chatTreePage, readChatTree, pageChatTree, chatTreeDetail as treeDetail, detailChunk } from "./src/chat-tree.js";
+import { orientationState } from "./src/orientation.js";
 
 const botId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/).describe("Bot id. Omit for the next bot-N; supply a name to override it.");
 const botSettings = z.strictObject({
@@ -35,7 +36,8 @@ const botView = z.object({
   state: z.enum(["running", "stopped"]),
   account: z.uuid().nullable().describe("Assigned Codex account ID, or null while unbound."),
   runningAccount: z.uuid().nullable().describe("Account used by the running process, or null when stopped or launched unbound. Stop/start to apply a changed assignment."),
-  mainThreadId: z.string().nullable().describe("First durable root thread, or null until a UI sends its first turn."),
+  mainThreadId: z.string().nullable().describe("Sanctioned root: allocated for a new Bot's automatic orientation, or the first durable UI root for legacy Bots. Null before allocation; orientation is not complete merely because this ID exists."),
+  orientation: orientationState.nullable().optional().describe("One-time initialization admission and exact native turn outcome. Current reads include null for legacy Bots, which are never automatically oriented. Unknown fences voice and automatic resubmission; retired means explicit conversation reset, not native completion."),
   recoveryIssue: z.string().nullable().describe("Process-ownership issue requiring inspection; a running state is unverified while this is set."),
   roleId: z.uuid().nullable().describe("Role ID used for the last launch, not a per-Bot assignment. Null before launch or for legacy launches. Later launches resolve the current default."),
   roleRevision: z.number().int().nonnegative().nullable().describe("Last launched Role revision, or null before launch. Compare both roleId and revision; restart to apply a new default or edits."),
@@ -44,7 +46,7 @@ const botView = z.object({
 
 export type BotsContext = { root: string; ledger: BotLedger; store: StateStore; supervisor: Supervisor; voice: VoiceCalls; chats: ChatIndex; liveChats: LiveChats; queue: ChatQueue; uploads: ChatUploads; state: BotState };
 export const topics = {
-  bots_changed: "Published when a bot starts, stops, exits, changes assignment or saved settings, or is fenced for recovery. Refresh bot_list and bot_settings_read.",
+  bots_changed: "Published when a bot starts, stops, exits, changes assignment, orientation or saved settings, or is fenced for recovery. Refresh bot_list and bot_settings_read.",
   threads_changed: "Published when thread lifecycle, configuration, metadata or status for this Bot may have changed, or its Codex connection resumes. Refresh chat_tree. An invalidation is not proof that a sanctioned thread changed.",
   voice_changed: "Published when the single voice call starts, connects, or ends. Refresh voice_status and bot_settings_read for call-loaded settings; the notice carries no SDP or audio.",
   defaults_changed: "Published when the defaults for newly created Bots change. Refresh bot_defaults_get, bot_settings_read without id, and bot_settings_catalog.",
@@ -86,7 +88,7 @@ async function claimNamedWorkspace(path: string): Promise<string> {
 
 export const botStart = operation({
   name: "bot_start",
-  description: "Start a bot or return its live process under the explicitly named enabled Codex account. Omit id for the next bot-N and a private workspace. Existing bots retain their assignment; use bot_assign, stop, then start to change it. New bots copy bot_defaults_get settings; optional settings and saved args override them.",
+  description: "Start a Bot under an explicit enabled Codex account. New Bots capture the default Role's bot.md and admit one orientation turn; returns on admission, not completion. Inspect bot_list for its outcome. Uncertainty never resends the introduction. Legacy Bots keep first-UI-turn behavior. Omit id for the next bot-N. Existing assignments change only through bot_assign, stop, then start.",
   input: z.strictObject({
     id: botId.optional().describe("Existing or custom bot id. Omit to allocate the next bot-N."),
     account: z.uuid().describe("Required enabled Codex account ID from account_list. For an existing bot, must equal its assignment."),
@@ -126,7 +128,7 @@ export const botStop = operation({
   async call(ctx: BotsContext, { id }) {
     if (ctx.supervisor.list().some((bot) => bot.id === id)) return ctx.supervisor.stop(id);
     if (!ctx.ledger.has(id) && !ctx.ledger.ownsWorkspace(id)) throw new Error(`unknown bot: ${id}`);
-    return { id, pid: null, cwd: workspacePath(ctx.root, id), url: null, state: "stopped" as const, account: null, runningAccount: null, mainThreadId: null, recoveryIssue: null, roleId: null, roleRevision: null, settings: ctx.store.botDefaults() };
+    return { id, pid: null, cwd: workspacePath(ctx.root, id), url: null, state: "stopped" as const, account: null, runningAccount: null, mainThreadId: null, orientation: null, recoveryIssue: null, roleId: null, roleRevision: null, settings: ctx.store.botDefaults() };
   },
 });
 export const botRemove = operation({
@@ -175,7 +177,7 @@ export const voiceStatus = operation({
   async call(ctx: BotsContext) { return { call: ctx.voice.status() }; },
 });
 export const voiceDial = operation({
-  name: "voice_dial", description: "Start full-duplex WebRTC audio on a verified running bot's durable main thread. Supply a gathered SDP offer and a fresh client-generated UUID. One call is allowed across all bots.",
+  name: "voice_dial", description: "Start full-duplex WebRTC audio on a verified running Bot's durable main thread. New Bots must finish their exact orientation turn with a known outcome; admission, waiting and uncertainty do not qualify. Later chat activity is not gated. Supply gathered SDP and a fresh client UUID. One call is allowed across all Bots.",
   input: z.strictObject({ botId, sessionId: sessionIdSchema, sdp: z.string().min(1).max(65_536).describe("Complete local WebRTC audio SDP offer, after ICE gathering.") }),
   output: z.strictObject({ sessionId: sessionIdSchema, answer: z.string().min(1).describe("Remote WebRTC SDP answer from Codex.") }),
   annotations: { title: "Dial voice" },
@@ -233,6 +235,8 @@ function unchanged(ctx: BotsContext, bot: ServerView): void {
 async function interactive(ctx: BotsContext, id: string, target: string): Promise<ServerView> {
   const bot = await allowed(ctx, id, target);
   if (bot.mainThreadId !== target) throw new Error("direct chat interaction is limited to this Bot's main thread; descendants are read-only");
+  if (bot.orientation && ["pending", "creating", "ready", "submitting"].includes(bot.orientation.state))
+    throw new Error("Bot orientation admission is in progress; refresh bot_list before submitting competing input");
   return bot;
 }
 async function inputParts(ctx: BotsContext, bot: ServerView, parts: z.infer<typeof inputPart>[]): Promise<Record<string, unknown>[]> {

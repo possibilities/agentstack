@@ -66,6 +66,8 @@ export interface SourceRunCounts {
 }
 
 export interface Source {
+  removed_at?: string | null;
+  checkpoint_generation?: number;
   id: number;
   source_type: string;
   identifier: string;
@@ -170,6 +172,8 @@ export interface SourceSyncWaitResult {
 }
 
 export interface SourceListItem {
+  removed_at?: string | null;
+  checkpoint_generation?: number;
   id: string;
   database_id: number;
   version: number;

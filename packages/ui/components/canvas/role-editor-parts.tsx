@@ -23,7 +23,7 @@ import { Window } from "./window";
 
 export const labelClass = "px-0.5 text-[0.7rem] font-medium text-muted-foreground";
 export const hintClass = "px-0.5 text-[0.68rem] text-pretty text-muted-foreground";
-export const fieldLabels: Record<string, string> = { title: "title", description: "description", body: "instructions", name: "name", files: "supporting files", definition: "connection", path: "path", conditions: "conditions" };
+export const fieldLabels: Record<string, string> = { botMarkdown: "bot.md", title: "title", description: "description", body: "instructions", name: "name", files: "supporting files", definition: "connection", path: "path", conditions: "conditions" };
 
 /** The window every editor renders in. It names the Role being edited, and says so when that is not the default; `unscoped` frames what belongs to no Role, such as a Role not yet created. */
 export function EditorFrame({ subtitle, footer, actions, empty = false, unscoped = false, children }: {

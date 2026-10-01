@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath } from "@stack/api";
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as rolesApi } from "../../roles/dist/api.js";
-import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser } from "./browser-fixture.mjs";
+import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture as serveReadFixture } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -100,11 +100,15 @@ async function until(read, done, label) {
 
 try {
   rolesServer = await serveApi({ name: "roles", transport: "socket", env, root });
-  websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["roles", "serve", "bots", "worker", "api"]), port: 0 });
+  const serveReads = await serveReadFixture(handlers);
+  Object.assign(handlers, serveReads.handlers);
+  // Synthetic owners expose their actual fixture operations, not unrelated production selections.
+  const gateway = await gatewayRoot(dir, ["roles", "serve", "bots", "worker", "api"], ["bots", "worker", "api"]);
+  websocket = await serveWebSocket({ env, root: gateway, port: 0 });
   const doc = (name, api) => fixtureDoc(name, api, websocket.url, publishedJsonSchema);
   const catalog = [doc("roles", rolesApi), doc("bots", botsApi), doc("serve"), doc("worker"), doc("api")];
   handlers.docs_snapshot = () => ({ packages: catalog });
-  for (const [name, names, topics] of [["serve", ["serve_status", "serve_codex_tools", "serve_codex_tools_check", "serve_resources", "serve_resource_history"], { pids_changed: "Fixture", codex_tools_changed: "Fixture", resources_changed: "Fixture" }], ["bots", ["bot_list", "bot_defaults_get", "voice_status"], botsApi.events.topics],
+  for (const [name, names, topics] of [["serve", serveReads.names, serveReads.topics], ["bots", ["bot_list", "bot_defaults_get", "voice_status"], botsApi.events.topics],
     ["worker", ["worker_list", "worker_runtime_list"], { workers_changed: "Fixture" }], ["api", ["docs_snapshot"], {}]]) {
     const served = await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {}, operations: fixture(names),
       events: { topics, scope: name === "bots" ? { valid: () => true, description: "Fixture", example: "bot-1" } : undefined } });
@@ -218,7 +222,7 @@ try {
   await newRole.waitFor();
   assert.equal(await newRole.getByLabel("Name", { exact: true }).evaluate((el) => el === document.activeElement), true);
   assert.equal(await editor.getByRole("button", { name: "Create role" }).isDisabled(), true, "a name is required");
-  await newRole.getByText("A new Role starts empty and is not a launch default. Existing sessions keep their Role.").waitFor();
+   await newRole.getByText("A new Role starts with a starter bot.md and no fragments or resources. It is not a launch default; existing sessions keep their Role.").waitFor();
   await newRole.getByLabel("Name", { exact: true }).fill("Researcher");
   await newRole.getByLabel(/^Description/).fill("Reads sources and reports what they say");
   await newRole.getByLabel("Name", { exact: true }).press("Meta+s");
@@ -493,7 +497,7 @@ try {
   await inspector.getByText("Role MCP server", { exact: true }).waitFor();
   await inspector.getByRole("button", { name: "Edit in Roles" }).click();
   await page.keyboard.press("Escape");
-  await skills.getByRole("button", { name: "review-changes-copy actions" }).click();
+  await tap(skills.getByRole("button", { name: "review-changes-copy actions" }));
   await page.getByRole("menuitem", { name: "Delete…" }).click();
   await dialog.getByText("Delete skill “review-changes-copy”?", { exact: true }).waitFor();
   await dialog.getByRole("button", { name: "Delete", exact: true }).click();
@@ -517,7 +521,7 @@ try {
   await editor.getByLabel("Name", { exact: true }).fill("researcher");
   await editor.getByText("Another Role already uses this name; letter case is ignored").first().waitFor();
   assert.equal(await editor.getByRole("button", { name: "Create role" }).isDisabled(), true);
-  await editor.getByText("A new Role starts empty and is not a launch default. Existing sessions keep their Role.").waitFor();
+   await editor.getByText("A new Role starts with a starter bot.md and no fragments or resources. It is not a launch default; existing sessions keep their Role.").waitFor();
   await editor.getByLabel("Name", { exact: true }).fill("Reviewer");
   await editor.getByLabel(/^Description/).fill("Reviews changes before they land");
   await editor.getByRole("button", { name: "Create role" }).click();
@@ -665,12 +669,36 @@ try {
   assert.equal((await rolesCall("roles_snapshot")).roles.find((role) => role.id === A).name, "Researcher");
   await details.getByLabel("Name", { exact: true }).fill("Research");
   await details.getByLabel(/^Description/).fill("Reads sources and reports what they say, with links");
+  await details.getByLabel("bot.md · Bot personality", { exact: true }).fill("Be an incisive, evidence-led researcher.");
   await editor.getByRole("button", { name: "Save", exact: true }).click();
   await until(() => rolesCall("roles_snapshot"), (value) => value.roles.find((role) => role.id === A).name === "Research", "the rename");
+  assert.equal((await snap(A)).botMarkdown, "Be an incisive, evidence-led researcher.");
+  await preview.getByText("Be an incisive, evidence-led researcher.", { exact: true }).waitFor();
   assert.equal(await defaultId(), B, "renaming never changes the default");
   await drop(false);
   await roleRow("Research").getByText("Editing", { exact: true }).waitFor();
   await roleRow("Foo").waitFor();
+
+  // bot.md uses the same Role-scoped draft and conflict flow, not the catalog's metadata-only snapshot.
+  const personality = () => editor.getByLabel("bot.md · Bot personality", { exact: true });
+  await personality().fill("Stay incisive, evidence-led and practical.");
+  const otherPersonality = (await snap(B)).botMarkdown;
+  await selectRole("Reviewer");
+  await tap(roleRow("Reviewer").getByRole("button", { name: "Reviewer actions" }));
+  await page.getByRole("menuitem", { name: "Edit details" }).click();
+  await editor.getByRole("form", { name: "Edit Role Reviewer" }).waitFor();
+  assert.equal(await personality().inputValue(), otherPersonality, "another Role never inherits the personality draft");
+  await selectRole("Research");
+  await editor.getByRole("form", { name: "Edit Role Research" }).waitFor();
+  assert.equal(await personality().inputValue(), "Stay incisive, evidence-led and practical.");
+  await rolesCall("role_update", { roleId: A, expectedRevision: await revisionOf(A), botMarkdown: "An edit from another client." });
+  await editor.getByRole("button", { name: "Keep mine", exact: true }).waitFor();
+  assert.equal(await editor.getByRole("button", { name: "Save", exact: true }).isDisabled(), true);
+  await editor.getByRole("button", { name: "Keep mine", exact: true }).click();
+  await editor.getByRole("button", { name: "Save", exact: true }).click();
+  await until(() => snap(A), (value) => value.botMarkdown === "Stay incisive, evidence-led and practical.", "the resolved personality edit");
+  assert.equal((await snap(B)).botMarkdown, otherPersonality);
+  await preview.getByText("Stay incisive, evidence-led and practical.", { exact: true }).waitFor();
 
   // A stale catalog revision commits nothing: the page rereads the catalog and rebuilds the write once.
   await drop(true);
@@ -706,7 +734,7 @@ try {
   await count(total).waitFor();
   assert.deepEqual(Object.values(await enabledNow(A)).every(Boolean), true, "every server is on in a newly created Role");
   assert.deepEqual(Object.values(await enabledNow(B)).every(Boolean), true);
-  await servers.getByText("Switches apply to later Bot launches and new Workers; running sessions keep their connections. New Stack servers start on.").waitFor();
+  await servers.getByText("Stack servers use stdio for Bot and Worker launches and stack roles inject. Switches apply to future launches; running sessions keep their connections. New Stack servers start on.").waitFor();
   await preview.getByRole("button", { name: "Launch", exact: false }).click();
   await preview.getByText(`${total} of ${total} Stack servers on · 1 from the Role`).waitFor();
   // Off for this Role only, and the preview tells enabled from configured.
