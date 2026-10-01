@@ -5,4 +5,4 @@ socket:
 websocket:
   operations: all
   events: all
-  description: Loopback attention API and payload-free change notices for future clients.
+  description: Loopback attention API and payload-free change notices, including local-operator captured-content and exact checkpoint maintenance.

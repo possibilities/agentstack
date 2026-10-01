@@ -41,6 +41,10 @@ mcp:
 websocket:
   operations:
     - roles_state_read
+    - role_launch_list
+    - role_launch_plan
+    - role_launch_clear
+    - roles_state_receipt_get
     - roles_snapshot
     - role_shim_list
     - role_shim_create

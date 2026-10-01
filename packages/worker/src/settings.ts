@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { operation, operatorInvocation } from "@stack/api";
+import { operation, operatorInvocation, requireStateOperator, statePlan, stateApplyInput, stateReceipt } from "@stack/api";
 import { catalog, evidence, settingsCatalog, settingsPatch, settingsPlan, settingsReceipt, settingsView, settingsState } from "@stack/settings";
 import type { WorkersContext } from "../api.js";
 import { workerSettingsBackend } from "./manager.js";
@@ -48,4 +48,15 @@ export const workerSettingsApply = operation({ name: "worker_settings_apply", de
   output: z.strictObject({ id: z.uuid(), revision: z.number().int(), status: z.literal("loaded") }), annotations: { title: "Apply Worker settings" },
   async call(ctx: WorkersContext, { id, expectedRevision, expectedInstance }, invocation) { return ctx.manager.applySettings(id, expectedRevision, expectedInstance, invocation); } });
 
-export const workerSettingsOperations = [workerSettingsCatalog, workerSettingsRead, workerSettingsPreview, workerSettingsPatch, workerSettingsApply];
+const settingsReceiptOperations = [
+  operation({ name: "worker_settings_receipts_plan", description: "Preview exact Worker/provider-defaults settings receipt retirement below current revision and at least seven days old. Legacy unknown-age receipts remain. Permanent request digest/revision tombstones prevent delayed edit replay. Saved/loaded/native selections and sessions remain unchanged. Local operator only.",
+    input: z.strictObject({ targets: z.array(target).min(1).max(100), retainDays: z.number().int().min(7).max(3650).default(7) }), output: statePlan,
+    async call(ctx: WorkersContext, { targets, retainDays }, invocation) { requireStateOperator(invocation); const subjects = targets.map(target => { if (target.id && !ctx.manager.ledger.worker(target.id)) throw new Error("Unknown Worker"); return target.id ? `worker:${target.id}` : `worker-defaults:${target.provider}`; }); return ctx.manager.ledger.settings.receiptsPlan(subjects, retainDays); } }),
+  operation({ name: "worker_settings_receipts_clear", description: "Atomically retire exact old settings receipts with minimal dedupe tombstones and a maintenance receipt. Changed saved revisions invalidate plans; identical retry never reapplies an edit or starts a turn/runtime. Local operator only.",
+    input: stateApplyInput, output: stateReceipt, annotations: { destructiveHint: true, idempotentHint: true },
+    async call(ctx: WorkersContext, input, invocation) { requireStateOperator(invocation); const result = ctx.manager.ledger.settings.receiptsClear(input); ctx.manager.onChange?.(); return result; } }),
+  operation({ name: "worker_state_receipt_get", description: "Read a durable Worker settings-receipt maintenance outcome, including unknown admissions after restart. Local operator only.",
+    input: z.strictObject({ requestId: z.uuid() }), output: z.strictObject({ receipt: stateReceipt.nullable() }), annotations: { readOnlyHint: true },
+    async call(ctx: WorkersContext, { requestId }, invocation) { requireStateOperator(invocation); return { receipt: ctx.manager.ledger.settings.maintenance.receipt(requestId) }; } }),
+];
+export const workerSettingsOperations = [...settingsReceiptOperations, workerSettingsCatalog, workerSettingsRead, workerSettingsPreview, workerSettingsPatch, workerSettingsApply];

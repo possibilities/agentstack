@@ -179,6 +179,8 @@ test("inject launches each native boundary with the selected bytes, private cred
           assert.ok(report.config.includes(withLocalAuth(f.env, auth => `Bearer ${auth.credential("stdio")}`)));
           assert.doesNotMatch(report.config, /disabled-mcp|notify|ambient/);
           assert.equal(await readFile(join(report.root, "home", ".codex", "session-fixture"), "utf8"), "history");
+          const lock = JSON.parse(await readFile(join(report.root, "launch-lock.json"), "utf8"));
+          assert.equal(lock.state, "exited"); assert.ok(lock.pid > 0); assert.ok(lock.birth.trim());
           await assert.rejects(stat(join(report.root, "home", ".codex", "config.toml")), { code: "ENOENT" });
           await assert.rejects(stat(join(report.root, "home", ".codex", "auth.json")), { code: "ENOENT" });
         } else {

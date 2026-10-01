@@ -5,6 +5,6 @@ socket:
 websocket:
   operations: all
   events: all
-  description: Local System Access controls and invalidations.
+  description: Local System Access controls, exact expired-history retirement and invalidations. Audit has no manual prune.
 http:
   description: Dedicated tailnet-only pairing, scoped Brain and Content ingress, and separately authenticated remote UI origin. No internal MCP forwarding.

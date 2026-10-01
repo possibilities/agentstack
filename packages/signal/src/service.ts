@@ -1,4 +1,4 @@
-import { socketCall, socketPath } from "@stack/api";
+import { socketCall, socketPath, type StateApplyInput } from "@stack/api";
 import { randomUUID } from "node:crypto";
 import { annotation, instructions, PROMPT_VERSION, type Settings } from "./schema.js";
 import { AttentionStore } from "./store.js";
@@ -13,6 +13,7 @@ export class AttentionService {
   private timer?:ReturnType<typeof setTimeout>;
   private collecting?:Promise<void>;
   private processing?:Promise<void>;
+  private maintaining?:Promise<unknown>;
   private closing=false;
   private readonly call:Call;
   onChange?:()=>void;
@@ -28,9 +29,28 @@ export class AttentionService {
     if(!this.collecting){this.collecting=this.sources.scan().catch(error=>{this.store.event("collection_error",{error:String(error)});}).finally(()=>{this.collecting=undefined;this.onChange?.();});}
     if(!this.processing&&this.store.meta<boolean>("baselined"))this.processing=this.processOne().catch(error=>{this.store.event("processing_error",{error:String(error)});}).finally(()=>{this.processing=undefined;this.onChange?.();});
   }
-  control(enabled:boolean){this.store.atomic(()=>{this.store.setMeta("enabled",enabled);if(enabled&&!this.store.meta("activatedAt"))this.store.setMeta("activatedAt",Date.now());this.store.event("processing_control",{enabled});});this.onChange?.();return this.store.status();}
+  control(enabled:boolean){if(enabled&&(this.maintaining||this.closing))throw new Error("Signal maintenance is observing source positions; wait before resuming");this.store.atomic(()=>{this.store.setMeta("enabled",enabled);if(enabled&&!this.store.meta("activatedAt"))this.store.setMeta("activatedAt",Date.now());this.store.event("processing_control",{enabled});});this.onChange?.();return this.store.status();}
   configure(update:Partial<Settings>,revision?:number){const result=this.store.configure(update,revision);this.onChange?.();return result;}
-  requireQuiescent() { if (this.store.meta("enabled") || this.collecting || this.processing) throw new Error("Pause Signal and wait for active source reads and inference to finish before cleanup"); }
+  requireQuiescent() { if (this.closing || this.store.meta("enabled") || this.collecting || this.processing || this.maintaining) throw new Error("Pause Signal and wait for active source reads, inference and maintenance to finish before cleanup"); }
+  private async observePaused<T>(selection: string[] | "all", apply: (heads: Awaited<ReturnType<Sources["heads"]>>) => T): Promise<T> {
+    this.requireQuiescent();
+    const task = (async () => {
+      const heads = await this.sources.heads(selection);
+      if (this.closing || this.store.meta("enabled") || this.collecting || this.processing) throw new Error("Signal state changed while observing sources; prepare again");
+      return apply(heads);
+    })();
+    this.maintaining = task;
+    try { return await task; } finally { this.maintaining = undefined; }
+  }
+  checkpointPlan(selection: string[] | "all") { return this.observePaused(selection, heads => this.store.checkpointPlan(selection, heads)); }
+  async checkpointReset(input: StateApplyInput) {
+    const prior = this.store.maintenance.existing(input);
+    if (prior) { if (prior.action !== "checkpoint_rebaseline") throw new Error("Signal maintenance action mismatch"); return prior; }
+    const { plan, payload } = this.store.maintenance.getPlan(input.planId);
+    if (plan.action !== "checkpoint_rebaseline") throw new Error("Signal maintenance action mismatch");
+    const result = await this.observePaused((payload as { selection: string[] | "all" }).selection, heads => this.store.checkpointReset(input, heads));
+    this.onChange?.(); return result;
+  }
   async accounts(assigned:string|null=this.store.defaults().accountId){const {accounts}=await this.call<{accounts:{id:string;enabled:boolean;removing:boolean}[]}>("auth","account_list",{});
     return accounts.filter(row=>row.enabled&&!row.removing&&(!assigned||row.id===assigned));}
   async models(){
@@ -90,5 +110,5 @@ export class AttentionService {
       this.store.setMeta("lastInference",{at:Date.now(),runId,state,error:code});
     }
   }
-  async close(){this.closing=true;if(this.timer)clearTimeout(this.timer);await Promise.allSettled([this.collecting,this.processing]);this.store.close();}
+  async close(){this.closing=true;if(this.timer)clearTimeout(this.timer);await Promise.allSettled([this.collecting,this.processing,this.maintaining]);this.store.close();}
 }

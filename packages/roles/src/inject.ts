@@ -11,6 +11,7 @@ import { injectArguments, type Harness } from "./inject-args.js";
 import { startOpenCodeHost } from "./inject-opencode.js";
 import { mcpRecord, skillRecord } from "./resources.js";
 import { RoleStore, renderInstructions, type RoleSnapshot } from "./store.js";
+import { processBirth } from "./launch-state.js";
 
 type Mcp = { type: "http"; url: string; headers: Record<string, string> } |
   { type: "stdio"; command: string; args: string[]; env: Record<string, string> };
@@ -139,6 +140,8 @@ async function launch(args: string[], signal: AbortSignal): Promise<Exit> {
   const parent = join(stateDir(), "roles", "inject");
   await mkdir(parent, { recursive: true, mode: 0o700 });
   const root = await mkdtemp(join(parent, `${harness}-`));
+  const lock = { version: 1, pid: process.pid, birth: await processBirth(process.pid), state: "preparing" };
+  await file(join(root, "launch-lock.json"), json(lock));
   const capabilities = join(root, "capabilities");
   const env = { ...process.env };
   let launched = false;
@@ -201,6 +204,7 @@ async function launch(args: string[], signal: AbortSignal): Promise<Exit> {
     }
     if (harness !== "opencode") await compatible(binary, harness, env);
     signal.throwIfAborted();
+    await file(join(root, "launch-lock.json"), json({ ...lock, state: "running" }));
     launched = true;
     result = await foreground(binary, argv, env, signal, host?.closed);
   } finally {
@@ -211,7 +215,10 @@ async function launch(args: string[], signal: AbortSignal): Promise<Exit> {
     else {
       for (const path of cleanup) await rm(path, { recursive: true, force: true });
       if (harness !== "codex") await rm(root, { recursive: true, force: true });
-      else console.error(`roles inject: private native history retained at ${root}`);
+      else {
+        await file(join(root, "launch-lock.json"), json({ ...lock, state: "exited" }));
+        console.error(`roles inject: private native history retained at ${root}`);
+      }
     }
   }
   return result;

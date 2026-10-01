@@ -1,6 +1,6 @@
 import { chmod, mkdir, rm } from "node:fs/promises";
 import { z } from "zod";
-import { withStateInventory } from "@stack/api";
+import { withStateInventory, requireStateOperator, stateApplyInput, statePlan, stateReceipt, type AnyOperation } from "@stack/api";
 import { authStateCategories } from "./src/state-categories.js";
 import { operation, socketCall, socketPath, type PackageApi } from "@stack/api";
 import { stateDir } from "./src/paths.js";
@@ -10,6 +10,7 @@ import { WorkerLoginManager, type WorkerLoginState } from "./src/worker-login.js
 import { accountRoot, credentialEvidence, loginCommand, prepareAccountProfile, type WorkerAccount, type WorkerProvider } from "./src/worker-accounts.js";
 import { removeClaudeCredentials, type ClaudeCredentialOptions } from "./src/claude-credentials.js";
 import { pairCodexWorkers } from "./src/pairing.js";
+import { AccountCacheState } from "./src/cache-state.js";
 
 const accountId = z.uuid().describe("Stable account ID from the corresponding Bot or Worker account list.");
 const providerSchema = z.enum(["codex", "devin", "claude"]);
@@ -30,6 +31,7 @@ const workerLoginStateSchema = z.object({
 
 export type AuthContext = {
   store: AuthStore;
+  cache?: AccountCacheState;
   login: LoginManager;
   workerLogin: WorkerLoginManager;
   botsSocket: string;
@@ -286,10 +288,25 @@ export const topics = {
 
 export type AuthTopic = keyof typeof topics;
 
+const accountMutations = new Set(["worker_account_prepare", "worker_account_confirm", "worker_account_set_enabled", "worker_account_remove", "worker_account_login_start", "account_remove"]);
+function fenceAccountMutation(op: AnyOperation<AuthContext>): AnyOperation<AuthContext> {
+  if (!accountMutations.has(op.name)) return op;
+  return { ...op, async call(ctx, input, invocation) {
+    const requested = (input as { id?: string }).id;
+    const id = op.name === "account_remove" && requested ? ctx.store.pairedWorker(requested) : requested;
+    return id && ctx.cache ? ctx.cache.mutate(id, () => op.call(ctx, input, invocation)) : op.call(ctx, input, invocation);
+  } };
+}
 const packageApi: PackageApi<AuthContext, AuthTopic> = {
-  operations: [accountList, accountSetEnabled, accountRemove, accountLoginStart, accountLoginReplace, accountLoginStatus, accountLoginCurrent, accountLoginCancel,
+  operations: [
+    operation({ name: "worker_account_cache_plan", description: "Preview pure-cache cleanup in an exact owned Worker account profile. Only Codex OpenCode cache/opencode/models.json is proven; Devin/Claude are unsupported. Requires account disabled, sign-in idle and runtime/catalog/teardown drained. No credentials or sessions selected. Local operator only.",
+      input: z.strictObject({ accountId }), output: statePlan, async call(ctx: AuthContext, { accountId }, invocation) { requireStateOperator(invocation); return ctx.cache!.plan(ctx, accountId); } }),
+    operation({ name: "worker_account_cache_clear", description: "Apply one exact pure-cache plan after rechecking profile/dependency revisions. Persist admission before safe file removal; partial/unknown outcomes never rerun. Native sign-in and session/history remain intact. No implicit drain or restart. Local operator only.",
+      input: stateApplyInput, output: stateReceipt, annotations: { destructiveHint: true, idempotentHint: true }, async call(ctx: AuthContext, input, invocation) { requireStateOperator(invocation); const result = await ctx.cache!.clear(ctx, input); ctx.onWorkerAccountsChanged?.(); return result; } }),
+    operation({ name: "auth_state_receipt_get", description: "Read one durable pure-cache maintenance receipt, including partial/quarantine or unknown outcomes. Local operator only.", input: z.strictObject({ requestId: z.uuid() }), output: z.strictObject({ receipt: stateReceipt.nullable() }), annotations: { readOnlyHint: true }, async call(ctx: AuthContext, { requestId }, invocation) { requireStateOperator(invocation); return { receipt: ctx.cache!.journal.receipt(requestId) }; } }),
+    accountList, accountSetEnabled, accountRemove, accountLoginStart, accountLoginReplace, accountLoginStatus, accountLoginCurrent, accountLoginCancel,
     workerAccountList, workerAccountPrepare, workerAccountConfirm, workerAccountSetEnabled, workerAccountRemove,
-    workerAccountLoginStart, workerAccountLoginStatus, workerAccountLoginCurrent, workerAccountLoginSubmit, workerAccountLoginCancel],
+    workerAccountLoginStart, workerAccountLoginStatus, workerAccountLoginCurrent, workerAccountLoginSubmit, workerAccountLoginCancel].map(fenceAccountMutation),
   events: {
     topics,
     start(ctx: AuthContext, publish: (topic: AuthTopic) => void) {
@@ -315,11 +332,12 @@ const packageApi: PackageApi<AuthContext, AuthTopic> = {
     await chmod(dir, 0o700);
     const store = new AuthStore(dir);
     await pairCodexWorkers(store);
-    return { store, login: new LoginManager(store), workerLogin: new WorkerLoginManager(store, { env }), botsSocket: socketPath("bots", env), workersSocket: socketPath("worker", env), onAccountsChanged: undefined, onWorkerAccountsChanged: undefined };
+    return { store, cache: new AccountCacheState(store.stateDir), login: new LoginManager(store), workerLogin: new WorkerLoginManager(store, { env }), botsSocket: socketPath("bots", env), workersSocket: socketPath("worker", env), onAccountsChanged: undefined, onWorkerAccountsChanged: undefined };
   },
   async closeContext(ctx) {
     await ctx.login.close();
     await ctx.workerLogin.close();
+    ctx.cache?.close();
     ctx.store.close();
   },
 };

@@ -54,6 +54,9 @@ const resultSchema = z.strictObject({ worker: workerSchema, turn: turnSummarySch
 const requestId = z.uuid().describe("Client-generated idempotency key. Retry with identical input after an uncertain response.");
 
 export type WorkersContext = { supervisor: WorkerSupervisor; manager: WorkerManager };
+export const workerAccountStateDependencies = operation({ name: "worker_account_state_dependencies", description: "Observe an account's runtime, native teardown and in-flight catalog blockers for exact Auth cache maintenance. Waits for queued runtime reconciliation, never starts or stops a runtime. Local operator only.",
+  input: z.strictObject({ id }), output: stateDependencies, annotations: { readOnlyHint: true },
+  async call(ctx: WorkersContext, { id }, invocation) { requireStateOperator(invocation); return ctx.supervisor.stateDependencies(id); } });
 export const workerWorkspaceList = operation({ name: "worker_workspace_list", description: "List one bounded, revision-fenced directory in the retained Worker Git worktree, including closed Workers. Symlinks are listed but never traversed. The worktree's files, native conversation and retained source branch have separate lifecycles; worker_diff inspects Git changes.",
   input: statePageInput.extend({ id, path: z.string().min(1).max(4096).default(".") }), output: stateFilePage, annotations: { readOnlyHint: true },
   async call(ctx: WorkersContext, { id, ...input }, invocation) { requireStateOperator(invocation); const { worker } = await ctx.manager.status(id);
@@ -229,7 +232,7 @@ export const workerTurnContext = operation({ name: "worker_turn_context", descri
   async call(ctx: WorkersContext, input, invocation) { return ctx.manager.turnContext(input.id, input.turnId, invocation); },
 });
 const packageApi: PackageApi<WorkersContext, keyof typeof topics> = {
-  operations: [workerBotDependencies, workerWorkspaceList, workerWorkspaceRead, ...workerSettingsOperations, workerCatalog, workerRuntimeList, workerAccountDrain, workerStart, workerList, workerStatus, workerRead,
+  operations: [workerAccountStateDependencies, workerBotDependencies, workerWorkspaceList, workerWorkspaceRead, ...workerSettingsOperations, workerCatalog, workerRuntimeList, workerAccountDrain, workerStart, workerList, workerStatus, workerRead,
     workerDetail, workerTurnList, workerRecordList, workerRecordRead, workerToolList, workerDiff,
      workerSend, workerRespond, workerCancel, workerResume, workerClose, workerRemove, workerWorkList, workerTurnContext],
   events: {

@@ -84,7 +84,7 @@ export class WorkerLedger {
     }
     this.history = new WorkerHistory(this.db);
     this.db.exec("CREATE INDEX IF NOT EXISTS turns_work_item ON turns(json_extract(work_context_json,'$.workItemId'))");
-    this.settings = new SettingsStore(this.db);
+    this.settings = new SettingsStore(this.db, "worker");
     for (const provider of ["codex", "devin", "claude"]) this.settings.seed(`worker-defaults:${provider}`, {}, "Native Worker selection");
     this.db.prepare("UPDATE workers SET phase = 'needs_recovery', issue = 'Owner restarted during a worker operation; inspect before resuming', updated_at = ? WHERE provider IN ('codex','devin','claude') AND phase IN ('preparing','running','awaiting_input','cancelling')").run(Date.now());
     this.db.prepare("UPDATE turns SET phase = 'unknown', issue = 'Turn outcome is unknown after owner restart', updated_at = ? WHERE worker_id IN (SELECT id FROM workers WHERE provider IN ('codex','devin','claude')) AND phase IN ('queued','running','awaiting_input','cancelling')").run(Date.now());
