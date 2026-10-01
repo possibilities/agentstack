@@ -52,6 +52,9 @@ export class AccessStore {
       CREATE TABLE IF NOT EXISTS sessions(hash TEXT PRIMARY KEY,credential_id TEXT NOT NULL REFERENCES credentials(id),path TEXT NOT NULL,origin TEXT NOT NULL,expires INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS audit(seq INTEGER PRIMARY KEY AUTOINCREMENT,time INTEGER NOT NULL,action TEXT NOT NULL,subject TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS ui_sessions(hash TEXT PRIMARY KEY,credential_id TEXT NOT NULL REFERENCES credentials(id),expires INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS ui_handoffs(hash TEXT PRIMARY KEY,credential_id TEXT NOT NULL REFERENCES credentials(id),origin TEXT NOT NULL,revision INTEGER NOT NULL,expires INTEGER NOT NULL,used INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS ui_view_families(id TEXT PRIMARY KEY,credential_id TEXT NOT NULL REFERENCES credentials(id),current_hash TEXT NOT NULL,expires INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS ui_view_refreshes(old_hash TEXT PRIMARY KEY,family_id TEXT NOT NULL REFERENCES ui_view_families(id),next_hash TEXT NOT NULL,expires INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS invitations(id TEXT PRIMARY KEY,digest TEXT NOT NULL,secret_hash TEXT NOT NULL,origin TEXT NOT NULL,kind TEXT NOT NULL,scopes TEXT NOT NULL,created INTEGER NOT NULL,expires INTEGER NOT NULL,revoked INTEGER,request_id TEXT);
       CREATE TABLE IF NOT EXISTS enrollments(id TEXT PRIMARY KEY,request_id TEXT UNIQUE NOT NULL,request_hash TEXT NOT NULL,commitment TEXT NOT NULL,label TEXT NOT NULL,kind TEXT NOT NULL,scopes TEXT NOT NULL,origin TEXT NOT NULL,created INTEGER NOT NULL,expires INTEGER NOT NULL,sponsor TEXT,sponsor_revision INTEGER,invitation_id TEXT,credential_id TEXT,cancelled INTEGER,request_expires INTEGER NOT NULL,public_key TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS enrollment_grants(grant_id TEXT PRIMARY KEY REFERENCES grants(id),enrollment_id TEXT NOT NULL,sponsor_credential_id TEXT);
@@ -102,9 +105,13 @@ export class AccessStore {
   private cleanup() {
     // Expired secrets cannot recover an exchange. Retain durable identities and
     // admission receipts, but bound abandoned requests and ephemeral material.
-    for (const table of ["pairings", "refreshes", "tokens", "handoffs", "sessions", "ui_sessions", "invitations"]) {
+    for (const table of ["pairings", "refreshes", "tokens", "handoffs", "sessions", "ui_sessions", "invitations", "ui_view_refreshes"]) {
       this.db.prepare(`DELETE FROM ${table} WHERE expires<=?`).run(this.now());
     }
+    // Preserve handoff request identities through their source token's lifetime;
+    // expiry or successful consumption must never be revived by an exact retry.
+    this.db.prepare("DELETE FROM ui_handoffs WHERE expires<=?").run(this.now() - 300_000);
+    this.db.prepare("DELETE FROM ui_view_families WHERE expires<=? AND id NOT IN (SELECT family_id FROM ui_view_refreshes)").run(this.now());
     // An invitation/sponsor may expire BEFORE the device QR. Keep the consumed
     // request ID until that QR expires, or an old QR could create a second grant.
     this.db.prepare("DELETE FROM enrollments WHERE request_expires<=?").run(this.now());
@@ -215,11 +222,12 @@ export class AccessStore {
     if (scope && !allowed.includes(scope)) return fail("insufficient_scope", 403);
     return { clientId: row.client_id, kind: row.kind, grantId: row.grant_id, credentialId: row.id, scopes: allowed };
   }
-  /** A browser session is distinct from API access tokens and may only belong to a browser-kind client. */
+  /** Legacy browser pairing exchanges its credential directly; native clients use a handoff instead. */
   startUi(refreshToken: string, requestId: string) {
     const credential = this.get("SELECT id FROM credentials WHERE refresh_hash=?", hash(refreshToken))
       ?? this.get("SELECT credential_id AS id FROM refreshes WHERE old_hash=? AND request=?", hash(refreshToken), `${requestId}:ui`);
     if (!credential) fail();
+    if (this.active(credential.id).kind !== "browser") fail("browser_required", 403);
     this.uiCheck(credential.id);
     const issued = this.refresh(refreshToken, requestId, "ui");
     const principal = this.authorize(issued.accessToken, "ui", "ui:view");
@@ -234,7 +242,7 @@ export class AccessStore {
     const row = this.get("SELECT 1 FROM ui_sessions WHERE hash=? AND expires>?", hash(token), this.now());
     if (!row) fail();
     const principal = this.authorize(token, "ui", "ui:view");
-    if (principal.kind !== "browser") fail("browser_required", 403);
+    if (!["browser", "desktop"].includes(principal.kind)) fail("ui_client_required", 403);
     return principal;
   }
   uiExpires(token: string): number {
@@ -247,7 +255,63 @@ export class AccessStore {
   }
   uiCheck(credentialId: string, scope: Scope = "ui:view") {
     const row = this.active(credentialId);
-    if (row.kind !== "browser" || !JSON.parse(row.scopes).includes(scope)) fail("insufficient_scope", 403);
+    if (!["browser", "desktop"].includes(row.kind) || !JSON.parse(row.scopes).includes(scope)) fail("insufficient_scope", 403);
+  }
+  /** Native credentials stay with their host. Only a one-use, origin-bound capability crosses navigation. */
+  uiConnectHandoff(token: string, requestId: string, origin: string) {
+    originSchema.parse(origin);
+    const principal = this.authorize(token, "ui", "ui:view");
+    this.uiCheck(principal.credentialId);
+    return this.transaction(() => {
+      const capability = derive(token, `ui-handoff:${requestId}`);
+      const row = this.active(principal.credentialId);
+      const old = this.get("SELECT * FROM ui_handoffs WHERE hash=?", hash(capability));
+      if (old && old.expires <= this.now()) fail("ui_handoff_expired", 409);
+      if (old && (old.origin !== origin || old.revision !== row.grant_revision)) fail("request_conflict", 409);
+      if (!old) {
+        if (Number(this.get("SELECT count(*) n FROM ui_handoffs WHERE expires>?", this.now())!.n) >= 100) fail("ui_handoff_capacity", 429);
+        this.db.prepare("INSERT INTO ui_handoffs VALUES(?,?,?,?,?,0)").run(hash(capability), principal.credentialId, origin, row.grant_revision, this.now() + 60_000);
+        this.audit("ui_handoff_created", principal.clientId);
+      }
+      return { url: `${origin}/connect/device#${capability}`, expiresAt: old?.expires ?? this.now() + 60_000, serverId: this.serverId };
+    });
+  }
+  exchangeUiHandoff(capability: string, origin: string) {
+    return this.transaction(() => {
+      const row = this.get("SELECT * FROM ui_handoffs WHERE hash=?", hash(capability));
+      if (!row || row.used || row.origin !== origin || row.expires <= this.now()) fail("ui_handoff_invalid");
+      this.uiCheck(row.credential_id);
+      if (this.active(row.credential_id).grant_revision !== row.revision) fail("grant_changed", 403);
+      this.db.prepare("UPDATE ui_handoffs SET used=1 WHERE hash=?").run(hash(capability));
+      const refreshToken = derive(capability, "ui-view-refresh");
+      this.db.prepare("INSERT INTO ui_view_families VALUES(?,?,?,?)").run(randomUUID(), row.credential_id, hash(refreshToken), this.now() + 900_000);
+      this.audit("ui_session_admitted", row.credential_id);
+      return { ...this.issueUiView(row.credential_id, derive(capability, "ui-view-session")), refreshToken };
+    });
+  }
+  /** HttpOnly viewer refresh has a separate lineage and cannot consume the native refresh credential. */
+  refreshUiView(refreshToken: string) {
+    return this.transaction(() => {
+      const digest = hash(refreshToken);
+      const replay = this.get("SELECT * FROM ui_view_refreshes WHERE old_hash=?", digest);
+      const family = replay ? this.get("SELECT * FROM ui_view_families WHERE id=?", replay.family_id)
+        : this.get("SELECT * FROM ui_view_families WHERE current_hash=?", digest);
+      if (!family || family.expires <= this.now() || replay && (replay.expires <= this.now() || replay.next_hash !== family.current_hash)) fail("ui_refresh_invalid");
+      this.uiCheck(family.credential_id);
+      const next = derive(refreshToken, "ui-view-next");
+      if (!replay) {
+        this.db.prepare("UPDATE ui_view_families SET current_hash=?,expires=? WHERE id=?").run(hash(next), this.now() + 900_000, family.id);
+        this.db.prepare("INSERT INTO ui_view_refreshes VALUES(?,?,?,?)").run(digest, family.id, hash(next), this.now() + 300_000);
+      }
+      return { ...this.issueUiView(family.credential_id, derive(refreshToken, "ui-view-session")), refreshToken: next };
+    });
+  }
+  private issueUiView(credentialId: string, accessToken: string) {
+    const old = this.get("SELECT expires FROM ui_sessions WHERE hash=?", hash(accessToken));
+    const expiresAt = old?.expires ?? this.now() + 300_000;
+    this.db.prepare("INSERT OR IGNORE INTO tokens VALUES(?,?,?,?)").run(hash(accessToken), credentialId, "ui", expiresAt);
+    this.db.prepare("INSERT OR IGNORE INTO ui_sessions(hash,credential_id,expires,id) VALUES(?,?,?,?)").run(hash(accessToken), credentialId, expiresAt, randomUUID());
+    return { accessToken, expiresAt: expiresAt as number, scopes: JSON.parse(this.active(credentialId).scopes) as Scope[] };
   }
   uiHandoff(token: string, path: string, origin: "documents" | "artifacts") {
     const principal = this.ui(token);

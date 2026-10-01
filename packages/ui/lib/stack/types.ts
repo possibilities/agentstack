@@ -1,3 +1,8 @@
+/** Desktop connection discovery is not a grant; Access remains the server-side authority. */
+export type AccessConnectionDescriptor = {
+  version: 1; serverId: string; deviceOrigin: string; documentOrigin: string; artifactOrigin: string;
+  uiOrigin: string | null; pairing: ("manual" | "invitation" | "sponsor")[];
+};
 export type AccessSnapshot = {
   serverId: string;
   clients: { id: string; label: string; kind: string; created: number; revoked: number | null }[];

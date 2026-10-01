@@ -69,7 +69,7 @@ if (accessHost) {
   try {
     if (origin) {
       const parsed = new URL(origin);
-      validOrigin = parsed.protocol === "https:" && parsed.origin === origin && Number(parsed.port) === accessUiPort && !parsed.username && !parsed.password;
+      validOrigin = parsed.protocol === "https:" && parsed.origin === origin && Number(parsed.port || 443) === accessUiPort && !parsed.username && !parsed.password;
     }
   } catch { /* fail closed below */ }
   if (!validOrigin || !process.env.STACK_ACCESS_TLS_CERT || !process.env.STACK_ACCESS_TLS_KEY

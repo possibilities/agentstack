@@ -11,7 +11,8 @@
     "./package.json": "./package.json",
     "./enrollment-client": { "types": "./dist/src/enrollment-client.d.ts", "default": "./dist/src/enrollment-client.js" },
     "./enrollment-protocol": { "types": "./dist/src/enrollment-protocol.d.ts", "default": "./dist/src/enrollment-protocol.js" },
-    "./qr": { "types": "./dist/src/qr.d.ts", "default": "./dist/src/qr.js" }
+    "./qr": { "types": "./dist/src/qr.d.ts", "default": "./dist/src/qr.js" },
+    "./connection-client": { "types": "./dist/src/connection-client.d.ts", "default": "./dist/src/connection-client.js" }
   },
   "scripts": {
     "build": "node ../../scripts/clean-dist.mjs && tsc",

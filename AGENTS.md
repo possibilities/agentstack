@@ -15,6 +15,8 @@
 
 ## Brain and device clients
 
+- `packages/client` owns the independent same-user Client host, cold installation, local user-service/login control and destination-pinned connections. It is not a platform Package API or remote installer. Keep native credentials out of WebViews; Access UI handoffs mint independent scoped viewer sessions. See [ADR 0152](docs/adr/0152-independent-client-bootstrap-and-ui-handoffs.md) and [the client contract](docs/client-bootstrap.md). Standalone UI and `packages/desk` remain separate phases.
+
 - `packages/brain` owns research admission, the ingestion ledger and index writes. URL extraction and source discovery use the Stack-owned `packages/scrape` engine; Scrape owns preset validation, egress policy and browser page extraction. Admission is not indexing completion; an Ingestion worker is not an ACP Worker.
 - Brain defaults belong under `<STACK_STATE_DIR>/brain`. Never import an existing research store, source manifest, token or client settings as part of setup or a test. The Chrome and Android packages are Stack applications, with sharing as their first feature.
 - Preserve the maintenance invariants in [`docs/brain-maintenance.md`](docs/brain-maintenance.md) and the device [share contract](docs/brain-share-contract.md), including read-only retrieval, fenced completion, full FTS row replacement, and destination-bound Share outboxes.
