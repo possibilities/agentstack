@@ -1,13 +1,13 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState } from "react";
-import { FileTextIcon, GitBranchIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import { FileTextIcon, GitBranchIcon, PlugZapIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { approxTokens, conditionDimensions, conditionValueLimit, contextIssues, contextKey, contextSummary, fallbackLimitBytes, fallbackSnapshotLimit, formatBytes, formatCount, injectCommand, injectionGuidance, launchHint, normalizeContext, launchLabel, previewBytes, previewPieces, projectBots, roleLaunches, type LaunchState, type WorkerRoleState } from "@/lib/stack/roles";
-import type { RoleLaunchPreview, RoleRenderContext } from "@/lib/stack/types";
+import { approxTokens, capabilityHarnessNames, conditionDimensions, conditionValueLimit, contextIssues, contextKey, contextSummary, exclusionLabel, fallbackLimitBytes, fallbackSnapshotLimit, formatBytes, formatCount, harnessMapping, injectCommand, injectionGuidance, launchHint, normalizeContext, launchLabel, previewBytes, previewPieces, projectBots, roleLaunches, type LaunchState, type WorkerRoleState } from "@/lib/stack/roles";
+import type { RoleCapabilityHarness, RoleLaunchPreview, RoleRenderContext } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { BotTile, CopyButton, Empty, Meter, NodeLink } from "./primitives";
 import { useStack, useStore } from "./provider";
@@ -30,7 +30,7 @@ const resourceKinds = new Set(["skill", "mcp-server", "trusted-project", "new-sk
  * trusted projects configure Bots only.
  */
 export function RolePreviewWindow() {
-  const { role, rolePreview, roleLaunch, roleCatalog, roleContext, roleContextShown, bots, workerSessions, status, endpoints } = useStack();
+  const { role, rolePreview, roleLaunch, roleCatalog, roleContext, roleContextShown, roleHarness, bots, workerSessions, status, endpoints } = useStack();
   const actions = useRoleActions();
   const roleView = useRoleView();
   const [view, setView] = useState<View>("instructions");
@@ -101,7 +101,8 @@ export function RolePreviewWindow() {
         <DefaultNote />
         {tabs}
         {context}
-        {launch ? <LaunchView launch={launch} updating={Boolean((role.data && launch.revision !== role.data.revision) || roleContextShown.roleLaunch !== current)} /> : <Empty icon={FileTextIcon} title={roleView.blank ?? (roleLaunch.error ? "Launch preview unavailable" : "Reading launch…")} />}
+        <CapabilityHarnessSelector />
+        {launch ? <LaunchView launch={launch} updating={Boolean((role.data && launch.revision !== role.data.revision) || roleContextShown.roleLaunch !== current || launch.harness !== roleHarness)} /> : <Empty icon={FileTextIcon} title={roleView.blank ?? (roleLaunch.error ? "Launch preview unavailable" : "Reading launch…")} />}
         {launched}
       </Window>
     );
@@ -162,8 +163,8 @@ const chip = "rounded-md px-1.5 py-0.5 font-mono text-[0.7rem]";
 /** Everything but the instruction text that the next launch receives, as `role_launch_preview` reports it. */
 function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating: boolean }) {
   const { bots, roleContext } = useStack();
-  // Instruction context is independent of capability selection. Until a selector is added,
-  // the store requests the unspecified-harness preview: unrestricted capabilities only.
+  // Instruction context and the capability harness are independent axes; the response's own
+  // `launch.harness` names which one this preview answers, never the rendering context's.
   const roleContextSummary = contextSummary(roleContext);
   const actions = useRoleActions();
   const used = Math.min(100, (launch.snapshotChars / (launch.snapshotLimitChars || fallbackSnapshotLimit)) * 100);
@@ -208,7 +209,7 @@ function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating:
             ))}
           </ul>
         ) : <p className="px-1.5 text-[0.7rem] text-muted-foreground">No Role skills are selected for this preview.</p>}
-        <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">{launch.harness ? `Capabilities for ${launch.harness}.` : "No capability harness selected: only unrestricted enabled capabilities are shown."} Instruction-rendering context does not select skills or connections. Launches may also discover project and bundled skills.</p>
+        <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">{launch.harness ? `Selected for ${launch.harness}.` : "No capability harness selected: only unrestricted enabled capabilities are shown."} Instruction-rendering context does not select skills or connections. Launches may also discover project and bundled skills.</p>
       </Section>
       <Section title="MCP servers" aside={<span className="text-[0.65rem] text-muted-foreground tabular-nums">{on} of {total} Stack connection{total === 1 ? "" : "s"} included · {launch.mcpServers.length} from the Role</span>}>
         <div className="flex flex-wrap gap-1 px-1.5">
@@ -218,9 +219,13 @@ function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating:
               {server.name}
             </button>
           ))}
-          {launch.internalMcpServers.map((server) => server.included
-            ? <span key={server.name} className={cn(chip, "bg-muted text-muted-foreground")} title={`${server.name} · ${server.transport} · Stack server, bound to each launch. ${server.description}`}>{server.title}</span>
-            : <span key={server.name} className={cn(chip, "bg-muted/40 text-muted-foreground/70 line-through")} title={`${server.name} · ${server.enabled ? "Excluded by harness selection" : "Off for this Role"}`}>{server.title}<span className="sr-only"> ({server.enabled ? "excluded by harness selection" : "off for this Role"})</span></span>)}
+          {launch.internalMcpServers.map((server) => {
+            if (server.included) return <span key={server.name} className={cn(chip, "bg-muted text-muted-foreground")} title={`${server.name} · ${server.transport} · Stack server, bound to each launch. ${server.description}`}>{server.title}</span>;
+            // Stored off is still "Off for this Role"; a harness exclusion is named as one, never as off.
+            const reason = exclusionLabel(server.selectionReason as Exclude<typeof server.selectionReason, "included">, launch.harness);
+            const suffix = server.selectionReason === "disabled" ? "Off for this Role" : reason;
+            return <span key={server.name} className={cn(chip, "bg-muted/40 text-muted-foreground/70 line-through")} title={`${server.name} · ${suffix}`}>{server.title}<span className="sr-only"> ({server.selectionReason === "disabled" ? "off for this Role" : reason})</span></span>;
+          })}
         </div>
         <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">
           Stack connections use stdio on future launches when enabled and selected for the actual harness. This preview does not describe running connections. Additional Role connections keep their configured transport.
@@ -235,6 +240,29 @@ function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating:
             <pre className="rounded-lg border bg-background/60 px-2.5 py-2 font-mono text-[0.7rem] leading-relaxed break-words whitespace-pre-wrap">{launch.config}</pre>
           </div>
         ) : null}
+      </Section>
+      <Section title="Not in this launch" aside={<span className="text-[0.65rem] text-muted-foreground tabular-nums">{launch.excludedCapabilities.length} excluded</span>}>
+        {launch.excludedCapabilities.length ? (
+          <ul aria-label="Excluded capabilities" className="flex flex-col gap-0.5">
+            {launch.excludedCapabilities.map((item) => {
+              const reason = exclusionLabel(item.reason, launch.harness);
+              const title = item.kind === "internal-mcp" ? launch.internalMcpServers.find((server) => server.name === item.name)?.title ?? item.name : item.name;
+              const body = item.kind === "internal-mcp" ? (
+                <span className="min-w-0 truncate text-[0.75rem]">{title}</span>
+              ) : (
+                <button type="button" onClick={() => open(item.kind === "skill" ? "skill" : "mcp-server", item.id)}
+                  className="min-w-0 truncate rounded-sm font-mono text-[0.75rem] hover:underline focus-visible:outline-2 focus-visible:outline-ring">{item.name}</button>
+              );
+              return (
+                <li key={`${item.kind}:${item.id}`} className="flex items-center gap-2 rounded-md px-1.5 py-1">
+                  <span className="w-[4.6rem] shrink-0 text-[0.64rem] text-muted-foreground">{item.kind === "skill" ? "Skill" : item.kind === "mcp" ? "MCP server" : "Stack server"}</span>
+                  {body}
+                  <span className={cn("ml-auto shrink-0 rounded px-1.5 py-px text-[0.64rem] font-medium", item.reason === "disabled" ? "bg-muted text-muted-foreground" : "bg-warning/15 text-warning")}>{reason}</span>
+                </li>
+              );
+            })}
+          </ul>
+        ) : <p className="px-1.5 text-[0.7rem] text-muted-foreground">Every capability is selected for this preview.</p>}
       </Section>
       <Section title="Trusted projects">
         {launch.trustedProjects.length ? (
@@ -339,6 +367,35 @@ function RenderContext({ roleName }: { roleName: string | null }) {
           <CopyButton value={`${injectCommand(roleName, roleContext)} `} label="inject command" className="opacity-100" />
         </div>
       ) : null}
+    </section>
+  );
+}
+
+/**
+ * The capability harness the Launch preview answers for: the page's own axis, independent of the Rendering
+ * context, which selects fragments only. Unspecified shows what every launch shares — the enabled,
+ * unrestricted capabilities — and is not a prediction of any real launch, since each one has a harness.
+ */
+function CapabilityHarnessSelector() {
+  const store = useStore();
+  const { roleHarness } = useStack();
+  const current = roleHarness ?? "unspecified";
+  return (
+    <section aria-labelledby="role-capability-harness" className="flex flex-col gap-1.5 rounded-xl border bg-background/50 px-2.5 py-2">
+      <div className="flex items-center gap-1.5">
+        <PlugZapIcon aria-hidden className="size-3.5 text-muted-foreground" />
+        <h3 id="role-capability-harness" className="text-[0.74rem] font-medium">Capability harness</h3>
+        <span className="text-[0.66rem] text-muted-foreground">preview only</span>
+      </div>
+      <ToggleGroup value={[current]} onValueChange={(next: string[]) => { if (next.length) store.setRoleHarness(next[0] === "unspecified" ? null : next[0] as RoleCapabilityHarness); }}
+        spacing={0} size="sm" variant="outline" aria-label="Capability harness" className="flex-wrap self-start">
+        <ToggleGroupItem value="unspecified">Unspecified</ToggleGroupItem>
+        {capabilityHarnessNames.map((name) => <ToggleGroupItem key={name} value={name} className="font-mono">{name}</ToggleGroupItem>)}
+      </ToggleGroup>
+      <p className="px-0.5 text-[0.66rem] text-pretty text-muted-foreground">
+        {roleHarness === null ? "Unspecified shows only unrestricted, enabled capabilities. It is not a launch prediction: every real launch has a harness. " : ""}
+        {harnessMapping} Selects skills and connections only; the Rendering context’s Harness field selects instruction fragments and never selects capabilities.
+      </p>
     </section>
   );
 }
