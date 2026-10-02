@@ -15,6 +15,7 @@ import { LocalAuth, serveSocket, socketCall } from "@stack/api";
 import { startClientHost } from "@stack/client";
 import { startClientUi } from "../bin/launcher.mjs";
 import { freePort, ui, z } from "./browser-fixture.mjs";
+import { checkLocalWorkflow, checkNoTrustedRelease } from "./client-local-workflow.mjs";
 
 const evidence = process.env.CLIENT_EVIDENCE_DIR;
 const base = await mkdtemp("/private/tmp/s8-"); // macOS Unix socket paths must stay short.
@@ -22,6 +23,9 @@ const root = join(base, "c"), platformRoot = join(base, "p"), otherRoot = join(b
 await mkdir(join(base, "home"));
 // homedir() in child processes points to a disposable home; no service mutation is called.
 const oldHome = process.env.HOME;
+const oldReleaseManifest = process.env.STACK_CLIENT_RELEASE_MANIFEST;
+// Never import an operator's pinned release configuration into a disposable test.
+delete process.env.STACK_CLIENT_RELEASE_MANIFEST;
 process.env.HOME = join(base, "home");
 let client, platform, browser, other, fixture, sentinel, cli;
 let accessContext, accessApi;
@@ -87,6 +91,7 @@ try {
   assert.ok(new URL(opened[0]).hash.length === 44, "parent opens a capability without printing it");
   pass("launcher cold start without any platform installation/socket");
   await expectStatus(401, `${origin}/client`);
+  await expectStatus(401, `${origin}/client/local`);
   await expectStatus(401, `${origin}/client?_rsc=unauthenticated`, { headers: { rsc: "1" } });
   await expectStatus(401, `${origin}/_next/static/does-not-exist.js`);
   await expectStatus(401, `${origin}/api/client/events`);
@@ -233,7 +238,7 @@ try {
     method, headers: { host: new URL(remoteUiOrigin).host, origin: remoteUiOrigin, cookie: `__Host-stack_ui=${viewer.accessToken}` },
   });
   assert.equal((await remoteUi(remoteRequest("/connect/me"), peer)).status, 200, "fixture viewer authority is valid before the path gate");
-  for (const [path, method] of [["/client", "GET"], ["/api/client/events", "GET"], ["/api/client/rpc", "POST"]])
+  for (const [path, method] of [["/client", "GET"], ["/client/local", "GET"], ["/api/client/events", "GET"], ["/api/client/rpc", "POST"]])
     assert.equal((await remoteUi(remoteRequest(path, method), peer)).status, 404);
   assert.equal(forwarded, 0);
   pass("valid Access viewer cannot reach Client pages/RPC/SSE; remote allowlist remains closed");
@@ -316,6 +321,8 @@ try {
       await page.keyboard.press("Tab");
       await writeFile(join(evidence, "render-check.json"), JSON.stringify({ pageErrors: errors, cspViolations: violations, localStorageEntries: 0, fragmentErased: true, keyboardSkipLink: true, narrowOverflow: false, layouts }, null, 2));
     }
+    await checkNoTrustedRelease(page, client, pass, evidence);
+    await checkLocalWorkflow({ browser, base, evidence, pass, checkHeader });
     auth.rotate();
     await page.getByText("Client session expired.", { exact: false }).waitFor();
     await page.getByText("Phone setup pending", { exact: true }).waitFor();
@@ -400,6 +407,7 @@ try {
   if (cli && cli.exitCode === null && cli.signalCode === null) { cli.kill(); await once(cli, "exit"); }
   for (const auth of authorities) auth.close();
   if (oldHome === undefined) delete process.env.HOME; else process.env.HOME = oldHome;
+  if (oldReleaseManifest === undefined) delete process.env.STACK_CLIENT_RELEASE_MANIFEST; else process.env.STACK_CLIENT_RELEASE_MANIFEST = oldReleaseManifest;
   await rm(base, { recursive: true, force: true });
   console.log("PASS all owned processes, sockets and disposable roots released");
 }
