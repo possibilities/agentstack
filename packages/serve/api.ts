@@ -88,9 +88,10 @@ export const serverLocalRevoke = operation({
 
 export const serverStatus = operation({
   name: "serve_status",
-  description: "Read the server process, its start time and runtime, its local URLs, and each required child's status: pid, running, start/exit times, exit code, signal, and spawn error.",
+  description: "Read the server process, its stable installation identity, its start time and runtime, its local URLs, and each required child's status: pid, running, start/exit times, exit code, signal, and spawn error.",
   input: z.strictObject({}),
   output: z.object({
+    serverId: z.uuid().nullable().describe("Stable installation identity: the Access instance UUID that Access connection descriptors and device pinning use. Null until Access has created its store; never derived from a path, port or origin. A new installation generation gets a new one."),
     pid: z.number().int().describe("Server process id."),
     startedAt: z.iso.datetime().describe("Time the server process started."),
     nodeVersion: z.string().describe("Node.js version string of the server process."),

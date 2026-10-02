@@ -60,6 +60,7 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
     for (const name of socketNames) assert.ok(existsSync(join(stateDir, "sockets", `${name}.sock`)), `${name}.sock missing`);
 
     let status = (await socketCall(serverSock, "tools/call", { name: "serve_status", arguments: {} })) as {
+      serverId: string | null;
       pid: number;
       children: Array<{ name: string; pid: number | null; running: boolean }>;
     };
@@ -70,6 +71,11 @@ test("serve owns sockets, MCP, WebSocket, Inspector, and UI canvas without a sta
       status = (await socketCall(serverSock, "tools/call", { name: "serve_status", arguments: {} })) as typeof status;
     }
     assert.ok(status.children.every((entry) => entry.running));
+    // The identity serve names is the one Access pins devices to, not a second identifier.
+    const accessIdentity = (await socketCall(join(stateDir, "sockets", "access.sock"), "tools/call", { name: "access_snapshot", arguments: {} }) as { serverId: string }).serverId;
+    assert.match(accessIdentity, /^[0-9a-f-]{36}$/);
+    status = (await socketCall(serverSock, "tools/call", { name: "serve_status", arguments: {} })) as typeof status;
+    assert.equal(status.serverId, accessIdentity);
     const inventory = await socketCall(serverSock, "tools/call", { name: "serve_state_list", arguments: { limit: 100 } }) as StatePage & { owners: Array<{ package: string; available: boolean }> };
     assert.deepEqual(inventory.owners.filter(owner => owner.available).map(owner => owner.package).sort(), [...socketNames].sort());
     assert.equal(inventory.nextOffset, null);

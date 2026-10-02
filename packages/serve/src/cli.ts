@@ -14,6 +14,7 @@ import { inspectorChild, inspectorPort } from "./inspector.js";
 import { startServer } from "./server.js";
 import { startWithServerSocketRecovery } from "./server-socket.js";
 import { statusSource } from "./status.js";
+import { readServerId } from "./identity.js";
 import { uiChild, uiPort } from "./ui.js";
 import { factoryControlOperations } from "./factory-operations.js";
 import { factoryLifecycle } from "./factory-lifecycle.js";
@@ -178,6 +179,7 @@ let mcp: Awaited<ReturnType<typeof serveMcp>> | undefined;
 let catalog: Awaited<ReturnType<typeof serveInspectorCatalog>> | undefined;
 const subscriptions = createMcpEventSubscriptions(process.env);
 statusSource.subscriptions = subscriptions;
+statusSource.serverId = () => readServerId(process.env);
 subscriptions.onChange = () => statusSource.onStateChange?.();
 subscriptions.onSubscriptionsChange = () => statusSource.onSubscriptionsChange?.();
 try {

@@ -3,6 +3,8 @@ import type { McpEventSubscriptions } from "@stack/api";
 import type { FactoryResetHooks } from "./factory-reset.js";
 
 export type ServerStatus = {
+  /** The stable installation identity (the Access instance UUID), or null until the Access owner has created it. */
+  serverId: string | null;
   pid: number;
   /** ISO time the server process started. */
   startedAt: string;
@@ -16,6 +18,8 @@ export type ServerStatus = {
 };
 
 export class StatusSource {
+  /** Reads the installation identity without creating it. The default names no identity; the server process wires the real read. */
+  serverId: () => string | null = () => null;
   factoryReset: FactoryResetHooks | null = null;
   subscriptions: McpEventSubscriptions | null = null;
   onStateChange?: () => void;
@@ -62,6 +66,7 @@ export class StatusSource {
 
   snapshot(): ServerStatus {
     return {
+      serverId: this.serverId(),
       pid: process.pid,
       startedAt: this.startedAt,
       nodeVersion: process.version,

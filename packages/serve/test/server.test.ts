@@ -314,7 +314,8 @@ test("server api serves status and pids_changed on its socket", async () => {
       children: Array<{ name: string; running: boolean }>;
     };
     assert.equal(empty.pid, process.pid);
-    assert.deepEqual(Object.keys(empty).sort(), ["children", "indexUrl", "inspectorUrl", "mcpUrls", "nodeVersion", "pid", "startedAt", "uiUrl"]);
+    assert.deepEqual(Object.keys(empty).sort(), ["children", "indexUrl", "inspectorUrl", "mcpUrls", "nodeVersion", "pid", "serverId", "startedAt", "uiUrl"]);
+    assert.equal((empty as { serverId?: string | null }).serverId, null, "a source with no identity reader names none");
     assert.ok(Number.isFinite(Date.parse((empty as { startedAt?: string }).startedAt!)));
     assert.equal((empty as { nodeVersion?: string }).nodeVersion, process.version);
     assert.equal(empty.indexUrl, null);

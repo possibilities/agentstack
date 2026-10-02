@@ -1,5 +1,4 @@
-import { DatabaseSync } from "node:sqlite";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { socketCall, socketPath, stateDir } from "@stack/api";
 import { observeAuthFactoryReset, clearAuthFactoryCredentials } from "@stack/auth";
 import { observeWorkerFactoryReset, clearWorkerFactoryWorktrees } from "@stack/worker";
@@ -8,6 +7,7 @@ import { retainFactoryVault } from "@stack/content";
 import type { BrowserResetSnapshot } from "@stack/browse";
 import type { FactoryResetHooks } from "./factory-reset.js";
 import type { RunningServer } from "./server.js";
+import { accessServerId } from "./identity.js";
 
 /** Parent integration, not a second offline Server. Keeps Browse alive only
  * for the exact reset callback after other owners have drained. */
@@ -15,9 +15,7 @@ export function factoryLifecycle(env: NodeJS.ProcessEnv, server: RunningServer, 
   const root = resolve(stateDir(env));
   return {
     async inspect() {
-      const db = new DatabaseSync(join(root, "access", "access.db"), { readOnly: true });
-      let serverId: string;
-      try { serverId = (db.prepare("SELECT uuid FROM instance WHERE id=1").get() as { uuid: string }).uuid; } finally { db.close(); }
+      const serverId = accessServerId(root);
       const browser = await socketCall(socketPath("browse", env), "tools/call", { name: "browser_factory_reset_inspect", arguments: {} }) as BrowserResetSnapshot;
       return { serverId, auth: observeAuthFactoryReset(root), worker: await observeWorkerFactoryReset(root), browser, roleBlockers: await factoryRoleLaunchBlockers(root) };
     },

@@ -478,7 +478,7 @@ test("the api package serves structured documents for every workspace package", 
     });
 
     const server = found.get("serve") as PackageDoc;
-    assert.deepEqual(Object.keys(server.operations.find(op => op.name === "serve_status")?.outputSchema.properties ?? {}).sort(), ["children", "indexUrl", "inspectorUrl", "mcpUrls", "nodeVersion", "pid", "startedAt", "uiUrl"]);
+    assert.deepEqual(Object.keys(server.operations.find(op => op.name === "serve_status")?.outputSchema.properties ?? {}).sort(), ["children", "indexUrl", "inspectorUrl", "mcpUrls", "nodeVersion", "pid", "serverId", "startedAt", "uiUrl"]);
     for (const name of ["serve_local_connect", "serve_local_revoke", "serve_mcp_event", "serve_completion_check"]) {
       assert.ok(server.operations.some(op => op.name === name));
       assert.ok(server.transports.filter(transport => transport.type !== "socket").every(transport => !transport.operations.includes(name)));
