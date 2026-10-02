@@ -17,7 +17,7 @@ import { errorMessage } from "./auth-actions";
 import { ContentVaultHistory } from "./content-history";
 import { usePagedRead } from "./owner-reads";
 import { MaintenanceDisclosure, StateFlowView, useStateFlow } from "./state-flow";
-import { Empty } from "./primitives";
+import { Empty, Time } from "./primitives";
 import { useNow, useStack, useStore } from "./provider";
 import { Section, Window } from "./window";
 
@@ -110,7 +110,7 @@ function PublicationCollection() {
               <span className="min-w-0 flex-1"><code className="break-all">{row.id}</code><span className="block text-muted-foreground">{row.scope} · {measured(row.bytes, formatBytes)}</span></span>
             </label>
             <code className="break-all text-muted-foreground">{row.path}</code>
-            <span className={hint}>Created {row.createdAt} · {row.releasedAt ? `Released ${row.releasedAt}` : "Not released"}</span>
+            <span className={hint}>Created <Time at={Date.parse(row.createdAt)} /> · {row.releasedAt ? <>Released <Time at={Date.parse(row.releasedAt)} /></> : "Not released"}</span>
             {row.blockedBy.map((blocker, index) => <p key={index} className="text-destructive">Blocked: {blocker}</p>)}
           </li>)}
         </ul>
