@@ -3,10 +3,12 @@ import { ClientCallError } from "./channel";
 export function remoteError(error: unknown): string {
   if (!(error instanceof ClientCallError)) return error instanceof Error ? error.message : "Action not confirmed. Inspect the retained request before any deliberate retry.";
   const messages: Record<string, string> = {
+    unauthorized: "Access did not authorize this request. The refusal does not identify why. For an unfinished Open beyond the five-minute refresh retry window, there is no pending-open reset API: inspect trusted-local Access, then deliberately re-enroll and forget a stranded local connection. Nothing retries or cycles credentials automatically.",
     approval_pending: "Approval is still pending. Approve in trusted-local Access on the target server, then deliberately choose Approved? Connect. Nothing polls approval here.",
     pairing_denied: "Access denied this pairing. Forget the local intent before a new deliberate connection decision.",
     pairing_expired_or_invalid: "The approval code expired or is no longer valid. Forget this local intent, then begin a new deliberate pairing.",
     server_destination_mismatch: "The advertised device origin does not match your exact origin. Destination refused; no pairing was sent.",
+    connection_host_refused: "The target Access configuration refuses this exact device Host/origin. Check the configured HTTPS device origin; no pairing was sent.",
     server_connection_changed: "The server identity or advertised destinations changed. This saved destination was not replaced. Inspect and confirm a new connection separately; no relocation API exists.",
     server_identity_mismatch: "The server installation identity changed. A new inspected and confirmed connection decision is required.",
     ui_destination_mismatch: "The returned UI origin or installation identity did not match the selected platform. Navigation was refused.",

@@ -78,7 +78,7 @@ export function PhoneConnection({ scope, intent }: { scope: string; intent: stri
                 const input = { requestId: crypto.randomUUID(), label: label.trim(), scopes };
                 void begin({ version: 1, operation: "client_enrollment_begin", destination: remoteDestination({ operation: "client_enrollment_begin", input }), input });
               }}>Make offline request</Button></div><Hint>{!label.trim() ? "Enter a connection label first." : disabled ? "Paused until the Client observation and recovery storage are available." : null}</Hint></>
-              : <><Facts items={[["Label", frozen.label], ["Requested permissions", frozen.scopes.join(", ")], ["Client request ID", frozen.requestId, { mono: true }],
+              : <><Facts items={[["Label", frozen.label], ["Requested permissions", frozen.scopes.join(", ")], ["Client request ID", frozen.requestId, { mono: true, selectable: true }],
                 ...(expiresAt !== undefined ? [["Request expiry", <Expiry key="expiry" at={expiresAt} now={now} />] as [string, React.ReactNode]] : [])]} />
                 {!request ? <div className="client-tray" data-tone="attention"><p className="text-sm">The private intent stays on the Client host. Reload never dispatches it. Inspect, then deliberately recover the same request QR.</p>
                   <div className="flex flex-wrap gap-2"><Button variant={inspected ? "outline" : "default"} disabled={disabled} onClick={async () => { await refresh(); setInspected(true); }}>Inspect current records</Button>
@@ -88,10 +88,12 @@ export function PhoneConnection({ scope, intent }: { scope: string; intent: stri
           </FlowStep>
           <FlowStep number={2} title="Approve on your phone" description="The phone needs access:enroll and every permission it approves. Scanning is not approval.">
             {request && qr && !expired ? <><div className="client-qr-layout"><RequestQr qr={qr} /><div className="flex min-w-0 flex-col gap-3">
-              <Facts items={[["Full fingerprint", request.fingerprint, { mono: true }], ["Requested permissions", (frozen?.scopes ?? scopes).join(", ")], ["Expiry", <Expiry key="expiry" at={request.expiresAt} now={now} />]]} />
+              <Facts items={[["Full fingerprint", request.fingerprint, { mono: true, selectable: true }], ["Requested permissions", (frozen?.scopes ?? scopes).join(", ")], ["Expiry", <Expiry key="expiry" at={request.expiresAt} now={now} />]]} />
               <p className="text-sm text-muted-foreground">Compare the full fingerprint on the phone. This QR has no server address, redemption secret or private key. It is encoded locally, black on white with a four-module quiet zone.</p></div></div>
               <details className="client-disclosure"><summary>Selectable offline request text</summary><pre tabIndex={0} className="client-json">{request.text}</pre></details></>
               : expired ? <Alert><AlertTitle>Request expired</AlertTitle><AlertDescription>The QR is no longer usable. It is not refreshed or renewed automatically. Forget this local intent, then make a new explicit request.</AlertDescription></Alert>
+              : request && !qr ? <><Hint>QR rendering was not confirmed. The saved offline request is unchanged; rendering does not renew it.</Hint>
+                <div><Button variant="outline" disabled={disabled} onClick={() => void action.run(async () => setQr(await clientCall("client_qr_render", { text: request.text })))}>Render saved QR</Button></div></>
               : <Hint>Make or deliberately recover the saved request first.</Hint>}
           </FlowStep>
           <FlowStep number={3} title="Preview the returned receipt" description="Paste works everywhere. A QR string is never opened as a URL." done={!!preview}>
@@ -99,14 +101,14 @@ export function PhoneConnection({ scope, intent }: { scope: string; intent: stri
               <Textarea id="phone-receipt" maxLength={2048} autoComplete="off" autoCapitalize="none" spellCheck={false} value={text} disabled={disabled || !request || expired || accepted} onChange={event => editReceipt(event.target.value)} />
               <FieldDescription>Only a canonical receipt bound to this request is accepted. No phone credential is imported.</FieldDescription></Field></FieldGroup>
             <ReceiptCamera disabled={disabled || !request || expired || accepted} onText={editReceipt} />
-            <div><Button disabled={disabled || !request || expired || !text || accepted} onClick={() => void previewReceipt()}>Preview receipt</Button></div>
+            <div><Button variant={preview ? "outline" : "default"} disabled={disabled || !request || expired || !text || accepted} onClick={() => void previewReceipt()}>Preview receipt</Button></div>
             <Hint>{!request ? "Recover the request QR before previewing a receipt." : expired ? "This request expired; receipt import is paused." : !text ? "Paste or scan the credential-free receipt first." : accepted ? "The confirmed receipt is already saved; proceed to Connect." : null}</Hint>
             {pending?.hasReceipt && !accepted ? <Hint>A receipt is saved on the host, but pending metadata does not expose its destination. Paste it again to review; no destination is inferred and nothing redeems automatically.</Hint> : null}
           </FlowStep>
           <FlowStep number={4} title="Confirm the destination, then connect" description="Acceptance saves this exact receipt on the host. Redemption is a separate deliberate action." done={accepted}>
             {preview ? <><div className="client-plan" aria-label="Receipt destination preview"><h4 className="text-sm font-semibold">Receipt destination</h4>
-              <Facts items={[["Installation ID", preview.serverId, { mono: true }], ["Device origin", preview.origin, { mono: true }], ["Approved permissions", preview.scopes.join(", ")],
-                ["Request fingerprint", preview.requestHash, { mono: true }], ["Receipt expiry", <Expiry key="expiry" at={preview.expiresAt} now={now} />]]} /></div>
+              <Facts items={[["Installation ID", preview.serverId, { mono: true, selectable: true }], ["Device origin", preview.origin, { mono: true, selectable: true }], ["Approved permissions", preview.scopes.join(", ")],
+                ["Request fingerprint", preview.requestHash, { mono: true, selectable: true }], ["Receipt expiry", <Expiry key="expiry" at={preview.expiresAt} now={now} />]]} /></div>
               {!accepted ? <><Field orientation="horizontal"><input id="confirm-receipt" type="checkbox" disabled={disabled || !!receiptExpired || expired} checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />
                 <FieldLabel htmlFor="confirm-receipt">I confirm this installation ID, destination and approved permissions</FieldLabel></Field>
                 <div><Button disabled={disabled || !confirmed || !!receiptExpired || expired} onClick={() => void action.run(async () => { await clientCall("client_enrollment_accept", { id: id!, receipt: text }); setAccepted(true); })}>Accept confirmed receipt</Button></div>
@@ -121,7 +123,12 @@ export function PhoneConnection({ scope, intent }: { scope: string; intent: stri
         if (!result) return false;
         setForgotten(true); if (saved) { try { clearRemoteRequest(scope, saved); } catch { action.setError("The host forgot this intent, but browser storage could not be cleared. The old UUID stays abandoned and must not be replayed."); } } return true;
       }} /> : null}
-      {intent && observation && !pending && !saved && !connectionId ? <Hint>This intent is not listed. It may have completed or been forgotten. Inspect Connections; no private intent is recreated.</Hint> : null}
+      {intent && observation && !pending && !connectionId && !forgotten ? <div className="client-tray" data-tone="attention">
+        <p className="text-sm">This intent is not listed. It may have completed or been forgotten. Inspect Connections first. The existing redeem operation can recover a retained completion with this exact intent ID; no new private intent is created.</p>
+        <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={disabled} onClick={async () => { await refresh(); setInspected(true); }}>Inspect completion records</Button>
+          <Button disabled={disabled || !inspected} onClick={() => void action.run(async () => { const result = await clientCall("client_enrollment_redeem", { id: intent }); setConnectionId(result.connectionId); })}>Recover completed connection</Button></div>
+        <Hint>{!inspected ? "Inspect first. Recovery uses only this saved intent ID and never makes another request." : null}</Hint>
+      </div> : null}
     </PanelBody></Panel>
   </ClientShell>;
 }

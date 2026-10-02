@@ -30,6 +30,7 @@ export function ReceiptCamera({ disabled, onText }: { disabled: boolean; onText:
       stream.current = media; setActive(true);
       // The video stays mounted so it is available before the state update paints.
       video.current!.srcObject = media; await video.current!.play();
+      if (generation.current !== current) return;
       const detector = new (detectorClass()!)({ formats: ["qr_code"] });
       let reading = false;
       timer.current = setInterval(async () => {

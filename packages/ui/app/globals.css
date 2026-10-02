@@ -326,6 +326,9 @@
 /* Remote Client workflows: data stays selectable; QR contrast never follows theme. */
 .client-approval-code { display: block; width: fit-content; max-width: 100%; padding: 0.75rem 1rem; border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--client-raised); font-family: var(--font-mono); font-size: 1.25rem; letter-spacing: 0.04em; overflow-wrap: anywhere; user-select: text; }
+.client-approval-code:focus-visible, .client-selectable:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.client-selectable { display: block; field-sizing: content; width: 100%; min-width: 0; min-height: 1.5em; resize: none; background: transparent;
+  border: 0; border-radius: 0.125rem; padding: 0; font: inherit; color: inherit; line-height: inherit; overflow-wrap: anywhere; }
 .client-qr-layout { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 1.25rem; }
 .client-qr-layout > div { flex: 1 1 14rem; }
 .client-request-qr { display: block; flex: none; width: 18rem; max-width: 100%; height: auto; background: #fff; }
@@ -347,6 +350,8 @@
 
 @media (max-width: 40rem) {
   .client-header { padding-inline: 1rem; }
+  .client-header[data-client-page] { flex-wrap: wrap; }
+  .client-header[data-client-page] .client-crumbs { flex-wrap: wrap; }
   .client-main { gap: 1.25rem; padding: 1.75rem 1rem 4rem; }
   .client-panel-body, .client-tray { padding: 1rem; }
   .client-panel-footer { padding-inline: 1rem; }

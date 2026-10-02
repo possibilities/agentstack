@@ -4,7 +4,7 @@ export function ClientShell({ children, local = false, page }: { children: React
   const title = local ? "Run locally" : page;
   return <div className="client-home">
     <a className="client-skip" href={local ? "#local-main" : "#connections-main"}>{local ? "Skip to local platform" : page ? "Skip to content" : "Skip to connections"}</a>
-    <header className="client-header">
+    <header className="client-header" data-client-page={page || undefined}>
       <span className="client-brand"><span aria-hidden className="client-mark" />Stack Client</span>
       <nav aria-label="Client"><ol className="client-crumbs">
         <li><a href="/client" aria-current={title ? undefined : "page"}>Connections</a></li>

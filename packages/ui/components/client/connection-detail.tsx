@@ -81,8 +81,8 @@ export function ConnectionDetail({ scope, id }: { scope: string; id: string }) {
         <Panel labelledBy="connection-title" className="client-machine"><PanelBody>
           <PanelTitle id="connection-title" aside={<StatusChip tone={pending ? "attention" : "neutral"}>{pending ? "Open unresolved" : "Saved — not a live connection"}</StatusChip>}>Selected platform</PanelTitle>
           <DescriptorFacts connection={connection.connection} />
-          <Facts items={[["Connection ID", connection.id, { mono: true }], ["Record revision", connection.revision], ["Access client ID", connection.clientId, { mono: true }],
-            ["Credential ID", connection.credentialId, { mono: true }], ["Native credential expiry", <Expiry key="expiry" at={connection.expiresAt} now={now} />]]} />
+          <Facts items={[["Connection ID", connection.id, { mono: true, selectable: true }], ["Record revision", connection.revision], ["Access client ID", connection.clientId, { mono: true, selectable: true }],
+            ["Credential ID", connection.credentialId, { mono: true, selectable: true }], ["Native credential expiry", <Expiry key="expiry" at={connection.expiresAt} now={now} />]]} />
           <p className="text-sm text-muted-foreground">Live Access governs permissions. Saved metadata does not expose current grant scopes or prove that the grant is active. View-only and trusted-local restrictions remain enforced on the target platform.</p>
           {opened ? <p role="status" className="text-sm">Handoff navigation requested in a separate browser tab. This is not proof of a viewer session. If the handoff was consumed or expired, choose a new deliberate Open; no re-pairing is needed for that alone.</p> : null}
           {!paused ? <div><Button disabled={disabled || !connection.connection.uiOrigin} onClick={() => void open()}>Open platform</Button></div> : null}
@@ -90,7 +90,7 @@ export function ConnectionDetail({ scope, id }: { scope: string; id: string }) {
           {paused ? <section aria-labelledby="open-request-title" className="client-tray" data-tone="attention">
             <div className="client-panel-title"><h2 id="open-request-title" className="text-sm font-semibold">Saved Open recovery</h2><StatusChip tone="attention">Unresolved</StatusChip></div>
             <p className="text-sm">{pending ? "The host lists an unfinished Open. Resume with its pendingOpen UUID, never a new refresh request." : "The Open answer or navigation was not confirmed. Inspect before deliberately recovering the same UUID."} Reload does not dispatch.</p>
-            <Facts items={[["Open request UUID", pending ?? saved!.input.requestId, { mono: true }], ...(pending ? [["Host pendingOpen", pending, { mono: true }] as [string, string, { mono: boolean }]] : [])]} />
+            <Facts items={[["Open request UUID", pending ?? saved!.input.requestId, { mono: true, selectable: true }], ...(pending ? [["Host pendingOpen", pending, { mono: true, selectable: true }] as [string, string, { mono: boolean; selectable: boolean }]] : [])]} />
             <div className="flex flex-wrap gap-2"><Button variant={inspected ? "outline" : "default"} disabled={disabled} onClick={async () => { await refresh(); setInspected(true); }}>Inspect current connection</Button>
               <Button disabled={disabled || !inspected || !connection.connection.uiOrigin} onClick={() => void open()}>{pending ? "Resume pending Open" : "Recover saved Open"}</Button>
               {!pending && inspected ? <Button variant="outline" disabled={disabled} onClick={() => { try { clearSaved(saved); action.setError(null); } catch { action.setError("Could not clear saved recovery input. Open remains paused; nothing was dispatched."); } }}>Acknowledge inspected handoff</Button> : null}</div>

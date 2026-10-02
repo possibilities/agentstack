@@ -29,7 +29,7 @@ export async function POST(request: Request) {
     const definite = ["trusted_release_required", "trusted_release_changed", "revision_conflict", "job_not_found", "request_conflict"];
     // These bounded owner codes carry no URL, credential or arbitrary remote
     // text. A known reason does NOT imply that preceding host writes had no effect.
-    const remote = ["approval_pending", "pairing_denied", "pairing_expired_or_invalid", "server_destination_mismatch", "server_connection_changed",
+    const remote = ["unauthorized", "approval_pending", "pairing_denied", "pairing_expired_or_invalid", "connection_host_refused", "server_destination_mismatch", "server_connection_changed",
       "server_identity_mismatch", "ui_destination_mismatch", "credential_revoked", "credential_expired", "insufficient_scope", "grant_changed",
       "refresh_reused_repair_required", "refresh_superseded", "refresh_recovery_required", "ui_handoff_expired", "ui_not_configured",
       "enrollment_expired_or_clock_skew", "enrollment_authority_changed", "enrollment_invalid", "enrollment_receipt_mismatch"];

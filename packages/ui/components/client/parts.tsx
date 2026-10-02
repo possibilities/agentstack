@@ -40,10 +40,11 @@ export function PanelTitle({ id, description, aside, children }: { id: string; d
 }
 
 /** Label/value pairs. Values stay selectable and wrap at any width. */
-export function Facts({ items, className }: { items: Array<[ReactNode, ReactNode, { mono?: boolean; key?: string }?]>; className?: string }) {
+export function Facts({ items, className }: { items: Array<[ReactNode, ReactNode, { mono?: boolean; key?: string; selectable?: boolean }?]>; className?: string }) {
   return <dl className={cn("client-facts", className)}>
     {items.map(([term, value, options], index) => <div key={options?.key ?? index} className="contents">
-      <dt>{term}</dt><dd className={options?.mono ? "font-mono text-[0.8125rem]" : undefined}>{value}</dd>
+      <dt>{term}</dt><dd className={options?.mono ? "font-mono text-[0.8125rem]" : undefined}>{options?.selectable && typeof value === "string"
+        ? <textarea readOnly rows={1} aria-label={typeof term === "string" ? term : "Recorded value"} className="client-selectable" value={value} /> : value}</dd>
     </div>)}
   </dl>;
 }

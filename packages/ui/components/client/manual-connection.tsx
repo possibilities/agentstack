@@ -78,9 +78,9 @@ export function ManualConnection({ scope, intent }: { scope: string; intent: str
                 <Input id="device-origin" type="text" inputMode="url" autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="https://machine.example:8943" value={origin}
                   disabled={disabled} aria-invalid={!!origin && !exactOrigin(origin)} onChange={event => { setOrigin(event.target.value); setConnection(null); setConfirmed(false); }} />
                 <FieldDescription>Use the complete HTTPS origin exactly as configured, without a trailing slash or path.</FieldDescription></Field></FieldGroup>
-              <div><Button disabled={disabled || !exactOrigin(origin)}>Inspect origin</Button></div>
+              <div><Button type="submit" variant={descriptor ? "outline" : "default"} disabled={disabled || !exactOrigin(origin)}>Inspect origin</Button></div>
               <Hint>{disabled ? "Paused while the Client observation, recovery storage or current action is unavailable." : !exactOrigin(origin) ? "Enter an exact non-loopback HTTPS origin before inspection." : null}</Hint>
-            </form> : <Facts items={[["Saved origin", frozen.connection.deviceOrigin, { mono: true }]]} />}
+            </form> : <Facts items={[["Saved origin", frozen.connection.deviceOrigin, { mono: true, selectable: true }]]} />}
           </FlowStep>
           <FlowStep number={2} title="Confirm this installation and every origin" description="This identity stays pinned. A changed server is a new connection decision." done={confirmed || !!frozen}>
             {descriptor ? <><DescriptorFacts connection={descriptor} />
@@ -89,7 +89,7 @@ export function ManualConnection({ scope, intent }: { scope: string; intent: str
               : <Hint>Inspect the origin first; confirmation is not inferred from reachability.</Hint>}
           </FlowStep>
           <FlowStep number={3} title="Request approval" description="Select only the UI permissions this desktop needs." done={!!approval}>
-            {frozen ? <Facts items={[["Label", frozen.label], ["Requested permissions", frozen.scopes.join(", ")], ["Request ID", frozen.requestId, { mono: true }]]} />
+            {frozen ? <Facts items={[["Label", frozen.label], ["Requested permissions", frozen.scopes.join(", ")], ["Request ID", frozen.requestId, { mono: true, selectable: true }]]} />
               : <><PermissionFields label={label} setLabel={setLabel} scopes={scopes} setScopes={setScopes} disabled={disabled} />
                 <div><Button disabled={disabled || !confirmed || !label.trim() || !connection?.pairing.includes("manual")} onClick={() => void begin()}>Request approval</Button></div>
                 <Hint>{!confirmed ? "Confirm the installation and all origins first." : !label.trim() ? "Enter a connection label first." : !connection?.pairing.includes("manual") ? "This descriptor does not advertise manual pairing." : null}</Hint></>}
@@ -99,7 +99,7 @@ export function ManualConnection({ scope, intent }: { scope: string; intent: str
               <Hint>{!inspected ? "Inspect first; retry uses the saved UUID and exact input." : null}</Hint></div> : null}
           </FlowStep>
           <FlowStep number={4} title="Approve there, connect here" description="Approval happens in trusted-local Access on the target server. This Client never polls approval." done={!!connectionId}>
-            {approval ? <><p className="text-sm">Compare the complete approval code there:</p><code tabIndex={0} className="client-approval-code" aria-label="Complete approval code">{approval.code}</code>
+            {approval ? <><p className="text-sm">Compare the complete approval code there:</p><input readOnly className="client-approval-code" aria-label="Complete approval code" value={approval.code} />
               <Facts items={[["Approval expiry", <Expiry key="expiry" at={approval.expiresAt} now={now} />]]} />
               <div><Button disabled={disabled || !!expired} onClick={() => void redeem()}>Approved? Connect</Button></div>
               <Hint>{expired ? "Approval expired. Forget this intent, then make a new explicit request; nothing renews automatically." : disabled ? "Paused while the current Client action or observation is unavailable." : "Click only after approval on the target platform. A saved code is not consent."}</Hint></>
@@ -120,7 +120,8 @@ export function ManualConnection({ scope, intent }: { scope: string; intent: str
         {peers.truncated ? <Hint>Showing only the first 200 peers; this list is truncated.</Hint> : null}
         <ul className="client-rows">{peers.peers.map((peer, index) => <li key={`${peer.id}:${index}`}><div className="client-list-row"><div className="flex min-w-0 flex-col gap-1"><p className="font-medium break-all">{peer.name || peer.id || "Unnamed peer"}</p>
           <p className="text-xs text-muted-foreground break-all">{peer.addresses.join(", ")}</p><StatusChip tone="neutral">{peer.online ? "Peer online" : "Peer offline"}</StatusChip></div>
-          <Button variant="outline" size="sm" disabled={disabled || !peer.name} onClick={() => { const name = peer.name.replace(/\.$/, ""); setOrigin(`https://${name}`); setConnection(null); setConfirmed(false); }}>Use peer hostname</Button></div></li>)}</ul>
+          <div className="flex flex-col gap-1"><Button variant="outline" size="sm" disabled={disabled || !peer.name} onClick={() => { const name = peer.name.replace(/\.$/, ""); setOrigin(`https://${name}`); setConnection(null); setConfirmed(false); }}>Use peer hostname</Button>
+            <Hint>{!peer.name ? "No hostname advertised; enter an origin manually." : null}</Hint></div></div></li>)}</ul>
         <Hint>Choosing a peer only fills the origin. Add the configured port if needed, then inspect and confirm; nothing scans or pairs automatically.</Hint></> : <Hint>No peer status is read until you choose Show peer hints.</Hint>}
     </PanelBody></Panel> : null}
   </ClientShell>;

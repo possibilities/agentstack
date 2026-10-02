@@ -25,9 +25,9 @@ export function useRemoteAction(refresh: () => Promise<void>) {
 }
 
 export function DescriptorFacts({ connection }: { connection: Descriptor }) {
-  return <Facts items={[["Installation ID", connection.serverId, { mono: true }], ["Device origin", connection.deviceOrigin, { mono: true }],
-    ["Documents origin", connection.documentOrigin, { mono: true }], ["Artifacts origin", connection.artifactOrigin, { mono: true }],
-    ["Platform UI origin", connection.uiOrigin ?? "Not advertised", { mono: !!connection.uiOrigin }]]} />;
+  return <Facts items={[["Installation ID", connection.serverId, { mono: true, selectable: true }], ["Device origin", connection.deviceOrigin, { mono: true, selectable: true }],
+    ["Documents origin", connection.documentOrigin, { mono: true, selectable: true }], ["Artifacts origin", connection.artifactOrigin, { mono: true, selectable: true }],
+    ["Platform UI origin", connection.uiOrigin ?? "Not advertised", { mono: !!connection.uiOrigin, selectable: !!connection.uiOrigin }]]} />;
 }
 
 export function PermissionFields({ label, setLabel, scopes, setScopes, disabled }: {
@@ -52,7 +52,7 @@ export function PermissionFields({ label, setLabel, scopes, setScopes, disabled 
 
 export function Expiry({ at, now }: { at: number; now: number | null }) {
   const expired = now !== null && at <= now;
-  return <span className="flex flex-wrap items-center gap-2"><time dateTime={new Date(at).toISOString()} className="tabular-nums">{new Date(at).toLocaleString()}</time>
+  return <span className="flex flex-wrap items-center gap-2"><time dateTime={new Date(at).toISOString()} className="tabular-nums"><textarea readOnly rows={1} aria-label="Exact expiry" className="client-selectable" value={new Date(at).toLocaleString()} /></time>
     <StatusChip tone={expired ? "danger" : "neutral"}>{expired ? "Expired" : now === null ? "Expiry recorded" : `Expires in ${Math.max(1, Math.ceil((at - now) / 60_000))} min`}</StatusChip></span>;
 }
 

@@ -281,13 +281,17 @@ It is not remote revocation, secure erase or guaranteed viewer sign-out.
 Changed identity/destinations require a new inspected connection; no relocation
 or pending-open reset is invented. The five-minute native retry limit and
 re-enroll/forget recovery are shown on unresolved Open details.
+Expired native refresh retry records can return generic `unauthorized` after
+Access cleanup. The UI preserves that refusal without claiming a specific cause;
+the unfinished Open remains pinned and the recovery limitation stays visible.
 
 Pending enrollment metadata does not expose a saved receipt's destination, so
 after reload the person must deliberately recover the same request QR and paste
-the receipt again to review it before redemption. A lost enrollment-redemption
-answer may need manual reconciliation against Connections: there is no public
-intent-to-completed-connection lookup. Connection metadata also cannot establish
-live scopes or grant status; owner refusals are reported without inferring them.
+the receipt again to review it before redemption. Lost redemption replies can be
+recovered deliberately with the same intent ID through the existing redeem
+operation; its retained completion returns the original connection ID.
+Connection metadata cannot establish live scopes or grant status; owner refusals
+are reported without inferring them.
 
 | Operation | Contract |
 | --- | --- |
