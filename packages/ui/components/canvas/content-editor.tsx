@@ -23,6 +23,7 @@ import type { ContentDocumentBody, ContentItem } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { errorMessage } from "./auth-actions";
 import { contentError, contentTargetKey, useContentActions } from "./content-actions";
+import { ContentVaultHistory } from "./content-history";
 import { InlineError, IsoTime, KindIcon, TagChip } from "./content-shared";
 import { Empty } from "./primitives";
 import { useStack, useStore, useWorkbench } from "./provider";
@@ -280,6 +281,7 @@ function DocumentEditor({ slug }: { slug: string }) {
         </div>
         <InlineError error={error} />
       </form>
+      <ContentVaultHistory slug={slug} />
     </EditorFrame>
   );
 }

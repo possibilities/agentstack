@@ -214,6 +214,7 @@ function RemoveDocumentDialog({ document, onClose, run, pending }: { document: {
           <AlertDialogTitle>Remove “{document?.title}”?</AlertDialogTitle>
           <AlertDialogDescription>
             It leaves search, lists and its <span className="font-mono">/d/{document?.slug}</span> link, and the reason is recorded in the file. Restore brings it back with the same slug.
+            {" "}Tombstoning keeps Git history and remote copies; it is not erasure.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <form onSubmit={(event) => { event.preventDefault(); remove(); }}>

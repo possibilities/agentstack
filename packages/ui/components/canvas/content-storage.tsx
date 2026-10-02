@@ -14,6 +14,7 @@ import { localOperation, localOperations, measured, stateOperations, type Page }
 import type { ContentPublication, ContentPublicationPage, StateFile } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { errorMessage } from "./auth-actions";
+import { ContentVaultHistory } from "./content-history";
 import { usePagedRead } from "./owner-reads";
 import { MaintenanceDisclosure, StateFlowView, useStateFlow } from "./state-flow";
 import { Empty } from "./primitives";
@@ -59,6 +60,7 @@ export function ContentStorageWindow() {
           <Stages />
           <Blobs />
           <Publications />
+          <ContentVaultHistory />
         </div>
       )}
     </Window>
