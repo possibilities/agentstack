@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { access, realpath } from "node:fs/promises";
+import { access, readFile, realpath } from "node:fs/promises";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -24,6 +24,12 @@ export async function startClientUi({ root = process.env.STACK_CLIENT_STATE_DIR 
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("invalid_ui_port");
   const release = await loadTrustedRelease(releaseManifest);
   await access(join(ui, ".next", "BUILD_ID")).catch(() => { throw new Error("client_ui_build_required"); });
+  // A staged distribution pins Next's serialized configuration rather than
+  // consulting source config or loading a TypeScript compiler at startup.
+  const portableConfig = await readFile(join(ui, "next-runtime.json"), "utf8").catch(error => {
+    if (error.code === "ENOENT") return "";
+    throw error;
+  });
   const origin = `http://127.0.0.1:${await checkPort(port)}`;
   if (signal?.aborted) throw new Error("client_ui_cancelled");
   const host = await startClientHost({ root: resolve(root), uiOrigin: origin });
@@ -51,6 +57,8 @@ export async function startClientUi({ root = process.env.STACK_CLIENT_STATE_DIR 
       env: { ...process.env, STACK_UI_MODE: "client", STACK_CLIENT_STATE_DIR: root, STACK_CLIENT_UI_ORIGIN: origin,
         // Always replace ambient child configuration, including the unset case.
         STACK_CLIENT_UI_RELEASE: release ? JSON.stringify(release) : "",
+        // Replace, never inherit, an ambient standalone configuration.
+        __NEXT_PRIVATE_STANDALONE_CONFIG: portableConfig,
         STACK_CLIENT_UI_INGRESS_KEY: randomBytes(32).toString("hex"), NEXT_TELEMETRY_DISABLED: "1", NODE_ENV: "production" },
       // Next's request/error logs must never echo capability POSTs or headers.
       stdio: ["ignore", "ignore", "ignore", "ipc"],
