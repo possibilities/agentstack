@@ -91,3 +91,38 @@ the exact turn, never the latest. Both views re-read on
 `serve_subscriptions_changed` (Occurrences also on `serve_state_changed`) and
 on reconnect, and an `unknown` receipt is presented as frozen with no retry,
 redelivery or approval control.
+
+## Domain views
+
+Each domain record surfaces the same retained-receipt vocabulary where the
+operator actually looks, not only in System History:
+
+- **Browse** — the handoff inspector shows the exact request's Bot watch and,
+  while a receipt exists, the `browser_handoff_completion` observation for that
+  `{botId, threadId, requestId}` — a human report, never verified browser
+  state. History rows identify each handoff's exact `threadId`/`requestId`.
+- **Workers** — a turn's `worker_send` receipt watches the exact requestId and
+  its `worker_turn_observation` reads that request's terminal result or active
+  phase with at most eight pending-permission summaries, never payload text and
+  never an answering control. `worker_event_list` shows the Worker-scoped event
+  delivery ledger (queued, interrupting, dispatched, unknown, cancelled);
+  receipts carry no payload, the dispatched receipt's `turnId` links its exact
+  event turn, a truncated page admits older receipts may exist, and automatic
+  event input stays fenced with no replay. A receipt-clicked turn focus
+  outranks a stale linked focus, and a new linked focus clears it.
+- **Proc** — a run's Exit watch reads `proc_run_completion` for the exact run:
+  exit facts only — a terminal exit is not Work completion — and an absent
+  receipt reads "No Bot watch requested", never an offer to subscribe.
+- **Brain** — Jobs and Sources disclosures list exact `submit` and
+  `sources_sync` receipts; each resolves its link and reads
+  `submission_completion`/`sources_sync_completion` for the bound request —
+  settled, blocked, not-settled, already-indexed or refused for another
+  admission, with already-indexed returning only the document identity and a
+  source observation paging its fixed Run set in 50-Run slices under one
+  receipt identity. A wrong Chat's observation refuses rather than leaking.
+
+In every domain a failed or unexposed watch read renders an unavailable state,
+never an empty watch; a missing receipt is the truthful no-watch state;
+uncertain or `unknown` admissions stay frozen with no retry, rearm, resend or
+subscribe control; and the Access remote fence excludes every read listed
+above just as it does the History views.
