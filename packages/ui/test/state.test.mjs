@@ -14,7 +14,7 @@ registerHooks({
   },
 });
 
-const { afterReceiptRead, applyInput, clearRecovery, continueInventory, continueSubscriptions, groupByOwner, linkNeedsSelection, loadInventory, loadSubscriptions,
+const { applyInput, clearRecovery, continueInventory, continueSubscriptions, groupByOwner, linkNeedsSelection, loadInventory, loadSubscriptions,
   localOperation, measured, planReadiness, readRecovery, relationshipNode, saveRecovery, StateFlowController, stateOperations } = await import("../lib/stack/state.ts");
 
 const entry = (id, owner, extra = {}) => ({ id, ownerPackage: owner, subject: null, kind: "storage", authority: "authoritative", location: "server", ownership: "stack",
@@ -118,19 +118,6 @@ test("blocked and expired plans cannot apply, and apply input binds the plan rev
   assert.deepEqual(applyInput(plan(), "req", { botId: "alpha" }), { planId: plan().id, expectedRevision: "rev-1", requestId: "req", botId: "alpha" });
 });
 
-test("a lost apply keeps its request: a receipt resolves it, an absent receipt stays uncertain", () => {
-  const input = applyInput(plan(), "22222222-2222-4222-8222-222222222222");
-  const checking = { phase: "checking", plan: plan(), input, error: "connection closed" };
-  const found = afterReceiptRead(checking, receipt("partial"));
-  assert.equal(found.phase, "receipt");
-  assert.equal(found.receipt.status, "partial", "partial is presented as-is, never retried or replanned");
-  const absent = afterReceiptRead(checking, null);
-  assert.equal(absent.phase, "uncertain");
-  assert.equal(absent.input, input, "the identical input is kept for an explicit same-UUID retry");
-  assert.match(absent.error, /connection closed\. The owner has no receipt for this request ID\./);
-  assert.match(afterReceiptRead(checking, null, "bots WebSocket is not connected").error, /Receipt read failed: bots WebSocket/);
-});
-
 test("reload recovery keeps only identity strings", () => {
   const values = new Map();
   globalThis.localStorage = { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: (key) => values.delete(key) };
@@ -190,30 +177,47 @@ test("the flow refuses blocked and expired plans without calling apply", async (
   }
 });
 
-test("a lost apply reads its receipt, stays uncertain without one, and retries only the identical input", async () => {
-  const values = fakeStorage();
-  try {
-    const answered = { ...receipt("completed"), requestId: "00000000-0000-4000-8000-000000000001" };
-    const owner = scriptedOwner({ prepare: [plan()], apply: [new Error("connection closed"), (input) => ({ ...answered, requestId: input.requestId })], receipt: [null] });
-    const receipts = [];
-    const flow = new StateFlowController({ operations: owner.operations, extra: { botId: "alpha" }, recoveryKey: "bots:alpha:workspace", onReceipt: (value) => receipts.push(value) }, clock());
-    await flow.prepare();
-    await flow.apply();
-    let state = flow.getState();
-    assert.equal(state.phase, "uncertain");
-    assert.match(state.error, /connection closed.*no receipt/);
-    assert.deepEqual(state.input, { planId: plan().id, expectedRevision: "rev-1", requestId: "00000000-0000-4000-8000-000000000001", botId: "alpha" });
-    assert.ok(values.has("stack.state-flow.bots:alpha:workspace"), "the uncertain request survives a reload");
+test("a lost apply uses its receipt or keeps the identical request for explicit retry", async (t) => {
+  for (const [label, answer, reason] of [
+    ["absent receipt", null, /The owner has no receipt for this request ID/],
+    ["unreadable receipt", new Error("bots WebSocket is not connected"), /Receipt read failed: bots WebSocket is not connected/],
+    ["partial receipt", { ...receipt("partial"), requestId: "00000000-0000-4000-8000-000000000001" }, null],
+  ]) await t.test(label, async () => {
+    const values = fakeStorage();
+    try {
+      const answered = { ...receipt("completed"), requestId: "00000000-0000-4000-8000-000000000001" };
+      const owner = scriptedOwner({ prepare: [plan()], apply: [new Error("connection closed"), (input) => ({ ...answered, requestId: input.requestId })], receipt: [answer] });
+      const receipts = [];
+      const flow = new StateFlowController({ operations: owner.operations, extra: { botId: "alpha" }, recoveryKey: "bots:alpha:workspace", onReceipt: (value) => receipts.push(value) }, clock());
+      await flow.prepare();
+      await flow.apply();
+      let state = flow.getState();
+      assert.deepEqual(state.input, { planId: plan().id, expectedRevision: "rev-1", requestId: "00000000-0000-4000-8000-000000000001", botId: "alpha" });
+      assert.deepEqual(owner.calls.map(([kind]) => kind), ["prepare", "apply", "receipt"], "no automatic replay or replan");
+      assert.equal(owner.calls.at(-1)[1], state.input.requestId, "receipt lookup uses the same request identity");
+      assert.ok(values.has("stack.state-flow.bots:alpha:workspace"), "the unsettled request survives a reload");
+      if (reason === null) {
+        assert.equal(state.phase, "receipt", "the owner's partial receipt takes precedence over a lost apply response");
+        assert.equal(state.receipt.status, "partial");
+        assert.equal(receipts.length, 1);
+        await flow.retry();
+        assert.equal(owner.calls.length, 3, "a known partial receipt is never replayed");
+        return;
+      }
+      assert.equal(state.phase, "uncertain");
+      assert.match(state.error, /connection closed/);
+      assert.match(state.error, reason);
 
-    await flow.retry();
-    state = flow.getState();
-    assert.equal(state.phase, "receipt");
-    const [first, second] = owner.calls.filter(([kind]) => kind === "apply").map(([, input]) => input);
-    assert.deepEqual(second, first, "the retry is the identical input under the same request UUID");
-    assert.deepEqual(owner.calls.filter(([kind]) => kind === "prepare").length, 1, "no automatic replan");
-    assert.equal(receipts.length, 1);
-    assert.equal(values.has("stack.state-flow.bots:alpha:workspace"), false, "a completed receipt needs no recovery");
-  } finally { delete globalThis.localStorage; }
+      await flow.retry();
+      state = flow.getState();
+      assert.equal(state.phase, "receipt");
+      const [first, second] = owner.calls.filter(([kind]) => kind === "apply").map(([, input]) => input);
+      assert.deepEqual(second, first, "the retry is the identical input under the same request UUID");
+      assert.deepEqual(owner.calls.filter(([kind]) => kind === "prepare").length, 1, "no automatic replan");
+      assert.equal(receipts.length, 1);
+      assert.equal(values.has("stack.state-flow.bots:alpha:workspace"), false, "a completed receipt needs no recovery");
+    } finally { delete globalThis.localStorage; }
+  });
 });
 
 test("a running receipt is observed again; partial and unknown results stay recoverable until the operator leaves them", async () => {

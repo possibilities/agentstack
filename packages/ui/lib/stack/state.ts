@@ -208,7 +208,7 @@ export type StateFlow =
   | { phase: "receipt"; plan: StatePlan | null; input: StateApplyInput; receipt: StateReceipt };
 
 /** Where an apply attempt that returned no receipt goes once its receipt has been read. */
-export function afterReceiptRead(flow: Extract<StateFlow, { phase: "checking" }>, receipt: StateReceipt | null, readError?: string): StateFlow {
+function afterReceiptRead(flow: Extract<StateFlow, { phase: "checking" }>, receipt: StateReceipt | null, readError?: string): StateFlow {
   if (receipt) return { phase: "receipt", plan: flow.plan, input: flow.input, receipt };
   const reasons = [flow.error, readError ? `Receipt read failed: ${readError}` : "The owner has no receipt for this request ID."]
     .filter((reason): reason is string => Boolean(reason)).map((reason) => /[.!?]$/.test(reason) ? reason : `${reason}.`);
