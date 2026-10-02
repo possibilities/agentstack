@@ -109,8 +109,15 @@ test("Bot attribution, current MCP exposure, ownership and operator edits never 
   await assert.rejects(f.call("proc_schedule_create", { id, ...input }), /schedule_id_conflict/);
 });
 
-test("opt-in Proc watches bind the originating Chat before execution and observe exit without output", { timeout: 15_000 }, async t => {
+for (const initial of [true, false]) test(`opt-in Proc watches bind the originating Chat and ${initial ? "observe an initial exit" : "deliver a later exit"} without output`, { timeout: 15_000 }, async t => {
   const f = await fixture(t), requestId = randomUUID();
+  const exitGate = join(f.root, "release-process");
+  const watchedProcess = initial ? processSpec : { ...processSpec, args: ["-e",
+    "const fs = require('node:fs'); const timer = setInterval(() => { if (fs.existsSync(process.argv[1])) { clearInterval(timer); console.log('owned-output'); } }, 10);", exitGate] };
+  if (initial) f.lineageGate(async () => {
+    // Keep preparation unchanged, but ensure the first completion read sees exit.
+    if (f.context.service.store.hasRun(requestId)) assert.equal((await f.context.service.join(requestId, 5_000)).timedOut, false);
+  });
   await mkdir(join(f.workspace, "packages", "proc"), { recursive: true });
   await writeFile(join(f.workspace, "packages", "proc", "api.yaml"), "name: proc\ndescription: Proc\nmcp:\n  description: Proc\n  operations: [proc_run_start, proc_run_completion]\n  events: [proc_runs_changed]\n");
   const deliveries: EventValue[] = [];
@@ -120,19 +127,26 @@ test("opt-in Proc watches bind the originating Chat before execution and observe
       async call(_ctx, input) { await owner.verifyCompletion(input.id, input.package, input.operation, input.recordId, input.caller); return { verified: true }; } }),
   ] });
   try {
-    const result = await owner.callAndWatch("proc", "proc_run_start", { requestId, process: processSpec, subscribe: true }, f.caller());
+    const result = await owner.callAndWatch("proc", "proc_run_start", { requestId, process: watchedProcess, subscribe: true }, f.caller());
     const receipt = result.subscription as { id: string; state: string };
     assert.equal(result.id, requestId);
+    assert.equal(receipt.state, initial ? "observed" : "pending");
+    assert.equal(deliveries.length, 0, "initial observation must not generate a redundant wakeup");
+    if (!initial) await writeFile(exitGate, "");
     await f.context.service.join(requestId, 5_000);
-    for (let n = 0; n < 300 && owner.status(f.caller(), receipt.id).completions[0]?.state !== "delivered"; n++) await new Promise(resolve => setTimeout(resolve, 10));
-    assert.equal(owner.status(f.caller(), receipt.id).completions[0]?.state, "delivered");
-    assert.equal(deliveries.length, 1);
-    assert.equal(deliveries[0]!.subscription.scope, requestId, "scope stays bound even if the fast process completes before admission returns");
-    assert.equal((deliveries[0]!.value as { result: { exitCode: number } }).result.exitCode, 0);
-    assert.ok(!JSON.stringify(deliveries[0]!.value).includes("owned-output"), "output/argv must not enter the exit watch");
+    const finalState = initial ? "observed" : "delivered";
+    for (let n = 0; n < 300 && owner.status(f.caller(), receipt.id).completions[0]?.state !== finalState; n++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(owner.status(f.caller(), receipt.id).completions[0]?.state, finalState);
+    assert.equal(deliveries.length, initial ? 0 : 1);
+    if (!initial) assert.equal(deliveries[0]!.subscription.scope, requestId, "the exit watch stays bound to the exact run");
+    const observation = (initial ? result.observation : deliveries[0]!.value) as { result: { id: string; exitCode: number } };
+    assert.equal(observation.result.id, requestId);
+    assert.equal(observation.result.exitCode, 0);
+    assert.ok(!JSON.stringify(observation).includes("owned-output"), "output/argv must not enter the exit watch");
     await assert.rejects(f.call("proc_run_completion", { id: requestId }, f.caller("a", "root-a")), /another Chat/);
-    await owner.callAndWatch("proc", "proc_run_start", { requestId, process: processSpec, subscribe: true }, f.caller());
-    assert.equal(deliveries.length, 1);
+    const repeated = await owner.callAndWatch("proc", "proc_run_start", { requestId, process: watchedProcess, subscribe: true }, f.caller());
+    assert.equal((repeated.subscription as { state: string }).state, finalState);
+    assert.equal(deliveries.length, initial ? 0 : 1);
   } finally { await owner.close(); await capability.close(); }
 });
 
