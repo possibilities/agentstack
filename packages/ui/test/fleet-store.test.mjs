@@ -178,6 +178,30 @@ test("catalog disable/re-enable fences the old observation and coalesces dirty n
   } finally { h.close(); }
 });
 
+test("catalog clearing fences a late native result and automatic cache misses until explicit observation", async () => {
+  const account = { id: "worker-1", provider: "codex", ready: true, enabled: true, removing: false };
+  const h = harness({ accounts: [account] });
+  try {
+    h.store.start({ scopedBots: false });
+    await until(h.store, () => h.store.getState().workerCatalogs[account.id]?.data && !h.store.getState().catalogPending[account.id]);
+    const late = deferred();
+    h.handlers.worker_catalog = () => late.promise;
+    const run = h.store.refreshWorkerCatalog(account.id);
+    h.store.holdWorkerCatalog(account.id);
+    const before = h.calls.filter((call) => call.name === "worker_catalog").length;
+    h.publish("worker", "workers_changed");
+    late.resolve({ accountId: account.id, models: [], stale: false, runtimeVersion: "obsolete" });
+    await run;
+    await h.store.refreshWorkerCatalog(account.id, false);
+    assert.equal(h.store.getState().workerCatalogs[account.id], undefined, "a late result cannot restore cleared sibling views");
+    assert.equal(h.calls.filter((call) => call.name === "worker_catalog").length, before, "no automatic native observation follows a held cache miss");
+    h.handlers.worker_catalog = () => ({ accountId: account.id, models: [], stale: false, runtimeVersion: "explicitly observed" });
+    await h.store.refreshWorkerCatalog(account.id);
+    assert.equal(h.store.getState().workerCatalogs[account.id].data.runtimeVersion, "explicitly observed");
+    assert.equal(h.calls.filter((call) => call.name === "worker_catalog").at(-1).arguments.refresh, true);
+  } finally { h.close(); }
+});
+
 test("catalog discovery's own notice produces a cache-only follow-up and then settles", async () => {
   const account = { id: "worker-1", provider: "devin", ready: true, enabled: true, removing: false };
   const h = harness({ accounts: [account] });

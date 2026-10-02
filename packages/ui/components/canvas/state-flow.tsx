@@ -196,7 +196,7 @@ export function StateFlowView({ controls, label, applyLabel = "Apply this plan",
         return (
           <>
             <StatePlanReview plan={flow.plan} now={now} />
-            {readiness.reason ? <p role="status" className="text-xs text-destructive">{readiness.reason}</p> : null}
+            {readiness.reason || unavailable ? <p role="status" className="text-xs text-destructive">{readiness.reason ?? unavailable}</p> : null}
             <div className="flex flex-wrap gap-1.5">
               <Button size="sm" variant="destructive" disabled={!readiness.canApply || !!unavailable} title={readiness.reason ?? unavailable ?? undefined} onClick={controls.apply}>{applyLabel}</Button>
               {readiness.expired || readiness.blocked ? prepareButton("Prepare a new plan", "ghost") : null}

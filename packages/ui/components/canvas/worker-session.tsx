@@ -398,7 +398,7 @@ function ConversationTab({ worker, generation }: { worker: WorkerSession; genera
   const turns = useMemo(() => conversation(transcript.entries, names), [transcript.entries, names]);
   return (
      <Scroller follow={transcript.entries.length}>
-       <ContentCleared at={worker.contentClearedAt} />
+       {worker.contentClearedAt != null ? <ContentCleared at={worker.contentClearedAt} /> : null}
       {turns.map((turn, index) => (
         <section key={turn.turnId} aria-label={`Turn ${index + 1}`} className="flex flex-col gap-2">
           <div className="flex items-center gap-2 text-[0.64rem] font-medium tracking-[0.08em] text-muted-foreground uppercase">
@@ -653,7 +653,7 @@ function RecordsTab({ worker, generation }: { worker: WorkerSession; generation:
   const shown = kind ? feed.entries.filter((entry) => entry.kind === kind) : feed.entries;
   return (
      <Scroller>
-       <ContentCleared at={worker.contentClearedAt} />
+       {worker.contentClearedAt != null ? <ContentCleared at={worker.contentClearedAt} /> : null}
        <div className="flex flex-wrap items-center gap-2">
         <NativeSelect size="sm" aria-label="Turn" className="min-w-0 flex-1" value={turnId} onChange={(event) => setTurnId(event.target.value)}>
           <NativeSelectOption value="">All turns</NativeSelectOption>

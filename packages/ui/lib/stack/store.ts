@@ -290,6 +290,8 @@ export class StackStore {
   private catalogDirty = new Map<string, boolean>();
   private catalogAvailable = new Set<string>();
   private catalogGeneration = new Map<string, number>();
+  /** Clearing a catalog must not let an invalidation's cache miss launch native discovery. */
+  private catalogHeld = new Set<string>();
   private historyWatchers = new Map<string, number>();
   private historyInflight = new Map<string, Promise<void>>();
   private historyDirty = new Set<string>();
@@ -377,6 +379,10 @@ export class StackStore {
 
   start({ packages, scopedBots = true }: StackConnections = {}): void {
     this.scopedBots = scopedBots;
+    try {
+      const held: unknown = JSON.parse(localStorage.getItem("stack.worker-catalog-held.v1") ?? "[]");
+      if (Array.isArray(held)) for (const id of held.slice(0, 1000)) if (typeof id === "string") this.catalogHeld.add(id);
+    } catch { /* persistence is optional; the in-memory fence still applies */ }
     const { endpoints } = this.state;
     const enabled = packages && new Set(packages);
     const open = (pkg: string, onOpen: () => void, onNotice?: (topic: string) => void, topics?: string[], options?: { silent?: readonly string[]; onStatus?(status: ChannelStatus): void }) => {
@@ -1151,6 +1157,9 @@ export class StackStore {
 
   /** One no-turn catalog read per account, shared by cards and inspectors. */
   refreshWorkerCatalog = (id: string, refresh = true): Promise<void> => {
+    if (!refresh && this.catalogHeld.has(id)) return Promise.resolve();
+    if (!this.catalogAccountAvailable(id) || this.main.get("worker")?.status !== "open") return Promise.resolve();
+    if (refresh && this.catalogHeld.delete(id)) this.saveCatalogHolds();
     const pending = this.catalogInflight.get(id);
     if (pending) {
       // An explicit rediscovery must not be swallowed by a cache-only read.
@@ -1178,6 +1187,21 @@ export class StackStore {
     this.catalogInflight.set(id, { promise: run, refresh });
     return run;
   };
+
+  /** Called before catalog apply: drop sibling views and fence races, even if the apply response is lost. */
+  holdWorkerCatalog = (id: string): void => {
+    this.catalogHeld.add(id);
+    this.saveCatalogHolds();
+    this.catalogGeneration.set(id, (this.catalogGeneration.get(id) ?? 0) + 1);
+    this.catalogDirty.delete(id);
+    const workerCatalogs = { ...this.state.workerCatalogs };
+    delete workerCatalogs[id];
+    this.set({ workerCatalogs });
+  };
+
+  private saveCatalogHolds(): void {
+    try { localStorage.setItem("stack.worker-catalog-held.v1", JSON.stringify([...this.catalogHeld])); } catch { /* optional persistence */ }
+  }
 
   /**
    * Reference-counted history subscription per scope id. The first watcher
@@ -1243,6 +1267,7 @@ export class StackStore {
     const workerCatalogs = Object.fromEntries(Object.entries(this.state.workerCatalogs).filter(([id]) => this.catalogAccountAvailable(id)));
     if (Object.keys(workerCatalogs).length !== Object.keys(this.state.workerCatalogs).length) this.set({ workerCatalogs });
     for (const id of available) {
+      if (this.catalogHeld.has(id)) continue;
       // Discovery itself emits workers_changed. Its coalesced follow-up MUST be
       // cache-only: the API's cached success/failure reads emit no new notice.
       if (invalidated && this.catalogInflight.has(id) && !this.catalogDirty.has(id)) this.catalogDirty.set(id, false);
