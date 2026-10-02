@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { installationControlRoot, McpEventSubscriptions, serveApi, socketCall, type EventValue, type InvocationContext, type StatePage, type StatePlan, type StateReceipt } from "@stack/api";
+import { installationControlRoot, McpEventSubscriptions, serveApi, socketCall, type PollOutput, type EventValue, type InvocationContext, type StatePage, type StatePlan, type StateReceipt } from "@stack/api";
 import type { Delivery, Endpoint, Watch, RemoteReceipt } from "../src/schema.js";
 
 const caller: InvocationContext = { transport: "mcp", botId: "bot-1", instance: "launch-1", threadId: "main", sessionId: null };
@@ -33,6 +33,40 @@ async function fixture(extra: NodeJS.ProcessEnv = {}) {
 }
 const issue = (action = "opened", extra: Record<string, unknown> = {}) => ({ action, repository: { id: 3, full_name: "owner/project", owner: { login: "owner" } }, sender: { login: "human" }, issue: { id: 7, number: 4, title: "Unicode 🐙", labels: ["bug"], html_url: "https://github.com/owner/project/issues/4" }, ...extra });
 async function until(check: () => boolean | Promise<boolean>) { const end = Date.now() + 5000; while (!await check() && Date.now() < end) await new Promise(resolve => setTimeout(resolve, 10)); assert.ok(await check(), "expected boundary observation did not arrive"); }
+
+test("typed GitHub occurrences bootstrap now and replay bounded stable IDs independently of watch consumption", async () => {
+  const f = await fixture();
+  try {
+    const { endpoint, secret } = await f.create();
+    const watch = await f.call<Watch>("github_watch_create", { id: randomUUID(), label: "Events", filter: { events: ["issues"] } });
+    const poll = (cursor: string | null, extras: object = {}) => f.call<PollOutput>("github_watch_events", { name: "github_delivery", arguments: { id: watch.id }, cursor, ...extras });
+    const start = await poll(null); assert.deepEqual(start.events, []);
+    const guids = [randomUUID(), randomUUID()];
+    for (const guid of guids) assert.equal((await f.send(endpoint, secret, "issues", issue(), { deliveryId: guid })).status, 202);
+    await f.send(endpoint, secret, "issues", issue(), { deliveryId: guids[0] });
+    await f.send(endpoint, secret, "push", { repository: { id: 3, full_name: "owner/project" } });
+    assert.deepEqual((await poll(null)).events, [], "a null cursor never dumps an existing backlog");
+    const first = await poll(start.cursor, { maxEvents: 1 });
+    assert.equal(first.hasMore, true); assert.equal(first.truncated, false);
+    assert.equal(first.events[0]!.eventId, `${endpoint.id}:${guids[0]}`);
+    const second = await poll(first.cursor, { maxEvents: 1 });
+    assert.equal(second.hasMore, false); assert.equal(second.events[0]!.eventId, `${endpoint.id}:${guids[1]}`);
+    const pending = await f.call("github_watch_read", { id: watch.id });
+    assert.equal(pending.pending, 2);
+    await f.call("github_watch_acknowledge", { id: watch.id, through: pending.through, expectedAcknowledgedThrough: watch.acknowledgedThrough });
+    assert.deepEqual((await poll(start.cursor)).events.map(event => event.eventId), guids.map(guid => `${endpoint.id}:${guid}`), "consumption does not mutate occurrence history");
+    await new Promise(resolve => setTimeout(resolve, 2));
+    const aged = await poll(start.cursor, { maxAgeMs: 0 }); assert.deepEqual(aged.events, []); assert.equal(aged.truncated, true);
+    const paused = await f.call<Watch>("github_watch_update", { id: watch.id, expectedRevision: watch.revision, enabled: false });
+    const pause = await poll(start.cursor); assert.equal(pause.cursor, start.cursor); assert.deepEqual(pause.events, []);
+    await f.call("github_watch_update", { id: watch.id, expectedRevision: paused.revision, enabled: true });
+    await f.restart(); assert.equal((await poll(first.cursor)).events[0]!.eventId, second.events[0]!.eventId);
+    const another = await f.call<Watch>("github_watch_create", { id: randomUUID(), label: "Another", filter: {} });
+    await assert.rejects(f.call("github_watch_events", { name: "github_delivery", arguments: { id: another.id }, cursor: first.cursor }), error => (error as { code: number }).code === -32602);
+    await f.call("github_watch_remove", { id: watch.id });
+    await assert.rejects(poll(second.cursor), error => (error as { code: number }).code === -32011);
+  } finally { await f.close(); }
+});
 
 test("signed arrivals drive scoped Stack subscriptions and survive coalescing, acknowledgement, cleanup and restart", { timeout: 30_000 }, async () => {
   const f = await fixture();

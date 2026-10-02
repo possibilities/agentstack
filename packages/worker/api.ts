@@ -10,6 +10,7 @@ import { withStateInventory, statePageInput, stateFilePage, stateFileRead, listS
 import { workerStateCategories } from "./src/state-categories.js";
 import { workerStateOperations } from "./src/state.js";
 import { turnObservation, turnObservationInput, turnWatch } from "./src/observation.js";
+import { workerEventInput, workerEventReceipt } from "./src/event-inbox.js";
 
 const id = z.uuid();
 const model = z.strictObject({ id: z.string(), name: z.string(), efforts: z.array(z.string()), effortConfigId: z.string().nullable() });
@@ -57,6 +58,12 @@ const resultSchema = z.strictObject({ worker: workerSchema, turn: turnSummarySch
 const requestId = z.uuid().describe("Client-generated idempotency key. Retry with identical input after an uncertain response.");
 
 export type WorkersContext = { supervisor: WorkerSupervisor; manager: WorkerManager };
+export const workerEventReceive = operation({ name: "worker_event_receive", description: "Private-socket-only subscription-owner intake into an exact loaded Worker session. deliveryId deduplicates identical retries; conflicting reuse refuses. Acknowledges the durable Worker inbox, not native prompt acceptance or processing. native schedules a recorded follow-up; interrupt explicitly requests cancellation first. Unknown native outcomes never replay.",
+  input: workerEventInput, output: workerEventReceipt,
+  async call(ctx: WorkersContext, input, invocation) { if (invocation) throw new Error("event intake requires the private owner socket"); return ctx.manager.receiveEvent(input); } });
+export const workerEventList = operation({ name: "worker_event_list", description: "Read the latest 128 event delivery receipts for this Worker. queued is durable intake; interrupting is an attempted native cancellation; dispatched names a recorded turn, not processing success. Read that turn for its outcome. unknown never replays automatically; cancelled queued input was not sent. Self-only for Worker callers. Payloads are excluded.",
+  input: z.strictObject({ id }), output: z.strictObject({ receipts: z.array(workerEventReceipt), limit: z.literal(128), total: z.number().int(), truncated: z.boolean() }), annotations: { readOnlyHint: true },
+  async call(ctx: WorkersContext, { id }, invocation) { return ctx.manager.events(id, invocation); } });
 export const workerAccountStateDependencies = operation({ name: "worker_account_state_dependencies", description: "Observe an account's runtime, native teardown and in-flight catalog blockers for exact Auth cache maintenance. Waits for queued runtime reconciliation, never starts or stops a runtime. Local operator only.",
   input: z.strictObject({ id }), output: stateDependencies, annotations: { readOnlyHint: true },
   async call(ctx: WorkersContext, { id }, invocation) { requireStateOperator(invocation); return ctx.supervisor.stateDependencies(id); } });
@@ -241,7 +248,7 @@ export const workerTurnContext = operation({ name: "worker_turn_context", descri
 const packageApi: PackageApi<WorkersContext, keyof typeof topics> = {
    operations: [workerAccountStateDependencies, workerBotDependencies, workerWorkspaceList, workerWorkspaceRead, ...workerStateOperations, ...workerSettingsOperations, workerCatalog, workerRuntimeList, workerAccountDrain, workerStart, workerList, workerStatus, workerRead,
     workerDetail, workerTurnList, workerRecordList, workerRecordRead, workerToolList, workerDiff,
-      workerSend, workerRespond, workerCancel, workerResume, workerClose, workerRemove, workerWorkList, workerTurnContext, workerTurnObservation],
+      workerSend, workerRespond, workerCancel, workerResume, workerClose, workerRemove, workerWorkList, workerTurnContext, workerTurnObservation, workerEventReceive, workerEventList],
   events: {
     topics,
     scope: { description: "Worker ID for worker_changed/worker_progress; request:<UUID> for exact worker_turn_changed, valid before admission. Bot reads retain exact ownership fences; progress is for UI, not Bot wakeups.",

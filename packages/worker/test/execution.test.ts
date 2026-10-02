@@ -82,6 +82,7 @@ const acpFixture = `#!/usr/bin/env node
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 if (process.argv[2] === '--version') { console.log('fake-acp 2.0'); process.exit(0); }
+if (process.argv[2] === 'models') { console.log(JSON.stringify({ families: [{ variants: [{ model_uid: 'openai/gpt-fixture' }] }] })); process.exit(0); }
 let buffer = '';
 let cwd = '';
 let promptId = null;
@@ -151,6 +152,75 @@ process.stdin.on('data', (chunk) => {
     }
   }
 });`;
+
+for (const provider of ["codex", "devin"] as const) test(`${provider} ACP event inbox wakes the exact session and interrupts only on explicit policy`, { timeout: 20_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "stack-acp-events-"));
+  const repo = await repoFixture(root), binary = join(root, "acp-fixture");
+  await writeFile(binary, acpFixture); await chmod(binary, 0o700);
+  const env = { PATH: process.env.PATH, HOME: root, STACK_STATE_DIR: root, STACK_OPENCODE_BIN: binary, STACK_DEVIN_BIN: binary };
+  const accountId = randomUUID();
+  const fixtureSocket = (name: string, op: string, value: unknown) => serveSocket({ info: { name, description: "Fixture.", transportDescription: "Fixture.", path: socketPath(name, env) }, context: {},
+    operations: [operation({ name: op, description: "Fixture.", input: z.object({}), output: z.any(), async call() { return value; } })] });
+  const auth = await fixtureSocket("auth", "worker_account_list", { accounts: [{ id: accountId, provider, enabled: true, ready: true, removing: false }] });
+  const roles = await fixtureSocket("roles", "role_launch_snapshot", role);
+  const server = await fixtureSocket("serve", "serve_status", { mcpUrls: {} });
+  let supervisor = new WorkerSupervisor(root, env), manager = new WorkerManager(root, supervisor, env);
+  const context = { supervisor, manager };
+  const socket = await serveSocket({ info: { name: "worker", description: "Fixture.", transportDescription: "Fixture.", path: socketPath("worker", env) }, context, operations: workersApi.operations });
+  const until = async (check: () => boolean) => { const deadline = Date.now() + 5000; while (!check() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5)); assert.ok(check()); };
+  try {
+    await supervisor.reconcile();
+    const start = await manager.start({ accountId, model: "openai/gpt-fixture", effort: "low", repo, task: "ASK permission", requestId: randomUUID() });
+    const id = start.worker.id;
+    await until(() => manager.ledger.worker(id)?.phase === "awaiting_input");
+    const event = { id, sessionId: start.worker.sessionId!, instance: start.worker.runtimeInstance!, deliveryId: randomUUID(),
+      package: "github", eventId: "one", name: "github_delivery", text: "Stack observed event one.", policy: "native" as const };
+    const call = (input: typeof event | (Omit<typeof event, "policy"> & { policy: "interrupt" })) => socketCall(socket.path, "tools/call", { name: "worker_event_receive", arguments: input });
+    const receipt = await call(event) as { state: string; turnId: string | null };
+    assert.equal(receipt.state, "queued"); assert.equal(receipt.turnId, null);
+    assert.equal(manager.ledger.worker(id)?.currentTurnId, start.turn.id);
+    assert.equal(manager.ledger.pending(id).length, 1, "event intake cannot implicitly answer permissions");
+    await call(event); assert.equal(manager.ledger.pendingEvents(id).length, 1);
+    await assert.rejects(call({ ...event, instance: randomUUID(), deliveryId: randomUUID() }), /exact loaded/);
+    const interrupt = { ...event, deliveryId: randomUUID(), eventId: "two", text: "Stack observed event two.", policy: "interrupt" as const };
+    await call(interrupt);
+    await until(() => !!manager.ledger.event(interrupt.deliveryId)?.turnId && manager.ledger.worker(id)?.phase === "idle");
+    assert.equal(manager.ledger.turn(start.turn.id)?.phase, "cancelled");
+    const events = await manager.events(id);
+    assert.equal(events.receipts.length, 2);
+    for (const row of events.receipts) { assert.equal(row.sessionId, start.worker.sessionId); assert.equal(manager.ledger.turn(row.turnId!)?.phase, "completed"); }
+    assert.equal(await readFile(join(start.worker.cwd!, "output.txt"), "utf8"), interrupt.text);
+    await assert.rejects(stat(join(start.worker.cwd!, "approved.txt")), /ENOENT/);
+    const inputCount = manager.ledger.turns(id).length;
+    await call(event); assert.equal(manager.ledger.turns(id).length, inputCount, "exact intake retry cannot dispatch twice");
+    await manager.send({ id, message: "ASK again", requestId: randomUUID() });
+    await until(() => manager.ledger.worker(id)?.phase === "awaiting_input");
+    const retained = { ...event, deliveryId: randomUUID(), eventId: "retained", text: "Future retained input." };
+    await call(retained);
+    await manager.close();
+    supervisor = new WorkerSupervisor(root, env); manager = new WorkerManager(root, supervisor, env);
+    Object.assign(context, { supervisor, manager });
+    assert.equal((await manager.events(id)).receipts.find(row => row.deliveryId === retained.deliveryId)?.state, "queued");
+    await supervisor.reconcile();
+    assert.equal(manager.ledger.worker(id)?.phase, "needs_recovery");
+    await assert.rejects(manager.resume(id, false), /acknowledge/);
+    await manager.resume(id, true);
+    await until(() => !!manager.ledger.event(retained.deliveryId)?.turnId && manager.ledger.worker(id)?.phase === "idle");
+    assert.equal(manager.ledger.worker(id)?.sessionId, start.worker.sessionId);
+    assert.equal(await readFile(join(start.worker.cwd!, "output.txt"), "utf8"), retained.text);
+    await manager.send({ id, message: "ASK close", requestId: randomUUID() });
+    await until(() => manager.ledger.worker(id)?.phase === "awaiting_input");
+    const current = manager.ledger.worker(id)!;
+    const cancelled = { ...retained, instance: current.runtimeInstance!, deliveryId: randomUUID(), eventId: "cancelled", text: "Must not dispatch after close." };
+    await call(cancelled);
+    await manager.close();
+    supervisor = new WorkerSupervisor(root, env); manager = new WorkerManager(root, supervisor, env);
+    Object.assign(context, { supervisor, manager });
+    await manager.closeWorker(id);
+    assert.equal((await manager.events(id)).receipts.find(row => row.deliveryId === cancelled.deliveryId)?.state, "cancelled");
+    assert.equal(await readFile(join(start.worker.cwd!, "output.txt"), "utf8"), retained.text);
+  } finally { await socket.close(); await manager.close(); await server.close(); await roles.close(); await auth.close(); await rm(root, { recursive: true, force: true }); }
+});
 
 test("durable ACP workers dispatch, follow up, answer permissions, and load after server restart", { timeout: 30_000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), "stack-worker-execution-"));

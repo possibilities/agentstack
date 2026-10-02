@@ -181,6 +181,36 @@ test("Claude SDK workers preserve account/session continuity, exact permission a
     assert.equal((await manager.tools(id, 0, 20)).tools[0]?.status, "completed");
     assert.equal((await manager.read(id, 0, 50)).entries.filter((entry) => entry.kind === "agent").map((entry) => entry.text).join(""), "Done.\n");
 
+    // Event ACK is durable intake, not a prompt/result ACK. The active session
+    // remains represented until cancellation, then the synthetic follow-up uses
+    // that same lifetime Query and a separately recorded Worker turn.
+    await manager.send({ id, message: "HANG", requestId: randomUUID() }); await wait(manager, id, "running");
+    const parentTurn = (await manager.status(id)).turn!.id;
+    const event = { id, instance: first.worker.runtimeInstance!, sessionId: first.worker.sessionId!, deliveryId: randomUUID(),
+      package: "github", name: "github_delivery", eventId: "delivery-1", text: "Observed GitHub delivery.", policy: "native" as const };
+    const queued = manager.receiveEvent(event);
+    assert.equal(queued.state, "queued"); assert.equal(queued.turnId, null);
+    assert.equal(manager.receiveEvent(event).deliveryId, queued.deliveryId);
+    assert.throws(() => manager.receiveEvent({ ...event, text: "Conflicting payload" }), /reused/);
+    assert.throws(() => manager.receiveEvent({ ...event, deliveryId: randomUUID(), sessionId: "another-session" }), /exact loaded/);
+    assert.equal((await manager.status(id)).turn!.id, parentTurn, "enqueueing cannot steal the active turn");
+    await manager.cancel(id);
+    for (let i = 0; i < 200 && !manager.ledger.event(event.deliveryId)?.turnId; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    await wait(manager, id, "idle");
+    const eventTurn = manager.ledger.event(event.deliveryId)!.turnId!;
+    assert.notEqual(eventTurn, parentTurn); assert.equal(manager.ledger.turn(eventTurn)?.phase, "completed");
+    assert.equal(native.inputs.at(-1)!.isSynthetic, true); assert.equal(native.inputs.at(-1)!.session_id, first.worker.sessionId);
+    assert.ok((await manager.read(id, 0, 50)).entries.some(entry => entry.turnId === eventTurn && entry.kind === "event"));
+    await manager.send({ id, message: "HANG", requestId: randomUUID() }); await wait(manager, id, "running");
+    const interruptedTurn = (await manager.status(id)).turn!.id;
+    const interrupt = { ...event, deliveryId: randomUUID(), eventId: "delivery-2", policy: "interrupt" as const };
+    assert.equal(manager.receiveEvent(interrupt).state, "queued");
+    for (let i = 0; i < 200 && !manager.ledger.event(interrupt.deliveryId)?.turnId; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    await wait(manager, id, "idle");
+    assert.equal(manager.ledger.turn(interruptedTurn)?.phase, "cancelled");
+    assert.equal(manager.ledger.turn(manager.ledger.event(interrupt.deliveryId)!.turnId!)?.phase, "completed");
+    assert.equal(sdk.calls.filter(call => call.id === first.worker.sessionId).length, 1, "events must not open concurrent resumes");
+
     for (const option of ["allow-once", "deny-once"]) {
       const follow = { id, message: `ASK ${option}`, requestId: randomUUID() };
       const sent = await manager.send(follow); assert.equal((await manager.send(follow)).turn.id, sent.turn.id);
@@ -224,7 +254,13 @@ test("Claude SDK workers preserve account/session continuity, exact permission a
     assert.equal(history.includes("PRIVATE REASONING"), false); assert.equal(history.includes("MUST NOT EXPOSE"), false);
     const lastTurn = (await manager.status(id)).turn!;
     const secretRecords = JSON.stringify(await manager.records(id, 0, 50, lastTurn.id));
-    const transcript = JSON.stringify(await manager.read(id, 0, 50));
+    const transcriptRows = [];
+    for (let after = 0;;) {
+      const page = await manager.read(id, after, 50); transcriptRows.push(...page.entries);
+      if (!page.hasMore) break;
+      after = page.nextSeq;
+    }
+    const transcript = JSON.stringify(transcriptRows);
     assert.ok(transcript.includes("This worker must not retain"), "non-secret launch labels must not redact ordinary prose");
     for (const value of [secretRecords, transcript]) {
       assert.equal(value.includes("fixture-bearer-token"), false); assert.equal(value.includes("proof="), false);

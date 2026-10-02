@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import { resolveWorkContext } from "@stack/hud/client";
 import { WorkerState } from "./state.js";
 import { turnObservation, turnWatch } from "./observation.js";
+import type { WorkerEventInput } from "./event-inbox.js";
 
 /** worker_list's compact most recent turn; worker_status and worker_turn_list carry the rest. */
 export type ListedTurn = Pick<TurnSummary, "id" | "phase" | "stopReason" | "issue" | "dispatchedAt" | "createdAt" | "updatedAt" | "workContext">;
@@ -31,6 +32,7 @@ export class WorkerManager {
   private progressTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly progressWorkers = new Set<string>();
   private closing = false;
+  private readonly eventRuns = new Map<string, Promise<void>>();
   private readonly sessions = new Map<string, string>();
   private readonly loading = new Set<string>();
   private readonly creating = new Map<string, { count: number; chars: number; dropped: number;
@@ -55,11 +57,12 @@ export class WorkerManager {
     if (this.progressTimer) clearTimeout(this.progressTimer);
     await Promise.allSettled([...this.maintenanceRuns]);
     await this.supervisor.close();
+    await Promise.allSettled(this.eventRuns.values());
     this.ledger.close();
   }
 
   private changed(progress = false, workerId?: string): void {
-    if (!progress) { this.onChange?.(workerId); return; }
+    if (!progress) { this.onChange?.(workerId); if (workerId && !this.closing) this.drainEvents(workerId); return; }
     if (workerId) this.progressWorkers.add(workerId);
     if (this.progressTimer) return;
     this.progressTimer = setTimeout(() => {
@@ -158,7 +161,7 @@ export class WorkerManager {
     if (this.closing || ids.some(id => this.maintenanceWorkers.has(id) || this.loading.has(id))) throw new Error("Worker maintenance/lifecycle operation is in progress");
     ids.forEach(id => this.maintenanceWorkers.add(id));
     const task = Promise.resolve().then(run); this.maintenanceRuns.add(task);
-    try { return await task; } finally { this.maintenanceRuns.delete(task); ids.forEach(id => this.maintenanceWorkers.delete(id)); }
+    try { return await task; } finally { this.maintenanceRuns.delete(task); ids.forEach(id => { this.maintenanceWorkers.delete(id); this.drainEvents(id); }); }
   }
   /** Worker self-reads do not grant Bot/operator ownership or mutation rights. */
   private async readable(id: string, invocation?: InvocationContext): Promise<WorkerRecord> {
@@ -263,6 +266,67 @@ export class WorkerManager {
     const worker = await this.readable(id, invocation);
     const turn = worker.currentTurnId ? this.ledger.turn(worker.currentTurnId) : null;
     return { worker, turn: turn ? summarizeTurn(turn) : null, pending: this.ledger.pending(id) };
+  }
+
+  /** Private owner intake. Durable ACK is distinct from native prompt completion. */
+  receiveEvent(input: WorkerEventInput) {
+    const worker = this.ledger.worker(input.id), runtime = worker && this.supervisor.runtime(worker.accountId);
+    if (this.closing || this.maintenanceWorkers.has(input.id) || this.loading.has(input.id) || !worker || !runtime || worker.sessionId !== input.sessionId || worker.runtimeInstance !== input.instance || runtime.instance !== input.instance
+      || !["idle", "running", "awaiting_input", "cancelling"].includes(worker.phase)) throw new OperationRejected("Event target is not the exact loaded Worker session");
+    const receipt = this.ledger.admitEvent(input);
+    this.changed(false, input.id);
+    return receipt;
+  }
+  async events(id: string, invocation?: InvocationContext) {
+    await this.readable(id, invocation);
+    const receipts = this.ledger.eventReceipts(id), total = this.ledger.eventReceiptCount(id);
+    return { receipts, limit: 128 as const, total, truncated: total > receipts.length };
+  }
+  private drainEvents(id: string) {
+    if (this.closing || this.eventRuns.has(id) || this.maintenanceWorkers.has(id) || this.loading.has(id) || this.ledger.eventBlocked(id)) return;
+    const run = this.dispatchEvent(id).finally(() => {
+      this.eventRuns.delete(id);
+      const next = this.ledger.pendingEvents(id)[0];
+      if (!this.closing && next && !next.issue && this.ledger.worker(id)?.phase === "idle") this.drainEvents(id);
+    });
+    this.eventRuns.set(id, run);
+    void run.catch(() => undefined);
+  }
+  private async dispatchEvent(id: string) {
+    const pending = this.ledger.pendingEvents(id);
+    if (!pending.length) return;
+    let worker = this.ledger.worker(id);
+    const event = worker && ["running", "awaiting_input"].includes(worker.phase)
+      ? pending.find(item => item.input.policy === "interrupt" && item.state === "queued") ?? pending[0]! : pending[0]!;
+    if (!worker || worker.phase === "closed" || worker.sessionId !== event.sessionId) { this.ledger.cancelEvents(id); return; }
+    const runtime = this.supervisor.runtime(worker.accountId);
+    if (!runtime || runtime.instance !== worker.runtimeInstance || !worker.sessionId) return;
+    if (event.input.policy === "interrupt" && event.state === "queued" && ["running", "awaiting_input"].includes(worker.phase)) {
+      // Persist before native cancellation. Never replay an uncertain interruption.
+      this.ledger.updateEvent(event.deliveryId, "interrupting");
+      try { await this.cancel(id); }
+      catch { this.ledger.updateEvent(event.deliveryId, "unknown", null, "Interrupt outcome unknown; inspect the native turn before continuing"); }
+      return;
+    }
+    if (worker.phase !== "idle") return;
+    try {
+      await this.account(worker.accountId);
+      const previousContext = worker.currentTurnId ? this.ledger.turn(worker.currentTurnId)?.workContext ?? null : null;
+      const context = await resolveWorkContext(this.env, undefined, undefined, previousContext);
+      worker = this.ledger.worker(id);
+      if (this.closing || this.maintenanceWorkers.has(id) || !worker || worker.phase !== "idle" || worker.sessionId !== event.sessionId || this.supervisor.runtime(worker.accountId) !== runtime || worker.runtimeInstance !== runtime.instance) return;
+      // A recorded prompt is the sole native dispatch fence. reserveTurn is sync;
+      // a crash after it is recovered as an unknown turn, never sent a second time.
+      const reserved = this.ledger.reserveTurn(id, event.deliveryId, event.input.text, worker.model, worker.effort, undefined, context, null, true);
+      this.ledger.updateEvent(event.deliveryId, "dispatched", reserved.turn.id);
+      if (!reserved.duplicate) this.prompt(id, reserved.turn.id, event.input.text, true);
+      this.changed(false, id);
+    } catch (error) {
+      const turn = this.ledger.turnByRequestId(event.deliveryId);
+      if (turn) this.ledger.updateEvent(event.deliveryId, "unknown", turn.id, "Event dispatch outcome unknown; no automatic replay");
+      else this.ledger.updateEvent(event.deliveryId, event.state, null, error instanceof Error ? error.message : String(error));
+      this.onChange?.(id);
+    }
   }
 
   async observeTurn(input: { requestId: string; botId: string; threadId: string }, invocation?: InvocationContext) {
@@ -463,7 +527,7 @@ export class WorkerManager {
     return { worker: this.ledger.worker(id)!, turn: summarizeTurn(this.ledger.turn(reserved.turn.id)!), duplicate: false };
   }
 
-  private prompt(id: string, turnId: string, promptText: string): void {
+  private prompt(id: string, turnId: string, promptText: string, observedEvent = false): void {
     const pending = this.ledger.turn(turnId);
     if (!pending || pending.phase === "cancelling") {
       if (pending) this.ledger.completeTurn(turnId, "cancelled", "cancelled", null);
@@ -482,7 +546,7 @@ export class WorkerManager {
     this.ledger.setWorkerPhase(id, "running");
     this.ledger.dispatchTurn(turnId, promptText);
     this.changed(false, id);
-    void runtime.process.request("session/prompt", { sessionId: worker.sessionId, prompt: [{ type: "text", text: promptText }] }, 0)
+    void runtime.process.request("session/prompt", { sessionId: worker.sessionId, prompt: [{ type: "text", text: promptText }], ...(observedEvent && worker.provider === "claude" ? { isSynthetic: true } : {}) }, 0)
       .then((result) => {
         if (this.closing) return;
         const current = this.ledger.turn(turnId);
@@ -607,22 +671,32 @@ export class WorkerManager {
       this.ledger.setWorkerPhase(id, "needs_recovery", "Worker session load failed; inspect before retrying");
       this.changed(false, id);
       throw new Error("Worker session load failed; inspect before retrying");
-    } finally { this.loading.delete(id); }
+    } finally { this.loading.delete(id); this.drainEvents(id); }
     this.changed(false, id);
     return this.ledger.worker(id)!;
   }
 
   async closeWorker(id: string, invocation?: InvocationContext): Promise<WorkerRecord> {
-    const worker = await this.owned(id, invocation);
-    if (worker.phase === "closed") return worker;
-    if (["running", "awaiting_input", "cancelling", "preparing"].includes(worker.phase)) throw new Error("worker has active or uncertain preparation; cancel or inspect before closing");
-    const runtime = this.supervisor.runtime(worker.accountId);
-    if (runtime?.canClose && runtime.instance === worker.runtimeInstance && worker.sessionId && ["idle", "failed"].includes(worker.phase))
-      await runtime.process.request("session/close", { sessionId: worker.sessionId });
-    this.ledger.setWorkerPhase(id, "closed");
-    if (worker.sessionId) this.sessions.delete(`${worker.accountId}:${worker.sessionId}`);
-    this.changed(false, id);
-    return this.ledger.worker(id)!;
+    await this.owned(id, invocation);
+    return this.maintain([id], async () => {
+      // Fence new intake and let an already preparing event observe the fence
+      // before deciding whether the native session is quiescent enough to close.
+      await this.eventRuns.get(id);
+      const worker = this.ledger.worker(id)!;
+      if (worker.phase === "closed") return worker;
+      if (["running", "awaiting_input", "cancelling", "preparing"].includes(worker.phase)) throw new Error("worker has active or uncertain preparation; cancel or inspect before closing");
+      const runtime = this.supervisor.runtime(worker.accountId);
+      if (runtime?.canClose && runtime.instance === worker.runtimeInstance && worker.sessionId && ["idle", "failed"].includes(worker.phase)) {
+        this.ledger.setWorkerPhase(id, "preparing");
+        try { await runtime.process.request("session/close", { sessionId: worker.sessionId }); }
+        catch { this.ledger.setWorkerPhase(id, "needs_recovery", "Native close outcome unknown; inspect before retrying"); this.changed(false, id); throw new Error("Native close outcome unknown; inspect before retrying"); }
+      }
+      this.ledger.setWorkerPhase(id, "closed");
+      this.ledger.cancelEvents(id);
+      if (worker.sessionId) this.sessions.delete(`${worker.accountId}:${worker.sessionId}`);
+      this.changed(false, id);
+      return this.ledger.worker(id)!;
+    });
   }
 
   async remove(id: string, discardWorktree: boolean, invocation?: InvocationContext): Promise<{ id: string; retainedBranch: string | null }> {

@@ -3,11 +3,11 @@ description: Run durable account-bound Workers through ACP or the native Claude 
 socket:
   description: Private socket for Worker lifecycle, bounded structured history, account catalog and runtime operations.
 mcp:
-  workerOperations: [worker_list, worker_status, worker_read, worker_detail, worker_turn_list, worker_record_list, worker_record_read, worker_tool_list, worker_diff, worker_turn_context]
-  operations: [worker_settings_catalog, worker_settings_read, worker_settings_preview, worker_settings_patch, worker_settings_apply, worker_catalog, worker_runtime_list, worker_account_drain, worker_start, worker_list, worker_status, worker_read, worker_detail, worker_turn_list, worker_record_list, worker_record_read, worker_tool_list, worker_diff, worker_send, worker_respond, worker_cancel, worker_resume, worker_close, worker_remove, worker_work_list, worker_turn_context, worker_turn_observation]
+  workerOperations: [worker_list, worker_status, worker_read, worker_detail, worker_turn_list, worker_record_list, worker_record_read, worker_tool_list, worker_diff, worker_turn_context, worker_event_list]
+  operations: [worker_settings_catalog, worker_settings_read, worker_settings_preview, worker_settings_patch, worker_settings_apply, worker_catalog, worker_runtime_list, worker_account_drain, worker_start, worker_list, worker_status, worker_read, worker_detail, worker_turn_list, worker_record_list, worker_record_read, worker_tool_list, worker_diff, worker_send, worker_respond, worker_cancel, worker_resume, worker_close, worker_remove, worker_work_list, worker_turn_context, worker_turn_observation, worker_event_list]
   events: all
   description: Bot-facing Worker operations and account-bound catalog, forwarded to the worker socket.
 websocket:
-  operations: all
+  operations: [worker_account_state_dependencies, worker_bot_dependencies, worker_workspace_list, worker_workspace_read, worker_state_native_effect, worker_state_plan, worker_state_clear, worker_state_branches, worker_settings_receipts_plan, worker_settings_receipts_clear, worker_state_receipt_get, worker_settings_catalog, worker_settings_read, worker_settings_preview, worker_settings_patch, worker_settings_apply, worker_catalog, worker_runtime_list, worker_account_drain, worker_start, worker_list, worker_status, worker_read, worker_detail, worker_turn_list, worker_record_list, worker_record_read, worker_tool_list, worker_diff, worker_send, worker_respond, worker_cancel, worker_resume, worker_close, worker_remove, worker_work_list, worker_turn_context, worker_turn_observation, worker_event_list, worker_state_read]
   events: all
   description: Loopback WebSocket for Worker reads, exact local-operator Git/transcript/native-session/branch/catalog and settings-receipt maintenance, lifecycle coordination and change notices.

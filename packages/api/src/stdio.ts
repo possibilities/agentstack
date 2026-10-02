@@ -35,9 +35,10 @@ export async function runMcpStdio(name: string, env: NodeJS.ProcessEnv = process
     // Catalog is public within an authorized connection; only Bot-owned requests
     // reach the durable owner. Operators never acquire a wakeup target.
     if (tool === "events_catalog") {
-      return mcpEventCatalog((await installedMcpCatalog(root, pkg)).catalog);
+      const installed = await installedMcpCatalog(root, pkg);
+      return mcpEventCatalog(identity && "workerId" in identity ? installed.workerCatalog : installed.catalog);
     }
-    if (!identity || !("botId" in identity)) throw new Error("event subscriptions require a bot-bound MCP tool call with Codex thread metadata");
+    if (!identity) throw new Error("event subscriptions require a managed Bot or Worker launch binding");
     try { return await socketCall(socketPath("serve", env), "tools/call", { name: "serve_mcp_event", arguments: {
       binding: env.STACK_MCP_BINDING, pkg, tool, arguments: args, threadId: invocation.threadId, sessionId: invocation.sessionId,
     } }, { signal, timeoutMs: 30_000 }) as object; }

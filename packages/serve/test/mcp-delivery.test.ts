@@ -5,10 +5,11 @@ import { join } from "node:path";
 import test from "node:test";
 import { WebSocketServer, type WebSocket } from "ws";
 import { z } from "zod";
-import { botInstance, operation, serveApi, serveSocket, socketCall, socketPath, type CompletionReceipt, type EventTarget, type InvocationContext } from "@stack/api";
+import { botInstance, operation, pollEvent, serveApi, serveSocket, socketCall, socketPath, type CompletionReceipt, type EventTarget, type InvocationContext, type Occurrence } from "@stack/api";
 import { serverCompletionCheck, type ServerContext } from "../api.js";
 import { StatusSource } from "../src/status.js";
 import { authorizeWorkerRead, createMcpEventSubscriptions, verifiedTarget } from "../src/mcp-delivery.js";
+import { serverStateOperations } from "../src/state.js";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function until(check: () => boolean): Promise<void> {
@@ -39,7 +40,7 @@ test("event values are admitted on idle and working sanctioned threads without w
   const root = await mkdtemp("/tmp/as-turn-events-");
   for (const name of ["sample", "worker", "browse", "notify"]) {
     await mkdir(join(root, "packages", name), { recursive: true });
-    await writeFile(join(root, "packages", name, "api.yaml"), `name: ${name}\ndescription: Test.\nmcp:\n  description: Test.\n  operations: all\n  events: all\n`);
+    await writeFile(join(root, "packages", name, "api.yaml"), `name: ${name}\ndescription: Test.\nmcp:\n  description: Test.\n  operations: all\n  events: all\n${name === "sample" ? "  workerEvents: [arrived]\n" : ""}`);
   }
   const env = { STACK_STATE_DIR: root };
   const http = createServer();
@@ -91,24 +92,33 @@ test("event values are admitted on idle and working sanctioned threads without w
       } })],
   });
   let value = 0;
+  const occurrences: Occurrence[] = [];
+  const poll = pollEvent({ name: "arrived", operation: "read_events", description: "Fixture occurrences.", input: z.strictObject({}), payload: z.strictObject({ value: z.number() }),
+    async poll(_ctx, _args, request) { return { events: occurrences.slice(request.cursor === null ? occurrences.length : Number(request.cursor)), cursor: String(occurrences.length), truncated: false, hasMore: false, nextPollMs: 1000 }; } });
   const sample = await serveSocket({
     info: { name: "sample", description: "Sample.", transportDescription: "Socket.", path: socketPath("sample", env) }, context: {},
     operations: [operation({ name: "snapshot", description: "Read state.", input: z.strictObject({}), output: z.object({ value: z.number() }), annotations: { readOnlyHint: true },
-      async call() { return { value }; } })], events: { topics: { changed: "Refresh snapshot." } },
+      async call() { return { value }; } }), poll], events: { topics: { changed: "Refresh snapshot." } },
   });
   const workerId = "11111111-1111-4111-8111-111111111111";
   let workerServer = "bot-1";
   let workerPhase = "running";
+  const workerInstance = "22222222-2222-4222-8222-222222222222";
+  const workerInputs: Record<string, unknown>[] = [];
   const workers = await serveSocket({
     info: { name: "worker", description: "Workers.", transportDescription: "Socket.", path: socketPath("worker", env) }, context: {},
     operations: [operation({ name: "worker_status", description: "Read Worker.", input: z.strictObject({ id: z.string() }), output: z.any(), annotations: { readOnlyHint: true },
-      async call(_ctx, { id }) { assert.equal(id, workerId); return { worker: { id, botId: workerServer, threadId: "child", phase: workerPhase }, turn: { stopReason: workerPhase === "completed" ? "end_turn" : null }, pending: [] }; } })],
+      async call(_ctx, { id }) { assert.equal(id, workerId); return { worker: { id, accountId: "account", botId: workerServer, threadId: "child", phase: workerPhase, sessionId: "exact-session", runtimeInstance: workerInstance }, turn: { stopReason: workerPhase === "completed" ? "end_turn" : null }, pending: [] }; } }),
+      operation({ name: "worker_runtime_list", description: "Fixture runtime.", input: z.strictObject({}), output: z.any(), async call() { return { runtimes: [{ id: "account", instance: workerInstance, state: "running" }] }; } }),
+      operation({ name: "worker_event_receive", description: "Fixture private intake.", input: z.record(z.string(), z.unknown()), output: z.any(), async call(_ctx, args, invocation) {
+        assert.equal(invocation, undefined); workerInputs.push(args); return { deliveryId: args.deliveryId };
+      } })],
     events: { topics: { worker_changed: "Worker changed." }, scope: { description: "Worker ID.", example: workerId, required: false, valid: (_ctx, id) => id === workerId } },
   });
   const subscriptions = createMcpEventSubscriptions(env, root);
   const source = new StatusSource(); source.subscriptions = subscriptions;
   const owner = await serveSocket({ info: { name: "serve", description: "Owner", transportDescription: "Private socket", path: socketPath("serve", env) },
-    context: { source, env } as unknown as ServerContext, operations: [serverCompletionCheck] });
+    context: { source, env } as unknown as ServerContext, operations: [serverCompletionCheck, ...serverStateOperations] });
   const notifications = await serveApi({ name: "notify", transport: "socket", env });
   let handback: unknown = null;
   const browser = await serveSocket({
@@ -241,6 +251,38 @@ test("event values are admitted on idle and working sanctioned threads without w
     dropSubmission = false;
     await socketCall(notifications.socketPath!, "tools/call", { name: "notification_send", arguments: { title: "Unrelated", message: "No retry" } });
     await pause(100); assert.equal(attempts, afterUnknown, "a connection lost after turn/start must not replay an unacknowledged answer");
+    await assert.rejects(subscriptions.occurrences!.subscribe("sample", { name: "arrived", policy: "interrupt" }, invocation), /Unsupported/);
+    await writeFile(join(root, "packages", "sample", "api.yaml"), "name: sample\ndescription: Test.\nmcp:\n  description: Test.\n  operations: all\n  events: all\n  workerEvents: [arrived]\n");
+    await subscriptions.occurrences!.subscribe("sample", { name: "arrived" }, invocation);
+    workerPhase = "idle";
+    const workerInvocation: InvocationContext = { transport: "mcp", botId: null, threadId: "untrusted-other-session", instance: null, sessionId: "untrusted-other-session", workerId, workerInstance };
+    await subscriptions.occurrences!.subscribe("sample", { name: "arrived" }, workerInvocation);
+    const beforeOccurrence = turns.length;
+    occurrences.push({ name: "arrived", eventId: "source-event", timestamp: new Date().toISOString(), data: { value: 42 } });
+    await until(() => turns.length === beforeOccurrence + 1 && workerInputs.length === 1);
+    const nativeEvent = turns.at(-1)!;
+    assert.equal(nativeEvent.threadId, "child"); assert.deepEqual(nativeEvent.input, []);
+    assert.match(nativeEvent.toolOutput.output, /source-event/);
+    assert.match(nativeEvent.toolOutput.output, /not a new human instruction/);
+    assert.equal(workerInputs[0]!.sessionId, "exact-session", "resolve session from the signed Worker's owner, not caller metadata");
+    assert.equal(workerInputs[0]!.instance, workerInstance); assert.equal(workerInputs[0]!.policy, "native");
+    const botReceipts = (await subscriptions.occurrences!.status(invocation))[0]!.deliveries;
+    const workerReceipts = (await subscriptions.occurrences!.status(workerInvocation))[0]!.deliveries;
+    assert.equal(botReceipts[0]!.boundary, "native_admission"); assert.equal(workerReceipts[0]!.boundary, "worker_inbox");
+    const operator = (name: string, args: Record<string, unknown>, caller?: InvocationContext) => socketCall(owner.path, "tools/call", { name, arguments: args, ...(caller ? { invocation: caller } : {}) });
+    const inventory = await operator("serve_occurrence_list", { workerId }) as { subscriptions: Array<{ id: string; revision: string }> };
+    assert.equal(inventory.subscriptions.length, 1);
+    assert.equal(Object.hasOwn(inventory.subscriptions[0]!, "deliveries"), false, "inventories omit potentially large receipt bodies");
+    assert.equal(Object.hasOwn(inventory.subscriptions[0]!, "arguments"), false);
+    const inspected = await operator("serve_occurrence_get", { id: inventory.subscriptions[0]!.id }) as { subscription: { deliveries: Array<{ boundary: string }> } };
+    assert.equal(inspected.subscription.deliveries[0]!.boundary, "worker_inbox");
+    await assert.rejects(operator("serve_occurrence_list", {}, invocation), /operator/);
+    const dependencies = await operator("serve_bot_dependencies", { botId: "bot-1", cwd: root }) as { relationships: Array<{ id: string }> };
+    const botOccurrence = (await subscriptions.occurrences!.status(invocation))[0]!;
+    assert.ok(dependencies.relationships.some(row => row.id === botOccurrence.id), "Bot maintenance must include occurrence input, not just snapshots");
+    await assert.rejects(operator("serve_subscription_remove", { id: inventory.subscriptions[0]!.id, expectedRevision: "stale" }), /revision/);
+    assert.deepEqual(await operator("serve_subscription_remove", { id: inventory.subscriptions[0]!.id, expectedRevision: inventory.subscriptions[0]!.revision }), { id: inventory.subscriptions[0]!.id, removed: true });
+    assert.deepEqual(await subscriptions.occurrences!.status(workerInvocation), []);
   } finally {
     holdAuthorization = false; releaseAuthorization?.();
     await subscriptions.close();

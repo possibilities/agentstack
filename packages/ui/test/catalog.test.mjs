@@ -59,13 +59,17 @@ test("incompatible transport metadata becomes a read error rather than a render 
     : name === "docs_list" ? { packages: [{ name: "brain" }] } : old), /Incompatible API catalog/);
 });
 
-test("MCP discovery requires an explicit effective Worker selection and preserves it", async () => {
-  const doc = { ...brain, transports: [{ ...brain.transports[0], type: "mcp", workerOperations: ["search"] }] };
+test("MCP discovery requires explicit effective Worker read and occurrence selections and preserves them", async () => {
+  const source = { name: "arrived", description: "Research arrived", delivery: ["poll"], inputSchema: {}, payloadSchema: {} };
+  const doc = { ...brain, operations: [...brain.operations, { ...brain.operations[0], name: "poll", eventSource: source }],
+    transports: [{ ...brain.transports[0], type: "mcp", operations: ["search", "poll"], events: ["changed", "arrived"], workerOperations: ["search"], workerEvents: ["arrived"] }] };
   assert.deepEqual(await loadCatalog(async () => ({ packages: [doc] })), [doc]);
-  for (const value of [undefined, "all", ["unknown"]]) {
-    const invalid = { ...doc, transports: [{ ...doc.transports[0], workerOperations: value }] };
-    await assert.rejects(loadCatalog(async name => name === "docs_snapshot" ? { packages: [invalid] }
-      : name === "docs_list" ? { packages: [{ name: "brain" }] } : invalid), /Incompatible API catalog/);
+  for (const [field, values] of [["workerOperations", [undefined, "all", ["unknown"]]], ["workerEvents", [undefined, "all", ["unknown"], ["changed"]]]]) {
+    for (const value of values) {
+      const invalid = { ...doc, transports: [{ ...doc.transports[0], [field]: value }] };
+      await assert.rejects(loadCatalog(async name => name === "docs_snapshot" ? { packages: [invalid] }
+        : name === "docs_list" ? { packages: [{ name: "brain" }] } : invalid), /Incompatible API catalog/, field);
+    }
   }
 });
 

@@ -1,7 +1,7 @@
 import type { PackageApi } from "./operation.js";
 import { packageEventTopics } from "./operation.js";
 import { loadPackageApi } from "./catalog.js";
-import { resolveExposure, resolveWorkerExposure } from "./exposure.js";
+import { declaredEventNames, resolveExposure, resolveWorkerExposure } from "./exposure.js";
 import { serveSocket, type ServedSocket, type SocketServerInfo } from "./socket.js";
 import { assertTransport, findPackage, socketPath, workspaceRoot } from "./workspace.js";
 import { assertInstallationOpen } from "./installation-fence.js";
@@ -30,9 +30,10 @@ export async function serveApi(options: {
   if (Boolean(located.config.http) !== Boolean(api.http?.length))
     throw new Error(`${options.name} HTTP manifest and Package API surfaces disagree`);
   const eventTopics = api.events ? packageEventTopics(options.name, api.events) : undefined;
+  const eventNames = declaredEventNames(eventTopics ?? {}, api.operations);
   for (const type of ["mcp", "websocket"] as const) if (located.config[type])
-    resolveExposure(located.config, type, api.operations.map((op) => op.name), Object.keys(eventTopics ?? {}));
-  if (located.config.mcp) resolveWorkerExposure(located.config, api.operations, Object.keys(eventTopics ?? {}));
+    resolveExposure(located.config, type, api.operations.map((op) => op.name), type === "mcp" ? eventNames : Object.keys(eventTopics ?? {}));
+  if (located.config.mcp) resolveWorkerExposure(located.config, api.operations, eventNames);
   let socket: ServedSocket | undefined;
   let stopEvents: (() => void) | void = undefined;
   let context: unknown;

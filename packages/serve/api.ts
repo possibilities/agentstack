@@ -106,7 +106,7 @@ export const serverStatus = operation({
 });
 
 export const serverMcpEvent = operation({
-  name: "serve_mcp_event", description: "Private-socket-only generated MCP event relay to the sole subscription owner. Independently verifies the signed Bot launch and sanctioned per-call thread. Never exposed through MCP or WebSocket.",
+  name: "serve_mcp_event", description: "Private-socket-only generated MCP event relay to the sole subscription owner. Verifies signed Bot launch and sanctioned Chat, or exact Worker/runtime identity. Workers may attach only explicitly selected occurrence sources; Bot snapshot/completion watches stay separate. Never exposed through MCP or WebSocket.",
   input: mcpEventRelayInput, output: z.record(z.string(), z.unknown()),
   async call(ctx: ServerContext, input, invocation) {
     if (invocation) throw new Error("MCP event relay requires the private socket");
@@ -196,7 +196,7 @@ export const serverHarnessReleasesCheck = operation({
 });
 
 export const topics = {
-  serve_state_changed: "Durable operator-managed subscription state changed. Refresh serve_subscription_list and affected state inventories; no payloads are included.",
+  serve_state_changed: "Durable subscription state changed. Refresh serve_subscription_list, serve_occurrence_list and affected state inventories; no payloads are included.",
   pids_changed: "Published when the set of owned child process ids changes.",
   codex_tools_changed: "Published when a Codex tools check starts or finishes. Refresh serve_codex_tools.",
   resources_changed: "Published after a resource sampling attempt, including failures. Refresh serve_resources or serve_resource_history; notices carry no metrics.",

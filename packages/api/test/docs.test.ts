@@ -9,14 +9,14 @@ import { forwardTimeouts } from "../src/forward-timeout.js";
 import type { CompletionWatch } from "../src/operation.js";
 
 type TransportDoc = { type: string; description: string; supported: boolean; subscriptions: boolean; endpoint: string | null;
-  operations: string[]; workerOperations: string[]; events: string[]; routes: Array<{ surface: string; surfaceDescription: string; kind: "json" | "static"; authentication: "bearer" | "none";
+  operations: string[]; workerOperations: string[]; workerEvents: string[]; events: string[]; routes: Array<{ surface: string; surfaceDescription: string; kind: "json" | "static"; authentication: "bearer" | "none";
     method: string; path: string; description: string; format: string; operation: string | null;
     inputSchema: Record<string, unknown> | null; querySchema: Record<string, unknown> | null;
     outputSchema: Record<string, unknown> | null; errorSchema: Record<string, unknown> | null }> };
 type OperationDoc = { name: string; title: string | null; description: string; standalone: boolean; annotations: Record<string, unknown>; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown>;
   completionWatch: CompletionWatch | null };
 type PackageDoc = { name: string; description: string; packageName: string; operations: OperationDoc[]; events: Record<string, string>; eventScope: { description: string; example: string; required: boolean } | null; transports: TransportDoc[] };
-const stateOperation = (name: string) => /_factory_reset_|_state_|_bot_dependencies$|_history_(plan|clear)$|_catalog_clear$|_settings_receipts_(plan|clear)$|^browser_(profile_reset_|site_data_|volume_|handoff_history_)|^role_launch_(list|plan|clear)$|^worker_account_cache_(plan|clear)$|^attention_checkpoint_(plan|reset)$|^brain_(jobs|runs|source|artifacts)_(plan|clear)$|^scrape_(queue_(plan|apply)$|corpus_(list|plan|clear)$)|^serve_subscription_|^bot_(workspace_|history_|log_|launch_|recovery_|session_reset$|upload_remove$|queue_history$|queue_bodies_clear$)|^chat_upload_(list|read)$|^content_(blob_list|storage_|publication_)|^blob_stage_(list|abort)$|^attention_infer_requests$|^usage_observations_|^xcom_control$|^worker_workspace_|^work_focus_(list|retire)/.test(name);
+const stateOperation = (name: string) => /_factory_reset_|_state_|_bot_dependencies$|_history_(plan|clear)$|_catalog_clear$|_settings_receipts_(plan|clear)$|^browser_(profile_reset_|site_data_|volume_|handoff_history_)|^role_launch_(list|plan|clear)$|^worker_account_cache_(plan|clear)$|^attention_checkpoint_(plan|reset)$|^brain_(jobs|runs|source|artifacts)_(plan|clear)$|^scrape_(queue_(plan|apply)$|corpus_(list|plan|clear)$)|^serve_(subscription|occurrence)_|^bot_(workspace_|history_|log_|launch_|recovery_|session_reset$|upload_remove$|queue_history$|queue_bodies_clear$)|^chat_upload_(list|read)$|^content_(blob_list|storage_|publication_)|^blob_stage_(list|abort)$|^attention_infer_requests$|^usage_observations_|^xcom_control$|^worker_workspace_|^work_focus_(list|retire)/.test(name);
 
 test("the api package serves structured documents for every workspace package", { timeout: 60_000 }, async () => {
   assert.equal(docsSnapshot.name, "docs_snapshot");
@@ -100,7 +100,7 @@ test("the api package serves structured documents for every workspace package", 
         assert.equal(doc.operations.find(op => op.name === name)?.annotations.readOnlyHint, true);
       }
     }
-    for (const pkg of ["auth", "bots", "browse", "source", "hud", "notify", "serve", "proc", "scrape", "usage", "xcom"])
+    for (const pkg of ["auth", "bots", "browse", "hud", "notify", "serve", "proc", "scrape", "usage", "xcom"])
       assert.deepEqual(found.get(pkg)!.transports.find(t => t.type === "mcp")!.workerOperations, []);
     assert.deepEqual(found.get("api")!.transports.find(t => t.type === "mcp")!.workerOperations, ["docs_list", "docs_get", "docs_snapshot"]);
     assert.deepEqual(found.get("roles")!.transports.find(t => t.type === "mcp")!.workerOperations, ["roles_snapshot", "role_internal_mcp_list", "role_snapshot", "role_preview"]);
@@ -112,6 +112,10 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(source.transports.find(t => t.type === "socket")!.endpoint, join(stateDir, "sockets", "source.sock"));
     const sourceMcp = source.transports.find(t => t.type === "mcp")!;
     assert.equal(sourceMcp.endpoint, "http://127.0.0.1:8743/mcp/source");
+    assert.deepEqual(sourceMcp.workerEvents, ["github_delivery"]);
+    assert.deepEqual(sourceMcp.workerOperations, ["github_watch_events"]);
+    for (const transport of found.get("worker")!.transports.filter(t => t.type !== "socket"))
+      assert.ok(!transport.operations.includes("worker_event_receive"), "native intake remains owner-only, not a transport-disclosed mutation");
     assert.ok(sourceMcp.operations.includes("github_watch_read") && sourceMcp.events.includes("github_watches_changed"));
     assert.ok(!sourceMcp.operations.includes("github_endpoint_secret_reveal") && !sourceMcp.operations.includes("github_hook_apply"));
     const webhookRoute = source.transports.find(t => t.type === "http")!.routes[0]!;
@@ -384,7 +388,7 @@ test("the api package serves structured documents for every workspace package", 
     assert.equal(workers.eventScope?.required, false);
     assert.deepEqual(workers.operations.map((operation) => operation.name).filter(name => !stateOperation(name)), ["worker_settings_catalog", "worker_settings_read", "worker_settings_preview", "worker_settings_patch", "worker_settings_apply", "worker_catalog", "worker_runtime_list", "worker_account_drain",
       "worker_start", "worker_list", "worker_status", "worker_read", "worker_detail", "worker_turn_list", "worker_record_list", "worker_record_read", "worker_tool_list",
-      "worker_diff", "worker_send", "worker_respond", "worker_cancel", "worker_resume", "worker_close", "worker_remove", "worker_work_list", "worker_turn_context", "worker_turn_observation"]);
+      "worker_diff", "worker_send", "worker_respond", "worker_cancel", "worker_resume", "worker_close", "worker_remove", "worker_work_list", "worker_turn_context", "worker_turn_observation", "worker_event_receive", "worker_event_list"]);
     for (const name of ["worker_list", "worker_detail", "worker_turn_list", "worker_record_list", "worker_record_read", "worker_tool_list", "worker_diff"]) {
       assert.equal(workers.operations.find((operation) => operation.name === name)?.annotations.readOnlyHint, true);
     }

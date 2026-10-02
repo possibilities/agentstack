@@ -25,6 +25,7 @@ const transportSchema = z
 // Worker disclosure is opt-in, independent of mutation hints and event exposure.
 const mcpSchema = transportSchema.extend({
   workerOperations: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)).default([]),
+  workerEvents: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)).default([]),
 });
 
 const httpSchema = z.object({

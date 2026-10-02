@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, ListToolsRequestSchema, McpError, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
+import { pollInput, pollOutput } from "./occurrence.js";
 import { socketPath } from "./workspace.js";
-import { currentMcpCatalog, currentWorkerCatalog, installedMcpCatalog } from "./exposure.js";
+import { currentMcpCatalog, currentWorkerCatalog, installedMcpCatalog, type SocketCatalog } from "./exposure.js";
 import { mcpInvocation, type McpIdentity } from "./mcp-authority.js";
 import { subscriptionTools, type McpEventCall } from "./mcp-events.js";
 import { socketCall, SocketCallError } from "./socket.js";
@@ -17,7 +19,9 @@ import { assertInstallationOpen } from "./installation-fence.js";
 export function packageMcpServer(name: string, description: string, root: string, env: NodeJS.ProcessEnv,
   identity: McpIdentity, checkAuthority: () => Promise<void>, events?: McpEventCall,
   stdio?: { checkCatalogAuthority(): Promise<void> }): Server {
-  const mcp = new Server({ name, version: "0.0.0" }, { capabilities: { tools: {} }, instructions: description });
+  // SDK preserves extension capabilities, though its released type predates this draft.
+  const capabilities = { tools: {}, events: {} };
+  const mcp = new Server({ name, version: "0.0.0" }, { capabilities, instructions: description });
   const worker = identity && "workerId" in identity;
   const selection = async () => {
     if (stdio) return installedMcpCatalog(root, name);
@@ -25,13 +29,47 @@ export function packageMcpServer(name: string, description: string, root: string
     return { api: undefined, catalog, workerCatalog: worker ? await currentWorkerCatalog(root, name, env) : catalog,
       exposure: { operations: catalog.tools.map(tool => tool.name), events: Object.keys(catalog.events?.topics ?? {}) } };
   };
-  const eventTools = (topics: string[]) => !worker && events && topics.length ? subscriptionTools : [];
+  const eventTools = (topics: string[], catalog: SocketCatalog) => {
+    if (!events) return [];
+    const occurrences = catalog.tools.some(tool => tool.eventSource);
+    return subscriptionTools.filter(tool => tool.name === "events_listen" ? occurrences
+      : worker ? occurrences && ["events_catalog", "events_status", "events_unsubscribe"].includes(tool.name) : topics.length || occurrences);
+  };
+  // Draft poll methods are protocol requests, not model tools. Internal stdio
+  // lists installed descriptors; execution always visits the live source owner.
+  mcp.setRequestHandler(z.object({ method: z.literal("events/list"), params: z.object({ cursor: z.string().optional() }).passthrough().optional() }), async ({ params }) => {
+    await (stdio?.checkCatalogAuthority ?? checkAuthority)();
+    if (params?.cursor) throw new McpError(-32602, "InvalidParams", { reason: "pagination_cursor" });
+    const selected = await selection();
+    const sources = (worker ? selected.workerCatalog : selected.catalog).tools.flatMap(tool => tool.eventSource ? [tool.eventSource] : []);
+    await (stdio?.checkCatalogAuthority ?? checkAuthority)();
+    return { events: sources };
+  });
+  mcp.setRequestHandler(z.object({ method: z.literal("events/poll"), params: pollInput.extend({ _meta: z.record(z.string(), z.unknown()).optional() }) }), async ({ params }, extra) => {
+    await checkAuthority(); assertInstallationOpen(env); extra.signal.throwIfAborted();
+    const selected = await selection();
+    const source = (worker ? selected.workerCatalog : selected.catalog).tools.find(tool => tool.eventSource?.name === params.name);
+    if (!source) throw new McpError(-32011, "NotFound", { kind: "event" });
+    const { _meta, ...request } = params;
+    const value = await socketCall(socketPath(name, env), "tools/call", { name: source.name, arguments: request,
+      invocation: mcpInvocation(identity, _meta) }, { signal: extra.signal });
+    const current = await selection();
+    if (!(worker ? current.workerCatalog : current.catalog).tools.some(tool => tool.name === source.name && tool.eventSource?.name === params.name))
+      throw new McpError(-32012, "Forbidden", { kind: "event" });
+    await checkAuthority(); assertInstallationOpen(env); extra.signal.throwIfAborted();
+    return pollOutput.parse(value);
+  });
+  for (const method of ["events/stream", "events/subscribe", "events/unsubscribe"] as const)
+    mcp.setRequestHandler(z.object({ method: z.literal(method), params: z.record(z.string(), z.unknown()).optional() }), async () => {
+      await checkAuthority();
+      throw new McpError(-32014, "Unsupported", { feature: "deliveryMode", supported: ["poll"] });
+    });
   mcp.setRequestHandler(ListToolsRequestSchema, async () => {
     const check = stdio?.checkCatalogAuthority ?? checkAuthority;
     await check();
     const { catalog, exposure, workerCatalog } = await selection();
     const listed = worker ? workerCatalog : catalog;
-    const generated = eventTools(exposure.events);
+    const generated = eventTools(exposure.events, listed);
     if (generated.some(tool => listed.tools.some(item => item.name === tool.name))) throw new Error(`${name} has an operation reserved for MCP event subscriptions`);
     await check();
     return { tools: [...listed.tools.map(tool => ({ ...tool, title: tool.annotations?.title })), ...generated] };
@@ -42,12 +80,12 @@ export function packageMcpServer(name: string, description: string, root: string
       assertInstallationOpen(env);
       const { api, catalog, exposure, workerCatalog } = await selection();
       if (worker) {
-        if (params.name.startsWith("events_")) throw new Error("worker MCP connections cannot subscribe Bot threads");
-        if (!workerCatalog.tools.some(tool => tool.name === params.name)) throw new Error("operation is not selected for Worker disclosure");
+        if (params.name === "events_subscribe") throw new Error("worker MCP connections cannot subscribe Bot threads");
+        if (!eventTools(exposure.events, workerCatalog).some(tool => tool.name === params.name) && !workerCatalog.tools.some(tool => tool.name === params.name)) throw new Error("operation is not selected for Worker disclosure");
       }
       const invocation = mcpInvocation(identity, params._meta);
       if (subscriptionTools.some(tool => tool.name === params.name)) {
-        if (!eventTools(exposure.events).length) throw new Error("event subscriptions are unavailable over mcp");
+        if (!eventTools(exposure.events, worker ? workerCatalog : catalog).some(tool => tool.name === params.name)) throw new Error("event subscriptions are unavailable over mcp");
         const result = await events!(name, params.name, params.arguments ?? {}, invocation, extra.signal);
         await checkAuthority();
         return { structuredContent: result, content: [{ type: "text", text: JSON.stringify(result) }] };

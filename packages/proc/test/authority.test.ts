@@ -122,11 +122,12 @@ test("opt-in Proc watches bind the originating Chat before execution and observe
   try {
     const result = await owner.callAndWatch("proc", "proc_run_start", { requestId, process: processSpec, subscribe: true }, f.caller());
     const receipt = result.subscription as { id: string; state: string };
-    assert.equal(result.id, requestId); assert.equal(owner.operatorList()[0]?.scope, requestId);
+    assert.equal(result.id, requestId);
     await f.context.service.join(requestId, 5_000);
     for (let n = 0; n < 300 && owner.status(f.caller(), receipt.id).completions[0]?.state !== "delivered"; n++) await new Promise(resolve => setTimeout(resolve, 10));
     assert.equal(owner.status(f.caller(), receipt.id).completions[0]?.state, "delivered");
     assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0]!.subscription.scope, requestId, "scope stays bound even if the fast process completes before admission returns");
     assert.equal((deliveries[0]!.value as { result: { exitCode: number } }).result.exitCode, 0);
     assert.ok(!JSON.stringify(deliveries[0]!.value).includes("owned-output"), "output/argv must not enter the exit watch");
     await assert.rejects(f.call("proc_run_completion", { id: requestId }, f.caller("a", "root-a")), /another Chat/);

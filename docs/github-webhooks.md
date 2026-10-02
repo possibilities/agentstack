@@ -13,6 +13,33 @@ migration is required. Its generic inventory is `source_state_read`, and new
 maintenance plans/receipts identify `source` as owner; existing receipts retain
 their original owner as history.
 
+## Typed occurrence polling and managed runtime delivery
+
+The `source` MCP connection also exposes draft `events/list` and `events/poll`.
+`github_delivery` takes `{id: <watch UUID>}` and delivers typed summary payloads,
+not original request bodies. A null cursor starts now; preserve the opaque cursor
+to replay retained arrivals. `maxAgeMs` bounds age, `maxEvents` caps each page,
+`hasMore` signals another page and `truncated` discloses skipped old entries.
+Disabled watches pause without advancing their cursor. Neither polling nor native
+delivery acknowledges `github_watch_read` entries.
+
+For a verified Bot Chat or Worker, the Stack-generated tool can own that poll loop:
+
+```json
+{"name":"events_listen","arguments":{"name":"github_delivery","arguments":{"id":"<watch UUID>"},"policy":"native"}}
+```
+
+The invoking identity determines the conversation. Bots use native Codex
+start-or-steer; OpenCode/Devin ACP and Claude SDK Workers use a durable inbox and
+recorded same-session follow-up once idle. Worker-only `policy:"interrupt"` requests
+active-turn cancellation first; it is never the default. `events_status` distinguishes
+`native_admission` from `worker_inbox`; neither proves processing. Inspect a Worker's
+`worker_event_list` and its linked turn for the later native outcome. Unknown
+delivery/turn/interruption never automatically replays. See
+[ADR 0160](adr/0160-poll-occurrences-and-runtime-event-intake.md) for authority,
+capacity and recovery boundaries. This poll profile is not ChatGPT webhook/MCP 2.0
+integration.
+
 ## Runtime and publication
 
 | Setting | Default | Contract |

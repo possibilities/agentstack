@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { InvocationContext } from "./invocation.js";
+import type { EventSource } from "./occurrence.js";
 export type { InvocationContext } from "./invocation.js";
 
 export type McpContent = CallToolResult["content"];
@@ -49,6 +50,7 @@ export type AnyOperation<Ctx> = {
   output: z.ZodType;
   annotations?: Annotations;
   completionWatch?: CompletionWatch;
+  eventSource?: EventSource;
   // Erase the standalone context at the heterogeneous package boundary. The
   // operation factory checks it against the handler's (possibly narrower) Ctx.
   standalone?: NoInfer<StandaloneContext<any>>;
@@ -126,6 +128,7 @@ export function operation<Ctx, InputSchema extends z.ZodType, OutputSchema exten
   output: OutputSchema;
   annotations?: Annotations;
   completionWatch?: CompletionWatch;
+  eventSource?: EventSource;
   standalone?: StandaloneContext<Ctx>;
   call(ctx: Ctx, input: z.infer<InputSchema>, invocation?: InvocationContext): Promise<z.infer<OutputSchema>>;
   mcpContent?(ctx: Ctx, input: z.infer<InputSchema>, output: z.infer<OutputSchema>): McpContent | Promise<McpContent>;
@@ -136,6 +139,7 @@ export function operation<Ctx, InputSchema extends z.ZodType, OutputSchema exten
   output: OutputSchema;
   annotations?: Annotations;
   completionWatch?: CompletionWatch;
+  eventSource?: EventSource;
   standalone?: NoInfer<StandaloneContext<Ctx>>;
   call(ctx: Ctx, input: z.infer<InputSchema>, invocation?: InvocationContext): Promise<z.infer<OutputSchema>>;
   mcpContent?(ctx: Ctx, input: z.infer<InputSchema>, output: z.infer<OutputSchema>): McpContent | Promise<McpContent>;

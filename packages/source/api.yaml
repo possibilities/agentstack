@@ -4,7 +4,8 @@ socket:
   description: Full local GitHub control, webhook setup, delivery reads, watches and owner maintenance. Receiver secrets and remote hook changes require local operator authority.
 mcp:
   workerOperations: []
-  operations: [github_status, github_event_catalog, github_event_schema, github_endpoint_list, github_endpoint_get, github_setup_read, github_delivery_list, github_delivery_get, github_delivery_payload, github_watch_create, github_watch_list, github_watch_get, github_watch_read, github_watch_update, github_watch_acknowledge, github_watch_remove]
+  workerEvents: [github_delivery]
+  operations: [github_watch_events, github_status, github_event_catalog, github_event_schema, github_endpoint_list, github_endpoint_get, github_setup_read, github_delivery_list, github_delivery_get, github_delivery_payload, github_watch_create, github_watch_list, github_watch_get, github_watch_read, github_watch_update, github_watch_acknowledge, github_watch_remove]
   events: all
   description: Agent discovery, durable delivery reads and filtered watch inboxes. Existing Stack events_subscribe drives scoped Bot snapshots; receiver credentials and remote setup remain local operator controls.
 websocket:
