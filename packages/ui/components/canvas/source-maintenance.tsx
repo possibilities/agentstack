@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { localOperations, stateOperations } from "@/lib/stack/state";
+import { listRecoveries, localOperations, readRecovery, stateOperations } from "@/lib/stack/state";
 import type { GithubDelivery } from "@/lib/stack/types";
 import { useStack, useStore } from "./provider";
-import { sourceHint } from "./source-shared";
+import { sourceHint, Stamp } from "./source-shared";
 import { MaintenanceDisclosure, StateFlowView, useStateFlow } from "./state-flow";
 
 export const maxPayloadClears = 100;
@@ -36,12 +36,37 @@ export function ClearPayloads({ chosen, retained, onSelectRetained, onClearSelec
   return <Flow chosen={chosen} retained={retained} onSelectRetained={onSelectRetained} onClearSelection={onClearSelection} onOpenChange={onOpenChange} onLockChange={onLockChange} />;
 }
 
+const historyPrefix = "source:history:";
+
+/**
+ * Saved clear requests left without a confirmed result, from any selection. Recovery is keyed by the exact choice, so
+ * it must not depend on choosing the same deliveries again: every unconfirmed request is listed here until the person
+ * reads its receipt and closes it.
+ */
+function usePendingClears(currentKey: string): { keys: string[]; close(key: string): void } {
+  const [seen, setSeen] = useState<string[]>([]);
+  const scan = useCallback(() => {
+    const found = listRecoveries(historyPrefix).map((item) => item.key);
+    setSeen((held) => { const next = [...new Set([...held, ...found])]; return next.length === held.length ? held : next; });
+  }, []);
+  // A selection that is no longer chosen leaves its saved request behind: look again whenever the chosen set changes.
+  useEffect(() => { scan(); }, [scan, currentKey]);
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => { if (event.key === null || event.key.includes(historyPrefix)) scan(); };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [scan]);
+  return { keys: seen.filter((key) => key !== currentKey), close: (key) => setSeen((held) => held.filter((item) => item !== key)) };
+}
+
 function Flow({ chosen, retained, onSelectRetained, onClearSelection, onOpenChange, onLockChange }: Parameters<typeof ClearPayloads>[0]) {
   const state = useStack();
   const store = useStore();
+  const currentKey = `${historyPrefix}${hash(chosen.join(","))}`;
+  const pending = usePendingClears(currentKey);
   const controls = useStateFlow({
     operations: stateOperations(store.call, "source", operations, { sequences: chosen }),
-    recoveryKey: `source:history:${hash(chosen.join(","))}`, observe: state.sourceGeneration,
+    recoveryKey: currentKey, observe: state.sourceGeneration,
     onReceipt: (receipt) => { if (receipt.status !== "running") store.refreshSourceDeliveries(); },
   });
   const locked = controls.flow.phase !== "idle";
@@ -50,7 +75,12 @@ function Flow({ chosen, retained, onSelectRetained, onClearSelection, onOpenChan
     : !chosen.length ? "Choose between 1 and 100 deliveries whose original payload is retained."
     : chosen.length > maxPayloadClears ? `A plan covers at most ${maxPayloadClears} deliveries; ${chosen.length} are chosen.` : null;
   return (
-    <MaintenanceDisclosure active={locked} aside="Clear original payloads" onOpenChange={onOpenChange} title="Maintenance">
+    <MaintenanceDisclosure active={locked || pending.keys.length > 0} aside={pending.keys.length ? `${pending.keys.length} unconfirmed` : "Clear original payloads"} onOpenChange={onOpenChange} title="Maintenance">
+      {pending.keys.length ? (
+        <section aria-label="Unconfirmed clear requests" className="flex flex-col gap-2">
+          {pending.keys.map((key) => <PendingClear key={key} recoveryKey={key} onClosed={() => pending.close(key)} />)}
+        </section>
+      ) : null}
       <p className={sourceHint}>Clear the original signed request body of exact deliveries to free retained-payload space. Their summaries, digests, duplicate fences, watch matches and acknowledgements stay; nothing is deleted from the ledger and no watch entry is acknowledged.</p>
       <p className={sourceHint}>This is logical removal, not secure erasure, and a cleared body is not restored by GitHub redelivering it. It does not retrieve deliveries GitHub could not make while storage was full.</p>
       <div className="flex flex-wrap items-center gap-1.5">
@@ -60,5 +90,34 @@ function Flow({ chosen, retained, onSelectRetained, onClearSelection, onOpenChan
       </div>
       <StateFlowView controls={controls} label="Prepare clearing original payloads" applyLabel="Clear original payloads" unavailable={unavailable} />
     </MaintenanceDisclosure>
+  );
+}
+
+/**
+ * One saved request from a selection that is no longer chosen. Only its receipt is read: nothing here sends the request
+ * again or prepares a plan, and forgetting it does not undo or cancel what the owner may have done.
+ */
+function PendingClear({ recoveryKey, onClosed }: { recoveryKey: string; onClosed(): void }) {
+  const state = useStack();
+  const store = useStore();
+  const saved = readRecovery(recoveryKey);
+  const controls = useStateFlow({
+    operations: stateOperations(store.call, "source", operations, { sequences: [] }),
+    recoveryKey, observe: state.sourceGeneration,
+    onReceipt: (receipt) => { if (receipt.status !== "running") store.refreshSourceDeliveries(); },
+  });
+  const left = useRef(false);
+  useEffect(() => {
+    if (controls.flow.phase !== "idle") left.current = true;
+    else if (left.current) onClosed();
+  }, [controls.flow.phase, onClosed]);
+  const forget = () => { controls.reset(); onClosed(); };
+  return (
+    <div role="group" aria-label={`Unconfirmed clear request ${saved?.input.requestId.slice(0, 8) ?? ""}`} className="flex flex-col gap-2 rounded-lg border border-warning/50 p-2.5">
+      <p className="text-[0.74rem] font-medium">Unconfirmed clear request{saved ? <> from <Stamp at={saved.at} className="font-normal text-muted-foreground" /></> : null}</p>
+      <p className={sourceHint}>An earlier choice has no confirmed result: the owner&rsquo;s receipt for this request ID is the only evidence of what it did. Reading it changes nothing; it is not sent again.</p>
+      {controls.flow.phase !== "idle" ? <StateFlowView controls={controls} label="Read receipt" unavailable={null} receiptOnlyRecovery /> : <p className={sourceHint}>Reading the receipt…</p>}
+      <div><Button size="xs" variant="ghost" onClick={forget}>Forget this request</Button></div>
+    </div>
   );
 }

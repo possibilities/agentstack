@@ -289,6 +289,20 @@ export function clearRecovery(key: string): void {
   try { localStorage.removeItem(recoveryPrefix + key); } catch { /* recovery is a convenience */ }
 }
 
+/** Every saved request whose key starts with `prefix`, so a view can show requests left unconfirmed by a selection that is no longer chosen. */
+export function listRecoveries(prefix: string): { key: string; at: number }[] {
+  const found: { key: string; at: number }[] = [];
+  try {
+    for (let index = 0; index < localStorage.length; index++) {
+      const stored = localStorage.key(index);
+      if (!stored?.startsWith(recoveryPrefix + prefix)) continue;
+      const key = stored.slice(recoveryPrefix.length), saved = readRecovery(key);
+      if (saved) found.push({ key, at: saved.at });
+    }
+  } catch { /* recovery is a convenience */ }
+  return found.sort((a, b) => a.at - b.at);
+}
+
 export type StateFlowOptions<Extra extends Record<string, string> = Record<string, never>> = {
   operations: StateOperations<Extra>;
   /** Owner routing identity every apply needs, such as a Bot's `botId`. Never content or credentials. */
