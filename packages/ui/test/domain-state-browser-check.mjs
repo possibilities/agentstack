@@ -468,7 +468,7 @@ try {
   // System State: unsupported coverage is stated, and each owner links to its controls.
   await go("system");
   const state = page.locator('[data-window="state"]');
-  await state.getByText("In-place Git reset, native-session reset or purge", { exact: false }).waitFor();
+  await state.getByText("Native purge requires disabled/drained accounts", { exact: false }).waitFor();
   await state.getByRole("region", { name: "worker state" }).getByRole("button", { name: "Open in Workers" }).waitFor();
   await shot("state-owner-links", state);
 
