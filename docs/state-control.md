@@ -205,6 +205,8 @@ released through this API; inspect exact resources and preserve evidence. Comple
 reset also stays startup-fenced until exact request/new-generation release proves
 writer absence and an empty root. Release starts nothing; a later explicit Server
 start creates fresh defaults and a fresh Access identity, requiring new pairing.
+System's local State window restates this lifecycle and the cold commands in a read-only
+disclosure on Serve's `factory-reset` category; it has no reset control.
 See [ADR 0158](adr/0158-installation-factory-reset.md).
 
 ## Coverage boundaries
