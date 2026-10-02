@@ -18,6 +18,15 @@ export type GithubWatch = { id: string; label: string; filter: GithubFilter; ena
 export type GithubWatchRead = { watch: GithubWatch; entries: GithubDelivery[]; pending: number; through: number; nextCursor: number | null };
 export type GithubRemoteReceipt = { requestId: string; endpointId: string; action: string; status: "running" | "succeeded" | "failed" | "unknown";
   hookId: number | null; startedAt: string; completedAt: string | null; error: string | null };
+/** A hook as GitHub reports it (secrets are never part of it), a reviewed hook plan, and the upstream records of the gh-backed operations. */
+export type GithubHook = { id: number; active: boolean; events: string[]; url: string; contentType: string | null; insecureSsl: string | null; updatedAt: string | null };
+export type GithubHookPlan = { id: string; endpointId: string; endpointRevision: number; action: "create" | "update"; hookId: number | null; webhookUrl: string; events: string[];
+  observedRevision: string; expiresAt: string; consequences: string[] };
+export type GithubAuthStatus = { available: boolean; authenticated: boolean; login: string | null; error: string | null };
+export type GithubRepositoryEntry = { id: number; repository: string; private: boolean; url: string; admin: boolean | null; archived: boolean };
+export type GithubOrganizationEntry = { id: number; login: string };
+export type GithubAttempt = { id: number; guid: string; deliveredAt: string; redelivery: boolean; duration: number; status: string; statusCode: number; event: string; action: string | null };
+export type GithubAttemptPage = { entries: GithubAttempt[]; nextCursor: string | null };
 export type GithubStatus = { ingress: { host: "127.0.0.1"; port: number; route: string; maxBodyBytes: number }; endpoints: number; watches: number; latestSequence: number;
   payloads: { bytes: number; count: number; maxBytes: number; maxCount: number } };
 export type GithubSetupStep = { id: string; state: string; title: string; detail: string };

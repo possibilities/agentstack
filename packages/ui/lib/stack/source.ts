@@ -449,7 +449,9 @@ export type ReceiverFact = { id: "local" | "public" | "remote" | "receipt" | "ar
  * The five separate facts about a receiver. None implies another: saved locally is not published, published is not
  * configured at GitHub, a request is not an arrival, and one arrival is not coverage of every selected event.
  */
-export function receiverFacts(endpoint: GithubEndpoint, setup: GithubSetup | null, when: (iso: string) => string = (iso) => iso): ReceiverFact[] {
+export function receiverFacts(endpoint: GithubEndpoint, setup: GithubSetup | null, when: (iso: string) => string = (iso) => iso,
+  /** The requests this browser recorded (hook, ping, redelivery) and the owner's receipt for each; absent where none can be recorded (a remote view). */
+  receipt?: { word: string; tone: Tone; lines: string[] }): ReceiverFact[] {
   const local = [`Configuration revision ${endpoint.revision} · secret version ${endpoint.secretVersion}`];
   if (endpoint.previousSecretExpiresAt) local.push(`The previous secret is also accepted until ${when(endpoint.previousSecretExpiresAt)}`);
   const automated = setup?.automatedHookManagement ?? (endpoint.githubHost.toLowerCase() === "github.com" && (endpoint.target.kind === "repository" || endpoint.target.kind === "organization"));
@@ -465,8 +467,8 @@ export function receiverFacts(endpoint: GithubEndpoint, setup: GithubSetup | nul
     { id: "remote", title: "Remote configuration", word: endpoint.managedHookId ? `Hook ${endpoint.managedHookId} recorded` : automated ? "No managed hook recorded" : "Set up by hand",
       tone: endpoint.managedHookId ? "info" : "muted",
       lines: [automated ? "Stack records the hook it last applied; GitHub may have changed since." : "This target is configured manually on GitHub; Stack records nothing about it."] },
-    { id: "receipt", title: "Request receipt", word: "None read here", tone: "muted",
-      lines: ["Hook plans, pings and redeliveries are not requested from this view. A request being admitted by GitHub would still not be a signed arrival."] },
+    { id: "receipt", title: "Request receipt", word: receipt?.word ?? "None recorded", tone: receipt?.tone ?? "muted",
+      lines: receipt?.lines ?? ["No hook, ping or redelivery request is recorded here. A request being admitted by GitHub would still not be a signed arrival."] },
     { id: "arrival", title: "Signed arrival", word: endpoint.lastDeliveryAt ? "Delivery observed" : endpoint.lastPingAt ? "Ping observed" : "None observed", tone: endpoint.lastDeliveryAt ? "success" : endpoint.lastPingAt ? "info" : "muted", lines: arrival },
   ];
 }

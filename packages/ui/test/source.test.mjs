@@ -286,10 +286,10 @@ test("the receiver's five facts stay separate: nothing implies another", () => {
     lastDeliveryAt: null, lastPingAt: null, accepted: 0, duplicates: 0, rejected: 0, lastFailure: null, managedHookId: null, boundTargetId: null };
   let facts = source.receiverFacts(endpoint, null);
   assert.deepEqual(facts.map((fact) => fact.id), ["local", "public", "remote", "receipt", "arrival"]);
-  assert.deepEqual(facts.map((fact) => fact.word), ["Enabled", "Origin not set", "No managed hook recorded", "None read here", "None observed"]);
+  assert.deepEqual(facts.map((fact) => fact.word), ["Enabled", "Origin not set", "No managed hook recorded", "None recorded", "None observed"]);
   assert.ok(facts.every((fact) => fact.word !== "Connected"));
   facts = source.receiverFacts({ ...endpoint, enabled: false, webhookUrl: "https://hooks.example.com/github/webhooks/x", managedHookId: 17, lastPingAt: "2026-10-01T10:00:00.000Z", target: { kind: "app" } }, null);
-  assert.deepEqual(facts.map((fact) => fact.word), ["Disabled", "Origin set", "Hook 17 recorded", "None read here", "Ping observed"]);
+  assert.deepEqual(facts.map((fact) => fact.word), ["Disabled", "Origin set", "Hook 17 recorded", "None recorded", "Ping observed"]);
   facts = source.receiverFacts({ ...endpoint, target: { kind: "app" }, lastDeliveryAt: "2026-10-01T11:00:00.000Z" }, null);
   assert.equal(facts[2].word, "Set up by hand");
   assert.equal(facts[4].word, "Delivery observed");
