@@ -446,3 +446,69 @@ test("Codex availability is its own axis, and uncertain observations never read 
   assert.equal(roles.codexAvailability(connection("available", "2026-09-29T10:00:00Z"), true, false, now).stale, true);
   assert.equal(roles.codexAvailability(connection("available"), true, false, now).stale, false);
 });
+
+test("harness filter drafts parse exactly, emit canonical text and block on pending or bad input", () => {
+  // Canonical order makes a stored ["claude","codex"] equal a UI-produced ["codex","claude"].
+  assert.equal(roles.harnessText(["claude", "codex"]), '["codex","claude"]');
+  assert.equal(roles.harnessText(null), "null");
+  assert.equal(roles.harnessText(undefined), "null");
+  assert.equal(roles.harnessText([]), "[]");
+  assert.deepEqual(roles.capabilityHarnessNames, ["codex", "opencode", "claude", "devin"]);
+
+  assert.deepEqual(roles.readHarnessDraft(""), { mode: "any", selected: [], value: null, issue: null });
+  assert.deepEqual(roles.readHarnessDraft("null"), { mode: "any", selected: [], value: null, issue: null });
+  assert.deepEqual(roles.readHarnessDraft("[]"), { mode: "none", selected: [], value: [], issue: null });
+  assert.deepEqual(roles.readHarnessDraft('["codex","devin"]'), { mode: "only", selected: ["codex", "devin"], value: ["codex", "devin"], issue: null });
+  // "Only:" with nothing ticked is pending input, not a value.
+  assert.deepEqual(roles.readHarnessDraft(roles.harnessOnlyPending), { mode: "only", selected: [], value: undefined, issue: "Choose at least one harness, or choose No harness" });
+  // Unknown names and duplicates are refused as edits; neither produces a value to save.
+  const unknown = roles.readHarnessDraft('["zed"]');
+  assert.equal(unknown.mode, "only");
+  assert.equal(unknown.value, undefined);
+  assert.equal(unknown.issue, "Unknown harness “zed”");
+  assert.equal(roles.readHarnessDraft('["codex",5]').issue, "Unknown harness “5”");
+  const twice = roles.readHarnessDraft('["codex","codex"]');
+  assert.equal(twice.value, undefined);
+  assert.equal(twice.issue, "“codex” is listed twice");
+  // Anything else unreadable or not a list blocks saving as unreadable.
+  for (const bad of ["not json", '"codex"', "{}", "[1]", "42"]) {
+    const draft = roles.readHarnessDraft(bad);
+    assert.equal(draft.issue, bad === "[1]" ? "Unknown harness “1”" : "Unreadable harness filter", bad);
+    assert.equal(draft.value, undefined, bad);
+  }
+  assert.equal(roles.readHarnessDraft("not json").mode, "any");
+
+  // harnessDraftFor round-trips every reachable mode and never emits a preselected restriction.
+  assert.equal(roles.harnessDraftFor("any", []), "null");
+  assert.equal(roles.harnessDraftFor("any", ["codex"]), "null", "a stray tick never leaks into Any");
+  assert.equal(roles.harnessDraftFor("none", []), "[]");
+  assert.equal(roles.harnessDraftFor("only", []), roles.harnessOnlyPending);
+  assert.equal(roles.harnessDraftFor("only", ["claude", "codex"]), '["codex","claude"]');
+  for (const [mode, selected] of [["any", []], ["none", []], ["only", ["codex", "devin"]], ["only", []]]) {
+    const next = roles.readHarnessDraft(roles.harnessDraftFor(mode, selected));
+    assert.deepEqual([next.mode, next.selected], [mode, selected]);
+  }
+
+  assert.equal(roles.harnessSummary(undefined), "Any harness");
+  assert.equal(roles.harnessSummary(null), "Any harness");
+  assert.equal(roles.harnessSummary([]), "No harness");
+  assert.equal(roles.harnessSummary(["claude", "codex"]), "codex · claude");
+  assert.equal(roles.harnessSummary(["devin"]), "devin");
+
+  // Harness exclusions are never called "Off"; only the stored switch is.
+  assert.equal(roles.exclusionLabel("disabled", "codex"), "Off");
+  assert.equal(roles.exclusionLabel("disabled", null), "Off");
+  assert.equal(roles.exclusionLabel("harness_required", null), "Needs a harness choice");
+  assert.equal(roles.exclusionLabel("harness_required", "codex"), "Needs a harness choice");
+  assert.equal(roles.exclusionLabel("harness_mismatch", "claude"), "Not for claude");
+  assert.equal(roles.exclusionLabel("harness_mismatch", null), "Allowed for no harness");
+  assert.notEqual(roles.exclusionLabel("harness_required", null), "Off");
+  assert.notEqual(roles.exclusionLabel("harness_mismatch", "devin"), "Off");
+
+  // A record without a filter reads "null"; a stored list is canonicalized for comparison.
+  const bare = { name: "s", description: "d", body: "", files: [] };
+  assert.equal(roles.skillText(bare).harnesses, "null");
+  assert.equal(roles.mcpText({ name: "m", description: "", definition: { type: "http", url: "https://x.test" } }).harnesses, "null");
+  assert.equal(roles.skillText({ ...bare, harnesses: ["devin", "codex"] }).harnesses, '["codex","devin"]');
+  assert.equal(roles.skillText({ ...bare, harnesses: [] }).harnesses, "[]");
+});

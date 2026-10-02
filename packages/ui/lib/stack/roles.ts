@@ -1,4 +1,4 @@
-import type { Bot, CodexToolsConnection, Role, RoleCatalog, RoleCategory, RoleFragment, RoleInternalMcp, RoleInternalServer, RoleLaunchPreview, RoleMcpDefinition, RoleMcpServer, RolePreview, RoleRenderContext, RoleSkill, RoleSkillFile, RoleSnapshot, RoleTrustedProject, WorkerSession } from "./types";
+import type { Bot, CodexToolsConnection, Role, RoleCapabilityHarness, RoleCapabilityHarnesses, RoleCapabilitySelection, RoleCatalog, RoleCategory, RoleFragment, RoleInternalMcp, RoleInternalServer, RoleLaunchPreview, RoleMcpDefinition, RoleMcpServer, RolePreview, RoleRenderContext, RoleSkill, RoleSkillFile, RoleSnapshot, RoleTrustedProject, WorkerSession } from "./types";
 
 /** Mirrors the Roles API's title limit. */
 export const titleLimit = 200;
@@ -617,14 +617,87 @@ export function skillFileIssues(files: RoleSkillFile[]): string[] {
 
 export const skillBytes = (skill: Pick<RoleSkill, "body" | "files">): number => utf8Bytes(skill.body) + skill.files.reduce((sum, file) => sum + base64Bytes(file.contentBase64), 0);
 
+/* ─── Capability harness filters ─────────────────────────────────────── */
+
+/** The finite launch identities a capability filter can name, in canonical order. Mirrors the Roles API. */
+export const capabilityHarnessNames = ["codex", "opencode", "claude", "devin"] as const satisfies readonly RoleCapabilityHarness[];
+
+/** Which launches each harness identity names. */
+export const harnessLaunches: Record<RoleCapabilityHarness, string> = {
+  codex: "Bots",
+  opencode: "Codex Workers",
+  claude: "Claude CLI injection and Claude SDK Workers",
+  devin: "Devin Workers",
+};
+
+/** The harness mapping in one sentence, shown wherever a filter is edited or explained. */
+export const harnessMapping = "Bots use codex · Codex Workers use opencode · Devin Workers use devin · Claude CLI injection and Claude SDK Workers use claude.";
+
+/**
+ * Canonical draft text for a filter: `null` unrestricted, `[]` none, else the allowlist in canonical order.
+ * Canonical order lets a saved `["claude","codex"]` compare equal to a UI-produced `["codex","claude"]`.
+ */
+export const harnessText = (value: RoleCapabilityHarnesses | undefined): string =>
+  JSON.stringify(value == null ? null : capabilityHarnessNames.filter((name) => value.includes(name)));
+
+/** Draft text for “Only:” with nothing ticked yet: deliberately not valid JSON, so it blocks saving. */
+export const harnessOnlyPending = "only";
+
+export type HarnessMode = "any" | "only" | "none";
+
+/** What a harness filter's draft text asks for, or the reason it cannot be saved. */
+export function readHarnessDraft(text: string): { mode: HarnessMode; selected: RoleCapabilityHarness[]; value: RoleCapabilityHarnesses | undefined; issue: string | null } {
+  const any = { mode: "any" as const, selected: [] as RoleCapabilityHarness[], value: null as RoleCapabilityHarnesses, issue: null };
+  if (text === "" || text === "null") return any;
+  if (text === harnessOnlyPending) return { mode: "only", selected: [], value: undefined, issue: "Choose at least one harness, or choose No harness" };
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { return { ...any, value: undefined, issue: "Unreadable harness filter" }; }
+  if (parsed === null) return any;
+  if (!Array.isArray(parsed)) return { ...any, value: undefined, issue: "Unreadable harness filter" };
+  if (!parsed.length) return { mode: "none", selected: [], value: [], issue: null };
+  const seen = new Set<string>();
+  for (const name of parsed) {
+    if (typeof name !== "string" || !(capabilityHarnessNames as readonly string[]).includes(name))
+      return { mode: "only", selected: [], value: undefined, issue: `Unknown harness “${name}”` };
+    if (seen.has(name)) return { mode: "only", selected: [], value: undefined, issue: `“${name}” is listed twice` };
+    seen.add(name);
+  }
+  const selected = parsed as RoleCapabilityHarness[];
+  return { mode: "only", selected, value: selected, issue: null };
+}
+
+/** The draft text a filter control emits for a mode and ticked set. */
+export function harnessDraftFor(mode: HarnessMode, selected: RoleCapabilityHarness[]): string {
+  if (mode === "any") return "null";
+  if (mode === "none") return "[]";
+  return selected.length ? harnessText(selected) : harnessOnlyPending;
+}
+
+/** A stored filter in a few words: “Any harness”, “No harness”, or “codex · claude”. */
+export function harnessSummary(value: RoleCapabilityHarnesses | undefined): string {
+  if (value == null) return "Any harness";
+  if (!value.length) return "No harness";
+  return capabilityHarnessNames.filter((name) => value.includes(name)).join(" · ");
+}
+
+/**
+ * Why an excluded capability is out, for the harness the preview named. Harness reasons are never “Off”:
+ * the disabled switch is a separate axis a person can flip, while a filter exclusion is not a switch at all.
+ */
+export function exclusionLabel(reason: Exclude<RoleCapabilitySelection, "included">, harness: RoleCapabilityHarness | null): string {
+  if (reason === "disabled") return "Off";
+  if (reason === "harness_required") return "Needs a harness choice";
+  return harness ? `Not for ${harness}` : "Allowed for no harness";
+}
+
 /* Draft text for resources: every edited value is a string, so structured fields travel as JSON. */
 
 export const skillText = (skill: Pick<RoleSkill, "name" | "description" | "body" | "files" | "harnesses">): Fields =>
-  ({ name: skill.name, description: skill.description, body: skill.body, files: JSON.stringify(skill.files), harnesses: JSON.stringify(skill.harnesses ?? null) });
+  ({ name: skill.name, description: skill.description, body: skill.body, files: JSON.stringify(skill.files), harnesses: harnessText(skill.harnesses) });
 export const projectText = (project: Pick<RoleTrustedProject, "path" | "description">): Fields => ({ path: project.path, description: project.description });
 export const mcpText = (server: Pick<RoleMcpServer, "name" | "description" | "definition" | "harnesses">): Fields =>
-  ({ name: server.name, description: server.description, definition: JSON.stringify(toMcpForm(server.definition)), harnesses: JSON.stringify(server.harnesses ?? null) });
-export const blankSkillText: Fields = { name: "", description: "", body: "", files: "[]" };
+  ({ name: server.name, description: server.description, definition: JSON.stringify(toMcpForm(server.definition)), harnesses: harnessText(server.harnesses) });
+export const blankSkillText: Fields = { name: "", description: "", body: "", files: "[]", harnesses: "null" };
 export const blankProjectText: Fields = { path: "", description: "" };
 
 export function draftFiles(value: string): RoleSkillFile[] {
@@ -645,7 +718,7 @@ export type McpForm = {
 };
 
 export const emptyMcpForm: McpForm = { type: "http", url: "", bearerTokenEnvVar: "", httpHeaders: [], envHttpHeaders: [], command: "", args: [], env: [], envVars: [] };
-export const blankMcpText: Fields = { name: "", description: "", definition: JSON.stringify(emptyMcpForm) };
+export const blankMcpText: Fields = { name: "", description: "", definition: JSON.stringify(emptyMcpForm), harnesses: "null" };
 
 export function toMcpForm(definition: RoleMcpDefinition): McpForm {
   if (definition.type === "http") return { ...emptyMcpForm, type: "http", url: definition.url, bearerTokenEnvVar: definition.bearerTokenEnvVar ?? "",

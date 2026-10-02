@@ -610,6 +610,131 @@ test("both previews read with the page's rendering context, and an answer for an
   }
 });
 
+test("the launch preview reads with the page's capability harness, fenced like the rendering context", async () => {
+  const original = globalThis.WebSocket;
+  const sockets = new Set();
+  const role = (id, revision) => ({ id, name: `Role ${id}`, description: "", revision, createdAt: null, updatedAt: null });
+  const catalog = { revision: 1, defaultRoleId: "A", workerDefaultRoleId: "A", roles: [role("A", 3), role("B", 1)] };
+  const revisions = { A: 3, B: 1 };
+  const calls = [];
+  const gates = new Map();
+  const hold = (key) => {
+    let release;
+    const promise = new Promise((resolve) => { release = resolve; });
+    gates.set(key, promise);
+    return () => { gates.delete(key); release(); };
+  };
+  const gated = (key, make) => gates.has(key) ? gates.get(key).then(make) : make();
+  // The launch read echoes the harness it was asked with and tags its config, which the real API's
+  // response does too (`harness` is echoed; the config reflects the selection).
+  const results = {
+    roles_snapshot: () => catalog,
+    role_editor_snapshot: ({ roleId }) => ({ ...role(roleId, revisions[roleId]), categories: [], skills: [], mcpServers: [], trustedProjects: [], disabledInternalMcpServers: [] }),
+    role_preview: (args) => { calls.push(["preview", args]); return { roleId: args.roleId, revision: revisions[args.roleId], rendered: "", segments: [], bytes: 0, limitBytes: 262144 }; },
+    role_launch_preview: (args) => { calls.push(["launch", args]);
+      return gated(`launch:${args.roleId}:${args.harness ?? "any"}`, () => ({ roleId: args.roleId, revision: revisions[args.roleId], harness: args.harness ?? null,
+        instructions: { bytes: 0, limitBytes: 1, fragments: 0 }, skills: [], internalMcpServers: [], mcpServers: [], excludedCapabilities: [],
+        config: `config:${args.harness ?? "any"}`, trustedProjects: [], cwds: [], issues: [], snapshotChars: 0, snapshotLimitChars: 1 })); },
+    role_internal_mcp_list: (args) => { calls.push(["internal", args]); return { roleId: args.roleId, revision: revisions[args.roleId], servers: [] }; },
+    docs_snapshot: () => ({ packages: [] }),
+  };
+
+  class FakeWebSocket {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    readyState = FakeWebSocket.CONNECTING;
+    subscriptions = new Map();
+    constructor(url) {
+      this.url = url;
+      sockets.add(this);
+      queueMicrotask(() => { this.readyState = FakeWebSocket.OPEN; this.onopen?.(); });
+    }
+    send(raw) {
+      const { id, method, params } = JSON.parse(raw);
+      if (method === "events/subscribe") this.subscriptions.set(params.subscription, params);
+      const reply = (body) => queueMicrotask(() => this.onmessage?.({ data: JSON.stringify({ id, ...body }) }));
+      if (method.startsWith("events/")) return reply({ result: params });
+      Promise.resolve(results[params.name]?.(params.arguments)).then((result) => reply({ result }), (cause) => reply({ error: { message: cause.message } }));
+    }
+    close() { this.readyState = 3; sockets.delete(this); this.onclose?.(); }
+  }
+  const publish = (pkg, topic) => {
+    for (const socket of sockets) for (const subscription of socket.subscriptions.values()) {
+      if (subscription.package === pkg && subscription.topics.includes(topic))
+        socket.onmessage?.({ data: JSON.stringify({ method: "events/changed", params: { package: pkg, subscription: subscription.subscription, topic } }) });
+    }
+  };
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+  const launches = () => calls.filter(([kind]) => kind === "launch").map(([, args]) => args);
+  const previews = () => calls.filter(([kind]) => kind === "preview");
+  const internals = () => calls.filter(([kind]) => kind === "internal");
+  const shown = () => store.getState().roleLaunch.data?.config;
+
+  globalThis.WebSocket = FakeWebSocket;
+  const store = new StackStore({
+    server: resource(null), resources: resource(null), accounts: resource([]), workerAccounts: resource([]), workerRuntimes: resource([]),
+    login: resource(null), workerLogins: resource([]), bots: resource([]), voice: resource(null), catalog: resource(null), roleCatalog: resource(null),
+    endpoints: { roles: "ws://roles-harness.invalid/websocket" },
+  });
+  try {
+    store.start();
+    await until(store, () => store.getState().roleCatalog.data !== null);
+    store.selectRole("A");
+    // An unspecified harness omits the argument entirely, as a launch without one does.
+    await until(store, () => shown() === "config:any" && store.getState().roleLaunch.data?.harness === null);
+    assert.ok(launches().every((args) => !("harness" in args)), "unspecified sends no harness");
+    assert.ok(internals().every(([, args]) => !("harness" in args)), "the internal list never takes a harness");
+
+    // Selecting a harness rereads only the launch preview; its read is held while the harness moves on.
+    const releaseCodex = hold("launch:A:codex");
+    const previewCalls = previews().length;
+    const internalCalls = internals().length;
+    store.setRoleHarness("codex");
+    await until(store, () => launches().some((args) => args.harness === "codex"));
+    assert.equal(previews().length, previewCalls, "rolePreview is not reread for a harness change");
+    assert.equal(internals().length, internalCalls, "roleInternal is not reread for a harness change");
+    assert.equal(store.getState().roleHarness, "codex");
+
+    // Claude's read lands; codex's late answer at a higher revision is still dropped.
+    store.setRoleHarness("claude");
+    await until(store, () => shown() === "config:claude" && store.getState().roleLaunch.data?.harness === "claude");
+    revisions.A = 9;
+    releaseCodex();
+    await settle();
+    assert.equal(shown(), "config:claude", "an earlier harness's answer never replaces a newer one");
+    assert.equal(store.getState().roleLaunch.data?.harness, "claude");
+    assert.equal(store.getState().roleLaunch.data?.revision, 3, "the higher-revision stale read did not land");
+
+    // role_changed rereads with the harness the page holds now.
+    revisions.A = 10;
+    const before = launches().length;
+    publish("roles", "role_changed");
+    await until(store, () => launches().length > before && launches().at(-1).harness === "claude" && store.getState().roleLaunch.data?.revision === 10);
+
+    // Another Role keeps the page's harness.
+    store.selectRole("B");
+    assert.equal(store.getState().roleLaunch.data, null);
+    await until(store, () => store.getState().roleLaunch.data?.roleId === "B");
+    assert.equal(store.getState().roleHarness, "claude", "the harness is page-held, not per-Role");
+    assert.ok(launches().filter((args) => args.roleId === "B").every((args) => args.harness === "claude"));
+
+    // The rendering context rides along independently: both arguments, no interaction.
+    store.setRoleContext({ model: "foo" });
+    await until(store, () => launches().at(-1).context?.model === "foo" && previews().at(-1)[1].context?.model === "foo");
+    const lastLaunch = launches().at(-1);
+    assert.equal(lastLaunch.harness, "claude", "a context change keeps the harness argument");
+    assert.ok(!("harness" in previews().at(-1)[1]), "role_preview never receives a harness");
+
+    // Back to unspecified: the argument is omitted again.
+    store.setRoleHarness(null);
+    await until(store, () => shown() === "config:any" && store.getState().roleLaunch.data?.roleId === "B" && store.getState().roleLaunch.data?.harness === null);
+    assert.ok(!("harness" in launches().at(-1)));
+  } finally {
+    store.stop();
+    globalThis.WebSocket = original;
+  }
+});
+
 test("hud subscribes before its first read, resnapshots after reconnecting, and scopes item notices", async () => {
   const { mkdtempSync, rmSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");

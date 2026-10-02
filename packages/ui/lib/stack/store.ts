@@ -8,7 +8,7 @@ import type { ContentArtifact, ContentCollection, ContentDocument, ContentItem, 
 import { scrapeCallError } from "./scrape";
 import type { ScrapeCanaryRun, ScrapePreset, ScrapeQueue, ScrapeReplay, ScrapeStatus } from "./types";
 import type { AgentBrowserInstallation, AgentBrowserStatus, BrowserController, BrowserHandoff, BrowserProfile, BrowserStatus, BrowserToolchain, HypemanInstallation } from "./types";
-import type { Account, AttentionItem, AttentionMessage, AttentionPage, AttentionRun, AttentionStatus, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, ServerResources, ServerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RoleCatalog, RoleInternalMcp, RoleLaunchPreview, RolePreview, RoleRenderContext, RoleShims, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerListItem, WorkerLogin, WorkerRuntime, WorkerStatus } from "./types";
+import type { Account, AttentionItem, AttentionMessage, AttentionPage, AttentionRun, AttentionStatus, Bot, BotSettings, ChannelStatus, InferModelObservation, InferRequestSummary, Login, Notification, NotificationCounts, NotificationFilter, NotificationPages, ServerResources, ServerStatus, PackageDoc, Resource, ResourceHistoryPage, ResourceHistoryPoint, RoleCapabilityHarness, RoleCatalog, RoleInternalMcp, RoleLaunchPreview, RolePreview, RoleRenderContext, RoleShims, RoleSnapshot, Snapshot, StackEvent, UsageSnapshot, VoiceCall, WorkerAccount, WorkerCatalog, WorkerListItem, WorkerLogin, WorkerRuntime, WorkerStatus } from "./types";
 import { acceptCatalog, acceptRoleRead, contextKey, normalizeContext, roleReadOf } from "./roles";
 import { brainCallError, jobViews, mergeJobs, submissionLabel, terminalStates, type BrainJobView, type CallError } from "./brain";
 import type { BrainAdmission, BrainJob, BrainJobRecord, BrainJobStats, BrainShareState, BrainSource, BrainStats, BrainStatus, BrainTag } from "./types";
@@ -65,6 +65,12 @@ export type StackState = Snapshot & {
   roleContext: RoleRenderContext;
   /** The `contextKey` each held preview answers, since a preview does not echo its context. */
   roleContextShown: Partial<Record<PreviewKey, string>>;
+  /**
+   * The capability harness the launch preview is read with, set with `setRoleHarness`. Page-held like
+   * `roleContext`: it survives Role selection and selects skills and connections only, never fragments.
+   * Null asks for the unspecified-harness preview, which lists unrestricted enabled capabilities only.
+   */
+  roleHarness: RoleCapabilityHarness | null;
   /** The internal Stack MCP servers configured now, each with the selected Role's switch. */
   roleInternal: Resource<RoleInternalMcp>;
   /** Cached Codex tool bridge observations; only `checkCodexTools` starts a runtime. */
@@ -334,7 +340,7 @@ export class StackStore {
       stateInventory: { data: null, error: null, at: null }, stateSelection: { owners: null, measure: false },
       subscriptions: { data: null, error: null, at: null }, subscriptionFilter: {}, serveStateGeneration: 0,
       botStateId: null, botStateGenerations: {}, xcomGeneration: 0,
-      roleContext: {}, roleContextShown: {},
+      roleContext: {}, roleContextShown: {}, roleHarness: null,
       signalStatus: { data: null, error: null, at: null }, signalGeneration: 0, signalRecords: { items: {}, messages: {}, runs: {} },
       contentDocuments: { data: null, error: null, at: null }, contentTags: { data: null, error: null, at: null },
       contentLibrary: { data: null, error: null, at: null }, contentItems: { data: null, error: null, at: null },
@@ -602,10 +608,23 @@ export class StackStore {
     this.refresh("roleLaunch");
   };
 
-  /** What a Role-scoped read is for: its Role, plus the rendering context for the previews. */
+  /**
+   * Preview the selected Role's capabilities for another launch harness. Only `roleLaunch` is reread — the
+   * instruction preview and the internal list do not take a harness — and a launch answer for any other
+   * harness is dropped when it lands through the same scope fence as a stale context.
+   */
+  setRoleHarness = (harness: RoleCapabilityHarness | null): void => {
+    if (harness === this.state.roleHarness) return;
+    this.set({ roleHarness: harness });
+    this.refresh("roleLaunch");
+  };
+
+  /** What a Role-scoped read is for: its Role, plus the rendering context for the previews, and the harness the launch preview selects for. */
   private readScope(key: RoleKey): string | null {
     const { roleId } = this.state;
-    return roleId !== null && isPreviewKey(key) ? `${roleId}\n${contextKey(this.state.roleContext)}` : roleId;
+    if (roleId === null) return null;
+    if (key === "roleLaunch") return `${roleId}\n${contextKey(this.state.roleContext)}\n${this.state.roleHarness ?? ""}`;
+    return isPreviewKey(key) ? `${roleId}\n${contextKey(this.state.roleContext)}` : roleId;
   }
 
   /** The context argument for a preview read; omitted when empty, as a launch without context omits it. */
@@ -1680,7 +1699,8 @@ export class StackStore {
       case "roleShims": return call<RoleShims>("roles", "role_shim_list");
       case "role": return call<RoleSnapshot>("roles", "role_editor_snapshot", { roleId: this.state.roleId });
       case "rolePreview": return call<RolePreview>("roles", "role_preview", { roleId: this.state.roleId, ...this.contextArgs() });
-      case "roleLaunch": return call<RoleLaunchPreview>("roles", "role_launch_preview", { roleId: this.state.roleId, cwds: botCwds(this.state.bots.data).split("\n").filter(Boolean), ...this.contextArgs() });
+      case "roleLaunch": return call<RoleLaunchPreview>("roles", "role_launch_preview", { roleId: this.state.roleId, cwds: botCwds(this.state.bots.data).split("\n").filter(Boolean),
+        ...(this.state.roleHarness ? { harness: this.state.roleHarness } : {}), ...this.contextArgs() });
       case "roleInternal": return call<RoleInternalMcp>("roles", "role_internal_mcp_list", { roleId: this.state.roleId });
       case "usage": return call<UsageSnapshot>("usage", "usage_snapshot");
       case "catalog": return loadCatalog((name, args) => call<never>("api", name, args)) as Promise<PackageDoc[]>;
