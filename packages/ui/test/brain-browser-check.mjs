@@ -21,7 +21,36 @@ const evidence = process.env.BRAIN_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
 const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("STACK_"))), STACK_STATE_DIR: dir, STACK_BRAIN_SHARE_PORT: "0", NEXT_TELEMETRY_DISABLED: "1" };
 const { api: brainApi } = await import("../../brain/dist/api.js");
-const handlers = { serve_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }) };
+// Retained Bot-watch receipts: Brain records carry no correlation UUID, so watches are receipt-driven.
+const watchBot = "bot-1", watchThread = "thread-1";
+const watchReq = (n) => `40000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const watchReceiptId = (n) => `50000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const brainReceipt = (n, operation, recordId, extra = {}) => ({ id: watchReceiptId(n), botId: watchBot, threadId: watchThread, pkg: "brain",
+  operation, recordId, state: "delivered", lastDeliveredAt: Date.now() - 30_000, lastDeliveryKind: "terminal", lastError: null,
+  nativeAdmissionUncertain: false, subscriptionPresent: true, ...extra });
+const watchReceipts = [
+  brainReceipt(1, "submit", watchReq(1)),
+  brainReceipt(2, "submit", watchReq(2), { state: "observed", lastDeliveryKind: null, subscriptionPresent: false }),
+  brainReceipt(3, "submit", watchReq(3)),
+  brainReceipt(4, "submit", watchReq(4)),
+  brainReceipt(5, "submit", watchReq(5)),
+  brainReceipt(6, "sources_sync", watchReq(6)),
+];
+const watchCalls = [];
+const watchLinks = {}; // recordId → resolved link, populated once the exact job/run ids exist
+const handlers = { serve_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
+  serve_completion_list: (args) => {
+    watchCalls.push(args);
+    const rows = watchReceipts.filter((row) => (!args.package || row.pkg === args.package) && (!args.operation || row.operation === args.operation)
+      && (!args.recordId || row.recordId === args.recordId) && (!args.botId || row.botId === args.botId) && (!args.threadId || row.threadId === args.threadId) && (!args.state || row.state === args.state));
+    const nextOffset = (args.offset ?? 0) + (args.limit ?? 50) < rows.length ? (args.offset ?? 0) + (args.limit ?? 50) : null;
+    return { completions: rows.slice(args.offset ?? 0, (args.offset ?? 0) + (args.limit ?? 50)), revision: "watch-1", total: rows.length, nextOffset, truncated: nextOffset !== null };
+  },
+  serve_completion_get: ({ id }) => {
+    const found = watchReceipts.find((row) => row.id === id) ?? null;
+    const link = found ? watchLinks[found.recordId] ?? null : null;
+    return { receipt: found, link, linkStatus: found ? (link ? "resolved" : "missing") : "not_found" };
+  } };
 const sockets = [];
 let websocket, next, browser, brain, web, page, db, journal;
 let procRevision = 1;
@@ -56,10 +85,13 @@ try {
       return { system: true, revision: procRevision, action: { type: "api", package: "brain", operation: "sources_sync" } };
     } }) }));
   websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["brain", "serve", "api"]), port: 0 });
-  const catalog = [fixtureDoc("brain", brainApi, websocket.url, publishedJsonSchema), fixtureDoc("serve", undefined, websocket.url, publishedJsonSchema), fixtureDoc("api", undefined, websocket.url, publishedJsonSchema)];
-  handlers.docs_snapshot = () => ({ packages: catalog });
   const serve = await serveFixture(handlers);
   Object.assign(handlers, serve.handlers);
+  // Catalog docs without a manifest still name the fixture socket's served operations so exposure checks work.
+  const servedDoc = (name, names, topics) => ({ ...fixtureDoc(name, undefined, websocket.url, publishedJsonSchema), events: topics,
+    transports: [{ type: "websocket", description: "Fixture", supported: true, subscriptions: true, endpoint: websocket.url, operations: names, events: Object.keys(topics), routes: [] }] });
+  const catalog = [fixtureDoc("brain", brainApi, websocket.url, publishedJsonSchema), servedDoc("serve", serve.names, serve.topics), servedDoc("api", ["docs_snapshot"], {})];
+  handlers.docs_snapshot = () => ({ packages: catalog });
   for (const [name, names, topics] of [["serve", serve.names, serve.topics], ["api", ["docs_snapshot"], {}]]) {
     sockets.push(await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {}, operations: fixtureOperations(names, handlers), events: { topics } }));
   }
@@ -83,6 +115,11 @@ try {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("dialog", (dialog) => { errors.push(`dialog: ${dialog.message()}`); void dialog.dismiss(); });
+  // Capture the exact operations the page calls so paging arguments and forbidden ops are auditable.
+  const sentCalls = [];
+  page.on("websocket", (ws) => ws.on("framesent", (frame) => {
+    try { const message = JSON.parse(String(frame.payload)); if (message.method === "tools/call") sentCalls.push(message.params); } catch { /* non-JSON frame */ }
+  }));
   await page.goto(`${origin}/brain`);
   const search = page.locator('[data-window="brain-search"]');
   const reader = page.locator('[data-window="brain-reader"]');
@@ -251,8 +288,114 @@ try {
   await page.getByText("Research source · blog_feed").waitFor();
   await page.screenshot({ path: join(evidence, "brain-sources.png"), animations: "disabled" });
 
-  // Deleting from the Reader is confirmed, and the index empties again.
-  await activate(done.getByRole("button", { name: "Show job 1 details" }));
+  // Bot watches (M6b): retained receipts read per operation; each expands to its correlation UUID, linked
+  // record and the exact admission binding's observation in the real ledger. Nothing retries or rearms.
+  const sourceDbId = db.prepare("SELECT id FROM sources WHERE identifier='fixture-feed'").get().id;
+  const bind = (requestId, operation, admission, botId = watchBot, threadId = watchThread) => db
+    .prepare("INSERT INTO admission_bindings(request_id,operation,bot_id,thread_id,input_digest,admission_json,created_at) VALUES(?,?,?,?,?,?,?)")
+    .run(requestId, operation, botId, threadId, "fixture-digest", JSON.stringify(admission), at);
+  const blockedJobId = Number(db.prepare("INSERT INTO jobs(idempotency_key,kind,state,run_at,block_reason,failure_class,failure_summary,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)")
+    .run("check-blocked", "url", "blocked", at, "private_target", "blocked", "Target is blocked from indexing", at, at).lastInsertRowid);
+  const queuedJobId = Number(db.prepare("INSERT INTO jobs(idempotency_key,kind,state,run_at,created_at,updated_at) VALUES(?,?,?,?,?,?)")
+    .run("check-queued", "url", "queued", new Date(Date.now() + 86_400_000).toISOString(), at, at).lastInsertRowid);
+  bind(watchReq(1), "submit", { version: 1, status: "duplicate", job_id: 1, intent_hash: "h1", state: "queued" });
+  bind(watchReq(2), "submit", { version: 1, status: "already_indexed", document_id: 1 });
+  bind(watchReq(3), "submit", { version: 1, status: "queued", job_id: blockedJobId, intent_hash: "h3", state: "queued" });
+  bind(watchReq(4), "submit", { version: 1, status: "queued", job_id: queuedJobId, intent_hash: "h4", state: "queued" });
+  // The fifth binding belongs to another Chat: the observation refuses it, never reporting its state.
+  bind(watchReq(5), "submit", { version: 1, status: "queued", job_id: 1, intent_hash: "h5", state: "queued" }, "bot-x", "thread-x");
+  const syncRunIds = [];
+  for (let n = 0; n < 120; n++) syncRunIds.push(Number(db.prepare("INSERT INTO runs(run_type,state,source_id,terminal_outcome,warnings,discovered_count,admitted_count,suppressed_count,committed_checkpoint,started_at,finished_at,created_at,updated_at) VALUES('source_sync','completed',?,?,?,?,?,?,?,?,?,?,?)")
+    .run(sourceDbId, n % 9 === 0 ? "partial" : n % 29 === 0 ? "failed" : "success", "[]", 3, 2, n % 7 === 0 ? 1 : 0, "{}", at, at, at, at).lastInsertRowid));
+  bind(watchReq(6), "sources_sync", syncRunIds.map((id) => ({ source_database_id: sourceDbId, status: "queued", run_id: id, job_id: null, scheduled_for: null, dry_run: false })));
+  Object.assign(watchLinks, {
+    [watchReq(1)]: { kind: "brain-submit", requestId: watchReq(1), jobId: 1, documentId: null },
+    [watchReq(2)]: { kind: "brain-submit", requestId: watchReq(2), jobId: null, documentId: 1 },
+    [watchReq(3)]: { kind: "brain-submit", requestId: watchReq(3), jobId: blockedJobId, documentId: null },
+    [watchReq(4)]: { kind: "brain-submit", requestId: watchReq(4), jobId: queuedJobId, documentId: null },
+    [watchReq(6)]: { kind: "brain-sources", requestId: watchReq(6), runIds: syncRunIds.slice(0, 3) },
+  });
+
+  const revealCalls = () => sentCalls.filter((params) => params.package === "brain" && params.name === "jobs_reveal").length;
+  const revealsBefore = revealCalls();
+  await activate(jobs.getByRole("button", { name: "Bot watches · submissions" }));
+  const jobsWatch = jobs.locator('section[aria-label="Bot watches"]');
+  await jobsWatch.getByText("Showing 5 of 5 receipts").waitFor();
+  const watchRow = (id) => jobsWatch.locator("li").filter({ has: page.locator(`[data-receipt="${id}"]`) });
+  assert.equal(await jobsWatch.locator("[data-receipt]").count(), 5, "all five submit receipts are listed");
+
+  const lost = watchRow(watchReceiptId(5));
+  await activate(lost.getByRole("button", { name: "Details" }));
+  await lost.getByText(/No domain record bound/).waitFor();
+  await lost.getByText(/Observation unavailable: Brain completion belongs to another admission or Chat/).waitFor();
+
+  const duplicate = watchRow(watchReceiptId(1));
+  await activate(duplicate.getByRole("button", { name: "Details" }));
+  await duplicate.getByRole("link", { name: "Brain job #1" }).waitFor();
+  await duplicate.getByText(/Job #1 · Completed/).waitFor();
+  await duplicate.getByText(/Exact job only; transitive fanout isn't included/).waitFor();
+
+  const indexed = watchRow(watchReceiptId(2));
+  await activate(indexed.getByRole("button", { name: "Details" }));
+  await indexed.getByText("Observed", { exact: true }).waitFor();
+  await indexed.getByRole("link", { name: "Document #1" }).first().waitFor();
+  await indexed.getByText(/Already indexed · document #1 — an observed document identity, not a queued job/).waitFor();
+
+  const blocked = watchRow(watchReceiptId(3));
+  await activate(blocked.getByRole("button", { name: "Details" }));
+  await blocked.getByRole("link", { name: `Brain job #${blockedJobId}` }).waitFor();
+  await blocked.getByText(new RegExp(`Job #${blockedJobId} · Blocked`)).waitFor();
+  await blocked.getByText(/Needs attention — not successful indexing/).waitFor();
+
+  const unsettled = watchRow(watchReceiptId(4));
+  await activate(unsettled.getByRole("button", { name: "Details" }));
+  await unsettled.getByText(/Not settled — queued, running or waiting to retry/).waitFor();
+  assert.equal(await jobsWatch.getByRole("button", { name: /Retry|Rearm|Resend/i }).count(), 0, "watches never offer retry or rearm");
+  assert.deepEqual(watchCalls.filter((call) => call.operation === "submit").at(0), { package: "brain", operation: "submit", offset: 0, limit: 50 });
+  await page.screenshot({ path: join(evidence, "brain-bot-watches.png"), animations: "disabled" });
+
+  // The sources disclosure pages the fixed Run set through the real completion read.
+  await activate(sources.getByRole("button", { name: "Bot watches · source syncs" }));
+  const sourcesWatch = sources.locator('section[aria-label="Bot watches"]');
+  const sync = sourcesWatch.locator("li").filter({ has: page.locator(`[data-receipt="${watchReceiptId(6)}"]`) });
+  await activate(sync.getByRole("button", { name: "Details" }));
+  await sync.getByText("Discovery and admission settled", { exact: true }).waitFor();
+  await sync.getByText(/120 admissions · 120 Runs/).waitFor();
+  await sync.getByText(/Discovery and admission settled — not child extraction or indexing/).waitFor();
+  await sync.getByText(/Source Runs #/).waitFor();
+  const runButtons = () => sync.getByRole("button", { name: /^run \d+$/ });
+  assert.equal(await runButtons().count(), 50, "the observation pages at fifty Runs");
+  await sync.getByText("Showing 50 of 120 Runs · more Runs on later pages").waitFor();
+  await activate(sync.getByRole("button", { name: "Load next 50" }));
+  await runButtons().nth(99).waitFor();
+  assert.equal(await runButtons().count(), 100, "the second page appends to the same admission");
+  await activate(sync.getByRole("button", { name: "Load next 50" }));
+  await runButtons().nth(119).waitFor();
+  assert.equal(await runButtons().count(), 120);
+  // Backends mark the set truncated on every page; the suffix only survives while more pages remain.
+  await sync.getByText("Showing 120 of 120 Runs", { exact: true }).waitFor();
+  assert.equal(await sync.getByRole("button", { name: "Load next 50" }).count(), 0, "the fixed Run set ends");
+  await page.screenshot({ path: join(evidence, "brain-source-watch.png"), animations: "disabled" });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.screenshot({ path: join(evidence, "brain-source-watch-dark.png"), animations: "disabled" });
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.setViewportSize({ width: 430, height: 900 });
+  await page.screenshot({ path: join(evidence, "brain-source-watch-narrow.png"), animations: "disabled" });
+  await page.setViewportSize({ width: 2600, height: 1300 });
+
+  // Each page read carries the same exact bound identity; no page or receipt triggers a reveal.
+  const syncCalls = sentCalls.filter((params) => params.package === "brain" && params.name === "sources_sync_completion");
+  assert.deepEqual(syncCalls.map((params) => params.arguments?.offset ?? 0), [0, 50, 100], "the observation pages at 50-run offsets");
+  for (const params of syncCalls) assert.deepEqual([params.arguments.requestId, params.arguments.botId, params.arguments.threadId], [watchReq(6), watchBot, watchThread]);
+  assert.equal(revealCalls(), revealsBefore, "no watch surface ever calls jobs_reveal");
+  assert.equal(audits(), auditCount, "no watch surface wrote a reveal audit");
+
+  // Deleting from the Reader is confirmed, and the index empties again. Clear a Run filter if one is still active.
+  const everyRun = jobs.getByRole("button", { name: "Show jobs from every Run" });
+  if (await everyRun.count()) await activate(everyRun);
+  await done.waitFor();
+  const showJob1 = done.getByRole("button", { name: "Show job 1 details" });
+  if (await showJob1.count()) await activate(showJob1);
   await activate(done.getByRole("button", { name: "Read document 1" }));
   await search.getByLabel("Search collected research").fill("Quasar");
   await activate(search.getByRole("button", { name: "Search", exact: true }));

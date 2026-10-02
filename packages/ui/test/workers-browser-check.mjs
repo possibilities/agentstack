@@ -55,6 +55,9 @@ const turns = {
   [wid("d")]: [turn(5, wid("d"))],
 };
 const entry = (seq, turnId, kind, text) => ({ seq, workerId: wid("a"), turnId, kind, text, at: now - 500_000 + seq * 1_000 });
+// Turn 6 is an event turn: its requestId is the dispatched event receipt's deliveryId. It sorts between
+// turns 1 and 2 in the list so turn 2 stays the latest for the summary's existing assertions.
+turns[wid("a")].splice(1, 0, turn(6, wid("a"), { requestId: tid(52), prompt: "Deploy finished on main" }));
 const transcript = {
   [wid("a")]: [
     entry(1, tid(1), "user", "Fix the flaky scheduler test"),
@@ -63,8 +66,10 @@ const transcript = {
     entry(6, tid(1), "plan", JSON.stringify([{ content: "Reproduce the race", status: "in_progress", priority: "high" }])),
     entry(7, tid(1), "plan", JSON.stringify([{ content: "Reproduce the race", status: "completed", priority: "high" }, { content: "Add a regression test", status: "pending", priority: "medium" }])),
     entry(8, tid(1), "turn", "stopped · end_turn"),
-    entry(9, tid(2), "user", "Also run the full suite"),
-    entry(10, tid(2), "tool", "Run pnpm test · pending"),
+    entry(9, tid(6), "event", "Deploy finished on main"),
+    entry(10, tid(6), "agent", "Noted."),
+    entry(11, tid(2), "user", "Also run the full suite"),
+    entry(12, tid(2), "tool", "Run pnpm test · pending"),
   ],
 };
 const record = (seq, kind, data, extra = {}) => ({ seq, workerId: wid("a"), turnId: tid(1), kind, source: "live", at: now - 400_000 + seq, data, dataChars: JSON.stringify(data ?? {}).length, oversized: false, ...extra });
@@ -82,6 +87,31 @@ const branches = Array.from({ length: 101 }, (_, n) => ({ workerId: account(600 
 let branchRevision = 1, changeBranchPage = false, nativeBlocked = false, resetBlocked = false, resetAvailable = false, resetDone = false;
 let drained = false, nativeRuntimeBusy = false, transcriptRevision = 0, catalogCleared = false, loseApply = false, omitNativeIds = false, catalogReady;
 const nativeIds = "ses_exact_full_root_1234567890, ses_exact_full_descendant_0987654321";
+
+// Retained completion receipts for exact turn requestIds (Bot watches) — delivered, uncertain, observed — and
+// event delivery receipts for worker "a": queued/interrupting/cancelled never claim a turn; the dispatched one
+// links the event turn; the unknown one reports the fenced interruption. 130 total, so the latest 128 truncate.
+const completion = (id, extra = {}) => ({ id, botId: "bot-1", threadId: "thread-1", pkg: "worker", operation: "worker_send",
+  recordId: account(101), state: "delivered", lastDeliveredAt: now - 390_000, lastDeliveryKind: "terminal",
+  lastError: null, nativeAdmissionUncertain: false, subscriptionPresent: true, ...extra });
+const completionReceipts = [
+  completion(account(300)),                                     // turn 1 · delivered
+  completion(account(301), { recordId: account(102) }),         // turn 2 · delivered
+  completion(account(302), { recordId: account(104), state: "unknown", lastDeliveredAt: null, lastDeliveryKind: "terminal",
+    lastError: "native_admission_unknown", nativeAdmissionUncertain: true, subscriptionPresent: false }), // turn 4 · uncertain
+  completion(account(303), { recordId: account(105), state: "observed", lastDeliveredAt: now - 100_000,
+    lastDeliveryKind: null, subscriptionPresent: false }),      // turn 5 · observed
+];
+const watchCalls = [];
+const deliveryReceipt = (deliveryId, state, turnId = null, extra = {}) => ({ deliveryId, workerId: wid("a"), sessionId: "native-session-1",
+  state, turnId, issue: null, createdAt: now - 300_000, updatedAt: now - 30_000, ...extra });
+const eventReceipts = [
+  deliveryReceipt(tid(50), "queued"), deliveryReceipt(tid(51), "interrupting"),
+  deliveryReceipt(tid(52), "dispatched", tid(6)),
+  deliveryReceipt(tid(53), "unknown", null, { issue: "interruption outcome unknown" }),
+  deliveryReceipt(tid(54), "cancelled"),
+  ...Array.from({ length: 125 }, (_, n) => deliveryReceipt(`d0000000-0000-4000-8000-${String(1000 + n).padStart(12, "0")}`, "dispatched")),
+];
 const planWorker = ({ ids, kind, allowUnmerged = [] }) => {
   assert.ok(ids.length > 0 && ids.length <= 100, "UI never plans empty or oversized IDs");
   assert.ok(allowUnmerged.every((id) => kind === "branch" && ids.includes(id)), "overrides belong only to exact selected branches");
@@ -187,6 +217,32 @@ const handlers = {
     const data = text.slice(offset, offset + size);
     return { seq, offset, data, nextOffset: offset + data.length, totalChars: text.length, hasMore: offset + data.length < text.length, encoding: "json-utf16" };
   },
+  worker_event_list: ({ id }) => ({ receipts: id === wid("a") ? eventReceipts.slice(0, 128) : [], limit: 128, total: id === wid("a") ? eventReceipts.length : 0, truncated: id === wid("a") }),
+  worker_turn_observation: ({ botId, threadId, requestId }) => {
+    if (botId !== "bot-1" || threadId !== "thread-1") throw new Error("turn observation belongs to another Chat");
+    if (requestId === account(101)) return { result: { workerId: wid("a"), turnId: tid(1), requestId, phase: "completed", stopReason: "end_turn", issue: null, workContext: null, contentClearedAt: null }, update: null };
+    if (requestId === account(102)) return { result: null, update: { workerId: wid("a"), turnId: tid(2), requestId, phase: "awaiting_input",
+      pending: Array.from({ length: 8 }, (_, n) => ({ permissionId: account(400 + n), optionCount: 2 })), pendingCount: 12, pendingTruncated: true } };
+    if (requestId === account(104)) return { result: { workerId: wid("c"), turnId: tid(4), requestId, phase: "unknown", stopReason: null,
+      issue: "Turn outcome is unknown after server restart", workContext: null, contentClearedAt: null }, update: null };
+    if (requestId === account(105)) return { result: { workerId: wid("d"), turnId: tid(5), requestId, phase: "completed", stopReason: "end_turn", issue: null,
+      workContext: null, contentClearedAt: now - 3_500_000 }, update: null };
+    return { result: null, update: null };
+  },
+  serve_completion_list: (args) => {
+    watchCalls.push(args);
+    const rows = completionReceipts.filter((row) => (!args.package || row.pkg === args.package) && (!args.operation || row.operation === args.operation)
+      && (!args.recordId || row.recordId === args.recordId) && (!args.botId || row.botId === args.botId) && (!args.threadId || row.threadId === args.threadId) && (!args.state || row.state === args.state));
+    const nextOffset = (args.offset ?? 0) + (args.limit ?? 100) < rows.length ? (args.offset ?? 0) + (args.limit ?? 100) : null;
+    return { completions: rows.slice(args.offset ?? 0, (args.offset ?? 0) + (args.limit ?? 100)), revision: "watch-1", total: rows.length, nextOffset, truncated: nextOffset !== null };
+  },
+  serve_subscription_list: () => ({ subscriptions: [], revision: "0", nextOffset: null }),
+  serve_occurrence_list: () => ({ subscriptions: [], revision: "0", nextOffset: null }),
+  serve_completion_get: ({ id }) => {
+    const receipt = completionReceipts.find((row) => row.id === id) ?? null;
+    const link = receipt?.id === account(301) ? { kind: "worker", workerId: wid("a"), turnId: tid(2) } : null;
+    return { receipt, linkStatus: link ? "resolved" : "missing", link };
+  },
   worker_detail: ({ id }) => ({ worker: workers.find((item) => item.id === id), observedSettings: turns[id]?.at(-1)?.observedSettings ?? null, metadata: workers.find((item) => item.id === id)?.contentClearedAt ? [] : [records[0]], capture,
     freshness: { connected: true, stale: false, readAt: now, reason: null },
     subagents: { coverage: "partial", hierarchyAvailable: false, childTranscriptsAvailable: false, reason: "The native runtime reports task references only." } }),
@@ -218,13 +274,16 @@ try {
 
   websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["worker", "auth", "serve", "bots", "roles", "api"]), port: 0 });
   const doc = (name, api) => fixtureDoc(name, api, websocket.url, publishedJsonSchema);
-  const catalog = [doc("worker", workerApi), doc("bots", botsApi), doc("roles", rolesApi), doc("auth"), doc("serve"), doc("api")];
-  handlers.docs_snapshot = () => ({ packages: catalog });
   const serve = await serveFixture(handlers);
   Object.assign(handlers, serve.handlers);
   const definitions = { serve: serve.names, auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"],
     bots: botsApi.operations.map((operation) => operation.name), worker: workerApi.operations.map((operation) => operation.name), api: ["docs_snapshot"] };
   const topics = { serve: serve.topics, auth: { accounts_changed: "Fixture", worker_accounts_changed: "Fixture", login_changed: "Fixture", worker_login_changed: "Fixture" }, bots: botsApi.events.topics, worker: workerApi.events.topics, api: {} };
+  // Catalog docs without a manifest still name the fixture socket's served operations so exposure checks work.
+  const servedDoc = (name) => ({ ...fixtureDoc(name, undefined, websocket.url, publishedJsonSchema), events: topics[name],
+    transports: [{ type: "websocket", description: "Fixture", supported: true, subscriptions: true, endpoint: websocket.url, operations: definitions[name], events: Object.keys(topics[name]), routes: [] }] });
+  const catalog = [doc("worker", workerApi), doc("bots", botsApi), doc("roles", rolesApi), servedDoc("auth"), servedDoc("serve"), servedDoc("api")];
+  handlers.docs_snapshot = () => ({ packages: catalog });
   for (const [name, names] of Object.entries(definitions)) {
     sockets.set(name, await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {}, operations: fixtureOperations(names, handlers),
       events: { topics: topics[name], scope: name === "bots" || name === "worker" ? { valid: () => true, description: "Fixture", example: "id" } : undefined } }));
@@ -246,6 +305,11 @@ try {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => { if (message.type() === "error" && /hydration|Minified React error #418|cannot be a descendant/i.test(message.text())) errors.push(message.text().slice(0, 2000)); });
+  // Capture the exact operations the page calls so forbidden writes and watch arguments are auditable.
+  const sentCalls = [];
+  page.on("websocket", (ws) => ws.on("framesent", (frame) => {
+    try { const message = JSON.parse(String(frame.payload)); if (message.method === "tools/call") sentCalls.push(message.params); } catch { /* non-JSON frame */ }
+  }));
   await page.goto(`${origin}/workers`);
   const list = page.locator('[data-window="workers"]');
   const worker = page.locator('[data-window="worker"]');
@@ -292,6 +356,9 @@ try {
   }
   assert.equal(await worker.locator("textarea, input[type=text]").count(), 0, "no composer");
   await worker.getByText("observed claude-sonnet-5 · high").waitFor();
+  // A delivered subscription event is its own bubble — labelled, untrusted, never a human task.
+  await worker.getByText("Deploy finished on main", { exact: true }).waitFor();
+  await worker.getByText("Event", { exact: true }).waitFor();
   // The captured Role is compared with that same Role: this Worker selected Researcher, which has been edited since.
   const roleChip = worker.getByTitle(/^Started with Researcher r/);
   await roleChip.getByText(`Researcher r${researcher.revision} · now r${edited.revision}`, { exact: true }).waitFor();
@@ -299,7 +366,7 @@ try {
   await page.screenshot({ path: join(evidence, "worker-conversation.png"), animations: "disabled" });
 
   // A progress notice scoped to this Worker continues the transcript from its last sequence.
-  transcript[wid("a")].push(entry(11, tid(2), "agent", "All 412 tests passed."));
+  transcript[wid("a")].push(entry(13, tid(2), "agent", "All 412 tests passed."));
   sockets.get("worker").publish("worker_progress", wid("a"));
   await worker.getByText("All 412 tests passed.").waitFor();
 
@@ -322,7 +389,72 @@ try {
   await workLinks.first().waitFor();
   assert.equal(await workLinks.count(), 2, "the summary's latest turn and that turn's row both link the item");
   assert.equal(await workLinks.first().getAttribute("href"), `/?focus=${encodeURIComponent(`work-item:${workItem}`)}`);
-  await worker.getByText("not associated", { exact: true }).waitFor();
+  await worker.getByText("not associated", { exact: true }).first().waitFor();
+
+  // Event receipts carry no payload; states are disclosed, never retried; the fenced interruption warns.
+  await worker.getByText(/130 receipts\. Receipts carry no payload/).waitFor();
+  await worker.getByText(/Only the latest 128 of 130 are inspectable/).waitFor();
+  await worker.locator(`[data-event-receipt="${tid(50)}"]`).getByText("Queued").waitFor();
+  await worker.locator(`[data-event-receipt="${tid(51)}"]`).getByText("Interrupting").waitFor();
+  await worker.locator(`[data-event-receipt="${tid(54)}"]`).getByText("Cancelled").waitFor();
+  const unknownDelivery = worker.locator(`[data-event-receipt="${tid(53)}"]`);
+  await unknownDelivery.getByText("Unknown", { exact: true }).waitFor();
+  await unknownDelivery.getByText("interruption outcome unknown").waitFor();
+  await worker.getByText(/Automatic event input to this Worker is fenced/).waitFor();
+  assert.equal(await worker.getByRole("button", { name: /Retry|Rearm|Resend/i }).count(), 0, "event receipts have no replay controls");
+
+  // The dispatched receipt links its event turn; focus highlights that exact turn.
+  await worker.locator(`[data-event-receipt="${tid(52)}"]`).getByRole("button", { name: `turn ${tid(6).slice(0, 8)}` }).click();
+  const eventTurn = worker.locator(`[data-turn-id="${tid(6)}"]`);
+  await worker.locator(`[data-turn-id="${tid(6)}"][aria-current="true"]`).waitFor();
+  await eventTurn.getByText("Event turn", { exact: true }).waitFor();
+  await eventTurn.getByText("Event input · untrusted observation, not a human task").waitFor();
+  await eventTurn.getByText(/Delivery Dispatched/).waitFor();
+  assert.equal(await eventTurn.getByRole("button", { name: "Bot watch" }).count(), 0, "an event turn carries no request watch");
+
+  // A linked turn focus from System's subscription detail takes the highlight and clears the receipt-clicked
+  // one; clicking a receipt's turn afterward still wins over the now-stale linked focus.
+  await page.goto(`${origin}/system`);
+  const subs = page.locator('[data-window="subscriptions"]');
+  await subs.waitFor();
+  await subs.getByRole("button", { name: "History", exact: true }).click();
+  const historyRow = subs.locator(`[data-receipt="${account(301)}"]`);
+  await historyRow.getByRole("button", { name: "Details" }).click();
+  await historyRow.getByText(/Linked — Resolved to the exact domain record/).waitFor();
+  await historyRow.getByRole("button", { name: `Worker aaaaaaaa · turn ${tid(2).slice(0, 8)}` }).click();
+  await worker.locator(`[data-turn-id="${tid(2)}"][aria-current="true"]`).waitFor();
+  assert.equal(await worker.locator(`[data-turn-id="${tid(6)}"][aria-current="true"]`).count(), 0, "a linked focus clears the receipt-clicked one");
+  await worker.locator(`[data-event-receipt="${tid(52)}"]`).getByRole("button", { name: `turn ${tid(6).slice(0, 8)}` }).click();
+  await worker.locator(`[data-turn-id="${tid(6)}"][aria-current="true"]`).waitFor();
+  assert.equal(await worker.locator(`[data-turn-id="${tid(2)}"][aria-current="true"]`).count(), 0, "an explicit receipt focus outranks a stale linked focus");
+  // The detour may have remounted the list; reopen the collapsed closed-Worker rows.
+  if (await row("stack · dddddd").count() === 0) await list.getByRole("button", { name: /Closed/ }).click();
+
+  // Turn 1's watch: the exact receipt, then the exact request's completed observation — never the latest turn.
+  const turn1 = worker.locator(`[data-turn-id="${tid(1)}"]`);
+  await turn1.getByRole("button", { name: "Bot watch" }).click();
+  await turn1.locator(`[data-receipt="${account(300)}"]`).getByText("Delivered").waitFor();
+  await turn1.getByText(/Terminal admission acknowledged/).waitFor();
+  await turn1.getByText("Completion", { exact: true }).waitFor();
+  await turn1.getByText("Completed · end_turn", { exact: true }).waitFor();
+  // A follow-up worker_send can come from a different Chat of the same Bot, so the watch filter is Bot-only.
+  assert.deepEqual(watchCalls.find((call) => call.recordId === account(101)), { package: "worker", recordId: account(101), limit: 100, botId: "bot-1" });
+
+  // Turn 2's watch: active observation with bounded pending permission metadata, 8 of 12, no answering control.
+  const turn2 = worker.locator(`[data-turn-id="${tid(2)}"]`);
+  await turn2.getByRole("button", { name: "Bot watch" }).click();
+  await turn2.getByText("Attention", { exact: true }).waitFor();
+  await turn2.getByText("12 pending permissions").waitFor();
+  assert.equal(await turn2.locator("li").filter({ hasText: /permission / }).count(), 8, "only the bounded eight pending entries render");
+  await turn2.getByText(/Showing 8 of 12\. Full options are in the Worker summary/).waitFor();
+  for (const name of [/allow/i, /deny/i, /answer/i]) assert.equal(await turn2.getByRole("button", { name }).count(), 0, `no ${name} in a turn watch`);
+  await page.screenshot({ path: join(evidence, "worker-turn-watch.png"), animations: "disabled" });
+  await page.emulateMedia({ colorScheme: "dark" }); await shot("worker-turn-watch-dark");
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.setViewportSize({ width: 430, height: 900 }); await shot("worker-turn-watch-narrow");
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await turn2.getByRole("button", { name: "Bot watch" }).click();
+  await turn1.getByRole("button", { name: "Bot watch" }).click();
   await worker.getByRole("tab", { name: "Tools" }).click();
   await worker.getByText("The parent link is unverified and the child’s status is unknown.", { exact: false }).waitFor();
   await worker.getByRole("button", { name: /Run pnpm test/ }).click();
@@ -363,6 +495,38 @@ try {
   await worker.getByRole("tab", { name: "Changes" }).click();
   await worker.getByText("the Worker's worktree is no longer available", { exact: false }).waitFor();
   await worker.getByRole("tab", { name: "Conversation" }).click();
+  await row("stack · cccccc").click();
+
+  // Watches stay truthful per turn: an uncertain admission is frozen, an observed one is settled,
+  // and an operator-started turn has no Bot watch at all. Nothing here answers or retries anything.
+  await worker.getByRole("tab", { name: "Turns" }).click();
+  const turn4 = worker.locator(`[data-turn-id="${tid(4)}"]`);
+  await turn4.getByRole("button", { name: "Bot watch" }).click();
+  await turn4.locator(`[data-receipt="${account(302)}"]`).getByText("Unknown", { exact: true }).waitFor();
+  await turn4.getByText(/Native admission is uncertain\. Delivery is frozen/).waitFor();
+  await turn4.getByText("Completion", { exact: true }).waitFor();
+  await turn4.getByRole("region", { name: "Bot watch" }).getByText(/Turn outcome is unknown after server restart/).waitFor();
+  assert.equal(await turn4.getByRole("button", { name: /Retry|Rearm|Resend/i }).count(), 0);
+  await turn4.getByRole("button", { name: "Bot watch" }).click();
+
+  await row("stack · dddddd").click();
+  await worker.getByRole("tab", { name: "Turns" }).click();
+  const turn5 = worker.locator(`[data-turn-id="${tid(5)}"]`);
+  await turn5.getByRole("button", { name: "Bot watch" }).click();
+  await turn5.locator(`[data-receipt="${account(303)}"]`).getByText("Observed").waitFor();
+  await turn5.getByText("Watch retired").waitFor();
+  await turn5.getByText("Turn content cleared").waitFor();
+  await turn5.getByRole("button", { name: "Bot watch" }).click();
+
+  await row("brain · bbbbbb").click();
+  await worker.getByRole("tab", { name: "Turns" }).click();
+  await worker.getByText("No event deliveries recorded.").waitFor();
+  const turn3 = worker.locator(`[data-turn-id="${tid(3)}"]`);
+  await turn3.getByRole("button", { name: "Bot watch" }).click();
+  await turn3.getByText("No Bot watch requested").waitFor();
+  await turn3.getByText(/watches its exact request by default/).waitFor();
+  assert.equal(await turn3.getByText("Completion", { exact: true }).count(), 0, "no receipt reads no observation");
+  await turn3.getByRole("button", { name: "Bot watch" }).click();
   await row("stack · cccccc").click();
 
   // A second window keeps its own Worker while the primary follows the list.
@@ -607,6 +771,7 @@ try {
   assert.equal(maintenanceCalls.filter(([name]) => name === "plan").length, plansBeforeHidden);
 
   assert.deepEqual(writes, []);
+  assert.equal(sentCalls.some((params) => params.package === "worker" && params.name === "worker_respond"), false, "no permission answer ever left the page");
   assert.deepEqual(errors, []);
   console.log(`workers browser check passed; evidence in ${evidence}`);
 } finally {

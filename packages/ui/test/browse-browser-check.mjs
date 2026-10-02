@@ -64,6 +64,13 @@ const seedUnknown = (kind, input, status = "unknown") => {
   return apply;
 };
 let nekoBase = "";
+// Retained Bot-watch receipt for the waiting handoff's exact request; the resolved sibling never asked.
+const watchCalls = [];
+let watchUnavailable = false;
+const completionReceipts = [
+  { id: uuid(70), botId: "bot-1", threadId: "thread-1", pkg: "browse", operation: "browser_handoff_request", recordId: uuid(60),
+    state: "delivered", lastDeliveredAt: Date.now() - 60_000, lastDeliveryKind: "terminal", lastError: null, nativeAdmissionUncertain: false, subscriptionPresent: true },
+];
 const state = {
   profiles: [],
   controllers: [],
@@ -98,7 +105,22 @@ const handlers = {
   browser_controller_list: () => ({ controllers: state.controllers }),
   browser_handoff_list: () => ({ handoffs: state.handoffs }),
   browser_handoff_get: (input) => ({ handoff: handoff(input.id) ?? null }),
-  browser_handoff_completion: () => ({ result: null }),
+  browser_handoff_completion: (input) => {
+    const found = state.handoffs.find((item) => item.requestId === input.requestId && item.botId === input.botId && item.threadId === input.threadId);
+    return { result: found && found.state === "resolved" ? found : null };
+  },
+  serve_completion_list: (args) => {
+    watchCalls.push(args);
+    if (watchUnavailable) throw new Error("server subscription owner unavailable");
+    const rows = completionReceipts.filter((row) => (!args.package || row.pkg === args.package) && (!args.operation || row.operation === args.operation)
+      && (!args.recordId || row.recordId === args.recordId) && (!args.botId || row.botId === args.botId) && (!args.threadId || row.threadId === args.threadId) && (!args.state || row.state === args.state));
+    const nextOffset = (args.offset ?? 0) + (args.limit ?? 100) < rows.length ? (args.offset ?? 0) + (args.limit ?? 100) : null;
+    return { completions: rows.slice(args.offset ?? 0, (args.offset ?? 0) + (args.limit ?? 100)), revision: "watch-1", total: rows.length, nextOffset, truncated: nextOffset !== null };
+  },
+  serve_completion_get: ({ id }) => {
+    const found = completionReceipts.find((row) => row.id === id) ?? null;
+    return found ? { receipt: found, link: { kind: "browse", requestId: found.recordId, handoffId: uuid(50) }, linkStatus: "resolved" } : { receipt: null, link: null, linkStatus: "not_found" };
+  },
   browser_controller_select: () => { throw new Error("the UI must not select controllers"); },
   browser_handoff_take: (input) => act("take", input),
   browser_handoff_finish: (input) => act("finish", input),
@@ -174,8 +196,12 @@ try {
 
   const serve = await serveFixture(handlers);
   Object.assign(handlers, serve.handlers);
+  // The bots WebSocket manifest selects explicit names: the fixture socket must serve every selected
+  // operation for the gateway to admit the page. Unobserved ones still throw if the UI ever calls them.
+  const unobserved = (name) => () => { throw new Error(`${name} is not observed in this fixture`); };
+  for (const op of botsApi.operations) handlers[op.name] ??= unobserved(op.name);
   const definitions = { browse: Object.keys(handlers).filter((name) => name.startsWith("browser_") || name.startsWith("browse_state_") || name.startsWith("agent_browser_") || name.startsWith("hypeman_")),
-    serve: serve.names, bots: ["bot_list", "bot_defaults_get", "voice_status"], api: ["docs_snapshot"] };
+    serve: serve.names, bots: botsApi.operations.map((op) => op.name), api: ["docs_snapshot"] };
   const topics = { browse: browseApi.events.topics, serve: serve.topics, bots: botsApi.events.topics, api: {} };
   websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, Object.keys(definitions), ["bots"]), port: 0 });
   const catalog = [fixtureDoc("browse", browseApi, websocket.url, publishedJsonSchema), ...["serve", "bots", "api"].map((name) => ({ ...fixtureDoc(name, null, websocket.url, publishedJsonSchema), events: topics[name],
@@ -217,6 +243,7 @@ try {
   const profiles = page.locator('[data-window="browse-profiles"]');
   const controllers = page.locator('[data-window="browse-controllers"]');
   const toolchain = page.locator('[data-window="browse-toolchain"]');
+  const inspector = page.getByRole("region", { name: "Inspector" });
   await handoffs.getByText("A Bot is waiting for you").waitFor();
   await handoffs.getByText("Requested tab found").waitFor();
 
@@ -271,6 +298,9 @@ try {
   await handoffs.getByText("Nothing waiting. Bots ask here when a page needs a person.").waitFor();
   await handoffs.getByRole("button", { name: "Show 2" }).click();
   await handoffs.getByText(/Completed · reported/).waitFor();
+  // History rows carry the exact Chat thread and request id for correlation.
+  await handoffs.locator('[title="Thread thread-1"]').waitFor();
+  await handoffs.locator(`[title="Request ${uuid(61)}"]`).waitFor();
 
   // Profiles: grouped, failed shown with its error, default not deletable, unassigned deletable by name.
   await profiles.getByText("CDP readiness exceeded 35s").waitFor();
@@ -393,6 +423,15 @@ try {
   await historyMaintenance.getByRole("button", { name: "Close receipt" }).click();
   await historyMaintenance.locator("summary").click();
 
+  // A cleared resolved handoff keeps its exact identity and truthfully reports the absent watch.
+  await handoffs.getByRole("button", { name: /Inspect Handoff content cleared/ }).click();
+  await inspector.getByText("Handoff content cleared", { exact: true }).first().waitFor();
+  await inspector.getByText("thread-2", { exact: true }).first().waitFor();
+  await inspector.getByText("No Bot watch requested").waitFor();
+  await inspector.getByText(/this view cannot subscribe/).waitFor();
+  assert.equal(await inspector.getByText(/The human reported/).count(), 0, "no receipt means no completion read at all");
+  await inspector.getByRole("button", { name: "Close inspector" }).click();
+
   // Exact owned volumes page independently; provider failure is not an empty inventory.
   const volumeMaintenance = toolchain.locator("details");
   await volumeMaintenance.locator("summary").click();
@@ -464,9 +503,33 @@ try {
   assert.deepEqual(calls.find((call) => call.name === "agent_browser_update_accept").input, { version: "0.39.0" });
   await page.screenshot({ path: join(evidence, "browse-operator.png"), animations: "disabled" });
 
-  // Inspecting a handoff shows its record and links.
+  // Inspecting a handoff shows its record and links — plus its exact Bot watch and the human report.
   await handoffs.getByRole("button", { name: /Inspect Sign in to GitHub/ }).click();
-  await page.getByText(/Browser handoff · Completed · reported/).waitFor();
+  await inspector.getByText(/Browser handoff · Completed · reported/).waitFor();
+  await inspector.locator('[data-bot-watch="browse"]').waitFor();
+  await inspector.locator(`[data-receipt="${uuid(70)}"]`).getByText("Delivered").waitFor();
+  await inspector.getByText(/Terminal admission acknowledged/).waitFor();
+  await inspector.getByText("The human reported Completed. A report, not verified browser state; the Bot verifies with a fresh snapshot.").waitFor();
+  await inspector.getByText("thread-1", { exact: true }).first().waitFor();
+  assert.deepEqual(watchCalls.find((call) => call.recordId === uuid(60)), { package: "browse", recordId: uuid(60), limit: 100, botId: "bot-1", threadId: "thread-1" });
+  assert.deepEqual(calls.find((call) => call.name === "browser_handoff_completion").input, { botId: "bot-1", threadId: "thread-1", requestId: uuid(60) });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.screenshot({ path: join(evidence, "browse-handoff-watch-dark.png"), animations: "disabled" });
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.screenshot({ path: join(evidence, "browse-handoff-watch-light.png"), animations: "disabled" });
+  await page.setViewportSize({ width: 430, height: 900 });
+  await page.screenshot({ path: join(evidence, "browse-handoff-watch-narrow.png"), animations: "disabled" });
+  await page.setViewportSize({ width: 2400, height: 1300 });
+
+  // A failed watch read is unavailable, never an empty watch; the subscriptions notice re-reads it.
+  watchUnavailable = true;
+  served.get("serve").publish("serve_subscriptions_changed");
+  await inspector.getByText(/Bot watch unavailable: server subscription owner unavailable/).waitFor();
+  assert.equal(await inspector.getByText("No Bot watch requested").count(), 0);
+  watchUnavailable = false;
+  served.get("serve").publish("serve_subscriptions_changed");
+  await inspector.locator(`[data-receipt="${uuid(70)}"]`).getByText("Delivered").waitFor();
+  await inspector.getByRole("button", { name: "Close inspector" }).click();
 
   // The b key reaches Browse from another space.
   await page.goto(`${origin}/fleet`);

@@ -50,6 +50,14 @@ const seedAction = JSON.stringify(apiAction);
 insertExecution.run(seedExecutions[0], seedIds.bot, msAgo(3 * 3_600_000), "completed", ago(3 * 3_600_000), ago(3 * 3_600_000 - 30_000), seedAuthority, seedAction, JSON.stringify({ sent: true }), null);
 insertExecution.run(seedExecutions[1], seedIds.bot, msAgo(2 * 3_600_000), "failed", ago(2 * 3_600_000), ago(2 * 3_600_000 - 20_000), seedAuthority, seedAction, null, "call_outcome_unknown");
 insertExecution.run(seedExecutions[2], seedIds.bot, msAgo(3_600_000), "unknown", ago(3_600_000), ago(3_600_000 - 10_000), seedAuthority, seedAction, null, "dispatch_interrupted");
+// A run whose guardian was interrupted: unknown is not a proven failure.
+const unknownRunId = "22222222-0000-4000-8000-0000000000aa";
+seed.db.prepare("INSERT INTO runs(id,execution_id,state,pid,exit_code,signal,error,request_hash,line_count,output_bytes,output_truncated,retain_output,started_at,finished_at,label) VALUES(?,NULL,'unknown',NULL,NULL,NULL,'interrupted guardian','fixture-hash',0,0,0,1,?,?,'Guardian lost')")
+  .run(unknownRunId, ago(600_000), ago(599_000));
+
+// Retained Bot-watch receipts for exact run ids; populated once the fixture runs exist.
+const completionReceipts = [];
+const watchCalls = [];
 
 const handlers = {
   serve_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
@@ -67,6 +75,13 @@ const handlers = {
   chat_thread_read: () => ({ messages: [] }),
   worker_list: () => ({ workers: [] }), worker_runtime_list: () => ({ runtimes: [] }),
   usage_snapshot: () => ({ atMs: now, inventoryAtMs: now, inventoryError: null, accounts: [] }),
+  serve_completion_list: (args) => {
+    watchCalls.push(args);
+    const rows = completionReceipts.filter((row) => (!args.package || row.pkg === args.package) && (!args.operation || row.operation === args.operation)
+      && (!args.recordId || row.recordId === args.recordId) && (!args.botId || row.botId === args.botId) && (!args.threadId || row.threadId === args.threadId) && (!args.state || row.state === args.state));
+    const nextOffset = (args.offset ?? 0) + (args.limit ?? 100) < rows.length ? (args.offset ?? 0) + (args.limit ?? 100) : null;
+    return { completions: rows.slice(args.offset ?? 0, (args.offset ?? 0) + (args.limit ?? 100)), revision: "watch-1", total: rows.length, nextOffset, truncated: nextOffset !== null };
+  },
 };
 const sockets = new Map();
 let websocket, next, browser, proc;
@@ -76,16 +91,22 @@ const call = (name, arguments_) => socketCall(socketPath("proc", env), "tools/ca
 try {
   proc = await serveApi({ name: "proc", transport: "socket", env, root });
   websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["proc", "serve", "auth", "worker", "bots", "usage", "api"]), port: 0 });
-  const doc = (name, api) => fixtureDoc(name, api, websocket.url, publishedJsonSchema);
-  const catalog = [doc("proc", procApi), doc("bots", botsApi), doc("serve"), doc("auth"), doc("worker"), doc("usage"), doc("api")];
-  handlers.docs_snapshot = () => ({ packages: catalog });
   const serve = await serveFixture(handlers);
   Object.assign(handlers, serve.handlers);
+  // bots/worker WebSocket manifests select explicit names: the fixture sockets must serve every selected
+  // operation for the gateway to admit the page. Unobserved ones still throw if the UI ever calls them.
+  const unobserved = (name) => () => { throw new Error(`${name} is not observed in this fixture`); };
+  for (const op of [...botsApi.operations, ...workerApi.operations]) handlers[op.name] ??= unobserved(op.name);
   const definitions = { serve: serve.names, auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"],
     worker: workerApi.operations.map((operation) => operation.name), bots: botsApi.operations.map((operation) => operation.name), usage: ["usage_snapshot"], api: ["docs_snapshot"] };
   const topics = { serve: serve.topics,
     auth: { accounts_changed: "Fixture", login_changed: "Fixture", worker_accounts_changed: "Fixture", worker_login_changed: "Fixture" },
     worker: { workers_changed: "Fixture" }, bots: botsApi.events.topics, usage: { usage_changed: "Fixture" }, api: {} };
+  const doc = (name, api) => fixtureDoc(name, api, websocket.url, publishedJsonSchema);
+  // Catalog docs without a manifest still name the fixture socket's served operations so exposure checks work.
+  const catalog = [doc("proc", procApi), doc("bots", botsApi), ...["serve", "auth", "worker", "usage", "api"].map((name) => ({ ...fixtureDoc(name, undefined, websocket.url, publishedJsonSchema), events: topics[name],
+    transports: [{ type: "websocket", description: "Fixture", supported: true, subscriptions: true, endpoint: websocket.url, operations: definitions[name], events: Object.keys(topics[name] ?? {}), routes: [] }] }))];
+  handlers.docs_snapshot = () => ({ packages: catalog });
   for (const [name, names] of Object.entries(definitions)) {
     sockets.set(name, await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {},
       operations: fixtureOperations(names, handlers), events: { topics: topics[name], scope: name === "bots" ? { valid: () => true, description: "Fixture", example: "bot-1" } : undefined } }));
@@ -118,6 +139,9 @@ try {
     process: { command: "/bin/sh", args: ["-c", "echo once; echo twice >&2"], cwd: "/tmp", timeoutMs: 60_000, retainOutput: false } });
   await call("proc_run_join", { id: noisy.id, waitMs: 30_000 });
   await call("proc_run_join", { id: forgotten.id, waitMs: 30_000 });
+  // The noisy run carries a Bot watch receipt; the runs admit their exact id as the request record.
+  completionReceipts.push({ id: "33333333-0000-4000-8000-000000000001", botId: "bot-1", threadId: "thread-bot-1", pkg: "proc", operation: "proc_run_start",
+    recordId: noisy.id, state: "delivered", lastDeliveredAt: now - 120_000, lastDeliveryKind: "terminal", lastError: null, nativeAdmissionUncertain: false, subscriptionPresent: true });
   // The secret schedule runs its one shot on startup; wait for its execution record.
   for (let attempt = 0; attempt < 50; attempt++) {
     const { executions } = await call("proc_execution_list", { id: secret.id, limit: 10 });
@@ -228,12 +252,38 @@ try {
   await run.getByLabel("Stream").selectOption("");
   await page.screenshot({ path: join(evidence, "proc-run-output.png"), animations: "disabled" });
 
-  // A run that keeps no output says so, and stopping the sleeper reaches Stopped.
+  // The Exit watch reads the exact run's completion and its Bot watch, separate from output.
+  const exitWatch = run.locator('section[aria-label="Exit watch"]');
+  await exitWatch.getByText("Exited", { exact: true }).waitFor();
+  await exitWatch.getByText(/code 3/).waitFor();
+  await exitWatch.getByText(/Exit facts only — a terminal exit isn't Work completion/).waitFor();
+  await exitWatch.locator('[data-receipt="33333333-0000-4000-8000-000000000001"]').getByText("Delivered").waitFor();
+  assert.deepEqual(watchCalls.find((call) => call.recordId === noisy.id), { package: "proc", recordId: noisy.id, limit: 100 });
+  await page.screenshot({ path: join(evidence, "proc-run-exit-watch.png"), animations: "disabled" });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.screenshot({ path: join(evidence, "proc-run-exit-watch-dark.png"), animations: "disabled" });
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.setViewportSize({ width: 430, height: 900 });
+  await page.screenshot({ path: join(evidence, "proc-run-exit-watch-narrow.png"), animations: "disabled" });
+  await page.setViewportSize({ width: 2600, height: 1300 });
+
+  // A run that keeps no output says so; its exit observation still reads and no Bot watch exists.
   await runs.getByRole("button", { name: /Finished/ }).click();
   await runs.locator('[data-node^="proc-run:"]').filter({ hasText: "Forgotten output" }).click();
   await run.getByText(/doesn't keep output after it exits/).waitFor();
+  await exitWatch.getByText("Exited", { exact: true }).waitFor();
+  await exitWatch.getByText("No Bot watch requested").waitFor();
+  await exitWatch.getByText(/this admission has no retained receipt/).waitFor();
+
+  // A lost guardian is unknown, never a proven failure.
+  await runs.locator('[data-node^="proc-run:"]').filter({ hasText: "Guardian lost" }).click();
+  await run.getByText("Unknown (not a proven failure)", { exact: true }).waitFor();
+  await exitWatch.getByText("Unknown", { exact: true }).waitFor();
+  await exitWatch.getByText("interrupted guardian").waitFor();
   await runs.locator('[data-node^="proc-run:"]').filter({ hasText: "Long sleep" }).click();
   await run.getByRole("heading", { name: "Long sleep" }).waitFor();
+  await exitWatch.getByText("No exit observed yet — the run is starting or running.").waitFor();
+  await exitWatch.getByText("No Bot watch requested").waitFor();
   await run.getByRole("button", { name: "Stop…" }).click();
   await page.getByRole("button", { name: "Stop", exact: true }).click();
   await run.getByText("Stopped", { exact: true }).waitFor();
