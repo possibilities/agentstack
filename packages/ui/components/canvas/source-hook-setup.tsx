@@ -22,9 +22,10 @@ export function codeWords(error: unknown): string {
   return code ? errorWords(code) ?? text : text;
 }
 
-export const blockerWords: Record<string, string> = {
-  receiver_disabled: "The receiver is disabled, so new requests are rejected. Enable it first.",
-  public_https_origin_unset: "No public HTTPS origin is set, so GitHub's cloud has nowhere to send requests. Set the origin first.",
+/** Why a plan cannot be prepared yet, kept apart from the setup facts' own blocker text. */
+const planNeeds: Record<string, string> = {
+  receiver_disabled: "Enable the receiver first: a disabled receiver rejects what GitHub would send.",
+  public_https_origin_unset: "Set the public origin first: the hook needs a URL GitHub's cloud can reach.",
 };
 
 /**
@@ -105,7 +106,7 @@ export function HookSetup({ endpoint, setup, requests }: { endpoint: GithubEndpo
 
       <div className="flex flex-col gap-1.5">
         <span className={sourceLabel}>3 · Plan</span>
-        {blockers.length ? <ul aria-label="Blocked until" className="flex flex-col gap-0.5 text-[0.72rem] text-warning">{blockers.map((blocker) => <li key={blocker}>{blockerWords[blocker] ?? blocker}</li>)}</ul> : null}
+        {blockers.length ? <ul aria-label="A plan needs" className="flex flex-col gap-0.5 text-[0.72rem] text-warning">{blockers.map((blocker) => <li key={blocker}>{planNeeds[blocker] ?? blocker}</li>)}</ul> : null}
         {!plan ? (
           <>
             <fieldset className="flex flex-col gap-1.5 rounded-lg border p-2.5" disabled={planning}>

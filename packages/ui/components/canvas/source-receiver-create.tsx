@@ -9,7 +9,7 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Spinner } from "@/components/ui/spinner";
 import { targetKinds, targetLabel } from "@/lib/stack/source";
 import {
-  browserStorage, createOutcome, createSlot, emptyReceiverDraft, emptyTargetDraft, freezeReceiver, maxReceiverLabel, setupMode, targetKindList,
+  browserStorage, createOutcome, createSlot, emptyReceiverDraft, emptyTargetDraft, errorWords, freezeReceiver, maxReceiverLabel, setupMode, targetKindList,
   type CreateRecord, type FrozenReceiver, type ReceiverCreateInput, type ReceiverDraft,
 } from "@/lib/stack/source-setup";
 import { localOperation } from "@/lib/stack/state";
@@ -291,7 +291,9 @@ function GhPicker({ kind, onPick }: { kind: "repository" | "organization"; onPic
         </Button>
         {signedIn?.authenticated ? <Word tone="success" className="text-[0.72rem]">Signed in as {signedIn.login}</Word> : signedIn ? <Word tone="warning" className="text-[0.72rem]">{signedIn.available ? "gh is not signed in" : "gh is not available"}</Word> : null}
       </div>
-      {signedIn && !signedIn.authenticated ? <p className={sourceHint}>{signedIn.available ? "Sign in on this machine with `gh auth login`, then check again." : "Install the GitHub CLI, sign in, then check again."}</p> : null}
+      {signedIn && !signedIn.authenticated ? (
+        <p className={sourceHint}>{errorWords(signedIn.error) ? `${errorWords(signedIn.error)} ` : ""}{signedIn.available ? "Sign in on this machine with `gh auth login`, then check again." : "Install the GitHub CLI, sign in, then check again."}</p>
+      ) : null}
       {signedIn?.authenticated ? (
         <>
           {kind === "repository" ? (
