@@ -166,7 +166,9 @@ if (process.argv[2] === "--run") {
     await stop(child);
   }
 } else {
-  const stage = resolve(process.env.STACK_UI_STAGE ?? join(dirname(script), "..", "dist", "package"));
+  // npm packs a symlinked directory as a link and silently drops its bundled node_modules (e.g. /tmp on macOS).
+  const requested = resolve(process.env.STACK_UI_STAGE ?? join(dirname(script), "..", "dist", "package"));
+  const stage = await realpath(requested).catch(() => requested);
   const npm = await executable("npm");
   if (Number(process.versions.node.split(".")[0]) < 24 || !npm
     || !await stat(join(stage, "packaging.json")).catch(() => null)
