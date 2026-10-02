@@ -45,10 +45,13 @@ test("draft poll requests and durable Worker intake remain distinct from snapsho
   const invocation: InvocationContext = { transport: "mcp", botId: null, instance: null, threadId: null, sessionId: null, workerId: "worker", workerInstance: "instance" };
   let attempts = 0;
   const delivered: Occurrence[] = [];
+  let releaseSecond!: () => void;
+  const secondDispatch = new Promise<void>(resolve => { releaseSecond = resolve; });
   const runtime: OccurrenceRuntime = {
     async resolve(input) { assert.equal(input.workerId, "worker"); return { kind: "worker", workerId: "worker", instance: "instance", sessionId: "session" }; },
     async verify(target) { return target; },
     async deliver(_target, event, _id, _policy, _signal, authorize) {
+      if (event.eventId === "second") await secondDispatch;
       await authorize(); attempts++;
       if (event.eventId === "second") throw new Error("input response lost after dispatch");
       delivered.push(event); return { boundary: "worker_inbox" };
@@ -77,15 +80,21 @@ test("draft poll requests and durable Worker intake remain distinct from snapsho
     const sub = (listening.structuredContent as { subscription: { id: string } }).subscription;
     const add = (eventId: string) => history.push({ eventId, name: "arrived", timestamp: new Date().toISOString(), data: { value: "match" } });
     add("first");
-    await until(async () => delivered.length === 1);
+    await until(async () => (await service.occurrences!.status(invocation))[0]!.deliveries.some(row => row.eventId === "first" && row.state === "admitted"));
     assert.equal((await service.occurrences!.status(invocation))[0]!.deliveries[0]!.boundary, "worker_inbox");
     add("second");
-    await until(async () => (await service.occurrences!.status(invocation))[0]!.deliveries.some(row => row.state === "unknown"));
+    // The owner persists unknown before dispatch as a crash fence, not a result.
+    await until(async () => (await service.occurrences!.status(invocation))[0]!.deliveries.some(row => row.eventId === "second" && row.state === "unknown" && row.error === null));
+    assert.equal(attempts, 1, "the pre-dispatch fence is visible while native input is still waiting");
+    releaseSecond();
+    await until(async () => (await service.occurrences!.status(invocation))[0]!.deliveries.some(row => row.eventId === "second" && row.state === "unknown" && row.error !== null));
+    const uncertain = (await service.occurrences!.status(invocation))[0]!.deliveries.find(row => row.eventId === "second")!;
+    assert.equal(uncertain.error, "input response lost after dispatch");
     assert.equal(attempts, 2); assert.equal(delivered[0]!.eventId, "first");
     const repeat = await service.occurrences!.subscribe("sample", { name: "arrived", arguments: { filter: "match" } }, invocation);
     assert.equal(repeat.id, sub.id); assert.equal(repeat.cursor, "2");
     await service.close(); service = owner(); service.resume(); add("third");
-    await until(async () => !!(await service.occurrences!.status(invocation))[0]!.lastError);
+    await until(async () => (await service.occurrences!.status(invocation))[0]!.lastError?.startsWith("Prior delivery is unknown;") === true);
     assert.equal(attempts, 2, "restart must not replay an uncertain native attempt or pass it");
     await manifest("[]");
     assert.deepEqual((await client.request({ method: "events/list", params: {} }, z.object({ events: z.array(z.any()) }))).events, []);
@@ -94,9 +103,9 @@ test("draft poll requests and durable Worker intake remain distinct from snapsho
     assert.deepEqual(await service.occurrences!.status(invocation), []);
     await manifest("all");
     await service.occurrences!.subscribe("sample", { name: "arrived", arguments: { filter: "ephemeral" } }, invocation);
-    await until(async () => delivered.some(event => event.eventId === "ephemeral"));
+    await until(async () => (await service.occurrences!.status(invocation))[0]!.deliveries.some(row => row.eventId === "ephemeral" && row.state === "admitted"));
     assert.equal(delivered.filter(event => event.eventId === "ephemeral").length, 1, "a cursor-less occurrence in the first response must not be discarded by bootstrap");
-  } finally { await client.close(); await server.close(); await service.close(); await socket.close(); await rm(root, { recursive: true, force: true }); }
+  } finally { releaseSecond(); await client.close(); await server.close(); await service.close(); await socket.close(); await rm(root, { recursive: true, force: true }); }
 });
 
 test("competing occurrence polls enforce the shared retained-receipt cap without advancing a refused cursor", { timeout: 20_000 }, async () => {
