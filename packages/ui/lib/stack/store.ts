@@ -1846,10 +1846,13 @@ export class StackStore {
   sourceMore = (): void => { void this.sourceLedgerSession.more(); };
   /** Continue past the snapshot's end to newer arrivals; only a finished snapshot offers it. */
   sourceExtend = (): void => { void this.sourceLedgerSession.extend(); };
-  /** The status read gives capacity and the newest sequence; a window may ask for it again after a maintenance receipt. */
-  refreshSourceStatus = (): void => { this.refresh("sourceStatus"); this.refresh("sourceEndpoints"); };
   /** After a cleanup receipt: summaries shown may carry a new cleared marker. */
-  refreshSourceDeliveries = (): void => { this.refresh("sourceStatus"); this.sourceLedgerSession.invalidate(0); this.set({ sourceGeneration: this.state.sourceGeneration + 1 }); };
+  refreshSourceDeliveries = (): void => {
+    this.refresh("sourceStatus"); this.refresh("sourceEndpoints");
+    for (const sequence of Object.keys(this.state.sourceDeliveries)) void this.loadSourceDelivery(Number(sequence));
+    this.sourceLedgerSession.invalidate(0);
+    this.set({ sourceGeneration: this.state.sourceGeneration + 1 });
+  };
 
   private invalidateBot(id: string): void {
     this.set({ botInvalidations: { ...this.state.botInvalidations, [id]: (this.state.botInvalidations[id] ?? 0) + 1 } });

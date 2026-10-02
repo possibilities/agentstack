@@ -468,6 +468,9 @@ try {
   const grant = accessStore.inventory().grants.find((entry) => entry.client_id === credential.clientId);
   accessStore.updateGrant(grant.id, 1, ["ui:view", "ui:control"], []);
   await remotePage.locator('[data-remote-scope="control"]').waitFor();
+  // The gateway fences open connections when a grant changes; let them reconnect before looking.
+  await rLedger.getByText(/^Snapshot through #\d+$/).waitFor();
+  await rReceivers.getByRole("img", { name: "Live" }).first().waitFor();
   assert.equal(await remotePage.locator("summary", { hasText: "Maintenance" }).count(), 0, "control scope still offers no Source maintenance");
   for (const result of await remoteCalls(fenced)) assert.ok(result.error, "control scope gains no Source mutation: the source package has no remote mutation allowlist");
   await remotePage.screenshot({ path: join(evidence, "source-remote-readonly.png"), animations: "disabled" });

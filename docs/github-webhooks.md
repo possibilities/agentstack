@@ -195,8 +195,10 @@ Workers gain no GitHub MCP operations. The local WebSocket declares the full
 contract; Access still denies local setup, receiver mutations/reveal and
 maintenance remotely, including viewers with control scope.
 
-No dedicated UI views or store subscriptions are added. Existing generic
-reference/inspection and System child discovery continue to show the API.
-Receiver setup/health, delivery monitoring, watch consumption and payload
-maintenance need a separate authorized UI phase. Source delivery does not restart
+The API phase added no UI. The UI's Source space ([ADR 0164](adr/0164-source-space.md))
+now reads receivers, the delivery ledger, original payloads and the event catalog, and
+clears original payloads through the shared maintenance flow, over the existing
+`github_endpoints_changed` and `github_deliveries_changed` topics. Receiver setup and
+secret handling, hook plan/apply/probe, and watch consumption remain API-only until their
+own authorized UI phases. Source delivery does not restart
 a running Server; never rebuild an active UI's `.next` in place without approval.

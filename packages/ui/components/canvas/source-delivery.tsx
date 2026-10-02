@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { formatBytes } from "@/lib/stack/resources";
 import {
-  addChunk, contentTypeLabel, deliveryName, payloadChunkChars, payloadComplete, payloadRenderChars, payloadText, targetLabel, verifyDigest, type DigestResult, type PayloadLoad,
+  addChunk, contentTypeLabel, deliveryName, payloadChunkChars, payloadComplete, payloadRenderChars, payloadText, targetKinds, targetLabel, verifyDigest, type DigestResult, type PayloadLoad,
 } from "@/lib/stack/source";
 import type { GithubDelivery, GithubPayloadChunk } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
@@ -77,7 +77,7 @@ function DeliveryView({ delivery, receiver }: { delivery: GithubDelivery; receiv
         <dl className="flex flex-col gap-1 text-[0.78rem]">
           <Line label="Receiver">
             <NodeLink node={{ kind: "github-receiver", id: delivery.endpointId }} label={receiver?.label ?? "receiver"} className="font-medium">{receiver?.label ?? `${delivery.endpointId.slice(0, 8)}…`}</NodeLink>
-            {receiver ? <span className="ml-1.5 font-mono text-[0.68rem] text-muted-foreground">{targetLabel(receiver.target)}</span> : null}
+            {receiver && targetLabel(receiver.target) !== targetKinds[receiver.target.kind] ? <span className="ml-1.5 font-mono text-[0.68rem] text-muted-foreground">{targetLabel(receiver.target)}</span> : null}
           </Line>
           <Line label="Delivery GUID" copy={delivery.deliveryId}><span className="font-mono text-[0.72rem]" title={delivery.deliveryId}>{delivery.deliveryId}</span></Line>
           {fields.filter(([, value]) => value !== null).map(([label, value]) => <Line key={label} label={label}><span className="font-mono text-[0.74rem]">{String(value)}</span></Line>)}

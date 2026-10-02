@@ -147,6 +147,19 @@ PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
   node packages/ui/test/brain-browser-check.mjs
 ```
 
+The Source space's check serves the real Source API against a short disposable state directory
+(`/tmp/m7a-*`; Unix socket paths are limited to about 104 bytes on macOS) with an ephemeral loopback
+intake, and sends signed webhooks to it as GitHub would. It covers paging under concurrent arrivals,
+typed filters, hostile payload text, chunked reads and the digest, deep links, exact payload clearing,
+a spent byte budget (507), the catalog, keyboard navigation, light, dark and narrow frames, and a remote
+read-only viewer. It uses `next dev` unless `SOURCE_NEXT=start`, and keeps screenshots when
+`SOURCE_EVIDENCE_DIR` is set:
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  node packages/ui/test/source-browser-check.mjs
+```
+
 The Proc space's check serves the real Proc API against a disposable state directory, seeded through
 `ProcStore` with a Bot-owned schedule, a legacy unattributed one and a blocked one, and creates its
 live fixtures through the socket: a secret-bearing schedule, a noisy failed run, a long run for Stop
