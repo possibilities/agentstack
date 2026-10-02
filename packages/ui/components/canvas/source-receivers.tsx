@@ -80,7 +80,7 @@ function ReceiverRow({ endpoint, open, onToggle }: { endpoint: GithubEndpoint; o
         </div>
         <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-[0.72rem] text-muted-foreground">
           <span>{targetKinds[endpoint.target.kind]}</span>
-          <span className="min-w-0 truncate font-mono text-foreground" title={targetLabel(endpoint.target)}>{targetLabel(endpoint.target)}</span>
+          {targetLabel(endpoint.target) !== targetKinds[endpoint.target.kind] ? <span className="min-w-0 truncate font-mono text-foreground" title={targetLabel(endpoint.target)}>{targetLabel(endpoint.target)}</span> : <span>any {endpoint.target.kind === "app" ? "installation" : "account"}</span>}
           {endpoint.githubHost !== "github.com" ? <span className="font-mono">{endpoint.githubHost}</span> : null}
         </p>
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[0.72rem]">

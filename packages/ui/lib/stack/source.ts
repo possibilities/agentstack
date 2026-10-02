@@ -368,7 +368,8 @@ export class SourceLedger {
     if (session === this.current.session) this.afterBusy();
   }
 
-  dispose(): void { if (this.timer) clearTimeout(this.timer); this.timer = null; this.listeners.clear(); }
+  /** Stop a pending revalidation. Subscribers stay: a store that restarts keeps its ledger. */
+  dispose(): void { if (this.timer) clearTimeout(this.timer); this.timer = null; }
 }
 
 function appendEntries(held: GithubDelivery[], more: GithubDelivery[]): GithubDelivery[] {

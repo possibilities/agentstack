@@ -233,6 +233,10 @@ test("a revalidation that fails is stated, and coalesced notices read the range 
   assert.equal(fake.calls.length - before, 1, "a burst of notices is one re-read");
   assert.equal(ledger.getState().refreshError, null);
   ledger.dispose();
+  let seen = 0;
+  ledger.subscribe(() => { seen++; });
+  await ledger.start({});
+  assert.ok(seen > 0, "a disposed ledger still serves its subscribers when the store starts again");
 });
 
 test("capacity speaks in words: full means intake refused, and a refusal is stated even before the limit", () => {

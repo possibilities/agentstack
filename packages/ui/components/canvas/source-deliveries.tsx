@@ -44,16 +44,16 @@ export function DeliveriesWindow() {
   const applied = describeFilter(ledger.filter, (id) => labels.get(id) ?? `${id.slice(0, 8)}…`);
   const reading = ledger.busy === "first";
 
-  // A chosen row whose payload was cleared (by this plan or another) is no longer a valid choice.
+  // A choice names rows that were read and still hold their payload. It is left alone while a plan or receipt is showing, so a
+  // cleared row never pulls a receipt out from under the person reading it; it is pruned as soon as the flow is back to idle.
   useEffect(() => {
+    if (locked) return;
     setChosen((held) => {
       const live = new Set(ledger.entries.filter((entry) => entry.payloadClearedAt === null).map((entry) => entry.sequence));
       const next = new Set([...held].filter((sequence) => live.has(sequence)));
       return next.size === held.size ? held : next;
     });
-  }, [ledger.entries]);
-  // A fresh session starts with no choice: the sequences belong to the rows that were read.
-  useEffect(() => { setChosen(new Set()); }, [ledger.session]);
+  }, [ledger.entries, ledger.session, locked]);
 
   const open = (sequence: number) => { store.selectSourceDelivery(sequence); goTo({ kind: "github-delivery", id: String(sequence) }); };
   const toggle = useCallback((sequence: number) => setChosen((held) => {

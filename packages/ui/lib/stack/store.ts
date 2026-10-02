@@ -334,7 +334,6 @@ export class StackStore {
   private readonly sourceLedgerSession: SourceLedger = new SourceLedger(
     (input) => this.call<GithubDeliveryPage>("source", "github_delivery_list", input),
     (sequence) => this.call<GithubDelivery>("source", "github_delivery_get", { sequence }));
-  private sourceLedgerUnsubscribe: (() => void) | null = null;
   private workItemWatchers = new Map<string, number>();
   private workItemChannels = new Map<string, Channel>();
   private statusInflight = new Map<string, Promise<void>>();
@@ -396,7 +395,7 @@ export class StackStore {
       sourceStatus: { data: null, error: null, at: null }, sourceEndpoints: { data: null, error: null, at: null }, sourceSetups: {}, sourceDeliveries: {},
       sourceLedger: initialLedger, sourceSelected: null, sourceGeneration: 0,
     };
-    this.sourceLedgerUnsubscribe = this.sourceLedgerSession.subscribe(() => this.set({ sourceLedger: this.sourceLedgerSession.getState() }));
+    this.sourceLedgerSession.subscribe(() => this.set({ sourceLedger: this.sourceLedgerSession.getState() }));
     this.serverState = this.state;
     for (const account of snapshot.workerAccounts.data ?? []) if (this.catalogAccountAvailable(account.id)) this.catalogAvailable.add(account.id);
   }
@@ -1797,6 +1796,16 @@ export class StackStore {
   private sourceDeliveriesChanged(): void {
     this.refresh("sourceStatus");
     this.set({ sourceGeneration: this.state.sourceGeneration + 1 });
+  }
+
+  /**
+   * Arrivals change nothing already loaded; a cleanup changes the cleared marker on rows and held deliveries. The notice carries
+   * neither, but the status does: each accepted delivery adds one retained body, so fewer bodies than the newest sequence implies
+   * means some were cleared since the last read, and only then are loaded summaries read again.
+   */
+  private sourceStatusLanded(prior: GithubStatus | null, status: GithubStatus): void {
+    if (!prior) return;
+    if (status.payloads.count >= prior.payloads.count + (status.latestSequence - prior.latestSequence)) return;
     for (const sequence of Object.keys(this.state.sourceDeliveries)) void this.loadSourceDelivery(Number(sequence));
     this.sourceLedgerSession.invalidate();
   }
@@ -1878,6 +1887,7 @@ export class StackStore {
           this.upsertNotifications(page.entries);
           page.entries = page.entries.map(item => this.state.notificationRecords[item.id] ?? item);
         }
+        const priorSource = key === "sourceStatus" ? this.state.sourceStatus.data : null;
         const changeSeq = key === "signalStatus" ? this.state.signalStatus.data?.changeSeq : undefined;
         if (key === "signalStatus" && next.data && (next.data as AttentionStatus).contentGeneration !== this.state.signalStatus.data?.contentGeneration)
           this.set({ signalRecords: { items: {}, messages: {}, runs: {} } });
@@ -1898,6 +1908,7 @@ export class StackStore {
         // Manifest changes do not advance a Role's revision, so a fresh discovery may mean a different internal list.
         if (key === "catalog") this.refresh("roleInternal");
         if (key === "brainStats" && next.data) this.rememberBrainDocuments((next.data as BrainStats).recent);
+        if (key === "sourceStatus" && next.data) this.sourceStatusLanded(priorSource, next.data as GithubStatus);
       })
       .finally(() => {
         // A newer read for another Role owns the entry now.
