@@ -197,7 +197,7 @@ function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating:
       ) : null}
       <Section title="Skills" aside={<span className="text-[0.65rem] text-muted-foreground">skills/&lt;name&gt;/SKILL.md</span>}>
         {launch.skills.length ? (
-          <ul className="flex flex-col gap-0.5">
+          <ul aria-label="Skills selected for this launch" className="flex flex-col gap-0.5">
             {launch.skills.map((skill) => (
               <li key={skill.id}>
                 <button type="button" onClick={() => open("skill", skill.id)} className="flex w-full items-baseline gap-2 rounded-md px-1.5 py-1 text-left hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring">

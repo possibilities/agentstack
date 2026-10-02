@@ -75,10 +75,21 @@ const wrapSockets = () => {
   const Native = window.WebSocket;
   window.__wsDrop = false;
   window.__wsDelay = 0;
+  // Record launch preview requests, and optionally delay those for one harness so a stale answer can land late.
+  window.__launchCalls = [];
+  window.__launchDelay = null;
   window.WebSocket = class extends Native {
     set onmessage(handler) { super.onmessage = handler ? (event) => { if (window.__wsDrop && String(event.data).includes('"events/changed"')) return; handler.call(this, event); } : handler; }
     get onmessage() { return super.onmessage; }
-    send(data) { if (window.__wsDelay && typeof data === "string" && data.includes('"fragment_update"')) setTimeout(() => super.send(data), window.__wsDelay); else super.send(data); }
+    send(data) {
+      if (typeof data === "string" && data.includes('"role_launch_preview"')) {
+        window.__launchCalls.push(JSON.parse(data).params.arguments);
+        const delay = window.__launchDelay;
+        if (delay && data.includes(`"harness":"${delay.harness}"`)) return setTimeout(() => super.send(data), delay.ms);
+      }
+      if (window.__wsDelay && typeof data === "string" && data.includes('"fragment_update"')) setTimeout(() => super.send(data), window.__wsDelay);
+      else super.send(data);
+    }
   };
 };
 const sockets = [];
@@ -551,6 +562,210 @@ try {
   snapshot = await snap(A);
   assert.deepEqual([snapshot.skills.map((skill) => skill.name), snapshot.trustedProjects.length], [["review-changes"], 0]);
 
+  /* ─── Capability harness filters ───────────────────────────────── */
+
+  const filterGroup = (form) => form.getByRole("radiogroup", { name: "Harness filter" });
+  const skillRow = (name) => skills.locator('li[data-node^="skill:"]').filter({ has: page.getByRole("button", { name: new RegExp(`^${name}(?!-| actions)`) }) });
+  const serverRow = (name) => servers.locator('li[data-node^="mcp-server:"]').filter({ has: page.getByRole("button", { name: new RegExp(`^${name}(?!-| actions)`) }) });
+  const harnessesOf = async (kind, name) => (await snap(A))[kind === "skill" ? "skills" : "mcpServers"].find((item) => item.name === name).harnesses ?? null;
+  const internalList = (id) => rolesCall("role_internal_mcp_list", { roleId: id }).then((list) => Object.fromEntries(list.servers.map((server) => [server.name, server])));
+
+  // A skill created through the editor starts unrestricted: Any harness is checked and nothing is written.
+  await skills.getByRole("button", { name: "New skill", exact: true }).click();
+  const newHarnessSkill = editor.getByRole("form", { name: "New skill" });
+  await newHarnessSkill.waitFor();
+  assert.equal(await filterGroup(newHarnessSkill).getByRole("radio", { name: "Any harness" }).isChecked(), true, "a new record defaults to Any harness");
+  await newHarnessSkill.getByLabel("Name", { exact: true }).fill("codex-skill");
+  await newHarnessSkill.getByLabel(/^Description/).fill("For Codex-family launches");
+  await newHarnessSkill.getByLabel("SKILL.md body", { exact: true }).fill("# Codex\n\nOnly codex.");
+  await editor.getByRole("button", { name: "Create skill" }).click();
+  const codexForm = editor.getByRole("form", { name: "Edit skill codex-skill" });
+  await codexForm.waitFor();
+  assert.equal(await harnessesOf("skill", "codex-skill"), null, "creation preserves omission rather than writing null");
+
+  // "Only:" with nothing ticked blocks saving; ticking checkboxes chooses the allowlist.
+  await filterGroup(codexForm).getByRole("radio", { name: "Only:" }).click();
+  await codexForm.getByText("Choose at least one harness, or choose No harness", { exact: true }).waitFor();
+  assert.equal(await editor.getByRole("button", { name: "Save", exact: true }).isDisabled(), true, "an unticked Only: is not saveable");
+  await codexForm.getByLabel("Allow codex").check();
+  await codexForm.getByLabel("Allow claude").check();
+  await editor.getByRole("button", { name: "Save", exact: true }).click();
+  await editor.getByText("All changes saved", { exact: true }).waitFor();
+  assert.deepEqual(await harnessesOf("skill", "codex-skill"), ["codex", "claude"]);
+  await skillRow("codex-skill").getByText("codex · claude", { exact: true }).waitFor();
+  await shot("harness-editor-light");
+
+  // A content save and the Enabled switch both leave the filter alone.
+  await codexForm.getByLabel("SKILL.md body", { exact: true }).fill("# Codex\n\nOnly codex, revised.");
+  await codexForm.getByLabel("SKILL.md body", { exact: true }).press("Meta+s");
+  await editor.getByText("All changes saved", { exact: true }).waitFor();
+  assert.deepEqual(await harnessesOf("skill", "codex-skill"), ["codex", "claude"], "a content save keeps the filter");
+  await skillRow("codex-skill").getByRole("switch", { name: "codex-skill enabled" }).click();
+  await until(() => snap(A), (value) => value.skills.find((skill) => skill.name === "codex-skill").enabled === false, "codex-skill to switch off");
+  assert.deepEqual(await harnessesOf("skill", "codex-skill"), ["codex", "claude"], "the enabled switch does not touch the filter");
+  await skillRow("codex-skill").getByRole("switch", { name: "codex-skill enabled" }).click();
+  await until(() => snap(A), (value) => value.skills.find((skill) => skill.name === "codex-skill").enabled === true, "codex-skill back on");
+
+  // No harness stores []; Any harness clears the restriction with null.
+  await filterGroup(codexForm).getByRole("radio", { name: "No harness" }).click();
+  await editor.getByRole("button", { name: "Save", exact: true }).click();
+  await editor.getByText("All changes saved", { exact: true }).waitFor();
+  assert.deepEqual(await harnessesOf("skill", "codex-skill"), []);
+  await skillRow("codex-skill").getByText("No harness", { exact: true }).waitFor();
+  await codexForm.getByText("Enabled, but its filter allows no harness", { exact: true }).waitFor();
+  await filterGroup(codexForm).getByRole("radio", { name: "Any harness" }).click();
+  await editor.getByRole("button", { name: "Save", exact: true }).click();
+  await editor.getByText("All changes saved", { exact: true }).waitFor();
+  assert.equal(await harnessesOf("skill", "codex-skill"), null, "Any harness clears the restriction");
+  await skillRow("codex-skill").getByText("No harness", { exact: true }).waitFor({ state: "detached" });
+
+  // Duplicating from the editor carries the filter currently in the draft, saved or not.
+  await codexForm.getByLabel("Allow devin").check();
+  await editor.getByRole("button", { name: "codex-skill actions" }).click();
+  await page.getByRole("menuitem", { name: "Duplicate" }).click();
+  await editor.getByRole("form", { name: "Edit skill codex-skill-copy" }).waitFor();
+  assert.deepEqual(await harnessesOf("skill", "codex-skill-copy"), ["devin"], "the copy gets the unsaved filter edit");
+  await editor.getByRole("button", { name: "codex-skill-copy actions" }).click();
+  await page.getByRole("menuitem", { name: "Delete…" }).click();
+  await dialog.getByRole("button", { name: "Delete", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+
+  // An unsaved filter draft against a filter changed elsewhere is the ordinary conflict flow.
+  await tap(skillRow("codex-skill").getByRole("button", { name: /^codex-skill(?!-| actions)/ }));
+  await codexForm.waitFor();
+  snapshot = await snap(A);
+  await rolesCall("skill_update", { roleId: A, expectedRevision: snapshot.revision, id: snapshot.skills.find((skill) => skill.name === "codex-skill").id, harnesses: ["opencode"] });
+  await codexForm.getByText("Changed elsewhere", { exact: true }).waitFor();
+  await codexForm.getByText(/saved harness filter changed/).waitFor();
+  await codexForm.getByRole("button", { name: "Use theirs", exact: true }).click();
+  assert.deepEqual(await harnessesOf("skill", "codex-skill"), ["opencode"], "Use theirs drops the edit and keeps the API value");
+  await until(() => codexForm.getByLabel("Allow opencode").isChecked(), (on) => on === true, "the editor to show the saved filter");
+  // Restore it to codex-only for the launch preview checks.
+  snapshot = await snap(A);
+  await rolesCall("skill_update", { roleId: A, expectedRevision: snapshot.revision, id: snapshot.skills.find((skill) => skill.name === "codex-skill").id, harnesses: ["codex"] });
+  await until(() => codexForm.getByLabel("Allow codex").isChecked(), (on) => on === true, "the restored filter to show");
+  assert.equal(await codexForm.getByLabel("Allow claude").isChecked(), false);
+
+  // The same control edits an additional MCP connection; create takes the chosen list.
+  await servers.getByRole("button", { name: "New MCP server", exact: true }).click();
+  const newHarnessServer = editor.getByRole("form", { name: "New MCP server" });
+  await newHarnessServer.waitFor();
+  assert.equal(await filterGroup(newHarnessServer).getByRole("radio", { name: "Any harness" }).isChecked(), true);
+  await filterGroup(newHarnessServer).getByRole("radio", { name: "Only:" }).click();
+  assert.equal(await editor.getByRole("button", { name: "Create server" }).isDisabled(), true, "an unticked Only: blocks creation");
+  await newHarnessServer.getByLabel("Allow devin").check();
+  await newHarnessServer.getByLabel("Name", { exact: true }).fill("worker-docs");
+  await newHarnessServer.getByLabel("URL", { exact: true }).fill("https://mcp.example.test/worker");
+  await editor.getByRole("button", { name: "Create server" }).click();
+  const workerForm = editor.getByRole("form", { name: "Edit MCP server worker-docs" });
+  await workerForm.waitFor();
+  assert.deepEqual(await harnessesOf("mcp", "worker-docs"), ["devin"], "creation sends the chosen allowlist");
+  await workerForm.getByLabel("Description · optional", { exact: true }).fill("For Devin Workers");
+  await workerForm.getByLabel("Name", { exact: true }).press("Meta+s");
+  await editor.getByText("All changes saved", { exact: true }).waitFor();
+  assert.deepEqual(await harnessesOf("mcp", "worker-docs"), ["devin"], "a content save keeps the filter");
+  await filterGroup(workerForm).getByRole("radio", { name: "Any harness" }).click();
+  await editor.getByRole("button", { name: "Save", exact: true }).click();
+  await editor.getByText("All changes saved", { exact: true }).waitFor();
+  assert.equal(await harnessesOf("mcp", "worker-docs"), null);
+  await filterGroup(workerForm).getByRole("radio", { name: "No harness" }).click();
+  await editor.getByRole("button", { name: "Save", exact: true }).click();
+  await editor.getByText("All changes saved", { exact: true }).waitFor();
+  assert.deepEqual(await harnessesOf("mcp", "worker-docs"), []);
+  await serverRow("worker-docs").getByText("No harness", { exact: true }).waitFor();
+
+  // An internal connection's filter is edited in its popover and is independent of its switch.
+  const stackFilter = (name) => servers.getByRole("button", { name: `${titles[name] ?? name} harness filter`, exact: true });
+  const popover = page.locator('[data-slot="popover-content"]');
+  await stackFilter("bots").click();
+  await popover.getByText(`${titles["bots"] ?? "bots"} · harness filter`, { exact: true }).waitFor();
+  await popover.getByText("Independent of the switch: changing it never turns the server on or off.", { exact: true }).waitFor();
+  await popover.getByRole("radio", { name: "Only:" }).click();
+  await popover.getByLabel("Allow codex").check();
+  await shot("harness-internal-popover");
+  await popover.getByRole("button", { name: "Apply", exact: true }).click();
+  await until(() => internalList(A), (value) => JSON.stringify(value.bots.harnesses) === '["codex"]' && value.bots.enabled === true, "the bots filter to apply without touching the switch");
+  await stackSwitch("bots").click();
+  await until(() => internalList(A), (value) => value.bots.enabled === false, "bots to switch off");
+  assert.deepEqual((await internalList(A)).bots.harnesses, ["codex"], "the switch never touches the filter");
+  await stackSwitch("bots").click();
+  await until(() => internalList(A), (value) => value.bots.enabled === true, "bots to switch on");
+  assert.deepEqual((await internalList(A)).bots.harnesses, ["codex"]);
+  await stackFilter("bots").click();
+  await popover.getByRole("radio", { name: "No harness" }).click();
+  await popover.getByRole("button", { name: "Apply", exact: true }).click();
+  await until(() => internalList(A), (value) => Array.isArray(value.bots.harnesses) && value.bots.harnesses.length === 0, "bots to allow no harness");
+  assert.equal((await internalList(A)).bots.enabled, true, "the filter never moves the switch");
+  await stackFilter("bots").click();
+  await popover.getByRole("radio", { name: "Any harness" }).click();
+  await popover.getByRole("button", { name: "Apply", exact: true }).click();
+  await until(() => internalList(A), (value) => value.bots.harnesses === null, "bots unrestricted again");
+  assert.ok(!("bots" in ((await rolesCall("role_editor_snapshot", { roleId: A })).internalMcpHarnesses ?? {})), "a cleared filter leaves the snapshot's map");
+
+  // A disabled, unrestricted capability is the control for the Off label.
+  snapshot = await snap(A);
+  await rolesCall("skill_create", { roleId: A, expectedRevision: snapshot.revision, name: "paused-skill", description: "Switched off", body: "# Paused", enabled: false });
+
+  // The Launch view's Capability harness selector previews one axis at a time.
+  await preview.getByRole("button", { name: "Launch", exact: false }).click();
+  const capabilitySelector = preview.getByRole("group", { name: "Capability harness" });
+  await capabilitySelector.waitFor();
+  const excluded = preview.getByRole("list", { name: "Excluded capabilities" });
+  const excludedRow = (name) => excluded.locator("li").filter({ hasText: name });
+  const includedSkills = preview.getByRole("list", { name: "Skills selected for this launch" });
+  await preview.getByText(/Unspecified shows only unrestricted, enabled capabilities\./).waitFor();
+  await excludedRow("codex-skill").getByText("Needs a harness choice", { exact: true }).waitFor();
+  await excludedRow("review-changes").getByText("Needs a harness choice", { exact: true }).waitFor();
+  await excludedRow("worker-docs").getByText("Allowed for no harness", { exact: true }).waitFor();
+  await excludedRow("paused-skill").getByText("Off", { exact: true }).waitFor();
+  assert.equal(await excluded.locator('[title$="Off for this Role"]').count(), 0, "no excluded row borrows the switch label");
+  const unspecified = await rolesCall("role_launch_preview", { roleId: A });
+  const unspecifiedOn = unspecified.internalMcpServers.filter((server) => server.included).length;
+  await preview.getByText(`${unspecifiedOn} of ${unspecified.internalMcpServers.length} Stack connections included · ${unspecified.mcpServers.length} from the Role`, { exact: true }).waitFor();
+  assert.equal(await excluded.locator("li").count(), unspecified.excludedCapabilities.length, "the excluded list matches the API");
+
+  await capabilitySelector.getByRole("button", { name: "codex", exact: true }).click();
+  await preview.getByText("Selected for codex.", { exact: false }).waitFor();
+  await includedSkills.getByRole("button", { name: /^codex-skill/ }).waitFor();
+  assert.equal(await excludedRow("codex-skill").count(), 0, "a codex launch includes the codex skill");
+  await excludedRow("review-changes").getByText("Not for codex", { exact: true }).waitFor();
+  await excludedRow("worker-docs").getByText("Not for codex", { exact: true }).waitFor();
+  const codexPreview = await rolesCall("role_launch_preview", { roleId: A, harness: "codex" });
+  const codexOn = codexPreview.internalMcpServers.filter((server) => server.included).length;
+  await preview.getByText(`${codexOn} of ${codexPreview.internalMcpServers.length} Stack connections included · ${codexPreview.mcpServers.length} from the Role`, { exact: true }).waitFor();
+  await shot("harness-preview-light");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await shot("harness-preview-dark");
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await shot("harness-preview-narrow");
+  await page.setViewportSize({ width: 2400, height: 1400 });
+
+  // The Rendering context's Harness field cannot impersonate the capability harness.
+  await preview.getByLabel("Harness", { exact: true }).fill("claude");
+  await until(() => page.evaluate(() => window.__launchCalls.at(-1)), (args) => args?.context?.harness === "claude", "the launch reread for the new context");
+  assert.equal((await page.evaluate(() => window.__launchCalls.at(-1))).harness, "codex", "the context's harness field never selects capabilities");
+  await preview.getByText("Selected for codex.", { exact: false }).waitFor();
+  assert.equal(await capabilitySelector.getByRole("button", { name: "codex", exact: true }).getAttribute("aria-pressed"), "true", "the selector is unmoved");
+  assert.equal(await preview.getByText("Selected for claude.", { exact: false }).count(), 0);
+  await preview.getByRole("button", { name: "Clear", exact: true }).click();
+  await until(() => page.evaluate(() => window.__launchCalls.at(-1)), (args) => args && !("context" in args), "the context cleared");
+
+  // A launch answer for a harness the page has left is never shown: select codex then claude while codex lags.
+  await capabilitySelector.getByRole("button", { name: "claude", exact: true }).click();
+  await preview.getByText("Selected for claude.", { exact: false }).waitFor();
+  await page.evaluate(() => { window.__launchDelay = { harness: "codex", ms: 1500 }; });
+  await capabilitySelector.getByRole("button", { name: "codex", exact: true }).click();
+  await capabilitySelector.getByRole("button", { name: "claude", exact: true }).click();
+  await preview.getByText("Selected for claude.", { exact: false }).waitFor();
+  await excludedRow("codex-skill").getByText("Not for claude", { exact: true }).waitFor();
+  await wait(1700);
+  assert.equal(await preview.getByText("Selected for claude.", { exact: false }).count(), 1, "the late codex answer is dropped");
+  assert.equal(await capabilitySelector.getByRole("button", { name: "claude", exact: true }).getAttribute("aria-pressed"), "true");
+  await page.evaluate(() => { window.__launchDelay = null; });
+  await capabilitySelector.getByRole("button", { name: "Unspecified", exact: true }).click();
+  await preview.getByText(/No capability harness selected: only unrestricted enabled capabilities are shown\./).waitFor();
+
   /* ─── Named Roles ─────────────────────────────────────────────────── */
 
   const revisionOf = async (id) => (await rolesCall("roles_snapshot")).roles.find((role) => role.id === id).revision;
@@ -804,7 +1019,7 @@ try {
   await count(total).waitFor();
   assert.deepEqual(Object.values(await enabledNow(A)).every(Boolean), true, "every server is on in a newly created Role");
   assert.deepEqual(Object.values(await enabledNow(B)).every(Boolean), true);
-  await servers.getByText("Stack connections use stdio for Bot and Worker launches and stack roles inject when enabled and allowed for the actual harness. These switches preserve any API-configured harness filters. Running sessions keep their connections. New Stack connections start on and unrestricted.").waitFor();
+  await servers.getByText("Stack connections use stdio for Bot and Worker launches and stack roles inject when switched on and allowed by their harness filter. Switches and filters are independent. Running sessions keep their connections. New Stack connections start on and unrestricted.").waitFor();
   await preview.getByRole("button", { name: "Launch", exact: false }).click();
   await preview.getByText(`${total} of ${total} Stack connections included · 1 from the Role`).waitFor();
   // Off for this Role only, and the preview tells enabled from configured.
@@ -995,7 +1210,7 @@ try {
   assert.equal(await system.getByRole("switch").count(), 0, "System observes; selection stays in Roles");
   await shot("system-codex-tools");
   assert.deepEqual(errors, [], "browser has no uncaught application errors");
-  console.log(JSON.stringify({ ok: true, evidence, assertions: "provisioned Manager and Worker defaults, per-audience notes, Make Worker default from the note and the row menu with its dialog, cancel and delete guard, new Role made Bot default, second Role and case-insensitive name hint, per-Role content, Bot launch comparison by Role identity and revision against the Bot default, Worker comparison against each captured Role, default switch with drafts on both Roles, delayed write outrun by selection, rename and API uniqueness refusal, stale catalog and stale Role and stale internal-switch rebuilds, internal switches per Role and all off, reserved internal names, Bot and Worker default delete refused, delete with drafts, Role deleted elsewhere with and without drafts, remembered selection, Role inspector and palette, category and fragment creation, preview order and segments, launch revisions, switches, cross-category drag, keyboard move, drafts, conflict keep-mine, stale-revision rebuild, search, category off, inspector hand-off, palette, delete guard and delete, skill files and duplicate/reorder/switch, MCP name guard, TOML and stdio split, trusted-project Bot matching, resource inspect and delete, light/dark/mobile, Codex tool availability checks and the linked System card and inspector" }, null, 2));
+  console.log(JSON.stringify({ ok: true, evidence, assertions: "provisioned Manager and Worker defaults, per-audience notes, Make Worker default from the note and the row menu with its dialog, cancel and delete guard, new Role made Bot default, second Role and case-insensitive name hint, per-Role content, Bot launch comparison by Role identity and revision against the Bot default, Worker comparison against each captured Role, default switch with drafts on both Roles, delayed write outrun by selection, rename and API uniqueness refusal, stale catalog and stale Role and stale internal-switch rebuilds, internal switches per Role and all off, reserved internal names, Bot and Worker default delete refused, delete with drafts, Role deleted elsewhere with and without drafts, remembered selection, Role inspector and palette, category and fragment creation, preview order and segments, launch revisions, switches, cross-category drag, keyboard move, drafts, conflict keep-mine, stale-revision rebuild, search, category off, inspector hand-off, palette, delete guard and delete, skill files and duplicate/reorder/switch, MCP name guard, TOML and stdio split, trusted-project Bot matching, resource inspect and delete, light/dark/mobile, Codex tool availability checks and the linked System card and inspector, harness filter defaults and Only/None/Any editing for skills and MCP servers, unticked Only blocked, unsaved-edit duplication, harness conflict notice and use-theirs, internal connection filter popover independent of its switch, Launch view capability harness selector with excluded capabilities and API-agreed counters, rendering context unable to impersonate the capability harness, and a delayed stale-harness answer dropped" }, null, 2));
 } catch (error) {
   failed = true;
   const page = browser?.contexts()[0]?.pages()[0];
