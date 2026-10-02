@@ -696,6 +696,9 @@ importers:
       '@stack/api':
         specifier: workspace:*
         version: link:../api
+      '@stack/client':
+        specifier: workspace:*
+        version: link:../client
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1

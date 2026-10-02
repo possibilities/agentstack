@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { Workbench } from "@/components/canvas/workbench";
 import { loadSnapshot } from "@/lib/stack/snapshot";
 import { defaultSpace, isSpaceId, parseNodeKey, spaceTitle } from "@/lib/stack/spaces";
 import { parseLocation } from "@/lib/stack/navigation";
+import { runtime, requireClientSession } from "@/lib/client/session";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,11 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
 
 export default async function Page({ params, searchParams }: { params: Promise<Params>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { space } = await params;
+  if (runtime.mode === "client") {
+    requireClientSession(await headers());
+    if (!space?.length) redirect("/client");
+    notFound();
+  }
   const segment = space?.[0];
   if (segment !== undefined && (!isSpaceId(segment) || segment === defaultSpace)) notFound();
   if (space && space.length > 1) notFound();

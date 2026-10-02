@@ -38,12 +38,63 @@ storage and socket permissions fail closed. A second host cannot rotate the
 first host's UI authority or mark its live jobs interrupted. A proven dead socket
 is recoverable, but a stale startup lock requires operator inspection.
 
-The client UI uses `LocalAuth` with `STACK_STATE_DIR` set to **the client root**.
+The client UI uses `LocalAuth` with an explicit `{STACK_STATE_DIR: clientRoot}`,
+never a process-global platform-state override.
 Its parent mints `client_ui_connect`; a same-origin `/connect/local` exchange
-installs the normal host-only HttpOnly local UI cookie. Gate every host page and
+installs a host-only HttpOnly local UI cookie. Gate every host page and
 mutating route, require exact Host/Origin, use nonce CSP and never expose the
 private socket as an anonymous HTTP bridge. This authority is independent of a
 platform's local UI cookie and Access's remote cookies.
+
+### Standalone UI foundation
+
+The private workspace's provisional `stack-ui` bin in `packages/ui` requires Node
+24 or newer and a completed UI build. It starts the Client host in the parent,
+supervises a loopback-only Next child, then opens the one-use bootstrap directly.
+`--root` selects the independent client root; `--port` defaults to 19000.
+`--no-open` leaves navigation to the parent integration. An occupied UI port or a
+live/uncertain foreign Client host is refused, never adopted. Closing the launcher
+closes only its UI child and Client host, not a platform user service.
+
+The immutable server runtime mode is `STACK_UI_MODE=client|platform`, defaulting to
+`platform`. Only the launcher supplies client-root/origin/ingress configuration.
+Client mode redirects `/` to `/client`, disables Canvas and platform connect
+controls, and guards page, RSC, asset and `/api/client/*` requests. Platform mode
+keeps the existing Canvas/Access policy and `/client` only explains the independent
+launcher; it does not read a Client host. This is not a new Canvas space.
+
+Client cookies use `stack_client_ui_<root-hash>`; the platform retains
+`stack_local_ui`. Names prevent overwrite on one loopback hostname, while the
+independent authority database and exact origin prevent cross-root authorization.
+All responses are no-store/no-referrer/nosniff. Client scripts use a fresh nonce
+CSP, with self-only connections, no objects, frames or base changes. The shared
+LocalAuth browser helpers accept a configured cookie name without changing their
+platform/Inspector defaults.
+
+The client-only ingress rejects exact-Host/Origin mismatches and all supplied
+forwarding/internal authority headers **before Next**. Next synthesizes forwarding
+headers itself, so a short-lived HMAC assertion binds the original method, target,
+Host, Origin and cookie; proxy, server renders and handlers verify it and recheck
+the client-root LocalAuth session. It is not browser authority and never replaces
+the session. Unsafe requests require the exact Origin; reads refuse a supplied
+mismatching Origin. Do not run the client mode through an unguarded `next start`.
+
+`POST /api/client/rpc` accepts only `{operation,input}` from an explicit Client
+contract allowlist, parses both input and output, and fixes `tools/call` and the
+client socket server-side. `client_ui_connect` remains parent/private-socket only.
+Errors with uncertain dispatch/results are not permission to replay. Authenticated
+`GET /api/client/events` subscribes to payload-free `client_changed` before emitting
+readiness; the browser then reads snapshot/list and rereads after reconnect. It
+rechecks the live session before notices and every 250 ms, closing on expiry or
+revocation. The Connections home retains last-good reads with loading/error state,
+shows local and saved remote platforms as peers, pending intents and unresolved
+jobs, and adds no install/pair/enroll controls in this foundation milestone.
+
+`bin/navigation.mjs` defines `openClientSurface`, destination-pinned `openPlatform`,
+`focusConnections` and explicit `openExternal` for the later desk adapter. Platform
+pages never receive a Client/native installation bridge. Portable packaging,
+release bundles, public npm publication and remaining workflow screens are later
+milestones; a bin field alone is not an available public npx distribution.
 
 ## Local platform APIs
 

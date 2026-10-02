@@ -190,6 +190,18 @@
     }
 }
 
+/* Standalone Client is not a Canvas space; it shares the existing theme. */
+.client-home { min-height: 100dvh; }
+.client-header { position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.5rem; background: var(--background); border-bottom: 1px solid var(--border); }
+.client-header a { text-decoration: underline; text-underline-offset: 0.25rem; }
+.client-main { display: flex; flex-direction: column; gap: 1.75rem; max-width: 52rem; margin-inline: auto; padding: 2rem 1.5rem 4rem; }
+.client-peers { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr)); gap: 1rem; }
+.client-peer { display: flex; min-width: 0; flex-direction: column; gap: 0.75rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); }
+.client-peer-title { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
+.client-skip { position: fixed; left: 1rem; top: -5rem; padding: 0.5rem; background: var(--background); }
+.client-skip:focus { top: 0.5rem; z-index: 1; }
+.client-home a:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; }
+
 @keyframes ui-ping {
   0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--ping, var(--success)) 55%, transparent); }
   100% { box-shadow: 0 0 0 10px transparent; }
