@@ -199,6 +199,8 @@ The API phase added no UI. The UI's Source space ([ADR 0164](adr/0164-source-spa
 now reads receivers, the delivery ledger, original payloads and the event catalog, and
 clears original payloads through the shared maintenance flow, over the existing
 `github_endpoints_changed` and `github_deliveries_changed` topics. Receiver setup and
-secret handling, hook plan/apply/probe, and watch consumption remain API-only until their
-own authorized UI phases. Source delivery does not restart
+secret handling and hook plan/apply/probe remain API-only until their own authorized UI phase.
+Watches ([ADR 0165](adr/0165-source-watches.md)) create, read and consume in the UI: the inbox is
+not a pinned snapshot, and acknowledgement happens only through entries a person marked as
+reviewed, with `expectedAcknowledgedThrough`; viewing and notices never acknowledge. Source delivery does not restart
 a running Server; never rebuild an active UI's `.next` in place without approval.

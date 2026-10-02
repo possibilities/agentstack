@@ -148,11 +148,15 @@ PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
 ```
 
 The Source space's check serves the real Source API against a short disposable state directory
-(`/tmp/m7a-*`; Unix socket paths are limited to about 104 bytes on macOS) with an ephemeral loopback
+(`/tmp/m7b-*`; Unix socket paths are limited to about 104 bytes on macOS) with an ephemeral loopback
 intake, and sends signed webhooks to it as GitHub would. It covers paging under concurrent arrivals,
 typed filters, hostile payload text, chunked reads and the digest, deep links, exact payload clearing,
 a spent byte budget (507), the catalog, keyboard navigation, light, dark and narrow frames, and a remote
-read-only viewer. It uses `next dev` unless `SOURCE_NEXT=start`, and keeps screenshots when
+read-only viewer. Its Watches section creates a watch from now and with a backfill, reviews the frozen request,
+pages an inbox under concurrent arrivals, reviews by keyboard and acknowledges through a confirmed range, refuses a
+stale cursor (held-back notices make the compare-and-set conflict deterministic), disables and re-enables
+notifications while matches are still captured, removes a watch, lists an unconfirmed payload-clear request, and
+reads watches on a remote session with no control. It uses `next dev` unless `SOURCE_NEXT=start`, and keeps screenshots when
 `SOURCE_EVIDENCE_DIR` is set:
 
 ```sh

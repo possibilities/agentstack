@@ -66,11 +66,6 @@ export function WatchInbox({ id, canAcknowledge, unavailableReason }: { id: stri
         <span className="font-medium text-foreground">Not a pinned snapshot.</span> The owner offers no pin for this read: matches can arrive while you read. Rows already loaded never move, and later matches load only when you ask.
         Reading, refreshing, notices, polling and native delivery never acknowledge an entry.
       </p>
-      <dl aria-label="Consumption" className="grid grid-cols-3 gap-2 rounded-lg bg-muted/50 px-2 py-1.5 text-center text-[0.68rem]">
-        <div className="flex flex-col"><dd className="text-[0.84rem] font-semibold tabular-nums">{watch ? `#${watch.acknowledgedThrough}` : "…"}</dd><dt className="text-muted-foreground">Acknowledged through</dt></div>
-        <div className="flex flex-col"><dd className="text-[0.84rem] font-semibold tabular-nums">{inbox.through === null ? "…" : `#${inbox.through}`}</dd><dt className="text-muted-foreground">Matched through</dt></div>
-        <div className="flex flex-col"><dd className="text-[0.84rem] font-semibold tabular-nums">{inbox.pending === null ? "…" : inbox.pending.toLocaleString("en-US")}</dd><dt className="text-muted-foreground">Pending</dt></div>
-      </dl>
       {watch && !watch.enabled ? <p role="status" className="text-[0.72rem] text-muted-foreground">Notifications and occurrence polling are off for this watch. Matching deliveries are still captured and appear here.</p> : null}
       <Notice notice={inbox.notice} onDismiss={store.sourceInboxDismissNotice} />
       {inbox.error ? (
@@ -139,7 +134,7 @@ export function WatchInbox({ id, canAcknowledge, unavailableReason }: { id: stri
               <span>The cursor only moves forward, so this cannot be undone here. It is sent only while the cursor is still #{confirm?.base} (compare-and-set); otherwise nothing is acknowledged, the inbox is read again and you review again.</span>
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
+          <AlertDialogFooter className="group-data-[size=sm]/alert-dialog-content:grid-cols-1">
             <AlertDialogCancel disabled={sending}>Cancel</AlertDialogCancel>
             <Button variant="destructive" disabled={sending || !confirm} onClick={() => void send()}>
               {sending ? <Spinner data-icon="inline-start" /> : <CheckCheckIcon data-icon="inline-start" />}Acknowledge through #{confirm?.through}
@@ -238,7 +233,7 @@ function Entry({ entry, receiver, reviewing, reviewed, stranded, open, busy, onM
           <dt className="text-muted-foreground">Content</dt><dd>{contentTypeLabel(entry.contentType)} · {formatBytes(entry.payloadBytes)}</dd>
           {entry.ref ? <><dt className="text-muted-foreground">Ref</dt><dd className="min-w-0 truncate font-mono" title={entry.ref}>{entry.ref}</dd></> : null}
           {entry.sha ? <><dt className="text-muted-foreground">Commit</dt><dd className="font-mono">{entry.sha.slice(0, 12)}</dd></> : null}
-          <dt className="text-muted-foreground">Digest</dt><dd className="flex min-w-0 items-center gap-1"><span className="min-w-0 truncate font-mono" title={entry.payloadSha256}>{entry.payloadSha256}</span><CopyButton value={entry.payloadSha256} label="digest" className="-my-1" /></dd>
+          <dt className="text-muted-foreground">Digest</dt><dd className="flex min-w-0 items-center gap-1"><span className="min-w-0 truncate font-mono" title={entry.payloadSha256}>{entry.payloadSha256}</span><CopyButton value={entry.payloadSha256} label="digest" className="-my-1 opacity-100" /></dd>
           {entry.entities.length ? <><dt className="text-muted-foreground">Names</dt>
             <dd className="flex min-w-0 flex-col gap-0.5">{entry.entities.slice(0, 6).map((item, index) => (
               <span key={`${item.kind}:${index}`} className="min-w-0 truncate" title={item.title ?? undefined}>{item.kind}{item.number !== null ? ` #${item.number}` : ""}{item.title ? ` · ${item.title}` : ""}{item.state ? ` · ${item.state}` : ""}</span>

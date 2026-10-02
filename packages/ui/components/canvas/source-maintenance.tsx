@@ -78,7 +78,9 @@ function Flow({ chosen, retained, onSelectRetained, onClearSelection, onOpenChan
     <MaintenanceDisclosure active={locked || pending.keys.length > 0} aside={pending.keys.length ? `${pending.keys.length} unconfirmed` : "Clear original payloads"} onOpenChange={onOpenChange} title="Maintenance">
       {pending.keys.length ? (
         <section aria-label="Unconfirmed clear requests" className="flex flex-col gap-2">
-          {pending.keys.map((key) => <PendingClear key={key} recoveryKey={key} onClosed={() => pending.close(key)} />)}
+          {state.status.source === "open"
+            ? pending.keys.map((key) => <PendingClear key={key} recoveryKey={key} onClosed={() => pending.close(key)} />)
+            : <p role="status" className={sourceHint}>{pending.keys.length} clear {pending.keys.length === 1 ? "request has" : "requests have"} no confirmed result. Their receipts are read when the Source connection is open.</p>}
         </section>
       ) : null}
       <p className={sourceHint}>Clear the original signed request body of exact deliveries to free retained-payload space. Their summaries, digests, duplicate fences, watch matches and acknowledgements stay; nothing is deleted from the ledger and no watch entry is acknowledged.</p>

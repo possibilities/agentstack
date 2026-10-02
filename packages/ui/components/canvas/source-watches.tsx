@@ -85,6 +85,9 @@ function WatchRow({ watch, selected, count, onToggle, onCreateFrom }: { watch: G
   const node = { kind: "github-watch" as const, id: watch.id };
   const chips = describeFilter(watch.filter, (id) => labels.get(id) ?? `${id.slice(0, 8)}…`);
   const none = count !== null && count.pending === 0;
+  // The selected watch shows what its inbox last read, which is never older than the list.
+  const live = selected && state.sourceInbox.watchId === watch.id ? state.sourceInbox.watch : null;
+  const acknowledged = live ? Math.max(live.acknowledgedThrough, watch.acknowledgedThrough) : watch.acknowledgedThrough;
   const ack = remote ? null : localOperation(state, "source", "github_watch_acknowledge");
   const body = `watch-${watch.id}-body`;
   return (
@@ -104,7 +107,7 @@ function WatchRow({ watch, selected, count, onToggle, onCreateFrom }: { watch: G
           {chips.length > 4 ? <span className={sourceChip}>+{chips.length - 4} more</span> : null}
         </div>
         <dl aria-label="Consumption" className="grid grid-cols-3 gap-2 rounded-lg bg-muted/50 px-2 py-1.5 text-center text-[0.68rem]">
-          <div className="flex flex-col"><dd className="text-[0.84rem] font-semibold tabular-nums">#{watch.acknowledgedThrough}</dd><dt className="text-muted-foreground">Acknowledged through</dt></div>
+          <div className="flex flex-col"><dd className="text-[0.84rem] font-semibold tabular-nums">#{acknowledged}</dd><dt className="text-muted-foreground">Acknowledged through</dt></div>
           <div className="flex flex-col"><dd className="text-[0.84rem] font-semibold tabular-nums">{count === null ? "—" : none && count.through <= watch.startAfter ? "none yet" : `#${count.through}`}</dd><dt className="text-muted-foreground">Matched through</dt></div>
           <div className="flex flex-col"><dd className={cn("text-[0.84rem] font-semibold tabular-nums", count && count.pending > 0 && "text-foreground")}>{count === null ? "—" : count.pending.toLocaleString("en-US")}</dd><dt className="text-muted-foreground">Pending</dt></div>
         </dl>
@@ -156,7 +159,7 @@ function Settings({ watch, onCreateFrom }: { watch: GithubWatch; onCreateFrom():
         <summary className="cursor-pointer px-2.5 py-1.5 text-[0.72rem] text-muted-foreground select-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">Definition and settings</summary>
         <div className="flex flex-col gap-3 border-t border-dashed p-2.5">
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[0.72rem]">
-            <dt className="text-muted-foreground">ID</dt><dd className="flex min-w-0 items-center gap-1"><span className="min-w-0 truncate font-mono" title={watch.id}>{watch.id}</span><CopyButton value={watch.id} label="watch ID" className="-my-1" /></dd>
+            <dt className="text-muted-foreground">ID</dt><dd className="flex min-w-0 items-center gap-1"><span className="min-w-0 truncate font-mono" title={watch.id}>{watch.id}</span><CopyButton value={watch.id} label="watch ID" className="-my-1 opacity-100" /></dd>
             <dt className="text-muted-foreground">Scope</dt><dd className="min-w-0 truncate font-mono" title={watch.scope}>{watch.scope}</dd>
             <dt className="text-muted-foreground">Configuration</dt><dd>Revision {watch.revision} · changed <Stamp at={watch.updatedAt} /></dd>
             <dt className="text-muted-foreground">Consumption</dt><dd>Acknowledged through #{watch.acknowledgedThrough}. This cursor is separate from the configuration revision.</dd>
@@ -234,7 +237,7 @@ function RemoveWatch({ watch, onClose }: { watch: GithubWatch; onClose(): void }
         <label className="flex flex-col gap-1 text-[0.74rem]"><span>Type <code className="font-mono font-semibold">{expected}</code>, the start of this watch&rsquo;s ID, to confirm</span>
           <Input value={typed} onChange={(event) => setTyped(event.target.value.trim())} autoComplete="off" spellCheck={false} aria-label="First eight characters of the watch ID" className="h-7 font-mono text-[0.78rem]" /></label>
         {error ? <p role="alert" className="text-[0.72rem] text-destructive">{error}</p> : null}
-        <AlertDialogFooter>
+        <AlertDialogFooter className="group-data-[size=sm]/alert-dialog-content:grid-cols-1">
           <Button variant="ghost" size="sm" onClick={() => { setSpace("system"); onClose(); }}>Open System</Button>
           <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
           <Button variant="destructive" disabled={pending || typed.toLowerCase() !== expected} onClick={() => void remove()}>
@@ -262,7 +265,7 @@ function Examples({ watch }: { watch: GithubWatch }) {
         <p className={sourceHint}>Requests for an agent&rsquo;s own connection, with this watch&rsquo;s ID filled in. Subscribing, polling, native admission and Worker intake never acknowledge an entry: only acknowledging above does, after review. This view has no wake or target action; it cannot attach this watch to a Bot or Worker.</p>
         {blocks.map(([title, text, note]) => (
           <div key={title} className="flex min-w-0 flex-col gap-1">
-            <span className="flex items-center gap-1.5"><code className="font-mono text-[0.72rem] font-semibold">{title}</code><CopyButton value={text} label={`${title} example`} /></span>
+            <span className="flex items-center gap-1.5"><code className="font-mono text-[0.72rem] font-semibold">{title}</code><CopyButton value={text} label={`${title} example`} className="opacity-100" /></span>
             <pre aria-label={`${title} example`} className="max-h-40 overflow-auto rounded-md bg-muted/50 p-2 font-mono text-[0.66rem] break-words whitespace-pre-wrap">{text}</pre>
             <span className={sourceHint}>{note}</span>
           </div>

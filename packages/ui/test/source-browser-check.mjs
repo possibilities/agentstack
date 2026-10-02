@@ -1,4 +1,4 @@
-// Optional rendered check of the Source space. The real Source API runs against a disposable state directory with an
+// Optional rendered check of the Source space (observe, then watches). The real Source API runs against a disposable state directory with an
 // ephemeral loopback intake; signed webhook requests reach it over HTTP exactly as GitHub's would, and server and
 // discovery are fixtures. No live server, receiver, secret or public hook is touched.
 // PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs node test/source-browser-check.mjs
@@ -10,7 +10,8 @@ import { execFileSync, spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath } from "@stack/api";
+import { DatabaseSync } from "node:sqlite";
+import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath, StateJournal } from "@stack/api";
 import { AccessStore } from "../../access/dist/src/store.js";
 import { startRemoteUi } from "../../access/dist/src/remote-ui.js";
 import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture } from "./browser-fixture.mjs";
@@ -18,7 +19,7 @@ import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui,
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const require = createRequire(import.meta.url);
-const dir = await mkdtemp("/tmp/m7a-");
+const dir = await mkdtemp("/tmp/m7b-");
 const evidence = process.env.SOURCE_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
 const maxBytes = 25 * 1024 * 1024;
@@ -102,6 +103,11 @@ try {
   const servedDoc = (name, names, topics) => ({ ...fixtureDoc(name, undefined, websocket.url, publishedJsonSchema), events: topics,
     transports: [{ type: "websocket", description: "Fixture", supported: true, subscriptions: true, endpoint: websocket.url, operations: names, events: Object.keys(topics), routes: [] }] });
   const catalog = [fixtureDoc("source", sourceApi, websocket.url, publishedJsonSchema), servedDoc("serve", serve.names, serve.topics), servedDoc("api", ["docs_snapshot"], {})];
+  // The shared fixture drops occurrence-source declarations; the real discovery carries them, and the Watches window links to that reference section.
+  for (const operation of catalog[0].operations) {
+    const declared = sourceApi.operations.find((candidate) => candidate.name === operation.name)?.eventSource;
+    if (declared) operation.eventSource = declared;
+  }
   handlers.docs_snapshot = () => ({ packages: catalog });
   for (const [name, names, topics] of [["serve", serve.names, serve.topics], ["api", ["docs_snapshot"], {}]]) {
     sockets.push(await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {}, operations: fixtureOperations(names, handlers), events: { topics } }));
@@ -123,6 +129,15 @@ try {
   browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_BIN ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });
   const context = await browser.newContext({ viewport: { width: 2600, height: 1300 }, reducedMotion: "reduce", permissions: ["clipboard-read", "clipboard-write"] });
   page = await context.newPage();
+  // Notices can be held back, then released, so a check can act while this tab has not yet heard about another consumer's change. Replies are never held.
+  const hold = { on: false, held: [], ws: null };
+  await page.routeWebSocket((url) => url.pathname.endsWith("/websocket"), (ws) => {
+    const server = ws.connectToServer();
+    hold.ws = ws;
+    server.onMessage((message) => { if (hold.on && typeof message === "string" && message.includes('"events/changed"')) hold.held.push(message); else ws.send(message); });
+    ws.onMessage((message) => server.send(message));
+  });
+  const release = () => { hold.on = false; for (const message of hold.held.splice(0)) hold.ws?.send(message); };
   await authorizeBrowser(page, origin, env);
   page.setDefaultTimeout(60_000);
   const errors = [];
@@ -408,6 +423,354 @@ try {
   await catalogWindow.getByRole("button", { name: /^issues/ }).first().click();
   await captures(catalogWindow, "source-catalog");
 
+  // ===================================================================================================================
+  // Watches (phase 2): definitions, frozen creation, the not-pinned inbox, explicit review and acknowledgement.
+  // ===================================================================================================================
+  const watchesWindow = page.locator('[data-window="source-watches"]');
+  const watchCalls = (name) => sent.filter((item) => item.name === name).map((item) => item.arguments);
+  const ackCalls = () => watchCalls("github_watch_acknowledge");
+  const cardFor = (watchId) => watchesWindow.locator(`li[data-node="github-watch:${watchId}"]`);
+  const ownerWatch = async (watchId) => (await call("github_watch_list")).watches.find((item) => item.id === watchId);
+  const dialogCaptures = async (name) => {
+    const dialog = page.getByRole("alertdialog");
+    await page.emulateMedia({ colorScheme: "light" });
+    await dialog.screenshot({ path: join(evidence, `${name}-light.png`), animations: "disabled" });
+    await page.emulateMedia({ colorScheme: "dark" });
+    await dialog.screenshot({ path: join(evidence, `${name}-dark.png`), animations: "disabled" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await dialog.screenshot({ path: join(evidence, `${name}-narrow.png`), animations: "disabled" });
+    assert.equal(await dialog.evaluate((el) => el.scrollWidth > el.clientWidth + 1), false, `${name} has no horizontal overflow at a narrow width`);
+    await page.setViewportSize({ width: 2600, height: 1300 });
+    await page.emulateMedia({ colorScheme: "light" });
+  };
+  const head = (await call("github_status")).latestSequence;
+
+  await page.goto(`${origin}/source`);
+  await watchesWindow.getByText("No watches", { exact: true }).waitFor();
+  await watchesWindow.getByText(/Polling, native admission and Worker intake never advance the consumption cursor/).waitFor();
+  assert.deepEqual(ackCalls(), [], "viewing the empty space acknowledges nothing");
+  await captures(watchesWindow, "source-watches-empty");
+
+  // Create from now, taking the Deliveries filter: the form shows the filter, the review shows the exact request, and nothing is sent by reviewing.
+  await ledger.getByText(/^Snapshot through #\d+$/).waitFor();
+  await ledger.getByRole("button", { name: "Filters", exact: false }).click();
+  const ledgerForm = ledger.getByRole("form", { name: "Delivery filters" });
+  await ledgerForm.getByLabel("Events").fill("pull_request");
+  await ledgerForm.getByRole("button", { name: "Apply filter" }).click();
+  await ledger.getByText("End of snapshot", { exact: true }).waitFor();
+  await watchesWindow.getByRole("button", { name: "New watch" }).click();
+  const createForm = watchesWindow.getByRole("form", { name: "New watch" });
+  assert.equal(await createForm.getByRole("button", { name: "From current ledger filter" }).isEnabled(), true);
+  await createForm.getByRole("button", { name: "From current ledger filter" }).click();
+  assert.equal(await createForm.getByLabel("Events").inputValue(), "pull_request", "the ledger's filter is the watch's draft");
+  await createForm.getByLabel("Label", { exact: true }).fill("Pull requests");
+  assert.equal(await createForm.getByRole("radio", { name: /^Now \(default\)/ }).isChecked(), true, "start now is the default");
+  await captures(createForm, "source-watch-create-edit");
+  await createForm.getByRole("button", { name: "Review definition" }).click();
+  const requestText = createForm.getByLabel("Exact github_watch_create request");
+  await createForm.locator("summary", { hasText: "Exact request" }).click();
+  await requestText.waitFor();
+  const nowInput = JSON.parse(await requestText.textContent());
+  assert.deepEqual(nowInput, { filter: { events: ["pull_request"] }, id: nowInput.id, label: "Pull requests", start: "now" });
+  await createForm.getByText(/Starts now: the owner fixes the start/).waitFor();
+  assert.equal(watchCalls("github_watch_create").length, 0, "reviewing creates nothing");
+  assert.equal((await call("github_watch_list")).watches.length, 0);
+  await captures(createForm, "source-watch-create-review");
+  await activate(createForm.getByRole("button", { name: "Create watch" }));
+  await watchesWindow.getByText(/Created .Pull requests/).waitFor();
+  assert.deepEqual(watchCalls("github_watch_create"), [nowInput], "exactly the reviewed request was sent");
+  const nowWatch = await ownerWatch(nowInput.id);
+  assert.equal(nowWatch.startAfter, head, "start now: after the newest arrival");
+  assert.equal(nowWatch.acknowledgedThrough, head);
+  assert.deepEqual(nowWatch.filter, { events: ["pull_request"] });
+  await activate(watchesWindow.getByRole("button", { name: "Done" }));
+  await ledgerForm.getByRole("button", { name: "Clear filter" }).click();
+  await ledger.getByText("25 loaded", { exact: true }).waitFor();
+
+  // Create with a backfill and a payload predicate: an impossible start is refused before anything is sent, the review warns about cleared bodies, and
+  // the delivery whose body was cleared (#1) cannot match the predicate.
+  for (let n = 120; n < 132; n++) await accepted(repo, "issues", issuePayload(n, {}, { locked: false }));
+  const newest = (await call("github_status")).latestSequence;
+  await watchesWindow.getByRole("button", { name: "New watch" }).click();
+  await createForm.getByLabel("Label", { exact: true }).fill("Unlocked issues");
+  await createForm.getByLabel("Events").fill("issues");
+  await createForm.locator("summary", { hasText: "Advanced" }).click();
+  await createForm.getByRole("button", { name: "Add predicate" }).click();
+  await createForm.getByLabel("Predicate 1 JSON Pointer path").fill("/issue/locked");
+  await createForm.getByLabel("Predicate 1 value type").selectOption("boolean");
+  await createForm.getByLabel("Predicate 1 value", { exact: true }).fill("false");
+  await createForm.getByRole("radio", { name: /Backfill after sequence N/ }).check();
+  await createForm.getByRole("textbox", { name: "Backfill after sequence" }).fill(String(newest + 5));
+  await createForm.getByRole("button", { name: "Review definition" }).click();
+  await createForm.getByRole("alert").getByText(/beyond the newest arrival/).waitFor();
+  assert.equal(watchCalls("github_watch_create").length, 1, "an impossible start is refused before anything is sent");
+  await createForm.getByRole("textbox", { name: "Backfill after sequence" }).fill("0");
+  await createForm.getByRole("button", { name: "Review definition" }).click();
+  await createForm.locator("summary", { hasText: "Exact request" }).click();
+  const backfillInput = JSON.parse(await requestText.textContent());
+  assert.deepEqual(backfillInput.filter, { events: ["issues"], predicates: [{ op: "equals", path: "/issue/locked", value: false }] });
+  assert.strictEqual(backfillInput.filter.predicates[0].value, false, "the boolean false stays a boolean");
+  assert.strictEqual(backfillInput.start, 0);
+  await createForm.getByText(/Backfills from after #0/).waitFor();
+  await createForm.getByRole("list", { name: "Cautions" }).getByText(/cannot match a payload predicate against a delivery whose original payload was cleared/).waitFor();
+  await captures(createForm, "source-watch-backfill-review");
+  await activate(createForm.getByRole("button", { name: "Create watch" }));
+  await watchesWindow.getByText(/Created .Unlocked issues/).waitFor();
+  const issuesId = backfillInput.id;
+  assert.deepEqual(watchCalls("github_watch_create").at(-1), backfillInput);
+  const issuesWatch = await ownerWatch(issuesId);
+  assert.equal(issuesWatch.startAfter, 0);
+  await activate(watchesWindow.getByRole("button", { name: "Done" }));
+  const issuesCard = cardFor(issuesId);
+  const prCard = cardFor(nowInput.id);
+  await issuesCard.getByText("Notifications on", { exact: true }).waitFor();
+  const issuesRead = await call("github_watch_read", { id: issuesId, limit: 1 });
+  assert.ok(issuesRead.pending > 25, `the backfill matched ${issuesRead.pending} retained deliveries, more than one page`);
+  await issuesCard.getByLabel("Consumption").getByText(String(issuesRead.pending), { exact: true }).waitFor();
+  await prCard.getByLabel("Consumption").getByText("0", { exact: true }).waitFor();
+  await captures(watchesWindow, "source-watches-list");
+
+  // The inbox is the oldest pending page from the owner's cursor, not a pinned snapshot: no `through` is ever sent; arrivals are announced
+  // and loaded only on request; the loaded rows never move.
+  // Creating a watch selects it: its inbox is already open (reading it acknowledges nothing).
+  await issuesCard.getByRole("button", { name: "Close inbox" }).waitFor();
+  const inboxRows = issuesCard.locator("li[data-entry]");
+  await inboxRows.first().waitFor();
+  await issuesCard.getByText("Not a pinned snapshot.").waitFor();
+  const entriesNow = () => inboxRows.evaluateAll((items) => items.map((item) => Number(item.getAttribute("data-entry"))));
+  const page0 = await entriesNow();
+  assert.ok(page0.length > 0 && page0.length <= 25, `first page: ${page0.length} entries`);
+  assert.equal(page0[0], 3, "#1 matched in the filter but its body was cleared, so a payload predicate never matched it; #2 is locked");
+  assert.equal(await issuesCard.locator('li[data-entry="1"]').count(), 0);
+  assert.deepEqual(page0, [...page0].sort((a, b) => a - b), "oldest first");
+  const firstRead = watchCalls("github_watch_read").find((item) => item.id === issuesId && item.limit === 25);
+  assert.deepEqual(firstRead, { id: issuesId, limit: 25 }, "the first read asks for the owner's cursor: no after, no through");
+  const arrival1 = await accepted(repo, "issues", issuePayload(201, {}, { locked: false }));
+  const arrival2 = await accepted(repo, "issues", issuePayload(202, {}, { locked: false }));
+  await issuesCard.getByText("New matches arrived").waitFor();
+  assert.deepEqual(await entriesNow(), page0, "loaded rows do not move when matches arrive");
+  const expectedAfters = [];
+  const nextPage = issuesCard.getByRole("button", { name: "Load next page" });
+  for (let guard = 0; guard < 8; guard++) {
+    if (await nextPage.isDisabled()) break;
+    const loaded = await entriesNow();
+    expectedAfters.push(loaded.at(-1));
+    await nextPage.click();
+    await inboxRows.nth(loaded.length).waitFor();
+  }
+  const all = await entriesNow();
+  assert.deepEqual(all.slice(-2), [arrival1, arrival2], "the two arrivals are appended below what was already read");
+  assert.deepEqual(all, [...all].sort((a, b) => a - b));
+  const tailReads = watchCalls("github_watch_read").filter((item) => item.id === issuesId && item.limit === 25 && item.after !== undefined).map((item) => item.after);
+  assert.deepEqual(tailReads.slice(0, expectedAfters.length), expectedAfters, "each page continues after the last entry loaded");
+  assert.ok(watchCalls("github_watch_read").every((item) => !("through" in item)), "the owner offers no pin for a watch read, and none is sent");
+  assert.deepEqual(ackCalls(), [], "paging acknowledges nothing");
+  assert.equal((await ownerWatch(issuesId)).acknowledgedThrough, 0);
+  await captures(watchesWindow, "source-watch-inbox");
+
+  // Reloading the page, opening an inbox and navigating never acknowledge.
+  await page.reload();
+  await activate(issuesCard.getByRole("button", { name: "Open inbox" }));
+  await inboxRows.first().waitFor();
+  await page.goto(`${origin}/source?focus=${encodeURIComponent(`github-watch:${issuesId}`)}`);
+  await inboxRows.first().waitFor();
+  assert.deepEqual(ackCalls(), [], "reload, navigation and links acknowledge nothing");
+  assert.equal((await ownerWatch(issuesId)).acknowledgedThrough, 0);
+
+  // Review by keyboard: tick one entry, open another's details, mark through a third. Acknowledging names the whole range and the entries
+  // marked without opening their details, and nothing moves until it is confirmed.
+  const reviewed = await entriesNow();
+  const [a, b, c, d] = reviewed;
+  const entry = (n) => issuesCard.locator(`li[data-entry="${n}"]`);
+  const acknowledgeButton = issuesCard.getByRole("button", { name: /^Acknowledge through/ });
+  assert.equal(await acknowledgeButton.isDisabled(), true, "nothing is reviewed yet");
+  const markA = entry(a).getByRole("checkbox", { name: `Entry ${a} reviewed` });
+  await markA.focus();
+  await markA.press("Space");
+  assert.equal(await markA.isChecked(), true);
+  assert.equal(await acknowledgeButton.isDisabled(), false);
+  await activate(entry(b).getByRole("button", { name: "Details" }));
+  await entry(b).getByText(`Open delivery #${b} in the reader`).waitFor();
+  await activate(entry(c).getByRole("button", { name: "Mark through here" }));
+  assert.equal(await entry(b).getByRole("checkbox").isChecked(), true, "marking through also marks the entries between");
+  assert.equal(await entry(d).getByRole("checkbox").isChecked(), false);
+  await issuesCard.getByText(new RegExp(`Reviewed #${a} to #${c} · 3 of \\d+ loaded entries`)).waitFor();
+  await issuesCard.getByText(/2 of these were marked without opening their details/).waitFor();
+  await captures(watchesWindow, "source-watch-review");
+  await activate(issuesCard.getByRole("button", { name: `Acknowledge through #${c}…` }));
+  const dialog = page.getByRole("alertdialog");
+  await dialog.getByText(`Acknowledge through #${c}?`).waitFor();
+  const dialogText = await dialog.textContent();
+  assert.match(dialogText, new RegExp(`from #0 to #${c}, covering 3 entries: #${a}, #${b}, #${c}`));
+  assert.match(dialogText, new RegExp(`2 entries were marked reviewed without opening their details and will be acknowledged anyway: #${a}, #${c}`));
+  assert.match(dialogText, /stay pending/);
+  assert.match(dialogText, /compare-and-set/);
+  await dialogCaptures("source-watch-acknowledge-confirm");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  assert.deepEqual(ackCalls(), [], "cancelling acknowledges nothing");
+  assert.equal((await ownerWatch(issuesId)).acknowledgedThrough, 0);
+  await activate(issuesCard.getByRole("button", { name: `Acknowledge through #${c}…` }));
+  await activate(page.getByRole("alertdialog").getByRole("button", { name: `Acknowledge through #${c}`, exact: true }));
+  await issuesCard.getByText(new RegExp(`Acknowledged through #${c} · 3 entries`)).waitFor();
+  assert.deepEqual(ackCalls(), [{ id: issuesId, through: c, expectedAcknowledgedThrough: 0 }], "one acknowledgement, compare-and-set against the cursor the rows were read from");
+  assert.equal((await ownerWatch(issuesId)).acknowledgedThrough, c);
+  await inboxRows.first().waitFor();
+  assert.equal((await entriesNow())[0], d, "the inbox was read again from the new cursor");
+  assert.equal(await issuesCard.locator('input[type="checkbox"]:checked').count(), 0, "no mark survives a reread");
+  await issuesCard.getByText(new RegExp(`Acknowledged through #${c} · 3 entries`)).scrollIntoViewIfNeeded();
+  await captures(watchesWindow, "source-watch-acknowledged");
+
+  // A cursor moved by another consumer while notices are held back: the confirmed request is refused (compare-and-set), the inbox is read again from
+  // the owner's cursor, every mark is cleared, and nothing is retried.
+  const next2 = await entriesNow();
+  const [e, f, g] = next2;
+  await activate(entry(f).getByRole("button", { name: "Mark through here" }));
+  await issuesCard.getByText(new RegExp(`Reviewed #${e} to #${f} · 2 of`)).waitFor();
+  await activate(issuesCard.getByRole("button", { name: `Acknowledge through #${f}…` }));
+  await page.getByRole("alertdialog").getByText(`Acknowledge through #${f}?`).waitFor();
+  hold.on = true;
+  await call("github_watch_acknowledge", { id: issuesId, through: e, expectedAcknowledgedThrough: c });
+  await page.getByRole("alertdialog").getByRole("button", { name: `Acknowledge through #${f}`, exact: true }).click();
+  await issuesCard.getByText("Nothing was acknowledged.").waitFor();
+  release();
+  assert.deepEqual(ackCalls().at(-1), { id: issuesId, through: f, expectedAcknowledgedThrough: c }, "the stale request named the cursor it was reviewed against");
+  assert.equal(ackCalls().length, 2, "the refusal is not retried");
+  assert.equal((await ownerWatch(issuesId)).acknowledgedThrough, e, "the other consumer's cursor stands; this window did not move it");
+  await issuesCard.getByText(new RegExp(`it is now #${e}`)).waitFor();
+  assert.equal((await entriesNow())[0], f, "the rows are those pending at the cursor as it is now");
+  assert.equal(await issuesCard.locator('input[type="checkbox"]:checked').count(), 0, "review starts over");
+  assert.equal(await acknowledgeButton.isDisabled(), true, "nothing can be acknowledged until it is reviewed again");
+  await issuesCard.getByText("Nothing was acknowledged.").scrollIntoViewIfNeeded();
+  await captures(watchesWindow, "source-watch-conflict");
+  await issuesCard.getByRole("button", { name: "Dismiss" }).click();
+
+  // The cursor moving while a mark is held (with notices flowing) replaces the rows and clears the mark; this window acknowledges nothing.
+  await activate(entry(f).getByRole("button", { name: "Mark through here" }));
+  await call("github_watch_acknowledge", { id: issuesId, through: f, expectedAcknowledgedThrough: e });
+  await issuesCard.getByText(new RegExp(`The acknowledged cursor moved from #${e} to #${f}`)).waitFor();
+  assert.equal(await issuesCard.locator('input[type="checkbox"]:checked').count(), 0);
+  assert.equal(ackCalls().length, 2, "only the one request this window made");
+  assert.equal((await entriesNow())[0], g);
+  await issuesCard.getByRole("button", { name: "Dismiss" }).click();
+
+  // Notifications off still capture matches; label edits use the configuration revision, and a stale one is refused.
+  await activate(prCard.getByRole("button", { name: "Open inbox" }));
+  await prCard.getByText("Nothing is pending.", { exact: false }).waitFor();
+  const prSettings = prCard.locator("details").filter({ has: page.locator("summary", { hasText: "Definition and settings" }) });
+  await activate(prSettings.locator("summary"));
+  await prSettings.getByText("Notifications / occurrence polling", { exact: true }).waitFor();
+  assert.equal(await prSettings.getByRole("button", { name: /New watch from this filter/ }).isVisible(), true);
+  await prSettings.getByText(/A filter is never edited: a different filter is a new watch/).waitFor();
+  await activate(prSettings.getByRole("button", { name: "Turn off" }));
+  await prCard.getByText("Notifications off", { exact: true }).first().waitFor();
+  const paused = await ownerWatch(nowInput.id);
+  assert.equal(paused.enabled, false);
+  assert.equal(paused.revision, nowWatch.revision + 1);
+  assert.equal(paused.acknowledgedThrough, nowWatch.acknowledgedThrough, "configuration changes never touch the consumption cursor");
+  assert.deepEqual(watchCalls("github_watch_update").at(-1), { id: nowInput.id, expectedRevision: nowWatch.revision, enabled: false });
+  await prCard.getByText(/Notifications and occurrence polling are off for this watch\. Matching deliveries are still captured/).waitFor();
+  const prSequence = await accepted(repo, "pull_request", { action: "opened", number: 301, pull_request: { id: 2301, number: 301, title: "Change 301", html_url: "https://example.test/pull/301", state: "open", merged: false },
+    repository: { id: 3, full_name: "owner/project" }, sender: { login: "human" } });
+  assert.equal((await call("github_watch_read", { id: nowInput.id, limit: 5 })).pending, 1, "a disabled watch still captured the match");
+  await prCard.getByText(/1 pending entry arrived after this inbox was read/).waitFor();
+  await prCard.getByRole("button", { name: "Load next page" }).click();
+  await prCard.locator(`li[data-entry="${prSequence}"]`).waitFor();
+  assert.deepEqual(ackCalls().length, 2, "a captured match is not acknowledged");
+  await captures(watchesWindow, "source-watch-disabled-captures");
+  const labelInput = prSettings.getByRole("textbox", { name: "Label" });
+  hold.on = true;
+  await call("github_watch_update", { id: nowInput.id, expectedRevision: paused.revision, label: "Pull requests (elsewhere)" });
+  await labelInput.fill("Pull requests, reviewed");
+  await prSettings.getByRole("button", { name: "Save label" }).click();
+  await prSettings.getByText(/changed elsewhere since it was shown/).waitFor();
+  release();
+  assert.equal((await ownerWatch(nowInput.id)).label, "Pull requests (elsewhere)", "the stale edit did not overwrite");
+  await prCard.getByText("Pull requests (elsewhere)", { exact: true }).first().waitFor();
+  await labelInput.fill("Pull requests, reviewed");
+  await prSettings.getByRole("button", { name: "Save label" }).click();
+  await prCard.getByText("Pull requests, reviewed", { exact: true }).first().waitFor();
+  const relabeled = await ownerWatch(nowInput.id);
+  assert.equal(relabeled.label, "Pull requests, reviewed");
+  assert.equal(relabeled.acknowledgedThrough, nowWatch.acknowledgedThrough);
+  await activate(prSettings.getByRole("button", { name: "Turn on" }));
+  await prCard.getByText("Notifications on", { exact: true }).first().waitFor();
+  assert.equal((await ownerWatch(nowInput.id)).enabled, true);
+
+  // Copyable examples carry this watch's ID, never an acknowledgement, and no wake or target action exists; the semantics are the reference's.
+  await activate(issuesCard.getByRole("button", { name: "Open inbox" }));
+  const issuesExamples = issuesCard.locator("details").filter({ has: page.locator("summary", { hasText: "Use from an agent" }) });
+  await activate(issuesExamples.locator("summary"));
+  const subscribeExample = JSON.parse(await issuesExamples.getByLabel("events_subscribe example", { exact: true }).textContent());
+  assert.deepEqual(subscribeExample, { topic: "github_watches_changed", scope: `watch:${issuesId}`, readOperation: "github_watch_read", readArguments: { id: issuesId } });
+  assert.match(await issuesExamples.getByLabel("events/poll example", { exact: true }).textContent(), new RegExp(`"id": "${issuesId}"[\\s\\S]*"cursor": null|"cursor": null[\\s\\S]*"id": "${issuesId}"`));
+  assert.match(await issuesExamples.getByLabel("events_listen example", { exact: true }).textContent(), /"policy": "native"/);
+  await issuesExamples.getByText(/never acknowledge an entry/).waitFor();
+  assert.equal(await watchesWindow.getByRole("button", { name: /wake|target|attach|subscribe to/i }).count(), 0, "no operator wake or target action");
+  await captures(watchesWindow, "source-watch-examples");
+  await issuesExamples.getByRole("link", { name: "github_watch_events" }).click();
+  await page.getByRole("heading", { name: "Occurrence source" }).waitFor();
+  await page.getByText(/events_listen/).first().waitFor();
+  await page.keyboard.press("Escape");
+
+  // Remove retires the exact watch's ID after an exact confirmation, and does not touch attached subscriptions.
+  await activate(prCard.getByRole("button", { name: "Open inbox" }));
+  await activate(prSettings.locator("summary"));
+  await activate(prSettings.getByRole("button", { name: "Remove watch…" }));
+  const removeDialog = page.getByRole("alertdialog");
+  await removeDialog.getByText("Remove this watch?").waitFor();
+  await removeDialog.getByText(nowInput.id).waitFor();
+  await removeDialog.getByText(/does not remove Stack subscriptions attached to it/).waitFor();
+  const removeButton = removeDialog.getByRole("button", { name: "Remove watch", exact: true });
+  assert.equal(await removeButton.isDisabled(), true, "the exact watch must be confirmed");
+  await removeDialog.getByRole("textbox", { name: /First eight characters/ }).fill("00000000");
+  assert.equal(await removeButton.isDisabled(), true, "another watch's prefix does not confirm this one");
+  await removeDialog.getByRole("textbox", { name: /First eight characters/ }).fill(nowInput.id.slice(0, 8));
+  await dialogCaptures("source-watch-remove-confirm");
+  await removeButton.click();
+  await prCard.waitFor({ state: "detached" });
+  assert.deepEqual(watchCalls("github_watch_remove"), [{ id: nowInput.id }]);
+  await assert.rejects(call("github_watch_get", { id: nowInput.id }), /github_watch_not_found/);
+  assert.equal((await call("github_watch_list")).watches.some((item) => item.id === nowInput.id), false);
+  await assert.rejects(call("github_watch_create", nowInput), /github_watch_id_conflict/, "a retired ID cannot be recreated");
+  await captures(watchesWindow, "source-watches-after-remove");
+
+  // M7a follow-up: a clear request left unconfirmed is listed whatever is chosen now, and only its receipt is ever read.
+  await page.goto(`${origin}/source`);
+  await ledger.getByText("25 loaded", { exact: true }).waitFor();
+  const db = new DatabaseSync(join(dir, "github", "github.sqlite"));
+  const journal = new StateJournal(db, "source");
+  const unknownPlan = await call("github_history_plan", { sequences: [10] });
+  const unknownInput = { planId: unknownPlan.id, expectedRevision: unknownPlan.revision, requestId: randomUUID() };
+  journal.begin(unknownInput, unknownPlan);
+  journal.finish(unknownInput.requestId, "unknown", [{ resource: "10", outcome: "unknown", detail: "Fixture interrupted admission; inspect the original request" }]);
+  const fnv = (text) => { let value = 0x811c9dc5; for (let index = 0; index < text.length; index++) { value ^= text.charCodeAt(index); value = Math.imul(value, 0x01000193) >>> 0; } return value.toString(16); };
+  const slot = `stack.state-flow.source:history:${fnv("10")}`;
+  await page.evaluate(([key, input]) => localStorage.setItem(key, JSON.stringify({ input, at: Date.now() })), [slot, unknownInput]);
+  const clearsBefore = watchCalls("github_history_clear").length;
+  await page.reload();
+  await ledger.getByText("25 loaded", { exact: true }).waitFor();
+  const pendingRequests = ledger.getByRole("region", { name: "Unconfirmed clear requests" });
+  await pendingRequests.waitFor();
+  await pendingRequests.getByRole("region", { name: "source receipt unknown" }).waitFor();
+  assert.equal(await ledger.getByText("0 chosen").count() > 0 || await ledger.getByText(/\d+ chosen/).count() > 0, true, "maintenance opened itself for the unconfirmed request");
+  assert.equal(await pendingRequests.getByRole("button", { name: /Prepare|Send identical|Clear original payloads/ }).count(), 0, "a stale request is never re-planned or resent");
+  const chooseOther = ledger.getByRole("checkbox", { name: "Choose delivery 5 for payload clearing" });
+  await chooseOther.focus();
+  await chooseOther.press("Space");
+  await ledger.getByText("1 chosen").waitFor();
+  await pendingRequests.waitFor();
+  await captures(ledger.locator("details").filter({ has: page.locator("summary", { hasText: "Maintenance" }) }), "source-payload-pending-request");
+  await activate(pendingRequests.getByRole("button", { name: /^Read receipt/ }));
+  await pendingRequests.getByRole("region", { name: "source receipt unknown" }).waitFor();
+  assert.equal(watchCalls("github_history_clear").length, clearsBefore, "reading a receipt clears nothing");
+  await activate(pendingRequests.getByRole("button", { name: "Forget this request" }));
+  await pendingRequests.waitFor({ state: "detached" });
+  assert.equal(await page.evaluate((key) => localStorage.getItem(key), slot), null, "forgetting drops the saved request");
+  assert.equal((await call("github_state_receipt_get", { requestId: unknownInput.requestId })).receipt.status, "unknown", "the owner's receipt is untouched");
+  journal.close(); db.close();
+  await page.goto(`${origin}/source`);
+  await watchesWindow.getByRole("button", { name: "Open inbox" }).first().waitFor();
+
   // Remote: an Access-authenticated viewer reads all four windows and nothing mutates, maintenance is not offered, and even control scope
   // gains no Source mutation. The local-only reads (setup is a read; secrets and maintenance are not) are fenced at the gateway.
   const remoteOrigin = `https://127.0.0.1:${remotePort}`;
@@ -450,6 +813,24 @@ try {
   assert.equal(await remotePage.locator("summary", { hasText: "Maintenance" }).count(), 0, "a remote viewer is not offered payload maintenance");
   assert.equal(await remotePage.getByRole("checkbox").count(), 0, "no choose-for-clearing controls");
   assert.equal(await remotePage.getByRole("button", { name: /Clear original payloads|Prepare clearing/ }).count(), 0);
+  // Watches read on a remote session (definitions, counts, inbox entries) and nothing about them can be changed or acknowledged.
+  const issuesNow = await ownerWatch(issuesId);
+  const rWatches = remotePage.locator('[data-window="source-watches"]');
+  const rIssues = rWatches.locator(`li[data-node="github-watch:${issuesId}"]`);
+  await rIssues.waitFor();
+  await rIssues.getByLabel("Consumption").getByText(`#${issuesNow.acknowledgedThrough}`, { exact: true }).first().waitFor();
+  assert.equal(await rWatches.getByRole("button", { name: "New watch" }).count(), 0, "a remote viewer cannot create a watch");
+  await activate(rIssues.getByRole("button", { name: "Open inbox" }));
+  await rIssues.locator("li[data-entry]").first().waitFor();
+  await rIssues.getByText("Not a pinned snapshot.").waitFor();
+  await rIssues.getByText(/Read-only connection: reviewing and acknowledging are local operator actions/).waitFor();
+  const rControls = rWatches.getByRole("button", { name: /Acknowledge|Mark through here|Turn on|Turn off|Save label|Remove watch|New watch from this filter/ });
+  assert.equal(await rControls.count(), 0, "no watch mutation control is offered remotely");
+  assert.equal(await rWatches.getByRole("checkbox").count(), 0, "no review marks remotely: nothing can be acknowledged");
+  assert.equal(await rWatches.getByRole("textbox", { name: "Label" }).count(), 0);
+  await rIssues.locator("summary", { hasText: "Definition and settings" }).click();
+  await rIssues.getByText(/A filter is never edited: a different filter is a new watch/).waitFor();
+  await remotePage.screenshot({ path: join(evidence, "source-watches-remote-readonly.png"), animations: "disabled" });
   const remoteCalls = (calls) => remotePage.evaluate((list) => new Promise((resolve, reject) => {
     const ws = new WebSocket(`${location.origin.replace(/^https:/, "wss:")}/websocket`);
     const results = [];
@@ -461,9 +842,13 @@ try {
   const fenced = [["source", "github_history_plan", { sequences: [1] }], ["source", "github_history_clear", { planId: zero, expectedRevision: "x", requestId: zero }],
     ["source", "github_state_receipt_get", { requestId: zero }], ["source", "github_endpoint_secret_reveal", { id: org.endpoint.id, reveal: true }],
     ["source", "github_endpoint_update", { id: org.endpoint.id, expectedRevision: 1, enabled: true }], ["source", "github_hook_list", { endpointId: org.endpoint.id }],
-    ["source", "github_watch_create", { id: randomUUID(), label: "Remote", filter: {} }], ["source", "github_auth_status", {}]];
+    ["source", "github_watch_create", { id: randomUUID(), label: "Remote", filter: {} }], ["source", "github_auth_status", {}],
+    ["source", "github_watch_update", { id: issuesId, expectedRevision: issuesNow.revision, enabled: false }],
+    ["source", "github_watch_acknowledge", { id: issuesId, through: issuesNow.acknowledgedThrough, expectedAcknowledgedThrough: issuesNow.acknowledgedThrough }],
+    ["source", "github_watch_remove", { id: issuesId }]];
   for (const result of await remoteCalls(fenced)) assert.ok(result.error, `the remote gateway refuses ${JSON.stringify(result)}`);
-  const allowed = await remoteCalls([["source", "github_status", {}], ["source", "github_delivery_get", { sequence: 3 }], ["source", "github_setup_read", { id: org.endpoint.id }]]);
+  const allowed = await remoteCalls([["source", "github_status", {}], ["source", "github_delivery_get", { sequence: 3 }], ["source", "github_setup_read", { id: org.endpoint.id }],
+    ["source", "github_watch_list", {}], ["source", "github_watch_get", { id: issuesId }], ["source", "github_watch_read", { id: issuesId, limit: 1 }]]);
   for (const result of allowed) assert.ok(!result.error, `a read-only Source operation is available remotely: ${JSON.stringify(result.error)}`);
   const grant = accessStore.inventory().grants.find((entry) => entry.client_id === credential.clientId);
   accessStore.updateGrant(grant.id, 1, ["ui:view", "ui:control"], []);
@@ -472,6 +857,7 @@ try {
   await rLedger.getByText(/^Snapshot through #\d+$/).waitFor();
   await rReceivers.getByRole("img", { name: "Live" }).first().waitFor();
   assert.equal(await remotePage.locator("summary", { hasText: "Maintenance" }).count(), 0, "control scope still offers no Source maintenance");
+  assert.equal(await rWatches.getByRole("button", { name: /Acknowledge|Mark through here|Turn on|Turn off|Save label|Remove watch|New watch/ }).count(), 0, "control scope offers no watch mutation either");
   for (const result of await remoteCalls(fenced)) assert.ok(result.error, "control scope gains no Source mutation: the source package has no remote mutation allowlist");
   await remotePage.screenshot({ path: join(evidence, "source-remote-readonly.png"), animations: "disabled" });
   assert.deepEqual(remoteErrors, [], `remote page errors: ${remoteErrors.join(" | ")}`);
@@ -482,6 +868,7 @@ try {
   console.log("source browser check passed");
 } catch (error) {
   if (page) await page.screenshot({ path: join(evidence, "source-failure.png"), animations: "disabled" }).catch(() => {});
+  if (page) console.error((await page.locator('[data-window="source-deliveries"]').innerText().catch(() => "")).slice(0, 1500));
   console.error(error);
   console.error(log.slice(-2000));
   process.exitCode = 1;

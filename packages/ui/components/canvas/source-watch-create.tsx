@@ -89,7 +89,7 @@ export function CreateWatch({ initialFilter, count, onClose }: { initialFilter: 
           <p className={sourceHint}>A watch is a durable inbox of the deliveries that match its filter. The filter is immutable: to match something different, create another watch. Creating one attaches nothing and acknowledges nothing.</p>
           <div className="flex flex-col gap-1">
             <span className={fieldLabel}>Watch ID</span>
-            <span className="flex items-center gap-1.5"><code className="min-w-0 truncate font-mono text-[0.72rem]" title={id}>{id}</code><CopyButton value={id} label="watch ID" />
+            <span className="flex items-center gap-1.5"><code className="min-w-0 truncate font-mono text-[0.72rem]" title={id}>{id}</code><CopyButton value={id} label="watch ID" className="opacity-100" />
               <Button type="button" size="xs" variant="ghost" onClick={() => setId(crypto.randomUUID())}><RefreshCwIcon data-icon="inline-start" />New ID</Button></span>
             <span className={sourceHint}>The ID is the idempotency key: sending the same ID with the same definition again returns the same watch.</span>
           </div>
