@@ -135,7 +135,7 @@ export const ownerGaps: Record<string, string> = {
   browse: "Default-profile reset, per-site data clearing, resolved handoff redaction and orphan-volume collection are not supported.",
   brain: "Terminal jobs without documents, source removal or checkpoint reset and stranded-Artifact collection are not supported.",
   scrape: "Queue cancel/retry/discard and corpus or session-state maintenance are not supported.",
-  roles: "Retained injection-launch cleanup and standalone settings-receipt retirement are not supported.",
+  roles: "Live launches, missing/legacy locks and interrupted native teardown block launch-directory clearing. External native histories and credentials and Bot/Worker materializations remain separate.",
   auth: "Cache-only clearing is not supported; account removal is the control.",
   access: "History and session-specific retirement are not supported; revocation is the control.",
   hud: "Physical media and backup erasure, and other owners' copies such as Worker-captured Work context, are out of scope.",

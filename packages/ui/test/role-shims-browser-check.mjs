@@ -7,7 +7,8 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { appendFile, chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath } from "@stack/api";
+import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath, StateJournal } from "@stack/api";
+import { processBirth } from "../../roles/dist/src/launch-state.js";
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as rolesApi } from "../../roles/dist/api.js";
 import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture } from "./browser-fixture.mjs";
@@ -200,6 +201,47 @@ try {
   await row("codex-plain").waitFor({ state: "detached" });
   await shims.getByText("No Role shims", { exact: true }).waitFor();
   assert.equal(await readFile(current.path, "utf8"), handEdited, "removing one shim touches no other command");
+
+  // Real launch owner: retained only, file/liveness refresh, blocked plan and durable unknown recovery.
+  const launchRoot = join(dir, "roles", "inject");
+  const retained = "codex-abc123", live = "codex-live12", unknown = "codex-unk123";
+  const lock = async (id, value) => { await mkdir(join(launchRoot, id), { recursive: true }); if (value) await writeFile(join(launchRoot, id, "launch-lock.json"), JSON.stringify(value)); };
+  await lock(retained, { version: 1, pid: 99999999, birth: "exited fixture", state: "exited" });
+  await lock(live, { version: 1, pid: process.pid, birth: await processBirth(process.pid), state: "running" });
+  await lock(unknown, null);
+  await shims.getByRole("button", { name: "Refresh launches" }).click();
+  const launches = shims.locator("details").filter({ hasText: "retained launches" });
+  await launches.locator("summary").click();
+  await launches.getByRole("checkbox", { name: `Select launch ${retained}` }).waitFor();
+  assert.equal(await launches.getByRole("checkbox", { name: `Select launch ${live}` }).isDisabled(), true);
+  assert.equal(await launches.getByRole("checkbox", { name: `Select launch ${unknown}` }).isDisabled(), true);
+  await launches.getByRole("checkbox", { name: `Select launch ${retained}` }).check();
+  // Change the exact selected resource before planning: the owner refuses, rather than stopping a process.
+  await lock(retained, { version: 1, pid: process.pid, birth: await processBirth(process.pid), state: "running" });
+  await launches.getByRole("button", { name: "Prepare clearing 1 launch directories" }).click();
+  await launches.getByText(`${retained}: Launching process is alive`, { exact: true }).waitFor();
+  assert.equal(await launches.getByRole("button", { name: "Clear these launch directories" }).isDisabled(), true);
+  await lock(retained, { version: 1, pid: 99999999, birth: "exited fixture", state: "exited" });
+  await launches.getByRole("button", { name: "Prepare a new plan" }).click();
+  await launches.getByText("Bot and Worker materializations, current Role configuration, shims, external native history/credentials and backups remain", { exact: true }).waitFor();
+  await page.emulateMedia({ colorScheme: "light" }); await shot("launch-plan-light");
+  await page.emulateMedia({ colorScheme: "dark" }); await shot("launch-plan-dark");
+  await launches.getByRole("button", { name: "Clear these launch directories" }).click();
+  await launches.getByText("Completed for the declared scope only.").waitFor();
+  assert.equal(await stat(join(launchRoot, retained)).then(() => true, () => false), false);
+  assert.ok(await stat(join(launchRoot, live))); assert.ok(await stat(join(launchRoot, unknown)));
+  const recoveryPlan = await rolesCall("role_launch_plan", { ids: [unknown] });
+  const recoveryInput = { planId: recoveryPlan.id, expectedRevision: recoveryPlan.revision, requestId: crypto.randomUUID() };
+  const journal = new StateJournal(join(dir, "roles", "maintenance.sqlite"), "roles");
+  journal.begin(recoveryInput, recoveryPlan);
+  journal.finish(recoveryInput.requestId, "unknown", [{ resource: unknown, outcome: "unknown", detail: "Interrupted teardown remains unknown" }]);
+  journal.close();
+  await page.evaluate((input) => localStorage.setItem("stack.state-flow.roles:launch_clear:ids", JSON.stringify({ input, at: Date.now() })), recoveryInput);
+  await page.reload();
+  await launches.getByRole("region", { name: "roles receipt unknown" }).waitFor();
+  assert.equal(await launches.getByRole("button", { name: "Send identical request" }).count(), 0);
+  await page.setViewportSize({ width: 390, height: 844 }); await shot("launch-unknown-narrow");
+  await page.setViewportSize({ width: 2400, height: 1400 });
 
   await page.emulateMedia({ colorScheme: "dark" });
   await tap(shims.getByRole("button", { name: "Create shim" }));

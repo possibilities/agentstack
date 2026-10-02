@@ -47,6 +47,7 @@ import { CopyButton, Empty } from "./primitives";
 import { useStack, useStore, useWorkbench } from "./provider";
 import { hintClass, labelClass, saveKeys } from "./role-editor-parts";
 import { footerButton, Section, Window } from "./window";
+import { RoleLaunchDirectories } from "./role-launch-maintenance";
 
 type ShimActions = {
   draft: ShimDraft | null;
@@ -209,6 +210,7 @@ export function RoleShimsWindow() {
             </div>
           )}
           {actions.draft ? <ShimEditor draft={actions.draft} /> : null}
+          <RoleLaunchDirectories />
         </>
       ) : (
         <Empty icon={SquareTerminalIcon} title={roleShims.error ? "Shims unavailable" : status.roles === "closed" ? "Roles reconnecting" : "Reading shims…"} />

@@ -715,6 +715,8 @@ export type NotificationCounts = { open: number; total: number; sources: Array<{
 export type NotificationFilter = { dismissed?: boolean; source?: string };
 export type NotificationPages = { filter: NotificationFilter; entries: Notification[]; nextCursor: number | null };
 /** `role_launch_preview`: what the next launch receives besides instructions, matched against given working directories. */
+export type RoleLaunch = { id: string; state: "live" | "retained" | "unknown"; issue: string | null; modifiedAt: string };
+
 export type RoleLaunchPreview = {
   roleId: string;
   revision: number;
