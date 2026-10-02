@@ -196,11 +196,26 @@ contract; Access still denies local setup, receiver mutations/reveal and
 maintenance remotely, including viewers with control scope.
 
 The API phase added no UI. The UI's Source space ([ADR 0164](adr/0164-source-space.md))
-now reads receivers, the delivery ledger, original payloads and the event catalog, and
+reads receivers, the delivery ledger, original payloads and the event catalog, and
 clears original payloads through the shared maintenance flow, over the existing
-`github_endpoints_changed` and `github_deliveries_changed` topics. Receiver setup and
-secret handling and hook plan/apply/probe remain API-only until their own authorized UI phase.
+`github_endpoints_changed` and `github_deliveries_changed` topics.
 Watches ([ADR 0165](adr/0165-source-watches.md)) create, read and consume in the UI: the inbox is
 not a pinned snapshot, and acknowledgement happens only through entries a person marked as
-reviewed, with `expectedAcknowledgedThrough`; viewing and notices never acknowledge. Source delivery does not restart
-a running Server; never rebuild an active UI's `.next` in place without approval.
+reviewed, with `expectedAcknowledgedThrough`; viewing and notices never acknowledge.
+Receiver setup ([ADR 0166](adr/0166-source-receiver-setup.md)) is a local operator's work in the
+Receivers window: creating a receiver (its UUID recorded in the browser before the request, a lost
+answer read back by that ID), editing label, public origin and enablement against the shown
+revision, an explicit secret reveal (held in one component's state and cleared on hide, close,
+receiver change, disconnect, authority loss, rotation or after two minutes) and rotation
+(immediate, or a grace period up to 24 hours, with the statement that GitHub is not updated),
+the gh sign-in check and paged repository/organization pickers, the hook list, a bespoke plan
+review and apply, ping and push-test probes, GitHub's delivery attempts matched to local
+arrivals by delivery GUID, redelivery of an exact attempt, and manual setup guidance for App,
+enterprise, Marketplace, Sponsors and GHES receivers. Every request to GitHub (apply, ping,
+test, redeliver) is recorded in the browser's recovery journal under its request UUID before
+it is sent; a lost answer is resolved only by reading `github_remote_receipt_get` for that same
+ID. An unknown outcome is never sent again, and a changed intent needs a new reviewed plan. A
+request's receipt is shown apart from observed `lastPingAt`/`lastDeliveryAt`: admitted by GitHub
+is not a signed arrival. Remote Access sees the five setup facts read-only and none of the
+controls. Source delivery does not restart a running Server; never rebuild an active UI's
+`.next` in place without approval.

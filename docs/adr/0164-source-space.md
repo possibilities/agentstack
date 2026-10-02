@@ -5,9 +5,10 @@ Status: accepted, 2026-10-02. Adds a Canvas space to the benches of
 [ADR 0159](0159-github-webhook-ledger-and-watches.md) its first UI, after the
 occurrence and runtime-intake work of [ADR 0160](0160-poll-occurrences-and-runtime-event-intake.md).
 It supersedes the "no dedicated UI views" note of `docs/github-webhooks.md` for this
-phase. This is phase 1 of three: **Observe**. Watches (phase 2) and receiver setup,
-secret handling, hook plans and probes (phase 3) are deliberately not built; the
-space makes no setup mutation of any kind.
+phase. This is phase 1 of three: **Observe**. Watches (phase 2, [ADR 0165](0165-source-watches.md))
+and receiver setup, secret handling, hook plans and probes (phase 3,
+[ADR 0166](0166-source-receiver-setup.md)) were built later; this phase made no setup
+mutation of any kind.
 
 ## Decision
 
@@ -95,6 +96,7 @@ page allowlist gained `/source` (`packages/access/src/remote-ui.ts`).
 People can see what arrived and prove which receiver it came through, read the exact
 signed body safely, and recover storage, without a setup UI existing yet. Receiver
 creation, edit, manual secret reveal and rotation, `gh` discovery, hook plan/apply, probe,
-provider attempts and redelivery stay API-only (phase 3), as do watches and their
-acknowledgement (phase 2). `docs/github-webhooks.md`'s "no dedicated UI" note describes
-the API phase only.
+provider attempts and redelivery were API-only in this phase and are the UI of
+[ADR 0166](0166-source-receiver-setup.md); watches and their acknowledgement are
+[ADR 0165](0165-source-watches.md). `docs/github-webhooks.md`'s "no dedicated UI" note
+describes the API phase only.

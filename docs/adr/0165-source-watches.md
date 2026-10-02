@@ -3,7 +3,7 @@
 Status: accepted, 2026-10-02. Phase 2 of the Source space of [ADR 0164](0164-source-space.md),
 over the watches of [ADR 0159](0159-github-webhook-ledger-and-watches.md) and the occurrence
 and runtime intake of [ADR 0160](0160-poll-occurrences-and-runtime-event-intake.md). Receiver
-setup, secret handling and hook plans (phase 3) remain API-only.
+setup, secret handling and hook plans (phase 3) are [ADR 0166](0166-source-receiver-setup.md).
 
 ## Decision
 
@@ -85,5 +85,6 @@ lets the person forget a request explicitly.
 
 People can create, review and consume watch inboxes without risking silent acknowledgement, and
 see what was skipped. Acknowledgement by a UI is an operator's explicit act on a cursor that agents
-may share; the confirmation says so and the compare-and-set bounds the damage. Receiver setup, secrets,
-hook plan/apply/probe, redelivery and `gh` discovery remain phase 3.
+may share; the confirmation says so, and says that an independent consumer should create its own
+private watch with the same filter. The compare-and-set bounds the damage. Receiver setup, secrets,
+hook plan/apply/probe, redelivery and `gh` discovery are phase 3 ([ADR 0166](0166-source-receiver-setup.md)).
