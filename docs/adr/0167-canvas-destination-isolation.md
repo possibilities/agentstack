@@ -39,13 +39,17 @@ short names inside it are:
 | `source-setup.create`, `source-setup.requests.<receiver>` | Source receiver creation and hook-request journals |
 | `uix.browse.intent.<handoff>` (sessionStorage) | a Browse take or finish and its exact retry arguments |
 
-**Until the destination is complete, persistence is inert.** There is no storage object: stores are
-detached, nothing is read or written, and nothing is recovered or dispatched from a record. Compose stays
-unready and says why; the Source journal and the Browse intent refuse to record, so what they guard is not
-sent; a state flow neither saves nor recovers; the bench, docks and inspector keep working in memory. Implicit
-Worker catalog discovery waits until its saved fences have been read. When the destination completes,
-storage attaches and each view reads its own destination once, keeping what was done meanwhile unless that
-destination saved something.
+**Until the destination is complete, persistence is inert, and so is anything that must record first.** There is
+no storage object: stores are detached and nothing is read or written. Storage failure blocks dispatch, and an
+unknown identity is storage failure. Every control that saves a UUID or record before sending refuses, with
+one short line, "Waiting for the server to name itself…" (or that the browser could not record the request when
+the storage refuses): a state flow with a recovery slot cannot prepare, apply, resend or read a receipt, and an
+apply is not sent unless its record was kept; Browse take and finish are not sent without their recorded intent;
+the Source journals and receiver creation are not sent unrecorded; a Worker catalog fence that cannot be saved
+refuses its apply (it still holds in memory); Compose stays unready. Nothing is added to the UI for this. The
+bench, docks and inspector keep working in memory. Implicit Worker catalog discovery waits until its saved fences
+have been read. When the destination completes, storage attaches and each view reads its own destination once,
+keeping what was done meanwhile unless that destination saved something.
 
 **A different server replaces the tree.** `StackProvider` keys its tree by an epoch. When the store reports
 a different identity, the tree is rebuilt from a blank snapshot (resources empty, endpoints kept): no loaded
