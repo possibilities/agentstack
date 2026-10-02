@@ -42,7 +42,7 @@ const botAttempt = { id: id(100), account: null, targetAccount: null, status: "p
 const served = new Map();
 const calls = [];
 const cacheJournal = new StateJournal(join(dir, "cache-state.sqlite"), "auth");
-let cacheDraining = true, cacheClears = 0;
+let cacheDraining = true, cacheClears = 0, runtimeLive = false, retainedWorker = false;
 let websocket, next, browser, submitGate, submitEntered;
 let log = "";
 const current = (provider) => [...attempts.values()].findLast((attempt) => attempt.provider === provider);
@@ -85,8 +85,10 @@ const handlers = {
   bot_list: () => ({ bots: [] }),
   bot_defaults_get: () => ({ model: "fixture", reasoningEffort: "medium", sandboxMode: "danger-full-access", approvalPolicy: "never" }),
   voice_status: () => ({ call: null }),
-  worker_list: () => ({ workers: [] }),
-  worker_runtime_list: () => ({ runtimes: [] }),
+  worker_list: () => ({ workers: retainedWorker ? [{ id: id(500), accountId: accounts[0].id, provider: "codex", phase: "needs_recovery", repo: "/fixture/stack", cwd: "/fixture/worker", botId: null, threadId: null,
+    model: "fixture", effort: "medium", branch: null, baseCommit: null, sourceDirty: false, roleId: null, roleRevision: null, sessionId: "retained-native", runtimeInstance: null, currentTurnId: null,
+    issue: null, createdAt: Date.now() - 10000, updatedAt: Date.now() - 10000, turn: null, pendingPermissions: 0 }] : [] }),
+  worker_runtime_list: () => ({ runtimes: runtimeLive ? [{ id: accounts[0].id, provider: "codex", backend: "acp", processModel: "account", pids: [123], state: "running", pid: 123, instance: id(501), error: null }] : [] }),
   usage_snapshot: () => ({ atMs: Date.now(), inventoryAtMs: Date.now(), inventoryError: null, accounts: [] }),
 };
 async function port() {
@@ -100,7 +102,7 @@ try {
    const definitions = { serve: ["serve_status"], auth: Object.keys(handlers).filter((name) => /^(account_|worker_account_|auth_state_)/.test(name)),
     bots: ["bot_list", "bot_defaults_get", "voice_status"], worker: ["worker_list", "worker_runtime_list"], usage: ["usage_snapshot"], api: ["docs_snapshot"] };
   websocket = await serveWebSocket({ env, root: await fixtureWorkspace(dir, Object.keys(definitions)), port: 0 });
-  const topics = { auth: Object.fromEntries(["accounts_changed", "worker_accounts_changed", "login_changed", "worker_login_changed"].map((name) => [name, "Fixture"])) };
+  const topics = { auth: Object.fromEntries(["accounts_changed", "worker_accounts_changed", "login_changed", "worker_login_changed"].map((name) => [name, "Fixture"])), worker: { workers_changed: "Fixture" } };
   handlers.docs_snapshot = () => ({ packages: Object.keys(definitions).map((name) => ({ name, packageName: `@stack/${name}`, description: "Auth fixture", events: topics[name] ?? {}, eventScope: null, operations: [],
     transports: [transport(websocket.url, definitions[name], Object.keys(topics[name] ?? {}))] })) });
   for (const [name, names] of Object.entries(definitions)) {
@@ -330,8 +332,14 @@ try {
   await cache.locator("summary").click();
   assert.equal(await cache.getByRole("button", { name: "Prepare model cache clearing" }).isDisabled(), true);
   codexAccount.enabled = false;
+  runtimeLive = true; retainedWorker = true; served.get("worker").publish("workers_changed");
   Object.assign(current("codex"), { status: "complete", needsCode: false }); publish();
   served.get("auth").publish("worker_accounts_changed");
+  await cache.getByText("Not met: no active account runtime", { exact: true }).waitFor();
+  assert.equal(await cache.getByRole("button", { name: "Prepare model cache clearing" }).isDisabled(), true);
+  runtimeLive = false; served.get("worker").publish("workers_changed");
+  await cache.getByText("Observed: no active account runtime", { exact: true }).waitFor();
+  // A retained needs-recovery Worker is not a live process and does not require transcript/session removal.
   await cache.getByRole("button", { name: "Prepare model cache clearing" }).click();
   await cache.getByText("Catalog teardown is still draining").waitFor();
   assert.equal(await cache.getByRole("button", { name: "Clear model cache", exact: true }).isDisabled(), true);
@@ -349,7 +357,16 @@ try {
   cacheJournal.begin(input_, cp); cacheJournal.finish(input_.requestId, "unknown", [{ resource: "cache/opencode/models.json", outcome: "unknown", detail: "Interrupted cache clearing" }]);
   await page.evaluate(({ input, id }) => localStorage.setItem(`stack.state-flow.auth:account_cache:${id}`, JSON.stringify({ input, at: Date.now() })), { input: input_, id: codexAccount.id });
   await page.reload();
-  await codex.getByRole("button", { name: /^Inspect worker account/ }).evaluate((element) => element.focus({ preventScroll: true })); await page.keyboard.press("Enter");
+  const inspectCodex = codex.getByRole("button", { name: /^Inspect worker account/ });
+  if (await inspectCodex.getAttribute("aria-pressed") !== "true") {
+    await inspectCodex.evaluate((element) => element.focus({ preventScroll: true })); await page.keyboard.press("Enter");
+  }
+  await cache.getByText(input_.requestId, { exact: true }).waitFor();
+  // The persisted inspector can mount before its socket reconnects. Recovery stays uncertain until the operator
+  // explicitly reads the same request's receipt; it must not resend cache clearing.
+  await cache.getByText("Met: sign-in idle", { exact: true }).waitFor();
+  const readReceipt = cache.getByRole("button", { name: "Read receipt", exact: true });
+  if (await readReceipt.isVisible()) await readReceipt.click();
   await cache.getByRole("region", { name: "auth receipt unknown" }).waitFor();
   assert.equal(await cache.getByRole("button", { name: "Send identical request" }).count(), 0);
   assert.equal(cacheClears, 1);

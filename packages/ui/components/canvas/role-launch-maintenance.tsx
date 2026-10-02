@@ -24,10 +24,10 @@ function LaunchDirectories() {
   const store = useStore();
   const [selected, setSelected] = useState<string[]>([]);
   const pages = usePagedRead<RoleLaunch>((offset, revision) => store.call<{ launches: RoleLaunch[]; revision: string; nextOffset: number | null }>("roles", "role_launch_list", { offset, limit: 100, ...(revision ? { revision } : {}) })
-    .then((page) => ({ items: page.launches, revision: page.revision, nextOffset: page.nextOffset })), "roles:launches", state.roleShims.at ?? 0);
+    .then((page) => ({ items: page.launches, revision: page.revision, nextOffset: page.nextOffset })), "roles:launches", state.roleCatalog.at ?? 0);
   const controls = useStateFlow({
     operations: stateOperations(store.call, "roles", { plan: "role_launch_plan", apply: "role_launch_clear", receipt: "roles_state_receipt_get" }, { ids: selected }),
-    recoveryKey: "roles:launch_clear:ids", observe: state.roleShims.at,
+    recoveryKey: "roles:launch_clear:ids", observe: state.roleCatalog.at,
     onReceipt: (receipt) => { pages.refresh(); if (receipt.status === "completed") setSelected([]); },
   });
   const locked = controls.flow.phase !== "idle";

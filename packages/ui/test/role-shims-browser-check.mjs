@@ -61,7 +61,7 @@ const expected = ["default", "--with-harness", "opencode", "--with-model", "astr
 
 try {
   rolesServer = await serveApi({ name: "roles", transport: "socket", env, root });
-  websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["roles", "serve", "bots", "worker", "api"]), port: 0 });
+  websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["roles", "serve", "bots", "worker", "api"], ["bots", "worker"]), port: 0 });
   const doc = (name, api) => fixtureDoc(name, api, websocket.url, publishedJsonSchema);
   const catalog = [doc("roles", rolesApi), doc("bots", botsApi), doc("serve"), doc("worker"), doc("api")];
   handlers.docs_snapshot = () => ({ packages: catalog });
@@ -215,6 +215,11 @@ try {
   await launches.getByRole("checkbox", { name: `Select launch ${retained}` }).waitFor();
   assert.equal(await launches.getByRole("checkbox", { name: `Select launch ${live}` }).isDisabled(), true);
   assert.equal(await launches.getByRole("checkbox", { name: `Select launch ${unknown}` }).isDisabled(), true);
+  const eventLaunch = "codex-evt123";
+  await lock(eventLaunch, { version: 1, pid: 99999999, birth: "exited fixture", state: "exited" });
+  const roleCatalog = await rolesCall("roles_snapshot");
+  await rolesCall("role_create", { expectedRevision: roleCatalog.revision, name: "Maintenance fixture" });
+  await launches.getByRole("checkbox", { name: `Select launch ${eventLaunch}` }).waitFor();
   await launches.getByRole("checkbox", { name: `Select launch ${retained}` }).check();
   // Change the exact selected resource before planning: the owner refuses, rather than stopping a process.
   await lock(retained, { version: 1, pid: process.pid, birth: await processBirth(process.pid), state: "running" });
@@ -230,6 +235,7 @@ try {
   await launches.getByText("Completed for the declared scope only.").waitFor();
   assert.equal(await stat(join(launchRoot, retained)).then(() => true, () => false), false);
   assert.ok(await stat(join(launchRoot, live))); assert.ok(await stat(join(launchRoot, unknown)));
+  assert.ok(await stat(join(launchRoot, eventLaunch)), "unselected retained sibling stays");
   const recoveryPlan = await rolesCall("role_launch_plan", { ids: [unknown] });
   const recoveryInput = { planId: recoveryPlan.id, expectedRevision: recoveryPlan.revision, requestId: crypto.randomUUID() };
   const journal = new StateJournal(join(dir, "roles", "maintenance.sqlite"), "roles");

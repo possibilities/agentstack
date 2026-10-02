@@ -109,14 +109,16 @@ test("a control needs its plan, apply and receipt operations, not only the plan"
   assert.equal(localOperations({ catalog: { data: [websocket(names)] }, remote: { scope: "control" } }, "hud", names).available, false, "remote Access never gets state controls");
 });
 
-test("the shipped controls replace the four obsolete unsupported-coverage sentences with what remains out of scope", () => {
+test("shipped controls disclose remaining limits rather than claiming their maintenance is unsupported", () => {
   for (const owner of ["hud", "bots", "infer", "proc"]) assert.doesNotMatch(ownerGaps[owner], /is not supported\.$/, `${owner} no longer claims its shipped control is unsupported`);
   assert.match(ownerGaps.hud, /backup erasure.*other owners' copies/);
   assert.match(ownerGaps.bots, /Native Codex queue and history copies/);
   assert.match(ownerGaps.infer, /memory-only and leaves no receipt/);
   assert.match(ownerGaps.proc, /removed schedules only/);
-  // Other owners' sentences are not part of this change.
-  assert.equal(ownerGaps.signal, "Checkpoint reset is not supported.");
+  assert.match(ownerGaps.signal, /not historical replay or transcript erase/);
+  assert.match(ownerGaps.roles, /missing\/legacy locks.*block/);
+  assert.match(ownerGaps.auth, /Devin\/Claude.*unsupported/);
+  assert.match(ownerGaps.access, /Audit has no manual prune/);
   assert.match(ownerGaps.content, /^Vault or Git-history purge/);
 });
 

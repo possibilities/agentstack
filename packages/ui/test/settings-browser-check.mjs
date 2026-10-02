@@ -187,11 +187,11 @@ try {
   const nextPort = await port();
   const origin = `http://127.0.0.1:${nextPort}`;
   env.STACK_WEBSOCKET_ORIGIN = origin;
-  next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "start", "--hostname", "127.0.0.1", "--port", String(nextPort)], { cwd: ui, env, stdio: ["ignore", "pipe", "pipe"] });
+  next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), process.env.NEXT_MODE === "dev" ? "dev" : "start", "--hostname", "127.0.0.1", "--port", String(nextPort)], { cwd: ui, env, stdio: ["ignore", "pipe", "pipe"] });
   next.stdout.on("data", (chunk) => { log += chunk; }); next.stderr.on("data", (chunk) => { log += chunk; });
   for (let attempt = 0; ; attempt++) {
     try { if ((await fetch(`${origin}/connect/local`)).ok) break; } catch { /* bounded readiness check */ }
-    if (attempt > 100 || next.exitCode !== null) throw new Error(log);
+    if (attempt > 1800 || next.exitCode !== null) throw new Error(log.slice(-8000));
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_BIN ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });
@@ -200,7 +200,7 @@ try {
   failurePage = page;
   await authorizeBrowser(page, origin, env);
   const errors = [];
-  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("pageerror", (error) => errors.push(`${error.message} (${page.url()})`));
   const shot = (name) => page.screenshot({ path: join(evidenceDir, `${name}.png`) });
   const count = (name) => writes.filter(([op]) => op === name).length;
 
@@ -210,7 +210,7 @@ try {
   await botsWindow.getByRole("button", { name: "bot-1 actions" }).click();
   await page.getByRole("menuitem", { name: "Settings…" }).click();
   const dialog = page.getByRole("dialog", { name: "bot-1 settings" });
-  await dialog.getByText("Saved revision").waitFor();
+  await dialog.getByText(/^Saved revision \d/).waitFor();
   await dialog.getByText("Models").waitFor();
   await dialog.getByText("unavailable").first().waitFor();
   const group = (name) => dialog.getByRole("button", { name: new RegExp(`^${name}`) });
@@ -387,7 +387,7 @@ try {
   sockets.get("worker").publish("workers_changed");
   const beforeReceipts = settings.get(receiptSubject);
   const applications = count("worker_settings_apply");
-  const oldReceipts = workerDefaults.locator("details").filter({ has: workerDefaults.locator("summary", { hasText: "Old receipts" }) });
+  const oldReceipts = workerDefaults.locator("details").filter({ hasText: "Old receipts" });
   await oldReceipts.locator("summary").click();
   await oldReceipts.getByRole("spinbutton", { name: "Retain days" }).fill("6");
   assert.equal(await oldReceipts.getByRole("button", { name: "Prepare old receipt clearing" }).isDisabled(), true);
@@ -409,10 +409,13 @@ try {
   settings.maintenance.begin(recoveryInput, recoveryPlan);
   settings.maintenance.finish(recoveryInput.requestId, "unknown", [{ resource: receiptSubject, outcome: "unknown", detail: "Interrupted receipt clearing" }]);
   await page.evaluate((input) => localStorage.setItem("stack.state-flow.worker:settings_receipts:worker-defaults:claude", JSON.stringify({ input, at: Date.now() })), recoveryInput);
+  // Isolate defaults-receipt recovery from the existing Worker-window restoration hydration mismatch.
+  // Retain the maintenance recovery slot; only unrelated fixture bench selection is reset.
+  await page.evaluate(() => localStorage.removeItem("stack.uix.workers.v1"));
   await page.reload();
   await list.getByRole("button", { name: "Defaults for new Workers" }).click();
   await workerDefaults.getByRole("radio", { name: "Claude", exact: true }).check();
-  await oldReceipts.getByRole("region", { name: "worker receipt unknown" }).waitFor();
+  await oldReceipts.getByRole("region", { name: "settings receipt unknown" }).waitFor();
   assert.equal(await oldReceipts.getByRole("button", { name: "Send identical request" }).count(), 0);
   await page.setViewportSize({ width: 390, height: 844 }); await shot("old-receipts-unknown-narrow");
 

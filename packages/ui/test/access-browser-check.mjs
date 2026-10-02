@@ -238,7 +238,7 @@ try {
   const history = accessWindow.getByRole("heading", { name: "Expired history", exact: true }).locator("../..");
   const groups = [["ui_sessions", "Expired UI sessions", expiredSession], ["expired_pairings", "Expired pairings", "expired"], ["expired_invitations", "Expired invitations", expiredInvite]];
   for (const [kind, title, id_] of groups) {
-    const scope = history.locator("details").filter({ has: history.locator("summary", { hasText: title }) });
+    const scope = history.locator("details").filter({ hasText: title });
     await scope.locator("summary").evaluate((element) => element.focus({ preventScroll: true })); await page.keyboard.press("Enter");
     await scope.getByRole("checkbox", { name: `Select ${kind} ${id_}` }).check();
     assert.equal(await scope.getByRole("checkbox").count(), 1, "only expired metadata is selectable");
@@ -248,6 +248,7 @@ try {
       await scope.getByText(`${id_}: active/unexpired authority cannot be retired; revocation is separate`).waitFor();
       assert.equal(await scope.getByRole("button", { name: `Clear these ${title.toLowerCase()}` }).isDisabled(), true);
       data.uiSessions[0].expires = now - 1;
+      publish();
       await scope.getByRole("button", { name: "Prepare a new plan" }).click();
     } else await scope.getByRole("button", { name: `Prepare clearing 1 ${title.toLowerCase()}` }).click();
     await scope.getByText("Enrollment/Share receipts and minimal replay digests", { exact: true }).waitFor();

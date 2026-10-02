@@ -13,9 +13,8 @@ export function WorkerAccountCache({ account }: { account: WorkerAccount }) {
   const signingIn = actions.signingIn === account.id || state.workerAttempts[account.id]?.status === "pending";
   const disabled = !account.enabled && !account.removing;
   const signInKnown = state.status.auth === "open" && state.workerLogins.data !== null && !state.workerLogins.error;
-  const runtimeKnown = state.status.worker === "open" && state.workerRuntimes.data !== null && !state.workerRuntimes.error && state.workerSessions.data !== null && !state.workerSessions.error;
-  const live = state.workerRuntimes.data?.some((runtime) => runtime.id === account.id && (runtime.state !== "stopped" || runtime.pids.length > 0 || runtime.pid !== null))
-    || state.workerSessions.data?.some((worker) => worker.accountId === account.id && worker.phase !== "closed");
+  const runtimeKnown = state.status.worker === "open" && state.workerRuntimes.data !== null && !state.workerRuntimes.error;
+  const live = state.workerRuntimes.data?.some((runtime) => runtime.id === account.id && (runtime.state === "running" || runtime.pids.length > 0 || runtime.pid !== null));
   const controls = useStateFlow({ operations: stateOperations(store.call, "auth", { plan: "worker_account_cache_plan", apply: "worker_account_cache_clear", receipt: "auth_state_receipt_get" }, { accountId: account.id }),
     recoveryKey: `auth:account_cache:${account.id}`, observe: state.workerAccounts.at });
   if (state.remote || !localOperations(state, "auth", ["worker_account_cache_plan", "worker_account_cache_clear", "auth_state_receipt_get"]).available) return null;
@@ -30,7 +29,7 @@ export function WorkerAccountCache({ account }: { account: WorkerAccount }) {
     <ul aria-label="Model cache preconditions" className="flex flex-col gap-1 text-xs">
       <li>{disabled ? "Met" : "Not met"}: account disabled and not removing</li>
       <li>{!signInKnown ? "Unknown" : signingIn ? "Not met" : "Met"}: sign-in idle</li>
-      <li>{!runtimeKnown ? "Unknown" : live ? "Not met" : "Observed"}: no active account runtime or open Worker</li>
+      <li>{!runtimeKnown ? "Unknown" : live ? "Not met" : "Observed"}: no active account runtime</li>
     </ul>
     <p className="text-xs text-pretty text-muted-foreground">The plan proves runtime, catalog and teardown are drained and the allow-listed path is present and safe. These observations do not prove arbitrary external processes stopped. Nothing here drains, signs in or restarts implicitly.</p>
     <StateFlowView controls={controls} label="Prepare model cache clearing" applyLabel="Clear model cache" unavailable={unavailable} />
