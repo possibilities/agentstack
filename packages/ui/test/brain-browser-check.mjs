@@ -201,6 +201,7 @@ try {
   await runFlow.getByText(/rendered-maintenance · cancelled · 1 jobs/).waitFor();
   await activate(runFlow.getByRole("button", { name: "Prepare clearing Run payloads" }));
   await runFlow.getByRole("region", { name: "brain plan runs_payload" }).waitFor();
+  assert.equal(await jobs.getByRole("button", { name: "Show jobs from every Run" }).isDisabled(), true, "exact Run selection freezes during the flow");
   await runFlow.getByText(`run:${runId}`, { exact: true }).waitFor();
   await captures(runFlow, "brain-run-plan");
   await activate(runFlow.getByRole("button", { name: "Clear Run payloads", exact: true }));
@@ -208,6 +209,7 @@ try {
   const runRecord = await call("jobs_run", { "run-id": runId });
   assert.ok(runRecord.content_cleared_at); assert.ok(runRecord.payload_digest);
   assert.equal(runRecord.state, "cancelled");
+  await activate(runFlow.getByRole("button", { name: "Close receipt" }));
   await activate(jobs.getByRole("button", { name: "Show jobs from every Run" }));
 
   // A source applied through the API appears through the sources notice, and pauses with a reason.
@@ -281,5 +283,5 @@ try {
   await brain?.close();
   journal?.close(); db?.close();
   await new Promise((resolve) => web ? web.close(resolve) : resolve());
-  if (!process.env.BRAIN_EVIDENCE_DIR) await rm(dir, { recursive: true, force: true });
+  await rm(dir, { recursive: true, force: true });
 }

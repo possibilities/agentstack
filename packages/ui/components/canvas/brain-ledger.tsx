@@ -31,6 +31,7 @@ export function JobsWindow() {
   const { status, endpoints, brainStatus, brainJobStats, brainJobView, brainJobs, brainSources, remote } = useStack();
   const now = useNow(30_000);
   const [expanded, setExpanded] = useState<number | null>(null);
+  const [runLocked, setRunLocked] = useState(false);
   const stats = brainJobStats.data;
   const list = brainJobs.data && brainJobs.data.view === brainJobView.view && brainJobs.data.run === brainJobView.run ? brainJobs.data.jobs : null;
   const issues = statusIssues(brainStatus.data);
@@ -81,17 +82,17 @@ export function JobsWindow() {
             {brainJobView.run !== null ? (
               <span className={cn(badge, "flex items-center gap-1 font-mono")}>
                 Run {brainJobView.run}
-                <button type="button" aria-label="Show jobs from every Run" onClick={() => store.setBrainJobView(brainJobView.view, null)} className="rounded-sm hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"><XIcon className="size-3" /></button>
+                <button type="button" disabled={runLocked} aria-label="Show jobs from every Run" onClick={() => store.setBrainJobView(brainJobView.view, null)} className="rounded-sm hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50"><XIcon className="size-3" /></button>
               </span>
             ) : null}
           </div>
-          {brainJobView.run !== null ? <BrainRunMaintenance id={brainJobView.run} /> : null}
+          {brainJobView.run !== null ? <BrainRunMaintenance id={brainJobView.run} onLockChange={setRunLocked} /> : null}
           {!list ? <Empty icon={ListChecksIcon} title="Reading jobs…" />
             : !list.length ? <Empty icon={ListChecksIcon} title={brainJobView.view === "attention" ? "Nothing needs a decision" : "No jobs here"} /> : (
               <ul className="flex flex-col gap-0.5">
                 {list.map((job) => (
                   <JobRow key={job.id} job={job} source={job.source_id !== null ? sourceNames.get(job.source_id) ?? null : null} expanded={expanded === job.id} blocked={blocked}
-                    onToggle={() => setExpanded(expanded === job.id ? null : job.id)} onRun={(run) => store.setBrainJobView("all", run)} />
+                    onToggle={() => setExpanded(expanded === job.id ? null : job.id)} onRun={(run) => { if (!runLocked) store.setBrainJobView("all", run); }} />
                 ))}
               </ul>
             )}

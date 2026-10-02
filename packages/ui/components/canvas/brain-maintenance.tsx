@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { localOperations, stateOperations } from "@/lib/stack/state";
 import type { BrainJob, BrainRun, BrainSource } from "@/lib/stack/types";
 import { useKeyedRead } from "./owner-reads";
@@ -31,22 +32,24 @@ function JobPayload({ job }: { job: BrainJob }) {
   </MaintenanceDisclosure>;
 }
 
-export function BrainRunMaintenance({ id }: { id: number }) {
+export function BrainRunMaintenance({ id, onLockChange }: { id: number; onLockChange(locked: boolean): void }) {
   const state = useStack();
   if (!localOperations(state, "brain", ["jobs_run", ...Object.values(operations("runs"))]).available) return null;
-  return <RunPayload key={id} id={id} />;
+  return <RunPayload key={id} id={id} onLockChange={onLockChange} />;
 }
 
-function RunPayload({ id }: { id: number }) {
+function RunPayload({ id, onLockChange }: { id: number; onLockChange(locked: boolean): void }) {
   const state = useStack();
   const store = useStore();
   const run = useKeyedRead(() => store.call<BrainRun>("brain", "jobs_run", { "run-id": id }), `brain:run:${id}`, state.brainJobs.at ?? 0);
   const controls = useStateFlow({ operations: stateOperations(store.call, "brain", operations("runs"), { ids: [id], scope: "payload" }),
     recoveryKey: `brain:runs_payload:${id}`, observe: state.brainJobs.at,
     onReceipt: (receipt) => { if (receipt.status !== "running") { run.refresh(); store.refreshBrainLedger(); store.refreshBrainSources(); } } });
+  const locked = controls.flow.phase !== "idle";
+  useEffect(() => { onLockChange(locked); return () => onLockChange(false); }, [locked, onLockChange]);
   const unavailable = state.status.brain !== "open" ? "The Brain connection is not open." : !id ? "Choose an exact Run."
     : run.error || !run.data ? "Read the exact Run before preparing." : run.data.content_cleared_at ? "Run payloads are already cleared." : null;
-  return <MaintenanceDisclosure active={controls.flow.phase !== "idle"} aside={`Run ${id} payloads`}>
+  return <MaintenanceDisclosure active={locked} aside={`Run ${id} payloads`}>
     <p className={hint}>Clear Run {id}’s captured payloads and its captured jobs, not only the visible filtered rows. Terminal/drained state is required; claims and indexed documents block via the plan. Nothing here cancels, retries or dispatches work.</p>
     {run.error ? <p role="alert" className="text-xs text-destructive">Run unavailable: {run.error}</p> : null}
     {run.data ? <p className={hint}>{run.data.run_type} · {run.data.state} · {run.data.counts.jobs} jobs · {run.data.counts.attempts} attempts
