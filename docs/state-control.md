@@ -177,7 +177,9 @@ most five seconds. A null owner answer is `missing`; any throw, timeout or
 unexpected payload is `unavailable`; unknown package/operation is `unsupported`.
 Neither read reaches MCP, and remote Access sessions see neither the reads nor
 the `serve_subscriptions_changed` payload-free invalidation topic that announces
-receipt and subscription-set transitions. See
+receipt and subscription-set transitions. The `serve_occurrence_list`/`get`
+inspection reads are local-only under remote grants in the same way, since
+occurrence detail can disclose source arguments and error text. See
 [ADR 0163](adr/0163-operator-completion-history-reads.md).
 
 ### Installation factory-reset lifecycle

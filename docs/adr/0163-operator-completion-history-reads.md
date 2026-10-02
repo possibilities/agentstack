@@ -73,4 +73,6 @@ their owner manifests and never appear in MCP or WebSocket selections. The
 Access remote-UI selection excludes the completion and subscription reads, the
 identity helpers under `ui:view` and `ui:view+ui:control` alike, and
 `serve_subscriptions_changed`; remote sessions receive no receipt, link or
-subscription-set data.
+subscription-set data. The occurrence inspection reads `serve_occurrence_list`
+and `serve_occurrence_get` — which can disclose source arguments and error text —
+are likewise local-only under any remote grant.

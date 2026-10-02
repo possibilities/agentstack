@@ -181,7 +181,7 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
   const factoryControls = ["serve_factory_reset_plan", "serve_factory_reset_clear", "serve_factory_reset_receipt_get", "serve_factory_reset_recover", "serve_factory_reset_fence_release"];
   const server = await serveSocket({ info: { name: "serve", description: "Demo.", transportDescription: "Socket.", path: socketPath("serve", env) }, context: {},
     operations: ["serve_status", "serve_settings_read", "serve_settings_update", "serve_harness_releases", "serve_harness_releases_check", "serve_subscription_list", "serve_subscription_get", "serve_subscription_remove",
-      "serve_completion_list", "serve_completion_get", ...factoryControls].map(name => operation({
+      "serve_occurrence_list", "serve_occurrence_get", "serve_completion_list", "serve_completion_get", ...factoryControls].map(name => operation({
       name, description: "Server control.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: !name.endsWith("update") && !name.endsWith("check") && name !== "serve_subscription_remove" },
       async call() { developerCalls++; return { ok: true }; },
     })), events: { topics: { pids_changed: "Changed.", serve_state_changed: "Subscriptions changed.", serve_subscriptions_changed: "Subscription set changed.", serve_settings_changed: "Settings changed.", harness_releases_changed: "Releases changed." } } });
@@ -254,7 +254,7 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
     assert.deepEqual(listed.result.tools.map((tool: { name: string }) => tool.name), ["serve_status"]);
     assert.equal((await send("tools/call", { package: "serve", name: "serve_status", arguments: {} })).result.ok, true);
     for (const name of ["serve_settings_read", "serve_settings_update", "serve_harness_releases", "serve_harness_releases_check", "serve_subscription_list", "serve_subscription_get", "serve_subscription_remove",
-      "serve_completion_list", "serve_completion_get", ...factoryControls])
+      "serve_occurrence_list", "serve_occurrence_get", "serve_completion_list", "serve_completion_get", ...factoryControls])
       assert.match((await send("tools/call", { package: "serve", name, arguments: {} })).error.message, /not available/);
     for (const topic of ["serve_settings_changed", "harness_releases_changed", "serve_subscriptions_changed"])
       assert.match((await send("events/subscribe", { package: "serve", subscription: topic, topics: [topic] })).error.message, /not available|selected|topic/i);
@@ -266,7 +266,7 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
     ws = await open(`wss://127.0.0.1:${port}/websocket`, `https://127.0.0.1:${port}`, `__Host-stack_ui=${viewing.accessToken}`);
     assert.deepEqual((await send("tools/list", { package: "serve" })).result.tools.map((tool: { name: string }) => tool.name), ["serve_status"],
       "a view-only grant still cannot reach operator history");
-    for (const name of ["serve_completion_list", "serve_completion_get", "serve_subscription_list", "serve_subscription_get", "serve_subscription_remove"])
+    for (const name of ["serve_completion_list", "serve_completion_get", "serve_subscription_list", "serve_subscription_get", "serve_subscription_remove", "serve_occurrence_list", "serve_occurrence_get"])
       assert.match((await send("tools/call", { package: "serve", name, arguments: {} })).error.message, /not available/);
     assert.equal(developerCalls, 1);
   } finally {
