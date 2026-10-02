@@ -201,6 +201,7 @@ try {
   await authorizeBrowser(page, origin, env);
   const errors = [];
   page.on("pageerror", (error) => errors.push(`${error.message} (${page.url()})`));
+  page.on("console", (message) => { if (message.type() === "error" && /hydration|Minified React error #418/i.test(message.text())) errors.push(message.text().slice(0, 2000)); });
   const shot = (name) => page.screenshot({ path: join(evidenceDir, `${name}.png`) });
   const count = (name) => writes.filter(([op]) => op === name).length;
 
@@ -409,10 +410,10 @@ try {
   settings.maintenance.begin(recoveryInput, recoveryPlan);
   settings.maintenance.finish(recoveryInput.requestId, "unknown", [{ resource: receiptSubject, outcome: "unknown", detail: "Interrupted receipt clearing" }]);
   await page.evaluate((input) => localStorage.setItem("stack.state-flow.worker:settings_receipts:worker-defaults:claude", JSON.stringify({ input, at: Date.now() })), recoveryInput);
-  // Isolate defaults-receipt recovery from the existing Worker-window restoration hydration mismatch.
-  // Retain the maintenance recovery slot; only unrelated fixture bench selection is reset.
-  await page.evaluate(() => localStorage.removeItem("stack.uix.workers.v1"));
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("stack.uix.workers.v1"))[0].workerId), idleWorker);
   await page.reload();
+  await page.locator(`[data-window="worker"][data-node="worker:${idleWorker}"]`).waitFor();
+  assert.deepEqual(errors, [], "persisted Worker selection and settings recovery reload without hydration errors");
   await list.getByRole("button", { name: "Defaults for new Workers" }).click();
   await workerDefaults.getByRole("radio", { name: "Claude", exact: true }).check();
   await oldReceipts.getByRole("region", { name: "settings receipt unknown" }).waitFor();

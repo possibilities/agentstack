@@ -232,7 +232,7 @@ try {
   const nextPort = await port();
   env.STACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${nextPort}`;
   const origin = `http://127.0.0.1:${nextPort}`;
-  next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "start", "--hostname", "127.0.0.1", "--port", String(nextPort)], { cwd: ui, env, stdio: ["ignore", "pipe", "pipe"] });
+  next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), process.env.NEXT_MODE === "dev" ? "dev" : "start", "--hostname", "127.0.0.1", "--port", String(nextPort)], { cwd: ui, env, stdio: ["ignore", "pipe", "pipe"] });
   next.stdout.on("data", (chunk) => { log += chunk; }); next.stderr.on("data", (chunk) => { log += chunk; });
   for (let attempt = 0; ; attempt++) {
     try { if ((await fetch(`${origin}/connect/local`)).ok) break; } catch { /* bounded readiness check */ }
@@ -245,7 +245,7 @@ try {
   await authorizeBrowser(page, origin, env);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (message) => { if (message.type() === "error" && /hydration|cannot be a descendant/i.test(message.text())) errors.push(message.text().slice(0, 2000)); });
+  page.on("console", (message) => { if (message.type() === "error" && /hydration|Minified React error #418|cannot be a descendant/i.test(message.text())) errors.push(message.text().slice(0, 2000)); });
   await page.goto(`${origin}/workers`);
   const list = page.locator('[data-window="workers"]');
   const worker = page.locator('[data-window="worker"]');
@@ -394,7 +394,6 @@ try {
   await page.keyboard.press("Escape");
 
   // Fleet's Bot card links to its Workers, filtered to that Bot.
-  await page.evaluate(() => localStorage.removeItem("stack.uix.workers.v1"));
   await page.goto(`${origin}/fleet`);
   await page.locator('[data-window="bots"]').getByRole("link", { name: /3 Workers/ }).click();
   await page.getByRole("button", { name: "Spaces · Workers" }).waitFor();
@@ -477,11 +476,11 @@ try {
   await native.getByText("Unknown. The owner cannot say what happened. Inspect the exact resources; this request will not run again.").waitFor();
   for (const name of ["Prepare a new plan", "Close receipt", "Send identical request"]) assert.equal(await native.getByRole("button", { name }).count(), 0);
   const appliesBeforeReload = maintenanceCalls.filter(([name]) => name === "apply").length;
-  // Retain the owner's recovery slot; isolate the known Worker selection hydration mismatch as M4b did.
-  await page.evaluate(() => localStorage.removeItem("stack.uix.workers.v1"));
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("stack.uix.workers.v1"))[0].workerId), wid("d"));
   await page.reload();
+  await worker.getByRole("heading", { name: /stack · dddddd/ }).waitFor();
+  assert.deepEqual(errors, [], "persisted Worker selection restores after reload without hydration errors");
   await list.getByRole("button", { name: /Closed/ }).click();
-  await row("stack · dddddd").click();
   await worker.getByRole("tab", { name: "Session" }).click();
   const recovered = worker.locator("details").filter({ has: page.locator("summary", { hasText: "Purge native session" }) });
   await recovered.getByRole("region", { name: "worker receipt unknown" }).waitFor();
@@ -574,7 +573,6 @@ try {
   await modelCache.getByText("Completed for the declared scope only.").waitFor();
   await list.getByRole("button", { name: "Refresh branches" }).waitFor();
   assert.equal(catalogCalls.filter(([id]) => id === codex).length, catalogBefore, "no cache-miss observation follows clear");
-  await page.evaluate(() => localStorage.removeItem("stack.uix.workers.v1"));
   await page.reload();
   await row("brain · bbbbbb").waitFor();
   assert.equal(catalogCalls.filter(([id]) => id === codex).length, catalogBefore, "catalog hold survives reload");
@@ -600,7 +598,6 @@ try {
   const docWorker = catalog.find((doc) => doc.name === "worker");
   docWorker.transports[0].operations = docWorker.transports[0].operations.filter((name) => name !== "worker_state_clear");
   const plansBeforeHidden = maintenanceCalls.filter(([name]) => name === "plan").length;
-  await page.evaluate(() => localStorage.removeItem("stack.uix.workers.v1"));
   await page.reload();
   await row("brain · bbbbbb").click();
   await press(worker.getByRole("tab", { name: "Session" }));

@@ -1,7 +1,7 @@
 // Optional rendered check of the Proc space. The real Proc API runs against a disposable state
 // directory seeded through ProcStore; server, auth, worker, bots, usage and discovery are fixtures.
 // PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs node test/proc-browser-check.mjs
-// CHROME_BIN may override the local headless Chrome executable. PROC_NEXT=start uses a prior `next build`.
+// CHROME_BIN may override the local headless Chrome executable. NEXT_MODE=dev skips the production build; PROC_NEXT=start uses one.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath } from "@stack/api";
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as procApi } from "../../proc/dist/api.js";
+import { api as workerApi } from "../../worker/dist/api.js";
 import { ProcStore } from "../../proc/dist/src/store.js";
 import { authorizeBrowser, fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, serveFixture } from "./browser-fixture.mjs";
 
@@ -21,7 +22,7 @@ const require = createRequire(import.meta.url);
 const dir = await mkdtemp(join("/tmp", "as-proc-ui-"));
 const evidence = process.env.PROC_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
-const env = { ...process.env, STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
+const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("STACK_"))), STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
 
 const botAuthority = (botId) => ({ kind: "bot", botId, mainThreadId: `main-${botId}`, threadId: `thread-${botId}` });
 const operatorActor = { kind: "operator" };
@@ -81,7 +82,7 @@ try {
   const serve = await serveFixture(handlers);
   Object.assign(handlers, serve.handlers);
   const definitions = { serve: serve.names, auth: ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"],
-    worker: ["worker_list", "worker_runtime_list"], bots: ["bot_list", "bot_defaults_get", "voice_status", "chat_list", "chat_thread_read"], usage: ["usage_snapshot"], api: ["docs_snapshot"] };
+    worker: workerApi.operations.map((operation) => operation.name), bots: botsApi.operations.map((operation) => operation.name), usage: ["usage_snapshot"], api: ["docs_snapshot"] };
   const topics = { serve: serve.topics,
     auth: { accounts_changed: "Fixture", login_changed: "Fixture", worker_accounts_changed: "Fixture", worker_login_changed: "Fixture" },
     worker: { workers_changed: "Fixture" }, bots: botsApi.events.topics, usage: { usage_changed: "Fixture" }, api: {} };
@@ -91,7 +92,7 @@ try {
   }
   const nextPort = await port();
   env.STACK_WEBSOCKET_ORIGIN = `http://127.0.0.1:${nextPort}`;
-  const mode = process.env.PROC_NEXT === "start" ? "start" : "dev";
+  const mode = process.env.NEXT_MODE === "dev" ? "dev" : process.env.PROC_NEXT === "start" ? "start" : "dev";
   next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), mode, "--hostname", "127.0.0.1", "--port", String(nextPort)], { cwd: ui, env, stdio: ["ignore", "pipe", "pipe"] });
   next.stdout.on("data", (chunk) => { log += chunk; }); next.stderr.on("data", (chunk) => { log += chunk; });
   const origin = `http://127.0.0.1:${nextPort}`;
@@ -158,6 +159,12 @@ try {
   // Schedule detail: the secret's name shows but its value never renders before Reveal.
   await row("Secret keeper").click();
   await schedule.getByRole("heading", { name: "Secret keeper" }).waitFor();
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("stack.uix.proc.v1")).selectedScheduleId), secret.id);
+  await page.reload();
+  await schedule.getByRole("heading", { name: "Secret keeper" }).waitFor();
+  assert.deepEqual([...errors, ...consoleErrors].filter((text) => /hydration|Minified React error #418/i.test(text)), [],
+    "persisted schedule selection restores after reload without hydration errors");
+  await schedules.getByRole("button", { name: /Off/ }).click();
   await schedule.getByText("API_TOKEN").waitFor();
   assert.ok(!(await page.locator("body").innerText()).includes("s3cret"), "the secret value must not render before Reveal");
   await schedule.getByRole("button", { name: "Reveal" }).first().click();

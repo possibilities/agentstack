@@ -13,6 +13,7 @@ type Listener = () => void;
 
 export class ChatWindowStore {
   private windows: ChatWindows = [{ id: primaryChat, botId: null }];
+  private readonly serverWindows = this.windows;
   private listeners = new Set<Listener>();
   private storage: Pick<Storage, "getItem" | "setItem"> | null = null;
 
@@ -29,6 +30,8 @@ export class ChatWindowStore {
   }
 
   getWindows = (): ChatWindows => this.windows;
+  /** Benches may hydrate after attach; keep the snapshot SSR rendered. */
+  getServerWindows = (): ChatWindows => this.serverWindows;
 
   subscribe = (listener: Listener): (() => void) => {
     this.listeners.add(listener);

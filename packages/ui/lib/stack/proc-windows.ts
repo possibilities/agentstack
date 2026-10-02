@@ -21,6 +21,9 @@ export class ProcWindowStore {
   private selected: string | null = null;
   private scheduleFilter: ProcScheduleFilter = {};
   private runFilter: ProcRunFilter = {};
+  private readonly serverWindows = this.windows;
+  private readonly serverScheduleFilter = this.scheduleFilter;
+  private readonly serverRunFilter = this.runFilter;
   private listeners = new Set<Listener>();
   private storage: Pick<Storage, "getItem" | "setItem"> | null = null;
 
@@ -39,6 +42,11 @@ export class ProcWindowStore {
   getSelected = (): string | null => this.selected;
   getScheduleFilter = (): ProcScheduleFilter => this.scheduleFilter;
   getRunFilter = (): ProcRunFilter => this.runFilter;
+  /** Benches may hydrate after attach; keep the snapshots SSR rendered. */
+  getServerWindows = (): ProcRunWindows => this.serverWindows;
+  getServerSelected = (): string | null => null;
+  getServerScheduleFilter = (): ProcScheduleFilter => this.serverScheduleFilter;
+  getServerRunFilter = (): ProcRunFilter => this.serverRunFilter;
 
   subscribe = (listener: Listener): (() => void) => {
     this.listeners.add(listener);

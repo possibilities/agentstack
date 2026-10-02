@@ -69,7 +69,7 @@ export function StackProvider({ snapshot, children, connections }: { snapshot: S
 export function useChatWindows(): { windows: ChatWindows; chats: ChatWindowStore } {
   const chats = use(ChatWindowsContext);
   if (!chats) throw new Error("useChatWindows requires StackProvider");
-  const windows = useSyncExternalStore(chats.subscribe, chats.getWindows, chats.getWindows);
+  const windows = useSyncExternalStore(chats.subscribe, chats.getWindows, chats.getServerWindows);
   return { windows, chats };
 }
 
@@ -77,9 +77,9 @@ export function useChatWindows(): { windows: ChatWindows; chats: ChatWindowStore
 export function useWorkerWindows(): { windows: WorkerWindows; filter: WorkerFilter; turnFocus: TurnFocus | null; workerWindows: WorkerWindowStore } {
   const workerWindows = use(WorkerWindowsContext);
   if (!workerWindows) throw new Error("useWorkerWindows requires StackProvider");
-  const windows = useSyncExternalStore(workerWindows.subscribe, workerWindows.getWindows, workerWindows.getWindows);
-  const filter = useSyncExternalStore(workerWindows.subscribe, workerWindows.getFilter, workerWindows.getFilter);
-  const turnFocus = useSyncExternalStore(workerWindows.subscribe, workerWindows.getTurnFocus, workerWindows.getTurnFocus);
+  const windows = useSyncExternalStore(workerWindows.subscribe, workerWindows.getWindows, workerWindows.getServerWindows);
+  const filter = useSyncExternalStore(workerWindows.subscribe, workerWindows.getFilter, workerWindows.getServerFilter);
+  const turnFocus = useSyncExternalStore(workerWindows.subscribe, workerWindows.getTurnFocus, workerWindows.getServerTurnFocus);
   return { windows, filter, turnFocus, workerWindows };
 }
 
@@ -87,10 +87,10 @@ export function useWorkerWindows(): { windows: WorkerWindows; filter: WorkerFilt
 export function useProcWindows(): { windows: ProcRunWindows; selectedScheduleId: string | null; scheduleFilter: ProcScheduleFilter; runFilter: ProcRunFilter; procWindows: ProcWindowStore } {
   const procWindows = use(ProcWindowsContext);
   if (!procWindows) throw new Error("useProcWindows requires StackProvider");
-  const windows = useSyncExternalStore(procWindows.subscribe, procWindows.getWindows, procWindows.getWindows);
-  const selectedScheduleId = useSyncExternalStore(procWindows.subscribe, procWindows.getSelected, procWindows.getSelected);
-  const scheduleFilter = useSyncExternalStore(procWindows.subscribe, procWindows.getScheduleFilter, procWindows.getScheduleFilter);
-  const runFilter = useSyncExternalStore(procWindows.subscribe, procWindows.getRunFilter, procWindows.getRunFilter);
+  const windows = useSyncExternalStore(procWindows.subscribe, procWindows.getWindows, procWindows.getServerWindows);
+  const selectedScheduleId = useSyncExternalStore(procWindows.subscribe, procWindows.getSelected, procWindows.getServerSelected);
+  const scheduleFilter = useSyncExternalStore(procWindows.subscribe, procWindows.getScheduleFilter, procWindows.getServerScheduleFilter);
+  const runFilter = useSyncExternalStore(procWindows.subscribe, procWindows.getRunFilter, procWindows.getServerRunFilter);
   return { windows, selectedScheduleId, scheduleFilter, runFilter, procWindows };
 }
 

@@ -724,10 +724,7 @@ try {
   await detail.getByRole("button", { name: "Cancel" }).click();
 
   // An unknown receipt left by an earlier session returns after a reload, inside a disclosure that opens itself.
-  // A persisted schedule selection renders "Reading schedule…" on the client where the server rendered "Choose a schedule" (an
-  // existing Proc hydration difference this change does not touch), so keep only the recovery slots across this load.
   await page.evaluate(([key, input]) => {
-    for (const name of Object.keys(localStorage)) if (!name.startsWith("stack.state-flow.")) localStorage.removeItem(name);
     localStorage.setItem(key, JSON.stringify({ input, at: Date.now() }));
   }, [`stack.state-flow.proc:schedule_definition:${procIds.unknown}`, unknownInput]);
   await go("proc");

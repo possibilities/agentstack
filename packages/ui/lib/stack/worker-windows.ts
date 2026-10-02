@@ -21,6 +21,8 @@ export class WorkerWindowStore {
   private filter: WorkerFilter = {};
   private turnFocus: TurnFocus | null = null;
   private focusSeq = 0;
+  private readonly serverWindows = this.windows;
+  private readonly serverFilter = this.filter;
   private listeners = new Set<Listener>();
   private storage: Pick<Storage, "getItem" | "setItem"> | null = null;
 
@@ -39,6 +41,11 @@ export class WorkerWindowStore {
   getWindows = (): WorkerWindows => this.windows;
   getFilter = (): WorkerFilter => this.filter;
   getTurnFocus = (): TurnFocus | null => this.turnFocus;
+  /** Benches may hydrate after attach; keep the snapshots SSR rendered. */
+  getServerWindows = (): WorkerWindows => this.serverWindows;
+  getServerFilter = (): WorkerFilter => this.serverFilter;
+  /** Turn focus is never persisted; SSR always renders without one. */
+  getServerTurnFocus = (): TurnFocus | null => null;
 
   subscribe = (listener: Listener): (() => void) => {
     this.listeners.add(listener);
