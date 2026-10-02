@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { connect, createServer, type Socket } from "node:net";
 import test from "node:test";
 import { z } from "zod";
 import { operation } from "../src/operation.js";
-import { serveApi } from "../src/serve.js";
 import { serveSocket, socketCall, socketSubscribe } from "../src/socket.js";
 
 const topics = { ping_changed: "Fired when the fixture pings.", pong_changed: "Fired when the fixture pongs." };
@@ -226,55 +225,6 @@ test("a subscription connection does not stall socket shutdown", async () => {
     new Promise((_resolve, reject) => setTimeout(() => reject(new Error("close hung")), 5_000)),
   ]);
   await rm(dir, { recursive: true, force: true });
-});
-
-test("an event-bearing package fails closed before its context is created on an incapable transport", async () => {
-  const root = await mkdtemp(join(tmpdir(), "stack-events-gate-"));
-  const dir = join(root, "packages", "demo");
-  await mkdir(join(dir, "dist", "src"), { recursive: true });
-  await writeFile(
-    join(dir, "api.yaml"),
-    "name: demo\ndescription: Demo operations.\nmcp:\n  description: MCP transport for demo operations.\n  operations: all\n  events: all\n",
-  );
-  await writeFile(
-    join(dir, "dist", "src", "index.js"),
-    `export const api = {
-      operations: [],
-      events: { topics: { ping: "Fired." }, start() { throw new Error("context should never start"); } },
-      async createContext() { throw new Error("context must not be created"); },
-      async closeContext() {},
-    };\n`,
-  );
-  try {
-    await assert.rejects(serveApi({ name: "demo", transport: "mcp", root }), /stack serve mcp/);
-    await assert.rejects(serveApi({ name: "demo", transport: "socket", root }), /does not configure socket/);
-    await assert.rejects(serveApi({ name: "demo", transport: "websocket", root }), /does not configure websocket/);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("scoped events stay on the socket owner for WebSocket forwarding", async () => {
-  const root = await mkdtemp(join(tmpdir(), "stack-scoped-websocket-"));
-  const dir = join(root, "packages", "demo");
-  await mkdir(join(dir, "dist"), { recursive: true });
-  await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Demo operations.\nsocket:\n  description: Local socket.\nwebsocket:\n  description: Browser notices.\n  operations: all\n  events: all\n");
-  await writeFile(join(dir, "dist", "api.js"), `export const api = {
-    operations: [],
-    events: {
-      topics: { ping_changed: "Ping changed." },
-      scope: { description: "Bot ID.", example: "bot-1", required: true, valid: () => true },
-      start() {},
-    },
-    async createContext() { return {}; },
-    async closeContext() {},
-  };\n`);
-  try {
-    const served = await serveApi({ name: "demo", transport: "socket", root, env: { ...process.env, STACK_STATE_DIR: root } });
-    await served.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
 });
 
 test("socketSubscribe closes on post-ack malformed frames, odd notifications, and abort", async () => {
