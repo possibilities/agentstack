@@ -92,9 +92,12 @@ jobs. Remote pair/enroll controls remain a later milestone.
 
 `bin/navigation.mjs` defines `openClientSurface`, destination-pinned `openPlatform`,
 `focusConnections` and explicit `openExternal` for the later desk adapter. Platform
-pages never receive a Client/native installation bridge. Portable packaging,
-release bundles, public npm publication and remote workflow screens are later
-milestones; a bin field alone is not an available public npx distribution.
+pages never receive a Client/native installation bridge. The private
+[portable candidate build](client-ui-packaging.md) prepares standalone output
+with the custom ingress and bundled runtime; it does not publish a public npx
+distribution or platform release bundle. The maintained
+[desk navigation contract](desk-navigation.md) is the later native-shell boundary.
+Remote workflow screens and public release choices remain separate milestones.
 
 ### Local platform workflow
 
@@ -230,11 +233,11 @@ not restarted. A local owned live service must first be explicitly stopped befor
 another platform release is selected. Old immutable releases and platform data
 are retained; this version has no uninstall, rollback or garbage-collection API.
 
-No release artifacts, npm package publication or default public release channel
-are supplied by this phase. All existing workspace packages, including the new
-client, are currently private. The standalone UI phase must supply a verified
-distribution build and publishable dependency closure before `npx` works on a
-fresh machine. No DMG/deb is required, but packaging-independent does not mean
+No published release artifacts, npm package publication or default public release
+channel are supplied by this phase. All existing workspace packages, including
+the client, are currently private. The UI can prepare a private, offline-installable
+[candidate](client-ui-packaging.md); public ownership, publication and an actual
+public npx check remain undecided. No DMG/deb is required, but packaging-independent does not mean
 artifact-independent. Initial local runtime targets are macOS arm64 and Debian
 x64; supporting other targets needs matching codexnk releases/installer support,
 not a vendor-runtime fallback. Missing prerequisites are surfaced, not installed
