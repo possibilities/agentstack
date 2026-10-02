@@ -5,26 +5,29 @@ import { BookCheckIcon, SendIcon, Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import {
-  browserStorage, canReadReceipt, canSendAgain, entryWords, forget, journalVersion, onJournalChange, readJournal, remoteKindWords, resendArguments, sendRemote, recover,
+  canReadReceipt, destinationKeyValue, canSendAgain, entryWords, forget, journalVersion, onJournalChange, readJournal, remoteKindWords, resendArguments, sendRemote, recover,
   type JournalEntry, type RemoteIo, type RemoteOutcome,
 } from "@/lib/stack/source-setup";
 import type { GithubRemoteReceipt } from "@/lib/stack/types";
 import { CopyButton } from "./primitives";
-import { useStore } from "./provider";
+import { useDestination, useStore } from "./provider";
 import { Stamp, sourceHint, sourceLabel, Word } from "./source-shared";
 
 const none: JournalEntry[] = [];
 const held = new Map<string, { version: number; entries: JournalEntry[] }>();
 
-/** This browser's recorded remote requests for one receiver. Re-renders when any is written. */
+/** This destination's recorded remote requests for one receiver. Re-renders when any is written. */
 export function useJournal(endpointId: string): JournalEntry[] {
+  const { local } = useDestination();
   const snapshot = useCallback(() => {
-    const version = journalVersion(), cached = held.get(endpointId);
+    if (!local) return none;
+    // Cached per destination: another platform's record is never served from here.
+    const key = `${local.prefix}${endpointId}`, version = journalVersion(), cached = held.get(key);
     if (cached && cached.version === version) return cached.entries;
-    const entries = readJournal(browserStorage(), endpointId);
-    held.set(endpointId, { version, entries });
+    const entries = readJournal(destinationKeyValue(local), endpointId);
+    held.set(key, { version, entries });
     return entries;
-  }, [endpointId]);
+  }, [endpointId, local]);
   return useSyncExternalStore(onJournalChange, snapshot, () => none);
 }
 
@@ -34,6 +37,8 @@ export function useJournal(endpointId: string): JournalEntry[] {
  */
 export function useRemoteRequests(endpointId: string) {
   const store = useStore();
+  const { local } = useDestination();
+  const journal = useMemo(() => destinationKeyValue(local), [local]);
   const entries = useJournal(endpointId);
   const [busy, setBusy] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -50,13 +55,13 @@ export function useRemoteRequests(endpointId: string) {
     : outcome.readError ? `The receipt could not be read: ${outcome.readError}` : outcome.error && outcome.entry.status !== "succeeded" ? `Answer received: ${outcome.error}` : null;
   const send = async (entry: JournalEntry): Promise<RemoteOutcome> => {
     setBusy(entry.requestId); note(entry.requestId, null);
-    try { const outcome = await sendRemote(browserStorage(), io, entry); note(entry.requestId, describe(outcome)); return outcome; } finally { setBusy(null); }
+    try { const outcome = await sendRemote(journal, io, entry); note(entry.requestId, describe(outcome)); return outcome; } finally { setBusy(null); }
   };
   const read = async (entry: JournalEntry): Promise<RemoteOutcome> => {
     setBusy(entry.requestId); note(entry.requestId, null);
-    try { const outcome = await recover(browserStorage(), io, entry); note(entry.requestId, outcome.readError ? `The receipt could not be read: ${outcome.readError}` : null); return outcome; } finally { setBusy(null); }
+    try { const outcome = await recover(journal, io, entry); note(entry.requestId, outcome.readError ? `The receipt could not be read: ${outcome.readError}` : null); return outcome; } finally { setBusy(null); }
   };
-  return { entries, busy, notes, send, read, forget: (entry: JournalEntry) => { forget(browserStorage(), entry.endpointId, entry.requestId); note(entry.requestId, null); } };
+  return { entries, busy, notes, send, read, forget: (entry: JournalEntry) => { forget(journal, entry.endpointId, entry.requestId); note(entry.requestId, null); } };
 }
 export type RemoteRequests = ReturnType<typeof useRemoteRequests>;
 

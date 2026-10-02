@@ -1,4 +1,5 @@
 import { loadCatalog } from "./catalog";
+import type { Destination, ScopedStorage } from "./destination";
 import type { AccessSnapshot, CodexToolsStatus } from "./types";
 import { Channel } from "./channel";
 import { loadResources, mergeHistory } from "./resources";
@@ -25,6 +26,8 @@ import { checkSettled, developerModeOn, type HarnessCheck } from "./developer";
 import type { HarnessCheckAdmission, HarnessReleases, ServeSettings } from "./types";
 
 export type StackState = Snapshot & {
+  /** The platform this page talks to. Its `serverId` is named by the server (serve_status), never inferred. */
+  destination: Destination;
   access: Resource<AccessSnapshot>;
   /** Main channel status by Package API name. */
   status: Record<string, ChannelStatus>;
@@ -301,6 +304,8 @@ const isPreviewKey = (key: ResourceKey): key is PreviewKey => key === "rolePrevi
 const catalogReplies = new Set(["roles_snapshot", "role_create", "role_set_default", "role_set_worker_default", "role_delete"]);
 
 const maxEvents = 250;
+/** The catalog-fence record's name in this destination's storage. */
+const catalogHeldName = "worker-catalog-held.v1";
 /** Work rows the tree reads before offering to load more. */
 export const hudTreePage = 1_000;
 
@@ -327,6 +332,12 @@ export class StackStore {
   private catalogGeneration = new Map<string, number>();
   /** Clearing a catalog must not let an invalidation's cache miss launch native discovery. */
   private catalogHeld = new Set<string>();
+  /** This destination's browser storage once the server has named itself; null keeps the fence in memory only. */
+  private storage: ScopedStorage | null = null;
+  /** A page served with a destination keeps implicit catalog discovery off until its saved fences have been read. */
+  private holdsPending: boolean;
+  private moved: ((next: Destination) => void) | null = null;
+  private movedTo: string | null = null;
   private historyWatchers = new Map<string, number>();
   private historyInflight = new Map<string, Promise<void>>();
   private historyDirty = new Set<string>();
@@ -371,8 +382,10 @@ export class StackStore {
   private releasesDirty = false;
 
   constructor(snapshot: Snapshot) {
+    const destination: Destination = { authority: snapshot.remote ? "remote" : "local", origin: null, serverId: snapshot.server.data?.serverId ?? null, ...snapshot.destination };
+    this.holdsPending = snapshot.destination !== undefined;
     this.state = {
-      ...snapshot, status: {}, scoped: {}, events: [], attempt: snapshot.login.data,
+      ...snapshot, destination, status: {}, scoped: {}, events: [], attempt: snapshot.login.data,
       access: { data: null, error: null, at: null },
       workerAttempts: Object.fromEntries((snapshot.workerLogins.data ?? []).map((login) => [login.account, login])),
       workerCatalogs: {}, catalogPending: {}, resourceHistory: {}, botInvalidations: {},
@@ -428,12 +441,28 @@ export class StackStore {
     return () => this.listeners.delete(listener);
   };
 
-  start({ packages, scopedBots = true }: StackConnections = {}): void {
-    this.scopedBots = scopedBots;
+  /**
+   * Give the store this destination's storage, or none while the server has not named itself. Saved catalog fences
+   * are read from it; a fence is never read from, or written to, any other destination.
+   */
+  attachStorage(storage: ScopedStorage | null): void {
+    this.storage = storage;
+    if (!storage) return;
     try {
-      const held: unknown = JSON.parse(localStorage.getItem("stack.worker-catalog-held.v1") ?? "[]");
+      const held: unknown = JSON.parse(storage.getItem(catalogHeldName) ?? "[]");
       if (Array.isArray(held)) for (const id of held.slice(0, 1000)) if (typeof id === "string") this.catalogHeld.add(id);
     } catch { /* persistence is optional; the in-memory fence still applies */ }
+    if (this.holdsPending) {
+      this.holdsPending = false;
+      this.reconcileCatalogs();
+    }
+  }
+
+  /** Called once when the server behind this page names a different identity than the one the page was served for. */
+  onDestinationMoved(handler: ((next: Destination) => void) | null): void { this.moved = handler; }
+
+  start({ packages, scopedBots = true }: StackConnections = {}): void {
+    this.scopedBots = scopedBots;
     const { endpoints } = this.state;
     const enabled = packages && new Set(packages);
     const open = (pkg: string, onOpen: () => void, onNotice?: (topic: string) => void, topics?: string[], options?: { silent?: readonly string[]; onStatus?(status: ChannelStatus): void }) => {
@@ -1235,7 +1264,7 @@ export class StackStore {
 
   /** One no-turn catalog read per account, shared by cards and inspectors. */
   refreshWorkerCatalog = (id: string, refresh = true): Promise<void> => {
-    if (!refresh && this.catalogHeld.has(id)) return Promise.resolve();
+    if (!refresh && (this.catalogHeld.has(id) || this.holdsPending)) return Promise.resolve();
     if (!this.catalogAccountAvailable(id) || this.main.get("worker")?.status !== "open") return Promise.resolve();
     if (refresh && this.catalogHeld.delete(id)) this.saveCatalogHolds();
     const pending = this.catalogInflight.get(id);
@@ -1278,7 +1307,7 @@ export class StackStore {
   };
 
   private saveCatalogHolds(): void {
-    try { localStorage.setItem("stack.worker-catalog-held.v1", JSON.stringify([...this.catalogHeld])); } catch { /* optional persistence */ }
+    try { this.storage?.setItem(catalogHeldName, JSON.stringify([...this.catalogHeld])); } catch { /* optional persistence */ }
   }
 
   /**
@@ -2040,6 +2069,7 @@ export class StackStore {
         else if (isPreviewKey(key) && next.data && shown !== null) this.set({ [key]: next, roleContextShown: { ...this.state.roleContextShown, [key]: shown } } as Partial<StackState>);
         else this.set({ [key]: next } as Partial<StackState>);
         if (key === "signalStatus" && next.data && (next.data as AttentionStatus).changeSeq !== changeSeq) this.bumpSignal();
+        if (key === "server" && next.data) this.observeDestination(next.data as ServerStatus);
         if (key === "login") this.reconcileAttempt();
         if (key === "workerLogins") this.reconcileWorkerAttempts();
         if (key === "bots") this.reconcileScoped();
@@ -2061,6 +2091,22 @@ export class StackStore {
       });
     this.inflight.set(key, run);
     if (isRoleKey(key)) this.inflightRole.set(key, scope);
+  }
+
+  /**
+   * The server names its identity in serve_status. The first name completes this page's destination; a different one
+   * later means another platform answers at this origin, which the owner of the tree replaces (never adopted in place).
+   * A status without a name changes nothing: identity is never inferred.
+   */
+  private observeDestination(status: ServerStatus): void {
+    const id = typeof status.serverId === "string" ? status.serverId.toLowerCase() : null;
+    if (!id) return;
+    const held = this.state.destination;
+    if (held.serverId?.toLowerCase() === id) return;
+    if (held.serverId === null) { this.set({ destination: { ...held, serverId: id } }); return; }
+    if (this.movedTo === id) return;
+    this.movedTo = id;
+    this.moved?.({ ...held, serverId: id });
   }
 
   private load(key: ResourceKey): Promise<Resource<unknown>["data"]> {

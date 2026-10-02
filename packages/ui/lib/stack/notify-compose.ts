@@ -62,8 +62,8 @@ export function composeErrors(input: NotificationInput, kind: NotificationKind, 
   return errors;
 }
 
-/** Endpoint-pinned like the connection itself; origin separates servers using the same relative gateway path. */
-export const notificationDraftKey = (origin: string, endpoint: string): string => `stack.uix.notify-compose.v1.${encodeURIComponent(origin)}.${encodeURIComponent(endpoint)}`;
+/** Endpoint-pinned like the connection itself. The destination (server, authority and origin) is the storage namespace, not part of this name. */
+export const notificationDraftKey = (endpoint: string): string => `uix.notify-compose.v1.${encodeURIComponent(endpoint)}`;
 
 /** A malformed recovery slot must not silently become a new intent. The UI offers explicit discard instead. */
 export function readNotificationDraft(raw: string | null): NotificationDraft | null {

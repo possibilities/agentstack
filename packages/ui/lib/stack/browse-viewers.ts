@@ -15,7 +15,7 @@ export type HandoffActionState = { kind: "take" | "finish"; choice: { outcome?: 
 export type HandoffActions = Readonly<Record<string, HandoffActionState>>;
 
 export const primaryViewer = "browse-viewer";
-const storageKey = "stack.uix.browse-viewers.v1";
+const storageKey = "uix.browse-viewers.v1";
 
 type Listener = () => void;
 

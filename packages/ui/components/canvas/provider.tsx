@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, use, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { blankSnapshot, destinationIdentity, destinationStorages, type Destination, type DestinationIdentity, type ScopedStorage } from "@/lib/stack/destination";
 import type { SpaceId } from "@/lib/stack/spaces";
 import { ChatWindowStore, type ChatWindows } from "@/lib/stack/chat-windows";
 import { WorkerWindowStore, type TurnFocus, type WorkerWindows } from "@/lib/stack/worker-windows";
@@ -19,13 +20,55 @@ const ViewerWindowsContext = createContext<ViewerWindowStore | null>(null);
 const ProcWindowsContext = createContext<ProcWindowStore | null>(null);
 const HudViewContext = createContext<HudViewStore | null>(null);
 
+/** This tree's destination: the complete identity once the server has named itself, and storage that belongs to it alone. */
+type DestinationValue = { identity: DestinationIdentity | null; local: ScopedStorage | null; session: ScopedStorage | null };
+const DestinationContext = createContext<DestinationValue>({ identity: null, local: null, session: null });
+
+/**
+ * The browser storage this page may use, scoped to its destination. Both areas are null until the server has named
+ * itself, so a store, draft or recovery record never reads or writes under an unknown namespace.
+ */
+export function useDestination(): DestinationValue {
+  return use(DestinationContext);
+}
+
+/**
+ * Everything the Canvas keeps in memory or in the browser belongs to one destination. When the server behind this
+ * origin turns out to be a different one, the whole tree is replaced with a blank snapshot for it: nothing already
+ * loaded, drafted, queued or recorded carries across (ADR 0167).
+ */
 export function StackProvider({ snapshot, children, connections }: { snapshot: Snapshot; children: React.ReactNode; connections?: StackConnections }) {
+  const [epoch, setEpoch] = useState({ seed: snapshot, generation: 0 });
+  const replace = useCallback((next: Destination) => setEpoch((held) => ({ seed: blankSnapshot(held.seed, next), generation: held.generation + 1 })), []);
+  return <StackTree key={epoch.generation} snapshot={epoch.seed} connections={connections} onMoved={replace}>{children}</StackTree>;
+}
+
+function StackTree({ snapshot, children, connections, onMoved }: { snapshot: Snapshot; children: React.ReactNode; connections?: StackConnections; onMoved(next: Destination): void }) {
   const [store] = useState(() => new StackStore(snapshot));
   const [chats] = useState(() => new ChatWindowStore());
   const [workerWindows] = useState(() => new WorkerWindowStore());
   const [viewers] = useState(() => new ViewerWindowStore());
   const [procWindows] = useState(() => new ProcWindowStore());
   const [hudView] = useState(() => new HudViewStore());
+  const destination = useSyncExternalStore(store.subscribe, () => store.getState().destination, () => store.getServerState().destination);
+  const identity = useMemo(() => destinationIdentity(destination), [destination]);
+  const scope = identity ? `${identity.serverId} ${identity.authority} ${identity.origin}` : null;
+  // Storage objects are only wrappers; the browser is touched when a store or view uses them, after mount.
+  const value = useMemo<DestinationValue>(() => ({ identity, ...destinationStorages(identity) }), [scope]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    store.onDestinationMoved(onMoved);
+    return () => store.onDestinationMoved(null);
+  }, [store, onMoved]);
+  // Persisted state is restored after hydration, and only from this destination's storage. Until the server has
+  // named itself every store is detached: nothing is read, written or recovered.
+  useEffect(() => {
+    store.attachStorage(value.local);
+    chats.attach(value.local);
+    workerWindows.attach(value.local);
+    viewers.attach(value.local);
+    procWindows.attach(value.local);
+    hudView.attach(value.local);
+  }, [store, chats, workerWindows, viewers, procWindows, hudView, value.local]);
   useEffect(() => {
     store.start(connections);
     return () => store.stop();
@@ -44,15 +87,6 @@ export function StackProvider({ snapshot, children, connections }: { snapshot: S
     document.addEventListener("visibilitychange", refresh);
     return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, [snapshot.remote, store]);
-  useEffect(() => {
-    let storage: Storage | null = null;
-    try { storage = window.localStorage; } catch { /* optional persistence */ }
-    chats.attach(storage);
-    workerWindows.attach(storage);
-    viewers.attach(storage);
-    procWindows.attach(storage);
-    hudView.attach(storage);
-  }, [chats, workerWindows, viewers, procWindows, hudView]);
   const bots = useSyncExternalStore(store.subscribe, () => store.getState().bots.data, () => store.getServerState().bots.data);
   useEffect(() => { if (bots) chats.prune(new Set(bots.map((bot) => bot.id))); }, [bots, chats]);
   const workers = useSyncExternalStore(store.subscribe, () => store.getState().workerSessions.data, () => store.getServerState().workerSessions.data);
@@ -62,7 +96,7 @@ export function StackProvider({ snapshot, children, connections }: { snapshot: S
   // A grant ends when its handoff leaves human control; the API has revoked it by then.
   const handoffs = useSyncExternalStore(store.subscribe, () => store.getState().browserHandoffs.data, () => store.getServerState().browserHandoffs.data);
   useEffect(() => { if (handoffs) viewers.pruneGrants(new Set(handoffs.filter((item) => item.state === "human_controlling").map((item) => item.id))); }, [handoffs, viewers]);
-  return <StoreContext value={store}><ChatWindowsContext value={chats}><WorkerWindowsContext value={workerWindows}><ViewerWindowsContext value={viewers}><ProcWindowsContext value={procWindows}><HudViewContext value={hudView}>{children}</HudViewContext></ProcWindowsContext></ViewerWindowsContext></WorkerWindowsContext></ChatWindowsContext></StoreContext>;
+  return <DestinationContext value={value}><StoreContext value={store}><ChatWindowsContext value={chats}><WorkerWindowsContext value={workerWindows}><ViewerWindowsContext value={viewers}><ProcWindowsContext value={procWindows}><HudViewContext value={hudView}>{children}</HudViewContext></ProcWindowsContext></ViewerWindowsContext></WorkerWindowsContext></ChatWindowsContext></StoreContext></DestinationContext>;
 }
 
 /** Fleet chat windows and the store that arranges them. */

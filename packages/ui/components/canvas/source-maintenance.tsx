@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { listRecoveries, localOperations, readRecovery, stateOperations } from "@/lib/stack/state";
 import type { GithubDelivery } from "@/lib/stack/types";
-import { useStack, useStore } from "./provider";
+import { useDestination, useStack, useStore } from "./provider";
 import { sourceHint, Stamp } from "./source-shared";
 import { MaintenanceDisclosure, StateFlowView, useStateFlow } from "./state-flow";
 
@@ -44,11 +44,13 @@ const historyPrefix = "source:history:";
  * reads its receipt and closes it.
  */
 function usePendingClears(currentKey: string): { keys: string[]; close(key: string): void } {
+  // Only this destination's saved requests are listed; with none yet, there is nothing to list.
+  const { local } = useDestination();
   const [seen, setSeen] = useState<string[]>([]);
   const scan = useCallback(() => {
-    const found = listRecoveries(historyPrefix).map((item) => item.key);
+    const found = listRecoveries(local, historyPrefix).map((item) => item.key);
     setSeen((held) => { const next = [...new Set([...held, ...found])]; return next.length === held.length ? held : next; });
-  }, []);
+  }, [local]);
   // A selection that is no longer chosen leaves its saved request behind: look again whenever the chosen set changes.
   useEffect(() => { scan(); }, [scan, currentKey]);
   useEffect(() => {
@@ -102,7 +104,8 @@ function Flow({ chosen, retained, onSelectRetained, onClearSelection, onOpenChan
 function PendingClear({ recoveryKey, onClosed }: { recoveryKey: string; onClosed(): void }) {
   const state = useStack();
   const store = useStore();
-  const saved = readRecovery(recoveryKey);
+  const { local } = useDestination();
+  const saved = readRecovery(local, recoveryKey);
   const controls = useStateFlow({
     operations: stateOperations(store.call, "source", operations, { sequences: [] }),
     recoveryKey, observe: state.sourceGeneration,

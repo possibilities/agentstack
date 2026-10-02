@@ -7,7 +7,7 @@ import type { TreeFilter } from "./hud";
  */
 export type HudView = { selectedId: string | null; collapsed: ReadonlySet<string>; rootId: string | null; filter: TreeFilter };
 
-const storageKey = "stack.ui.hud.v1";
+const storageKey = "ui.hud.v1";
 const maxCollapsed = 500;
 type Listener = () => void;
 

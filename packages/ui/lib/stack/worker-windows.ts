@@ -12,7 +12,7 @@ export type WorkerWindows = readonly WorkerWindow[];
 export type TurnFocus = { windowId: string; workerId: string; turnId: string; seq: number };
 
 export const primaryWorker = "worker";
-const storageKey = "stack.uix.workers.v1";
+const storageKey = "uix.workers.v1";
 
 type Listener = () => void;
 

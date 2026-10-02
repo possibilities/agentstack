@@ -109,7 +109,7 @@ export function freezeReceiver(draft: ReceiverDraft, held: number | null): { ok:
 
 /** An in-progress creation, persisted before it is sent so a lost answer is read back by its ID rather than guessed at. */
 export type CreateRecord = { input: ReceiverCreateInput; at: number };
-export const createSlot = "stack.source-setup.create";
+export const createSlot = "source-setup.create";
 
 /** What reading a receiver back by ID says about a creation whose answer was lost. */
 export function createOutcome(endpoint: GithubEndpoint | null, input: ReceiverCreateInput): "created" | "mismatch" | "absent" {
@@ -226,11 +226,15 @@ export function expiryWords(msLeft: number): string {
 /** A storage the journal writes to. Failure to write is reported, never swallowed: a request that cannot be recorded is not sent. */
 export type KeyValue = { get(key: string): string | null; set(key: string, value: string): boolean; remove(key: string): void };
 
-export function browserStorage(): KeyValue {
+/**
+ * A journal's storage: one destination's, or none. With none, nothing is read and every write is refused, so a request
+ * that cannot be recorded under a known destination is never sent.
+ */
+export function destinationKeyValue(storage: { getItem(name: string): string | null; setItem(name: string, value: string): void; removeItem(name: string): void } | null): KeyValue {
   return {
-    get: (key) => { try { return localStorage.getItem(key); } catch { return null; } },
-    set: (key, value) => { try { localStorage.setItem(key, value); return localStorage.getItem(key) === value; } catch { return false; } },
-    remove: (key) => { try { localStorage.removeItem(key); } catch { /* nothing to remove */ } },
+    get: (key) => { try { return storage?.getItem(key) ?? null; } catch { return null; } },
+    set: (key, value) => { if (!storage) return false; try { storage.setItem(key, value); return storage.getItem(key) === value; } catch { return false; } },
+    remove: (key) => { try { storage?.removeItem(key); } catch { /* nothing to remove */ } },
   };
 }
 
@@ -248,7 +252,7 @@ export type JournalEntry = {
   planId?: string; hookId?: number; attemptId?: number; guid?: string;
   startedAt: string | null; completedAt: string | null; error: string | null;
 };
-const journalPrefix = "stack.source-setup.requests.";
+const journalPrefix = "source-setup.requests.";
 export const journalKey = (endpointId: string): string => journalPrefix + endpointId;
 const keepSettled = 12;
 const unsettled = (entry: JournalEntry) => entry.status === "pending" || entry.status === "running" || entry.status === "unknown";

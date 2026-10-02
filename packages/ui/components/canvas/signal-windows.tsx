@@ -23,7 +23,8 @@ import type { AttentionAudience, AttentionChunk, AttentionEvent, AttentionFeedba
 import { cn } from "@/lib/utils";
 import { errorMessage } from "./auth-actions";
 import { CopyButton, Empty, NodeCard, NodeLink, NodeTitle, Row, StatusDot, Time, type Tone } from "./primitives";
-import { useChatWindows, useStack, useStore, useWorkbench } from "./provider";
+import type { ScopedStorage } from "@/lib/stack/destination";
+import { useChatWindows, useDestination, useStack, useStore, useWorkbench } from "./provider";
 import { Section, Window } from "./window";
 
 const labelClass = "px-0.5 text-[0.7rem] font-medium text-muted-foreground";
@@ -189,14 +190,16 @@ function OpenChatButton({ conversation }: { conversation: string }) {
   );
 }
 
-function feedbackAuthor(): string {
-  try { return window.localStorage.getItem("stack.uix.signal.author.v1") || "human"; } catch { return "human"; }
+/** The author last used for feedback in this destination; "human" until the server has named itself or nothing is saved. */
+function feedbackAuthor(storage: ScopedStorage | null): string {
+  try { return storage?.getItem("uix.signal.author.v1") || "human"; } catch { return "human"; }
 }
 
 /** Attributed evaluation evidence. The key is fixed while the dialog is open, so a retried submission never records twice. */
 function FeedbackDialog({ open, onOpenChange, messageId, runId, subject }: { open: boolean; onOpenChange(open: boolean): void; messageId: string; runId: string | null; subject: string }) {
   const store = useStore();
   const { remote } = useStack();
+  const { local: storage } = useDestination();
   const formId = useId();
   const [id, setId] = useState(() => crypto.randomUUID());
   const [kind, setKind] = useState<AttentionFeedbackKind>("correction");
@@ -207,17 +210,18 @@ function FeedbackDialog({ open, onOpenChange, messageId, runId, subject }: { ope
   useEffect(() => {
     if (!open) return;
     setId(crypto.randomUUID());
-    setAuthor(feedbackAuthor());
     setBody("");
     setError(null);
   }, [open]);
+  // The saved author is this destination's; it is read when the dialog opens and again if the server names itself while it is open.
+  useEffect(() => { if (open) setAuthor(feedbackAuthor(storage)); }, [open, storage]);
   const submit = async () => {
     if (!body.trim() || !author.trim()) return;
     setPending(true);
     setError(null);
     try {
       await store.signalAction("attention_feedback", { id, messageId, ...(runId ? { runId } : {}), kind, author: author.trim(), body: body.trim() });
-      try { window.localStorage.setItem("stack.uix.signal.author.v1", author.trim()); } catch { /* optional persistence */ }
+      try { storage?.setItem("uix.signal.author.v1", author.trim()); } catch { /* optional persistence */ }
       toast.success("Feedback recorded");
       onOpenChange(false);
     } catch (cause) {

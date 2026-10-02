@@ -15,7 +15,7 @@ import type { NotificationSend, OperationDoc } from "@/lib/stack/types";
 import { errorMessage } from "./auth-actions";
 import { useNotifyActions } from "./notify-actions";
 import { Empty, Row } from "./primitives";
-import { useStack, useStore, useWorkbench } from "./provider";
+import { useDestination, useStack, useStore, useWorkbench } from "./provider";
 import { Window } from "./window";
 
 const labels = { title: "Title", message: "Message", subtitle: "Subtitle (optional)", source: "Source (optional)", group: "Group (optional)", open: "Open URL (optional)", reply: "Reply placeholder" };
@@ -23,12 +23,13 @@ const labels = { title: "Title", message: "Message", subtitle: "Subtitle (option
 /** Registration owns geometry; this body owns only the live form and its destination-pinned intent. */
 export function ComposeWindow() {
   const state = useStack();
+  const { local } = useDestination();
   const access = notificationSendAccess(state);
   if (state.remote && (!access.exposed || access.reason)) return null;
   const endpoint = state.endpoints.notify;
   return <Window id="notify-compose" title="Compose" subtitle="operator send" icon={SendIcon} accent="notify">
     {!endpoint || !access.operation || !access.exposed ? <Empty icon={SendIcon} title={access.reason ?? "Notify isn’t served by this server"} />
-      : <ComposeForm key={endpoint} endpoint={endpoint} operation={access.operation} unavailable={access.reason ?? (state.status.notify !== "open" ? "The notify connection is not open. Your draft is retained." : null)} />}
+      : <ComposeForm key={endpoint} endpoint={endpoint} operation={access.operation} unavailable={access.reason ?? (state.status.notify !== "open" ? "The notify connection is not open. Your draft is retained." : !local ? "Waiting for the server to name itself. Drafts are kept per server, so nothing is saved or sent until it does." : null)} />}
   </Window>;
 }
 
@@ -56,12 +57,16 @@ function ComposeForm({ endpoint, operation, unavailable }: { endpoint: string; o
   const errors = composeErrors(input, values.kind, operation.inputSchema);
   const record = draft?.sent ? state.notificationRecords[draft.id] : undefined;
 
+  // The draft belongs to this destination: its storage holds it, and until the server has named itself there is none,
+  // so the form stays unready and nothing is read, written or sent.
+  const { local: storage } = useDestination();
   useEffect(() => {
-    key.current = notificationDraftKey(window.location.origin, endpoint);
+    if (!storage) return;
+    key.current = notificationDraftKey(endpoint);
     const restore = () => {
       if (pending.current) return;
       try {
-        const raw = localStorage.getItem(key.current!);
+        const raw = storage.getItem(key.current!);
         savedRaw.current = raw;
         const saved = readNotificationDraft(raw);
         current.current = saved; setDraft(saved); setRecoveryError(null); setError(null);
@@ -69,20 +74,20 @@ function ComposeForm({ endpoint, operation, unavailable }: { endpoint: string; o
       setReady(true);
     };
     restore();
-    const changed = (event: StorageEvent) => { if (event.key === key.current || event.key === null) restore(); };
+    const changed = (event: StorageEvent) => { if (event.key === storage.prefix + key.current || event.key === null) restore(); };
     window.addEventListener("storage", changed);
     return () => window.removeEventListener("storage", changed);
-  }, [endpoint]);
+  }, [endpoint, storage]);
   useEffect(() => draft?.sent ? store.watchNotification(draft.id) : undefined, [store, draft?.sent, draft?.id]);
 
   const hold = (next: NotificationDraft | null) => { current.current = next; setDraft(next); };
   const persist = (next: NotificationDraft | null) => {
-    if (!key.current) throw new Error("The draft destination is not ready.");
+    if (!key.current || !storage) throw new Error("The draft destination is not ready.");
     // Never overwrite a newer tab's intent, including when our acknowledgement arrives late.
-    if (localStorage.getItem(key.current) !== savedRaw.current) throw new Error("The saved draft changed in another tab. Reload Compose before continuing.");
+    if (storage.getItem(key.current) !== savedRaw.current) throw new Error("The saved draft changed in another tab. Reload Compose before continuing.");
     const raw = next ? JSON.stringify(next) : null;
-    if (raw) localStorage.setItem(key.current, raw);
-    else localStorage.removeItem(key.current);
+    if (raw) storage.setItem(key.current, raw);
+    else storage.removeItem(key.current);
     savedRaw.current = raw;
   };
   const edit = (change: Partial<ComposeValues>) => {

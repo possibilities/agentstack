@@ -18,6 +18,12 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
   return { title: `Stack · ${title}` };
 }
 
+/** The loopback origin the proxy admitted for a local render; the same expression the proxy builds its own origin from. */
+function localOrigin(incoming: Headers): string | undefined {
+  const host = incoming.get("host");
+  return host ? `http://${host}` : undefined;
+}
+
 export default async function Page({ params, searchParams }: { params: Promise<Params>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { space } = await params;
   if (runtime.mode === "client") {
@@ -38,5 +44,5 @@ export default async function Page({ params, searchParams }: { params: Promise<P
   const remote = incoming.get("x-stack-remote-ui") === "1" ? incoming.get("x-stack-ui-origin") : null;
   const scope = incoming.get("x-stack-ui-scope");
   return <Workbench snapshot={await loadSnapshot(remote ?? undefined, scope === "view" || scope === "control" ? scope : undefined,
-    incoming.get("x-stack-ui-scopes")?.split(",").filter(Boolean) ?? [])} initialSpace={segment ?? defaultSpace} initialFocus={initialFocus} initialLocation={initialLocation} />;
+    incoming.get("x-stack-ui-scopes")?.split(",").filter(Boolean) ?? [], localOrigin(incoming))} initialSpace={segment ?? defaultSpace} initialFocus={initialFocus} initialLocation={initialLocation} />;
 }

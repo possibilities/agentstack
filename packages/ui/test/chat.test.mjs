@@ -115,7 +115,7 @@ test("chat windows switch the primary, reveal an existing Bot, add and close ext
   restored.attach(storage);
   assert.deepEqual(restored.getWindows(), chats.getWindows());
   assert.equal(notified, 1);
-  saved.set("stack.uix.chats.v1", JSON.stringify([{ id: "chat-2", botId: "bot-9" }, { id: "../evil" }, { id: "chat-2" }, "junk"]));
+  saved.set("uix.chats.v1", JSON.stringify([{ id: "chat-2", botId: "bot-9" }, { id: "../evil" }, { id: "chat-2" }, "junk"]));
   const repaired = new ChatWindowStore();
   repaired.attach(storage);
   assert.deepEqual(repaired.getWindows(), [{ id: primaryChat, botId: null }, { id: "chat-2", botId: "bot-9" }]);

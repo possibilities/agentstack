@@ -33,7 +33,8 @@ import {
 } from "@/lib/stack/roles";
 import type { Role, RoleCapabilityHarnesses, RoleCatalog, RoleInternalMcp, RoleReceipt, RoleSnapshot } from "@/lib/stack/types";
 import { errorMessage } from "./auth-actions";
-import { useStack, useStore } from "./provider";
+import type { ScopedStorage } from "@/lib/stack/destination";
+import { useDestination, useStack, useStore } from "./provider";
 import { DefaultDialog, DeleteRoleDialog } from "./role-dialogs";
 
 /** What the Role editor shows. New records are drafts until created. */
@@ -159,7 +160,7 @@ export function useRoleView(): RoleView {
 const stale = /stale role revision/;
 const staleCatalog = /stale role catalog revision/;
 /** Each viewer remembers which Role it last edited; it never carries a draft or the default. */
-const storageKey = "stack.uix.roles.v1";
+const storageKey = "uix.roles.v1";
 
 export function RoleActionsProvider({ children }: { children: React.ReactNode }) {
   const store = useStore();
@@ -180,17 +181,22 @@ export function RoleActionsProvider({ children }: { children: React.ReactNode })
   const drafted = useMemo(() => scopedRoles(drafts), [drafts]);
 
   // Restore which Role this viewer last edited; storage may be blocked or empty, and the catalog decides whether it still exists.
+  // Only this destination's saved choice is read or written; with none yet (the server has not named itself) neither happens.
+  const { local: storage } = useDestination();
+  const [restored, setRestored] = useState<ScopedStorage | null>(null);
   useEffect(() => {
+    if (!storage) return;
     try {
-      const saved: unknown = JSON.parse(window.localStorage.getItem(storageKey) ?? "null");
+      const saved: unknown = JSON.parse(storage.getItem(storageKey) ?? "null");
       const selected = typeof saved === "object" && saved !== null && "selected" in saved ? saved.selected : null;
       if (typeof selected === "string" && store.getState().roleId === null) store.selectRole(selected);
     } catch { /* optional persistence */ }
-  }, [store]);
+    setRestored(storage);
+  }, [store, storage]);
   useEffect(() => {
-    if (!roleId) return;
-    try { window.localStorage.setItem(storageKey, JSON.stringify({ selected: roleId })); } catch { /* optional persistence */ }
-  }, [roleId]);
+    if (!roleId || !storage || restored !== storage) return;
+    try { storage.setItem(storageKey, JSON.stringify({ selected: roleId })); } catch { /* optional persistence */ }
+  }, [roleId, storage, restored]);
 
   useEffect(() => { for (const item of catalog?.roles ?? []) names.current.set(item.id, item.name); }, [catalog]);
   // With no valid selection, edit the default. A selected Role deleted elsewhere is left in place while it holds

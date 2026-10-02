@@ -11,7 +11,7 @@ import { planReadiness, receiptTone, receiptWords, StateFlowController, type Sta
 import type { StateOutcome, StatePlan, StateReceipt } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { CopyButton, StatusDot, type Tone } from "./primitives";
-import { useNow } from "./provider";
+import { useDestination, useNow } from "./provider";
 
 /*
  * The shared owner maintenance flow (docs/state-control.md, ADR 0135): prepare → preview → apply → receipt.
@@ -126,12 +126,16 @@ export type StateFlowControls = {
  * calls it makes. `observe` is any owner invalidation, such as an event generation: a running receipt is read
  * again when it changes; nothing polls.
  */
-export function useStateFlow<Extra extends Record<string, string> = Record<string, never>>({ observe, ...options }: StateFlowOptions<Extra> & { observe?: unknown }): StateFlowControls {
-  const controller = useMemo(() => new StateFlowController<Extra>(options), [options.recoveryKey]);
-  controller.update(options);
+export function useStateFlow<Extra extends Record<string, string> = Record<string, never>>({ observe, ...options }: Omit<StateFlowOptions<Extra>, "recovery"> & { observe?: unknown }): StateFlowControls {
+  // The flow saves and recovers requests only in this destination's storage; with none yet, nothing is saved or recovered.
+  const { local: recovery } = useDestination();
+  const controller = useMemo(() => new StateFlowController<Extra>({ ...options, recovery }), [options.recoveryKey]);
+  controller.update({ ...options, recovery });
   const flow = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
   // Unmounting only drops in-flight results; a saved request stays recoverable.
-  useEffect(() => { void controller.recover(); return () => controller.detach(); }, [controller]);
+  useEffect(() => () => controller.detach(), [controller]);
+  // A saved request is read back once this destination is known, and only into an idle flow.
+  useEffect(() => { void controller.recover(); }, [controller, recovery]);
   const first = useRef(true);
   useEffect(() => {
     if (first.current) { first.current = false; return; }
@@ -152,7 +156,7 @@ export function useStateFlow<Extra extends Record<string, string> = Record<strin
  * receipt or uncertainty afterwards. `unavailable` disables preparing with its reason (remote, disconnected,
  * nothing selected). Downstream views pass their owner's explicit operations.
  */
-export function StateMaintenance<Extra extends Record<string, string> = Record<string, never>>({ label, applyLabel = "Apply this plan", unavailable, className, ...options }: StateFlowOptions<Extra> & { observe?: unknown } & {
+export function StateMaintenance<Extra extends Record<string, string> = Record<string, never>>({ label, applyLabel = "Apply this plan", unavailable, className, ...options }: Omit<StateFlowOptions<Extra>, "recovery"> & { observe?: unknown } & {
   /** The decision being prepared, e.g. "Prepare workspace clear". */
   label: string;
   applyLabel?: string;

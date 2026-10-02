@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowLeftIcon, LogInIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -9,27 +9,27 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Spinner } from "@/components/ui/spinner";
 import { targetKinds, targetLabel } from "@/lib/stack/source";
 import {
-  browserStorage, createOutcome, createSlot, emptyReceiverDraft, emptyTargetDraft, errorWords, freezeReceiver, maxReceiverLabel, setupMode, targetKindList,
-  type CreateRecord, type FrozenReceiver, type ReceiverCreateInput, type ReceiverDraft,
+  createOutcome, destinationKeyValue, createSlot, emptyReceiverDraft, emptyTargetDraft, errorWords, freezeReceiver, maxReceiverLabel, setupMode, targetKindList,
+  type CreateRecord, type FrozenReceiver, type KeyValue, type ReceiverCreateInput, type ReceiverDraft,
 } from "@/lib/stack/source-setup";
 import { localOperation } from "@/lib/stack/state";
 import type { GithubAuthStatus, GithubEndpoint, GithubOrganizationEntry, GithubRepositoryEntry } from "@/lib/stack/types";
 import { errorMessage } from "./auth-actions";
 import { CopyButton } from "./primitives";
-import { useStack, useStore, useWorkbench } from "./provider";
+import { useDestination, useStack, useStore, useWorkbench } from "./provider";
 import { fieldLabel } from "./scrape-shared";
 import { codeWords } from "./source-hook-setup";
 import { sourceHint, sourceLabel, Word } from "./source-shared";
 
-/** The unconfirmed creation this browser recorded before sending it, if any. */
-export function readCreateRecord(): CreateRecord | null {
+/** The unconfirmed creation this destination's storage recorded before sending it, if any. */
+export function readCreateRecord(journal: KeyValue): CreateRecord | null {
   try {
-    const value: unknown = JSON.parse(browserStorage().get(createSlot) ?? "null");
+    const value: unknown = JSON.parse(journal.get(createSlot) ?? "null");
     const input = (value as CreateRecord | null)?.input;
     return input && typeof input.id === "string" && typeof input.label === "string" && input.target && typeof input.githubHost === "string" ? value as CreateRecord : null;
   } catch { return null; }
 }
-export const clearCreateRecord = (): void => browserStorage().remove(createSlot);
+export const clearCreateRecord = (journal: KeyValue): void => journal.remove(createSlot);
 
 type Step =
   | { name: "edit" }
@@ -56,6 +56,8 @@ export function CreateReceiver({ resume, count, onClose }: { resume: CreateRecor
   const store = useStore();
   const state = useStack();
   const { goTo } = useWorkbench();
+  const { local } = useDestination();
+  const journal = useMemo(() => destinationKeyValue(local), [local]);
   const [draft, setDraft] = useState<ReceiverDraft>(() => resume ? draftOf(resume.input) : emptyReceiverDraft(crypto.randomUUID()));
   const [errors, setErrors] = useState<string[]>([]);
   const [step, setStep] = useState<Step>({ name: "edit" });
@@ -70,7 +72,7 @@ export function CreateReceiver({ resume, count, onClose }: { resume: CreateRecor
     try { found = await store.readSourceReceiver(frozen.input.id); confirmed = createOutcome(found, frozen.input); } catch (readError) {
       if (/github_endpoint_not_found/.test(errorMessage(readError))) confirmed = "absent";
     }
-    if (confirmed === "created" && found) { clearCreateRecord(); void store.loadSourceSetup(found.id); setStep({ name: "saved", endpoint: found }); return; }
+    if (confirmed === "created" && found) { clearCreateRecord(journal); void store.loadSourceSetup(found.id); setStep({ name: "saved", endpoint: found }); return; }
     setStep({ name: "failed", frozen, error, confirmed });
   };
   // Reopened after a reload with an unconfirmed creation: say what the owner holds before anything is sent.
@@ -90,26 +92,26 @@ export function CreateReceiver({ resume, count, onClose }: { resume: CreateRecor
   /** Record the exact request, then send it. If it cannot be recorded it is not sent. */
   const save = async (frozen: FrozenReceiver) => {
     const record: CreateRecord = { input: { ...frozen.input }, at: Date.now() };
-    if (!browserStorage().set(createSlot, JSON.stringify(record))) {
-      setStep({ name: "failed", frozen, error: "This browser could not record the request, so it was not sent.", confirmed: "absent" });
+    if (!journal.set(createSlot, JSON.stringify(record))) {
+      setStep({ name: "failed", frozen, error: "This browser could not record the request for this server, so it was not sent.", confirmed: "absent" });
       return;
     }
     setStep({ name: "saving", frozen });
     try {
       const endpoint = await store.createSourceReceiver({ ...frozen.input });
-      clearCreateRecord();
+      clearCreateRecord(journal);
       void store.loadSourceSetup(endpoint.id);
       setStep({ name: "saved", endpoint });
     } catch (error) {
       const text = errorMessage(error);
       // A clear refusal wrote nothing; anything else may have, so the receiver is read back by its ID.
-      if (/github_endpoint_id_conflict|github_endpoint_capacity/.test(text)) { clearCreateRecord(); setStep({ name: "failed", frozen, error: text, confirmed: /conflict/.test(text) ? "mismatch" : "absent" }); }
+      if (/github_endpoint_id_conflict|github_endpoint_capacity/.test(text)) { clearCreateRecord(journal); setStep({ name: "failed", frozen, error: text, confirmed: /conflict/.test(text) ? "mismatch" : "absent" }); }
       else await readBack(frozen, text);
     }
   };
   const busy = step.name === "saving";
   const dismiss = () => { if (!busy) onClose(); };
-  const abandon = () => { clearCreateRecord(); onClose(); };
+  const abandon = () => { clearCreateRecord(journal); onClose(); };
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) dismiss(); }}>
@@ -173,7 +175,7 @@ export function CreateReceiver({ resume, count, onClose }: { resume: CreateRecor
               {step.name === "failed" ? <Failed step={step} /> : null}
               <div className="flex flex-wrap items-center gap-1.5">
                 {step.name === "failed" && step.confirmed === "mismatch" ? (
-                  <Button type="button" size="sm" onClick={() => { clearCreateRecord(); setDraft({ ...draftOf(step.frozen.input), id: crypto.randomUUID() }); setStep({ name: "edit" }); }}>Start again with a new ID</Button>
+                  <Button type="button" size="sm" onClick={() => { clearCreateRecord(journal); setDraft({ ...draftOf(step.frozen.input), id: crypto.randomUUID() }); setStep({ name: "edit" }); }}>Start again with a new ID</Button>
                 ) : (
                   <Button type="button" size="sm" disabled={busy || !connected} onClick={() => void save(step.frozen)}>
                     {busy ? <Spinner data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}{step.name === "failed" ? "Save again (same ID)" : "Save receiver locally"}

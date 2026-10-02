@@ -11,7 +11,7 @@ export type ProcRunWindow = { id: string; runId: string | null };
 export type ProcRunWindows = readonly ProcRunWindow[];
 
 export const primaryProcRun = "proc-run";
-const storageKey = "stack.uix.proc.v1";
+const storageKey = "uix.proc.v1";
 
 type Saved = { windows?: unknown; selectedScheduleId?: unknown };
 type Listener = () => void;

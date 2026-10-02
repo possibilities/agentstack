@@ -1,3 +1,5 @@
+import type { Destination } from "./destination";
+
 /** The Source package's (github_*) records. Payload-derived strings are untrusted observed data and render as escaped text only. */
 export type GithubTarget = { kind: "repository"; repository: string } | { kind: "organization"; organization: string }
   | { kind: "enterprise"; enterprise: string } | { kind: "app"; appId?: number } | { kind: "marketplace" } | { kind: "sponsors_listing"; account: string };
@@ -367,6 +369,8 @@ export type ServerChild = {
 };
 
 export type ServerStatus = {
+  /** The stable installation identity (the Access instance UUID). Null until Access has created it; older servers omit it. */
+  serverId?: string | null;
   pid: number;
   startedAt: string;
   nodeVersion: string;
@@ -1025,6 +1029,8 @@ export type Snapshot = {
   /** Null when this server cannot name them, e.g. a random port; older snapshots omit it. */
   contentOrigins?: ContentOrigins | null;
   remote?: { scope: "view" | "control"; scopes: string[]; contentOrigins: ContentOrigins };
+  /** The platform this page was served for. Older snapshots omit it, and the Canvas then keeps nothing in the browser. */
+  destination?: Destination;
 };
 
 /**

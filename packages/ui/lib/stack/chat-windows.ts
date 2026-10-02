@@ -7,7 +7,8 @@ export type ChatWindow = { id: string; botId: string | null };
 export type ChatWindows = readonly ChatWindow[];
 
 export const primaryChat = "chat";
-const storageKey = "stack.uix.chats.v1";
+/** Names within a destination's storage (destination.ts adds the namespace). */
+const storageKey = "uix.chats.v1";
 
 type Listener = () => void;
 

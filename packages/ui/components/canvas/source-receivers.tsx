@@ -1,15 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronDownIcon, ChevronRightIcon, ListIcon, PlusIcon, RadioTowerIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { receiverFacts, targetKinds, targetLabel, type ReceiverFact } from "@/lib/stack/source";
-import { maxReceivers, requestFact, type CreateRecord } from "@/lib/stack/source-setup";
+import { destinationKeyValue, maxReceivers, requestFact, type CreateRecord } from "@/lib/stack/source-setup";
 import { localOperation } from "@/lib/stack/state";
 import type { GithubEndpoint, GithubSetup } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { CopyButton, Empty, Flash, NodeCard, NodeTitle, StatusDot } from "./primitives";
-import { useStack, useStore, useWorkbench } from "./provider";
+import { useDestination, useStack, useStore, useWorkbench } from "./provider";
 import { clearCreateRecord, CreateReceiver, readCreateRecord } from "./source-receiver-create";
 import { ReceiverSetupControls } from "./source-receiver-setup";
 import { useJournal } from "./source-requests";
@@ -27,6 +27,8 @@ export function ReceiversWindow() {
   const state = useStack();
   const { status, endpoints, remote, sourceStatus, sourceEndpoints } = state;
   const [open, setOpen] = useState<string | null>(null);
+  const { local } = useDestination();
+  const journal = useMemo(() => destinationKeyValue(local), [local]);
   const [creating, setCreating] = useState<{ resume: CreateRecord | null } | null>(null);
   const [unconfirmed, setUnconfirmed] = useState<CreateRecord | null>(null);
   const createAccess = remote ? null : localOperation(state, "source", "github_endpoint_create");
@@ -40,10 +42,10 @@ export function ReceiversWindow() {
   // A creation this browser recorded before sending it, whose answer was never seen: offered back until the receiver exists or it is forgotten.
   useEffect(() => {
     if (remote || !list) { setUnconfirmed(null); return; }
-    const held = readCreateRecord();
-    if (held && list.some((endpoint) => endpoint.id === held.input.id)) { clearCreateRecord(); setUnconfirmed(null); return; }
+    const held = readCreateRecord(journal);
+    if (held && list.some((endpoint) => endpoint.id === held.input.id)) { clearCreateRecord(journal); setUnconfirmed(null); return; }
     setUnconfirmed(creating ? null : held);
-  }, [remote, list, creating]);
+  }, [remote, list, creating, journal]);
   return (
     <Window id="source-receivers" title="Receivers" icon={RadioTowerIcon} accent="source" count={list?.length ?? null}
       status={endpoints.source ? status.source : undefined} endpoint={endpoints.source} updatedAt={sourceEndpoints.at ?? sourceStatus.at}

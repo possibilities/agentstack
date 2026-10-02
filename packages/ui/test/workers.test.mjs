@@ -174,7 +174,7 @@ test("WorkerWindowStore follows Workers like chat windows and restores a valid a
   windows.setFilter({ botId: "bot-1" });
   assert.deepEqual(windows.getFilter(), { botId: "bot-1" });
 
-  saved.set("stack.uix.workers.v1", JSON.stringify([{ id: "worker-3", workerId: "x" }, { id: "bogus", workerId: "y" }, { id: "worker-3", workerId: "dup" }]));
+  saved.set("uix.workers.v1", JSON.stringify([{ id: "worker-3", workerId: "x" }, { id: "bogus", workerId: "y" }, { id: "worker-3", workerId: "dup" }]));
   const restored = new WorkerWindowStore();
   restored.attach(storage);
   assert.deepEqual(restored.getWindows(), [{ id: "worker", workerId: null }, { id: "worker-3", workerId: "x" }]);

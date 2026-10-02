@@ -17,13 +17,9 @@ import { cn } from "@/lib/utils";
 import { ContentCleared, Empty, Flash, NodeCard, NodeLink, NodeTitle, Row, StatusDot, Time } from "./primitives";
 import { browseMaintenanceOperations } from "./browse-maintenance";
 import { MaintenanceDisclosure, StateFlowView, useStateFlow } from "./state-flow";
-import { useStack, useStore, useViewerWindows, useWorkbench } from "./provider";
+import { useDestination, useStack, useStore, useViewerWindows, useWorkbench } from "./provider";
 import { BotWatch, useObservedRead } from "./watch-receipts";
 import { PlacementContext, Section, Window } from "./window";
-
-function session(): Storage | null {
-  try { return window.sessionStorage; } catch { return null; }
-}
 
 function mint(): string {
   return crypto.randomUUID();
@@ -45,9 +41,11 @@ export function useHandoffActions() {
   const store = useStore();
   const { viewers, actions, grants } = useViewerWindows();
   const { goTo } = useWorkbench();
+  // Intents live in this destination's sessionStorage: a take or finish recorded for one server is never offered to another.
+  const { session } = useDestination();
   const act = async (kind: "take" | "finish", handoff: BrowserHandoff, choice: HandoffActionState["choice"] = {}) => {
     if (actions[handoff.id]?.pending) return;
-    const storage = session();
+    const storage = session;
     const stored = loadIntent(storage, handoff.id);
     const intent = intentFor(kind, handoff, stored, choice, mint);
     saveIntent(storage, intent, handoff.id);
@@ -68,7 +66,7 @@ export function useHandoffActions() {
   };
   /** A stored intent this page can repeat for a handoff that has moved on without it. */
   const resumable = (handoff: BrowserHandoff): "take" | "finish" | null => {
-    const stored = loadIntent(session(), handoff.id);
+    const stored = loadIntent(session, handoff.id);
     if (stored?.kind === "take" && handoff.state === "human_controlling" && !grants[handoff.id]) return "take";
     if (stored?.kind === "finish" && handoff.state === "returning") return "finish";
     return null;
@@ -77,7 +75,7 @@ export function useHandoffActions() {
     const state = actions[handoff.id];
     if (state) return act(state.kind, handoff, state.choice);
     const kind = resumable(handoff);
-    const stored = loadIntent(session(), handoff.id);
+    const stored = loadIntent(session, handoff.id);
     if (kind && stored) return act(kind, handoff, { outcome: stored.args.outcome, note: stored.args.note });
   };
   return { act, retry, resumable, actions, grants };

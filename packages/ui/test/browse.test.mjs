@@ -108,9 +108,9 @@ test("intents persist per handoff and ignore malformed storage", () => {
   saveIntent(storage, intent, "h1");
   assert.deepEqual(loadIntent(storage, "h1"), intent);
   assert.equal(loadIntent(storage, "h2"), null);
-  storage.setItem("stack.uix.browse.intent.h3", "{not json");
+  storage.setItem("uix.browse.intent.h3", "{not json");
   assert.equal(loadIntent(storage, "h3"), null);
-  storage.setItem("stack.uix.browse.intent.h4", JSON.stringify({ kind: "take", args: { id: "other", requestId: "x" } }));
+  storage.setItem("uix.browse.intent.h4", JSON.stringify({ kind: "take", args: { id: "other", requestId: "x" } }));
   assert.equal(loadIntent(storage, "h4"), null);
   saveIntent(storage, null, "h1");
   assert.equal(loadIntent(storage, "h1"), null);
@@ -137,7 +137,7 @@ test("viewer windows switch the primary, keep pinned viewers, prune deleted prof
   assert.deepEqual(store.getWindows(), [{ id: primaryViewer, profileId: null }]);
 
   const restored = new ViewerWindowStore();
-  storage.setItem("stack.uix.browse-viewers.v1", JSON.stringify([{ id: "browse-viewer-3", profileId: "p3" }, { id: "evil", profileId: "p4" }, { id: "browse-viewer-3", profileId: "dup" }]));
+  storage.setItem("uix.browse-viewers.v1", JSON.stringify([{ id: "browse-viewer-3", profileId: "p3" }, { id: "evil", profileId: "p4" }, { id: "browse-viewer-3", profileId: "dup" }]));
   restored.attach(storage);
   assert.deepEqual(restored.getWindows(), [{ id: primaryViewer, profileId: null }, { id: "browse-viewer-3", profileId: "p3" }]);
 });

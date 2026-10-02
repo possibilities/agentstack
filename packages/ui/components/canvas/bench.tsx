@@ -6,7 +6,8 @@ import { homeOf, spaces, type SpaceId } from "@/lib/stack/spaces";
 import { nodeKey, type NodeRef } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { Lines } from "./lines";
-import { useChatWindows, useProcWindows, useStack, useViewerWindows, useWorkerWindows } from "./provider";
+import type { ScopedStorage } from "@/lib/stack/destination";
+import { useChatWindows, useDestination, useProcWindows, useStack, useViewerWindows, useWorkerWindows } from "./provider";
 import { spaceViews } from "./spaces";
 import { PlacementContext, type WindowPlacement } from "./window";
 
@@ -43,7 +44,6 @@ type Gesture =
   | { id: string; kind: "resize"; width?: number; height?: number; fit: number | null; grooved: boolean; free: boolean };
 
 export type BenchControls = { space: SpaceId; fit(): void; tidy(): void; goToNode(ref: NodeRef): void; zoom(factor: number): void };
-const legacyStorageKey = "stack.uix.bench.v1";
 
 export function Bench({ space, blocked, onControls, onScale, onArrive }: {
   space: SpaceId; blocked: boolean; onControls(controls: BenchControls | null): void; onScale(scale: number): void; onArrive(ref: NodeRef): void;
@@ -53,7 +53,9 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
   const { windows: workers } = useWorkerWindows();
   const { windows: viewers } = useViewerWindows();
   const { windows: procRuns } = useProcWindows();
-  const storageKey = `stack.uix.bench.v2.${space}`;
+  // Names within this destination's storage; unqualified `stack.uix.bench.*` records from before isolation are never read.
+  const storageKey = `uix.bench.v2.${space}`;
+  const { local: storage } = useDestination();
   const regions = spaces.filter((s) => s.id === space).map((s) => ({ ...s, defs: spaceViews[s.id].windows(state, { chats, workers, viewers, procRuns }) }));
   const signature = JSON.stringify(regions.map((s) => ({ id: s.id, defs: s.defs.map(({ id, width, height, column, fixed }) => ({ id, width, height, column, fixed })) })));
   // Content refreshes cannot affect footprint or layout. Only registration geometry can.
@@ -141,21 +143,30 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
     });
   }, [setLayout]);
 
+  // The storage this view has applied: none until the server has named its destination, then that destination's.
+  const applied = useRef<ScopedStorage | null>(null);
   useLayoutEffect(() => {
     // Activity resumes effects when revisiting a bench; retain its in-memory view.
-    if (ready) return;
+    if (ready && applied.current === storage) return;
     let stored: SavedBench = {};
+    let found = false;
     try {
-      const value = JSON.parse(localStorage.getItem(storageKey) ?? localStorage.getItem(legacyStorageKey) ?? "{}");
+      const raw = storage?.getItem(storageKey);
+      const value = JSON.parse(raw ?? "{}");
       if (value && typeof value === "object") stored = value;
+      found = raw != null;
     } catch { /* optional persistence */ }
+    const adopting = ready && applied.current === null;
+    applied.current = storage;
+    // The server named itself after the bench was shown: an arrangement made meanwhile stays unless this destination saved one.
+    if (adopting && !found) return;
     saved.current = stored.layout && typeof stored.layout === "object" ? stored.layout : {};
     const restored = { signature, ...reconcileBench(structure, stored.layout) };
     setArrangement(restored);
     current.current.packed = restored;
     setCamera(restoreBenchCamera(stored, space, restored, viewportSize()));
     setReady(true);
-  }, [ready, storageKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ready, storageKey, storage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useLayoutEffect(() => {
     if (arrangement.signature === signature) return;
@@ -164,17 +175,18 @@ export function Bench({ space, blocked, onControls, onScale, onArrive }: {
   }, [arrangement, packed, signature, viewportSize]);
 
   useEffect(() => {
-    if (!ready) return;
+    // Nothing is written until this destination is known and its own saved arrangement has been considered.
+    if (!ready || !storage || applied.current !== storage) return;
     const size = viewportSize();
     const persist = () => {
       const anchor = viewedWindow(packed, camera, size);
       // Camera x is stored in screen coordinates; its logical space prevents cross-space restores.
-      try { localStorage.setItem(storageKey, JSON.stringify({ space, layout, anchor, camera })); } catch { /* optional persistence */ }
+      try { storage.setItem(storageKey, JSON.stringify({ space, layout, anchor, camera })); } catch { /* optional persistence */ }
     };
     persistOnHide.current = persist;
     const timer = setTimeout(persist, 250);
     return () => clearTimeout(timer);
-  }, [ready, space, storageKey, layout, camera, packed, viewportSize]);
+  }, [ready, space, storage, storageKey, layout, camera, packed, viewportSize]);
   // Flush on Activity hide, without synchronously writing on every pan/resize frame.
   useEffect(() => () => { persistOnHide.current?.(); }, []);
   useEffect(() => { onScale(camera.k); }, [camera.k, onScale]);

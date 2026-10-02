@@ -193,7 +193,7 @@ function FactoryResetDisclosure() {
       </div>
       <p className={hintClass}>
         This browser&rsquo;s Canvas storage is a device copy. Reset does not clear it and neither does this view: uncertain
-        {" "}<code className={mono}>stack.state-flow.*</code> and <code className={mono}>stack.uix.browse.intent.*</code> recovery records are preserved.
+        {" "}recovery records under <code className={mono}>stack.destination.*</code>, one namespace per server (<code className={mono}>state-flow.*</code>, <code className={mono}>uix.browse.intent.*</code>), are preserved.
       </p>
     </MaintenanceDisclosure>
   );

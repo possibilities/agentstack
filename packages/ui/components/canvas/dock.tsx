@@ -2,7 +2,9 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import type { ScopedStorage } from "@/lib/stack/destination";
 import { clamp } from "@/lib/stack/geometry";
+import { useDestination } from "./provider";
 
 /** A nonmodal landmark, not a dialog: the bench stays reachable by keyboard. */
 export function Dock({ side, label, open, overlay, width, min, max, onResize, onClose, returnFocus, restoreFocusOnHide = true, children }: {
@@ -64,37 +66,42 @@ export function Dock({ side, label, open, overlay, width, min, max, onResize, on
 }
 
 export function useDockSizes() {
+  const { local: storage } = useDestination();
   const [sizes, setSizes] = useState({ inspector: 420, reference: 680 });
-  const [loaded, setLoaded] = useState(false);
+  // The storage whose saved sizes were applied; sizes are written only back to the destination they were read from.
+  const [loaded, setLoaded] = useState<ScopedStorage | null>(null);
   useEffect(() => {
+    if (!storage) return;
     try {
-      const saved = JSON.parse(localStorage.getItem("stack.uix.docks.v1") ?? "{}");
+      const saved = JSON.parse(storage.getItem("uix.docks.v1") ?? "{}");
       setSizes((current) => Object.fromEntries(Object.entries(current).map(([key, value]) => [key, typeof saved[key] === "number" && Number.isFinite(saved[key]) ? clamp(saved[key], 280, 1200) : value])) as typeof current);
     } catch { /* Unavailable storage never blocks the bench. */ }
-    setLoaded(true);
-  }, []);
+    setLoaded(storage);
+  }, [storage]);
   useEffect(() => {
-    if (!loaded) return;
-    const timer = setTimeout(() => { try { localStorage.setItem("stack.uix.docks.v1", JSON.stringify(sizes)); } catch { /* optional persistence */ } }, 200);
+    if (!storage || loaded !== storage) return;
+    const timer = setTimeout(() => { try { storage.setItem("uix.docks.v1", JSON.stringify(sizes)); } catch { /* optional persistence */ } }, 200);
     return () => clearTimeout(timer);
-  }, [loaded, sizes]);
+  }, [loaded, storage, sizes]);
   return [sizes, setSizes] as const;
 }
 
 /** The inspector's pin preference: unpinned (the default) contracts on outside interaction. */
 export function useInspectorPin() {
+  const { local: storage } = useDestination();
   const [pinned, setPinned] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState<ScopedStorage | null>(null);
   useEffect(() => {
+    if (!storage) return;
     try {
-      const saved = JSON.parse(localStorage.getItem("stack.uix.inspector.v1") ?? "{}");
+      const saved = JSON.parse(storage.getItem("uix.inspector.v1") ?? "{}");
       if (typeof saved.pinned === "boolean") setPinned(saved.pinned);
     } catch { /* Unavailable storage never blocks the bench. */ }
-    setLoaded(true);
-  }, []);
+    setLoaded(storage);
+  }, [storage]);
   useEffect(() => {
-    if (!loaded) return;
-    try { localStorage.setItem("stack.uix.inspector.v1", JSON.stringify({ pinned })); } catch { /* optional persistence */ }
-  }, [loaded, pinned]);
+    if (!storage || loaded !== storage) return;
+    try { storage.setItem("uix.inspector.v1", JSON.stringify({ pinned })); } catch { /* optional persistence */ }
+  }, [loaded, storage, pinned]);
   return [pinned, setPinned] as const;
 }
