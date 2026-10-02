@@ -79,7 +79,7 @@ try {
       operations: fixtureOperations(names, handlers), events: { topics: topics[name], scope: name === "bots" ? { valid: () => true, description: "Fixture", example: "bot-1" } : undefined } }));
   }
   hud = await serveApi({ name: "hud", transport: "socket", env, root });
-  websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["hud", "serve", "auth", "worker", "bots", "usage", "api"]), port: 0 });
+  websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["hud", "serve", "auth", "worker", "bots", "usage", "api"], ["bots", "worker"]), port: 0 });
   const doc = (name, api) => fixtureDoc(name, api, websocket.url, publishedJsonSchema);
   handlers.docs_snapshot = () => ({ packages: [doc("hud", hudApi), doc("bots", botsApi), doc("serve"), doc("auth"), doc("worker"), doc("usage"), doc("api")] });
 
@@ -180,7 +180,7 @@ try {
   await timeline.getByText("Progress from the human").waitFor();
 
   // Metadata is read only when opened.
-  await item.getByText("Agent metadata").click();
+  await item.locator("summary", { hasText: "Agent metadata" }).click();
   await item.getByText("meta-marker-value", { exact: false }).waitFor();
 
   // Creating a child through the page places it under its parent.
